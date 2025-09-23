@@ -12,18 +12,13 @@ numpy>=1.24.0
 # API Integration
 aiohttp>=3.9.0
 requests>=2.31.0
-redis>=5.0.0
 
-# Image Processing
-opencv-python>=4.8.0
+# Redis (use redis-py, not redis)
+redis-py>=5.0.0
+
+# Image Processing (opencv-python-headless for cloud deployment)
+opencv-python-headless>=4.8.0
 Pillow>=10.0.0
-
-# Database
-sqlite3  # Built into Python
-
-# Async Support
-asyncio  # Built into Python
 
 # Utilities
 python-dotenv>=1.0.0
-dataclasses  # Built into Python 3.7+
