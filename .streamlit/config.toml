@@ -1,0 +1,3 @@
+[global]
+# Force pip instead of uv for package installation
+packageManager = "pip"
