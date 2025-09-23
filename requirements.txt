@@ -1,24 +1,6 @@
-# GammaHunter - Market Maker Co-Pilot Requirements
-# Phase 1 Essential Dependencies
-
-# Web Interface
-streamlit>=1.28.0
-plotly>=5.17.0
-
-# Data Processing
-pandas>=2.1.0
-numpy>=1.24.0
-
-# API Integration
-aiohttp>=3.9.0
-requests>=2.31.0
-
-# Redis (use redis-py, not redis)
-redis-py>=5.0.0
-
-# Image Processing (opencv-python-headless for cloud deployment)
-opencv-python-headless>=4.8.0
-Pillow>=10.0.0
-
-# Utilities
-python-dotenv>=1.0.0
+streamlit==1.29.0
+plotly==5.17.0
+pandas==2.1.4
+numpy==1.24.3
+requests==2.31.0
+python-dotenv==1.0.0
