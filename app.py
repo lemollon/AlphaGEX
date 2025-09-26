@@ -501,5 +501,5 @@ def main():
     app = GammaHunterApp()
     app.run()
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # Fix: Change **name** to __name__
     main()
