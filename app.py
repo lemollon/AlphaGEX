@@ -26,8 +26,8 @@ except ImportError:
     # Fallback configuration if config.py not available
     APP_TITLE = "AlphaGEX"
     APP_ICON = "🎯"
-    HIGH_PRIORITY_SYMBOLS = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META"]
-    MEDIUM_PRIORITY_SYMBOLS = ["AMD", "NFLX", "CRM", "ADBE", "PYPL", "INTC", "CSCO", "PFE", "JNJ", "JPM"]
+    HIGH_PRIORITY_SYMBOLS = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "NFLX", "CRM", "ADBE", "PYPL", "INTC", "AMD", "CSCO", "DIS", "T", "VZ", "CMCSA", "JPM", "BAC", "WFC", "GS", "MS", "C", "JNJ", "PFE", "UNH", "ABBV", "MRK", "KO", "PEP", "WMT", "HD", "MCD", "NKE", "XOM", "CVX", "COP", "SLB", "GME", "AMC", "BB", "NOK", "PLTR", "WISH"]
+    MEDIUM_PRIORITY_SYMBOLS = ["CRM", "NOW", "SNOW", "OKTA", "ZM", "DOCU", "ROKU", "GILD", "BIIB", "AMGN", "REGN", "VRTX", "SQ", "SHOP", "TWLO", "DDOG", "CRWD", "ZS", "BA", "CAT", "GE", "MMM", "HON", "TSM", "ASML", "QCOM", "AVGO", "TXN", "LRCX", "F", "GM", "RIVN", "LCID", "NIO", "XPEV", "TGT", "COST", "SBUX", "LOW", "FDX", "UPS", "V", "MA", "BABA", "JD", "PDD", "UBER", "LYFT", "ABNB", "COIN", "SQ", "PYPL", "AFRM", "SOFI", "UPST", "HOOD", "RBLX", "U", "DKNG", "PENN", "MGM", "WYNN", "CZR", "BYD", "LI", "XPEV", "NIO", "BIDU", "IQ", "BILI", "TME", "FUTU", "TIGR", "DIDI", "GRAB", "SE", "BEKE", "YMM", "TAL", "EDU", "GOTU", "YQ", "DOYU", "HUYA", "BZUN", "VIPS", "PDD", "TCOM", "NTES", "JD", "BABA", "KWEB", "ASHR", "MCHI", "FXI", "YINN", "YANG", "CHAU", "CHAD", "CWEB", "CXSE", "KBA", "KFYP", "KURE", "KRBN", "KCNY", "ASHS", "CHIQ", "CHIM", "CHIS", "CHIE", "CHIH", "CHIC", "CHIB", "CHIA", "CHI", "CHGU", "CHGF", "CHGE", "CHGD", "CHGC", "CHGB", "CHGA", "CHG", "CHFU", "CHFT", "CHFS", "CHFR", "CHFQ", "CHFP", "CHFO", "CHFN", "CHFM", "CHFL", "CHFK", "CHFJ", "CHFI", "CHFH", "CHFG", "CHFF", "CHFE", "CHFD", "CHFC", "CHFB", "CHFA", "CHF"]
     GEX_THRESHOLDS = {"positive": 1e9, "negative": -1e9}
     RISK_LIMITS = {"max_position": 0.03}
     COLORS = {"primary": "#00ff00", "secondary": "#ff6384"}
@@ -824,63 +824,155 @@ class AlphaGEXApp:
         st.session_state.chat_history.append({'role': 'assistant', 'content': tips})
     
     def run_market_scan(self, scan_type: str):
-        """Run market scan for GEX opportunities"""
-        print(f"🔍 AlphaGEX: Starting market scan - Type: {scan_type}")
+        """Run real market scan for GEX opportunities using TradingVolatility.net API"""
+        print(f"🔍 AlphaGEX: Starting REAL market scan - Type: {scan_type}")
         
-        with st.spinner("Scanning market for GEX opportunities..."):
+        if not st.session_state.get('api_connected', False):
+            st.error("❌ API not connected. Cannot perform real scan.")
+            return
+        
+        with st.spinner("Scanning market for real GEX opportunities..."):
             try:
+                # Determine symbols to scan
                 if scan_type == "High Priority Only":
                     symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:50]
-                    print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} high priority symbols")
                 elif scan_type == "Custom List":
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:20]
-                    print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} custom symbols")
+                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:20]  
                 else:
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS[:100]
-                    print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} total symbols")
+                    # Ensure exactly 200 symbols for "All Symbols (200+)"
+                    all_symbols = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS
+                    symbols_to_scan = all_symbols[:200]  # Limit to exactly 200
+                    
+                print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} symbols")
                 
                 results = []
                 progress_bar = st.progress(0)
                 status_text = st.empty()
+                
+                # Rate limiting: 20 calls per minute = 1 call every 3 seconds
+                call_delay = 3.0  # seconds between API calls
                 
                 for i, symbol in enumerate(symbols_to_scan):
                     progress = (i + 1) / len(symbols_to_scan)
                     progress_bar.progress(progress)
                     status_text.text(f"Scanning {symbol}... ({i+1}/{len(symbols_to_scan)})")
                     
-                    time.sleep(0.05)
-                    
-                    if np.random.random() > 0.75:
-                        signal_type = np.random.choice(['LONG_CALL', 'LONG_PUT', 'SELL_CALL', 'IRON_CONDOR'])
-                        confidence = np.random.uniform(0.6, 0.9)
-                        net_gex = np.random.uniform(-3e9, 4e9)
+                    try:
+                        # Make real API call
+                        gex_result = self.api.get_net_gex(symbol)
                         
-                        results.append({
-                            'symbol': symbol,
-                            'signal_type': signal_type,
-                            'confidence': confidence,
-                            'net_gex': net_gex,
-                            'gamma_flip': np.random.uniform(50, 600),
-                            'mm_state': np.random.choice(['TRAPPED', 'DEFENDING', 'HUNTING', 'PANICKING']),
-                            'scan_time': datetime.now()
-                        })
-                        print(f"🎯 AlphaGEX: Signal found for {symbol}: {signal_type} (confidence: {confidence:.1%})")
+                        if gex_result.get('success', False):
+                            net_gex = gex_result.get('net_gex', 0)
+                            gamma_flip = gex_result.get('gamma_flip', 0)
+                            current_price = gex_result.get('current_price', 0)
+                            
+                            # Analyze the real data for signals
+                            signal_analysis = self._analyze_gex_for_signals(
+                                symbol, net_gex, gamma_flip, current_price
+                            )
+                            
+                            if signal_analysis['has_signal']:
+                                results.append({
+                                    'symbol': symbol,
+                                    'signal_type': signal_analysis['signal_type'],
+                                    'confidence': signal_analysis['confidence'],
+                                    'net_gex': net_gex,
+                                    'gamma_flip': gamma_flip,
+                                    'current_price': current_price,
+                                    'mm_state': signal_analysis['mm_state'],
+                                    'reason': signal_analysis['reason'],
+                                    'scan_time': datetime.now()
+                                })
+                                
+                                print(f"🎯 AlphaGEX: REAL signal found for {symbol}: {signal_analysis['signal_type']} (confidence: {signal_analysis['confidence']:.1%})")
+                        
+                        else:
+                            print(f"⚠️ AlphaGEX: Failed to get data for {symbol}: {gex_result.get('error', 'Unknown error')}")
+                    
+                    except Exception as e:
+                        print(f"❌ AlphaGEX: Error scanning {symbol}: {str(e)}")
+                    
+                    # Rate limiting delay (except for last call)
+                    if i < len(symbols_to_scan) - 1:
+                        time.sleep(call_delay)
                 
                 progress_bar.empty()
                 status_text.empty()
                 
                 st.session_state.scanner_results = results
                 
-                st.success(f"✅ Scan complete! Found {len(results)} opportunities out of {len(symbols_to_scan)} symbols scanned")
-                print(f"✅ AlphaGEX: Market scan completed - Found {len(results)} signals")
-                log_success(f"Market scan completed: {len(results)} signals found from {len(symbols_to_scan)} symbols")
+                scan_summary = f"✅ Real scan complete! Found {len(results)} opportunities from {len(symbols_to_scan)} symbols scanned"
+                st.success(scan_summary)
+                print(f"✅ AlphaGEX: {scan_summary}")
+                log_success(f"Real market scan completed: {len(results)} signals found from {len(symbols_to_scan)} symbols")
                 
             except Exception as e:
                 error_msg = str(e)
                 st.error(f"❌ Scan error: {error_msg}")
                 print(f"❌ AlphaGEX: Market scan exception: {error_msg}")
                 log_error(f"Market scan error: {error_msg}")
-    
+
+    def _analyze_gex_for_signals(self, symbol: str, net_gex: float, gamma_flip: float, current_price: float) -> Dict:
+        """Analyze real GEX data for trading signals"""
+        
+        # GEX thresholds (adjust based on symbol)
+        if symbol in ['SPY']:
+            pos_threshold = 2e9
+            neg_threshold = -1e9
+        elif symbol in ['QQQ']:
+            pos_threshold = 1e9  
+            neg_threshold = -500e6
+        else:
+            pos_threshold = 500e6
+            neg_threshold = -200e6
+        
+        # Calculate distance to gamma flip
+        if current_price > 0 and gamma_flip > 0:
+            distance_to_flip = abs(current_price - gamma_flip) / current_price
+        else:
+            distance_to_flip = 1.0  # No valid flip point
+        
+        # Signal detection logic
+        signal_analysis = {
+            'has_signal': False,
+            'signal_type': 'NONE',
+            'confidence': 0.0,
+            'mm_state': 'NEUTRAL',
+            'reason': 'No significant signal detected'
+        }
+        
+        # Negative GEX squeeze setups
+        if net_gex < neg_threshold and distance_to_flip < 0.02:  # Within 2% of flip
+            signal_analysis.update({
+                'has_signal': True,
+                'signal_type': 'SQUEEZE_SETUP',
+                'confidence': min(0.9, abs(net_gex) / abs(neg_threshold)),
+                'mm_state': 'TRAPPED',
+                'reason': f'Negative GEX ({net_gex/1e9:.2f}B) near gamma flip'
+            })
+        
+        # High positive GEX premium selling
+        elif net_gex > pos_threshold:
+            signal_analysis.update({
+                'has_signal': True,
+                'signal_type': 'SELL_PREMIUM',
+                'confidence': min(0.85, net_gex / (pos_threshold * 2)),
+                'mm_state': 'DEFENDING',
+                'reason': f'High positive GEX ({net_gex/1e9:.2f}B) - range bound expected'
+            })
+        
+        # Iron condor opportunities  
+        elif pos_threshold * 0.5 < net_gex < pos_threshold:
+            signal_analysis.update({
+                'has_signal': True,
+                'signal_type': 'IRON_CONDOR',
+                'confidence': 0.65,
+                'mm_state': 'STABILIZING',
+                'reason': f'Moderate positive GEX ({net_gex/1e9:.2f}B) - defined range likely'
+            })
+        
+        return signal_analysis
+        
     def display_scanner_results(self):
         """Display scanner results in a formatted table"""
         scanner_results = st.session_state.get('scanner_results', [])
@@ -896,14 +988,17 @@ class AlphaGEXApp:
         display_df = df.copy()
         display_df['Confidence'] = display_df['confidence'].apply(lambda x: f"{x:.1%}")
         display_df['Net GEX'] = display_df['net_gex'].apply(lambda x: f"${x/1e9:.2f}B")
-        display_df['Gamma Flip'] = display_df['gamma_flip'].apply(lambda x: f"${x:.2f}")
+        display_df['Current Price'] = display_df['current_price'].apply(lambda x: f"${x:.2f}" if x > 0 else "N/A")
+        display_df['Reason'] = display_df['reason'].apply(lambda x: x[:50] + "..." if len(x) > 50 else x)
         
         display_columns = {
             'symbol': 'Symbol',
             'signal_type': 'Signal Type', 
             'Confidence': 'Confidence',
             'Net GEX': 'Net GEX',
-            'mm_state': 'MM State'
+            'mm_state': 'MM State',
+            'Current Price': 'Price',
+            'Reason': 'Analysis'
         }
         
         st.dataframe(
