@@ -46,24 +46,6 @@ st.markdown("""
         margin-bottom: 1rem;
     }
     
-    .metric-card {
-        background: linear-gradient(135deg, #1e3c72, #2a5298);
-        padding: 1rem;
-        border-radius: 10px;
-        border: 1px solid #00ff00;
-        margin: 0.5rem 0;
-    }
-    
-    .status-connected {
-        color: #00ff00;
-        font-weight: bold;
-    }
-    
-    .status-error {
-        color: #ff4444;
-        font-weight: bold;
-    }
-    
     .gex-positive {
         background-color: rgba(255, 99, 132, 0.1);
         border-left: 4px solid #ff6384;
@@ -93,14 +75,11 @@ class AlphaGEXApp:
     
     def __init__(self):
         """Initialize the AlphaGEX application"""
-        # DEBUGGING: Print initialization start
         print("🚀 AlphaGEX: Starting application initialization...")
         
-        # Initialize session state first
         self.initialize_session_state()
         print("✅ AlphaGEX: Session state initialized")
         
-        # Initialize core components
         self.api = TradingVolatilityAPI()
         print("✅ AlphaGEX: API client initialized")
         
@@ -110,14 +89,11 @@ class AlphaGEXApp:
         self.visual_analyzer = VisualIntelligenceCoordinator()
         print("✅ AlphaGEX: Visual analyzer initialized")
         
-        # Initialize system status checks
         self.check_system_status()
         print("✅ AlphaGEX: System status checked")
         
     def initialize_session_state(self):
         """Initialize Streamlit session state variables"""
-        # DEBUGGING: Log each session state initialization
-        
         if 'system_status' not in st.session_state:
             st.session_state.system_status = '🟡 Initializing'
             print("📊 AlphaGEX: System status set to initializing")
@@ -156,18 +132,15 @@ class AlphaGEXApp:
         
         # Check Redis status
         try:
-            # Try to import redis and test connection
             import redis
             print("✅ AlphaGEX: Redis module imported successfully")
             
-            # Try to connect to Redis (local or cloud)
             try:
                 r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-                r.ping()  # Test connection
+                r.ping()
                 st.session_state.redis_status = '🟢 Connected'
                 print("✅ AlphaGEX: Redis connection successful")
             except redis.ConnectionError:
-                # Redis not available, use mock mode
                 st.session_state.redis_status = '🟡 Mock Mode'
                 print("⚠️ AlphaGEX: Redis not available, using mock mode")
             except Exception as e:
@@ -175,7 +148,6 @@ class AlphaGEXApp:
                 print(f"❌ AlphaGEX: Redis error: {str(e)}")
                 
         except ImportError:
-            # Redis not installed
             st.session_state.redis_status = '🔴 Not Installed'
             print("❌ AlphaGEX: Redis not installed")
             
@@ -187,7 +159,6 @@ class AlphaGEXApp:
             st.session_state.api_connected = False
             print("⚠️ AlphaGEX: No API username configured")
             
-        # Update overall system status
         st.session_state.system_status = '🟢 Online'
         print("✅ AlphaGEX: System status updated to online")
         
@@ -203,10 +174,7 @@ class AlphaGEXApp:
         print(f"🔍 AlphaGEX: Verifying API connection for user: {username}")
         
         try:
-            # Set API credentials
             self.api.set_credentials(username)
-            
-            # Test connection
             result = test_api_connection(username)
             print(f"📡 AlphaGEX: API test result: {result}")
             
@@ -229,7 +197,6 @@ class AlphaGEXApp:
         st.markdown(f'<h1 class="main-header">{APP_ICON} AlphaGEX</h1>', unsafe_allow_html=True)
         st.markdown("*Professional Gamma Exposure Trading Platform*")
         
-        # Status metrics
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -248,7 +215,6 @@ class AlphaGEXApp:
             print(f"📊 AlphaGEX: Analysis count displayed: {analysis_count}")
             
         with col4:
-            # DEBUGGING: Check API status logic
             is_connected = st.session_state.get('api_connected', False)
             has_username = bool(st.session_state.get('api_username', '').strip())
             
@@ -271,14 +237,11 @@ class AlphaGEXApp:
         with st.sidebar:
             st.header("⚙️ Configuration")
             
-            # API Configuration Section
             st.subheader("📡 TradingVolatility.net API")
             
-            # Get current username
             current_username = st.session_state.get('api_username', '')
             print(f"🔍 AlphaGEX: Current API username: '{current_username}'")
             
-            # Username input
             username = st.text_input(
                 "API Username", 
                 value=current_username,
@@ -286,7 +249,6 @@ class AlphaGEXApp:
                 key="api_username_input"
             )
             
-            # DEBUGGING: Check if username changed
             username = username.strip() if username else ''
             if username != current_username:
                 print(f"🔄 AlphaGEX: Username changed from '{current_username}' to '{username}'")
@@ -295,11 +257,9 @@ class AlphaGEXApp:
                 if username:
                     print(f"🔍 AlphaGEX: Testing new API credentials...")
                     
-                    # Show testing message
                     with st.spinner("Testing API connection..."):
                         self.verify_api_connection()
                         
-                    # Show result
                     if st.session_state.get('api_connected', False):
                         st.success("✅ API Connected!")
                         print("✅ AlphaGEX: API connection successful in sidebar")
@@ -307,11 +267,9 @@ class AlphaGEXApp:
                         st.error("❌ API Connection Failed")
                         print("❌ AlphaGEX: API connection failed in sidebar")
                 else:
-                    # Username cleared
                     st.session_state.api_connected = False
                     print("⚠️ AlphaGEX: API username cleared")
             
-            # Display connection status
             if st.session_state.get('api_connected', False):
                 st.success("🟢 API Status: Connected")
             elif st.session_state.get('api_username', '').strip():
@@ -319,17 +277,14 @@ class AlphaGEXApp:
             else:
                 st.warning("🟡 API Status: Not Configured")
             
-            # Test connection button
             if st.button("🔄 Test API Connection") and st.session_state.get('api_username', '').strip():
                 print("🔍 AlphaGEX: Manual API test requested")
                 with st.spinner("Testing connection..."):
                     self.verify_api_connection()
                 st.rerun()
             
-            # System Settings
             st.subheader("⚙️ System Settings")
             
-            # Analysis settings
             st.selectbox(
                 "Default Analysis Timeframe",
                 options=["Intraday", "1-3 DTE", "1-2 Weeks"],
@@ -337,7 +292,6 @@ class AlphaGEXApp:
                 key="default_timeframe"
             )
             
-            # Risk settings
             max_position_size = st.slider(
                 "Max Position Size (%)",
                 min_value=1,
@@ -347,7 +301,6 @@ class AlphaGEXApp:
             )
             st.session_state['max_position_size'] = max_position_size / 100
             
-            # Scanner settings
             st.subheader("🔍 Scanner Settings")
             min_confidence = st.slider(
                 "Minimum Signal Confidence",
@@ -359,16 +312,13 @@ class AlphaGEXApp:
             )
             st.session_state['min_confidence'] = min_confidence
             
-            # System Status Indicators
             st.subheader("📊 System Status")
             
-            # API Status
             if st.session_state.get('api_connected', False):
                 st.success("🟢 API Connected")
             else:
                 st.warning("🟡 API Not Configured")
                 
-            # Redis Status  
             redis_status = st.session_state.get('redis_status', '🔴 Unknown')
             if '🟢' in redis_status:
                 st.success(f"🟢 Redis: {redis_status}")
@@ -377,7 +327,6 @@ class AlphaGEXApp:
             else:
                 st.error(f"🔴 Redis: {redis_status}")
                 
-            # Analysis History
             analysis_count = len(st.session_state.get('analysis_history', []))
             if analysis_count > 0:
                 st.info(f"📈 {analysis_count} analyses performed")
@@ -392,7 +341,6 @@ class AlphaGEXApp:
         
         st.subheader("📊 GEX Chart Analysis & Symbol Deep Dive")
         
-        # Symbol input section
         col1, col2 = st.columns([2, 1])
         
         with col1:
@@ -405,7 +353,6 @@ class AlphaGEXApp:
         with col2:
             analyze_btn = st.button("🚀 Analyze Symbol", type="primary")
         
-        # Check if analysis should run
         if analyze_btn and symbol:
             print(f"🔍 AlphaGEX: Analysis requested for symbol: {symbol}")
             if not st.session_state.get('api_connected', False):
@@ -414,7 +361,6 @@ class AlphaGEXApp:
             else:
                 self.perform_symbol_analysis(symbol)
         
-        # Image upload section
         st.subheader("📸 Upload GEX Chart for Visual Analysis")
         uploaded_file = st.file_uploader(
             "Choose a GEX profile chart image",
@@ -426,7 +372,6 @@ class AlphaGEXApp:
             print("📸 AlphaGEX: Chart image uploaded for analysis")
             self.analyze_uploaded_chart(uploaded_file)
         
-        # Display current analysis if available
         if st.session_state.get('current_analysis'):
             print("📊 AlphaGEX: Displaying current analysis results")
             self.display_analysis_results(st.session_state.current_analysis)
@@ -440,7 +385,6 @@ class AlphaGEXApp:
         st.subheader("💬 AlphaGEX AI Co-Pilot")
         st.info("🤖 Your intelligent trading assistant for GEX analysis and strategy suggestions")
         
-        # Chat history display
         chat_container = st.container()
         
         with chat_container:
@@ -454,7 +398,6 @@ class AlphaGEXApp:
                     st.markdown(f"**AlphaGEX:** {message['content']}")
                 st.markdown("---")
         
-        # Chat input
         user_input = st.text_input(
             "Ask AlphaGEX about gamma exposure, market maker behavior, or trading strategies:",
             placeholder="e.g., 'What does high positive GEX mean for SPY?'",
@@ -466,7 +409,6 @@ class AlphaGEXApp:
             self.process_chat_message(user_input)
             st.rerun()
             
-        # Quick action buttons
         st.subheader("🚀 Quick Actions")
         col1, col2, col3, col4 = st.columns(4)
         
@@ -501,12 +443,10 @@ class AlphaGEXApp:
         st.subheader("🔍 Live 200+ Symbol GEX Scanner")
         st.info("🎯 Scanning for high-probability gamma exposure setups across 200+ symbols")
         
-        # API check for scanner
         if not st.session_state.get('api_connected', False):
             st.warning("⚠️ Scanner requires API configuration. Please set up your credentials in the sidebar.")
             return
         
-        # Scanner controls
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
@@ -526,7 +466,6 @@ class AlphaGEXApp:
             if auto_scan:
                 print("🔄 AlphaGEX: Auto-refresh enabled")
         
-        # Display scan results
         scanner_results = st.session_state.get('scanner_results', [])
         if scanner_results:
             print(f"📊 AlphaGEX: Displaying {len(scanner_results)} scanner results")
@@ -541,7 +480,6 @@ class AlphaGEXApp:
         
         with st.spinner(f"Analyzing {symbol}... This may take a moment."):
             try:
-                # Get GEX data from API
                 print(f"📡 AlphaGEX: Fetching GEX data for {symbol}")
                 gex_result = self.api.get_net_gex(symbol)
                 print(f"📡 AlphaGEX: GEX API result: {gex_result}")
@@ -549,22 +487,18 @@ class AlphaGEXApp:
                 if gex_result.get('success', False):
                     print(f"✅ AlphaGEX: GEX data retrieved successfully for {symbol}")
                     
-                    # Get price data
                     print(f"💰 AlphaGEX: Fetching price data for {symbol}")
                     price_data = self.get_price_data(symbol)
                     print(f"💰 AlphaGEX: Price data: {price_data}")
                     
-                    # Perform behavioral analysis
                     print(f"🧠 AlphaGEX: Running behavioral analysis for {symbol}")
                     behavioral_analysis = self.behavioral_engine.analyze_mm_behavior(gex_result, price_data)
                     print(f"🧠 AlphaGEX: Behavioral analysis complete")
                     
-                    # Perform visual analysis
                     print(f"👁️ AlphaGEX: Running visual analysis for {symbol}")
                     visual_analysis = self.visual_analyzer.process_gex_data_visually(gex_result)
                     print(f"👁️ AlphaGEX: Visual analysis complete")
                     
-                    # Create comprehensive analysis
                     analysis = {
                         'symbol': symbol,
                         'timestamp': datetime.now(),
@@ -574,7 +508,6 @@ class AlphaGEXApp:
                         'visual_analysis': visual_analysis
                     }
                     
-                    # Store in session state and history
                     st.session_state.current_analysis = analysis
                     st.session_state.analysis_history.append(analysis)
                     print(f"✅ AlphaGEX: Analysis stored for {symbol}")
@@ -600,11 +533,9 @@ class AlphaGEXApp:
         
         with st.spinner("Analyzing chart image..."):
             try:
-                # Display the uploaded image
                 st.image(uploaded_file, caption="Uploaded GEX Chart", use_column_width=True)
                 print("📸 AlphaGEX: Chart image displayed")
                 
-                # Perform visual analysis
                 visual_result = self.visual_analyzer.analyze_chart_image(uploaded_file)
                 print(f"👁️ AlphaGEX: Visual analysis result: {visual_result}")
                 
@@ -612,7 +543,6 @@ class AlphaGEXApp:
                     st.success("✅ Chart analysis complete!")
                     print("✅ AlphaGEX: Chart analysis successful")
                     
-                    # Display insights
                     insights = visual_result.get('insights', [])
                     if insights:
                         st.subheader("🔍 Visual Analysis Insights")
@@ -620,7 +550,6 @@ class AlphaGEXApp:
                             st.write(f"• {insight}")
                             print(f"💡 AlphaGEX: Insight: {insight}")
                     
-                    # Display confidence score
                     confidence = visual_result.get('confidence', 0)
                     st.metric("Analysis Confidence", f"{confidence:.1%}")
                     print(f"📊 AlphaGEX: Confidence score: {confidence:.1%}")
@@ -641,7 +570,6 @@ class AlphaGEXApp:
         
         st.subheader(f"📊 Analysis Results: {analysis['symbol']}")
         
-        # Key metrics
         gex_data = analysis.get('gex_data', {})
         behavioral_data = analysis.get('behavioral_analysis', {})
         
@@ -663,8 +591,7 @@ class AlphaGEXApp:
             confidence = behavioral_data.get('confidence', 0)
             st.metric("Confidence", f"{confidence:.1%}")
         
-        # GEX regime analysis
-        if net_gex > 1e9:  # Positive GEX
+        if net_gex > 1e9:
             st.markdown("""
             <div class="gex-positive">
                 <strong>🛡️ Positive GEX Environment</strong><br>
@@ -673,7 +600,7 @@ class AlphaGEXApp:
             </div>
             """, unsafe_allow_html=True)
             print("📊 AlphaGEX: Displaying positive GEX environment analysis")
-        elif net_gex < -1e9:  # Negative GEX
+        elif net_gex < -1e9:
             st.markdown("""
             <div class="gex-negative">
                 <strong>🔥 Negative GEX Environment</strong><br>
@@ -686,7 +613,6 @@ class AlphaGEXApp:
             st.info("📊 Neutral GEX environment - mixed signals")
             print("📊 AlphaGEX: Displaying neutral GEX environment analysis")
         
-        # Trading signals
         signals = behavioral_data.get('signals', [])
         if signals:
             st.subheader("🎯 Trading Signals")
@@ -734,13 +660,10 @@ class AlphaGEXApp:
         """Process a chat message from the user"""
         print(f"💬 AlphaGEX: Processing chat message: {message}")
         
-        # Add user message to history
         st.session_state.chat_history.append({'role': 'user', 'content': message})
         
-        # Generate AI response
         response = self.generate_ai_response(message)
         
-        # Add AI response to history
         st.session_state.chat_history.append({'role': 'assistant', 'content': response})
         print("💬 AlphaGEX: Chat message processed and response generated")
     
@@ -853,484 +776,28 @@ class AlphaGEXApp:
         
         with st.spinner("Scanning market for GEX opportunities..."):
             try:
-                # Determine symbols to scan based on type
                 if scan_type == "High Priority Only":
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:50]  # Top 50 high priority
+                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:50]
                     print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} high priority symbols")
                 elif scan_type == "Custom List":
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:20]  # Smaller custom list
+                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:20]
                     print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} custom symbols")
-                else:  # All symbols
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS[:100]  # Limit for performance
-                    print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} total symbols")
-                
-                # Initialize results
-                results = []
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # Scan symbols (demo mode - replace with real API calls)
-                for i, symbol in enumerate(symbols_to_scan):
-                    # Update progress
-                    progress = (i + 1) / len(symbols_to_scan)
-                    progress_bar.progress(progress)
-                    status_text.text(f"Scanning {symbol}... ({i+1}/{len(symbols_to_scan)})")
-                    
-                    # Simulate API call with rate limiting
-                    time.sleep(0.05)  # Simulate API delay
-                    
-                    # Generate realistic scan result (replace with real API call)
-                    if np.random.random() > 0.75:  # 25% chance of signal
-                        signal_type = np.random.choice(['LONG_CALL', 'LONG_PUT', 'SELL_CALL', 'IRON_CONDOR'])
-                        confidence = np.random.uniform(0.6, 0.9)
-                        net_gex = np.random.uniform(-3e9, 4e9)
-                        
-                        results.append({
-                            'symbol': symbol,
-                            'signal_type': signal_type,
-                            'confidence': confidence,
-                            'net_gex': net_gex,
-                            'gamma_flip': np.random.uniform(50, 600),
-                            'mm_state': np.random.choice(['TRAPPED', 'DEFENDING', 'HUNTING', 'PANICKING']),
-                            'scan_time': datetime.now()
-                        })
-                        print(f"🎯 AlphaGEX: Signal found for {symbol}: {signal_type} (confidence: {confidence:.1%})")
-                
-                # Clean up progress indicators
-                progress_bar.empty()
-                status_text.empty()
-                
-                # Store results
-                st.session_state.scanner_results = results
-                
-                # Show completion message
-                st.success(f"✅ Scan complete! Found {len(results)} opportunities out of {len(symbols_to_scan)} symbols scanned")
-                print(f"✅ AlphaGEX: Market scan completed - Found {len(results)} signals")
-                log_success(f"Market scan completed: {len(results)} signals found from {len(symbols_to_scan)} symbols")
-                
-            except Exception as e:
-                error_msg = str(e)
-                st.error(f"❌ Scan error: {error_msg}")
-                print(f"❌ AlphaGEX: Market scan exception: {error_msg}")
-                log_error(f"Market scan error: {error_msg}")
-    
-    def display_scanner_results(self):
-        """Display scanner results in a formatted table"""
-        scanner_results = st.session_state.get('scanner_results', [])
-        if not scanner_results:
-            return
-            
-        print(f"📊 AlphaGEX: Displaying {len(scanner_results)} scanner results")
-        
-        st.subheader(f"📊 Scan Results ({len(scanner_results)} signals)")
-        
-        # Convert to DataFrame for display
-        df = pd.DataFrame(scanner_results)
-        
-        # Format the data for better display
-        display_df = df.copy()
-        display_df['Confidence'] = display_df['confidence'].apply(lambda x: f"{x:.1%}")
-        display_df['Net GEX'] = display_df['net_gex'].apply(lambda x: f"${x/1e9:.2f}B")
-        display_df['Gamma Flip'] = display_df['gamma_flip'].apply(lambda x: f"${x:.2f}")
-        
-        # Select and rename columns for display
-        display_columns = {
-            'symbol': 'Symbol',
-            'signal_type': 'Signal Type', 
-            'Confidence': 'Confidence',
-            'Net GEX': 'Net GEX',
-            'mm_state': 'MM State'
-        }
-        
-        # Display formatted table
-        st.dataframe(
-            display_df[list(display_columns.keys())].rename(columns=display_columns),
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        print("✅ AlphaGEX: Scanner results table displayed")
-        
-    def display_scanner_stats(self):
-        """Display comprehensive scanner statistics"""
-        scanner_results = st.session_state.get('scanner_results', [])
-        if not scanner_results:
-            return
-            
-        print("📊 AlphaGEX: Displaying scanner statistics")
-        
-        st.subheader("📈 Scan Statistics")
-        
-        # Calculate statistics
-        total_signals = len(scanner_results)
-        high_conf_signals = sum(1 for r in scanner_results if r['confidence'] > 0.75)
-        avg_confidence = np.mean([r['confidence'] for r in scanner_results])
-        negative_gex_count = sum(1 for r in scanner_results if r['net_gex'] < 0)
-        
-        # Display in columns
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Signals", total_signals)
-            
-        with col2:
-            st.metric("High Confidence", f"{high_conf_signals} ({high_conf_signals/total_signals:.1%})")
-            
-        with col3:
-            st.metric("Avg Confidence", f"{avg_confidence:.1%}")
-            
-        with col4:
-            st.metric("Negative GEX", f"{negative_gex_count} ({negative_gex_count/total_signals:.1%})")
-        
-        # Signal type breakdown
-        signal_types = {}
-        for result in scanner_results:
-            signal_type = result['signal_type']
-            signal_types[signal_type] = signal_types.get(signal_type, 0) + 1
-        
-        if signal_types:
-            st.subheader("🎯 Signal Type Distribution")
-            for signal_type, count in signal_types.items():
-                percentage = count / total_signals
-                st.write(f"**{signal_type}**: {count} signals ({percentage:.1%})")
-        
-        print("✅ AlphaGEX: Scanner statistics displayed")
-    
-    def run(self):
-        """Main application run method"""
-        print("🚀 AlphaGEX: Starting main application run...")
-        
-        # Update system status to online
-        st.session_state.system_status = '🟢 Online'
-        
-        # Render main components
-        self.render_header()
-        self.render_sidebar()
-        
-        # Main interface tabs
-        tab1, tab2, tab3 = st.tabs(["📊 Chart Analysis", "💬 AlphaGEX Co-Pilot", "🔍 Live Scanner"])
-        
-        with tab1:
-            self.render_chart_analysis_tab()
-        
-        with tab2:
-            self.render_copilot_chat_tab()
-        
-        with tab3:
-            self.render_scanner_tab()
-        
-        # Footer
-        st.markdown("---")
-        st.markdown("""
-        **AlphaGEX v1.0** | Professional Gamma Exposure Trading Platform  
-        Built on comprehensive gamma exposure research and market maker behavioral analysis.  
-        ⚠️ **Educational purposes only. Not financial advice.**
-        """)
-        
-        print("✅ AlphaGEX: Main application run completed successfully")
-
-# Main execution
-def main():
-    """Main application entry point"""
-    print("🌟 AlphaGEX: Application starting...")
-    
-    try:
-        app = AlphaGEXApp()
-        print("✅ AlphaGEX: Application instance created successfully")
-        
-        app.run()
-        print("✅ AlphaGEX: Application run completed successfully")
-        
-    except Exception as e:
-        error_msg = str(e)
-        st.error(f"❌ Application Error: {error_msg}")
-        print(f"❌ AlphaGEX: Application startup error: {error_msg}")
-        log_error(f"Application startup error: {error_msg}")
-
-if __name__ == "__main__":
-    main()
-            try:
-                # Display the uploaded image
-                st.image(uploaded_file, caption="Uploaded GEX Chart", use_column_width=True)
-                print("📸 AlphaGEX: Chart image displayed")
-                
-                # Perform visual analysis
-                visual_result = self.visual_analyzer.analyze_chart_image(uploaded_file)
-                print(f"👁️ AlphaGEX: Visual analysis result: {visual_result}")
-                
-                if visual_result.get('success', True):
-                    st.success("✅ Chart analysis complete!")
-                    print("✅ AlphaGEX: Chart analysis successful")
-                    
-                    # Display insights
-                    insights = visual_result.get('insights', [])
-                    if insights:
-                        st.subheader("🔍 Visual Analysis Insights")
-                        for insight in insights:
-                            st.write(f"• {insight}")
-                            print(f"💡 AlphaGEX: Insight: {insight}")
-                    
-                    # Display confidence score
-                    confidence = visual_result.get('confidence', 0)
-                    st.metric("Analysis Confidence", f"{confidence:.1%}")
-                    print(f"📊 AlphaGEX: Confidence score: {confidence:.1%}")
-                    
                 else:
-                    st.warning("⚠️ Chart analysis had limited success")
-                    print("⚠️ AlphaGEX: Chart analysis had limited success")
-                    
-            except Exception as e:
-                error_msg = str(e)
-                st.error(f"❌ Chart analysis error: {error_msg}")
-                print(f"❌ AlphaGEX: Chart analysis exception: {error_msg}")
-                log_error(f"Chart analysis error: {error_msg}")
-    
-    def display_analysis_results(self, analysis: Dict):
-        """Display comprehensive analysis results"""
-        print(f"📊 AlphaGEX: Displaying analysis results for {analysis.get('symbol', 'Unknown')}")
-        
-        st.subheader(f"📊 Analysis Results: {analysis['symbol']}")
-        
-        # Key metrics
-        gex_data = analysis.get('gex_data', {})
-        behavioral_data = analysis.get('behavioral_analysis', {})
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            net_gex = gex_data.get('net_gex', 0)
-            st.metric("Net GEX", f"${net_gex/1e9:.2f}B")
-            
-        with col2:
-            gamma_flip = gex_data.get('gamma_flip', 0)
-            st.metric("Gamma Flip", f"${gamma_flip:.2f}")
-            
-        with col3:
-            mm_state = behavioral_data.get('mm_state', 'Unknown')
-            st.metric("MM State", mm_state)
-            
-        with col4:
-            confidence = behavioral_data.get('confidence', 0)
-            st.metric("Confidence", f"{confidence:.1%}")
-        
-        # GEX regime analysis
-        if net_gex > 1e9:  # Positive GEX
-            st.markdown("""
-            <div class="gex-positive">
-                <strong>🛡️ Positive GEX Environment</strong><br>
-                Market makers are long gamma, expecting range-bound price action.
-                Consider premium selling strategies or iron condors.
-            </div>
-            """, unsafe_allow_html=True)
-            print("📊 AlphaGEX: Displaying positive GEX environment analysis")
-        elif net_gex < -1e9:  # Negative GEX
-            st.markdown("""
-            <div class="gex-negative">
-                <strong>🔥 Negative GEX Environment</strong><br>
-                Market makers are short gamma, expecting volatile price action.
-                Look for squeeze setups and momentum plays.
-            </div>
-            """, unsafe_allow_html=True)
-            print("📊 AlphaGEX: Displaying negative GEX environment analysis")
-        else:
-            st.info("📊 Neutral GEX environment - mixed signals")
-            print("📊 AlphaGEX: Displaying neutral GEX environment analysis")
-        
-        # Trading signals
-        signals = behavioral_data.get('signals', [])
-        if signals:
-            st.subheader("🎯 Trading Signals")
-            print(f"🎯 AlphaGEX: Displaying {len(signals)} trading signals")
-            for signal in signals:
-                st.markdown(f"""
-                <div class="signal-box">
-                    <strong>{signal['type']}</strong><br>
-                    <em>{signal['reason']}</em><br>
-                    Confidence: {signal['confidence']:.1%} | Time Horizon: {signal['time_horizon']}
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("🔍 No high-confidence signals detected at this time")
-            print("🔍 AlphaGEX: No trading signals found")
-    
-    def get_price_data(self, symbol: str) -> Dict:
-        """Get current price data for a symbol"""
-        print(f"💰 AlphaGEX: Fetching price data for {symbol}")
-        
-        try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="1d")
-            
-            if not hist.empty:
-                current_price = hist['Close'].iloc[-1]
-                daily_change = (hist['Close'].iloc[-1] - hist['Open'].iloc[0]) / hist['Open'].iloc[0]
-                
-                result = {
-                    'current_price': current_price,
-                    'daily_change': daily_change
-                }
-                print(f"💰 AlphaGEX: Price data retrieved - Price: ${current_price:.2f}, Change: {daily_change:.2%}")
-                return result
-            else:
-                print(f"⚠️ AlphaGEX: No price data available for {symbol}")
-                return {'current_price': 0, 'daily_change': 0}
-                
-        except Exception as e:
-            print(f"❌ AlphaGEX: Price data fetch error for {symbol}: {str(e)}")
-            log_error(f"Price data fetch error for {symbol}: {str(e)}")
-            return {'current_price': 0, 'daily_change': 0}
-    
-    def process_chat_message(self, message: str):
-        """Process a chat message from the user"""
-        print(f"💬 AlphaGEX: Processing chat message: {message}")
-        
-        # Add user message to history
-        st.session_state.chat_history.append({'role': 'user', 'content': message})
-        
-        # Generate AI response
-        response = self.generate_ai_response(message)
-        
-        # Add AI response to history
-        st.session_state.chat_history.append({'role': 'assistant', 'content': response})
-        print("💬 AlphaGEX: Chat message processed and response generated")
-    
-    def generate_ai_response(self, message: str) -> str:
-        """Generate AI response to user message"""
-        print(f"🤖 AlphaGEX: Generating AI response for: {message}")
-        
-        message_lower = message.lower()
-        
-        if 'gex' in message_lower or 'gamma' in message_lower:
-            return "Gamma Exposure (GEX) represents the dollar amount market makers need to hedge based on options positioning. High positive GEX suggests range-bound markets, while negative GEX indicates potential for explosive moves. Use our scanner to find current GEX opportunities!"
-        elif 'squeeze' in message_lower:
-            return "A gamma squeeze occurs when market makers are short gamma and must buy stock as prices rise, creating a feedback loop. Look for negative GEX environments near gamma flip points for squeeze setups. Our behavioral engine identifies these automatically!"
-        elif 'strategy' in message_lower or 'trade' in message_lower:
-            return "Based on current market conditions, I recommend focusing on the gamma regime. In positive GEX environments (>1B), consider premium selling. In negative GEX (<-1B), look for directional plays above/below the gamma flip. Check our analysis tab for specific setups!"
-        elif 'api' in message_lower or 'configure' in message_lower:
-            return "To get started, configure your TradingVolatility.net API credentials in the sidebar. This unlocks real-time GEX data and our full 200+ symbol scanner. Need help? Check the configuration section!"
-        elif 'help' in message_lower:
-            return "I'm AlphaGEX, your gamma exposure trading assistant! I can help you understand GEX analysis, find trading opportunities, and explain market maker behavior. Try asking about specific symbols, GEX levels, or trading strategies!"
-        else:
-            return "Great question! I'm here to help with gamma exposure analysis and trading strategies. Ask me about GEX levels, market maker behavior, specific symbols, or trading setups. You can also use our scanner to find opportunities across 200+ symbols!"
-    
-    def quick_market_explanation(self):
-        """Provide quick market explanation"""
-        print("💡 AlphaGEX: Generating quick market explanation")
-        
-        explanation = """
-        📊 **Current Market Analysis:**
-        
-        • **GEX Environment**: Analyzing current gamma exposure levels across major indices
-        • **Market Maker Positioning**: Evaluating dealer hedging requirements  
-        • **Key Levels**: Identifying gamma flip points and wall levels
-        • **Trade Setups**: Looking for high-probability opportunities
-        
-        **Next Steps**: Use the Chart Analysis tab for specific symbols or run the Scanner to find opportunities across 200+ symbols!
-        """
-        st.session_state.chat_history.append({'role': 'assistant', 'content': explanation})
-    
-    def find_best_setups(self):
-        """Find and display best current setups"""
-        print("🎯 AlphaGEX: Finding best current setups")
-        
-        setup_analysis = """
-        🎯 **Best Current Setups:**
-        
-        Based on gamma exposure analysis methodology:
-        
-        1. **SPY**: Check for squeeze setup if negative GEX detected
-        2. **QQQ**: Monitor tech sector gamma positioning for breakout plays
-        3. **High IV Names**: Look for premium selling opportunities in range-bound names
-        4. **Meme Stocks**: Watch for gamma squeeze setups during high volatility periods
-        
-        **Action Items**: Run a full scan using our 200+ symbol scanner to get real-time opportunities with confidence scores!
-        """
-        st.session_state.chat_history.append({'role': 'assistant', 'content': setup_analysis})
-    
-    def perform_risk_check(self):
-        """Perform risk assessment"""
-        print("⚠️ AlphaGEX: Performing risk check")
-        
-        risk_analysis = """
-        ⚠️ **Risk Assessment & Management:**
-        
-        **Position Sizing Rules:**
-        • Max 3% per squeeze play (high volatility)
-        • Max 5% for premium selling strategies 
-        • Max 2% portfolio loss for iron condors
-        
-        **Exit Rules:**
-        • Stop losses at 50% loss for long options
-        • Profit targets: 100% for directional, 50% for short premium
-        • Time stops: Close positions with <1 DTE
-        
-        **Risk Factors:**
-        • Gamma analysis is probabilistic, not guaranteed
-        • Market conditions can change rapidly
-        • Always maintain position size discipline
-        
-        **Current Settings**: Check your risk parameters in the sidebar configuration!
-        """
-        st.session_state.chat_history.append({'role': 'assistant', 'content': risk_analysis})
-    
-    def show_trading_tips(self):
-        """Show trading tips"""
-        print("📚 AlphaGEX: Showing trading tips")
-        
-        tips = """
-        📚 **AlphaGEX Professional Trading Tips:**
-        
-        **Core Principles:**
-        1. **Follow the Gamma**: Let GEX levels guide your strategy selection
-        2. **Respect the Walls**: Don't fight strong gamma concentration levels
-        3. **Time is Everything**: Use expiration cycles to your advantage
-        4. **Size Properly**: Risk management is key to long-term success
-        5. **Stay Flexible**: Market regimes change - adapt your approach
-        
-        **Advanced Techniques:**
-        • Watch for gamma flip breaches (high probability moves)
-        • Monitor dealer positioning changes throughout the day
-        • Combine multiple timeframes for better entries
-        • Use our confidence scores to prioritize trades
-        
-        **Remember**: Consistent profitability comes from discipline, not prediction!
-        """
-        st.session_state.chat_history.append({'role': 'assistant', 'content': tips})
-    
-    def run_market_scan(self, scan_type: str):
-        """Run market scan for GEX opportunities"""
-        print(f"🔍 AlphaGEX: Starting market scan - Type: {scan_type}")
-        
-        with st.spinner("Scanning market for GEX opportunities..."):
-            try:
-                # Determine symbols to scan based on type
-                if scan_type == "High Priority Only":
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:50]  # Top 50 high priority
-                    print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} high priority symbols")
-                elif scan_type == "Custom List":
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:20]  # Smaller custom list
-                    print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} custom symbols")
-                else:  # All symbols
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS[:100]  # Limit for performance
+                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS[:100]
                     print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} total symbols")
                 
-                # Initialize results
                 results = []
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                # Scan symbols (demo mode - replace with real API calls)
                 for i, symbol in enumerate(symbols_to_scan):
-                    # Update progress
                     progress = (i + 1) / len(symbols_to_scan)
                     progress_bar.progress(progress)
                     status_text.text(f"Scanning {symbol}... ({i+1}/{len(symbols_to_scan)})")
                     
-                    # Simulate API call with rate limiting
-                    time.sleep(0.05)  # Simulate API delay
+                    time.sleep(0.05)
                     
-                    # Generate realistic scan result (replace with real API call)
-                    if np.random.random() > 0.75:  # 25% chance of signal
+                    if np.random.random() > 0.75:
                         signal_type = np.random.choice(['LONG_CALL', 'LONG_PUT', 'SELL_CALL', 'IRON_CONDOR'])
                         confidence = np.random.uniform(0.6, 0.9)
                         net_gex = np.random.uniform(-3e9, 4e9)
@@ -1346,14 +813,11 @@ if __name__ == "__main__":
                         })
                         print(f"🎯 AlphaGEX: Signal found for {symbol}: {signal_type} (confidence: {confidence:.1%})")
                 
-                # Clean up progress indicators
                 progress_bar.empty()
                 status_text.empty()
                 
-                # Store results
                 st.session_state.scanner_results = results
                 
-                # Show completion message
                 st.success(f"✅ Scan complete! Found {len(results)} opportunities out of {len(symbols_to_scan)} symbols scanned")
                 print(f"✅ AlphaGEX: Market scan completed - Found {len(results)} signals")
                 log_success(f"Market scan completed: {len(results)} signals found from {len(symbols_to_scan)} symbols")
@@ -1374,16 +838,13 @@ if __name__ == "__main__":
         
         st.subheader(f"📊 Scan Results ({len(scanner_results)} signals)")
         
-        # Convert to DataFrame for display
         df = pd.DataFrame(scanner_results)
         
-        # Format the data for better display
         display_df = df.copy()
         display_df['Confidence'] = display_df['confidence'].apply(lambda x: f"{x:.1%}")
         display_df['Net GEX'] = display_df['net_gex'].apply(lambda x: f"${x/1e9:.2f}B")
         display_df['Gamma Flip'] = display_df['gamma_flip'].apply(lambda x: f"${x:.2f}")
         
-        # Select and rename columns for display
         display_columns = {
             'symbol': 'Symbol',
             'signal_type': 'Signal Type', 
@@ -1392,7 +853,6 @@ if __name__ == "__main__":
             'mm_state': 'MM State'
         }
         
-        # Display formatted table
         st.dataframe(
             display_df[list(display_columns.keys())].rename(columns=display_columns),
             use_container_width=True,
@@ -1411,13 +871,11 @@ if __name__ == "__main__":
         
         st.subheader("📈 Scan Statistics")
         
-        # Calculate statistics
         total_signals = len(scanner_results)
         high_conf_signals = sum(1 for r in scanner_results if r['confidence'] > 0.75)
         avg_confidence = np.mean([r['confidence'] for r in scanner_results])
         negative_gex_count = sum(1 for r in scanner_results if r['net_gex'] < 0)
         
-        # Display in columns
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -1432,7 +890,6 @@ if __name__ == "__main__":
         with col4:
             st.metric("Negative GEX", f"{negative_gex_count} ({negative_gex_count/total_signals:.1%})")
         
-        # Signal type breakdown
         signal_types = {}
         for result in scanner_results:
             signal_type = result['signal_type']
@@ -1450,14 +907,11 @@ if __name__ == "__main__":
         """Main application run method"""
         print("🚀 AlphaGEX: Starting main application run...")
         
-        # Update system status to online
         st.session_state.system_status = '🟢 Online'
         
-        # Render main components
         self.render_header()
         self.render_sidebar()
         
-        # Main interface tabs
         tab1, tab2, tab3 = st.tabs(["📊 Chart Analysis", "💬 AlphaGEX Co-Pilot", "🔍 Live Scanner"])
         
         with tab1:
@@ -1469,7 +923,6 @@ if __name__ == "__main__":
         with tab3:
             self.render_scanner_tab()
         
-        # Footer
         st.markdown("---")
         st.markdown("""
         **AlphaGEX v1.0** | Professional Gamma Exposure Trading Platform  
@@ -1479,7 +932,6 @@ if __name__ == "__main__":
         
         print("✅ AlphaGEX: Main application run completed successfully")
 
-# Main execution
 def main():
     """Main application entry point"""
     print("🌟 AlphaGEX: Application starting...")
