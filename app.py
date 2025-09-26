@@ -17,54 +17,6 @@ import time
 import json
 from typing import Dict, List, Optional
 
-#!/usr/bin/env python3
-"""
-AlphaGEX - Professional Gamma Exposure Trading Platform
-========================================================
-Complete market maker exploitation system using gamma exposure analysis.
-Updated with Phase 1 Dynamic Symbol Selection
-"""
-
-print("DEBUG: Starting app.py execution...")
-
-import streamlit as st
-print("DEBUG: Streamlit imported successfully")
-
-import pandas as pd
-import numpy as np
-print("DEBUG: Basic libraries imported")
-
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-print("DEBUG: Plotly imported")
-
-import yfinance as yf
-from datetime import datetime, timedelta
-import time
-import json
-from typing import Dict, List, Optional
-print("DEBUG: All standard libraries imported")
-
-# Import configuration and core modules
-print("DEBUG: Attempting to import config...")
-try:
-    from config import (
-        APP_TITLE, APP_ICON, HIGH_PRIORITY_SYMBOLS, MEDIUM_PRIORITY_SYMBOLS,
-        GEX_THRESHOLDS, RISK_LIMITS, COLORS, STREAMLIT_CONFIG
-    )
-    print("DEBUG: Config imported successfully")
-    # Try to import extended symbols if available
-    try:
-        from config import EXTENDED_PRIORITY_SYMBOLS, FULL_SYMBOL_UNIVERSE
-        print("DEBUG: Extended config imported")
-    except ImportError:
-        print("DEBUG: Using fallback extended config")
-        EXTENDED_PRIORITY_SYMBOLS = []
-        FULL_SYMBOL_UNIVERSE = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS
-except ImportError:
-    print("DEBUG: Using fallback configuration")
-    # Your fallback config here...
-
 # Import configuration and core modules
 try:
     from config import (
@@ -222,12 +174,12 @@ except ImportError:
 
 # Dynamic Symbol Selection Import
 try:
-    from core.dynamic_selector import DynamicSymbolSelector, create_dynamic_selector
+    from core.dynamic_selector import DynamicSymbolSelector
     DYNAMIC_SELECTION_AVAILABLE = True
     print("✅ AlphaGEX: Dynamic symbol selection enabled")
-except ImportError:
+except ImportError as e:
     DYNAMIC_SELECTION_AVAILABLE = False
-    print("⚠️ AlphaGEX: Dynamic selection not available, using static lists")
+    print(f"⚠️ AlphaGEX: Dynamic selection not available: {e}")
     # Mock dynamic selector for consistency
     class DynamicSymbolSelector:
         def __init__(self, *args):
@@ -303,18 +255,24 @@ class AlphaGEXApp:
         print("✅ AlphaGEX: Visual analyzer initialized")
         
         # Initialize dynamic selector if available
+        self.dynamic_selector = None
         if DYNAMIC_SELECTION_AVAILABLE:
             try:
-                self.dynamic_selector = create_dynamic_selector(
+                print(f"🔄 AlphaGEX: Creating dynamic selector with {len(HIGH_PRIORITY_SYMBOLS)} high priority symbols...")
+                self.dynamic_selector = DynamicSymbolSelector(
                     HIGH_PRIORITY_SYMBOLS, 
                     MEDIUM_PRIORITY_SYMBOLS, 
                     EXTENDED_PRIORITY_SYMBOLS
                 )
-                print("✅ AlphaGEX: Dynamic selector initialized")
+                print("✅ AlphaGEX: Dynamic selector initialized successfully")
             except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
                 print(f"⚠️ AlphaGEX: Dynamic selector failed to initialize: {e}")
+                print(f"⚠️ Full error: {error_detail}")
                 self.dynamic_selector = None
         else:
+            print("📋 AlphaGEX: Using static symbol selection only")
             self.dynamic_selector = None
         
         self.check_system_status()
@@ -1311,3 +1269,47 @@ class AlphaGEXApp:
         
         with tab2:
             self.render_copilot_chat_tab()
+        
+        with tab3:
+            self.render_scanner_tab()
+        
+        st.markdown("---")
+        st.markdown("""
+        **AlphaGEX v1.0** | Professional Gamma Exposure Trading Platform  
+        Built on comprehensive gamma exposure research and market maker behavioral analysis.  
+        ⚠️ **Educational purposes only. Not financial advice.**
+        """)
+        
+        print("✅ AlphaGEX: Main application run completed successfully")
+
+def main():
+    """Main application entry point"""
+    print("🌟 AlphaGEX: Application starting...")
+    
+    try:
+        print("🔄 AlphaGEX: Creating application instance...")
+        app = AlphaGEXApp()
+        print("✅ AlphaGEX: Application instance created successfully")
+        
+        print("🔄 AlphaGEX: Starting application run...")
+        app.run()
+        print("✅ AlphaGEX: Application run completed successfully")
+        
+    except Exception as e:
+        error_msg = str(e)
+        import traceback
+        full_error = traceback.format_exc()
+        
+        st.error(f"❌ Application Error: {error_msg}")
+        st.code(full_error)
+        print(f"❌ AlphaGEX: Application startup error: {error_msg}")
+        print(f"❌ Full traceback: {full_error}")
+        log_error(f"Application startup error: {error_msg}")
+
+# Force execution
+if __name__ == "__main__":
+    print("📍 AlphaGEX: __main__ block executing...")
+    main()
+else:
+    print("📍 AlphaGEX: Module imported, calling main()...")
+    main()
