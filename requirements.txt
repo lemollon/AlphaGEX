@@ -1,5 +1,5 @@
-streamlit==1.29.0
-plotly==5.17.0
-pandas==2.1.4
-numpy==1.26.4
-redis==4.6.0
+streamlit
+plotly
+pandas
+numpy
+redis
