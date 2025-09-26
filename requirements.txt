@@ -3,3 +3,7 @@ plotly
 pandas
 numpy
 redis
+requests
+python-dotenv
+opencv-python-headless
+Pillow
