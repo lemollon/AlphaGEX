@@ -110,23 +110,24 @@ class GammaHunterApp:
             error_id = log_error("app_initialization", e)
             st.session_state.system_status = f"Error: {error_id}"
     
-    def render_header(self):
-        """Render main header"""
-        st.markdown(f'<h1 class="main-header">{APP_ICON} GammaHunter</h1>', unsafe_allow_html=True)
-        st.markdown("*Your intelligent Market Maker Co-Pilot*")
-        
-        # Status metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("System Status", st.session_state.system_status)
-        with col2:
-            st.metric("Redis", st.session_state.get('redis_status', 'Unknown'))
-        with col3:
-            st.metric("Analyses", len(st.session_state.analysis_history))
-        with col4:
-            api_status = "Connected" if self.api else "Not Configured"
-            st.metric("API Status", api_status)
+def render_header(self):
+    """Render main header"""
+    st.markdown(f'<h1 class="main-header">{APP_ICON} GammaHunter</h1>', unsafe_allow_html=True)
+    st.markdown("*Your intelligent Market Maker Co-Pilot*")
+    
+    # Status metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("System Status", st.session_state.system_status)
+    with col2:
+        st.metric("Redis", st.session_state.get('redis_status', 'Unknown'))
+    with col3:
+        st.metric("Analyses", len(st.session_state.analysis_history))
+    with col4:
+        # Fix: Check if self.api exists and is properly configured
+        api_status = "Connected" if hasattr(self, 'api') and self.api and getattr(self.api, 'username', None) else "Not Configured"
+        st.metric("API Status", api_status)
     
     def render_sidebar(self):
         """Render sidebar configuration"""
