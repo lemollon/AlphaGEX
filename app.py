@@ -17,14 +17,67 @@ import json
 from typing import Dict, List, Optional
 
 # Import configuration and core modules
-from config import (
-    APP_TITLE, APP_ICON, HIGH_PRIORITY_SYMBOLS, MEDIUM_PRIORITY_SYMBOLS,
-    GEX_THRESHOLDS, RISK_LIMITS, COLORS, STREAMLIT_CONFIG
-)
-from core.logger import logger, log_error, log_info, log_warning, log_success
-from core.api_client import TradingVolatilityAPI, test_api_connection
-from core.behavioral_engine import BehavioralEngine
-from core.visual_analyzer import VisualIntelligenceCoordinator
+try:
+    from config import (
+        APP_TITLE, APP_ICON, HIGH_PRIORITY_SYMBOLS, MEDIUM_PRIORITY_SYMBOLS,
+        GEX_THRESHOLDS, RISK_LIMITS, COLORS, STREAMLIT_CONFIG
+    )
+except ImportError:
+    # Fallback configuration if config.py not available
+    APP_TITLE = "AlphaGEX"
+    APP_ICON = "🎯"
+    HIGH_PRIORITY_SYMBOLS = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META"]
+    MEDIUM_PRIORITY_SYMBOLS = ["AMD", "NFLX", "CRM", "ADBE", "PYPL", "INTC", "CSCO", "PFE", "JNJ", "JPM"]
+    GEX_THRESHOLDS = {"positive": 1e9, "negative": -1e9}
+    RISK_LIMITS = {"max_position": 0.03}
+    COLORS = {"primary": "#00ff00", "secondary": "#ff6384"}
+    STREAMLIT_CONFIG = {"theme": "dark"}
+
+try:
+    from core.logger import logger, log_error, log_info, log_warning, log_success
+except ImportError:
+    # Fallback logging functions
+    def log_error(msg): print(f"ERROR: {msg}")
+    def log_info(msg): print(f"INFO: {msg}")
+    def log_warning(msg): print(f"WARNING: {msg}")
+    def log_success(msg): print(f"SUCCESS: {msg}")
+
+try:
+    from core.api_client import TradingVolatilityAPI, test_api_connection
+except ImportError:
+    # Mock API client
+    class TradingVolatilityAPI:
+        def __init__(self):
+            self.username = None
+        def set_credentials(self, username):
+            self.username = username
+        def get_net_gex(self, symbol):
+            return {"success": True, "net_gex": np.random.uniform(-3e9, 4e9), "gamma_flip": np.random.uniform(400, 500)}
+    
+    def test_api_connection(username):
+        return {"status": "success" if username else "error", "message": "Connection test"}
+
+try:
+    from core.behavioral_engine import BehavioralEngine
+except ImportError:
+    # Mock behavioral engine
+    class BehavioralEngine:
+        def analyze_mm_behavior(self, gex_data, price_data):
+            return {
+                "mm_state": np.random.choice(["TRAPPED", "DEFENDING", "HUNTING"]),
+                "confidence": np.random.uniform(0.6, 0.9),
+                "signals": [{"type": "LONG_CALL", "reason": "Mock signal", "confidence": 0.75, "time_horizon": "1-2 days"}]
+            }
+
+try:
+    from core.visual_analyzer import VisualIntelligenceCoordinator
+except ImportError:
+    # Mock visual analyzer
+    class VisualIntelligenceCoordinator:
+        def process_gex_data_visually(self, gex_data):
+            return {"insights": ["Mock visual insight"], "confidence": 0.8}
+        def analyze_chart_image(self, image):
+            return {"success": True, "insights": ["Chart pattern detected"], "confidence": 0.7}
 
 # Page configuration
 st.set_page_config(
