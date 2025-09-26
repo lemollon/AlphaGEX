@@ -17,6 +17,54 @@ import time
 import json
 from typing import Dict, List, Optional
 
+#!/usr/bin/env python3
+"""
+AlphaGEX - Professional Gamma Exposure Trading Platform
+========================================================
+Complete market maker exploitation system using gamma exposure analysis.
+Updated with Phase 1 Dynamic Symbol Selection
+"""
+
+print("DEBUG: Starting app.py execution...")
+
+import streamlit as st
+print("DEBUG: Streamlit imported successfully")
+
+import pandas as pd
+import numpy as np
+print("DEBUG: Basic libraries imported")
+
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+print("DEBUG: Plotly imported")
+
+import yfinance as yf
+from datetime import datetime, timedelta
+import time
+import json
+from typing import Dict, List, Optional
+print("DEBUG: All standard libraries imported")
+
+# Import configuration and core modules
+print("DEBUG: Attempting to import config...")
+try:
+    from config import (
+        APP_TITLE, APP_ICON, HIGH_PRIORITY_SYMBOLS, MEDIUM_PRIORITY_SYMBOLS,
+        GEX_THRESHOLDS, RISK_LIMITS, COLORS, STREAMLIT_CONFIG
+    )
+    print("DEBUG: Config imported successfully")
+    # Try to import extended symbols if available
+    try:
+        from config import EXTENDED_PRIORITY_SYMBOLS, FULL_SYMBOL_UNIVERSE
+        print("DEBUG: Extended config imported")
+    except ImportError:
+        print("DEBUG: Using fallback extended config")
+        EXTENDED_PRIORITY_SYMBOLS = []
+        FULL_SYMBOL_UNIVERSE = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS
+except ImportError:
+    print("DEBUG: Using fallback configuration")
+    # Your fallback config here...
+
 # Import configuration and core modules
 try:
     from config import (
