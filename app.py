@@ -3,6 +3,7 @@
 AlphaGEX - Professional Gamma Exposure Trading Platform
 ========================================================
 Complete market maker exploitation system using gamma exposure analysis.
+Updated with Phase 1 Dynamic Symbol Selection
 """
 
 import streamlit as st
@@ -22,12 +23,104 @@ try:
         APP_TITLE, APP_ICON, HIGH_PRIORITY_SYMBOLS, MEDIUM_PRIORITY_SYMBOLS,
         GEX_THRESHOLDS, RISK_LIMITS, COLORS, STREAMLIT_CONFIG
     )
+    # Try to import extended symbols if available
+    try:
+        from config import EXTENDED_PRIORITY_SYMBOLS, FULL_SYMBOL_UNIVERSE
+    except ImportError:
+        EXTENDED_PRIORITY_SYMBOLS = []
+        FULL_SYMBOL_UNIVERSE = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS
 except ImportError:
-    # Fallback configuration if config.py not available
+    # Comprehensive fallback configuration for 200+ symbols
     APP_TITLE = "AlphaGEX"
     APP_ICON = "🎯"
-    HIGH_PRIORITY_SYMBOLS = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "NFLX", "CRM", "ADBE", "PYPL", "INTC", "AMD", "CSCO", "DIS", "T", "VZ", "CMCSA", "JPM", "BAC", "WFC", "GS", "MS", "C", "JNJ", "PFE", "UNH", "ABBV", "MRK", "KO", "PEP", "WMT", "HD", "MCD", "NKE", "XOM", "CVX", "COP", "SLB", "GME", "AMC", "BB", "NOK", "PLTR", "WISH"]
-    MEDIUM_PRIORITY_SYMBOLS = ["CRM", "NOW", "SNOW", "OKTA", "ZM", "DOCU", "ROKU", "GILD", "BIIB", "AMGN", "REGN", "VRTX", "SQ", "SHOP", "TWLO", "DDOG", "CRWD", "ZS", "BA", "CAT", "GE", "MMM", "HON", "TSM", "ASML", "QCOM", "AVGO", "TXN", "LRCX", "F", "GM", "RIVN", "LCID", "NIO", "XPEV", "TGT", "COST", "SBUX", "LOW", "FDX", "UPS", "V", "MA", "BABA", "JD", "PDD", "UBER", "LYFT", "ABNB", "COIN", "SQ", "PYPL", "AFRM", "SOFI", "UPST", "HOOD", "RBLX", "U", "DKNG", "PENN", "MGM", "WYNN", "CZR", "BYD", "LI", "XPEV", "NIO", "BIDU", "IQ", "BILI", "TME", "FUTU", "TIGR", "DIDI", "GRAB", "SE", "BEKE", "YMM", "TAL", "EDU", "GOTU", "YQ", "DOYU", "HUYA", "BZUN", "VIPS", "PDD", "TCOM", "NTES", "JD", "BABA", "KWEB", "ASHR", "MCHI", "FXI", "YINN", "YANG", "CHAU", "CHAD", "CWEB", "CXSE", "KBA", "KFYP", "KURE", "KRBN", "KCNY", "ASHS", "CHIQ", "CHIM", "CHIS", "CHIE", "CHIH", "CHIC", "CHIB", "CHIA", "CHI", "CHGU", "CHGF", "CHGE", "CHGD", "CHGC", "CHGB", "CHGA", "CHG", "CHFU", "CHFT", "CHFS", "CHFR", "CHFQ", "CHFP", "CHFO", "CHFN", "CHFM", "CHFL", "CHFK", "CHFJ", "CHFI", "CHFH", "CHFG", "CHFF", "CHFE", "CHFD", "CHFC", "CHFB", "CHFA", "CHF"]
+    
+    # High Priority - Major indices and most liquid options (50 symbols)
+    HIGH_PRIORITY_SYMBOLS = [
+        # Major ETFs & Indices
+        "SPY", "QQQ", "IWM", "DIA", "VIX", "EFA", "EEM", "GLD", "SLV", "TLT",
+        "XLF", "XLE", "XLK", "XLV", "XLI", "XLP", "XLY", "XLU", "XLB", "XLRE",
+        
+        # Mega Cap Tech
+        "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "NVDA", "NFLX", "ADBE",
+        
+        # Large Cap Tech
+        "CRM", "ORCL", "INTC", "AMD", "QCOM", "AVGO", "CSCO", "NOW", "SNOW", "MDB",
+        "PLTR", "RBLX", "U", "ZM", "DOCU", "ROKU", "DDOG", "CRWD", "ZS", "OKTA"
+    ]
+    
+    # Medium Priority - Sector leaders (100 symbols)
+    MEDIUM_PRIORITY_SYMBOLS = [
+        # Communication & Media
+        "DIS", "CMCSA", "T", "VZ", "WBD", "PARA", "FOX", "FOXA", "DISH", "SPOT",
+        
+        # Financial Services
+        "JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "SCHW", "AXP", "COF",
+        "V", "MA", "PYPL", "SQ", "AFRM", "SOFI", "UPST", "HOOD", "COIN", "USB",
+        
+        # Healthcare & Biotech
+        "JNJ", "PFE", "UNH", "ABBV", "MRK", "GILD", "BIIB", "AMGN", "REGN", "VRTX",
+        "BMY", "LLY", "TMO", "DHR", "ABT", "ISRG", "DXCM", "ILMN", "MRNA", "BNTX",
+        
+        # Consumer Discretionary
+        "HD", "MCD", "SBUX", "NKE", "LOW", "TJX", "TGT", "COST", "BKNG", "LULU",
+        "ABNB", "UBER", "LYFT", "DASH", "ETSY", "CHWY", "PINS", "SNAP", "RH", "BBY",
+        
+        # Consumer Staples
+        "KO", "PEP", "WMT", "PG", "MDLZ", "KHC", "CL", "KMB", "GIS", "K",
+        
+        # Industrial
+        "BA", "CAT", "GE", "MMM", "HON", "UPS", "FDX", "LMT", "RTX", "NOC",
+        "DE", "EMR", "ETN", "ITW", "PH", "ROK", "DOV", "XYL", "CARR", "OTIS",
+        
+        # Energy
+        "XOM", "CVX", "COP", "EOG", "SLB", "OXY", "MPC", "VLO", "PSX", "KMI",
+        
+        # Semiconductors
+        "TSM", "ASML", "TXN", "LRCX", "KLAC", "AMAT", "ADI", "MRVL", "MU", "MCHP"
+    ]
+    
+    # Extended Priority - Additional names for 200+ coverage (100+ symbols)
+    EXTENDED_PRIORITY_SYMBOLS = [
+        # Additional Tech/Growth
+        "SHOP", "TWLO", "VEEV", "WDAY", "PANW", "FTNT", "NET", "ESTC", "SPLK", "TEAM",
+        "INTU", "CDNS", "SNPS", "ANSS", "ADSK", "ROP", "TDG", "VRSN", "MTCH", "BMBL",
+        
+        # Healthcare Extended
+        "CI", "CVS", "ANTM", "HUM", "CNC", "MOH", "ELV", "HCA", "UHS", "THC",
+        "IDXX", "ZTS", "EW", "SYK", "BSX", "MDT", "GEHC", "IQV", "CRL", "LH",
+        
+        # Financial Extended
+        "PNC", "TFC", "FITB", "KEY", "RF", "ZION", "CMA", "HBAN", "CFG", "MTB",
+        "CBOE", "NDAQ", "ICE", "CME", "SPGI", "MCO", "MKTX", "TW", "LPLA", "IBKR",
+        
+        # Consumer Extended
+        "PTON", "ZG", "Z", "WSM", "GPS", "ANF", "UAA", "UA", "CROX", "DECK",
+        "SKX", "VFC", "PVH", "RL", "CPRI", "TPG", "YETI", "ONON", "BIRD", "GOLF",
+        
+        # Industrial Extended
+        "DAL", "UAL", "AAL", "LUV", "ALK", "JBLU", "SAVE", "HA", "CSX", "UNP",
+        "NSC", "CP", "CNI", "KSU", "GWR", "TRN", "WAB", "CHRW", "EXPD", "LSTR",
+        
+        # Automotive & Transportation
+        "F", "GM", "RIVN", "LCID", "NIO", "XPEV", "LI", "GRAB", "CPNG", "SE",
+        
+        # Materials & Utilities
+        "LIN", "APD", "ECL", "SHW", "DD", "DOW", "PPG", "NEM", "FCX", "VALE",
+        "NEE", "DUK", "SO", "D", "AEP", "EXC", "XEL", "WEC", "ES", "AWK",
+        
+        # Real Estate
+        "AMT", "PLD", "CCI", "EQIX", "WELL", "SPG", "O", "VICI", "EXR", "AVB",
+        
+        # Other Notable Names
+        "BILL", "PCTY", "YEXT", "SUMO", "FSLY", "ALGN", "BIDU", "BILI", "BYND", "CDAY"
+    ]
+    
+    # Combine all symbols for full universe
+    ALL_SYMBOLS = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS + EXTENDED_PRIORITY_SYMBOLS
+    FULL_SYMBOL_UNIVERSE = list(dict.fromkeys(ALL_SYMBOLS))  # Remove duplicates
+    
+    print(f"✅ AlphaGEX: Loaded {len(FULL_SYMBOL_UNIVERSE)} symbols for scanning")
+    
     GEX_THRESHOLDS = {"positive": 1e9, "negative": -1e9}
     RISK_LIMITS = {"max_position": 0.03}
     COLORS = {"primary": "#00ff00", "secondary": "#ff6384"}
@@ -78,6 +171,25 @@ except ImportError:
             return {"insights": ["Mock visual insight"], "confidence": 0.8}
         def analyze_chart_image(self, image):
             return {"success": True, "insights": ["Chart pattern detected"], "confidence": 0.7}
+
+# Dynamic Symbol Selection Import
+try:
+    from core.dynamic_selector import DynamicSymbolSelector, create_dynamic_selector
+    DYNAMIC_SELECTION_AVAILABLE = True
+    print("✅ AlphaGEX: Dynamic symbol selection enabled")
+except ImportError:
+    DYNAMIC_SELECTION_AVAILABLE = False
+    print("⚠️ AlphaGEX: Dynamic selection not available, using static lists")
+    # Mock dynamic selector for consistency
+    class DynamicSymbolSelector:
+        def __init__(self, *args):
+            pass
+        def get_symbols_for_scan_type(self, scan_type):
+            return [], {}
+        def get_fallback_symbols(self, scan_type):
+            return []
+        def get_market_regime(self):
+            return "NEUTRAL"
 
 # Page configuration
 st.set_page_config(
@@ -142,6 +254,21 @@ class AlphaGEXApp:
         self.visual_analyzer = VisualIntelligenceCoordinator()
         print("✅ AlphaGEX: Visual analyzer initialized")
         
+        # Initialize dynamic selector if available
+        if DYNAMIC_SELECTION_AVAILABLE:
+            try:
+                self.dynamic_selector = create_dynamic_selector(
+                    HIGH_PRIORITY_SYMBOLS, 
+                    MEDIUM_PRIORITY_SYMBOLS, 
+                    EXTENDED_PRIORITY_SYMBOLS
+                )
+                print("✅ AlphaGEX: Dynamic selector initialized")
+            except Exception as e:
+                print(f"⚠️ AlphaGEX: Dynamic selector failed to initialize: {e}")
+                self.dynamic_selector = None
+        else:
+            self.dynamic_selector = None
+        
         self.check_system_status()
         print("✅ AlphaGEX: System status checked")
         
@@ -178,6 +305,10 @@ class AlphaGEXApp:
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
             print("📊 AlphaGEX: Chat history initialized")
+            
+        if 'enable_dynamic_selection' not in st.session_state:
+            st.session_state.enable_dynamic_selection = True
+            print("📊 AlphaGEX: Dynamic selection preference initialized")
             
     def check_system_status(self):
         """Check and update system component status"""
@@ -364,6 +495,44 @@ class AlphaGEXApp:
                 help="Minimum confidence level for signals"
             )
             st.session_state['min_confidence'] = min_confidence
+            
+            # Dynamic Selection Settings
+            if DYNAMIC_SELECTION_AVAILABLE and self.dynamic_selector:
+                st.subheader("🎯 Dynamic Selection")
+                
+                enable_dynamic = st.checkbox(
+                    "Enable Dynamic Symbol Ranking",
+                    value=st.session_state.get('enable_dynamic_selection', True),
+                    help="Use market conditions to prioritize symbols"
+                )
+                st.session_state['enable_dynamic_selection'] = enable_dynamic
+                
+                if enable_dynamic:
+                    # Show current market regime
+                    try:
+                        regime = self.dynamic_selector.get_market_regime()
+                        if regime == "BEAR":
+                            st.info(f"🐻 Market Regime: {regime} (emphasizing defensive stocks)")
+                        elif regime == "HIGH_VOLATILITY":
+                            st.warning(f"⚡ Market Regime: {regime} (prioritizing gamma candidates)")
+                        elif regime == "BULL":
+                            st.success(f"🐂 Market Regime: {regime} (tech leadership)")
+                        else:
+                            st.info(f"📊 Market Regime: {regime}")
+                    except:
+                        st.info("📊 Market Regime: Analysis pending")
+                        
+                    # Cache status
+                    if (hasattr(self.dynamic_selector, 'last_update') and 
+                        self.dynamic_selector.last_update and 
+                        datetime.now() - self.dynamic_selector.last_update < self.dynamic_selector.cache_duration):
+                        time_since_update = datetime.now() - self.dynamic_selector.last_update
+                        st.success(f"🕒 Rankings cached ({time_since_update.total_seconds()/3600:.1f}h ago)")
+                    else:
+                        st.warning("🔄 Rankings will be refreshed on next scan")
+            else:
+                st.subheader("📋 Static Selection")
+                st.info("Using predefined symbol lists")
             
             st.subheader("📊 System Status")
             
@@ -824,7 +993,7 @@ class AlphaGEXApp:
         st.session_state.chat_history.append({'role': 'assistant', 'content': tips})
     
     def run_market_scan(self, scan_type: str):
-        """Run real market scan for GEX opportunities using TradingVolatility.net API"""
+        """Run real market scan with optional dynamic symbol selection"""
         print(f"🔍 AlphaGEX: Starting REAL market scan - Type: {scan_type}")
         
         if not st.session_state.get('api_connected', False):
@@ -833,24 +1002,41 @@ class AlphaGEXApp:
         
         with st.spinner("Scanning market for real GEX opportunities..."):
             try:
-                # Determine symbols to scan
-                if scan_type == "High Priority Only":
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:50]
-                elif scan_type == "Custom List":
-                    symbols_to_scan = HIGH_PRIORITY_SYMBOLS[:20]  
+                # Get symbols using dynamic selection if available and enabled
+                if (self.dynamic_selector and DYNAMIC_SELECTION_AVAILABLE and 
+                    st.session_state.get('enable_dynamic_selection', True)):
+                    try:
+                        symbols_to_scan, metadata = self.dynamic_selector.get_symbols_for_scan_type(scan_type)
+                        
+                        # Display dynamic selection info
+                        market_regime = metadata.get('market_regime', 'NEUTRAL')
+                        st.info(f"📊 Using dynamic selection: {market_regime} market regime detected")
+                        print(f"🎯 AlphaGEX: Dynamic selection - Market regime: {market_regime}")
+                        print(f"🎯 AlphaGEX: Top symbols: {symbols_to_scan[:10]}")
+                        
+                    except Exception as e:
+                        print(f"⚠️ Dynamic selection failed: {e}, falling back to static lists")
+                        if self.dynamic_selector:
+                            symbols_to_scan = self.dynamic_selector.get_fallback_symbols(scan_type)
+                        else:
+                            symbols_to_scan = self._get_static_symbols(scan_type)
+                        st.warning("⚠️ Using static symbol list (dynamic selection temporarily unavailable)")
+                        
                 else:
-                    # Ensure exactly 200 symbols for "All Symbols (200+)"
-                    all_symbols = HIGH_PRIORITY_SYMBOLS + MEDIUM_PRIORITY_SYMBOLS
-                    symbols_to_scan = all_symbols[:200]  # Limit to exactly 200
+                    # Use static selection
+                    symbols_to_scan = self._get_static_symbols(scan_type)
+                    st.info("📋 Using static symbol selection")
                     
                 print(f"🔍 AlphaGEX: Scanning {len(symbols_to_scan)} symbols")
+                st.info(f"📊 Scanning {len(symbols_to_scan)} symbols - estimated time: {len(symbols_to_scan) * 3 / 60:.1f} minutes")
                 
+                # Rest of the scanning logic remains exactly the same
                 results = []
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
                 # Rate limiting: 20 calls per minute = 1 call every 3 seconds
-                call_delay = 3.0  # seconds between API calls
+                call_delay = 3.0
                 
                 for i, symbol in enumerate(symbols_to_scan):
                     progress = (i + 1) / len(symbols_to_scan)
@@ -911,6 +1097,16 @@ class AlphaGEXApp:
                 st.error(f"❌ Scan error: {error_msg}")
                 print(f"❌ AlphaGEX: Market scan exception: {error_msg}")
                 log_error(f"Market scan error: {error_msg}")
+
+    def _get_static_symbols(self, scan_type: str) -> List[str]:
+        """Get static symbol list based on scan type"""
+        if scan_type == "High Priority Only":
+            return HIGH_PRIORITY_SYMBOLS[:50]
+        elif scan_type == "Custom List":
+            return HIGH_PRIORITY_SYMBOLS[:20]  
+        else:
+            # Use full static universe
+            return FULL_SYMBOL_UNIVERSE[:200]
 
     def _analyze_gex_for_signals(self, symbol: str, net_gex: float, gamma_flip: float, current_price: float) -> Dict:
         """Analyze real GEX data for trading signals"""
@@ -1067,35 +1263,3 @@ class AlphaGEXApp:
         
         with tab2:
             self.render_copilot_chat_tab()
-        
-        with tab3:
-            self.render_scanner_tab()
-        
-        st.markdown("---")
-        st.markdown("""
-        **AlphaGEX v1.0** | Professional Gamma Exposure Trading Platform  
-        Built on comprehensive gamma exposure research and market maker behavioral analysis.  
-        ⚠️ **Educational purposes only. Not financial advice.**
-        """)
-        
-        print("✅ AlphaGEX: Main application run completed successfully")
-
-def main():
-    """Main application entry point"""
-    print("🌟 AlphaGEX: Application starting...")
-    
-    try:
-        app = AlphaGEXApp()
-        print("✅ AlphaGEX: Application instance created successfully")
-        
-        app.run()
-        print("✅ AlphaGEX: Application run completed successfully")
-        
-    except Exception as e:
-        error_msg = str(e)
-        st.error(f"❌ Application Error: {error_msg}")
-        print(f"❌ AlphaGEX: Application startup error: {error_msg}")
-        log_error(f"Application startup error: {error_msg}")
-
-if __name__ == "__main__":
-    main()
