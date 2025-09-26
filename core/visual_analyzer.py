@@ -10,6 +10,12 @@ except ImportError:
     print("OpenCV not available - visual analysis will be limited")
     cv2 = None
 
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    print("Matplotlib not available - some chart features will be limited")
+    plt = None
+
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -17,7 +23,6 @@ import streamlit as st
 from typing import Dict, List, Optional, Tuple
 import requests
 from io import BytesIO
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 
 class VisualIntelligenceCoordinator:
