@@ -8,3 +8,4 @@ python-dotenv
 opencv-python-headless
 Pillow
 matplotlib
+yfinance
