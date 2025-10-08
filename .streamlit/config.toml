@@ -1,7 +1,0 @@
-[global]
-# Force pip instead of uv for package installation
-packageManager = "pip"
-
-[server]
-# Use stable Python version
-pythonVersion = "3.11"
