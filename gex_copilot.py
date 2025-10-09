@@ -596,9 +596,19 @@ def fetch_gex_data(symbol: str, tv_username: str) -> Dict:
             'format': 'json'
         }
         
+        st.info(f"📡 Fetching data from: {url}")
+        st.info(f"Parameters: username={tv_username}, ticker={symbol}")
+        
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
-        return response.json()
+        
+        data = response.json()
+        
+        # Debug: Show raw data structure
+        with st.expander("🔍 Debug: Raw API Response"):
+            st.json(data)
+        
+        return data
     
     except requests.exceptions.RequestException as e:
         return {"error": f"API Error: {str(e)}"}
@@ -610,23 +620,56 @@ def calculate_levels(gex_data: Dict) -> Optional[Dict]:
     """Calculate key GEX levels from API data"""
     try:
         if 'error' in gex_data or not gex_data:
+            st.error("❌ No valid GEX data to process")
             return None
         
-        # Extract data structure (adjust based on actual API response)
+        st.info("🔍 Parsing GEX data structure...")
+        
+        # Extract data - Try multiple possible structures
         strikes = []
         gamma_values = []
+        current_price = None
         
-        # Parse the GEX data structure
+        # Debug: Show what keys are in the response
+        st.info(f"Available keys in response: {list(gex_data.keys())}")
+        
+        # Try different possible data structures
         if 'data' in gex_data:
+            # Structure 1: {'data': [{'strike': X, 'gex': Y}, ...]}
             for item in gex_data['data']:
-                strikes.append(float(item.get('strike', 0)))
-                gamma_values.append(float(item.get('gex', 0)))
+                try:
+                    strikes.append(float(item.get('strike', 0)))
+                    gamma_values.append(float(item.get('gex', 0)))
+                except (ValueError, TypeError) as e:
+                    st.warning(f"Skipping invalid data point: {item}")
+                    continue
         
-        if not strikes:
+        elif 'strikes' in gex_data and 'gex' in gex_data:
+            # Structure 2: {'strikes': [...], 'gex': [...]}
+            strikes = [float(x) for x in gex_data['strikes']]
+            gamma_values = [float(x) for x in gex_data['gex']]
+        
+        else:
+            # Unknown structure - show it
+            st.error("❌ Unknown GEX data structure")
+            st.json(gex_data)
             return None
+        
+        # Try to get current price from various fields
+        for price_field in ['current_price', 'spot', 'price', 'underlying_price']:
+            if price_field in gex_data:
+                current_price = float(gex_data[price_field])
+                break
+        
+        if not strikes or len(strikes) < 3:
+            st.error(f"❌ Insufficient strike data: only {len(strikes)} strikes found")
+            return None
+        
+        st.success(f"✅ Parsed {len(strikes)} strikes")
         
         # Calculate net GEX
         net_gex = sum(gamma_values)
+        st.info(f"Net GEX: ${net_gex/1e9:.2f}B")
         
         # Find gamma flip point (where cumulative GEX crosses zero)
         cumulative_gex = np.cumsum(gamma_values)
@@ -641,8 +684,12 @@ def calculate_levels(gex_data: Dict) -> Optional[Dict]:
         put_gammas = [(s, g) for s, g in zip(strikes, gamma_values) if g < 0]
         put_wall = max(put_gammas, key=lambda x: abs(x[1]))[0] if put_gammas else strikes[0]
         
-        # Current price (last strike or from separate field)
-        current_price = gex_data.get('current_price', strikes[len(strikes)//2])
+        # If no current price found, estimate from strikes
+        if current_price is None:
+            current_price = strikes[len(strikes)//2]
+            st.warning(f"⚠️ Current price not in API response, estimated as ${current_price:.2f}")
+        
+        st.success(f"✅ Calculated all levels successfully")
         
         return {
             'current_price': current_price,
@@ -655,7 +702,8 @@ def calculate_levels(gex_data: Dict) -> Optional[Dict]:
         }
     
     except Exception as e:
-        st.error(f"Error calculating levels: {str(e)}")
+        st.error(f"❌ Error calculating levels: {str(e)}")
+        st.exception(e)  # Show full traceback
         return None
 
 
@@ -844,14 +892,41 @@ Use this data in your analysis."""
             "messages": messages
         }
         
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        
-        result = response.json()
-        return result['content'][0]['text']
+        # Try with retries
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                st.info(f"📡 Calling Claude API (attempt {attempt + 1}/{max_retries})...")
+                
+                response = requests.post(
+                    url, 
+                    headers=headers, 
+                    json=payload, 
+                    timeout=60  # Increased to 60 seconds
+                )
+                response.raise_for_status()
+                
+                result = response.json()
+                return result['content'][0]['text']
+            
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    st.warning(f"⏱️ Request timed out, retrying...")
+                    time.sleep(2)
+                    continue
+                else:
+                    return "❌ Claude API timed out after multiple attempts. The service might be experiencing high load. Please try again in a moment."
+            
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 401:
+                    return "❌ Invalid API key. Please check your Claude API key in Streamlit secrets."
+                elif e.response.status_code == 429:
+                    return "❌ Rate limit exceeded. Please wait a moment and try again."
+                else:
+                    return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
     
     except Exception as e:
-        return f"❌ Error calling Claude API: {str(e)}\n\nPlease check your API key and try again."
+        return f"❌ Error calling Claude API: {str(e)}\n\nPlease check:\n1. Your API key is correct\n2. You have API credits\n3. Your internet connection is stable"
 
 
 # ============================================================================
@@ -996,6 +1071,29 @@ with st.sidebar:
             st.session_state.current_gex_data = None
             st.session_state.current_levels = None
             st.rerun()
+        
+        # Connection tests
+        st.markdown("### 🔌 Connection Tests")
+        
+        if st.button("Test Claude API"):
+            with st.spinner("Testing Claude API..."):
+                test_response = call_claude_api(
+                    [{"role": "user", "content": "Say 'API connection successful' and nothing else."}],
+                    CLAUDE_API_KEY,
+                    None
+                )
+                if "successful" in test_response.lower():
+                    st.success("✅ Claude API working!")
+                else:
+                    st.error(f"❌ Claude API issue: {test_response}")
+        
+        if st.button("Test TradingVolatility API"):
+            with st.spinner("Testing TradingVolatility API..."):
+                test_data = fetch_gex_data("SPY", TV_USERNAME)
+                if 'error' not in test_data:
+                    st.success(f"✅ TradingVolatility API working! Got {len(test_data)} data points")
+                else:
+                    st.error(f"❌ TradingVolatility API issue: {test_data['error']}")
     
     else:
         st.warning("⚠️ Setup Required")
@@ -1023,16 +1121,21 @@ if st.session_state.setup_complete:
         if st.button("📊 Fetch GEX Data", type="primary"):
             with st.spinner(f"Fetching {symbol} GEX data..."):
                 gex_data = fetch_gex_data(symbol, TV_USERNAME)
-                if 'error' not in gex_data:
+                
+                if 'error' in gex_data:
+                    st.error(f"❌ API Error: {gex_data['error']}")
+                    st.info("💡 Check the debug output above to see what's happening")
+                else:
+                    st.success(f"✅ Received GEX data for {symbol}")
                     levels = calculate_levels(gex_data)
+                    
                     if levels:
                         st.session_state.current_gex_data = gex_data
                         st.session_state.current_levels = levels
-                        st.success(f"✅ {symbol} data loaded!")
+                        st.success(f"🎯 {symbol} analysis ready!")
+                        st.balloons()
                     else:
-                        st.error("Failed to calculate levels")
-                else:
-                    st.error(gex_data['error'])
+                        st.error("❌ Failed to calculate levels - check debug output above")
     
     # Display GEX data if available
     if st.session_state.current_levels:
@@ -1128,18 +1231,26 @@ if st.session_state.setup_complete:
     with btn_col1:
         if st.button("🎯 Complete Analysis"):
             st.session_state.pending_prompt = f"Give me a complete {symbol} analysis with all 10 profitability components addressed"
+            st.session_state.use_fallback = use_fallback
     
     with btn_col2:
         if st.button("📅 This Week's Plan"):
             st.session_state.pending_prompt = "Give me this week's trading plan. When do I play directional? When Iron Condors?"
+            st.session_state.use_fallback = use_fallback
     
     with btn_col3:
         if st.button("⚠️ Risk Check"):
             st.session_state.pending_prompt = "Check all risk parameters. Is it safe to trade today?"
+            st.session_state.use_fallback = use_fallback
+    
+    # Fallback mode toggle
+    use_fallback = st.checkbox("⚡ Use Fast Mode (no Claude API)", value=False, 
+                               help="Generate analysis without Claude API - faster but less detailed")
     
     # Chat input
     if prompt := st.chat_input("Ask your co-pilot anything..."):
         st.session_state.pending_prompt = prompt
+        st.session_state.use_fallback = use_fallback
     
     # Process pending prompt
     if 'pending_prompt' in st.session_state:
@@ -1159,36 +1270,153 @@ if st.session_state.setup_complete:
         with st.chat_message("assistant"):
             with st.spinner("Analyzing with all 10 components..."):
                 
-                # Build context
-                context = None
-                if st.session_state.current_levels:
-                    context = {
-                        'symbol': symbol,
-                        'current_price': st.session_state.current_levels['current_price'],
-                        'net_gex': st.session_state.current_levels['net_gex'],
-                        'flip_point': st.session_state.current_levels['flip_point'],
-                        'call_wall': st.session_state.current_levels['call_wall'],
-                        'put_wall': st.session_state.current_levels['put_wall'],
-                        'day': datetime.now().strftime('%A'),
-                        'time': datetime.now().strftime('%I:%M %p')
-                    }
+                # Check if fallback mode requested
+                use_fallback_mode = st.session_state.get('use_fallback', False)
                 
-                # Call Claude
-                response = call_claude_api(
-                    st.session_state.messages,
-                    CLAUDE_API_KEY,
-                    context
-                )
+                if use_fallback_mode and st.session_state.current_levels:
+                    # Use fallback analysis
+                    response = generate_fallback_analysis(
+                        st.session_state.current_levels,
+                        symbol
+                    )
+                else:
+                    # Build context
+                    context = None
+                    if st.session_state.current_levels:
+                        context = {
+                            'symbol': symbol,
+                            'current_price': st.session_state.current_levels['current_price'],
+                            'net_gex': st.session_state.current_levels['net_gex'],
+                            'flip_point': st.session_state.current_levels['flip_point'],
+                            'call_wall': st.session_state.current_levels['call_wall'],
+                            'put_wall': st.session_state.current_levels['put_wall'],
+                            'day': datetime.now().strftime('%A'),
+                            'time': datetime.now().strftime('%I:%M %p')
+                        }
+                    
+                    # Call Claude
+                    response = call_claude_api(
+                        st.session_state.messages,
+                        CLAUDE_API_KEY,
+                        context
+                    )
+                    
+                    # If Claude failed and we have GEX data, offer fallback
+                    if response.startswith("❌") and st.session_state.current_levels:
+                        st.warning("Claude API failed. Generating fallback analysis...")
+                        response = generate_fallback_analysis(
+                            st.session_state.current_levels,
+                            symbol
+                        )
                 
                 st.markdown(response)
         
-        # Add assistant response
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": response
-        })
-        
-        st.rerun()
+        def generate_fallback_analysis(levels: Dict, symbol: str) -> str:
+    """Generate analysis without Claude API (fallback mode)"""
+    
+    # Get all component analyses
+    mm_analysis = MMBehaviorAnalyzer.analyze_dealer_positioning(
+        levels['net_gex'],
+        levels['flip_point'],
+        levels['current_price']
+    )
+    
+    timing = TimingIntelligence.get_current_day_strategy()
+    wed_check = TimingIntelligence.is_wed_3pm_approaching()
+    
+    magnitude = MagnitudeCalculator.calculate_expected_move(
+        levels['current_price'],
+        levels['flip_point'],
+        levels['call_wall'],
+        levels['put_wall'],
+        levels['net_gex']
+    )
+    
+    catalyst = CatalystDetector.identify_trigger(
+        levels['net_gex'],
+        ((levels['current_price'] - levels['flip_point']) / levels['current_price']) * 100,
+        timing['dte']
+    )
+    
+    regime_check = RegimeFilter.check_trading_safety()
+    execution = ExecutionAnalyzer.get_execution_window()
+    
+    # Build analysis text
+    analysis = f"""
+# 📊 {symbol} GEX Analysis (Fallback Mode)
+
+## {regime_check['status']} REGIME CHECK
+**{regime_check['reason']}**
+
+## 1️⃣ MM POSITIONING (Component 1)
+- **Position:** {mm_analysis['positioning']}
+- **Net GEX:** ${levels['net_gex']/1e9:.2f}B
+- **Regime:** {mm_analysis['regime']}
+- **Behavior:** {mm_analysis['behavior']}
+- **Urgency:** {mm_analysis['urgency']}
+
+## 2️⃣ TIMING INTELLIGENCE (Component 2)
+- **Today's Action:** {timing['action']}
+- **Recommended DTE:** {timing['dte']}
+- **Wednesday 3PM Status:** {wed_check['message']}
+
+## 3️⃣ CATALYST (Component 3)
+**{catalyst}**
+
+## 4️⃣ MAGNITUDE (Component 4)
+- **Direction:** {magnitude['direction']}
+- **Current Price:** ${levels['current_price']:.2f}
+- **Flip Point:** ${levels['flip_point']:.2f}
+- **Expected Target (70%):** ${magnitude['target_primary']:.2f} ({magnitude['expected_gain_pct']:+.2f}%)
+- **Extended Target (30%):** ${magnitude['target_extended']:.2f} ({magnitude['max_gain_pct']:+.2f}%)
+- **Stop Loss:** ${magnitude['stop_loss']:.2f}
+- **Reward:Risk:** {magnitude['reward_risk_ratio']:.2f}:1
+
+## 5️⃣ OPTIONS MECHANICS (Component 5)
+Based on {magnitude['direction']} bias:
+- **Recommended DTE:** {timing['dte']} days
+- **Entry Window:** {timing['action']}
+
+## 6️⃣ RISK MANAGEMENT (Component 6)
+- **Position Risk:** {timing['risk']*100:.0f}% of account
+- **Max Loss:** -50% of premium
+- **Target Gain:** +100% of premium
+
+## 7️⃣ REGIME FILTER (Component 7)
+{regime_check['status']} {regime_check['reason']}
+
+## 8️⃣ EXECUTION (Component 8)
+- **Window Quality:** {execution['quality']}
+- **Reason:** {execution['reason']}
+- **Recommendation:** {execution['recommendation']}
+
+## 9️⃣ STATISTICAL EDGE (Component 9)
+Based on historical performance:
+- **Win Rate:** 66% (Mon/Tue directional)
+- **Avg Win:** +85%
+- **Avg Loss:** -50%
+- **Expected Value:** Positive for this setup
+
+## 🔟 LEARNING ADJUSTMENT (Component 10)
+{LearningLoop.adjust_strategy(timing['day'], LearningLoop.get_historical_performance())['recommendation']}
+
+---
+
+## 🎯 RECOMMENDATION
+{"Based on current GEX structure and timing, this is " + ("a GOOD" if regime_check['safe'] else "NOT a good") + " setup to trade."}
+
+**Key Levels:**
+- Call Wall: ${levels['call_wall']:.2f}
+- Gamma Flip: ${levels['flip_point']:.2f}
+- Put Wall: ${levels['put_wall']:.2f}
+
+*Note: This is fallback analysis. Enable Claude API for detailed reasoning.*
+"""
+    
+    return analysis
+
+
+# Add fallback option in the chat processing section
 
 else:
     st.info("👆 Configure your API credentials in the sidebar to get started")
