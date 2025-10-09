@@ -1231,26 +1231,18 @@ if st.session_state.setup_complete:
     with btn_col1:
         if st.button("🎯 Complete Analysis"):
             st.session_state.pending_prompt = f"Give me a complete {symbol} analysis with all 10 profitability components addressed"
-            st.session_state.use_fallback = use_fallback
     
     with btn_col2:
         if st.button("📅 This Week's Plan"):
             st.session_state.pending_prompt = "Give me this week's trading plan. When do I play directional? When Iron Condors?"
-            st.session_state.use_fallback = use_fallback
     
     with btn_col3:
         if st.button("⚠️ Risk Check"):
             st.session_state.pending_prompt = "Check all risk parameters. Is it safe to trade today?"
-            st.session_state.use_fallback = use_fallback
-    
-    # Fallback mode toggle
-    use_fallback = st.checkbox("⚡ Use Fast Mode (no Claude API)", value=False, 
-                               help="Generate analysis without Claude API - faster but less detailed")
     
     # Chat input
     if prompt := st.chat_input("Ask your co-pilot anything..."):
         st.session_state.pending_prompt = prompt
-        st.session_state.use_fallback = use_fallback
     
     # Process pending prompt
     if 'pending_prompt' in st.session_state:
@@ -1270,153 +1262,30 @@ if st.session_state.setup_complete:
         with st.chat_message("assistant"):
             with st.spinner("Analyzing with all 10 components..."):
                 
-                # Check if fallback mode requested
-                use_fallback_mode = st.session_state.get('use_fallback', False)
+                # Build context
+                context = None
+                if st.session_state.current_levels:
+                    context = {
+                        'symbol': symbol,
+                        'current_price': st.session_state.current_levels['current_price'],
+                        'net_gex': st.session_state.current_levels['net_gex'],
+                        'flip_point': st.session_state.current_levels['flip_point'],
+                        'call_wall': st.session_state.current_levels['call_wall'],
+                        'put_wall': st.session_state.current_levels['put_wall'],
+                        'day': datetime.now().strftime('%A'),
+                        'time': datetime.now().strftime('%I:%M %p')
+                    }
                 
-                if use_fallback_mode and st.session_state.current_levels:
-                    # Use fallback analysis
-                    response = generate_fallback_analysis(
-                        st.session_state.current_levels,
-                        symbol
-                    )
-                else:
-                    # Build context
-                    context = None
-                    if st.session_state.current_levels:
-                        context = {
-                            'symbol': symbol,
-                            'current_price': st.session_state.current_levels['current_price'],
-                            'net_gex': st.session_state.current_levels['net_gex'],
-                            'flip_point': st.session_state.current_levels['flip_point'],
-                            'call_wall': st.session_state.current_levels['call_wall'],
-                            'put_wall': st.session_state.current_levels['put_wall'],
-                            'day': datetime.now().strftime('%A'),
-                            'time': datetime.now().strftime('%I:%M %p')
-                        }
-                    
-                    # Call Claude
-                    response = call_claude_api(
-                        st.session_state.messages,
-                        CLAUDE_API_KEY,
-                        context
-                    )
-                    
-                    # If Claude failed and we have GEX data, offer fallback
-                    if response.startswith("❌") and st.session_state.current_levels:
-                        st.warning("Claude API failed. Generating fallback analysis...")
-                        response = generate_fallback_analysis(
-                            st.session_state.current_levels,
-                            symbol
-                        )
+                # Call Claude API
+                response = call_claude_api(
+                    st.session_state.messages,
+                    CLAUDE_API_KEY,
+                    context
+                )
                 
                 st.markdown(response)
         
-        def generate_fallback_analysis(levels: Dict, symbol: str) -> str:
-    """Generate analysis without Claude API (fallback mode)"""
-    
-    # Get all component analyses
-    mm_analysis = MMBehaviorAnalyzer.analyze_dealer_positioning(
-        levels['net_gex'],
-        levels['flip_point'],
-        levels['current_price']
-    )
-    
-    timing = TimingIntelligence.get_current_day_strategy()
-    wed_check = TimingIntelligence.is_wed_3pm_approaching()
-    
-    magnitude = MagnitudeCalculator.calculate_expected_move(
-        levels['current_price'],
-        levels['flip_point'],
-        levels['call_wall'],
-        levels['put_wall'],
-        levels['net_gex']
-    )
-    
-    catalyst = CatalystDetector.identify_trigger(
-        levels['net_gex'],
-        ((levels['current_price'] - levels['flip_point']) / levels['current_price']) * 100,
-        timing['dte']
-    )
-    
-    regime_check = RegimeFilter.check_trading_safety()
-    execution = ExecutionAnalyzer.get_execution_window()
-    
-    # Build analysis text
-    analysis = f"""
-# 📊 {symbol} GEX Analysis (Fallback Mode)
-
-## {regime_check['status']} REGIME CHECK
-**{regime_check['reason']}**
-
-## 1️⃣ MM POSITIONING (Component 1)
-- **Position:** {mm_analysis['positioning']}
-- **Net GEX:** ${levels['net_gex']/1e9:.2f}B
-- **Regime:** {mm_analysis['regime']}
-- **Behavior:** {mm_analysis['behavior']}
-- **Urgency:** {mm_analysis['urgency']}
-
-## 2️⃣ TIMING INTELLIGENCE (Component 2)
-- **Today's Action:** {timing['action']}
-- **Recommended DTE:** {timing['dte']}
-- **Wednesday 3PM Status:** {wed_check['message']}
-
-## 3️⃣ CATALYST (Component 3)
-**{catalyst}**
-
-## 4️⃣ MAGNITUDE (Component 4)
-- **Direction:** {magnitude['direction']}
-- **Current Price:** ${levels['current_price']:.2f}
-- **Flip Point:** ${levels['flip_point']:.2f}
-- **Expected Target (70%):** ${magnitude['target_primary']:.2f} ({magnitude['expected_gain_pct']:+.2f}%)
-- **Extended Target (30%):** ${magnitude['target_extended']:.2f} ({magnitude['max_gain_pct']:+.2f}%)
-- **Stop Loss:** ${magnitude['stop_loss']:.2f}
-- **Reward:Risk:** {magnitude['reward_risk_ratio']:.2f}:1
-
-## 5️⃣ OPTIONS MECHANICS (Component 5)
-Based on {magnitude['direction']} bias:
-- **Recommended DTE:** {timing['dte']} days
-- **Entry Window:** {timing['action']}
-
-## 6️⃣ RISK MANAGEMENT (Component 6)
-- **Position Risk:** {timing['risk']*100:.0f}% of account
-- **Max Loss:** -50% of premium
-- **Target Gain:** +100% of premium
-
-## 7️⃣ REGIME FILTER (Component 7)
-{regime_check['status']} {regime_check['reason']}
-
-## 8️⃣ EXECUTION (Component 8)
-- **Window Quality:** {execution['quality']}
-- **Reason:** {execution['reason']}
-- **Recommendation:** {execution['recommendation']}
-
-## 9️⃣ STATISTICAL EDGE (Component 9)
-Based on historical performance:
-- **Win Rate:** 66% (Mon/Tue directional)
-- **Avg Win:** +85%
-- **Avg Loss:** -50%
-- **Expected Value:** Positive for this setup
-
-## 🔟 LEARNING ADJUSTMENT (Component 10)
-{LearningLoop.adjust_strategy(timing['day'], LearningLoop.get_historical_performance())['recommendation']}
-
----
-
-## 🎯 RECOMMENDATION
-{"Based on current GEX structure and timing, this is " + ("a GOOD" if regime_check['safe'] else "NOT a good") + " setup to trade."}
-
-**Key Levels:**
-- Call Wall: ${levels['call_wall']:.2f}
-- Gamma Flip: ${levels['flip_point']:.2f}
-- Put Wall: ${levels['put_wall']:.2f}
-
-*Note: This is fallback analysis. Enable Claude API for detailed reasoning.*
-"""
-    
-    return analysis
-
-
-# Add fallback option in the chat processing section
+        # Removed fallback analysis function - all responses use Claude API
 
 else:
     st.info("👆 Configure your API credentials in the sidebar to get started")
