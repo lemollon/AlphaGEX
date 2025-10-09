@@ -6,3 +6,5 @@ plotly==5.18.0
 yfinance==0.2.28
 scipy==1.11.0
 twilio==9.0.0
+py_vollib==1.0.1
+py_lets_be_rational==1.0.
