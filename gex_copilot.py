@@ -1045,7 +1045,7 @@ def detect_setups(gex_data: Dict, fred_regime: Dict) -> List[Dict]:
         return []
 
 # ============================================================================
-# TRADE TRACKING FUNCTIONS
+# TRADE TRACKING FUNCTIONS (FIXED NaN HANDLING)
 # ============================================================================
 
 def save_trade(trade_data: Dict) -> bool:
@@ -1116,7 +1116,7 @@ def close_trade(trade_id: int, exit_price: float) -> bool:
         return False
 
 def get_trade_stats() -> Dict:
-    """Calculate trading statistics"""
+    """Calculate trading statistics with NaN protection"""
     try:
         conn = sqlite3.connect(DB_PATH)
         df_closed = pd.read_sql_query(
@@ -1126,20 +1126,30 @@ def get_trade_stats() -> Dict:
         conn.close()
         
         if len(df_closed) == 0:
-            return {'total_trades': 0, 'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0}
+            return {'total_trades': 0, 'win_rate': 0.0, 'total_pnl': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0}
         
         wins = df_closed[df_closed['pnl'] > 0]
         losses = df_closed[df_closed['pnl'] <= 0]
         
+        # Ensure no NaN values - convert to float and check
+        avg_win = float(wins['pnl'].mean()) if len(wins) > 0 else 0.0
+        avg_loss = float(losses['pnl'].mean()) if len(losses) > 0 else 0.0
+        total_pnl = float(df_closed['pnl'].sum())
+        
+        # Replace NaN with 0.0
+        avg_win = 0.0 if pd.isna(avg_win) else avg_win
+        avg_loss = 0.0 if pd.isna(avg_loss) else avg_loss
+        total_pnl = 0.0 if pd.isna(total_pnl) else total_pnl
+        
         return {
-            'total_trades': len(df_closed),
-            'win_rate': len(wins) / len(df_closed) * 100,
-            'total_pnl': df_closed['pnl'].sum(),
-            'avg_win': wins['pnl'].mean() if len(wins) > 0 else 0,
-            'avg_loss': losses['pnl'].mean() if len(losses) > 0 else 0
+            'total_trades': int(len(df_closed)),
+            'win_rate': float(len(wins) / len(df_closed) * 100),
+            'total_pnl': total_pnl,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss
         }
-    except:
-        return {'total_trades': 0, 'win_rate': 0, 'total_pnl': 0}
+    except Exception as e:
+        return {'total_trades': 0, 'win_rate': 0.0, 'total_pnl': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0}
 
 # ============================================================================
 # ALERT SYSTEM
@@ -1267,7 +1277,7 @@ def create_greeks_display(greeks_data: Dict) -> go.Figure:
         return go.Figure()
 
 # ============================================================================
-# UI COMPONENTS
+# UI COMPONENTS (FIXED NaN HANDLING)
 # ============================================================================
 
 def render_sidebar():
@@ -1294,17 +1304,23 @@ def render_sidebar():
         
         st.markdown("---")
         
-        # Performance stats
+        # Performance stats with NaN protection
         st.subheader("📈 Performance")
         stats = get_trade_stats()
         
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Win Rate", f"{stats['win_rate']:.1f}%")
-            st.metric("Total Trades", stats['total_trades'])
+            st.metric("Win Rate", f"{stats.get('win_rate', 0):.1f}%")
+            st.metric("Total Trades", stats.get('total_trades', 0))
         with col2:
-            st.metric("Total P&L", f"${stats['total_pnl']:,.0f}")
-            st.metric("Avg Win", f"${stats['avg_win']:,.0f}")
+            # Handle NaN values
+            avg_win = stats.get('avg_win', 0)
+            avg_win = 0 if pd.isna(avg_win) else avg_win
+            total_pnl = stats.get('total_pnl', 0)
+            total_pnl = 0 if pd.isna(total_pnl) else total_pnl
+            
+            st.metric("Total P&L", f"${total_pnl:,.0f}")
+            st.metric("Avg Win", f"${avg_win:,.0f}")
         
         # Economic regime
         st.markdown("---")
@@ -1627,7 +1643,7 @@ if __name__ == "__main__":
     st.caption("GEX Trading Co-Pilot v5.0 | Complete System with All 10 Components | © 2025")
 
 # ============================================================================
-# END OF COMPLETE CODE - 2050+ LINES
+# END OF PART 3
 # ============================================================================
 # ============================================================================
 # PART 4: API INTEGRATIONS & HELPER FUNCTIONS
