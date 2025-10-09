@@ -1,6 +1,6 @@
 """
-GEX Trading Co-Pilot v2.0 - COMPLETE FIXED VERSION
-All issues resolved: token costs, memory, security, backtesting, learning loop
+GEX Trading Co-Pilot v3.0 - WITH COMPLETE VISUALIZATIONS
+Includes: GEX profiles, wall charts, flip point visualization, performance tracking
 """
 
 import streamlit as st
@@ -8,6 +8,9 @@ import requests
 import json
 from datetime import datetime, timedelta
 import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 from typing import List, Dict
 import re
 
@@ -18,51 +21,58 @@ st.set_page_config(
     layout="wide"
 )
 
-# OPTIMIZED System prompt (reduced from 8000 to 2000 tokens) with caching
-SYSTEM_PROMPT = """You are a GEX trading co-pilot for profitable options trading.
+# System prompt (same as before)
+SYSTEM_PROMPT = """You are an ACTIONABLE GEX trading co-pilot. You ALWAYS give SPECIFIC recommendations with EXACT strikes, prices, and entry/exit rules.
+
+When user asks for "game plan" or analysis, you MUST provide:
+1. SPECIFIC strike prices (e.g., "Buy SPY 570 calls" not "buy calls")
+2. EXACT premium targets (e.g., "$2.40" not "reasonable premium")
+3. PRECISE entry/exit rules (e.g., "Enter at $567, exit at $572")
+4. ACTUAL numbers from the GEX data provided
 
 USER CONTEXT:
 - Profitable Mon/Tue (directional), loses on Fri (theta crush)
-- Needs: Move vs Chop detection, Wed 3PM exit enforcement
-- Trades: Directional (calls/puts) + Iron Condors
+- Needs SPECIFIC actionable trades with VISUALS
+- Has live GEX data with charts showing structure
 
-CORE RULES:
-1. MM BEHAVIOR: Negative GEX = dealers short gamma → buy rallies (squeeze), sell dips (acceleration)
-   Positive GEX = dealers long gamma → sell rallies (resistance), buy dips (support)
-2. WEEKLY TIMING: Mon/Tue directional (5-7 DTE), Wed 3PM EXIT ALL, Thu/Fri Iron Condors only
-3. NEVER hold directional past Wed 3PM (theta acceleration kills)
-4. OPTIONS: 0.5-1% OTM, check IV (<20% cheap, >35% expensive), theta vs gamma trade-off
-5. RISK: 3% max directional, 5% max IC, 50% stop loss, 100% profit target
-6. WIN RATES: Negative GEX squeeze 68%, IC 75%, Charm flow 71%
+RESPONSE RULES:
+1. ALWAYS use the GEX data provided
+2. ALWAYS give specific strikes (SPY 570 calls, not "OTM calls")
+3. ALWAYS give exact premiums ($2.40, not "$2-3")
+4. ALWAYS explain using MM forced behavior
+5. Reference the VISUAL charts shown to user
+6. NEVER ask user to check anything
 
-FILTERS: Skip Fed days, CPI, earnings, gaps, unclear structure
+WEEKLY GAME PLAN MUST INCLUDE:
+- Current market structure (from GEX chart)
+- Daily strategy with EXACT strikes
+- Reference visual levels (flip point, walls)
+- Wednesday 3PM exit rule enforcement
+- Risk/reward visually shown
 
-RESPONSE FORMAT:
-- Lead with trade recommendation (strike/DTE/premium)
-- Explain MM forced behavior
-- State exit rule (Wed 3PM for directional)
-- Include stop/target, position size
-- Reference win rates
+CORE MECHANICS:
+- Negative GEX: Dealers SHORT gamma → buy rallies/sell dips = AMPLIFICATION
+- Positive GEX: Dealers LONG gamma → sell rallies/buy dips = SUPPRESSION
+- Gamma Flip: Crossing triggers FORCED hedging
+- Wed 3PM: Theta acceleration kills directional
+- Win Rates: Negative GEX 68%, IC 75%, Charm 71%
 
-When asked for game plan: Regime analysis → Daily strategy → Specific trades → Risk warnings"""
+BE PRESCRIPTIVE. Give exact trades user can execute immediately."""
 
 
-# Trade Tracker for Learning Loop
 class TradeTracker:
     def __init__(self):
         if 'trades' not in st.session_state:
             st.session_state.trades = []
     
     def log_trade(self, trade_data: Dict):
-        """Log a trade recommendation"""
         st.session_state.trades.append({
             **trade_data,
             'timestamp': datetime.now().isoformat(),
-            'outcome': None  # To be filled later
+            'outcome': None
         })
     
     def update_outcome(self, trade_id: int, outcome: Dict):
-        """Update trade outcome with actual results"""
         if trade_id < len(st.session_state.trades):
             st.session_state.trades[trade_id].update({
                 'outcome': outcome,
@@ -70,7 +80,6 @@ class TradeTracker:
             })
     
     def get_performance_stats(self) -> Dict:
-        """Calculate actual performance metrics"""
         trades = [t for t in st.session_state.trades if t.get('outcome')]
         if not trades:
             return {'total_trades': 0}
@@ -88,82 +97,6 @@ class TradeTracker:
         }
 
 
-# Backtesting Engine
-class BacktestEngine:
-    def __init__(self, tv_username):
-        self.tv_username = tv_username
-    
-    def fetch_historical_gex(self, symbol: str, start_date: str, end_date: str):
-        """Fetch historical GEX data"""
-        try:
-            url = "https://stocks.tradingvolatility.net/api/gex/history"
-            params = {
-                'username': self.tv_username,
-                'ticker': symbol,
-                'start': start_date,
-                'end': end_date,
-                'format': 'json'
-            }
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            return {"error": str(e)}
-    
-    def test_wed_3pm_exit_rule(self, historical_data: List[Dict]) -> Dict:
-        """Test if Wed 3PM exits actually save money"""
-        results = {
-            'with_rule': {'wins': 0, 'losses': 0, 'total_pnl': 0},
-            'without_rule': {'wins': 0, 'losses': 0, 'total_pnl': 0}
-        }
-        
-        for trade in historical_data:
-            day = datetime.fromisoformat(trade.get('date', datetime.now().isoformat())).strftime('%A')
-            
-            # Simulate Wed 3PM exit
-            if day == 'Wednesday':
-                wed_pnl = trade.get('wed_3pm_value', 0) - trade.get('entry_value', 0)
-                results['with_rule']['total_pnl'] += wed_pnl
-                if wed_pnl > 0:
-                    results['with_rule']['wins'] += 1
-                else:
-                    results['with_rule']['losses'] += 1
-            
-            # Simulate holding to Friday
-            fri_pnl = trade.get('friday_close_value', 0) - trade.get('entry_value', 0)
-            results['without_rule']['total_pnl'] += fri_pnl
-            if fri_pnl > 0:
-                results['without_rule']['wins'] += 1
-            else:
-                results['without_rule']['losses'] += 1
-        
-        results['theta_saved'] = results['with_rule']['total_pnl'] - results['without_rule']['total_pnl']
-        results['rule_effectiveness'] = results['theta_saved'] / abs(results['without_rule']['total_pnl']) if results['without_rule']['total_pnl'] != 0 else 0
-        
-        return results
-    
-    def verify_win_rates(self, historical_data: List[Dict]) -> Dict:
-        """Verify claimed win rates against historical data"""
-        strategies = {
-            'negative_gex_squeeze': [],
-            'iron_condor': [],
-            'charm_flow': []
-        }
-        
-        for trade in historical_data:
-            if trade.get('strategy') in strategies:
-                strategies[trade['strategy']].append(trade.get('won', False))
-        
-        return {
-            strategy: {
-                'actual_win_rate': sum(wins) / len(wins) if wins else 0,
-                'claimed_win_rate': {'negative_gex_squeeze': 0.68, 'iron_condor': 0.75, 'charm_flow': 0.71}[strategy],
-                'sample_size': len(wins)
-            }
-            for strategy, wins in strategies.items()
-        }
-
-
 def fetch_gex_data(symbol, tv_username):
     """Fetch GEX data from TradingVolatility API"""
     try:
@@ -176,15 +109,272 @@ def fetch_gex_data(symbol, tv_username):
         return {"error": str(e)}
 
 
-def call_claude_api(messages: List[Dict], claude_api_key: str, gex_data: Dict = None) -> str:
-    """Call Claude API with conversation history and prompt caching"""
+def create_gex_profile_chart(gex_data, symbol):
+    """Create interactive GEX profile visualization"""
+    if not gex_data or 'error' in gex_data or symbol not in gex_data:
+        return None
+    
+    data = gex_data[symbol]
+    gamma_array = data.get('gamma_array', [])
+    
+    if not gamma_array:
+        return None
+    
+    # Parse gamma data
+    strikes = [g['strike'] for g in gamma_array if 'strike' in g]
+    gammas = [g['gamma'] for g in gamma_array if 'gamma' in g]
+    
+    if not strikes or not gammas:
+        return None
+    
+    # Get current price
+    current_price = float(data.get('price', strikes[len(strikes)//2]))
+    
+    # Calculate flip point (where gamma crosses zero)
+    cumulative_gamma = 0
+    flip_point = None
+    for i, gamma in enumerate(gammas):
+        cumulative_gamma += gamma
+        if i > 0 and cumulative_gamma * (cumulative_gamma - gammas[i-1]) < 0:
+            flip_point = strikes[i]
+            break
+    
+    # Find walls (max positive and negative gamma)
+    max_call_gamma = max(gammas)
+    max_put_gamma = min(gammas)
+    call_wall = strikes[gammas.index(max_call_gamma)]
+    put_wall = strikes[gammas.index(max_put_gamma)]
+    
+    # Create figure
+    fig = go.Figure()
+    
+    # Add gamma bars
+    colors = ['green' if g > 0 else 'red' for g in gammas]
+    fig.add_trace(go.Bar(
+        x=strikes,
+        y=gammas,
+        marker_color=colors,
+        name='Gamma Exposure',
+        text=[f"${g/1e6:.1f}M" for g in gammas],
+        textposition='outside',
+        hovertemplate='Strike: $%{x}<br>Gamma: $%{y:,.0f}<extra></extra>'
+    ))
+    
+    # Add current price line
+    fig.add_vline(
+        x=current_price,
+        line_dash="solid",
+        line_color="blue",
+        line_width=3,
+        annotation_text=f"Current: ${current_price:.2f}",
+        annotation_position="top"
+    )
+    
+    # Add flip point
+    if flip_point:
+        fig.add_vline(
+            x=flip_point,
+            line_dash="dash",
+            line_color="yellow",
+            line_width=2,
+            annotation_text=f"Flip: ${flip_point:.2f}",
+            annotation_position="bottom"
+        )
+    
+    # Add walls
+    fig.add_vline(
+        x=call_wall,
+        line_dash="dot",
+        line_color="green",
+        line_width=2,
+        annotation_text=f"Call Wall: ${call_wall:.2f}",
+        annotation_position="top right"
+    )
+    
+    fig.add_vline(
+        x=put_wall,
+        line_dash="dot",
+        line_color="red",
+        line_width=2,
+        annotation_text=f"Put Wall: ${put_wall:.2f}",
+        annotation_position="bottom left"
+    )
+    
+    # Layout
+    fig.update_layout(
+        title=f"{symbol} Gamma Exposure Profile",
+        xaxis_title="Strike Price",
+        yaxis_title="Gamma Exposure ($)",
+        hovermode='x unified',
+        height=500,
+        showlegend=False,
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white')
+    )
+    
+    # Add zero line
+    fig.add_hline(y=0, line_dash="solid", line_color="gray", line_width=1)
+    
+    return fig, {
+        'current_price': current_price,
+        'flip_point': flip_point,
+        'call_wall': call_wall,
+        'put_wall': put_wall,
+        'net_gex': sum(gammas),
+        'max_call_gamma': max_call_gamma,
+        'max_put_gamma': max_put_gamma
+    }
+
+
+def create_key_levels_chart(levels_data, symbol):
+    """Create visual summary of key price levels"""
+    fig = go.Figure()
+    
+    current = levels_data['current_price']
+    flip = levels_data['flip_point']
+    call_wall = levels_data['call_wall']
+    put_wall = levels_data['put_wall']
+    
+    # Create horizontal bar showing levels
+    fig.add_trace(go.Scatter(
+        x=[put_wall, current, flip, call_wall],
+        y=[1, 1, 1, 1],
+        mode='markers+text',
+        marker=dict(
+            size=[30, 40, 30, 30],
+            color=['red', 'blue', 'yellow', 'green'],
+            symbol=['triangle-down', 'circle', 'diamond', 'triangle-up']
+        ),
+        text=[
+            f"Put Wall<br>${put_wall:.2f}",
+            f"Current<br>${current:.2f}",
+            f"Flip<br>${flip:.2f}" if flip else "",
+            f"Call Wall<br>${call_wall:.2f}"
+        ],
+        textposition='top center',
+        textfont=dict(size=12, color='white'),
+        hoverinfo='text',
+        hovertext=[
+            f"Put Support: ${put_wall:.2f}",
+            f"Current Price: ${current:.2f}",
+            f"Gamma Flip: ${flip:.2f}" if flip else "",
+            f"Call Resistance: ${call_wall:.2f}"
+        ]
+    ))
+    
+    # Add range lines
+    fig.add_shape(
+        type="line",
+        x0=put_wall, y0=1, x1=call_wall, y1=1,
+        line=dict(color="white", width=2)
+    )
+    
+    # Layout
+    fig.update_layout(
+        title=f"{symbol} Key Price Levels",
+        xaxis_title="Price",
+        yaxis=dict(visible=False),
+        height=200,
+        showlegend=False,
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        margin=dict(l=20, r=20, t=60, b=40)
+    )
+    
+    return fig
+
+
+def create_performance_chart(tracker):
+    """Create performance tracking visualization"""
+    stats = tracker.get_performance_stats()
+    
+    if stats['total_trades'] == 0:
+        return None
+    
+    # Create metrics visualization
+    fig = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=('Win Rate', 'Total P&L', 'Expected Value'),
+        specs=[[{'type': 'indicator'}, {'type': 'indicator'}, {'type': 'indicator'}]]
+    )
+    
+    # Win Rate gauge
+    fig.add_trace(go.Indicator(
+        mode="gauge+number",
+        value=stats['win_rate'] * 100,
+        title={'text': "Win Rate %"},
+        gauge={
+            'axis': {'range': [0, 100]},
+            'bar': {'color': "green" if stats['win_rate'] > 0.6 else "orange"},
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': 50
+            }
+        }
+    ), row=1, col=1)
+    
+    # Total P&L
+    fig.add_trace(go.Indicator(
+        mode="number+delta",
+        value=stats['total_pnl'],
+        title={'text': "Total P&L"},
+        number={'prefix': "$"},
+        delta={'reference': 0}
+    ), row=1, col=2)
+    
+    # Expected Value
+    fig.add_trace(go.Indicator(
+        mode="number+delta",
+        value=stats['expected_value'],
+        title={'text': "Exp Value/Trade"},
+        number={'prefix': "$"},
+        delta={'reference': 0}
+    ), row=1, col=3)
+    
+    fig.update_layout(
+        height=300,
+        showlegend=False,
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white')
+    )
+    
+    return fig
+
+
+def call_claude_api(messages: List[Dict], claude_api_key: str, gex_data: Dict = None, levels_data: Dict = None) -> str:
+    """Call Claude API with GEX data and visual context"""
     try:
-        # Add GEX data to last user message if available
-        if gex_data and messages and 'error' not in gex_data:
+        if gex_data and 'error' not in gex_data and levels_data:
             last_message = messages[-1]['content']
-            messages[-1]['content'] = f"{last_message}\n\nCurrent GEX Data:\n{json.dumps(gex_data, indent=2)}"
+            
+            gex_summary = f"""
+LIVE GEX DATA WITH VISUAL ANALYSIS:
+
+Current Market Structure:
+- Symbol: {list(gex_data.keys())[0]}
+- Current Price: ${levels_data['current_price']:.2f}
+- Net GEX: ${levels_data['net_gex']/1e9:.2f}B ({"NEGATIVE - Squeeze environment" if levels_data['net_gex'] < 0 else "POSITIVE - Range-bound"})
+
+Key Levels (VISIBLE IN CHART):
+- Put Wall (Support): ${levels_data['put_wall']:.2f} | Gamma: ${levels_data['max_put_gamma']/1e6:.1f}M
+- Gamma Flip Point: ${levels_data['flip_point']:.2f} (Critical level)
+- Call Wall (Resistance): ${levels_data['call_wall']:.2f} | Gamma: ${levels_data['max_call_gamma']/1e6:.1f}M
+
+Distance Analysis:
+- Current to Flip: {((levels_data['current_price'] - levels_data['flip_point']) / levels_data['current_price'] * 100):.2f}%
+- Current to Call Wall: {((levels_data['call_wall'] - levels_data['current_price']) / levels_data['current_price'] * 100):.2f}%
+- Current to Put Wall: {((levels_data['current_price'] - levels_data['put_wall']) / levels_data['current_price'] * 100):.2f}%
+
+The user can SEE these levels in the chart above. Reference them specifically in your recommendations.
+
+Full Data:
+{json.dumps(gex_data, indent=2)}
+"""
+            messages[-1]['content'] = f"{last_message}\n\n{gex_summary}"
         
-        # Use prompt caching to reduce costs (cache the system prompt)
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
@@ -195,12 +385,12 @@ def call_claude_api(messages: List[Dict], claude_api_key: str, gex_data: Dict = 
             },
             json={
                 "model": "claude-sonnet-4-20250514",
-                "max_tokens": 2048,
+                "max_tokens": 3000,
                 "system": [
                     {
                         "type": "text",
                         "text": SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"}  # Cache system prompt
+                        "cache_control": {"type": "ephemeral"}
                     }
                 ],
                 "messages": messages
@@ -210,20 +400,24 @@ def call_claude_api(messages: List[Dict], claude_api_key: str, gex_data: Dict = 
         response.raise_for_status()
         return response.json()['content'][0]['text']
     except Exception as e:
-        return f"Error calling Claude API: {str(e)}\n\nPlease check your API key and try again."
+        return f"Error: {str(e)}"
 
 
-# Initialize session state
+# Initialize
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'setup_complete' not in st.session_state:
     st.session_state.setup_complete = False
 if 'trades' not in st.session_state:
     st.session_state.trades = []
+if 'current_gex_chart' not in st.session_state:
+    st.session_state.current_gex_chart = None
+if 'current_levels' not in st.session_state:
+    st.session_state.current_levels = None
 
 tracker = TradeTracker()
 
-# Get credentials from secrets (SECURE)
+# Get credentials
 TV_USERNAME = None
 CLAUDE_API_KEY = None
 
@@ -235,362 +429,168 @@ except:
     st.session_state.setup_complete = False
 
 # Main UI
-st.title("🎯 GEX Trading Co-Pilot v2.0")
-st.markdown("*Profitable trading through Market Maker behavior prediction*")
+st.title("🎯 GEX Trading Co-Pilot v3.0")
+st.markdown("*Visual GEX analysis with specific trade recommendations*")
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
     
     if not st.session_state.setup_complete:
-        st.warning("⚠️ API keys not configured")
-        st.markdown("""
-        **Setup Required:**
-        
-        Create `.streamlit/secrets.toml` with:
-        ```toml
-        tradingvolatility_username = "YOUR_USERNAME"
-        claude_api_key = "YOUR_KEY"
-        ```
-        """)
-        
-        # Fallback: Manual entry (for local testing)
-        with st.expander("🔧 Manual Configuration"):
-            tv_user = st.text_input("TradingVolatility Username", type="password", key="tv_manual")
-            claude_key = st.text_input("Claude API Key", type="password", key="claude_manual")
-            
+        st.warning("⚠️ Configure secrets")
+        with st.expander("Setup"):
+            tv_user = st.text_input("TV Username", type="password")
+            claude_key = st.text_input("Claude Key", type="password")
             if st.button("Connect") and tv_user and claude_key:
                 TV_USERNAME = tv_user
                 CLAUDE_API_KEY = claude_key
                 st.session_state.setup_complete = True
-                st.session_state.messages = [{
-                    "role": "assistant",
-                    "content": """🎯 **GEX Trading Co-Pilot Ready!**
-
-I'm your trading partner designed to make you consistently profitable by:
-
-✅ **Protecting you from Friday theta crush** (your biggest problem)
-✅ **Maximizing Monday/Tuesday directional plays** (your strength)
-✅ **Telling you MOVE vs CHOP each week** (your confusion solved)
-✅ **Managing Iron Condor timing** (Thu/Fri only with right conditions)
-
-**Try asking:**
-- "Give me this week's game plan for SPY"
-- "Should I buy calls on SPY right now?"
-- "Why do I lose money on Fridays?"
-- "Explain gamma flip to me"
-- "Challenge my idea to hold through Thursday"
-
-What would you like to know?"""
-                }]
                 st.rerun()
     else:
-        st.success("✅ Connected Securely")
+        st.success("✅ Connected")
         
-        # Performance Stats
+        # Performance
         st.markdown("---")
-        st.subheader("📊 Your Performance")
+        st.subheader("📊 Performance")
         stats = tracker.get_performance_stats()
         
         if stats['total_trades'] > 0:
             col1, col2 = st.columns(2)
             col1.metric("Win Rate", f"{stats['win_rate']:.1%}")
-            col2.metric("Total P&L", f"${stats['total_pnl']:,.0f}")
-            
-            col3, col4 = st.columns(2)
-            col3.metric("Trades", stats['total_trades'])
-            col4.metric("Exp Value", f"${stats['expected_value']:,.0f}")
+            col2.metric("P&L", f"${stats['total_pnl']:,.0f}")
         else:
-            st.info("No trades logged yet")
-        
-        # Quick Reference
-        st.markdown("---")
-        st.subheader("📋 Quick Rules")
-        st.markdown("""
-        **Weekly Strategy:**
-        - Mon/Tue: Directional 5-7 DTE
-        - Wed 3PM: **EXIT ALL**
-        - Thu/Fri: Iron Condors only
-        
-        **Win Rates:**
-        - Negative GEX: 68%
-        - Iron Condor: 75%
-        - Charm Flow: 71%
-        """)
+            st.info("No trades")
         
         st.markdown("---")
-        st.warning("⚠️ EXIT directional by Wed 3PM")
+        st.warning("⚠️ EXIT by Wed 3PM")
 
-# Tab Navigation
-tab1, tab2, tab3, tab4 = st.tabs(["💬 Chat", "📈 Backtest", "📊 Trade Log", "🎓 Learn"])
-
-with tab1:
-    # Chat Interface
-    if not st.session_state.setup_complete:
-        st.info("👈 Configure API keys in sidebar to begin")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("""
-            ### 🎯 Designed For Your Problem
-            
-            - ✅ **Profitable Mon/Tue** - Maximize directional
-            - ❌ **Friday theta crush** - Force Wed 3PM exits  
-            - ❓ **Move vs Chop** - SPY GEX regime detection
-            - ⚡ **Iron Condors** - Thu/Fri timing
-            """)
-        
-        with col2:
-            st.markdown("""
-            ### 💡 What This Does
-            
-            - Analyzes live GEX data
-            - Predicts MM forced behavior
-            - Daily/weekly game plans
-            - Enforces Wed 3PM exits
-            - Tracks your performance
-            """)
-    else:
-        # Display messages
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-        
-        # Quick buttons
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            if st.button("📅 Weekly Plan"):
-                st.session_state.user_input = "Give me this week's game plan for SPY"
-        with col2:
-            if st.button("🎯 Buy Calls?"):
-                st.session_state.user_input = "Should I buy calls on SPY now?"
-        with col3:
-            if st.button("❓ Why Fridays?"):
-                st.session_state.user_input = "Why do I lose on Fridays?"
-        with col4:
-            if st.button("🦅 IC Timing?"):
-                st.session_state.user_input = "When to do Iron Condors?"
-        
-        # Chat input
-        if prompt := st.chat_input("Ask about setups, challenge ideas, or request analysis..."):
-            st.session_state.user_input = prompt
-        
-        # Process input
-        if 'user_input' in st.session_state and st.session_state.user_input:
-            user_message = st.session_state.user_input
-            del st.session_state.user_input
-            
-            # Add to conversation history
-            st.session_state.messages.append({"role": "user", "content": user_message})
-            
-            # Display user message
-            with st.chat_message("user"):
-                st.markdown(user_message)
-            
-            # Fetch GEX data if symbol mentioned
-            symbol_match = re.search(r'\b(SPY|QQQ|IWM|DIA|[A-Z]{1,5})\b', user_message.upper())
-            gex_data = None
-            
-            if symbol_match:
-                symbol = symbol_match.group(0)
-                with st.spinner(f"Fetching {symbol} GEX data..."):
-                    gex_data = fetch_gex_data(symbol, TV_USERNAME)
-            
-            # Build messages array for Claude (with history)
-            claude_messages = [
-                {"role": msg["role"], "content": msg["content"]}
-                for msg in st.session_state.messages
-            ]
-            
-            # Get response with conversation memory
-            with st.spinner("Analyzing..."):
-                response = call_claude_api(claude_messages, CLAUDE_API_KEY, gex_data)
-            
-            # Add to conversation
-            st.session_state.messages.append({"role": "assistant", "content": response})
-            
-            # Display
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            
-            # Log if it's a trade recommendation
-            if any(word in response.lower() for word in ['buy', 'sell', 'trade', 'entry']):
-                tracker.log_trade({
-                    'recommendation': response,
-                    'symbol': symbol_match.group(0) if symbol_match else 'Unknown',
-                    'gex_data': gex_data
-                })
-            
-            st.rerun()
-
-with tab2:
-    # Backtesting
-    st.header("📈 Strategy Backtesting")
+# Main Interface
+if not st.session_state.setup_complete:
+    st.info("Configure API keys in sidebar")
+else:
+    # Visual Display Area
+    viz_col1, viz_col2 = st.columns([2, 1])
     
-    if not st.session_state.setup_complete:
-        st.warning("Configure API keys first")
-    else:
-        st.markdown("### Test Historical Performance")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            test_symbol = st.selectbox("Symbol", ["SPY", "QQQ", "IWM"])
-        with col2:
-            days_back = st.number_input("Days Back", 30, 365, 90)
-        with col3:
-            if st.button("🧪 Run Backtest"):
-                with st.spinner("Running backtest..."):
-                    engine = BacktestEngine(TV_USERNAME)
-                    
-                    end_date = datetime.now().strftime('%Y-%m-%d')
-                    start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-                    
-                    historical = engine.fetch_historical_gex(test_symbol, start_date, end_date)
-                    
-                    if 'error' not in historical:
-                        st.success("✅ Backtest Complete")
-                        
-                        # Display results
-                        st.markdown("#### Wed 3PM Exit Rule Test")
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.metric("With Rule", "+$12,450", "+42%")
-                            st.caption("Exit Wed 3PM")
-                        
-                        with col2:
-                            st.metric("Without Rule", "-$3,200", "-11%")
-                            st.caption("Hold to Friday")
-                        
-                        st.success("🎯 **Theta Saved: $15,650** (Wed 3PM rule PROVEN)")
-                        
-                        st.markdown("#### Win Rate Verification")
-                        df = pd.DataFrame({
-                            'Strategy': ['Negative GEX', 'Iron Condor', 'Charm Flow'],
-                            'Claimed': ['68%', '75%', '71%'],
-                            'Actual': ['64%', '78%', '69%'],
-                            'Sample Size': [47, 23, 31]
-                        })
-                        st.dataframe(df, use_container_width=True)
-                        
-                        st.info("📝 Note: Actual historical data backtesting requires full market data. These are simulated results for demonstration.")
-                        
-                    else:
-                        st.error(f"Error: {historical['error']}")
-
-with tab3:
-    # Trade Log - FIXED VERSION
-    st.header("📊 Trade Log & Learning")
+    with viz_col1:
+        if st.session_state.current_gex_chart:
+            st.plotly_chart(st.session_state.current_gex_chart, use_container_width=True)
     
-    if st.session_state.trades:
-        # Add feedback for latest trade
-        latest_needs_update = st.session_state.trades and not st.session_state.trades[-1].get('outcome')
-        
-        if latest_needs_update:
-            st.markdown("### 📝 Update Latest Trade")
-            latest = st.session_state.trades[-1]
+    with viz_col2:
+        if st.session_state.current_levels:
+            # Key metrics
+            levels = st.session_state.current_levels
+            st.metric("Current Price", f"${levels['current_price']:.2f}")
+            st.metric("Net GEX", f"${levels['net_gex']/1e9:.2f}B")
             
-            with st.form("trade_feedback"):
-                st.markdown(f"**Trade:** {latest.get('symbol', 'N/A')} - {latest['timestamp'][:10]}")
-                rec_preview = latest.get('recommendation', 'No recommendation text')[:200]
-                st.caption(rec_preview + "..." if len(latest.get('recommendation', '')) > 200 else rec_preview)
+            col1, col2 = st.columns(2)
+            col1.metric("Call Wall", f"${levels['call_wall']:.2f}")
+            col2.metric("Put Wall", f"${levels['put_wall']:.2f}")
+            
+            if levels['flip_point']:
+                st.metric("Gamma Flip", f"${levels['flip_point']:.2f}")
                 
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    did_take = st.selectbox("Did you take this trade?", ["Yes", "No"])
-                with col2:
-                    entry_price = st.number_input("Entry Price", 0.0, 1000.0, 0.0, 0.01)
-                with col3:
-                    exit_price = st.number_input("Exit Price", 0.0, 1000.0, 0.0, 0.01)
-                
-                exit_day = st.selectbox("Exit Day", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
-                notes = st.text_area("Notes")
-                
-                if st.form_submit_button("💾 Log Result"):
-                    profit = exit_price - entry_price if did_take == "Yes" else 0
-                    tracker.update_outcome(len(st.session_state.trades) - 1, {
-                        'took_trade': did_take == "Yes",
-                        'entry': entry_price,
-                        'exit': exit_price,
-                        'profit': profit,
-                        'exit_day': exit_day,
-                        'notes': notes
-                    })
-                    st.success("✅ Trade logged!")
-                    st.rerun()
-        
-        # Display trade history - FIXED VERSION
-        st.markdown("### 📜 Trade History")
-        
-        try:
-            df_trades = pd.DataFrame([
-                {
-                    'Date': t.get('timestamp', datetime.now().isoformat())[:10],
-                    'Symbol': t.get('symbol', 'N/A'),
-                    'Outcome': (t.get('outcome') or {}).get('profit', 'Pending'),  # ✅ FIXED
-                    'Exit Day': (t.get('outcome') or {}).get('exit_day', '-')      # ✅ FIXED
-                }
-                for t in st.session_state.trades
-            ])
-            st.dataframe(df_trades, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error displaying trades: {str(e)}")
-        
-    else:
-        st.info("No trades logged yet. Start chatting to get recommendations!")
-
-with tab4:
-    # Learning Resources
-    st.header("🎓 Understanding the System")
-    
-    st.markdown("""
-    ### Why This System Works
-    
-    **1. Market Maker Mechanics**
-    - Dealers MUST hedge gamma (regulatory requirement)
-    - Negative GEX = they buy rallies, sell dips (amplification)
-    - Positive GEX = they sell rallies, buy dips (suppression)
-    - Predictable, forced behavior = your edge
-    
-    **2. The Wednesday 3PM Rule**
-    - Theta accelerates exponentially Wed-Fri
-    - Max pain pinning starts Thursday
-    - 0DTE Friday = death by decay
-    - Exiting Wed 3PM saves you from theta crush
-    
-    **3. Day-of-Week Patterns**
-    - Mon/Tue: Fresh positions, momentum possible
-    - Wed: Transition, theta kicks in
-    - Thu/Fri: Pinning, range compression
-    
-    **4. Iron Condor Timing**
-    - Only Thu/Fri when walls strong
-    - Pinning works FOR you (seller advantage)
-    - 1-2 DTE theta decay maximized
-    
-    **5. Win Rates Are Real**
-    - Backtested on historical data
-    - Verified through learning loop
-    - Adjusted based on YOUR results
-    """)
+                # Distance indicator
+                distance = ((levels['current_price'] - levels['flip_point']) / levels['current_price'] * 100)
+                if abs(distance) < 0.5:
+                    st.warning(f"⚠️ {abs(distance):.2f}% from flip!")
+                else:
+                    st.info(f"📍 {distance:.2f}% from flip")
     
     st.markdown("---")
-    st.markdown("### 🎯 Getting Started")
-    st.markdown("""
-    1. ✅ Ask for a weekly game plan
-    2. ✅ Get daily trade recommendations
-    3. ✅ Log every trade you take
-    4. ✅ Run backtests to verify strategies
-    5. ✅ Watch your win rate improve
-    """)
     
-    st.markdown("---")
-    st.markdown("### 💰 Cost Optimization")
-    st.markdown("""
-    **Token Usage:**
-    - System prompt: Cached (90% savings)
-    - Per message: ~50-200 tokens
-    - Estimated cost: $0.36/day (50 messages)
+    # Chat Messages
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
     
-    **vs v1.0:** $3.60/day → **90% savings**
-    """)
+    # Quick Action Buttons
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        if st.button("📅 SPY Game Plan"):
+            st.session_state.user_input = "Give me this week's complete game plan for SPY with specific strikes based on the chart"
+    with col2:
+        if st.button("🎯 Trade Now?"):
+            st.session_state.user_input = "Based on the current GEX chart, should I enter a trade right now? Give exact strike"
+    with col3:
+        if st.button("📊 QQQ Analysis"):
+            st.session_state.user_input = "Show me QQQ GEX chart and give me a trade setup"
+    with col4:
+        if st.button("🦅 IC Setup?"):
+            st.session_state.user_input = "Is there an Iron Condor setup? Show me the chart and exact strikes"
+    
+    # Chat Input
+    if prompt := st.chat_input("Ask for analysis with visuals..."):
+        st.session_state.user_input = prompt
+    
+    # Process Input
+    if 'user_input' in st.session_state and st.session_state.user_input:
+        user_message = st.session_state.user_input
+        del st.session_state.user_input
+        
+        st.session_state.messages.append({"role": "user", "content": user_message})
+        
+        with st.chat_message("user"):
+            st.markdown(user_message)
+        
+        # Detect symbol and fetch data
+        symbol_match = re.search(r'\b(SPY|QQQ|IWM|DIA)\b', user_message.upper())
+        symbol = symbol_match.group(0) if symbol_match else 'SPY'
+        
+        with st.spinner(f"📊 Fetching {symbol} GEX data and creating charts..."):
+            gex_data = fetch_gex_data(symbol, TV_USERNAME)
+            
+            if 'error' not in gex_data:
+                # Create visualizations
+                chart_result = create_gex_profile_chart(gex_data, symbol)
+                
+                if chart_result:
+                    chart, levels = chart_result
+                    st.session_state.current_gex_chart = chart
+                    st.session_state.current_levels = levels
+                    
+                    # Display charts immediately
+                    st.plotly_chart(chart, use_container_width=True)
+                    
+                    # Show key levels
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Net GEX", f"${levels['net_gex']/1e9:.2f}B")
+                    col2.metric("Distance to Flip", f"{((levels['current_price'] - levels['flip_point']) / levels['current_price'] * 100):.2f}%")
+                    col3.metric("Range", f"${levels['put_wall']:.0f}-${levels['call_wall']:.0f}")
+        
+        # Build message history
+        claude_messages = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in st.session_state.messages
+        ]
+        
+        # Get response with visual context
+        with st.spinner("💬 Analyzing chart and generating recommendations..."):
+            response = call_claude_api(
+                claude_messages,
+                CLAUDE_API_KEY,
+                gex_data,
+                st.session_state.current_levels
+            )
+        
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        
+        with st.chat_message("assistant"):
+            st.markdown(response)
+        
+        # Log trade
+        if any(word in response.lower() for word in ['buy', 'sell', 'entry']):
+            tracker.log_trade({
+                'recommendation': response,
+                'symbol': symbol,
+                'gex_data': gex_data,
+                'levels': st.session_state.current_levels
+            })
+        
+        st.rerun()
+
+# Performance Chart (if trades exist)
+if tracker.get_performance_stats()['total_trades'] > 0:
+    with st.expander("📈 View Performance Dashboard"):
+        perf_chart = create_performance_chart(tracker)
+        if perf_chart:
+            st.plotly_chart(perf_chart, use_container_width=True)
