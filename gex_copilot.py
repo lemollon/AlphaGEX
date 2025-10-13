@@ -440,76 +440,13 @@ class LearningLoop:
 def get_actionable_economic_regime():
     """Fetch FRED data and return ACTIONABLE trading directives"""
     try:
-        # Check if we have FRED API key
-        fred_api_key = st.session_state.get('fred_key')
-        
-        if fred_api_key:
-            # Use real FRED API
-            from fredapi import Fred
-            fred = Fred(api_key=fred_api_key)
-            
-            # Fetch real data
-            try:
-                import pandas as pd
-                from datetime import datetime, timedelta
-                
-                # Get latest data points
-                end_date = datetime.now()
-                start_date = end_date - timedelta(days=30)
-                
-                # VIX
-                try:
-                    vix_data = fred.get_series('VIXCLS', start_date, end_date)
-                    vix = float(vix_data.iloc[-1]) if len(vix_data) > 0 else 16.2
-                except:
-                    vix = 16.2
-                
-                # Fed Funds Rate
-                try:
-                    fed_data = fred.get_series('DFF', start_date, end_date)
-                    fed_funds = float(fed_data.iloc[-1]) if len(fed_data) > 0 else 4.33
-                except:
-                    fed_funds = 4.33
-                
-                # 10-Year Treasury
-                try:
-                    treasury_data = fred.get_series('DGS10', start_date, end_date)
-                    treasury_10y = float(treasury_data.iloc[-1]) if len(treasury_data) > 0 else 4.25
-                except:
-                    treasury_10y = 4.25
-                
-                # Unemployment Rate
-                try:
-                    unemployment_data = fred.get_series('UNRATE', start_date, end_date)
-                    unemployment = float(unemployment_data.iloc[-1]) if len(unemployment_data) > 0 else 3.7
-                except:
-                    unemployment = 3.7
-                
-                fred_data = {
-                    'vix': vix,
-                    'fed_funds': fed_funds,
-                    'treasury_10y': treasury_10y,
-                    'unemployment': unemployment,
-                    'source': 'FRED API'
-                }
-            except:
-                # If FRED API fails, use simulated data
-                fred_data = {
-                    'vix': 16.2,
-                    'fed_funds': 4.33,
-                    'treasury_10y': 4.25,
-                    'unemployment': 3.7,
-                    'source': 'Simulated (FRED API error)'
-                }
-        else:
-            # Simulate FRED data if no API key
-            fred_data = {
-                'vix': 16.2,
-                'fed_funds': 4.33,
-                'treasury_10y': 4.25,
-                'unemployment': 3.7,
-                'source': 'Simulated (No FRED API key)'
-            }
+        # Simulate FRED data
+        fred_data = {
+            'vix': 16.2,
+            'fed_funds': 4.33,
+            'treasury_10y': 4.25,
+            'unemployment': 3.7
+        }
         
         # Determine market bias
         if fred_data['vix'] < 15:
@@ -549,9 +486,6 @@ def get_actionable_economic_regime():
         else:
             directives.append("🟡 Fed Funds: {:.2f}% (MODERATE) → Normal environment".format(fred_data['fed_funds']))
         
-        # Add data source
-        directives.append(f"📊 Data source: {fred_data['source']}")
-        
         return {
             'market_bias': bias,
             'risk_level': risk_level,
@@ -560,13 +494,13 @@ def get_actionable_economic_regime():
             'directives': directives,
             'data': fred_data
         }
-    except Exception as e:
+    except:
         return {
             'market_bias': 'UNKNOWN',
             'risk_level': 'HIGH',
             'position_multiplier': 0.5,
             'action': 'REDUCED SIZING',
-            'directives': ['⚠️ Unable to fetch economic data: ' + str(e)],
+            'directives': ['⚠️ Unable to fetch economic data'],
             'data': {}
         }
 
@@ -1352,50 +1286,8 @@ def render_sidebar():
         st.title("🎯 GEX Co-Pilot v5.0")
         st.markdown("---")
         
-        # Changed from selectbox to text_input to allow any symbol
-        symbol = st.text_input(
-            "📊 Enter Stock Symbol",
-            value=st.session_state.get('current_symbol', 'SPY'),
-            help="Enter any stock symbol (e.g., SPY, QQQ, AAPL, TSLA, etc.)",
-            placeholder="Enter symbol..."
-        ).upper()  # Convert to uppercase
-        
-        # Validate symbol
-        if symbol:
-            if not symbol.isalpha() or len(symbol) > 5:
-                st.warning("⚠️ Please enter a valid stock symbol")
-            else:
-                st.session_state['current_symbol'] = symbol
-        
-        # Popular symbols for quick access
-        st.markdown("**Quick Select:**")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("SPY", use_container_width=True):
-                st.session_state['current_symbol'] = 'SPY'
-                st.rerun()
-        with col2:
-            if st.button("QQQ", use_container_width=True):
-                st.session_state['current_symbol'] = 'QQQ'
-                st.rerun()
-        with col3:
-            if st.button("IWM", use_container_width=True):
-                st.session_state['current_symbol'] = 'IWM'
-                st.rerun()
-        
-        col4, col5, col6 = st.columns(3)
-        with col4:
-            if st.button("TSLA", use_container_width=True):
-                st.session_state['current_symbol'] = 'TSLA'
-                st.rerun()
-        with col5:
-            if st.button("AAPL", use_container_width=True):
-                st.session_state['current_symbol'] = 'AAPL'
-                st.rerun()
-        with col6:
-            if st.button("NVDA", use_container_width=True):
-                st.session_state['current_symbol'] = 'NVDA'
-                st.rerun()
+        symbol = st.selectbox("📊 Symbol",
+                             ["SPY", "QQQ", "IWM", "DIA", "TSLA", "AAPL", "NVDA"])
         
         if st.button("🔄 Refresh Data", use_container_width=True):
             st.rerun()
@@ -1740,6 +1632,19 @@ def main():
         else:
             st.error("❌ Unable to fetch GEX data")
 
+# ============================================================================
+# RUN APPLICATION
+# ============================================================================
+
+if __name__ == "__main__":
+    main()
+    
+    st.markdown("---")
+    st.caption("GEX Trading Co-Pilot v5.0 | Complete System with All 10 Components | © 2025")
+
+# ============================================================================
+# END OF PART 3
+# ============================================================================
 # ============================================================================
 # PART 4: API INTEGRATIONS & HELPER FUNCTIONS
 # ============================================================================
@@ -2141,68 +2046,31 @@ def load_api_config() -> Dict:
 # ============================================================================
 
 def render_api_configuration():
-    """Render API configuration panel in sidebar - uses Streamlit secrets"""
-    
+    """Render API configuration panel in sidebar"""
     with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_state.get('api_configured', False)):
-        
-        # Debug button to check secrets
-        if st.button("🔍 Debug: Check Secrets"):
-            st.write("**Available secrets:**")
-            if hasattr(st, 'secrets'):
-                for key in st.secrets:
-                    # Show key names but not values for security
-                    st.write(f"- {key}: {'*' * 10}")
-            else:
-                st.write("No secrets object found")
-            
-            st.write("**Session state keys:**")
-            st.write(f"- Username: {'SET' if st.session_state.get('tradingvol_username') else 'NOT SET'}")
-            st.write(f"- API Key: {'SET' if st.session_state.get('tradingvol_key') else 'NOT SET'}")
-            st.write(f"- Claude Key: {'SET' if st.session_state.get('claude_key') else 'NOT SET'}")
-            st.write(f"- FRED Key: {'SET' if st.session_state.get('fred_key') else 'NOT SET'}")
-        
-        # Show status if loaded from secrets
-        if st.session_state.get('secrets_loaded'):
-            st.success("✅ API keys loaded from secrets")
-            st.caption("Keys are hidden for security")
-        
         st.markdown("### TradingVolatility.net")
         
         tradingvol_username = st.text_input(
             "Username",
             value=st.session_state.get('tradingvol_username', ''),
-            help="Your TradingVolatility username",
-            disabled=st.session_state.get('secrets_loaded', False)
+            help="Your TradingVolatility username (e.g., I-RWFNBLR2S1DP)"
         )
         
         tradingvol_key = st.text_input(
             "API Key",
-            value="*" * 20 if st.session_state.get('tradingvol_key') else '',
+            value=st.session_state.get('tradingvol_key', ''),
             type="password",
-            help="Your TradingVolatility API key",
-            disabled=st.session_state.get('secrets_loaded', False)
+            help="Your TradingVolatility API key"
         )
         
         st.markdown("---")
         st.markdown("### Claude AI")
-            
+        
         claude_key = st.text_input(
             "Claude API Key",
-            value="*" * 20 if st.session_state.get('claude_key') else '',
+            value=st.session_state.get('claude_key', ''),
             type="password",
-            help="Your Anthropic Claude API key",
-            disabled=st.session_state.get('secrets_loaded', False)
-        )
-        
-        st.markdown("---")
-        st.markdown("### FRED Economic Data")
-        
-        fred_key = st.text_input(
-            "FRED API Key",
-            value="*" * 20 if st.session_state.get('fred_key') else '',
-            type="password",
-            help="Your FRED API key for economic data",
-            disabled=st.session_state.get('secrets_loaded', False)
+            help="Your Anthropic Claude API key"
         )
         
         st.markdown("---")
@@ -2210,57 +2078,40 @@ def render_api_configuration():
         
         twilio_sid = st.text_input(
             "Twilio Account SID",
-            value="*" * 20 if st.session_state.get('twilio_sid') else '',
-            type="password",
-            disabled=st.session_state.get('secrets_loaded', False)
+            value=st.session_state.get('twilio_sid', ''),
+            type="password"
         )
         
         twilio_token = st.text_input(
             "Twilio Auth Token",
-            value="*" * 20 if st.session_state.get('twilio_token') else '',
-            type="password",
-            disabled=st.session_state.get('secrets_loaded', False)
+            value=st.session_state.get('twilio_token', ''),
+            type="password"
         )
         
         twilio_from = st.text_input(
             "From Phone",
             value=st.session_state.get('twilio_from', ''),
-            help="Format: +1234567890",
-            disabled=st.session_state.get('secrets_loaded', False)
+            help="Format: +1234567890"
         )
         
         alert_phone = st.text_input(
             "Your Phone",
             value=st.session_state.get('alert_phone', ''),
-            help="Where to send alerts",
-            disabled=st.session_state.get('secrets_loaded', False)
+            help="Where to send alerts"
         )
         
-        # Manual override option
-        if st.session_state.get('secrets_loaded'):
-            st.info("📌 API keys loaded from secrets file")
-        else:
-            st.warning("⚠️ Could not load from secrets - enter manually")
-            if st.button("💾 Save Configuration", use_container_width=True):
-                # Allow manual entry even if secrets don't load
-                if tradingvol_username and tradingvol_key:
-                    st.session_state['tradingvol_username'] = tradingvol_username
-                    st.session_state['tradingvol_key'] = tradingvol_key
-                    st.session_state['claude_key'] = claude_key
-                    st.session_state['fred_key'] = fred_key
-                    st.session_state['api_configured'] = True
-                    
-                    if twilio_sid:
-                        st.session_state['twilio_sid'] = twilio_sid
-                        st.session_state['twilio_token'] = twilio_token
-                        st.session_state['twilio_from'] = twilio_from
-                        st.session_state['alert_phone'] = alert_phone
-                    
-                    st.success("✅ Configuration saved!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("Please enter at least username and API key")
+        if st.button("💾 Save Configuration", use_container_width=True):
+            twilio_config = {
+                'sid': twilio_sid,
+                'token': twilio_token,
+                'from_phone': twilio_from,
+                'to_phone': alert_phone
+            } if twilio_sid else None
+            
+            save_api_config(tradingvol_username, tradingvol_key, claude_key, twilio_config)
+            st.success("✅ Configuration saved!")
+            time.sleep(1)
+            st.rerun()
 
 # ============================================================================
 # ENHANCED FETCH FUNCTION WITH REAL API
@@ -2354,104 +2205,10 @@ def render_component_status_panel():
 # UPDATE MAIN APP TO USE REAL APIs
 # ============================================================================
 
-def load_secrets_on_startup():
-    """Load API keys from Streamlit secrets on app startup"""
-    if 'secrets_loaded' not in st.session_state:
-        try:
-            # Debug: Show what secrets are available
-            # st.write("Available secrets:", list(st.secrets.keys()))
-            
-            # Try multiple possible secret structures
-            # Option 1: Nested structure
-            if 'tradingvolatility' in st.secrets:
-                st.session_state['tradingvol_username'] = st.secrets['tradingvolatility'].get('username', '')
-                st.session_state['tradingvol_key'] = st.secrets['tradingvolatility'].get('api_key', '')
-            # Option 2: Flat structure with underscore
-            elif 'tradingvolatility_username' in st.secrets:
-                st.session_state['tradingvol_username'] = st.secrets['tradingvolatility_username']
-                st.session_state['tradingvol_key'] = st.secrets['tradingvolatility_api_key']
-            # Option 3: Simple flat structure
-            elif 'username' in st.secrets:
-                st.session_state['tradingvol_username'] = st.secrets['username']
-                st.session_state['tradingvol_key'] = st.secrets['api_key']
-            
-            # Load Claude API key - try multiple formats
-            if 'claude' in st.secrets:
-                st.session_state['claude_key'] = st.secrets['claude'].get('api_key', '')
-            elif 'claude_api_key' in st.secrets:
-                st.session_state['claude_key'] = st.secrets['claude_api_key']
-            elif 'ANTHROPIC_API_KEY' in st.secrets:
-                st.session_state['claude_key'] = st.secrets['ANTHROPIC_API_KEY']
-            
-            # Load FRED API key - try multiple formats
-            if 'fred' in st.secrets:
-                st.session_state['fred_key'] = st.secrets['fred'].get('api_key', '')
-            elif 'fred_api_key' in st.secrets:
-                st.session_state['fred_key'] = st.secrets['fred_api_key']
-            elif 'FRED_API_KEY' in st.secrets:
-                st.session_state['fred_key'] = st.secrets['FRED_API_KEY']
-            
-            # Load Twilio credentials (optional) - try multiple formats
-            if 'twilio' in st.secrets:
-                st.session_state['twilio_sid'] = st.secrets['twilio'].get('account_sid', '')
-                st.session_state['twilio_token'] = st.secrets['twilio'].get('auth_token', '')
-                st.session_state['twilio_from'] = st.secrets['twilio'].get('from_phone', '')
-                st.session_state['alert_phone'] = st.secrets['twilio'].get('to_phone', '')
-            elif 'twilio_account_sid' in st.secrets:
-                st.session_state['twilio_sid'] = st.secrets.get('twilio_account_sid', '')
-                st.session_state['twilio_token'] = st.secrets.get('twilio_auth_token', '')
-                st.session_state['twilio_from'] = st.secrets.get('twilio_from_phone', '')
-                st.session_state['alert_phone'] = st.secrets.get('twilio_to_phone', '')
-            
-            # Mark as configured if we have the essential keys
-            if (st.session_state.get('tradingvol_username') and 
-                st.session_state.get('tradingvol_key')):
-                st.session_state['api_configured'] = True
-                st.session_state['secrets_loaded'] = True
-                return True
-            else:
-                # Debug: Show what was loaded
-                # st.write("Username loaded:", st.session_state.get('tradingvol_username', 'NOT FOUND'))
-                # st.write("API Key loaded:", 'EXISTS' if st.session_state.get('tradingvol_key') else 'NOT FOUND')
-                # st.write("FRED Key loaded:", 'EXISTS' if st.session_state.get('fred_key') else 'NOT FOUND')
-                return False
-                
-        except Exception as e:
-            st.error(f"Error loading secrets: {e}")
-            # Try to be more helpful
-            st.info("Make sure your secrets.toml has the correct structure")
-            return False
-    return st.session_state.get('api_configured', False)
-
 def main_enhanced():
     """Enhanced main application with real API integrations"""
     
     init_database()
-    
-    # Debug mode - uncomment to see what's happening with secrets
-    # st.write("Debug: Available secrets keys:", list(st.secrets.keys()) if hasattr(st, 'secrets') else "No secrets found")
-    
-    # Load secrets immediately on startup
-    secrets_loaded = load_secrets_on_startup()
-    
-    # If secrets didn't load, try one more simple approach
-    if not secrets_loaded:
-        # Direct assignment from Streamlit Cloud secrets manager format
-        if hasattr(st, 'secrets'):
-            # Get any format of the keys
-            for key in st.secrets:
-                if 'username' in key.lower():
-                    st.session_state['tradingvol_username'] = st.secrets[key]
-                elif 'api_key' in key.lower() and 'claude' not in key.lower():
-                    st.session_state['tradingvol_key'] = st.secrets[key]
-                elif 'claude' in key.lower() or 'anthropic' in key.lower():
-                    st.session_state['claude_key'] = st.secrets[key]
-            
-            # Check again if we got the essentials
-            if (st.session_state.get('tradingvol_username') and 
-                st.session_state.get('tradingvol_key')):
-                st.session_state['api_configured'] = True
-                secrets_loaded = True
     
     # Render API configuration
     render_api_configuration()
@@ -2465,9 +2222,8 @@ def main_enhanced():
     # Check if APIs are configured
     config = load_api_config()
     
-    if not config['api_configured'] and not secrets_loaded:
+    if not config['api_configured']:
         st.warning("⚠️ Please configure your API keys in the sidebar to get started")
-        st.info("Or add them to your `.streamlit/secrets.toml` file")
         st.stop()
     
     # Fetch GEX data using REAL API
@@ -2546,49 +2302,17 @@ def main_enhanced():
             st.error("❌ Unable to fetch GEX data. Check your API configuration.")
 
 # ============================================================================
-# RUN APPLICATION - FIXED: Only one execution block
+# REPLACE ORIGINAL main() WITH main_enhanced()
 # ============================================================================
 
 if __name__ == "__main__":
-    # Use the enhanced version with API integrations
+    # Comment out the original main() from Part 3 and use this instead
     main_enhanced()
     
     st.markdown("---")
     st.caption("GEX Trading Co-Pilot v5.0 COMPLETE | All 10 Components + Real API Integration | © 2025")
 
 # ============================================================================
-# END OF COMPLETE SYSTEM
-# Total Lines: ~2300
+# END OF PART 4 - COMPLETE SYSTEM
+# Total Lines: ~2550
 # ============================================================================
-
-"""
-STREAMLIT SECRETS CONFIGURATION
-================================
-
-Create a file called .streamlit/secrets.toml in your project directory with:
-
-[tradingvolatility]
-username = "your_tradingvolatility_username"
-api_key = "your_tradingvolatility_api_key"
-
-[claude]
-api_key = "your_anthropic_api_key"
-
-[fred]
-api_key = "your_fred_api_key"
-
-[twilio]  # Optional
-account_sid = "your_twilio_account_sid"
-auth_token = "your_twilio_auth_token"
-from_phone = "+1234567890"
-to_phone = "+0987654321"
-
-OR use flat structure:
-
-username = "your_tradingvolatility_username"
-api_key = "your_tradingvolatility_api_key"
-claude_api_key = "your_anthropic_api_key"
-fred_api_key = "your_fred_api_key"
-
-The app will automatically load these on startup!
-"""
