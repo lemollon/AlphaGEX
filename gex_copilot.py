@@ -65,6 +65,8 @@ if 'api_call_count' not in st.session_state:
     st.session_state.api_call_count = 0
 if 'last_update' not in st.session_state:
     st.session_state.last_update = None
+if 'api_errors' not in st.session_state:
+    st.session_state.api_errors = []
 
 # ============================================================================
 # DATABASE INITIALIZATION - Complete Schema
@@ -1339,6 +1341,9 @@ class TradingVolatilityAPI:
                 timeout=10
             )
             
+            # Safely increment API call count
+            if 'api_call_count' not in st.session_state:
+                st.session_state.api_call_count = 0
             st.session_state.api_call_count += 1
             
             if response.status_code == 200:
@@ -1897,10 +1902,12 @@ def main():
         
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("API Calls", st.session_state.api_call_count, key="sidebar_api_calls")
+            api_calls = st.session_state.get('api_call_count', 0)
+            st.metric("API Calls", int(api_calls), key="sidebar_api_calls")
         with col2:
-            if st.session_state.last_update:
-                mins_ago = (datetime.now() - st.session_state.last_update).seconds // 60
+            last_update = st.session_state.get('last_update', None)
+            if last_update:
+                mins_ago = (datetime.now() - last_update).seconds // 60
                 st.metric("Updated", f"{mins_ago}m ago", key="sidebar_updated")
             else:
                 st.metric("Updated", "Never", key="sidebar_updated_never")
