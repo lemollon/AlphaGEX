@@ -2076,60 +2076,40 @@ def load_api_config() -> Dict:
 
 def render_api_configuration():
     """Render API configuration panel in sidebar - uses Streamlit secrets"""
-    # Auto-load from secrets if available
-    if 'api_configured' not in st.session_state:
-        try:
-            # Try to load from Streamlit secrets
-            if 'tradingvolatility' in st.secrets:
-                st.session_state['tradingvol_username'] = st.secrets['tradingvolatility'].get('username', '')
-                st.session_state['tradingvol_key'] = st.secrets['tradingvolatility'].get('api_key', '')
-                
-            if 'claude' in st.secrets:
-                st.session_state['claude_key'] = st.secrets['claude'].get('api_key', '')
-                
-            if 'twilio' in st.secrets:
-                st.session_state['twilio_sid'] = st.secrets['twilio'].get('account_sid', '')
-                st.session_state['twilio_token'] = st.secrets['twilio'].get('auth_token', '')
-                st.session_state['twilio_from'] = st.secrets['twilio'].get('from_phone', '')
-                st.session_state['alert_phone'] = st.secrets['twilio'].get('to_phone', '')
-            
-            # Mark as configured if we have the essential keys
-            if st.session_state.get('tradingvol_username') and st.session_state.get('tradingvol_key'):
-                st.session_state['api_configured'] = True
-        except:
-            pass
     
     with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_state.get('api_configured', False)):
-        st.markdown("### TradingVolatility.net")
         
         # Show status if loaded from secrets
-        if st.session_state.get('tradingvol_username'):
-            st.success("✅ Loaded from secrets")
+        if st.session_state.get('secrets_loaded'):
+            st.success("✅ API keys loaded from secrets")
+            st.caption("Keys are hidden for security")
+        
+        st.markdown("### TradingVolatility.net")
         
         tradingvol_username = st.text_input(
             "Username",
             value=st.session_state.get('tradingvol_username', ''),
-            help="Your TradingVolatility username (e.g., I-RWFNBLR2S1DP)"
+            help="Your TradingVolatility username",
+            disabled=st.session_state.get('secrets_loaded', False)
         )
         
         tradingvol_key = st.text_input(
             "API Key",
-            value=st.session_state.get('tradingvol_key', ''),
+            value="*" * 20 if st.session_state.get('tradingvol_key') else '',
             type="password",
-            help="Your TradingVolatility API key"
+            help="Your TradingVolatility API key",
+            disabled=st.session_state.get('secrets_loaded', False)
         )
         
         st.markdown("---")
         st.markdown("### Claude AI")
-        
-        if st.session_state.get('claude_key'):
-            st.success("✅ Loaded from secrets")
             
         claude_key = st.text_input(
             "Claude API Key",
-            value=st.session_state.get('claude_key', ''),
+            value="*" * 20 if st.session_state.get('claude_key') else '',
             type="password",
-            help="Your Anthropic Claude API key"
+            help="Your Anthropic Claude API key",
+            disabled=st.session_state.get('secrets_loaded', False)
         )
         
         st.markdown("---")
@@ -2137,40 +2117,48 @@ def render_api_configuration():
         
         twilio_sid = st.text_input(
             "Twilio Account SID",
-            value=st.session_state.get('twilio_sid', ''),
-            type="password"
+            value="*" * 20 if st.session_state.get('twilio_sid') else '',
+            type="password",
+            disabled=st.session_state.get('secrets_loaded', False)
         )
         
         twilio_token = st.text_input(
             "Twilio Auth Token",
-            value=st.session_state.get('twilio_token', ''),
-            type="password"
+            value="*" * 20 if st.session_state.get('twilio_token') else '',
+            type="password",
+            disabled=st.session_state.get('secrets_loaded', False)
         )
         
         twilio_from = st.text_input(
             "From Phone",
             value=st.session_state.get('twilio_from', ''),
-            help="Format: +1234567890"
+            help="Format: +1234567890",
+            disabled=st.session_state.get('secrets_loaded', False)
         )
         
         alert_phone = st.text_input(
             "Your Phone",
             value=st.session_state.get('alert_phone', ''),
-            help="Where to send alerts"
+            help="Where to send alerts",
+            disabled=st.session_state.get('secrets_loaded', False)
         )
         
-        if st.button("💾 Save Configuration", use_container_width=True):
-            twilio_config = {
-                'sid': twilio_sid,
-                'token': twilio_token,
-                'from_phone': twilio_from,
-                'to_phone': alert_phone
-            } if twilio_sid else None
-            
-            save_api_config(tradingvol_username, tradingvol_key, claude_key, twilio_config)
-            st.success("✅ Configuration saved!")
-            time.sleep(1)
-            st.rerun()
+        # Only show save button if not loaded from secrets
+        if not st.session_state.get('secrets_loaded'):
+            if st.button("💾 Save Configuration", use_container_width=True):
+                twilio_config = {
+                    'sid': twilio_sid,
+                    'token': twilio_token,
+                    'from_phone': twilio_from,
+                    'to_phone': alert_phone
+                } if twilio_sid else None
+                
+                save_api_config(tradingvol_username, tradingvol_key, claude_key, twilio_config)
+                st.success("✅ Configuration saved!")
+                time.sleep(1)
+                st.rerun()
+        else:
+            st.info("📌 API keys loaded from secrets file")
 
 # ============================================================================
 # ENHANCED FETCH FUNCTION WITH REAL API
@@ -2264,10 +2252,44 @@ def render_component_status_panel():
 # UPDATE MAIN APP TO USE REAL APIs
 # ============================================================================
 
+def load_secrets_on_startup():
+    """Load API keys from Streamlit secrets on app startup"""
+    if 'secrets_loaded' not in st.session_state:
+        try:
+            # Load TradingVolatility credentials
+            if 'tradingvolatility' in st.secrets:
+                st.session_state['tradingvol_username'] = st.secrets['tradingvolatility'].get('username', '')
+                st.session_state['tradingvol_key'] = st.secrets['tradingvolatility'].get('api_key', '')
+            
+            # Load Claude API key
+            if 'claude' in st.secrets:
+                st.session_state['claude_key'] = st.secrets['claude'].get('api_key', '')
+            
+            # Load Twilio credentials (optional)
+            if 'twilio' in st.secrets:
+                st.session_state['twilio_sid'] = st.secrets['twilio'].get('account_sid', '')
+                st.session_state['twilio_token'] = st.secrets['twilio'].get('auth_token', '')
+                st.session_state['twilio_from'] = st.secrets['twilio'].get('from_phone', '')
+                st.session_state['alert_phone'] = st.secrets['twilio'].get('to_phone', '')
+            
+            # Mark as configured if we have the essential keys
+            if (st.session_state.get('tradingvol_username') and 
+                st.session_state.get('tradingvol_key')):
+                st.session_state['api_configured'] = True
+                st.session_state['secrets_loaded'] = True
+                return True
+        except Exception as e:
+            st.warning(f"Could not load secrets: {e}")
+            return False
+    return st.session_state.get('api_configured', False)
+
 def main_enhanced():
     """Enhanced main application with real API integrations"""
     
     init_database()
+    
+    # Load secrets immediately on startup
+    secrets_loaded = load_secrets_on_startup()
     
     # Render API configuration
     render_api_configuration()
@@ -2281,8 +2303,9 @@ def main_enhanced():
     # Check if APIs are configured
     config = load_api_config()
     
-    if not config['api_configured']:
+    if not config['api_configured'] and not secrets_loaded:
         st.warning("⚠️ Please configure your API keys in the sidebar to get started")
+        st.info("Or add them to your `.streamlit/secrets.toml` file")
         st.stop()
     
     # Fetch GEX data using REAL API
