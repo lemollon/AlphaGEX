@@ -1286,8 +1286,50 @@ def render_sidebar():
         st.title("🎯 GEX Co-Pilot v5.0")
         st.markdown("---")
         
-        symbol = st.selectbox("📊 Symbol",
-                             ["SPY", "QQQ", "IWM", "DIA", "TSLA", "AAPL", "NVDA"])
+        # Changed from selectbox to text_input to allow any symbol
+        symbol = st.text_input(
+            "📊 Enter Stock Symbol",
+            value=st.session_state.get('current_symbol', 'SPY'),
+            help="Enter any stock symbol (e.g., SPY, QQQ, AAPL, TSLA, etc.)",
+            placeholder="Enter symbol..."
+        ).upper()  # Convert to uppercase
+        
+        # Validate symbol
+        if symbol:
+            if not symbol.isalpha() or len(symbol) > 5:
+                st.warning("⚠️ Please enter a valid stock symbol")
+            else:
+                st.session_state['current_symbol'] = symbol
+        
+        # Popular symbols for quick access
+        st.markdown("**Quick Select:**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("SPY", use_container_width=True):
+                st.session_state['current_symbol'] = 'SPY'
+                st.rerun()
+        with col2:
+            if st.button("QQQ", use_container_width=True):
+                st.session_state['current_symbol'] = 'QQQ'
+                st.rerun()
+        with col3:
+            if st.button("IWM", use_container_width=True):
+                st.session_state['current_symbol'] = 'IWM'
+                st.rerun()
+        
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            if st.button("TSLA", use_container_width=True):
+                st.session_state['current_symbol'] = 'TSLA'
+                st.rerun()
+        with col5:
+            if st.button("AAPL", use_container_width=True):
+                st.session_state['current_symbol'] = 'AAPL'
+                st.rerun()
+        with col6:
+            if st.button("NVDA", use_container_width=True):
+                st.session_state['current_symbol'] = 'NVDA'
+                st.rerun()
         
         if st.button("🔄 Refresh Data", use_container_width=True):
             st.rerun()
@@ -2033,9 +2075,36 @@ def load_api_config() -> Dict:
 # ============================================================================
 
 def render_api_configuration():
-    """Render API configuration panel in sidebar"""
+    """Render API configuration panel in sidebar - uses Streamlit secrets"""
+    # Auto-load from secrets if available
+    if 'api_configured' not in st.session_state:
+        try:
+            # Try to load from Streamlit secrets
+            if 'tradingvolatility' in st.secrets:
+                st.session_state['tradingvol_username'] = st.secrets['tradingvolatility'].get('username', '')
+                st.session_state['tradingvol_key'] = st.secrets['tradingvolatility'].get('api_key', '')
+                
+            if 'claude' in st.secrets:
+                st.session_state['claude_key'] = st.secrets['claude'].get('api_key', '')
+                
+            if 'twilio' in st.secrets:
+                st.session_state['twilio_sid'] = st.secrets['twilio'].get('account_sid', '')
+                st.session_state['twilio_token'] = st.secrets['twilio'].get('auth_token', '')
+                st.session_state['twilio_from'] = st.secrets['twilio'].get('from_phone', '')
+                st.session_state['alert_phone'] = st.secrets['twilio'].get('to_phone', '')
+            
+            # Mark as configured if we have the essential keys
+            if st.session_state.get('tradingvol_username') and st.session_state.get('tradingvol_key'):
+                st.session_state['api_configured'] = True
+        except:
+            pass
+    
     with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_state.get('api_configured', False)):
         st.markdown("### TradingVolatility.net")
+        
+        # Show status if loaded from secrets
+        if st.session_state.get('tradingvol_username'):
+            st.success("✅ Loaded from secrets")
         
         tradingvol_username = st.text_input(
             "Username",
@@ -2053,6 +2122,9 @@ def render_api_configuration():
         st.markdown("---")
         st.markdown("### Claude AI")
         
+        if st.session_state.get('claude_key'):
+            st.success("✅ Loaded from secrets")
+            
         claude_key = st.text_input(
             "Claude API Key",
             value=st.session_state.get('claude_key', ''),
@@ -2303,3 +2375,25 @@ if __name__ == "__main__":
 # END OF COMPLETE SYSTEM
 # Total Lines: ~2300
 # ============================================================================
+
+"""
+STREAMLIT SECRETS CONFIGURATION
+================================
+
+Create a file called .streamlit/secrets.toml in your project directory with:
+
+[tradingvolatility]
+username = "your_tradingvolatility_username"
+api_key = "your_tradingvolatility_api_key"
+
+[claude]
+api_key = "your_anthropic_api_key"
+
+[twilio]  # Optional
+account_sid = "your_twilio_account_sid"
+auth_token = "your_twilio_auth_token"
+from_phone = "+1234567890"
+to_phone = "+0987654321"
+
+The app will automatically load these on startup!
+"""
