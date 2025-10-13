@@ -1633,19 +1633,6 @@ def main():
             st.error("❌ Unable to fetch GEX data")
 
 # ============================================================================
-# RUN APPLICATION
-# ============================================================================
-
-if __name__ == "__main__":
-    main()
-    
-    st.markdown("---")
-    st.caption("GEX Trading Co-Pilot v5.0 | Complete System with All 10 Components | © 2025")
-
-# ============================================================================
-# END OF PART 3
-# ============================================================================
-# ============================================================================
 # PART 4: API INTEGRATIONS & HELPER FUNCTIONS
 # ============================================================================
 # This part contains all the actual API integrations that make the UI work
@@ -2302,17 +2289,17 @@ def main_enhanced():
             st.error("❌ Unable to fetch GEX data. Check your API configuration.")
 
 # ============================================================================
-# REPLACE ORIGINAL main() WITH main_enhanced()
+# RUN APPLICATION - FIXED: Only one execution block
 # ============================================================================
 
 if __name__ == "__main__":
-    # Comment out the original main() from Part 3 and use this instead
+    # Use the enhanced version with API integrations
     main_enhanced()
     
     st.markdown("---")
     st.caption("GEX Trading Co-Pilot v5.0 COMPLETE | All 10 Components + Real API Integration | © 2025")
 
 # ============================================================================
-# END OF PART 4 - COMPLETE SYSTEM
-# Total Lines: ~2550
+# END OF COMPLETE SYSTEM
+# Total Lines: ~2300
 # ============================================================================
