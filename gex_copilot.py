@@ -1902,15 +1902,27 @@ def main():
         
         col1, col2 = st.columns(2)
         with col1:
+            # Ensure api_call_count is properly typed
             api_calls = st.session_state.get('api_call_count', 0)
-            st.metric("API Calls", int(api_calls), key="sidebar_api_calls")
+            if api_calls is None or api_calls == "":
+                api_calls = 0
+            try:
+                api_calls = int(float(str(api_calls)))  # Handle any type
+            except:
+                api_calls = 0
+            st.metric("API Calls", value=api_calls, key="sidebar_api_calls")
         with col2:
             last_update = st.session_state.get('last_update', None)
             if last_update:
-                mins_ago = (datetime.now() - last_update).seconds // 60
-                st.metric("Updated", f"{mins_ago}m ago", key="sidebar_updated")
+                try:
+                    if isinstance(last_update, str):
+                        last_update = datetime.strptime(last_update, '%Y-%m-%d %H:%M:%S')
+                    mins_ago = int((datetime.now() - last_update).seconds // 60)
+                    st.metric("Updated", value=f"{mins_ago}m ago", key="sidebar_updated")
+                except:
+                    st.metric("Updated", value="Just now", key="sidebar_updated_error")
             else:
-                st.metric("Updated", "Never", key="sidebar_updated_never")
+                st.metric("Updated", value="Never", key="sidebar_updated_never")
         
         # Component status
         st.divider()
@@ -1964,27 +1976,33 @@ def main():
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            net_gex_b = gex_data['total_net_gex'] / 1e9
+            net_gex_b = float(gex_data.get('total_net_gex', 0)) / 1e9
+            delta_text = "MOVE" if net_gex_b < 0 else "CHOP"
             st.metric(
-                "Net GEX",
-                f"${net_gex_b:.2f}B",
-                delta="MOVE" if net_gex_b < 0 else "CHOP",
+                label="Net GEX",
+                value=f"${net_gex_b:.2f}B",
+                delta=delta_text,
                 key="overview_net_gex"
             )
         
         with col2:
+            flip_point = float(gex_data.get('flip_point', 0))
+            current_price = float(gex_data.get('current_price', 1))
+            flip_delta = ((current_price - flip_point) / current_price * 100) if current_price != 0 else 0
             st.metric(
-                "Gamma Flip",
-                f"${gex_data['flip_point']:.2f}",
-                delta=f"{((gex_data['current_price']-gex_data['flip_point'])/gex_data['current_price']*100):.1f}%",
+                label="Gamma Flip",
+                value=f"${flip_point:.2f}",
+                delta=f"{flip_delta:.1f}%",
                 key="overview_flip"
             )
         
         with col3:
-            st.metric("Call Wall", f"${gex_data['call_wall']:.2f}", key="overview_call_wall")
+            call_wall = float(gex_data.get('call_wall', 0))
+            st.metric(label="Call Wall", value=f"${call_wall:.2f}", key="overview_call_wall")
         
         with col4:
-            st.metric("Put Wall", f"${gex_data['put_wall']:.2f}", key="overview_put_wall")
+            put_wall = float(gex_data.get('put_wall', 0))
+            st.metric(label="Put Wall", value=f"${put_wall:.2f}", key="overview_put_wall")
         
         # MM Behavior Analysis
         mm_analysis = MMBehaviorAnalyzer.analyze_dealer_positioning(gex_data)
@@ -2028,7 +2046,8 @@ def main():
                         st.info(setup['rationale'])
                     
                     with col2:
-                        st.metric("R:R", f"{setup.get('risk_reward', 0):.1f}:1", key=f"setup_rr_{i}")
+                        risk_reward = float(setup.get('risk_reward', 0))
+                        st.metric(label="R:R", value=f"{risk_reward:.1f}:1", key=f"setup_rr_{i}")
                         st.write(f"**DTE:** {setup['dte']}")
                         
                         if st.button(f"Track Trade #{i+1}", key=f"track_trade_{i}"):
@@ -2048,9 +2067,13 @@ def main():
         col1, col2 = st.columns(2)
         
         with col1:
-            st.metric("Action", current_strategy['action'], key="timing_action")
-            st.metric("Win Rate", current_strategy['win_rate'], key="timing_win_rate")
-            st.metric("Risk Level", current_strategy.get('risk_level', 'N/A'), key="timing_risk")
+            action = str(current_strategy.get('action', 'N/A'))
+            win_rate = str(current_strategy.get('win_rate', 'N/A'))
+            risk_level = str(current_strategy.get('risk_level', 'N/A'))
+            
+            st.metric(label="Action", value=action, key="timing_action")
+            st.metric(label="Win Rate", value=win_rate, key="timing_win_rate")
+            st.metric(label="Risk Level", value=risk_level, key="timing_risk")
         
         with col2:
             st.write(f"**Best Setups:** {', '.join(current_strategy['best_setups'])}")
@@ -2079,8 +2102,9 @@ def main():
                         st.write(f"**{key.replace('_', ' ').title()}:** {value}")
                 
                 if day in weekly['win_rates_by_day']:
-                    st.metric(f"Historical Win Rate", 
-                             f"{weekly['win_rates_by_day'][day]}%",
+                    win_rate_val = float(weekly['win_rates_by_day'].get(day, 0))
+                    st.metric(label=f"Historical Win Rate", 
+                             value=f"{win_rate_val:.0f}%",
                              key=f"weekly_wr_{day}")
     
     # Tab 4: Monte Carlo
@@ -2118,16 +2142,21 @@ def main():
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.metric("Mean Price", f"${mc_results['mean_price']:.2f}", key="mc_mean_price")
-                    st.metric("Std Dev", f"${mc_results['std_dev']:.2f}", key="mc_std_dev")
+                    mean_price = float(mc_results.get('mean_price', 0))
+                    std_dev = float(mc_results.get('std_dev', 0))
+                    st.metric(label="Mean Price", value=f"${mean_price:.2f}", key="mc_mean_price")
+                    st.metric(label="Std Dev", value=f"${std_dev:.2f}", key="mc_std_dev")
                 
                 with col2:
-                    st.metric("5% Percentile", f"${mc_results['percentile_5']:.2f}", key="mc_p5")
-                    st.metric("95% Percentile", f"${mc_results['percentile_95']:.2f}", key="mc_p95")
+                    p5 = float(mc_results.get('percentile_5', 0))
+                    p95 = float(mc_results.get('percentile_95', 0))
+                    st.metric(label="5% Percentile", value=f"${p5:.2f}", key="mc_p5")
+                    st.metric(label="95% Percentile", value=f"${p95:.2f}", key="mc_p95")
                 
                 with col3:
-                    st.metric("P(Above Current)", 
-                             f"{mc_results['probability_above_current']:.1f}%",
+                    prob_above = float(mc_results.get('probability_above_current', 0))
+                    st.metric(label="P(Above Current)", 
+                             value=f"{prob_above:.1f}%",
                              key="mc_prob_above")
                 
                 # Visualization
@@ -2149,14 +2178,17 @@ def main():
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("P(ITM)", f"{option_prob['probability_itm']:.1f}%", key="mc_opt_itm")
-                    st.metric("Expected Profit if ITM", 
-                             f"${option_prob['expected_profit_if_itm']:.2f}",
+                    prob_itm = float(option_prob.get('probability_itm', 0))
+                    profit_if_itm = float(option_prob.get('expected_profit_if_itm', 0))
+                    st.metric(label="P(ITM)", value=f"{prob_itm:.1f}%", key="mc_opt_itm")
+                    st.metric(label="Expected Profit if ITM", 
+                             value=f"${profit_if_itm:.2f}",
                              key="mc_opt_profit")
                 
                 with col2:
-                    st.metric("Expected Value", 
-                             f"${option_prob['expected_value']:.2f}",
+                    expected_value = float(option_prob.get('expected_value', 0))
+                    st.metric(label="Expected Value", 
+                             value=f"${expected_value:.2f}",
                              key="mc_opt_ev")
     
     # Tab 5: Positions
@@ -2245,13 +2277,17 @@ def main():
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.metric("Total Trades", analysis['overall']['total_trades'], key="metric_total_trades")
+                total_trades = int(analysis['overall'].get('total_trades', 0))
+                st.metric(label="Total Trades", value=total_trades, key="metric_total_trades")
             with col2:
-                st.metric("Win Rate", f"{analysis['overall']['win_rate']:.1f}%", key="metric_win_rate")
+                win_rate = float(analysis['overall'].get('win_rate', 0))
+                st.metric(label="Win Rate", value=f"{win_rate:.1f}%", key="metric_win_rate")
             with col3:
-                st.metric("Total P&L", f"${analysis['overall']['total_pnl']:.2f}", key="metric_pnl")
+                total_pnl = float(analysis['overall'].get('total_pnl', 0))
+                st.metric(label="Total P&L", value=f"${total_pnl:.2f}", key="metric_pnl")
             with col4:
-                st.metric("Profit Factor", f"{analysis['overall'].get('profit_factor', 0):.2f}", key="metric_pf")
+                profit_factor = float(analysis['overall'].get('profit_factor', 0))
+                st.metric(label="Profit Factor", value=f"{profit_factor:.2f}", key="metric_pf")
             
             # Performance by day
             if 'by_day' in analysis:
@@ -2283,9 +2319,15 @@ def main():
         # Display data source and timing
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Data Source", gex_data.get('data_source', 'Unknown'), key="metric_data_source")
+            data_source = str(gex_data.get('data_source', 'Unknown'))
+            st.metric(label="Data Source", value=data_source, key="metric_data_source")
         with col2:
-            st.metric("Last Update", gex_data['timestamp'].strftime('%H:%M:%S'), key="metric_last_update")
+            timestamp = gex_data.get('timestamp', datetime.now())
+            if isinstance(timestamp, str):
+                time_str = timestamp
+            else:
+                time_str = timestamp.strftime('%H:%M:%S')
+            st.metric(label="Last Update", value=time_str, key="metric_last_update")
         
         st.info("""
         **System Components:**
