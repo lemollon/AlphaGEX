@@ -440,13 +440,76 @@ class LearningLoop:
 def get_actionable_economic_regime():
     """Fetch FRED data and return ACTIONABLE trading directives"""
     try:
-        # Simulate FRED data
-        fred_data = {
-            'vix': 16.2,
-            'fed_funds': 4.33,
-            'treasury_10y': 4.25,
-            'unemployment': 3.7
-        }
+        # Check if we have FRED API key
+        fred_api_key = st.session_state.get('fred_key')
+        
+        if fred_api_key:
+            # Use real FRED API
+            from fredapi import Fred
+            fred = Fred(api_key=fred_api_key)
+            
+            # Fetch real data
+            try:
+                import pandas as pd
+                from datetime import datetime, timedelta
+                
+                # Get latest data points
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=30)
+                
+                # VIX
+                try:
+                    vix_data = fred.get_series('VIXCLS', start_date, end_date)
+                    vix = float(vix_data.iloc[-1]) if len(vix_data) > 0 else 16.2
+                except:
+                    vix = 16.2
+                
+                # Fed Funds Rate
+                try:
+                    fed_data = fred.get_series('DFF', start_date, end_date)
+                    fed_funds = float(fed_data.iloc[-1]) if len(fed_data) > 0 else 4.33
+                except:
+                    fed_funds = 4.33
+                
+                # 10-Year Treasury
+                try:
+                    treasury_data = fred.get_series('DGS10', start_date, end_date)
+                    treasury_10y = float(treasury_data.iloc[-1]) if len(treasury_data) > 0 else 4.25
+                except:
+                    treasury_10y = 4.25
+                
+                # Unemployment Rate
+                try:
+                    unemployment_data = fred.get_series('UNRATE', start_date, end_date)
+                    unemployment = float(unemployment_data.iloc[-1]) if len(unemployment_data) > 0 else 3.7
+                except:
+                    unemployment = 3.7
+                
+                fred_data = {
+                    'vix': vix,
+                    'fed_funds': fed_funds,
+                    'treasury_10y': treasury_10y,
+                    'unemployment': unemployment,
+                    'source': 'FRED API'
+                }
+            except:
+                # If FRED API fails, use simulated data
+                fred_data = {
+                    'vix': 16.2,
+                    'fed_funds': 4.33,
+                    'treasury_10y': 4.25,
+                    'unemployment': 3.7,
+                    'source': 'Simulated (FRED API error)'
+                }
+        else:
+            # Simulate FRED data if no API key
+            fred_data = {
+                'vix': 16.2,
+                'fed_funds': 4.33,
+                'treasury_10y': 4.25,
+                'unemployment': 3.7,
+                'source': 'Simulated (No FRED API key)'
+            }
         
         # Determine market bias
         if fred_data['vix'] < 15:
@@ -486,6 +549,9 @@ def get_actionable_economic_regime():
         else:
             directives.append("🟡 Fed Funds: {:.2f}% (MODERATE) → Normal environment".format(fred_data['fed_funds']))
         
+        # Add data source
+        directives.append(f"📊 Data source: {fred_data['source']}")
+        
         return {
             'market_bias': bias,
             'risk_level': risk_level,
@@ -494,13 +560,13 @@ def get_actionable_economic_regime():
             'directives': directives,
             'data': fred_data
         }
-    except:
+    except Exception as e:
         return {
             'market_bias': 'UNKNOWN',
             'risk_level': 'HIGH',
             'position_multiplier': 0.5,
             'action': 'REDUCED SIZING',
-            'directives': ['⚠️ Unable to fetch economic data'],
+            'directives': ['⚠️ Unable to fetch economic data: ' + str(e)],
             'data': {}
         }
 
@@ -2079,6 +2145,22 @@ def render_api_configuration():
     
     with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_state.get('api_configured', False)):
         
+        # Debug button to check secrets
+        if st.button("🔍 Debug: Check Secrets"):
+            st.write("**Available secrets:**")
+            if hasattr(st, 'secrets'):
+                for key in st.secrets:
+                    # Show key names but not values for security
+                    st.write(f"- {key}: {'*' * 10}")
+            else:
+                st.write("No secrets object found")
+            
+            st.write("**Session state keys:**")
+            st.write(f"- Username: {'SET' if st.session_state.get('tradingvol_username') else 'NOT SET'}")
+            st.write(f"- API Key: {'SET' if st.session_state.get('tradingvol_key') else 'NOT SET'}")
+            st.write(f"- Claude Key: {'SET' if st.session_state.get('claude_key') else 'NOT SET'}")
+            st.write(f"- FRED Key: {'SET' if st.session_state.get('fred_key') else 'NOT SET'}")
+        
         # Show status if loaded from secrets
         if st.session_state.get('secrets_loaded'):
             st.success("✅ API keys loaded from secrets")
@@ -2113,6 +2195,17 @@ def render_api_configuration():
         )
         
         st.markdown("---")
+        st.markdown("### FRED Economic Data")
+        
+        fred_key = st.text_input(
+            "FRED API Key",
+            value="*" * 20 if st.session_state.get('fred_key') else '',
+            type="password",
+            help="Your FRED API key for economic data",
+            disabled=st.session_state.get('secrets_loaded', False)
+        )
+        
+        st.markdown("---")
         st.markdown("### SMS Alerts (Optional)")
         
         twilio_sid = st.text_input(
@@ -2143,22 +2236,31 @@ def render_api_configuration():
             disabled=st.session_state.get('secrets_loaded', False)
         )
         
-        # Only show save button if not loaded from secrets
-        if not st.session_state.get('secrets_loaded'):
-            if st.button("💾 Save Configuration", use_container_width=True):
-                twilio_config = {
-                    'sid': twilio_sid,
-                    'token': twilio_token,
-                    'from_phone': twilio_from,
-                    'to_phone': alert_phone
-                } if twilio_sid else None
-                
-                save_api_config(tradingvol_username, tradingvol_key, claude_key, twilio_config)
-                st.success("✅ Configuration saved!")
-                time.sleep(1)
-                st.rerun()
-        else:
+        # Manual override option
+        if st.session_state.get('secrets_loaded'):
             st.info("📌 API keys loaded from secrets file")
+        else:
+            st.warning("⚠️ Could not load from secrets - enter manually")
+            if st.button("💾 Save Configuration", use_container_width=True):
+                # Allow manual entry even if secrets don't load
+                if tradingvol_username and tradingvol_key:
+                    st.session_state['tradingvol_username'] = tradingvol_username
+                    st.session_state['tradingvol_key'] = tradingvol_key
+                    st.session_state['claude_key'] = claude_key
+                    st.session_state['fred_key'] = fred_key
+                    st.session_state['api_configured'] = True
+                    
+                    if twilio_sid:
+                        st.session_state['twilio_sid'] = twilio_sid
+                        st.session_state['twilio_token'] = twilio_token
+                        st.session_state['twilio_from'] = twilio_from
+                        st.session_state['alert_phone'] = alert_phone
+                    
+                    st.success("✅ Configuration saved!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Please enter at least username and API key")
 
 # ============================================================================
 # ENHANCED FETCH FUNCTION WITH REAL API
@@ -2256,21 +2358,50 @@ def load_secrets_on_startup():
     """Load API keys from Streamlit secrets on app startup"""
     if 'secrets_loaded' not in st.session_state:
         try:
-            # Load TradingVolatility credentials
+            # Debug: Show what secrets are available
+            # st.write("Available secrets:", list(st.secrets.keys()))
+            
+            # Try multiple possible secret structures
+            # Option 1: Nested structure
             if 'tradingvolatility' in st.secrets:
                 st.session_state['tradingvol_username'] = st.secrets['tradingvolatility'].get('username', '')
                 st.session_state['tradingvol_key'] = st.secrets['tradingvolatility'].get('api_key', '')
+            # Option 2: Flat structure with underscore
+            elif 'tradingvolatility_username' in st.secrets:
+                st.session_state['tradingvol_username'] = st.secrets['tradingvolatility_username']
+                st.session_state['tradingvol_key'] = st.secrets['tradingvolatility_api_key']
+            # Option 3: Simple flat structure
+            elif 'username' in st.secrets:
+                st.session_state['tradingvol_username'] = st.secrets['username']
+                st.session_state['tradingvol_key'] = st.secrets['api_key']
             
-            # Load Claude API key
+            # Load Claude API key - try multiple formats
             if 'claude' in st.secrets:
                 st.session_state['claude_key'] = st.secrets['claude'].get('api_key', '')
+            elif 'claude_api_key' in st.secrets:
+                st.session_state['claude_key'] = st.secrets['claude_api_key']
+            elif 'ANTHROPIC_API_KEY' in st.secrets:
+                st.session_state['claude_key'] = st.secrets['ANTHROPIC_API_KEY']
             
-            # Load Twilio credentials (optional)
+            # Load FRED API key - try multiple formats
+            if 'fred' in st.secrets:
+                st.session_state['fred_key'] = st.secrets['fred'].get('api_key', '')
+            elif 'fred_api_key' in st.secrets:
+                st.session_state['fred_key'] = st.secrets['fred_api_key']
+            elif 'FRED_API_KEY' in st.secrets:
+                st.session_state['fred_key'] = st.secrets['FRED_API_KEY']
+            
+            # Load Twilio credentials (optional) - try multiple formats
             if 'twilio' in st.secrets:
                 st.session_state['twilio_sid'] = st.secrets['twilio'].get('account_sid', '')
                 st.session_state['twilio_token'] = st.secrets['twilio'].get('auth_token', '')
                 st.session_state['twilio_from'] = st.secrets['twilio'].get('from_phone', '')
                 st.session_state['alert_phone'] = st.secrets['twilio'].get('to_phone', '')
+            elif 'twilio_account_sid' in st.secrets:
+                st.session_state['twilio_sid'] = st.secrets.get('twilio_account_sid', '')
+                st.session_state['twilio_token'] = st.secrets.get('twilio_auth_token', '')
+                st.session_state['twilio_from'] = st.secrets.get('twilio_from_phone', '')
+                st.session_state['alert_phone'] = st.secrets.get('twilio_to_phone', '')
             
             # Mark as configured if we have the essential keys
             if (st.session_state.get('tradingvol_username') and 
@@ -2278,8 +2409,17 @@ def load_secrets_on_startup():
                 st.session_state['api_configured'] = True
                 st.session_state['secrets_loaded'] = True
                 return True
+            else:
+                # Debug: Show what was loaded
+                # st.write("Username loaded:", st.session_state.get('tradingvol_username', 'NOT FOUND'))
+                # st.write("API Key loaded:", 'EXISTS' if st.session_state.get('tradingvol_key') else 'NOT FOUND')
+                # st.write("FRED Key loaded:", 'EXISTS' if st.session_state.get('fred_key') else 'NOT FOUND')
+                return False
+                
         except Exception as e:
-            st.warning(f"Could not load secrets: {e}")
+            st.error(f"Error loading secrets: {e}")
+            # Try to be more helpful
+            st.info("Make sure your secrets.toml has the correct structure")
             return False
     return st.session_state.get('api_configured', False)
 
@@ -2288,8 +2428,30 @@ def main_enhanced():
     
     init_database()
     
+    # Debug mode - uncomment to see what's happening with secrets
+    # st.write("Debug: Available secrets keys:", list(st.secrets.keys()) if hasattr(st, 'secrets') else "No secrets found")
+    
     # Load secrets immediately on startup
     secrets_loaded = load_secrets_on_startup()
+    
+    # If secrets didn't load, try one more simple approach
+    if not secrets_loaded:
+        # Direct assignment from Streamlit Cloud secrets manager format
+        if hasattr(st, 'secrets'):
+            # Get any format of the keys
+            for key in st.secrets:
+                if 'username' in key.lower():
+                    st.session_state['tradingvol_username'] = st.secrets[key]
+                elif 'api_key' in key.lower() and 'claude' not in key.lower():
+                    st.session_state['tradingvol_key'] = st.secrets[key]
+                elif 'claude' in key.lower() or 'anthropic' in key.lower():
+                    st.session_state['claude_key'] = st.secrets[key]
+            
+            # Check again if we got the essentials
+            if (st.session_state.get('tradingvol_username') and 
+                st.session_state.get('tradingvol_key')):
+                st.session_state['api_configured'] = True
+                secrets_loaded = True
     
     # Render API configuration
     render_api_configuration()
@@ -2412,11 +2574,21 @@ api_key = "your_tradingvolatility_api_key"
 [claude]
 api_key = "your_anthropic_api_key"
 
+[fred]
+api_key = "your_fred_api_key"
+
 [twilio]  # Optional
 account_sid = "your_twilio_account_sid"
 auth_token = "your_twilio_auth_token"
 from_phone = "+1234567890"
 to_phone = "+0987654321"
+
+OR use flat structure:
+
+username = "your_tradingvolatility_username"
+api_key = "your_tradingvolatility_api_key"
+claude_api_key = "your_anthropic_api_key"
+fred_api_key = "your_fred_api_key"
 
 The app will automatically load these on startup!
 """
