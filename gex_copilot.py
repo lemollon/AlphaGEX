@@ -54,10 +54,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# API Configuration
-TRADINGVOLATILITY_USERNAME = "I-RWFNBLR2S1DP"
+# API Configuration from secrets
 TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-3-5-sonnet-20241022"  # Updated to latest model
 
 # Database Path
 DB_PATH = Path("gex_copilot.db")
@@ -255,13 +254,62 @@ def init_database():
 class TradingVolatilityAPI:
     """Complete API integration with rate limiting and caching"""
     
-    def __init__(self, username: str):
-        self.username = username
+    def __init__(self):
+        # Get credentials from Streamlit secrets
+        self.username = st.secrets.get("username", "")
+        self.api_key = st.secrets.get("api_key", "")
         self.base_url = TRADINGVOLATILITY_BASE
         self.rate_limit = 20  # calls per minute weekday
         self.last_calls = []
         self.cache = {}
         self.cache_ttl = 300  # 5 minutes
+        
+        # Check if credentials are configured
+        if not self.username or not self.api_key:
+            st.warning("TradingVolatility credentials not found in secrets. Using mock data.")
+    
+    def _rate_limit_check(self):
+        """Enforce API rate limits"""
+        now = time.time()
+        self.last_calls = [t for t in self.last_calls if now - t < 60]
+        
+        if len(self.last_calls) >= self.rate_limit:
+            wait_time = 60 - (now - self.last_calls[0]) + 1
+            if wait_time > 0:
+                st.warning(f"Rate limit reached. Waiting {wait_time:.0f} seconds...")
+                time.sleep(wait_time)
+        
+        self.last_calls.append(now)
+    
+    def get_vix(self) -> float:
+        """Get real-time VIX from TradingVolatility or Yahoo Finance"""
+        try:
+            # Try TradingVolatility first
+            if self.username and self.api_key:
+                url = f"{self.base_url}/vix"
+                params = {
+                    'username': self.username,
+                    'api_key': self.api_key
+                }
+                response = requests.get(url, params=params, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    return float(data.get('vix', 20))
+        except:
+            pass
+        
+        # Fallback to Yahoo Finance
+        try:
+            if YFINANCE_AVAILABLE:
+                vix = yf.Ticker("^VIX")
+                hist = vix.history(period="1d")
+                if not hist.empty:
+                    return float(hist['Close'].iloc[-1])
+        except:
+            pass
+        
+        # Default if both fail
+        return 20.0
     
     def _rate_limit_check(self):
         """Enforce API rate limits"""
@@ -278,6 +326,11 @@ class TradingVolatilityAPI:
     
     def get_net_gamma(self, symbol: str, use_cache: bool = True) -> Dict:
         """Fetch net gamma data with caching"""
+        
+        # Check if credentials exist
+        if not self.username or not self.api_key:
+            return self._get_mock_data(symbol)
+        
         cache_key = f"net_gamma_{symbol}"
         
         # Check cache first
@@ -290,12 +343,12 @@ class TradingVolatilityAPI:
         self._rate_limit_check()
         
         try:
-            # Correct endpoint structure
+            # Try correct endpoint structure
             url = f"{self.base_url}/gex"
             params = {
                 'username': self.username,
-                'ticker': symbol.upper(),
-                'type': 'netgamma'
+                'api_key': self.api_key,
+                'ticker': symbol.upper()
             }
             
             response = requests.get(url, params=params, timeout=10)
@@ -310,7 +363,7 @@ class TradingVolatilityAPI:
                 return self._get_mock_data(symbol)
                 
         except Exception as e:
-            st.warning(f"Using mock data due to API issue: {str(e)[:50]}")
+            st.warning(f"Using mock data due to API issue")
             return self._get_mock_data(symbol)
     
     def get_gex_profile(self, symbol: str, expiry: str = 'all') -> Dict:
@@ -390,38 +443,48 @@ class FREDIntegration:
     """Federal Reserve Economic Data integration for macro context"""
     
     def __init__(self):
-        self.api_key = st.secrets.get("FRED_API_KEY", "")
+        self.api_key = st.secrets.get("fred_api_key", "")
         self.base_url = "https://api.stlouisfed.org/fred/series/observations"
         self.cache = {}
         self.cache_ttl = 3600  # 1 hour cache
+        # Get TradingVolatility API for real VIX
+        self.tv_api = None  # Will be set in get_economic_data
     
     def get_economic_data(self) -> Dict:
-        """Fetch key economic indicators with better defaults"""
+        """Fetch key economic indicators with real VIX"""
         
-        # Use realistic current values as defaults
+        # Initialize TV API if not done
+        if self.tv_api is None:
+            self.tv_api = TradingVolatilityAPI()
+        
+        # Get REAL VIX from TradingVolatility or Yahoo
+        real_vix = self.tv_api.get_vix()
+        
+        # Start with VIX from real source
+        data = {'vix': real_vix}
+        
+        # Use realistic current values as defaults for other indicators
         defaults = {
             'ten_year_yield': 4.3,
             'fed_funds_rate': 5.5,
-            'vix': 20,  # More realistic current VIX
             'dollar_index': 105,
             'unemployment': 3.8,
             'cpi': 3.2
         }
         
-        # If no API key, return defaults
+        # If no FRED API key, return VIX + defaults
         if not self.api_key:
-            return defaults
+            data.update(defaults)
+            return data
         
+        # FRED indicators (excluding VIX since we get it elsewhere)
         indicators = {
             'DGS10': 'ten_year_yield',
             'DFF': 'fed_funds_rate',
-            'VIXCLS': 'vix',
             'DEXUSEU': 'dollar_index',
             'UNRATE': 'unemployment',
             'CPIAUCSL': 'cpi'
         }
-        
-        data = {}
         
         for series_id, name in indicators.items():
             # Check cache first
@@ -514,11 +577,15 @@ class FREDIntegration:
 class ClaudeIntelligence:
     """Advanced AI integration for market analysis"""
     
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or st.secrets.get("CLAUDE_API_KEY", "")
+    def __init__(self):
+        # Get API key from secrets
+        self.api_key = st.secrets.get("claude_api_key", "")
         self.model = CLAUDE_MODEL
         self.conversation_history = []
         self.fred = FREDIntegration()
+        
+        if not self.api_key:
+            st.warning("Claude API key not found in secrets. Using fallback analysis.")
         
     def analyze_market(self, market_data: Dict, user_query: str) -> str:
         """Generate intelligent market analysis based on actual query"""
@@ -1692,10 +1759,9 @@ def main():
     
     # Initialize session state
     if 'api_client' not in st.session_state:
-        st.session_state.api_client = TradingVolatilityAPI(TRADINGVOLATILITY_USERNAME)
+        st.session_state.api_client = TradingVolatilityAPI()
     if 'claude_ai' not in st.session_state:
-        claude_key = st.secrets.get("CLAUDE_API_KEY", "")
-        st.session_state.claude_ai = ClaudeIntelligence(claude_key)
+        st.session_state.claude_ai = ClaudeIntelligence()
     if 'current_data' not in st.session_state:
         st.session_state.current_data = {}
     if 'conversation_history' not in st.session_state:
