@@ -2671,7 +2671,7 @@ def main():
             st.metric(
                 "Flip Point",
                 f"${flip:.2f}",
-                delta=f"{((flip-spot)/spot*100):+.1f}%"
+                delta=f"{((flip-spot)/spot*100):+.1f}%" if spot and spot != 0 else "N/A"
             )
             st.metric("Call Wall", f"${data.get('call_wall', 0):.2f}")
             st.metric("Put Wall", f"${data.get('put_wall', 0):.2f}")
