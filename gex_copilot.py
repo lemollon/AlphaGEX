@@ -361,40 +361,70 @@ class TradingVolatilityAPI:
             response = requests.get(url, params=params, headers=headers, timeout=10)
             
             if response.status_code == 200:
-                data = response.json()
-                
-                # Parse the response to match our expected format
-                parsed_data = {
-                    'symbol': symbol,
-                    'spot_price': data.get('spot', data.get('current_price', 0)),
-                    'net_gex': data.get('net_gex', data.get('netGEX', 0)),
-                    'flip_point': data.get('flip', data.get('gamma_flip', 0)),
-                    'call_wall': data.get('call_wall', data.get('callWall', 0)),
-                    'put_wall': data.get('put_wall', data.get('putWall', 0)),
-                    'timestamp': datetime.now().isoformat(),
-                    'data_quality': 'live'
-                }
-                
-                # Cache the result
-                self.cache[cache_key] = (parsed_data, time.time())
-                st.success(f"✅ Live GEX data fetched for {symbol}")
-                return parsed_data
+                # Try to parse JSON response
+                try:
+                    # First try as JSON
+                    content_type = response.headers.get('Content-Type', '')
+                    
+                    if 'application/json' in content_type:
+                        data = response.json()
+                    else:
+                        # If not JSON, try to parse text response
+                        text = response.text.strip()
+                        
+                        # Check if it's CSV or plain text
+                        if ',' in text or '\t' in text:
+                            # Parse CSV-like response
+                            lines = text.split('\n')
+                            if len(lines) > 1:
+                                headers = lines[0].split(',')
+                                values = lines[1].split(',')
+                                data = dict(zip(headers, values))
+                            else:
+                                st.warning(f"Unexpected API response format. Using mock data.")
+                                return self._get_mock_data(symbol)
+                        else:
+                            st.warning(f"API returned non-JSON data: {text[:100]}... Using mock data.")
+                            return self._get_mock_data(symbol)
+                    
+                    # Parse the response to match our expected format
+                    parsed_data = {
+                        'symbol': symbol,
+                        'spot_price': float(data.get('spot', data.get('current_price', data.get('price', 0)))),
+                        'net_gex': float(data.get('net_gex', data.get('netGEX', data.get('netgex', 0)))),
+                        'flip_point': float(data.get('flip', data.get('gamma_flip', data.get('flip_point', 0)))),
+                        'call_wall': float(data.get('call_wall', data.get('callWall', data.get('callwall', 0)))),
+                        'put_wall': float(data.get('put_wall', data.get('putWall', data.get('putwall', 0)))),
+                        'timestamp': datetime.now().isoformat(),
+                        'data_quality': 'live'
+                    }
+                    
+                    # Cache the result
+                    self.cache[cache_key] = (parsed_data, time.time())
+                    st.success(f"✅ Live GEX data fetched for {symbol}")
+                    return parsed_data
+                    
+                except (json.JSONDecodeError, ValueError) as e:
+                    st.warning(f"Failed to parse API response: {str(e)[:50]}... Using mock data.")
+                    # Log the actual response for debugging
+                    st.info(f"Response preview: {response.text[:200]}...")
+                    return self._get_mock_data(symbol)
             
             elif response.status_code == 401:
                 st.error("Authentication failed - check your API key in secrets")
                 return self._get_mock_data(symbol)
             elif response.status_code == 404:
-                st.error(f"Symbol {symbol} not found")
+                st.error(f"Symbol {symbol} not found or endpoint incorrect")
                 return self._get_mock_data(symbol)
             else:
-                st.warning(f"API returned {response.status_code}, using mock data")
+                st.warning(f"API returned {response.status_code}: {response.text[:100]}... Using mock data")
                 return self._get_mock_data(symbol)
                 
         except requests.exceptions.RequestException as e:
-            st.warning(f"Network issue: {str(e)[:50]}... Using mock data")
+            st.warning(f"Network issue: {str(e)[:100]}... Using mock data")
             return self._get_mock_data(symbol)
         except Exception as e:
-            st.warning(f"Unexpected error: {str(e)[:50]}... Using mock data")
+            st.warning(f"Unexpected error: {str(e)[:100]}... Using mock data")
             return self._get_mock_data(symbol)
     
     def get_gex_profile(self, symbol: str, expiry: str = 'all') -> Dict:
