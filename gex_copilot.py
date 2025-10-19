@@ -2487,7 +2487,22 @@ class StrategyEngine:
 
 ## 📍 Critical Levels
 - **Current: ${spot:.2f}**
-- **Flip Point: ${flip:.2f}** ({((flip-spot)/spot*100):+.2f}% away if spot != 0 else 'N/A'})
+flip_percent = f"{((flip-spot)/spot*100):+.2f}%" if spot != 0 else "N/A"
+        plan = f"""
+# 🎯 {symbol} GAME PLAN - {day} {time_now} CT
+
+## 📊 Market Maker Positioning
+- **State: {mm_state}** - {state_config['behavior']}
+- **Net GEX: ${net_gex/1e9:.2f}B**
+- **Action Required: {state_config['action']}**
+- **Confidence: {state_config['confidence']}%**
+
+## 📍 Critical Levels
+- **Current: ${spot:.2f}**
+- **Flip Point: ${flip:.2f}** ({flip_percent} away)
+- **Call Wall: ${market_data.get('call_wall', 0):.2f}**
+- **Put Wall: ${market_data.get('put_wall', 0):.2f}**
+        """
 - **Call Wall: ${market_data.get('call_wall', 0):.2f}**
 - **Put Wall: ${market_data.get('put_wall', 0):.2f}**
         """
