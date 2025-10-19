@@ -2481,7 +2481,7 @@ class StrategyEngine:
 
 ## 📊 Market Maker Positioning
 - **State: {mm_state}** - {state_config['behavior']}
-- **Net GEX: ${net_gex/1e9:.2f}B**
+- **Net GEX: ${net_gex/1000000000:.2f}B**
 - **Action Required: {state_config['action']}**
 - **Confidence: {state_config['confidence']}%**
 
