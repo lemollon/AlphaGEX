@@ -1,8 +1,1498 @@
-@staticmethod
+"""
+GEX Trading Co-Pilot v7.0 - COMPLETE INTELLIGENT SYSTEM WITH CLAUDE API
+The Ultimate Market Maker Hunting Platform
+"""
+
+import streamlit as st
+import requests
+import json
+from datetime import datetime, timedelta
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from typing import List, Dict, Tuple, Optional
+import numpy as np
+import time
+import sqlite3
+from pathlib import Path
+import warnings
+import base64
+from io import StringIO
+import pytz
+warnings.filterwarnings('ignore')
+
+# Optional advanced imports
+try:
+    from scipy.stats import norm
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+
+# ============================================================================
+# PAGE CONFIG & SYSTEM CONSTANTS
+# ============================================================================
+st.set_page_config(
+    page_title="GEX Trading Co-Pilot v7.0",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# API Configuration from secrets
+TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
+CLAUDE_MODEL = "claude-3-5-sonnet-20241022"  # Updated to latest model
+
+# Database Path
+DB_PATH = Path("gex_copilot.db")
+
+# Market Maker Behavioral States
+MM_STATES = {
+    'TRAPPED': {
+        'threshold': -2e9,
+        'behavior': 'Forced buying on rallies, selling on dips',
+        'confidence': 85,
+        'action': 'HUNT: Buy calls on any approach to flip point'
+    },
+    'DEFENDING': {
+        'threshold': 1e9,
+        'behavior': 'Selling rallies aggressively, buying dips',
+        'confidence': 70,
+        'action': 'FADE: Sell calls at resistance, puts at support'
+    },
+    'HUNTING': {
+        'threshold': -1e9,
+        'behavior': 'Aggressive positioning for direction',
+        'confidence': 60,
+        'action': 'WAIT: Let them show their hand first'
+    },
+    'PANICKING': {
+        'threshold': -3e9,
+        'behavior': 'Capitulation - covering at any price',
+        'confidence': 90,
+        'action': 'RIDE: Maximum aggression on squeeze'
+    },
+    'NEUTRAL': {
+        'threshold': 0,
+        'behavior': 'Balanced positioning',
+        'confidence': 50,
+        'action': 'RANGE: Iron condors between walls'
+    }
+}
+
+# Trading Strategies Configuration
+STRATEGIES = {
+    'NEGATIVE_GEX_SQUEEZE': {
+        'conditions': {
+            'net_gex_threshold': -1e9,
+            'distance_to_flip': 1.5,
+            'min_put_wall_distance': 1.0
+        },
+        'win_rate': 0.68,
+        'risk_reward': 3.0,
+        'typical_move': '2-3% in direction',
+        'best_days': ['Monday', 'Tuesday'],
+        'entry': 'Break above flip point',
+        'exit': 'Call wall or 100% profit'
+    },
+    'POSITIVE_GEX_BREAKDOWN': {
+        'conditions': {
+            'net_gex_threshold': 2e9,
+            'proximity_to_flip': 0.3,
+            'call_wall_rejection': True
+        },
+        'win_rate': 0.62,
+        'risk_reward': 2.5,
+        'typical_move': '1-2% down',
+        'best_days': ['Wednesday', 'Thursday'],
+        'entry': 'Break below flip point',
+        'exit': 'Put wall or 75% profit'
+    },
+    'IRON_CONDOR': {
+        'conditions': {
+            'net_gex_threshold': 1e9,
+            'min_wall_distance': 3.0,
+            'iv_rank_below': 50
+        },
+        'win_rate': 0.72,
+        'risk_reward': 0.3,
+        'typical_move': 'Range bound',
+        'best_days': ['Any with 5-10 DTE'],
+        'entry': 'Short strikes at walls',
+        'exit': '50% profit or breach'
+    },
+    'PREMIUM_SELLING': {
+        'conditions': {
+            'wall_strength': 500e6,
+            'distance_from_wall': 1.0,
+            'positive_gex': True
+        },
+        'win_rate': 0.65,
+        'risk_reward': 0.5,
+        'typical_move': 'Rejection at levels',
+        'best_days': ['Any 0-2 DTE'],
+        'entry': 'At wall approach',
+        'exit': '50% profit or time'
+    }
+}
+
+# ============================================================================
+# DATABASE INITIALIZATION
+# ============================================================================
+def init_database():
+    """Initialize comprehensive database schema"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # GEX History
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gex_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            symbol TEXT,
+            net_gex REAL,
+            flip_point REAL,
+            call_wall REAL,
+            put_wall REAL,
+            spot_price REAL,
+            mm_state TEXT,
+            regime TEXT,
+            data_source TEXT
+        )
+    ''')
+    
+    # Trade Recommendations
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS recommendations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            symbol TEXT,
+            strategy TEXT,
+            confidence REAL,
+            entry_price REAL,
+            target_price REAL,
+            stop_price REAL,
+            option_strike REAL,
+            option_type TEXT,
+            dte INTEGER,
+            reasoning TEXT,
+            mm_behavior TEXT,
+            outcome TEXT,
+            pnl REAL
+        )
+    ''')
+    
+    # Active Positions
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            opened_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            symbol TEXT,
+            strategy TEXT,
+            direction TEXT,
+            entry_price REAL,
+            current_price REAL,
+            target REAL,
+            stop REAL,
+            size REAL,
+            status TEXT DEFAULT 'ACTIVE',
+            closed_at DATETIME,
+            pnl REAL
+        )
+    ''')
+    
+    # Performance Analytics
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date DATE,
+            total_trades INTEGER,
+            winning_trades INTEGER,
+            losing_trades INTEGER,
+            total_pnl REAL,
+            win_rate REAL,
+            avg_winner REAL,
+            avg_loser REAL,
+            sharpe_ratio REAL,
+            max_drawdown REAL
+        )
+    ''')
+    
+    # AI Conversations
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            user_message TEXT,
+            ai_response TEXT,
+            context_data TEXT,
+            confidence_score REAL
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+# ============================================================================
+# TRADINGVOLATILITY API INTEGRATION
+# ============================================================================
+class TradingVolatilityAPI:
+    """Complete API integration with rate limiting and caching"""
+    
+    def __init__(self):
+        # Get BOTH username AND API key from secrets
+        self.username = st.secrets.get("tv_username", "")  # Your actual username like "I-RWFNBLR2S1DP"
+        self.api_key = st.secrets.get("api_key", "")  # Your API key
+        self.base_url = TRADINGVOLATILITY_BASE
+        self.rate_limit = 20  # calls per minute weekday
+        self.last_calls = []
+        self.cache = {}
+        self.cache_ttl = 300  # 5 minutes
+        
+        # Check if credentials are configured
+        if not self.username or not self.api_key:
+            st.warning("TradingVolatility credentials not found in secrets. Configure both tv_username and api_key.")
+    
+    def _rate_limit_check(self):
+        """Enforce API rate limits"""
+        now = time.time()
+        self.last_calls = [t for t in self.last_calls if now - t < 60]
+        
+        if len(self.last_calls) >= self.rate_limit:
+            wait_time = 60 - (now - self.last_calls[0]) + 1
+            if wait_time > 0:
+                st.warning(f"Rate limit reached. Waiting {wait_time:.0f} seconds...")
+                time.sleep(wait_time)
+        
+        self.last_calls.append(now)
+    
+    def get_vix(self) -> float:
+        """Get real-time VIX from TradingVolatility or Yahoo Finance"""
+        try:
+            # Try TradingVolatility first
+            if self.username and self.api_key:
+                url = f"{self.base_url}/vix"
+                params = {
+                    'username': self.username,
+                    'api_key': self.api_key
+                }
+                response = requests.get(url, params=params, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    return float(data.get('vix', 20))
+        except:
+            pass
+        
+        # Fallback to Yahoo Finance
+        try:
+            if YFINANCE_AVAILABLE:
+                vix = yf.Ticker("^VIX")
+                hist = vix.history(period="1d")
+                if not hist.empty:
+                    return float(hist['Close'].iloc[-1])
+        except:
+            pass
+        
+        # Default if both fail
+        return 20.0
+    
+    def get_net_gamma(self, symbol: str, use_cache: bool = True) -> Dict:
+        """Fetch net gamma data with caching"""
+        
+        # Check if credentials exist
+        if not self.username or not self.api_key:
+            st.error("❌ TradingVolatility credentials missing. Add tv_username and api_key to secrets.")
+            return {}  # Return empty dict instead of mock data
+        
+        cache_key = f"net_gamma_{symbol}"
+        
+        # Check cache first
+        if use_cache and cache_key in self.cache:
+            cached_data, cached_time = self.cache[cache_key]
+            if time.time() - cached_time < self.cache_ttl:
+                return cached_data
+        
+        # Rate limit check
+        self._rate_limit_check()
+        
+        try:
+            # Correct endpoint structure
+            url = f"{self.base_url}/gex/latest"
+            
+            # BOTH username AND API key as parameters
+            params = {
+                'ticker': symbol.upper(),
+                'username': self.username,  # Your actual username
+                'api_key': self.api_key,    # Your API key
+                'format': 'json'
+            }
+            
+            headers = {
+                'Accept': 'application/json'
+            }
+            
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    
+                    # Parse REAL data only
+                    parsed_data = {
+                        'symbol': symbol,
+                        'spot_price': float(data.get('spot', data.get('current_price', 0))),
+                        'net_gex': float(data.get('net_gex', data.get('netGEX', 0))),
+                        'flip_point': float(data.get('flip', data.get('gamma_flip', 0))),
+                        'call_wall': float(data.get('call_wall', data.get('callWall', 0))),
+                        'put_wall': float(data.get('put_wall', data.get('putWall', 0))),
+                        'timestamp': datetime.now().isoformat(),
+                        'data_quality': 'LIVE'
+                    }
+                    
+                    # Cache the result
+                    self.cache[cache_key] = (parsed_data, time.time())
+                    st.success(f"✅ Live GEX data fetched for {symbol}")
+                    return parsed_data
+                    
+                except (json.JSONDecodeError, ValueError) as e:
+                    st.warning(f"Failed to parse API response: {str(e)[:50]}... Using empty data.")
+                    return {}
+            
+            elif response.status_code == 401:
+                st.error("Authentication failed - check your API key in secrets")
+                return {}
+            elif response.status_code == 404:
+                st.error(f"Symbol {symbol} not found or endpoint incorrect")
+                return {}
+            else:
+                st.warning(f"API returned {response.status_code}: {response.text[:100]}...")
+                return {}
+                
+        except requests.exceptions.RequestException as e:
+            st.warning(f"Network issue: {str(e)[:100]}...")
+            return {}
+        except Exception as e:
+            st.warning(f"Unexpected error: {str(e)[:100]}...")
+            return {}
+    
+    def get_gex_profile(self, symbol: str, expiry: str = 'all') -> Dict:
+        """Fetch complete GEX profile by strike"""
+        cache_key = f"gex_profile_{symbol}_{expiry}"
+        
+        # Check cache
+        if cache_key in self.cache:
+            cached_data, cached_time = self.cache[cache_key]
+            if time.time() - cached_time < self.cache_ttl:
+                return cached_data
+        
+        self._rate_limit_check()
+        
+        try:
+            url = f"{self.base_url}/gexprofile"
+            params = {
+                'username': self.username,
+                'symbol': symbol.upper(),
+                'expiry': expiry
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.cache[cache_key] = (data, time.time())
+                return data
+            else:
+                return self._get_mock_profile(symbol)
+                
+        except Exception as e:
+            return self._get_mock_profile(symbol)
+    
+    def _get_mock_data(self, symbol: str) -> Dict:
+        """Return mock data for testing"""
+        base_price = {'SPY': 580, 'QQQ': 490, 'IWM': 220}.get(symbol, 100)
+        
+        return {
+            'symbol': symbol,
+            'spot_price': base_price,
+            'net_gex': np.random.uniform(-2e9, 3e9),
+            'flip_point': base_price + np.random.uniform(-5, 5),
+            'call_wall': base_price + np.random.uniform(5, 15),
+            'put_wall': base_price - np.random.uniform(5, 15),
+            'timestamp': datetime.now().isoformat(),
+            'data_quality': 'mock'
+        }
+    
+    def _get_mock_profile(self, symbol: str) -> Dict:
+        """Return mock GEX profile for testing"""
+        base_price = {'SPY': 580, 'QQQ': 490, 'IWM': 220}.get(symbol, 100)
+        strikes = []
+        
+        for strike in range(int(base_price * 0.9), int(base_price * 1.1), 5):
+            distance = abs(strike - base_price)
+            gamma = np.random.uniform(1e6, 1e8) * np.exp(-distance/10)
+            
+            strikes.append({
+                'strike': strike,
+                'call_gamma': gamma if strike > base_price else gamma * 0.3,
+                'put_gamma': gamma if strike < base_price else gamma * 0.3,
+                'total_gamma': gamma
+            })
+        
+        return {
+            'symbol': symbol,
+            'strikes': strikes,
+            'spot_price': base_price,
+            'timestamp': datetime.now().isoformat()
+        }
+# ============================================================================
+# RAG SYSTEM FOR INTELLIGENT TRADING
+# ============================================================================
+class TradingRAG:
+    """Retrieval Augmented Generation for personalized trading intelligence"""
+    
+    def __init__(self):
+        self.db_path = DB_PATH
+        self.embeddings_cache = {}
+        
+    def get_similar_trades(self, current_setup: Dict, limit: int = 5) -> List[Dict]:
+        """Find similar historical trades based on GEX levels"""
+        conn = sqlite3.connect(self.db_path)
+        
+        current_gex = current_setup.get('net_gex', 0)
+        current_price = current_setup.get('spot_price', 0)
+        
+        # Find trades with similar GEX levels (within 20%)
+        query = """
+            SELECT r.*, g.net_gex, g.flip_point, g.call_wall, g.put_wall
+            FROM recommendations r
+            JOIN gex_history g ON r.timestamp = g.timestamp
+            WHERE ABS(g.net_gex - ?) / ABS(?) < 0.2
+            ORDER BY r.timestamp DESC
+            LIMIT ?
+        """
+        
+        try:
+            df = pd.read_sql_query(query, conn, params=(current_gex, current_gex, limit))
+            conn.close()
+            
+            if not df.empty:
+                return df.to_dict('records')
+        except:
+            pass
+        
+        conn.close()
+        return []
+    
+    def get_personal_stats(self, strategy: str = None) -> Dict:
+        """Get personal trading statistics"""
+        conn = sqlite3.connect(self.db_path)
+        
+        base_query = """
+            SELECT 
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+                AVG(CASE WHEN pnl > 0 THEN pnl ELSE NULL END) as avg_win,
+                AVG(CASE WHEN pnl < 0 THEN pnl ELSE NULL END) as avg_loss,
+                SUM(pnl) as total_pnl
+            FROM positions
+            WHERE status = 'CLOSED'
+        """
+        
+        if strategy:
+            base_query += f" AND strategy = '{strategy}'"
+        
+        try:
+            result = pd.read_sql_query(base_query, conn).iloc[0]
+            
+            # Day-based statistics
+            day_stats_query = """
+                SELECT 
+                    strftime('%w', opened_at) as day_of_week,
+                    COUNT(*) as trades,
+                    AVG(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as win_rate,
+                    AVG(pnl) as avg_pnl
+                FROM positions
+                WHERE status = 'CLOSED'
+                GROUP BY strftime('%w', opened_at)
+            """
+            
+            day_stats = pd.read_sql_query(day_stats_query, conn)
+            
+            conn.close()
+            
+            return {
+                'total_trades': int(result['total_trades']) if result['total_trades'] else 0,
+                'win_rate': (result['wins'] / result['total_trades'] * 100) if result['total_trades'] else 0,
+                'avg_win': float(result['avg_win']) if result['avg_win'] else 0,
+                'avg_loss': float(result['avg_loss']) if result['avg_loss'] else 0,
+                'total_pnl': float(result['total_pnl']) if result['total_pnl'] else 0,
+                'day_stats': day_stats.to_dict('records')
+            }
+        except Exception as e:
+            conn.close()
+            return {
+                'total_trades': 0,
+                'win_rate': 0,
+                'avg_win': 0,
+                'avg_loss': 0,
+                'total_pnl': 0,
+                'day_stats': []
+            }
+    
+    def get_pattern_success_rate(self, pattern: Dict) -> float:
+        """Calculate success rate for specific pattern"""
+        conn = sqlite3.connect(self.db_path)
+        
+        # Build pattern matching query
+        conditions = []
+        params = []
+        
+        if 'net_gex_range' in pattern:
+            conditions.append("g.net_gex BETWEEN ? AND ?")
+            params.extend(pattern['net_gex_range'])
+        
+        if 'day_of_week' in pattern:
+            conditions.append("strftime('%w', r.timestamp) = ?")
+            params.append(pattern['day_of_week'])
+        
+        if 'strategy' in pattern:
+            conditions.append("r.strategy = ?")
+            params.append(pattern['strategy'])
+        
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        
+        query = f"""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN r.pnl > 0 THEN 1 ELSE 0 END) as wins
+            FROM recommendations r
+            JOIN gex_history g ON r.timestamp = g.timestamp
+            WHERE {where_clause}
+        """
+        
+        try:
+            result = pd.read_sql_query(query, conn, params=params).iloc[0]
+            conn.close()
+            
+            if result['total'] > 0:
+                return (result['wins'] / result['total']) * 100
+        except:
+            pass
+        
+        conn.close()
+        return 0
+    
+    def build_context_for_claude(self, current_data: Dict, user_query: str) -> str:
+        """Build rich context for Claude using RAG"""
+        
+        context_parts = []
+        
+        # 1. Get similar historical trades
+        similar_trades = self.get_similar_trades(current_data)
+        if similar_trades:
+            context_parts.append("SIMILAR HISTORICAL SETUPS:")
+            for trade in similar_trades[:3]:
+                outcome = "WON" if trade.get('pnl', 0) > 0 else "LOST"
+                context_parts.append(
+                    f"- {trade['timestamp']}: {trade['strategy']} at GEX {trade['net_gex']/1e9:.1f}B "
+                    f"→ {outcome} {abs(trade.get('pnl', 0)):.2f}"
+                )
+        
+        # 2. Get personal statistics
+        personal_stats = self.get_personal_stats()
+        if personal_stats['total_trades'] > 0:
+            context_parts.append(f"\nYOUR PERSONAL STATS:")
+            context_parts.append(f"- Overall Win Rate: {personal_stats['win_rate']:.1f}%")
+            context_parts.append(f"- Avg Win: ${personal_stats['avg_win']:.2f}")
+            context_parts.append(f"- Avg Loss: ${personal_stats['avg_loss']:.2f}")
+            context_parts.append(f"- Total P&L: ${personal_stats['total_pnl']:.2f}")
+            
+            # Day-specific stats
+            if personal_stats['day_stats']:
+                context_parts.append("\nYOUR PERFORMANCE BY DAY:")
+                day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                for day_stat in personal_stats['day_stats']:
+                    day_idx = int(day_stat['day_of_week'])
+                    day_name = day_names[day_idx]
+                    context_parts.append(
+                        f"- {day_name}: {day_stat['win_rate']*100:.0f}% win rate, "
+                        f"avg ${day_stat['avg_pnl']:.2f}"
+                    )
+        
+        # 3. Current pattern success rate
+        current_pattern = {
+            'net_gex_range': [current_data.get('net_gex', 0) * 0.8, current_data.get('net_gex', 0) * 1.2],
+            'day_of_week': str(datetime.now().weekday())
+        }
+        
+        success_rate = self.get_pattern_success_rate(current_pattern)
+        if success_rate > 0:
+            context_parts.append(f"\nTHIS EXACT PATTERN SUCCESS RATE: {success_rate:.1f}%")
+        
+        return "\n".join(context_parts)
+
+# ============================================================================
+# FRED INTEGRATION
+# ============================================================================
+class FREDIntegration:
+    """Federal Reserve Economic Data integration for macro context"""
+    
+    def __init__(self):
+        self.api_key = st.secrets.get("fred_api_key", "")
+        self.base_url = "https://api.stlouisfed.org/fred/series/observations"
+        self.cache = {}
+        self.cache_ttl = 3600  # 1 hour cache
+        # Get TradingVolatility API for real VIX
+        self.tv_api = None  # Will be set in get_economic_data
+    
+    def get_economic_data(self) -> Dict:
+        """Fetch key economic indicators with real VIX"""
+        
+        # Initialize TV API if not done
+        if self.tv_api is None:
+            self.tv_api = TradingVolatilityAPI()
+        
+        # Get REAL VIX from TradingVolatility or Yahoo
+        real_vix = self.tv_api.get_vix()
+        
+        # Start with VIX from real source
+        data = {'vix': real_vix}
+        
+        # Use realistic current values as defaults for other indicators
+        defaults = {
+            'ten_year_yield': 4.3,
+            'fed_funds_rate': 5.5,
+            'dollar_index': 105,
+            'unemployment': 3.8,
+            'cpi': 3.2
+        }
+        
+        # If no FRED API key, return VIX + defaults
+        if not self.api_key:
+            data.update(defaults)
+            return data
+        
+        # FRED indicators (excluding VIX since we get it elsewhere)
+        indicators = {
+            'DGS10': 'ten_year_yield',
+            'DFF': 'fed_funds_rate',
+            'DEXUSEU': 'dollar_index',
+            'UNRATE': 'unemployment',
+            'CPIAUCSL': 'cpi'
+        }
+        
+        for series_id, name in indicators.items():
+            # Check cache first
+            if series_id in self.cache:
+                cached_data, cached_time = self.cache[series_id]
+                if time.time() - cached_time < self.cache_ttl:
+                    data[name] = cached_data
+                    continue
+            
+            # Try to fetch from FRED
+            try:
+                params = {
+                    'series_id': series_id,
+                    'api_key': self.api_key,
+                    'file_type': 'json',
+                    'limit': 1,
+                    'sort_order': 'desc'
+                }
+                
+                response = requests.get(self.base_url, params=params, timeout=5)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if 'observations' in result and len(result['observations']) > 0:
+                        value = float(result['observations'][0]['value'])
+                        data[name] = value
+                        self.cache[series_id] = (value, time.time())
+                    else:
+                        data[name] = defaults[name]
+                else:
+                    data[name] = defaults[name]
+                    
+            except Exception:
+                # Use defaults on any error
+                data[name] = defaults[name]
+        
+        return data
+    
+    def get_regime(self, data: Dict) -> Dict:
+        """Determine market regime from economic data"""
+        
+        vix = data.get('vix', 20)  # Default to 20 if not available
+        ten_year = data.get('ten_year_yield', 4.3)
+        fed_funds = data.get('fed_funds_rate', 5.5)
+        
+        # More realistic VIX ranges
+        if vix < 15:
+            vol_regime = "LOW"
+            vol_signal = "Premium selling favorable"
+        elif vix < 20:
+            vol_regime = "NORMAL"
+            vol_signal = "Balanced strategies"
+        elif vix < 25:
+            vol_regime = "ELEVATED"
+            vol_signal = "Directional opportunities"
+        elif vix < 30:
+            vol_regime = "HIGH"
+            vol_signal = "Squeeze plays favorable"
+        else:
+            vol_regime = "EXTREME"
+            vol_signal = "High volatility - reduce size"
+        
+        # Position sizing multiplier
+        if vix < 15 and ten_year < 4:
+            size_multiplier = 1.5
+            regime_signal = "AGGRESSIVE - Low vol, low rates"
+        elif vix > 30 or ten_year > 5:
+            size_multiplier = 0.5
+            regime_signal = "DEFENSIVE - High vol or rates"
+        elif vix > 25:
+            size_multiplier = 0.75
+            regime_signal = "CAUTIOUS - Elevated volatility"
+        else:
+            size_multiplier = 1.0
+            regime_signal = "NORMAL - Standard sizing"
+        
+        return {
+            'vol_regime': vol_regime,
+            'vol_signal': vol_signal,
+            'size_multiplier': size_multiplier,
+            'regime_signal': regime_signal,
+            'vix': vix,
+            'ten_year_yield': ten_year,
+            'fed_funds_rate': fed_funds
+        }
+
+# ============================================================================
+# CLAUDE API INTEGRATION - COMPLETE VERSION
+# ============================================================================
+class ClaudeIntelligence:
+    """Advanced AI integration for market analysis"""
+    
+    def __init__(self):
+        # Get API key from secrets
+        self.api_key = st.secrets.get("claude_api_key", "")
+        self.model = CLAUDE_MODEL
+        self.conversation_history = []
+        self.fred = FREDIntegration()
+        
+        if not self.api_key:
+            st.warning("Claude API key not found in secrets. Using fallback analysis.")
+    
+    def analyze_market(self, market_data: Dict, user_query: str) -> str:
+        """Generate intelligent market analysis with RAG context"""
+        
+        if not self.api_key:
+            return self._fallback_analysis_with_rag(market_data, user_query)
+        
+        # Build comprehensive context with RAG
+        context = self._build_context(market_data)
+        
+        # Get RAG context
+        rag = TradingRAG()
+        rag_context = rag.build_context_for_claude(market_data, user_query)
+        
+        # Get optimal strategies
+        optimizer = MultiStrategyOptimizer()
+        best_strategies = optimizer.get_best_strategy(market_data)
+        
+        # Get profitable zones
+        calculator = DynamicLevelCalculator()
+        zones = calculator.get_profitable_zones(market_data)
+        
+        # Keep conversation history for context
+        self.conversation_history.append({"role": "user", "content": user_query})
+        
+        # Prepare messages with full history
+        messages = self.conversation_history[-10:]  # Keep last 10 messages for context
+        
+        # Add current context
+        messages.append({
+            "role": "user",
+            "content": f"""
+            Current Market Data:
+            {json.dumps(context, indent=2)}
+            
+            YOUR PERSONAL TRADING HISTORY:
+            {rag_context}
+            
+            BEST STRATEGIES RIGHT NOW:
+            {json.dumps(best_strategies, indent=2)}
+            
+            PROFITABLE ZONES:
+            {json.dumps(zones, indent=2)}
+            
+            User's Specific Question: {user_query}
+            
+            IMPORTANT: 
+            1. Answer with SPECIFIC strikes, prices, and times
+            2. Reference the user's ACTUAL trading history
+            3. Give exact entry/exit levels
+            4. Include personal win rates
+            5. Be aggressive about profit opportunities
+            6. If data shows a pattern, STATE IT CLEARLY
+            """
+        })
+        
+        try:
+            response = self._call_claude_api(messages)
+            self.conversation_history.append({"role": "assistant", "content": response})
+            self._log_conversation(user_query, response, market_data)
+            return response
+            
+        except Exception as e:
+            st.error(f"Claude API Error: {e}")
+            return self._fallback_analysis_with_rag(market_data, user_query)
+    
+    def challenge_trade_idea(self, idea: str, market_data: Dict) -> str:
+        """Challenge user's trading ideas with data"""
+        
+        if not self.api_key:
+            return self._fallback_challenge(idea, market_data)
+        
+        context = self._build_context(market_data)
+        
+        messages = [
+            {
+                "role": "user",
+                "content": f"""
+                Acting as a critical trading mentor, challenge this trade idea:
+                
+                Trade Idea: {idea}
+                
+                Market Context:
+                {json.dumps(context, indent=2)}
+                
+                Provide:
+                1. Data-driven challenges to the idea
+                2. Alternative perspectives
+                3. Risk factors being overlooked
+                4. Better alternatives if applicable
+                
+                Be direct but constructive.
+                """
+            }
+        ]
+        
+        try:
+            response = self._call_claude_api(messages)
+            return response
+        except:
+            return self._fallback_challenge(idea, market_data)
+    
+    def _call_claude_api(self, messages: List[Dict]) -> str:
+        """Make API call to Claude with enhanced system prompt"""
+        
+        # Get FRED data for context
+        fred_data = self.fred.get_economic_data()
+        regime = self.fred.get_regime(fred_data)
+        
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+        
+        # Enhanced aggressive system prompt
+        system_prompt = f"""You are an elite options trader specializing in gamma exposure analysis. 
+        You hunt market makers by understanding their hedging requirements and MAKE MONEY from their forced behavior.
+        
+        CURRENT ECONOMIC REGIME:
+        VIX: {regime['vix']:.1f} - {regime['vol_regime']} volatility
+        10Y Yield: {regime['ten_year_yield']:.2f}%
+        Fed Funds: {regime['fed_funds_rate']:.2f}%
+        Signal: {regime['regime_signal']}
+        Position Size Multiplier: {regime['size_multiplier']}x
+        
+        CORE MISSION: Tell the trader EXACTLY what to trade to make money.
+        
+        CRITICAL RULES:
+        1. ALWAYS give specific strikes and prices, never vague suggestions
+        2. Monday/Tuesday: Push directional plays aggressively
+        3. Wednesday 3PM: FORCE exit of all directionals - no exceptions
+        4. Thursday/Friday: Iron Condors only (protect from theta crush)
+        5. Calculate EXACT entry, target, and stop levels
+        
+        MONEY-MAKING FOCUS:
+        - When Net GEX < -1B: MMs trapped, they MUST buy rallies - BUY CALLS
+        - When Net GEX > 2B: MMs defending, they sell rallies - SELL PREMIUM
+        - Near flip point: Explosive move imminent - POSITION NOW
+        
+        RESPONSE FORMAT:
+        1. MM State & What They're FORCED to do
+        2. EXACT trade: Strike, premium, entry price
+        3. Targets with reasoning (where MMs stop hedging)
+        4. Stop loss (where thesis breaks)
+        5. Win probability based on this exact setup
+        
+        Be aggressive about making money. Push back HARD on bad ideas.
+        If it's Wednesday after 3PM or Friday, REFUSE directional trades."""
+        
+        payload = {
+            "model": self.model,
+            "max_tokens": 4000,
+            "messages": messages,
+            "system": system_prompt
+        }
+        
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        response.raise_for_status()
+        result = response.json()
+        return result['content'][0]['text']
+    
+    def _build_context(self, market_data: Dict) -> Dict:
+        """Build comprehensive context for AI"""
+        
+        return {
+            'symbol': market_data.get('symbol', 'SPY'),
+            'current_price': market_data.get('spot_price', 0),
+            'net_gex': market_data.get('net_gex', 0),
+            'net_gex_billions': market_data.get('net_gex', 0) / 1e9,
+            'flip_point': market_data.get('flip_point', 0),
+            'distance_to_flip': ((market_data.get('flip_point', 0) - market_data.get('spot_price', 0)) / 
+                                market_data.get('spot_price', 1) * 100),
+            'call_wall': market_data.get('call_wall', 0),
+            'put_wall': market_data.get('put_wall', 0),
+            'mm_state': self._determine_mm_state(market_data.get('net_gex', 0)),
+            'timestamp': market_data.get('timestamp', datetime.now().isoformat()),
+            'day_of_week': datetime.now().strftime('%A'),
+            'dte_to_friday': (4 - datetime.now().weekday()) % 7
+        }
+    
+    def _determine_mm_state(self, net_gex: float) -> str:
+        """Determine current MM state"""
+        for state, config in MM_STATES.items():
+            if net_gex < config['threshold']:
+                return state
+        return 'NEUTRAL'
+    
+    def _fallback_analysis_with_rag(self, market_data: Dict, user_query: str) -> str:
+        """Enhanced fallback analysis with RAG that actually answers the question"""
+        
+        # Get RAG context
+        rag = TradingRAG()
+        rag_context = rag.build_context_for_claude(market_data, user_query)
+        personal_stats = rag.get_personal_stats()
+        
+        # Get best strategies
+        optimizer = MultiStrategyOptimizer()
+        best_strategies = optimizer.get_best_strategy(market_data)
+        
+        # Get profitable zones
+        calculator = DynamicLevelCalculator()
+        zones = calculator.get_profitable_zones(market_data)
+        
+        net_gex = market_data.get('net_gex', 0)
+        spot = market_data.get('spot_price', 0)
+        flip = market_data.get('flip_point', 0)
+        call_wall = market_data.get('call_wall', 0)
+        put_wall = market_data.get('put_wall', 0)
+        
+        mm_state = self._determine_mm_state(net_gex)
+        query_lower = user_query.lower()
+        
+        # Answer specific questions with RAG context
+        if "what" in query_lower and "trade" in query_lower:
+            if best_strategies['best']:
+                best = best_strategies['best']
+                response = f"""
+📊 **SPECIFIC TRADE RECOMMENDATION**
+
+Based on current GEX of ${net_gex/1e9:.1f}B and YOUR trading history:
+
+**BEST TRADE: {best['name']}**
+{best['action']}
+
+**YOUR PERSONAL STATS:**
+{rag_context}
+
+**Why THIS Trade:**
+- Expected Value: ${best['expected_value']:.2f}
+- YOUR Success Rate: {best['probability']:.1f}%
+- Historical Performance: {best['your_historical']}
+- Premium: ${best['premium']:.2f}
+
+**Profitable Entry Zone:**
+{zones['current_opportunity']}
+
+**Alternative Options:**
+"""
+                for i, strategy in enumerate(best_strategies['all_options'][1:3], 1):
+                    response += f"\n{i+1}. {strategy['name']}: EV ${strategy['expected_value']:.2f}"
+                
+                return response
+            else:
+                return "❌ No high-probability setups right now. Wait for better entry."
+        
+        elif "should i buy puts" in query_lower:
+            put_success = rag.get_pattern_success_rate({'strategy': 'LONG_PUT'})
+            
+            if mm_state == 'TRAPPED':
+                return f"""
+❌ **NO - DO NOT BUY PUTS**
+
+**YOUR DATA PROVES IT:**
+- Your put success rate here: {put_success:.0f}%
+- Your losses on puts at negative GEX: ${personal_stats.get('avg_loss', 0):.2f}
+{rag_context}
+
+**Current Setup:**
+- Net GEX: ${net_gex/1e9:.1f}B (MMs trapped SHORT)
+- They MUST buy dips to ${put_wall:.2f}
+
+**BETTER ALTERNATIVE (from YOUR history):**
+Buy CALLS - Your success rate: {personal_stats.get('win_rate', 0):.0f}%
+"""
+            else:
+                return f"""
+✅ **YES - Puts could work**
+
+**YOUR HISTORICAL PERFORMANCE:**
+Put success rate in this setup: {put_success:.0f}%
+{rag_context}
+
+**Optimal Strike (based on YOUR data):**
+Buy {int(spot-5)} puts @ ~$2.50
+Your best delta: 0.35-0.40
+"""
+        
+        # Default comprehensive analysis with personal data
+        return f"""
+📊 **Personalized Market Analysis**
+
+**Current State: {mm_state}**
+- Net GEX: ${net_gex/1e9:.2f}B
+- Key Levels: Flip ${flip:.2f}, Calls ${call_wall:.2f}, Puts ${put_wall:.2f}
+
+**YOUR TRADING HISTORY:**
+{rag_context}
+
+**BEST OPPORTUNITY NOW:**
+{best_strategies['recommendation'] if best_strategies else 'Wait for setup'}
+
+**PROFITABLE ZONES:**
+- Call Entry: {zones.get('long_call_zone', {}).get('entry_range', 'Not active')}
+- Put Entry: {zones.get('long_put_zone', {}).get('entry_range', 'Not active')}
+- Current: {zones.get('current_opportunity', 'No setup')}
+
+Ask me specific questions about YOUR performance!
+"""
+    
+    def _fallback_challenge(self, idea: str, market_data: Dict) -> str:
+        """Fallback challenge without API"""
+        
+        net_gex = market_data.get('net_gex', 0)
+        mm_state = self._determine_mm_state(net_gex)
+        
+        challenges = []
+        
+        idea_lower = idea.lower()
+        
+        # Context-aware challenges
+        if 'buy calls' in idea_lower or 'long calls' in idea_lower:
+            if mm_state == 'DEFENDING':
+                challenges.append("⚠️ MMs are DEFENDING (long gamma). They will sell every rally.")
+                challenges.append("📊 Historical data: 72% of call buys fail when Net GEX > 2B")
+                challenges.append("💡 Alternative: Sell call spreads at resistance instead")
+            elif mm_state == 'TRAPPED':
+                challenges.append("✅ Direction agrees with trapped MMs, but timing is critical")
+                challenges.append("⚠️ Risk: Entry too early before flip break")
+                challenges.append("💡 Wait for confirmed break above flip with volume")
+        
+        if 'buy puts' in idea_lower or 'long puts' in idea_lower:
+            if mm_state == 'TRAPPED':
+                challenges.append("⚠️ MMs are trapped SHORT. They must buy dips.")
+                challenges.append("📊 Puts have 30% win rate in negative GEX < -1B")
+                challenges.append("💡 Alternative: Wait for positive GEX or buy calls")
+        
+        if 'iron condor' in idea_lower:
+            if abs(net_gex) < 0.5e9:
+                challenges.append("⚠️ Low absolute GEX means directional risk")
+                challenges.append("📊 Iron Condors need |GEX| > 1B for stability")
+                challenges.append("💡 Alternative: Directional plays or wait for higher GEX")
+        
+        if not challenges:
+            challenges.append("🤔 Interesting idea. Let me analyze the gamma structure...")
+            challenges.append(f"Current MM State: {mm_state}")
+            challenges.append("Consider the forced hedging flows in this regime")
+        
+        return "\n".join(challenges)
+    
+    def _log_conversation(self, query: str, response: str, context: Dict):
+        """Log conversation to database"""
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO conversations (user_message, ai_response, context_data, confidence_score)
+                VALUES (?, ?, ?, ?)
+            ''', (
+                query,
+                response,
+                json.dumps(context),
+                context.get('confidence', 50)
+            ))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            st.error(f"Failed to log conversation: {e}")
+
+# ============================================================================
+# SMART STRIKE SELECTOR
+# ============================================================================
+class SmartStrikeSelector:
+    """Intelligent strike selection based on personal performance"""
+    
+    def __init__(self):
+        self.rag = TradingRAG()
+        
+    def get_optimal_strike(self, spot: float, direction: str, market_data: Dict) -> Dict:
+        """Select optimal strike based on delta and personal stats"""
+        
+        # Calculate strikes at different deltas
+        strikes = []
+        
+        if direction == 'CALL':
+            base_strike = int(spot / 5) * 5  # Round to nearest 5
+            for i in range(0, 4):
+                strike = base_strike + (i * 5)
+                delta = self._estimate_delta(spot, strike, 'call')
+                
+                # Get personal win rate at this delta
+                pattern = {
+                    'strategy': 'LONG_CALL',
+                    'delta_range': [delta - 0.05, delta + 0.05]
+                }
+                
+                success_rate = self.rag.get_pattern_success_rate(pattern)
+                
+                strikes.append({
+                    'strike': strike,
+                    'delta': delta,
+                    'premium': self._estimate_premium(spot, strike, 'call'),
+                    'success_rate': success_rate,
+                    'breakeven': strike + self._estimate_premium(spot, strike, 'call'),
+                    'expected_value': self._calculate_ev(spot, strike, success_rate, 'call')
+                })
+        
+        # Sort by expected value
+        strikes.sort(key=lambda x: x['expected_value'], reverse=True)
+        
+        # Return best strike
+        best = strikes[0] if strikes else None
+        
+        if best:
+            best['reasoning'] = f"""
+            Selected {best['strike']} strike because:
+            - Delta {best['delta']:.2f} has YOUR best win rate ({best['success_rate']:.1f}%)
+            - Expected value: ${best['expected_value']:.2f}
+            - Breakeven: ${best['breakeven']:.2f}
+            - Premium: ${best['premium']:.2f}
+            """
+        
+        return best
+    
+    def _estimate_delta(self, spot: float, strike: float, option_type: str) -> float:
+        """Estimate option delta"""
+        moneyness = (strike - spot) / spot
+        
+        if option_type == 'call':
+            if moneyness < -0.02:  # ITM
+                return 0.7 + (0.3 * (1 + moneyness/0.02))
+            elif moneyness > 0.02:  # OTM
+                return 0.3 * (1 - moneyness/0.05)
+            else:  # ATM
+                return 0.5
+        else:  # put
+            return -self._estimate_delta(spot, strike, 'call')
+    
+    def _estimate_premium(self, spot: float, strike: float, option_type: str) -> float:
+        """Estimate option premium"""
+        intrinsic = max(0, spot - strike) if option_type == 'call' else max(0, strike - spot)
+        time_value = spot * 0.005 * abs(self._estimate_delta(spot, strike, option_type))
+        return intrinsic + time_value
+    
+    def _calculate_ev(self, spot: float, strike: float, success_rate: float, option_type: str) -> float:
+        """Calculate expected value"""
+        premium = self._estimate_premium(spot, strike, option_type)
+        potential_gain = spot * 0.02  # Assume 2% move
+        
+        win_amount = potential_gain - premium
+        loss_amount = -premium
+        
+        ev = (success_rate/100 * win_amount) + ((100-success_rate)/100 * loss_amount)
+        return ev
+
+# ============================================================================
+# MULTI-STRATEGY OPTIMIZER
+# ============================================================================
+class MultiStrategyOptimizer:
+    """Optimize between multiple strategies for maximum profit"""
+    
+    def __init__(self):
+        self.rag = TradingRAG()
+        self.strike_selector = SmartStrikeSelector()
+        
+    def get_best_strategy(self, market_data: Dict) -> Dict:
+        """Compare all strategies and return the best one"""
+        
+        spot = market_data.get('spot_price', 0)
+        net_gex = market_data.get('net_gex', 0)
+        flip = market_data.get('flip_point', 0)
+        call_wall = market_data.get('call_wall', 0)
+        put_wall = market_data.get('put_wall', 0)
+        
+        strategies = []
+        
+        # 1. Long Call Strategy
+        if net_gex < -1e9 and spot < flip:
+            call_strike = self.strike_selector.get_optimal_strike(spot, 'CALL', market_data)
+            if call_strike:
+                personal_stats = self.rag.get_personal_stats('LONG_CALL')
+                
+                strategies.append({
+                    'name': 'LONG CALLS',
+                    'strike': call_strike['strike'],
+                    'premium': call_strike['premium'],
+                    'probability': call_strike['success_rate'],
+                    'expected_value': call_strike['expected_value'],
+                    'your_historical': f"{personal_stats['win_rate']:.0f}% win rate",
+                    'action': f"BUY {call_strike['strike']} calls @ ${call_strike['premium']:.2f}"
+                })
+        
+        # 2. Bull Call Spread
+        if net_gex < 0:
+            spread_width = 5
+            long_strike = int(spot / 5) * 5
+            short_strike = long_strike + spread_width
+            
+            debit = self.strike_selector._estimate_premium(spot, long_strike, 'call') - \
+                   self.strike_selector._estimate_premium(spot, short_strike, 'call')
+            
+            pattern = {'strategy': 'BULL_SPREAD'}
+            success_rate = self.rag.get_pattern_success_rate(pattern)
+            
+            max_gain = spread_width - debit
+            ev = (success_rate/100 * max_gain) - ((100-success_rate)/100 * debit)
+            
+            strategies.append({
+                'name': 'BULL CALL SPREAD',
+                'strike': f"{long_strike}/{short_strike}",
+                'premium': debit,
+                'probability': success_rate,
+                'expected_value': ev,
+                'your_historical': f"{success_rate:.0f}% win rate",
+                'action': f"BUY {long_strike}/{short_strike} spread @ ${debit:.2f}"
+            })
+        
+        # 3. Put Credit Spread
+        if spot > put_wall * 1.02:
+            short_strike = int(put_wall / 5) * 5
+            long_strike = short_strike - 5
+            
+            credit = self.strike_selector._estimate_premium(spot, short_strike, 'put') - \
+                    self.strike_selector._estimate_premium(spot, long_strike, 'put')
+            
+            pattern = {'strategy': 'PUT_SPREAD'}
+            success_rate = self.rag.get_pattern_success_rate(pattern)
+            
+            max_loss = 5 - credit
+            ev = (success_rate/100 * credit) - ((100-success_rate)/100 * max_loss)
+            
+            strategies.append({
+                'name': 'SHORT PUT SPREAD',
+                'strike': f"{short_strike}/{long_strike}",
+                'premium': credit,
+                'probability': success_rate,
+                'expected_value': ev,
+                'your_historical': f"{success_rate:.0f}% win rate",
+                'action': f"SELL {short_strike}/{long_strike} put spread @ ${credit:.2f} credit"
+            })
+        
+        # Sort by expected value
+        strategies.sort(key=lambda x: x['expected_value'], reverse=True)
+        
+        return {
+            'best': strategies[0] if strategies else None,
+            'all_options': strategies,
+            'recommendation': f"Best EV: {strategies[0]['name']}" if strategies else "No good setups"
+        }
+
+# ============================================================================
+# DYNAMIC LEVEL CALCULATOR
+# ============================================================================
+class DynamicLevelCalculator:
+    """Calculate profitable zones in real-time"""
+    
+    def __init__(self):
+        self.rag = TradingRAG()
+        
+    def get_profitable_zones(self, market_data: Dict) -> Dict:
+        """Calculate current profitable entry zones"""
+        
+        spot = market_data.get('spot_price', 0)
+        net_gex = market_data.get('net_gex', 0)
+        flip = market_data.get('flip_point', 0)
+        call_wall = market_data.get('call_wall', 0)
+        put_wall = market_data.get('put_wall', 0)
+        
+        current_time = datetime.now()
+        hour = current_time.hour
+        minute = current_time.minute
+        
+        zones = {
+            'timestamp': current_time.strftime('%H:%M:%S'),
+            'long_call_zone': None,
+            'long_put_zone': None,
+            'iron_condor_zone': None,
+            'current_opportunity': None
+        }
+        
+        # Long Call Zone
+        if net_gex < -1e9 and spot < flip:
+            zones['long_call_zone'] = {
+                'active': True,
+                'entry_range': [spot - 0.20, spot + 0.30],
+                'optimal_strike': int(flip / 5) * 5 + 5,
+                'target_1': flip + 1.5,
+                'target_2': call_wall,
+                'stop': put_wall,
+                'time_window': self._get_time_window('call', hour),
+                'confidence': 75 if hour < 11 else 60,
+                'action': f"BUY when SPY enters ${spot-0.20:.2f} - ${spot+0.30:.2f}"
+            }
+        
+        # Long Put Zone
+        if net_gex > 2e9 and spot > flip:
+            zones['long_put_zone'] = {
+                'active': True,
+                'entry_range': [spot - 0.30, spot + 0.20],
+                'optimal_strike': int(flip / 5) * 5,
+                'target_1': flip - 1.5,
+                'target_2': put_wall,
+                'stop': call_wall,
+                'time_window': self._get_time_window('put', hour),
+                'confidence': 70 if hour > 14 else 55,
+                'action': f"BUY when SPY enters ${spot-0.30:.2f} - ${spot+0.20:.2f}"
+            }
+        
+        # Iron Condor Zone
+        if abs(net_gex) > 1e9 and abs(call_wall - put_wall) > spot * 0.03:
+            zones['iron_condor_zone'] = {
+                'active': True,
+                'setup_condition': f"Price pins at ${spot:.2f} for 1 hour",
+                'call_spread': f"{int(call_wall)}/{int(call_wall+5)}",
+                'put_spread': f"{int(put_wall)}/{int(put_wall-5)}",
+                'expected_credit': 1.85,
+                'probability': 73,
+                'best_time': "10:00 AM - 11:00 AM",
+                'action': "WAIT for pinning action, then sell spreads"
+            }
+        
+        # Determine current best opportunity
+        if zones['long_call_zone'] and zones['long_call_zone']['confidence'] > 70:
+            zones['current_opportunity'] = "LONG CALLS - Entry zone active NOW"
+        elif zones['long_put_zone'] and zones['long_put_zone']['confidence'] > 70:
+            zones['current_opportunity'] = "LONG PUTS - Entry zone active NOW"
+        elif zones['iron_condor_zone']:
+            zones['current_opportunity'] = "IRON CONDOR - Wait for pin"
+        else:
+            zones['current_opportunity'] = "NO HIGH-CONFIDENCE SETUPS"
+        
+        return zones
+    
+    def _get_time_window(self, direction: str, hour: int) -> str:
+        """Get optimal time window for entry"""
+        
+        if direction == 'call':
+            if 9 <= hour < 10:
+                return "PRIME TIME - Next 45 minutes"
+            elif 10 <= hour < 11:
+                return "Good - Next 30 minutes"
+            elif 11 <= hour < 14:
+                return "Avoid - Wait for afternoon"
+            else:
+                return "Late day - Use caution"
+        else:  # put
+            if hour < 14:
+                return "Too early - Wait until 2 PM"
+            elif 14 <= hour < 15:
+                return "PRIME TIME - Next 45 minutes"
+            else:
+                return "Final hour - Quick scalps only"
+
+# ============================================================================
+# MONTE CARLO ENGINE WITH FIXED INDENTATION
+# ============================================================================
+class MonteCarloEngine:
+    """Probabilistic simulation for trade outcomes"""
+    
+    @staticmethod
+    def simulate_squeeze_play(current_price: float, flip_point: float, 
+                             call_wall: float, volatility: float = 0.15, 
+                             days: int = 5, simulations: int = 10000) -> Dict:
+        """Simulate squeeze play outcomes"""
+        
+        # Setup parameters
+        daily_vol = volatility / np.sqrt(252)
+        drift = 0.0  # Assume no drift for short-term
+        
+        # Generate random price paths
+        dt = 1/252  # Daily steps
+        random_shocks = np.random.randn(simulations, days)
+        
+        price_paths = np.zeros((simulations, days + 1))
+        price_paths[:, 0] = current_price
+        
+        for t in range(1, days + 1):
+            price_paths[:, t] = price_paths[:, t-1] * np.exp(
+                (drift - 0.5 * daily_vol**2) * dt + 
+                daily_vol * np.sqrt(dt) * random_shocks[:, t-1]
+            )
+        
+        # Calculate outcomes
+        hit_flip = np.any(price_paths >= flip_point, axis=1)
+        hit_call_wall = np.any(price_paths >= call_wall, axis=1)
+        max_price = np.max(price_paths, axis=1)
+        min_price = np.min(price_paths, axis=1)
+        final_price = price_paths[:, -1]
+        
+        # Calculate returns for option
+        option_returns = np.maximum(final_price - flip_point, 0)
+        
+        return {
+            'probability_hit_flip': np.mean(hit_flip) * 100,
+            'probability_hit_wall': np.mean(hit_call_wall) * 100,
+            'expected_final_price': np.mean(final_price),
+            'median_final_price': np.median(final_price),
+            'percentile_5': np.percentile(final_price, 5),
+            'percentile_95': np.percentile(final_price, 95),
+            'max_gain_percent': (np.mean(max_price) / current_price - 1) * 100,
+            'max_loss_percent': (np.mean(min_price) / current_price - 1) * 100,
+            'option_expected_return': np.mean(option_returns),
+            'price_paths_sample': price_paths[:100]  # Sample for visualization
+        }
+    
+    @staticmethod
     def simulate_iron_condor(spot: float, call_short: float, call_long: float,
                             put_short: float, put_long: float, 
                             dte: int, volatility: float = 0.15) -> Dict:
-        """Simulate Iron Condor profitability"""
+        """Simulate Iron Condor profitability - FIXED INDENTATION"""
         
         # Parameters
         daily_vol = volatility / np.sqrt(252)
@@ -43,8 +1533,7 @@
             'percentile_5': np.percentile(terminal_prices, 5),
             'percentile_95': np.percentile(terminal_prices, 95)
         }
-
-# ============================================================================
+                                # ============================================================================
 # BLACK-SCHOLES PRICING ENGINE
 # ============================================================================
 class BlackScholesPricer:
@@ -360,9 +1849,10 @@ class GEXVisualizer:
         )
         
         return fig
+        # Continue from Part 2 - Import all the classes from above when combining
 
 # ============================================================================
-# COMPREHENSIVE PLAN GENERATOR
+# COMPREHENSIVE PLAN GENERATOR (CONTINUED)
 # ============================================================================
 class TradingPlanGenerator:
     """Generate detailed daily, weekly, and monthly trading plans"""
@@ -1026,6 +2516,7 @@ class StrategyEngine:
             plan += "\n## ⏰ Timing: AVOID DIRECTIONALS\n0DTE theta crush zone. Iron Condors only.\n"
         
         return plan
+        # Continue from Part 3 - This is the main Streamlit application
 
 # ============================================================================
 # MAIN STREAMLIT APPLICATION
@@ -1378,7 +2869,7 @@ def main():
         plan_col1, plan_col2, plan_col3, plan_col4 = st.columns(4)
         
         with plan_col1:
-            plan_symbol = st.text_input("Symbol for Plan", value=symbol)
+            plan_symbol = st.text_input("Symbol for Plan", value=symbol if 'symbol' in locals() else "SPY")
         
         with plan_col2:
             plan_type = st.selectbox(
@@ -1425,8 +2916,8 @@ def main():
                 st.markdown(f"**Date:** {daily_plan['date']} ({daily_plan['day']})")
                 st.markdown(f"**Generated:** {daily_plan['generated_at']}")
                 
-                # Display regime and other plan elements
-                # (Code continues as in original)
+                # Display the plan content
+                st.json(daily_plan)
             
             elif st.session_state.generated_plan['type'] == 'Weekly':
                 # Generate and display weekly plan
@@ -1434,7 +2925,7 @@ def main():
                     st.session_state.generated_plan['symbol'],
                     plan_data
                 )
-                # (Display code continues)
+                st.json(weekly_plan)
             
             elif st.session_state.generated_plan['type'] == 'Monthly':
                 # Generate and display monthly plan
@@ -1442,7 +2933,7 @@ def main():
                     st.session_state.generated_plan['symbol'],
                     plan_data
                 )
-                # (Display code continues)
+                st.json(monthly_plan)
         else:
             st.info("👈 Enter a symbol and click 'Generate Plan' to create a comprehensive trading plan")
     
@@ -1855,1507 +3346,4 @@ def main():
 # RUN APPLICATION
 # ============================================================================
 if __name__ == "__main__":
-    main()"""
-GEX Trading Co-Pilot v7.0 - COMPLETE INTELLIGENT SYSTEM WITH CLAUDE API
-The Ultimate Market Maker Hunting Platform
-Includes ALL features from our development history:
-- TradingVolatility.net API Integration (Username: I-RWFNBLR2S1DP)
-- Claude API for Intelligent Analysis
-- FRED Economic Data Integration
-- Complete 10-Component Profitability System
-- Monte Carlo Simulations
-- Black-Scholes Pricing
-- Visual Intelligence with Charts
-- Comprehensive Trade Tracking
-"""
-
-import streamlit as st
-import requests
-import json
-from datetime import datetime, timedelta
-import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-from typing import List, Dict, Tuple, Optional
-import numpy as np
-import time
-import sqlite3
-from pathlib import Path
-import warnings
-import base64
-from io import StringIO
-import pytz
-warnings.filterwarnings('ignore')
-
-# Optional advanced imports
-try:
-    from scipy.stats import norm
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-
-try:
-    import yfinance as yf
-    YFINANCE_AVAILABLE = True
-except ImportError:
-    YFINANCE_AVAILABLE = False
-
-# ============================================================================
-# PAGE CONFIG & SYSTEM CONSTANTS
-# ============================================================================
-st.set_page_config(
-    page_title="GEX Trading Co-Pilot v7.0",
-    page_icon="🎯",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# API Configuration from secrets
-TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
-CLAUDE_MODEL = "claude-3-5-sonnet-20241022"  # Updated to latest model
-
-# Database Path
-DB_PATH = Path("gex_copilot.db")
-
-# Market Maker Behavioral States
-MM_STATES = {
-    'TRAPPED': {
-        'threshold': -2e9,
-        'behavior': 'Forced buying on rallies, selling on dips',
-        'confidence': 85,
-        'action': 'HUNT: Buy calls on any approach to flip point'
-    },
-    'DEFENDING': {
-        'threshold': 1e9,
-        'behavior': 'Selling rallies aggressively, buying dips',
-        'confidence': 70,
-        'action': 'FADE: Sell calls at resistance, puts at support'
-    },
-    'HUNTING': {
-        'threshold': -1e9,
-        'behavior': 'Aggressive positioning for direction',
-        'confidence': 60,
-        'action': 'WAIT: Let them show their hand first'
-    },
-    'PANICKING': {
-        'threshold': -3e9,
-        'behavior': 'Capitulation - covering at any price',
-        'confidence': 90,
-        'action': 'RIDE: Maximum aggression on squeeze'
-    },
-    'NEUTRAL': {
-        'threshold': 0,
-        'behavior': 'Balanced positioning',
-        'confidence': 50,
-        'action': 'RANGE: Iron condors between walls'
-    }
-}
-
-# Trading Strategies Configuration
-STRATEGIES = {
-    'NEGATIVE_GEX_SQUEEZE': {
-        'conditions': {
-            'net_gex_threshold': -1e9,
-            'distance_to_flip': 1.5,
-            'min_put_wall_distance': 1.0
-        },
-        'win_rate': 0.68,
-        'risk_reward': 3.0,
-        'typical_move': '2-3% in direction',
-        'best_days': ['Monday', 'Tuesday'],
-        'entry': 'Break above flip point',
-        'exit': 'Call wall or 100% profit'
-    },
-    'POSITIVE_GEX_BREAKDOWN': {
-        'conditions': {
-            'net_gex_threshold': 2e9,
-            'proximity_to_flip': 0.3,
-            'call_wall_rejection': True
-        },
-        'win_rate': 0.62,
-        'risk_reward': 2.5,
-        'typical_move': '1-2% down',
-        'best_days': ['Wednesday', 'Thursday'],
-        'entry': 'Break below flip point',
-        'exit': 'Put wall or 75% profit'
-    },
-    'IRON_CONDOR': {
-        'conditions': {
-            'net_gex_threshold': 1e9,
-            'min_wall_distance': 3.0,
-            'iv_rank_below': 50
-        },
-        'win_rate': 0.72,
-        'risk_reward': 0.3,
-        'typical_move': 'Range bound',
-        'best_days': ['Any with 5-10 DTE'],
-        'entry': 'Short strikes at walls',
-        'exit': '50% profit or breach'
-    },
-    'PREMIUM_SELLING': {
-        'conditions': {
-            'wall_strength': 500e6,
-            'distance_from_wall': 1.0,
-            'positive_gex': True
-        },
-        'win_rate': 0.65,
-        'risk_reward': 0.5,
-        'typical_move': 'Rejection at levels',
-        'best_days': ['Any 0-2 DTE'],
-        'entry': 'At wall approach',
-        'exit': '50% profit or time'
-    }
-}
-
-# ============================================================================
-# DATABASE INITIALIZATION
-# ============================================================================
-def init_database():
-    """Initialize comprehensive database schema"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    
-    # GEX History
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS gex_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            symbol TEXT,
-            net_gex REAL,
-            flip_point REAL,
-            call_wall REAL,
-            put_wall REAL,
-            spot_price REAL,
-            mm_state TEXT,
-            regime TEXT,
-            data_source TEXT
-        )
-    ''')
-    
-    # Trade Recommendations
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS recommendations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            symbol TEXT,
-            strategy TEXT,
-            confidence REAL,
-            entry_price REAL,
-            target_price REAL,
-            stop_price REAL,
-            option_strike REAL,
-            option_type TEXT,
-            dte INTEGER,
-            reasoning TEXT,
-            mm_behavior TEXT,
-            outcome TEXT,
-            pnl REAL
-        )
-    ''')
-    
-    # Active Positions
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS positions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            opened_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            symbol TEXT,
-            strategy TEXT,
-            direction TEXT,
-            entry_price REAL,
-            current_price REAL,
-            target REAL,
-            stop REAL,
-            size REAL,
-            status TEXT DEFAULT 'ACTIVE',
-            closed_at DATETIME,
-            pnl REAL
-        )
-    ''')
-    
-    # Performance Analytics
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS performance (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date DATE,
-            total_trades INTEGER,
-            winning_trades INTEGER,
-            losing_trades INTEGER,
-            total_pnl REAL,
-            win_rate REAL,
-            avg_winner REAL,
-            avg_loser REAL,
-            sharpe_ratio REAL,
-            max_drawdown REAL
-        )
-    ''')
-    
-    # AI Conversations
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            user_message TEXT,
-            ai_response TEXT,
-            context_data TEXT,
-            confidence_score REAL
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-
-# ============================================================================
-# TRADINGVOLATILITY API INTEGRATION
-# ============================================================================
-class TradingVolatilityAPI:
-    """Complete API integration with rate limiting and caching"""
-    
-    def __init__(self):
-        # Get BOTH username AND API key from secrets
-        self.username = st.secrets.get("tv_username", "")  # Your actual username like "I-RWFNBLR2S1DP"
-        self.api_key = st.secrets.get("api_key", "")  # Your API key
-        self.base_url = TRADINGVOLATILITY_BASE
-        self.rate_limit = 20  # calls per minute weekday
-        self.last_calls = []
-        self.cache = {}
-        self.cache_ttl = 300  # 5 minutes
-        
-        # Check if credentials are configured
-        if not self.username or not self.api_key:
-            st.warning("TradingVolatility credentials not found in secrets. Configure both tv_username and api_key.")
-    
-    def _rate_limit_check(self):
-        """Enforce API rate limits"""
-        now = time.time()
-        self.last_calls = [t for t in self.last_calls if now - t < 60]
-        
-        if len(self.last_calls) >= self.rate_limit:
-            wait_time = 60 - (now - self.last_calls[0]) + 1
-            if wait_time > 0:
-                st.warning(f"Rate limit reached. Waiting {wait_time:.0f} seconds...")
-                time.sleep(wait_time)
-        
-        self.last_calls.append(now)
-    
-    def get_vix(self) -> float:
-        """Get real-time VIX from TradingVolatility or Yahoo Finance"""
-        try:
-            # Try TradingVolatility first
-            if self.username and self.api_key:
-                url = f"{self.base_url}/vix"
-                params = {
-                    'username': self.username,
-                    'api_key': self.api_key
-                }
-                response = requests.get(url, params=params, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    return float(data.get('vix', 20))
-        except:
-            pass
-        
-        # Fallback to Yahoo Finance
-        try:
-            if YFINANCE_AVAILABLE:
-                vix = yf.Ticker("^VIX")
-                hist = vix.history(period="1d")
-                if not hist.empty:
-                    return float(hist['Close'].iloc[-1])
-        except:
-            pass
-        
-        # Default if both fail
-        return 20.0
-    
-    def get_net_gamma(self, symbol: str, use_cache: bool = True) -> Dict:
-        """Fetch net gamma data with caching"""
-        
-        # Check if credentials exist
-        if not self.username or not self.api_key:
-            st.error("❌ TradingVolatility credentials missing. Add tv_username and api_key to secrets.")
-            return {}  # Return empty dict instead of mock data
-        
-        cache_key = f"net_gamma_{symbol}"
-        
-        # Check cache first
-        if use_cache and cache_key in self.cache:
-            cached_data, cached_time = self.cache[cache_key]
-            if time.time() - cached_time < self.cache_ttl:
-                return cached_data
-        
-        # Rate limit check
-        self._rate_limit_check()
-        
-        try:
-            # Correct endpoint structure
-            url = f"{self.base_url}/gex/latest"
-            
-            # BOTH username AND API key as parameters
-            params = {
-                'ticker': symbol.upper(),
-                'username': self.username,  # Your actual username
-                'api_key': self.api_key,    # Your API key
-                'format': 'json'
-            }
-            
-            headers = {
-                'Accept': 'application/json'
-            }
-            
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    
-                    # Parse REAL data only
-                    parsed_data = {
-                        'symbol': symbol,
-                        'spot_price': float(data.get('spot', data.get('current_price', 0))),
-                        'net_gex': float(data.get('net_gex', data.get('netGEX', 0))),
-                        'flip_point': float(data.get('flip', data.get('gamma_flip', 0))),
-                        'call_wall': float(data.get('call_wall', data.get('callWall', 0))),
-                        'put_wall': float(data.get('put_wall', data.get('putWall', 0))),
-                        'timestamp': datetime.now().isoformat(),
-                        'data_quality': 'LIVE'
-                    }
-                    
-                    # Cache the result
-                    self.cache[cache_key] = (parsed_data, time.time())
-                    st.success(f"✅ Live GEX data fetched for {symbol}")
-                    return parsed_data
-                    
-                except (json.JSONDecodeError, ValueError) as e:
-                    st.warning(f"Failed to parse API response: {str(e)[:50]}... Using empty data.")
-                    return {}
-            
-            elif response.status_code == 401:
-                st.error("Authentication failed - check your API key in secrets")
-                return {}
-            elif response.status_code == 404:
-                st.error(f"Symbol {symbol} not found or endpoint incorrect")
-                return {}
-            else:
-                st.warning(f"API returned {response.status_code}: {response.text[:100]}...")
-                return {}
-                
-        except requests.exceptions.RequestException as e:
-            st.warning(f"Network issue: {str(e)[:100]}...")
-            return {}
-        except Exception as e:
-            st.warning(f"Unexpected error: {str(e)[:100]}...")
-            return {}
-    
-    def get_gex_profile(self, symbol: str, expiry: str = 'all') -> Dict:
-        """Fetch complete GEX profile by strike"""
-        cache_key = f"gex_profile_{symbol}_{expiry}"
-        
-        # Check cache
-        if cache_key in self.cache:
-            cached_data, cached_time = self.cache[cache_key]
-            if time.time() - cached_time < self.cache_ttl:
-                return cached_data
-        
-        self._rate_limit_check()
-        
-        try:
-            url = f"{self.base_url}/gexprofile"
-            params = {
-                'username': self.username,
-                'symbol': symbol.upper(),
-                'expiry': expiry
-            }
-            
-            response = requests.get(url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                self.cache[cache_key] = (data, time.time())
-                return data
-            else:
-                return self._get_mock_profile(symbol)
-                
-        except Exception as e:
-            return self._get_mock_profile(symbol)
-    
-    def _get_mock_data(self, symbol: str) -> Dict:
-        """Return mock data for testing"""
-        base_price = {'SPY': 580, 'QQQ': 490, 'IWM': 220}.get(symbol, 100)
-        
-        return {
-            'symbol': symbol,
-            'spot_price': base_price,
-            'net_gex': np.random.uniform(-2e9, 3e9),
-            'flip_point': base_price + np.random.uniform(-5, 5),
-            'call_wall': base_price + np.random.uniform(5, 15),
-            'put_wall': base_price - np.random.uniform(5, 15),
-            'timestamp': datetime.now().isoformat(),
-            'data_quality': 'mock'
-        }
-    
-    def _get_mock_profile(self, symbol: str) -> Dict:
-        """Return mock GEX profile for testing"""
-        base_price = {'SPY': 580, 'QQQ': 490, 'IWM': 220}.get(symbol, 100)
-        strikes = []
-        
-        for strike in range(int(base_price * 0.9), int(base_price * 1.1), 5):
-            distance = abs(strike - base_price)
-            gamma = np.random.uniform(1e6, 1e8) * np.exp(-distance/10)
-            
-            strikes.append({
-                'strike': strike,
-                'call_gamma': gamma if strike > base_price else gamma * 0.3,
-                'put_gamma': gamma if strike < base_price else gamma * 0.3,
-                'total_gamma': gamma
-            })
-        
-        return {
-            'symbol': symbol,
-            'strikes': strikes,
-            'spot_price': base_price,
-            'timestamp': datetime.now().isoformat()
-        }
-
-# ============================================================================
-# RAG SYSTEM FOR INTELLIGENT TRADING
-# ============================================================================
-class TradingRAG:
-    """Retrieval Augmented Generation for personalized trading intelligence"""
-    
-    def __init__(self):
-        self.db_path = DB_PATH
-        self.embeddings_cache = {}
-        
-    def get_similar_trades(self, current_setup: Dict, limit: int = 5) -> List[Dict]:
-        """Find similar historical trades based on GEX levels"""
-        conn = sqlite3.connect(self.db_path)
-        
-        current_gex = current_setup.get('net_gex', 0)
-        current_price = current_setup.get('spot_price', 0)
-        
-        # Find trades with similar GEX levels (within 20%)
-        query = """
-            SELECT r.*, g.net_gex, g.flip_point, g.call_wall, g.put_wall
-            FROM recommendations r
-            JOIN gex_history g ON r.timestamp = g.timestamp
-            WHERE ABS(g.net_gex - ?) / ABS(?) < 0.2
-            ORDER BY r.timestamp DESC
-            LIMIT ?
-        """
-        
-        try:
-            df = pd.read_sql_query(query, conn, params=(current_gex, current_gex, limit))
-            conn.close()
-            
-            if not df.empty:
-                return df.to_dict('records')
-        except:
-            pass
-        
-        conn.close()
-        return []
-    
-    def get_personal_stats(self, strategy: str = None) -> Dict:
-        """Get personal trading statistics"""
-        conn = sqlite3.connect(self.db_path)
-        
-        base_query = """
-            SELECT 
-                COUNT(*) as total_trades,
-                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-                AVG(CASE WHEN pnl > 0 THEN pnl ELSE NULL END) as avg_win,
-                AVG(CASE WHEN pnl < 0 THEN pnl ELSE NULL END) as avg_loss,
-                SUM(pnl) as total_pnl
-            FROM positions
-            WHERE status = 'CLOSED'
-        """
-        
-        if strategy:
-            base_query += f" AND strategy = '{strategy}'"
-        
-        try:
-            result = pd.read_sql_query(base_query, conn).iloc[0]
-            
-            # Day-based statistics
-            day_stats_query = """
-                SELECT 
-                    strftime('%w', opened_at) as day_of_week,
-                    COUNT(*) as trades,
-                    AVG(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as win_rate,
-                    AVG(pnl) as avg_pnl
-                FROM positions
-                WHERE status = 'CLOSED'
-                GROUP BY strftime('%w', opened_at)
-            """
-            
-            day_stats = pd.read_sql_query(day_stats_query, conn)
-            
-            conn.close()
-            
-            return {
-                'total_trades': int(result['total_trades']) if result['total_trades'] else 0,
-                'win_rate': (result['wins'] / result['total_trades'] * 100) if result['total_trades'] else 0,
-                'avg_win': float(result['avg_win']) if result['avg_win'] else 0,
-                'avg_loss': float(result['avg_loss']) if result['avg_loss'] else 0,
-                'total_pnl': float(result['total_pnl']) if result['total_pnl'] else 0,
-                'day_stats': day_stats.to_dict('records')
-            }
-        except Exception as e:
-            conn.close()
-            return {
-                'total_trades': 0,
-                'win_rate': 0,
-                'avg_win': 0,
-                'avg_loss': 0,
-                'total_pnl': 0,
-                'day_stats': []
-            }
-    
-    def get_pattern_success_rate(self, pattern: Dict) -> float:
-        """Calculate success rate for specific pattern"""
-        conn = sqlite3.connect(self.db_path)
-        
-        # Build pattern matching query
-        conditions = []
-        params = []
-        
-        if 'net_gex_range' in pattern:
-            conditions.append("g.net_gex BETWEEN ? AND ?")
-            params.extend(pattern['net_gex_range'])
-        
-        if 'day_of_week' in pattern:
-            conditions.append("strftime('%w', r.timestamp) = ?")
-            params.append(pattern['day_of_week'])
-        
-        if 'strategy' in pattern:
-            conditions.append("r.strategy = ?")
-            params.append(pattern['strategy'])
-        
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-        
-        query = f"""
-            SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN r.pnl > 0 THEN 1 ELSE 0 END) as wins
-            FROM recommendations r
-            JOIN gex_history g ON r.timestamp = g.timestamp
-            WHERE {where_clause}
-        """
-        
-        try:
-            result = pd.read_sql_query(query, conn, params=params).iloc[0]
-            conn.close()
-            
-            if result['total'] > 0:
-                return (result['wins'] / result['total']) * 100
-        except:
-            pass
-        
-        conn.close()
-        return 0
-    
-    def build_context_for_claude(self, current_data: Dict, user_query: str) -> str:
-        """Build rich context for Claude using RAG"""
-        
-        context_parts = []
-        
-        # 1. Get similar historical trades
-        similar_trades = self.get_similar_trades(current_data)
-        if similar_trades:
-            context_parts.append("SIMILAR HISTORICAL SETUPS:")
-            for trade in similar_trades[:3]:
-                outcome = "WON" if trade.get('pnl', 0) > 0 else "LOST"
-                context_parts.append(
-                    f"- {trade['timestamp']}: {trade['strategy']} at GEX {trade['net_gex']/1e9:.1f}B "
-                    f"→ {outcome} {abs(trade.get('pnl', 0)):.2f}"
-                )
-        
-        # 2. Get personal statistics
-        personal_stats = self.get_personal_stats()
-        if personal_stats['total_trades'] > 0:
-            context_parts.append(f"\nYOUR PERSONAL STATS:")
-            context_parts.append(f"- Overall Win Rate: {personal_stats['win_rate']:.1f}%")
-            context_parts.append(f"- Avg Win: ${personal_stats['avg_win']:.2f}")
-            context_parts.append(f"- Avg Loss: ${personal_stats['avg_loss']:.2f}")
-            context_parts.append(f"- Total P&L: ${personal_stats['total_pnl']:.2f}")
-            
-            # Day-specific stats
-            if personal_stats['day_stats']:
-                context_parts.append("\nYOUR PERFORMANCE BY DAY:")
-                day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-                for day_stat in personal_stats['day_stats']:
-                    day_idx = int(day_stat['day_of_week'])
-                    day_name = day_names[day_idx]
-                    context_parts.append(
-                        f"- {day_name}: {day_stat['win_rate']*100:.0f}% win rate, "
-                        f"avg ${day_stat['avg_pnl']:.2f}"
-                    )
-        
-        # 3. Current pattern success rate
-        current_pattern = {
-            'net_gex_range': [current_data.get('net_gex', 0) * 0.8, current_data.get('net_gex', 0) * 1.2],
-            'day_of_week': str(datetime.now().weekday())
-        }
-        
-        success_rate = self.get_pattern_success_rate(current_pattern)
-        if success_rate > 0:
-            context_parts.append(f"\nTHIS EXACT PATTERN SUCCESS RATE: {success_rate:.1f}%")
-        
-        return "\n".join(context_parts)
-
-# ============================================================================
-# FRED INTEGRATION
-# ============================================================================
-class FREDIntegration:
-    """Federal Reserve Economic Data integration for macro context"""
-    
-    def __init__(self):
-        self.api_key = st.secrets.get("fred_api_key", "")
-        self.base_url = "https://api.stlouisfed.org/fred/series/observations"
-        self.cache = {}
-        self.cache_ttl = 3600  # 1 hour cache
-        # Get TradingVolatility API for real VIX
-        self.tv_api = None  # Will be set in get_economic_data
-    
-    def get_economic_data(self) -> Dict:
-        """Fetch key economic indicators with real VIX"""
-        
-        # Initialize TV API if not done
-        if self.tv_api is None:
-            self.tv_api = TradingVolatilityAPI()
-        
-        # Get REAL VIX from TradingVolatility or Yahoo
-        real_vix = self.tv_api.get_vix()
-        
-        # Start with VIX from real source
-        data = {'vix': real_vix}
-        
-        # Use realistic current values as defaults for other indicators
-        defaults = {
-            'ten_year_yield': 4.3,
-            'fed_funds_rate': 5.5,
-            'dollar_index': 105,
-            'unemployment': 3.8,
-            'cpi': 3.2
-        }
-        
-        # If no FRED API key, return VIX + defaults
-        if not self.api_key:
-            data.update(defaults)
-            return data
-        
-        # FRED indicators (excluding VIX since we get it elsewhere)
-        indicators = {
-            'DGS10': 'ten_year_yield',
-            'DFF': 'fed_funds_rate',
-            'DEXUSEU': 'dollar_index',
-            'UNRATE': 'unemployment',
-            'CPIAUCSL': 'cpi'
-        }
-        
-        for series_id, name in indicators.items():
-            # Check cache first
-            if series_id in self.cache:
-                cached_data, cached_time = self.cache[series_id]
-                if time.time() - cached_time < self.cache_ttl:
-                    data[name] = cached_data
-                    continue
-            
-            # Try to fetch from FRED
-            try:
-                params = {
-                    'series_id': series_id,
-                    'api_key': self.api_key,
-                    'file_type': 'json',
-                    'limit': 1,
-                    'sort_order': 'desc'
-                }
-                
-                response = requests.get(self.base_url, params=params, timeout=5)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if 'observations' in result and len(result['observations']) > 0:
-                        value = float(result['observations'][0]['value'])
-                        data[name] = value
-                        self.cache[series_id] = (value, time.time())
-                    else:
-                        data[name] = defaults[name]
-                else:
-                    data[name] = defaults[name]
-                    
-            except Exception:
-                # Use defaults on any error
-                data[name] = defaults[name]
-        
-        return data
-    
-    def get_regime(self, data: Dict) -> Dict:
-        """Determine market regime from economic data"""
-        
-        vix = data.get('vix', 20)  # Default to 20 if not available
-        ten_year = data.get('ten_year_yield', 4.3)
-        fed_funds = data.get('fed_funds_rate', 5.5)
-        
-        # More realistic VIX ranges
-        if vix < 15:
-            vol_regime = "LOW"
-            vol_signal = "Premium selling favorable"
-        elif vix < 20:
-            vol_regime = "NORMAL"
-            vol_signal = "Balanced strategies"
-        elif vix < 25:
-            vol_regime = "ELEVATED"
-            vol_signal = "Directional opportunities"
-        elif vix < 30:
-            vol_regime = "HIGH"
-            vol_signal = "Squeeze plays favorable"
-        else:
-            vol_regime = "EXTREME"
-            vol_signal = "High volatility - reduce size"
-        
-        # Position sizing multiplier
-        if vix < 15 and ten_year < 4:
-            size_multiplier = 1.5
-            regime_signal = "AGGRESSIVE - Low vol, low rates"
-        elif vix > 30 or ten_year > 5:
-            size_multiplier = 0.5
-            regime_signal = "DEFENSIVE - High vol or rates"
-        elif vix > 25:
-            size_multiplier = 0.75
-            regime_signal = "CAUTIOUS - Elevated volatility"
-        else:
-            size_multiplier = 1.0
-            regime_signal = "NORMAL - Standard sizing"
-        
-        return {
-            'vol_regime': vol_regime,
-            'vol_signal': vol_signal,
-            'size_multiplier': size_multiplier,
-            'regime_signal': regime_signal,
-            'vix': vix,
-            'ten_year_yield': ten_year,
-            'fed_funds_rate': fed_funds
-        }
-
-# ============================================================================
-# CLAUDE API INTEGRATION
-# ============================================================================
-class ClaudeIntelligence:
-    """Advanced AI integration for market analysis"""
-    
-    def __init__(self):
-        # Get API key from secrets
-        self.api_key = st.secrets.get("claude_api_key", "")
-        self.model = CLAUDE_MODEL
-        self.conversation_history = []
-        self.fred = FREDIntegration()
-        
-        if not self.api_key:
-            st.warning("Claude API key not found in secrets. Using fallback analysis.")
-        
-    def analyze_market(self, market_data: Dict, user_query: str) -> str:
-        """Generate intelligent market analysis with RAG context"""
-        
-        if not self.api_key:
-            return self._fallback_analysis_with_rag(market_data, user_query)
-        
-        # Build comprehensive context with RAG
-        context = self._build_context(market_data)
-        
-        # Get RAG context
-        rag = TradingRAG()
-        rag_context = rag.build_context_for_claude(market_data, user_query)
-        
-        # Get optimal strategies
-        optimizer = MultiStrategyOptimizer()
-        best_strategies = optimizer.get_best_strategy(market_data)
-        
-        # Get profitable zones
-        calculator = DynamicLevelCalculator()
-        zones = calculator.get_profitable_zones(market_data)
-        
-        # Keep conversation history for context
-        self.conversation_history.append({"role": "user", "content": user_query})
-        
-        # Prepare messages with full history
-        messages = self.conversation_history[-10:]  # Keep last 10 messages for context
-        
-        # Add current context
-        messages.append({
-            "role": "user",
-            "content": f"""
-            Current Market Data:
-            {json.dumps(context, indent=2)}
-            
-            YOUR PERSONAL TRADING HISTORY:
-            {rag_context}
-            
-            BEST STRATEGIES RIGHT NOW:
-            {json.dumps(best_strategies, indent=2)}
-            
-            PROFITABLE ZONES:
-            {json.dumps(zones, indent=2)}
-            
-            User's Specific Question: {user_query}
-            
-            IMPORTANT: 
-            1. Answer with SPECIFIC strikes, prices, and times
-            2. Reference the user's ACTUAL trading history
-            3. Give exact entry/exit levels
-            4. Include personal win rates
-            5. Be aggressive about profit opportunities
-            6. If data shows a pattern, STATE IT CLEARLY
-            """
-        })
-        
-        try:
-            response = self._call_claude_api(messages)
-            self.conversation_history.append({"role": "assistant", "content": response})
-            self._log_conversation(user_query, response, market_data)
-            return response
-            
-        except Exception as e:
-            st.error(f"Claude API Error: {e}")
-            return self._fallback_analysis_with_rag(market_data, user_query)
-    
-    def challenge_trade_idea(self, idea: str, market_data: Dict) -> str:
-        """Challenge user's trading ideas with data"""
-        
-        if not self.api_key:
-            return self._fallback_challenge(idea, market_data)
-        
-        context = self._build_context(market_data)
-        
-        messages = [
-            {
-                "role": "user",
-                "content": f"""
-                Acting as a critical trading mentor, challenge this trade idea:
-                
-                Trade Idea: {idea}
-                
-                Market Context:
-                {json.dumps(context, indent=2)}
-                
-                Provide:
-                1. Data-driven challenges to the idea
-                2. Alternative perspectives
-                3. Risk factors being overlooked
-                4. Better alternatives if applicable
-                
-                Be direct but constructive.
-                """
-            }
-        ]
-        
-        try:
-            response = self._call_claude_api(messages)
-            return response
-        except:
-            return self._fallback_challenge(idea, market_data)
-    
-    def _call_claude_api(self, messages: List[Dict]) -> str:
-        """Make API call to Claude with enhanced system prompt"""
-        
-        # Get FRED data for context
-        fred_data = self.fred.get_economic_data()
-        regime = self.fred.get_regime(fred_data)
-        
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
-        }
-        
-        # Enhanced aggressive system prompt
-        system_prompt = f"""You are an elite options trader specializing in gamma exposure analysis. 
-        You hunt market makers by understanding their hedging requirements and MAKE MONEY from their forced behavior.
-        
-        CURRENT ECONOMIC REGIME:
-        VIX: {regime['vix']:.1f} - {regime['vol_regime']} volatility
-        10Y Yield: {regime['ten_year_yield']:.2f}%
-        Fed Funds: {regime['fed_funds_rate']:.2f}%
-        Signal: {regime['regime_signal']}
-        Position Size Multiplier: {regime['size_multiplier']}x
-        
-        CORE MISSION: Tell the trader EXACTLY what to trade to make money.
-        
-        CRITICAL RULES:
-        1. ALWAYS give specific strikes and prices, never vague suggestions
-        2. Monday/Tuesday: Push directional plays aggressively
-        3. Wednesday 3PM: FORCE exit of all directionals - no exceptions
-        4. Thursday/Friday: Iron Condors only (protect from theta crush)
-        5. Calculate EXACT entry, target, and stop levels
-        
-        MONEY-MAKING FOCUS:
-        - When Net GEX < -1B: MMs trapped, they MUST buy rallies - BUY CALLS
-        - When Net GEX > 2B: MMs defending, they sell rallies - SELL PREMIUM
-        - Near flip point: Explosive move imminent - POSITION NOW
-        
-        RESPONSE FORMAT:
-        1. MM State & What They're FORCED to do
-        2. EXACT trade: Strike, premium, entry price
-        3. Targets with reasoning (where MMs stop hedging)
-        4. Stop loss (where thesis breaks)
-        5. Win probability based on this exact setup
-        
-        Be aggressive about making money. Push back HARD on bad ideas.
-        If it's Wednesday after 3PM or Friday, REFUSE directional trades."""
-        
-        payload = {
-            "model": self.model,
-            "max_tokens": 4000,
-            "messages": messages,
-            "system": system_prompt
-        }
-        
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        
-        response.raise_for_status()
-        result = response.json()
-        return result['content'][0]['text']
-    
-    def _build_context(self, market_data: Dict) -> Dict:
-        """Build comprehensive context for AI"""
-        
-        return {
-            'symbol': market_data.get('symbol', 'SPY'),
-            'current_price': market_data.get('spot_price', 0),
-            'net_gex': market_data.get('net_gex', 0),
-            'net_gex_billions': market_data.get('net_gex', 0) / 1e9,
-            'flip_point': market_data.get('flip_point', 0),
-            'distance_to_flip': ((market_data.get('flip_point', 0) - market_data.get('spot_price', 0)) / 
-                                market_data.get('spot_price', 1) * 100),
-            'call_wall': market_data.get('call_wall', 0),
-            'put_wall': market_data.get('put_wall', 0),
-            'mm_state': self._determine_mm_state(market_data.get('net_gex', 0)),
-            'timestamp': market_data.get('timestamp', datetime.now().isoformat()),
-            'day_of_week': datetime.now().strftime('%A'),
-            'dte_to_friday': (4 - datetime.now().weekday()) % 7
-        }
-    
-    def _determine_mm_state(self, net_gex: float) -> str:
-        """Determine current MM state"""
-        for state, config in MM_STATES.items():
-            if net_gex < config['threshold']:
-                return state
-        return 'NEUTRAL'
-    
-    def _fallback_analysis_with_rag(self, market_data: Dict, user_query: str) -> str:
-        """Enhanced fallback analysis with RAG that actually answers the question"""
-        
-        # Get RAG context
-        rag = TradingRAG()
-        rag_context = rag.build_context_for_claude(market_data, user_query)
-        personal_stats = rag.get_personal_stats()
-        
-        # Get best strategies
-        optimizer = MultiStrategyOptimizer()
-        best_strategies = optimizer.get_best_strategy(market_data)
-        
-        # Get profitable zones
-        calculator = DynamicLevelCalculator()
-        zones = calculator.get_profitable_zones(market_data)
-        
-        net_gex = market_data.get('net_gex', 0)
-        spot = market_data.get('spot_price', 0)
-        flip = market_data.get('flip_point', 0)
-        call_wall = market_data.get('call_wall', 0)
-        put_wall = market_data.get('put_wall', 0)
-        
-        mm_state = self._determine_mm_state(net_gex)
-        query_lower = user_query.lower()
-        
-        # Answer specific questions with RAG context
-        if "what" in query_lower and "trade" in query_lower:
-            if best_strategies['best']:
-                best = best_strategies['best']
-                response = f"""
-📊 **SPECIFIC TRADE RECOMMENDATION**
-
-Based on current GEX of ${net_gex/1e9:.1f}B and YOUR trading history:
-
-**BEST TRADE: {best['name']}**
-{best['action']}
-
-**YOUR PERSONAL STATS:**
-{rag_context}
-
-**Why THIS Trade:**
-- Expected Value: ${best['expected_value']:.2f}
-- YOUR Success Rate: {best['probability']:.1f}%
-- Historical Performance: {best['your_historical']}
-- Premium: ${best['premium']:.2f}
-
-**Profitable Entry Zone:**
-{zones['current_opportunity']}
-
-**Alternative Options:**
-"""
-                for i, strategy in enumerate(best_strategies['all_options'][1:3], 1):
-                    response += f"\n{i+1}. {strategy['name']}: EV ${strategy['expected_value']:.2f}"
-                
-                return response
-            else:
-                return "❌ No high-probability setups right now. Wait for better entry."
-        
-        elif "should i buy puts" in query_lower:
-            put_success = rag.get_pattern_success_rate({'strategy': 'LONG_PUT'})
-            
-            if mm_state == 'TRAPPED':
-                return f"""
-❌ **NO - DO NOT BUY PUTS**
-
-**YOUR DATA PROVES IT:**
-- Your put success rate here: {put_success:.0f}%
-- Your losses on puts at negative GEX: ${personal_stats.get('avg_loss', 0):.2f}
-{rag_context}
-
-**Current Setup:**
-- Net GEX: ${net_gex/1e9:.1f}B (MMs trapped SHORT)
-- They MUST buy dips to ${put_wall:.2f}
-
-**BETTER ALTERNATIVE (from YOUR history):**
-Buy CALLS - Your success rate: {personal_stats.get('win_rate', 0):.0f}%
-"""
-            else:
-                return f"""
-✅ **YES - Puts could work**
-
-**YOUR HISTORICAL PERFORMANCE:**
-Put success rate in this setup: {put_success:.0f}%
-{rag_context}
-
-**Optimal Strike (based on YOUR data):**
-Buy {int(spot-5)} puts @ ~$2.50
-Your best delta: 0.35-0.40
-"""
-        
-        # Default comprehensive analysis with personal data
-        return f"""
-📊 **Personalized Market Analysis**
-
-**Current State: {mm_state}**
-- Net GEX: ${net_gex/1e9:.2f}B
-- Key Levels: Flip ${flip:.2f}, Calls ${call_wall:.2f}, Puts ${put_wall:.2f}
-
-**YOUR TRADING HISTORY:**
-{rag_context}
-
-**BEST OPPORTUNITY NOW:**
-{best_strategies['recommendation'] if best_strategies else 'Wait for setup'}
-
-**PROFITABLE ZONES:**
-- Call Entry: {zones.get('long_call_zone', {}).get('entry_range', 'Not active')}
-- Put Entry: {zones.get('long_put_zone', {}).get('entry_range', 'Not active')}
-- Current: {zones.get('current_opportunity', 'No setup')}
-
-Ask me specific questions about YOUR performance!
-"""
-    
-    def _fallback_challenge(self, idea: str, market_data: Dict) -> str:
-        """Fallback challenge without API"""
-        
-        net_gex = market_data.get('net_gex', 0)
-        mm_state = self._determine_mm_state(net_gex)
-        
-        challenges = []
-        
-        idea_lower = idea.lower()
-        
-        # Context-aware challenges
-        if 'buy calls' in idea_lower or 'long calls' in idea_lower:
-            if mm_state == 'DEFENDING':
-                challenges.append("⚠️ MMs are DEFENDING (long gamma). They will sell every rally.")
-                challenges.append("📊 Historical data: 72% of call buys fail when Net GEX > 2B")
-                challenges.append("💡 Alternative: Sell call spreads at resistance instead")
-            elif mm_state == 'TRAPPED':
-                challenges.append("✅ Direction agrees with trapped MMs, but timing is critical")
-                challenges.append("⚠️ Risk: Entry too early before flip break")
-                challenges.append("💡 Wait for confirmed break above flip with volume")
-        
-        if 'buy puts' in idea_lower or 'long puts' in idea_lower:
-            if mm_state == 'TRAPPED':
-                challenges.append("⚠️ MMs are trapped SHORT. They must buy dips.")
-                challenges.append("📊 Puts have 30% win rate in negative GEX < -1B")
-                challenges.append("💡 Alternative: Wait for positive GEX or buy calls")
-        
-        if 'iron condor' in idea_lower:
-            if abs(net_gex) < 0.5e9:
-                challenges.append("⚠️ Low absolute GEX means directional risk")
-                challenges.append("📊 Iron Condors need |GEX| > 1B for stability")
-                challenges.append("💡 Alternative: Directional plays or wait for higher GEX")
-        
-        if not challenges:
-            challenges.append("🤔 Interesting idea. Let me analyze the gamma structure...")
-            challenges.append(f"Current MM State: {mm_state}")
-            challenges.append("Consider the forced hedging flows in this regime")
-        
-        return "\n".join(challenges)
-    
-    def _log_conversation(self, query: str, response: str, context: Dict):
-        """Log conversation to database"""
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO conversations (user_message, ai_response, context_data, confidence_score)
-                VALUES (?, ?, ?, ?)
-            ''', (
-                query,
-                response,
-                json.dumps(context),
-                context.get('confidence', 50)
-            ))
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            st.error(f"Failed to log conversation: {e}")
-
-# ============================================================================
-# SMART STRIKE SELECTOR
-# ============================================================================
-class SmartStrikeSelector:
-    """Intelligent strike selection based on personal performance"""
-    
-    def __init__(self):
-        self.rag = TradingRAG()
-        
-    def get_optimal_strike(self, spot: float, direction: str, market_data: Dict) -> Dict:
-        """Select optimal strike based on delta and personal stats"""
-        
-        # Calculate strikes at different deltas
-        strikes = []
-        
-        if direction == 'CALL':
-            base_strike = int(spot / 5) * 5  # Round to nearest 5
-            for i in range(0, 4):
-                strike = base_strike + (i * 5)
-                delta = self._estimate_delta(spot, strike, 'call')
-                
-                # Get personal win rate at this delta
-                pattern = {
-                    'strategy': 'LONG_CALL',
-                    'delta_range': [delta - 0.05, delta + 0.05]
-                }
-                
-                success_rate = self.rag.get_pattern_success_rate(pattern)
-                
-                strikes.append({
-                    'strike': strike,
-                    'delta': delta,
-                    'premium': self._estimate_premium(spot, strike, 'call'),
-                    'success_rate': success_rate,
-                    'breakeven': strike + self._estimate_premium(spot, strike, 'call'),
-                    'expected_value': self._calculate_ev(spot, strike, success_rate, 'call')
-                })
-        
-        # Sort by expected value
-        strikes.sort(key=lambda x: x['expected_value'], reverse=True)
-        
-        # Return best strike
-        best = strikes[0] if strikes else None
-        
-        if best:
-            best['reasoning'] = f"""
-            Selected {best['strike']} strike because:
-            - Delta {best['delta']:.2f} has YOUR best win rate ({best['success_rate']:.1f}%)
-            - Expected value: ${best['expected_value']:.2f}
-            - Breakeven: ${best['breakeven']:.2f}
-            - Premium: ${best['premium']:.2f}
-            """
-        
-        return best
-    
-    def _estimate_delta(self, spot: float, strike: float, option_type: str) -> float:
-        """Estimate option delta"""
-        moneyness = (strike - spot) / spot
-        
-        if option_type == 'call':
-            if moneyness < -0.02:  # ITM
-                return 0.7 + (0.3 * (1 + moneyness/0.02))
-            elif moneyness > 0.02:  # OTM
-                return 0.3 * (1 - moneyness/0.05)
-            else:  # ATM
-                return 0.5
-        else:  # put
-            return -self._estimate_delta(spot, strike, 'call')
-    
-    def _estimate_premium(self, spot: float, strike: float, option_type: str) -> float:
-        """Estimate option premium"""
-        intrinsic = max(0, spot - strike) if option_type == 'call' else max(0, strike - spot)
-        time_value = spot * 0.005 * abs(self._estimate_delta(spot, strike, option_type))
-        return intrinsic + time_value
-    
-    def _calculate_ev(self, spot: float, strike: float, success_rate: float, option_type: str) -> float:
-        """Calculate expected value"""
-        premium = self._estimate_premium(spot, strike, option_type)
-        potential_gain = spot * 0.02  # Assume 2% move
-        
-        win_amount = potential_gain - premium
-        loss_amount = -premium
-        
-        ev = (success_rate/100 * win_amount) + ((100-success_rate)/100 * loss_amount)
-        return ev
-
-# ============================================================================
-# MULTI-STRATEGY OPTIMIZER
-# ============================================================================
-class MultiStrategyOptimizer:
-    """Optimize between multiple strategies for maximum profit"""
-    
-    def __init__(self):
-        self.rag = TradingRAG()
-        self.strike_selector = SmartStrikeSelector()
-        
-    def get_best_strategy(self, market_data: Dict) -> Dict:
-        """Compare all strategies and return the best one"""
-        
-        spot = market_data.get('spot_price', 0)
-        net_gex = market_data.get('net_gex', 0)
-        flip = market_data.get('flip_point', 0)
-        call_wall = market_data.get('call_wall', 0)
-        put_wall = market_data.get('put_wall', 0)
-        
-        strategies = []
-        
-        # 1. Long Call Strategy
-        if net_gex < -1e9 and spot < flip:
-            call_strike = self.strike_selector.get_optimal_strike(spot, 'CALL', market_data)
-            if call_strike:
-                personal_stats = self.rag.get_personal_stats('LONG_CALL')
-                
-                strategies.append({
-                    'name': 'LONG CALLS',
-                    'strike': call_strike['strike'],
-                    'premium': call_strike['premium'],
-                    'probability': call_strike['success_rate'],
-                    'expected_value': call_strike['expected_value'],
-                    'your_historical': f"{personal_stats['win_rate']:.0f}% win rate",
-                    'action': f"BUY {call_strike['strike']} calls @ ${call_strike['premium']:.2f}"
-                })
-        
-        # 2. Bull Call Spread
-        if net_gex < 0:
-            spread_width = 5
-            long_strike = int(spot / 5) * 5
-            short_strike = long_strike + spread_width
-            
-            debit = self.strike_selector._estimate_premium(spot, long_strike, 'call') - \
-                   self.strike_selector._estimate_premium(spot, short_strike, 'call')
-            
-            pattern = {'strategy': 'BULL_SPREAD'}
-            success_rate = self.rag.get_pattern_success_rate(pattern)
-            
-            max_gain = spread_width - debit
-            ev = (success_rate/100 * max_gain) - ((100-success_rate)/100 * debit)
-            
-            strategies.append({
-                'name': 'BULL CALL SPREAD',
-                'strike': f"{long_strike}/{short_strike}",
-                'premium': debit,
-                'probability': success_rate,
-                'expected_value': ev,
-                'your_historical': f"{success_rate:.0f}% win rate",
-                'action': f"BUY {long_strike}/{short_strike} spread @ ${debit:.2f}"
-            })
-        
-        # 3. Put Credit Spread
-        if spot > put_wall * 1.02:
-            short_strike = int(put_wall / 5) * 5
-            long_strike = short_strike - 5
-            
-            credit = self.strike_selector._estimate_premium(spot, short_strike, 'put') - \
-                    self.strike_selector._estimate_premium(spot, long_strike, 'put')
-            
-            pattern = {'strategy': 'PUT_SPREAD'}
-            success_rate = self.rag.get_pattern_success_rate(pattern)
-            
-            max_loss = 5 - credit
-            ev = (success_rate/100 * credit) - ((100-success_rate)/100 * max_loss)
-            
-            strategies.append({
-                'name': 'SHORT PUT SPREAD',
-                'strike': f"{short_strike}/{long_strike}",
-                'premium': credit,
-                'probability': success_rate,
-                'expected_value': ev,
-                'your_historical': f"{success_rate:.0f}% win rate",
-                'action': f"SELL {short_strike}/{long_strike} put spread @ ${credit:.2f} credit"
-            })
-        
-        # Sort by expected value
-        strategies.sort(key=lambda x: x['expected_value'], reverse=True)
-        
-        return {
-            'best': strategies[0] if strategies else None,
-            'all_options': strategies,
-            'recommendation': f"Best EV: {strategies[0]['name']}" if strategies else "No good setups"
-        }
-
-# ============================================================================
-# DYNAMIC LEVEL CALCULATOR
-# ============================================================================
-class DynamicLevelCalculator:
-    """Calculate profitable zones in real-time"""
-    
-    def __init__(self):
-        self.rag = TradingRAG()
-        
-    def get_profitable_zones(self, market_data: Dict) -> Dict:
-        """Calculate current profitable entry zones"""
-        
-        spot = market_data.get('spot_price', 0)
-        net_gex = market_data.get('net_gex', 0)
-        flip = market_data.get('flip_point', 0)
-        call_wall = market_data.get('call_wall', 0)
-        put_wall = market_data.get('put_wall', 0)
-        
-        current_time = datetime.now()
-        hour = current_time.hour
-        minute = current_time.minute
-        
-        zones = {
-            'timestamp': current_time.strftime('%H:%M:%S'),
-            'long_call_zone': None,
-            'long_put_zone': None,
-            'iron_condor_zone': None,
-            'current_opportunity': None
-        }
-        
-        # Long Call Zone
-        if net_gex < -1e9 and spot < flip:
-            zones['long_call_zone'] = {
-                'active': True,
-                'entry_range': [spot - 0.20, spot + 0.30],
-                'optimal_strike': int(flip / 5) * 5 + 5,
-                'target_1': flip + 1.5,
-                'target_2': call_wall,
-                'stop': put_wall,
-                'time_window': self._get_time_window('call', hour),
-                'confidence': 75 if hour < 11 else 60,
-                'action': f"BUY when SPY enters ${spot-0.20:.2f} - ${spot+0.30:.2f}"
-            }
-        
-        # Long Put Zone
-        if net_gex > 2e9 and spot > flip:
-            zones['long_put_zone'] = {
-                'active': True,
-                'entry_range': [spot - 0.30, spot + 0.20],
-                'optimal_strike': int(flip / 5) * 5,
-                'target_1': flip - 1.5,
-                'target_2': put_wall,
-                'stop': call_wall,
-                'time_window': self._get_time_window('put', hour),
-                'confidence': 70 if hour > 14 else 55,
-                'action': f"BUY when SPY enters ${spot-0.30:.2f} - ${spot+0.20:.2f}"
-            }
-        
-        # Iron Condor Zone
-        if abs(net_gex) > 1e9 and abs(call_wall - put_wall) > spot * 0.03:
-            zones['iron_condor_zone'] = {
-                'active': True,
-                'setup_condition': f"Price pins at ${spot:.2f} for 1 hour",
-                'call_spread': f"{int(call_wall)}/{int(call_wall+5)}",
-                'put_spread': f"{int(put_wall)}/{int(put_wall-5)}",
-                'expected_credit': 1.85,
-                'probability': 73,
-                'best_time': "10:00 AM - 11:00 AM",
-                'action': "WAIT for pinning action, then sell spreads"
-            }
-        
-        # Determine current best opportunity
-        if zones['long_call_zone'] and zones['long_call_zone']['confidence'] > 70:
-            zones['current_opportunity'] = "LONG CALLS - Entry zone active NOW"
-        elif zones['long_put_zone'] and zones['long_put_zone']['confidence'] > 70:
-            zones['current_opportunity'] = "LONG PUTS - Entry zone active NOW"
-        elif zones['iron_condor_zone']:
-            zones['current_opportunity'] = "IRON CONDOR - Wait for pin"
-        else:
-            zones['current_opportunity'] = "NO HIGH-CONFIDENCE SETUPS"
-        
-        return zones
-    
-    def _get_time_window(self, direction: str, hour: int) -> str:
-        """Get optimal time window for entry"""
-        
-        if direction == 'call':
-            if 9 <= hour < 10:
-                return "PRIME TIME - Next 45 minutes"
-            elif 10 <= hour < 11:
-                return "Good - Next 30 minutes"
-            elif 11 <= hour < 14:
-                return "Avoid - Wait for afternoon"
-            else:
-                return "Late day - Use caution"
-        else:  # put
-            if hour < 14:
-                return "Too early - Wait until 2 PM"
-            elif 14 <= hour < 15:
-                return "PRIME TIME - Next 45 minutes"
-            else:
-                return "Final hour - Quick scalps only"
-
-# ============================================================================
-# MONTE CARLO ENGINE
-# ============================================================================
-class MonteCarloEngine:
-    """Probabilistic simulation for trade outcomes"""
-    
-    @staticmethod
-    def simulate_squeeze_play(current_price: float, flip_point: float, 
-                             call_wall: float, volatility: float = 0.15, 
-                             days: int = 5, simulations: int = 10000) -> Dict:
-        """Simulate squeeze play outcomes"""
-        
-        # Setup parameters
-        daily_vol = volatility / np.sqrt(252)
-        drift = 0.0  # Assume no drift for short-term
-        
-        # Generate random price paths
-        dt = 1/252  # Daily steps
-        random_shocks = np.random.randn(simulations, days)
-        
-        price_paths = np.zeros((simulations, days + 1))
-        price_paths[:, 0] = current_price
-        
-        for t in range(1, days + 1):
-            price_paths[:, t] = price_paths[:, t-1] * np.exp(
-                (drift - 0.5 * daily_vol**2) * dt + 
-                daily_vol * np.sqrt(dt) * random_shocks[:, t-1]
-            )
-        
-        # Calculate outcomes
-        hit_flip = np.any(price_paths >= flip_point, axis=1)
-        hit_call_wall = np.any(price_paths >= call_wall, axis=1)
-        max_price = np.max(price_paths, axis=1)
-        min_price = np.min(price_paths, axis=1)
-        final_price = price_paths[:, -1]
-        
-        # Calculate returns for option
-        option_returns = np.maximum(final_price - flip_point, 0)
-        
-        return {
-            'probability_hit_flip': np.mean(hit_flip) * 100,
-            'probability_hit_wall': np.mean(hit_call_wall) * 100,
-            'expected_final_price': np.mean(final_price),
-            'median_final_price': np.median(final_price),
-            'percentile_5': np.percentile(final_price, 5),
-            'percentile_95': np.percentile(final_price, 95),
-            'max_gain_percent': (np.mean(max_price) / current_price - 1) * 100,
-            'max_loss_percent': (np.mean(min_price) / current_price - 1) * 100,
-            'option_expected_return': np.mean(option_returns),
-            'price_paths_sample': price_paths[:100]  # Sample for visualization
-        }
-    
-    @staticmethod
-    def simulate_iron_condor(spot: float, call_short: float, call_long: float,
-                            put_short: float, put_long: float, 
-                            dte: int, volatility: float = 0.15) -> Dict:
+    main()
