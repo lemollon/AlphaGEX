@@ -28,6 +28,7 @@ from pathlib import Path
 import warnings
 import base64
 from io import StringIO
+import pytz
 warnings.filterwarnings('ignore')
 
 # Optional advanced imports
@@ -1680,9 +1681,15 @@ def main():
     if 'active_positions' not in st.session_state:
         st.session_state.active_positions = []
     
-    # Header
-    st.title("🎯 GEX Trading Co-Pilot v7.0")
-    st.markdown("**The Ultimate Market Maker Hunting Platform**")
+    # Header with better styling
+    st.markdown("""
+    <h1 style='text-align: center; color: #00D4FF;'>
+    🎯 GEX Trading Co-Pilot v7.0
+    </h1>
+    <p style='text-align: center; font-size: 18px; color: #888;'>
+    The Ultimate Market Maker Hunting Platform
+    </p>
+    """, unsafe_allow_html=True)
     
     # Top metrics row
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -1697,15 +1704,25 @@ def main():
     with col3:
         # Calculate today's P&L
         conn = sqlite3.connect(DB_PATH)
-        today_pnl = pd.read_sql_query(
+        today_pnl_query = pd.read_sql_query(
             "SELECT SUM(pnl) as total FROM positions WHERE DATE(closed_at) = DATE('now')",
             conn
-        ).iloc[0]['total'] or 0
+        )
+        today_pnl = today_pnl_query.iloc[0]['total'] if not today_pnl_query.empty and today_pnl_query.iloc[0]['total'] is not None else 0.0
         conn.close()
         st.metric("Today's P&L", f"${today_pnl:,.2f}", delta=f"{today_pnl:+,.2f}")
     
     with col4:
-        current_time = datetime.now().strftime('%H:%M')
+        # US Central Time
+        try:
+            central = pytz.timezone('US/Central')
+            central_time = datetime.now(central)
+            current_time = central_time.strftime('%H:%M CT')
+        except:
+            # Fallback if pytz not available
+            utc_now = datetime.utcnow()
+            central_time = utc_now - timedelta(hours=6)  # UTC-6 for Central
+            current_time = central_time.strftime('%H:%M CT')
         st.metric("Market Time", current_time)
     
     with col5:
@@ -1800,8 +1817,8 @@ def main():
         
         conn = sqlite3.connect(DB_PATH)
         
-        # Calculate stats
-        stats = pd.read_sql_query("""
+        # Calculate stats with None handling
+        stats_query = pd.read_sql_query("""
             SELECT 
                 COUNT(*) as total_trades,
                 SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
@@ -1810,17 +1827,27 @@ def main():
             FROM positions
             WHERE status = 'CLOSED'
             AND closed_at >= datetime('now', '-30 days')
-        """, conn).iloc[0]
+        """, conn)
         
         conn.close()
         
-        win_rate = (stats['wins'] / stats['total_trades'] * 100) if stats['total_trades'] > 0 else 0
+        # Safe extraction with defaults
+        if not stats_query.empty:
+            stats = stats_query.iloc[0]
+            total_trades = int(stats['total_trades']) if stats['total_trades'] is not None else 0
+            wins = int(stats['wins']) if stats['wins'] is not None else 0
+            total_pnl = float(stats['total_pnl']) if stats['total_pnl'] is not None else 0.0
+            
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+        else:
+            win_rate = 0
+            total_pnl = 0
         
         col1, col2 = st.columns(2)
         with col1:
             st.metric("30D Win Rate", f"{win_rate:.1f}%")
         with col2:
-            st.metric("30D P&L", f"${stats['total_pnl']:,.2f}")
+            st.metric("30D P&L", f"${total_pnl:,.2f}")
     
     # Main Content Area - Tabs
     tabs = st.tabs([
@@ -2431,8 +2458,8 @@ def main():
         
         conn.close()
     
-    # Tab 5: Education
-    with tabs[4]:
+    # Tab 6: Education (was Tab 5, now Tab 6)
+    with tabs[5]:
         st.subheader("📚 GEX Trading Education")
         
         # Educational sections
