@@ -290,10 +290,12 @@ class TradingVolatilityAPI:
         self._rate_limit_check()
         
         try:
-            url = f"{self.base_url}/netgamma"
+            # Correct endpoint structure
+            url = f"{self.base_url}/gex"
             params = {
                 'username': self.username,
-                'symbol': symbol.upper()
+                'ticker': symbol.upper(),
+                'type': 'netgamma'
             }
             
             response = requests.get(url, params=params, timeout=10)
@@ -304,11 +306,11 @@ class TradingVolatilityAPI:
                 self.cache[cache_key] = (data, time.time())
                 return data
             else:
-                st.error(f"API Error {response.status_code}: {response.text}")
+                st.warning(f"API returned {response.status_code}, using mock data")
                 return self._get_mock_data(symbol)
                 
         except Exception as e:
-            st.error(f"API Request Failed: {e}")
+            st.warning(f"Using mock data due to API issue: {str(e)[:50]}")
             return self._get_mock_data(symbol)
     
     def get_gex_profile(self, symbol: str, expiry: str = 'all') -> Dict:
@@ -394,15 +396,29 @@ class FREDIntegration:
         self.cache_ttl = 3600  # 1 hour cache
     
     def get_economic_data(self) -> Dict:
-        """Fetch key economic indicators"""
+        """Fetch key economic indicators with better defaults"""
+        
+        # Use realistic current values as defaults
+        defaults = {
+            'ten_year_yield': 4.3,
+            'fed_funds_rate': 5.5,
+            'vix': 20,  # More realistic current VIX
+            'dollar_index': 105,
+            'unemployment': 3.8,
+            'cpi': 3.2
+        }
+        
+        # If no API key, return defaults
+        if not self.api_key:
+            return defaults
         
         indicators = {
-            'DGS10': 'ten_year_yield',  # 10-Year Treasury
-            'DFF': 'fed_funds_rate',    # Fed Funds Rate
-            'VIXCLS': 'vix',            # VIX
-            'DEXUSEU': 'dollar_index',  # Dollar Index
-            'UNRATE': 'unemployment',   # Unemployment Rate
-            'CPIAUCSL': 'cpi'          # CPI
+            'DGS10': 'ten_year_yield',
+            'DFF': 'fed_funds_rate',
+            'VIXCLS': 'vix',
+            'DEXUSEU': 'dollar_index',
+            'UNRATE': 'unemployment',
+            'CPIAUCSL': 'cpi'
         }
         
         data = {}
@@ -415,7 +431,7 @@ class FREDIntegration:
                     data[name] = cached_data
                     continue
             
-            # Fetch from FRED
+            # Try to fetch from FRED
             try:
                 params = {
                     'series_id': series_id,
@@ -433,52 +449,51 @@ class FREDIntegration:
                         value = float(result['observations'][0]['value'])
                         data[name] = value
                         self.cache[series_id] = (value, time.time())
-                
-            except Exception as e:
-                # Use default values if FRED fails
-                defaults = {
-                    'ten_year_yield': 4.3,
-                    'fed_funds_rate': 5.5,
-                    'vix': 15,
-                    'dollar_index': 105,
-                    'unemployment': 3.8,
-                    'cpi': 3.2
-                }
-                data[name] = defaults.get(name, 0)
+                    else:
+                        data[name] = defaults[name]
+                else:
+                    data[name] = defaults[name]
+                    
+            except Exception:
+                # Use defaults on any error
+                data[name] = defaults[name]
         
         return data
     
     def get_regime(self, data: Dict) -> Dict:
         """Determine market regime from economic data"""
         
-        vix = data.get('vix', 15)
+        vix = data.get('vix', 20)  # Default to 20 if not available
         ten_year = data.get('ten_year_yield', 4.3)
         fed_funds = data.get('fed_funds_rate', 5.5)
         
-        # Determine regime
-        if vix < 12:
-            vol_regime = "EXTREMELY_LOW"
-            vol_signal = "Premium selling paradise"
-        elif vix < 16:
+        # More realistic VIX ranges
+        if vix < 15:
             vol_regime = "LOW"
-            vol_signal = "Favor Iron Condors"
-        elif vix < 22:
+            vol_signal = "Premium selling favorable"
+        elif vix < 20:
             vol_regime = "NORMAL"
             vol_signal = "Balanced strategies"
-        elif vix < 30:
+        elif vix < 25:
             vol_regime = "ELEVATED"
             vol_signal = "Directional opportunities"
-        else:
+        elif vix < 30:
             vol_regime = "HIGH"
             vol_signal = "Squeeze plays favorable"
+        else:
+            vol_regime = "EXTREME"
+            vol_signal = "High volatility - reduce size"
         
         # Position sizing multiplier
-        if vix < 12 and ten_year < 4:
+        if vix < 15 and ten_year < 4:
             size_multiplier = 1.5
             regime_signal = "AGGRESSIVE - Low vol, low rates"
-        elif vix > 25 or ten_year > 5:
+        elif vix > 30 or ten_year > 5:
             size_multiplier = 0.5
             regime_signal = "DEFENSIVE - High vol or rates"
+        elif vix > 25:
+            size_multiplier = 0.75
+            regime_signal = "CAUTIOUS - Elevated volatility"
         else:
             size_multiplier = 1.0
             regime_signal = "NORMAL - Standard sizing"
@@ -506,35 +521,42 @@ class ClaudeIntelligence:
         self.fred = FREDIntegration()
         
     def analyze_market(self, market_data: Dict, user_query: str) -> str:
-        """Generate intelligent market analysis"""
+        """Generate intelligent market analysis based on actual query"""
         
         if not self.api_key:
             return self._fallback_analysis(market_data, user_query)
         
-        # Build context
+        # Build comprehensive context with user's actual question
         context = self._build_context(market_data)
         
-        # Prepare messages
-        messages = [
-            {
-                "role": "user",
-                "content": f"""
-                Market Context:
-                {json.dumps(context, indent=2)}
-                
-                User Query: {user_query}
-                
-                Provide actionable trading analysis focusing on:
-                1. What market makers are likely forced to do
-                2. Specific entry/exit levels
-                3. Risk/reward assessment
-                4. Confidence level (0-100%)
-                """
-            }
-        ]
+        # Keep conversation history for context
+        self.conversation_history.append({"role": "user", "content": user_query})
+        
+        # Prepare messages with full history
+        messages = self.conversation_history[-10:]  # Keep last 10 messages for context
+        
+        # Add current context
+        messages.append({
+            "role": "user",
+            "content": f"""
+            Current Market Data:
+            {json.dumps(context, indent=2)}
+            
+            User's Specific Question: {user_query}
+            
+            IMPORTANT: Answer the user's SPECIFIC question above. 
+            Don't give generic responses. Think about what they're actually asking.
+            If they ask about a specific strike or strategy, analyze that specifically.
+            If they ask "why", explain the reasoning.
+            If they ask "should I", give a clear yes/no with reasoning.
+            
+            Be specific with strikes, prices, and timing.
+            """
+        })
         
         try:
             response = self._call_claude_api(messages)
+            self.conversation_history.append({"role": "assistant", "content": response})
             self._log_conversation(user_query, response, market_data)
             return response
             
