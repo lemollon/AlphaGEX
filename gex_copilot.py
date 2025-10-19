@@ -48,7 +48,34 @@ def get_net_gamma(self, symbol: str, use_cache: bool = True) -> Dict:
                         'call_wall': float(data.get('call_wall', data.get('callWall', 0))),
                         'put_wall': float(data.get('put_wall', data.get('putWall', 0))),
                         'timestamp': datetime.now().isoformat(),
-                        'data_quality': 'LIVE"""
+                        'data_quality': 'LIVE'
+                    }
+                    
+                    # Cache the result
+                    self.cache[cache_key] = (parsed_data, time.time())
+                    st.success(f"✅ Live GEX data fetched for {symbol}")
+                    return parsed_data
+                    
+                except (json.JSONDecodeError, ValueError) as e:
+                    st.warning(f"Failed to parse API response: {str(e)[:50]}... Using empty data.")
+                    return {}
+            
+            elif response.status_code == 401:
+                st.error("Authentication failed - check your API key in secrets")
+                return {}
+            elif response.status_code == 404:
+                st.error(f"Symbol {symbol} not found or endpoint incorrect")
+                return {}
+            else:
+                st.warning(f"API returned {response.status_code}: {response.text[:100]}...")
+                return {}
+                
+        except requests.exceptions.RequestException as e:
+            st.warning(f"Network issue: {str(e)[:100]}...")
+            return {}
+        except Exception as e:
+            st.warning(f"Unexpected error: {str(e)[:100]}...")
+            return {}"""
 GEX Trading Co-Pilot v7.0 - COMPLETE INTELLIGENT SYSTEM WITH CLAUDE API
 The Ultimate Market Maker Hunting Platform
 Includes ALL features from our development history:
@@ -1126,7 +1153,7 @@ Based on current GEX of ${net_gex/1e9:.1f}B and YOUR trading history:
 **Alternative Options:**
 """
                 for i, strategy in enumerate(best_strategies['all_options'][1:3], 1):
-                    return += f"\n{i+1}. {strategy['name']}: EV ${strategy['expected_value']:.2f}"
+                    response += f"\n{i+1}. {strategy['name']}: EV ${strategy['expected_value']:.2f}"
                 
                 return response
             else:
