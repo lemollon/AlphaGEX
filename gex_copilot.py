@@ -2487,7 +2487,7 @@ class StrategyEngine:
 
 ## 📍 Critical Levels
 - **Current: ${spot:.2f}**
-- **Flip Point: ${flip:.2f}** ({((flip-spot)/spot*100):+.2f}% away)
+- **Flip Point: ${flip:.2f}** ({((flip-spot)/spot*100):+.2f}% away if spot != 0 else 'N/A'})
 - **Call Wall: ${market_data.get('call_wall', 0):.2f}**
 - **Put Wall: ${market_data.get('put_wall', 0):.2f}**
         """
