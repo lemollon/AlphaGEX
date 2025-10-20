@@ -447,32 +447,36 @@ def main():
             plan_generator = TradingPlanGenerator()
             plan_data = st.session_state.generated_plan['data']
 
-            if st.session_state.generated_plan['type'] == 'Daily':
-                daily_plan = plan_generator.generate_daily_plan(
-                    st.session_state.generated_plan['symbol'],
-                    plan_data
-                )
-                # Display formatted markdown instead of JSON
-                formatted_plan = plan_generator.format_daily_plan_markdown(daily_plan)
-                st.markdown(formatted_plan)
+            try:
+                if st.session_state.generated_plan['type'] == 'Daily':
+                    daily_plan = plan_generator.generate_daily_plan(
+                        st.session_state.generated_plan['symbol'],
+                        plan_data
+                    )
+                    # Display formatted markdown instead of JSON
+                    formatted_plan = plan_generator.format_daily_plan_markdown(daily_plan)
+                    st.markdown(formatted_plan)
 
-            elif st.session_state.generated_plan['type'] == 'Weekly':
-                weekly_plan = plan_generator.generate_weekly_plan(
-                    st.session_state.generated_plan['symbol'],
-                    plan_data
-                )
-                # Display formatted markdown instead of JSON
-                formatted_plan = plan_generator.format_weekly_plan_markdown(weekly_plan)
-                st.markdown(formatted_plan)
+                elif st.session_state.generated_plan['type'] == 'Weekly':
+                    weekly_plan = plan_generator.generate_weekly_plan(
+                        st.session_state.generated_plan['symbol'],
+                        plan_data
+                    )
+                    # Display formatted markdown instead of JSON
+                    formatted_plan = plan_generator.format_weekly_plan_markdown(weekly_plan)
+                    st.markdown(formatted_plan)
 
-            elif st.session_state.generated_plan['type'] == 'Monthly':
-                monthly_plan = plan_generator.generate_monthly_plan(
-                    st.session_state.generated_plan['symbol'],
-                    plan_data
-                )
-                # Display formatted markdown instead of JSON
-                formatted_plan = plan_generator.format_monthly_plan_markdown(monthly_plan)
-                st.markdown(formatted_plan)
+                elif st.session_state.generated_plan['type'] == 'Monthly':
+                    monthly_plan = plan_generator.generate_monthly_plan(
+                        st.session_state.generated_plan['symbol'],
+                        plan_data
+                    )
+                    # Display formatted markdown instead of JSON
+                    formatted_plan = plan_generator.format_monthly_plan_markdown(monthly_plan)
+                    st.markdown(formatted_plan)
+            except Exception as e:
+                st.error(f"⚠️ Error generating plan: {str(e)}")
+                st.info("💡 Trading plans work best with high-volume symbols like SPY, QQQ, TSLA, AAPL")
         else:
             st.info("👈 Enter a symbol and click 'Generate Plan' to create a comprehensive trading plan")
     
