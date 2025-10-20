@@ -446,30 +446,33 @@ def main():
         if 'generated_plan' in st.session_state:
             plan_generator = TradingPlanGenerator()
             plan_data = st.session_state.generated_plan['data']
-            
+
             if st.session_state.generated_plan['type'] == 'Daily':
                 daily_plan = plan_generator.generate_daily_plan(
                     st.session_state.generated_plan['symbol'],
                     plan_data
                 )
-                st.markdown(f"## 📊 Daily Trading Plan - {daily_plan['symbol']}")
-                st.markdown(f"**Date:** {daily_plan['date']} ({daily_plan['day']})")
-                st.markdown(f"**Generated:** {daily_plan['generated_at']}")
-                st.json(daily_plan)
-            
+                # Display formatted markdown instead of JSON
+                formatted_plan = plan_generator.format_daily_plan_markdown(daily_plan)
+                st.markdown(formatted_plan)
+
             elif st.session_state.generated_plan['type'] == 'Weekly':
                 weekly_plan = plan_generator.generate_weekly_plan(
                     st.session_state.generated_plan['symbol'],
                     plan_data
                 )
-                st.json(weekly_plan)
-            
+                # Display formatted markdown instead of JSON
+                formatted_plan = plan_generator.format_weekly_plan_markdown(weekly_plan)
+                st.markdown(formatted_plan)
+
             elif st.session_state.generated_plan['type'] == 'Monthly':
                 monthly_plan = plan_generator.generate_monthly_plan(
                     st.session_state.generated_plan['symbol'],
                     plan_data
                 )
-                st.json(monthly_plan)
+                # Display formatted markdown instead of JSON
+                formatted_plan = plan_generator.format_monthly_plan_markdown(monthly_plan)
+                st.markdown(formatted_plan)
         else:
             st.info("👈 Enter a symbol and click 'Generate Plan' to create a comprehensive trading plan")
     
