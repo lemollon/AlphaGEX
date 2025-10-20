@@ -271,27 +271,44 @@ class TradingPlanGenerator:
         
     def generate_daily_plan(self, symbol: str, market_data: Dict) -> Dict:
         """Generate comprehensive daily trading plan with exact levels"""
-        
+
         spot = market_data.get('spot_price', 0)
         net_gex = market_data.get('net_gex', 0)
         flip = market_data.get('flip_point', 0)
         call_wall = market_data.get('call_wall', 0)
         put_wall = market_data.get('put_wall', 0)
-        
+
         now = datetime.now()
         day = now.strftime('%A')
-        
-        fred_data = self.fred.get_economic_data()
-        regime = self.fred.get_regime(fred_data)
-        
-        rag = TradingRAG()
-        personal_stats = rag.get_personal_stats()
-        
-        optimizer = MultiStrategyOptimizer()
-        best_strategies = optimizer.get_best_strategy(market_data)
-        
-        calculator = DynamicLevelCalculator()
-        zones = calculator.get_profitable_zones(market_data)
+
+        # Safe calls with error handling
+        try:
+            fred_data = self.fred.get_economic_data()
+            regime = self.fred.get_regime(fred_data)
+        except Exception as e:
+            print(f"FRED data error: {e}")
+            regime = {'type': 'Unknown', 'volatility': 'Normal', 'trend': 'Neutral', 'size_multiplier': 1.0}
+
+        try:
+            rag = TradingRAG()
+            personal_stats = rag.get_personal_stats()
+        except Exception as e:
+            print(f"RAG error: {e}")
+            personal_stats = {}
+
+        try:
+            optimizer = MultiStrategyOptimizer()
+            best_strategies = optimizer.get_best_strategy(market_data)
+        except Exception as e:
+            print(f"Optimizer error: {e}")
+            best_strategies = {'best': None}
+
+        try:
+            calculator = DynamicLevelCalculator()
+            zones = calculator.get_profitable_zones(market_data)
+        except Exception as e:
+            print(f"Calculator error: {e}")
+            zones = {'best_zone': 'N/A', 'avoid_zone': 'N/A', 'win_rate': 0}
         
         plan = {
             'symbol': symbol,
@@ -304,47 +321,70 @@ class TradingPlanGenerator:
             'exact_trades': []
         }
         
-        plan['execution_schedule'] = self._build_execution_schedule(
-            symbol, spot, flip, call_wall, put_wall, regime, personal_stats, day
-        )
-        
-        if best_strategies['best']:
-            best = best_strategies['best']
-            plan['exact_trades'].append({
-                'time': '9:45 AM',
-                'strategy': best['name'],
-                'action': best['action'],
-                'entry_zone': f"${spot-0.30:.2f} - ${spot+0.20:.2f}",
-                'targets': [flip, call_wall] if 'CALL' in best['name'] else [flip, put_wall],
-                'stop': put_wall if 'CALL' in best['name'] else call_wall,
-                'expected_value': best['expected_value'],
-                'your_success_rate': best['probability'],
-                'position_size': f"${3000 * regime['size_multiplier']:.0f}"
-            })
-        
+        try:
+            plan['execution_schedule'] = self._build_execution_schedule(
+                symbol, spot, flip, call_wall, put_wall, regime, personal_stats, day
+            )
+        except Exception as e:
+            print(f"Execution schedule error: {e}")
+            plan['execution_schedule'] = {}
+
+        if best_strategies and best_strategies.get('best'):
+            try:
+                best = best_strategies['best']
+                plan['exact_trades'].append({
+                    'time': '9:45 AM',
+                    'strategy': best.get('name', 'Unknown'),
+                    'action': best.get('action', 'N/A'),
+                    'entry_zone': f"${spot-0.30:.2f} - ${spot+0.20:.2f}",
+                    'targets': [flip, call_wall] if 'CALL' in best.get('name', '') else [flip, put_wall],
+                    'stop': put_wall if 'CALL' in best.get('name', '') else call_wall,
+                    'expected_value': best.get('expected_value', 'N/A'),
+                    'your_success_rate': best.get('probability', 0),
+                    'position_size': f"${3000 * regime.get('size_multiplier', 1.0):.0f}"
+                })
+            except Exception as e:
+                print(f"Trade setup error: {e}")
+
         plan['profitable_zones'] = zones
-        
-        plan['pre_market'] = self._generate_pre_market_checklist(
-            symbol, net_gex, flip, spot, day
-        )
-        
-        plan['opening_30min'] = self._generate_opening_strategy(
-            spot, flip, net_gex, regime, day
-        )
-        
-        plan['mid_morning'] = self._generate_mid_morning_strategy(
-            spot, flip, call_wall, put_wall, net_gex
-        )
-        
+
+        try:
+            plan['pre_market'] = self._generate_pre_market_checklist(
+                symbol, net_gex, flip, spot, day
+            )
+        except Exception as e:
+            print(f"Pre-market error: {e}")
+            plan['pre_market'] = {'checklist': [], 'key_level': 'N/A', 'bias': 'N/A'}
+
+        try:
+            plan['opening_30min'] = self._generate_opening_strategy(
+                spot, flip, net_gex, regime, day
+            )
+        except Exception as e:
+            print(f"Opening strategy error: {e}")
+            plan['opening_30min'] = {'strategy': 'N/A', 'watch_for': 'N/A', 'action': 'N/A'}
+
+        try:
+            plan['mid_morning'] = self._generate_mid_morning_strategy(
+                spot, flip, call_wall, put_wall, net_gex
+            )
+        except Exception as e:
+            print(f"Mid-morning error: {e}")
+            plan['mid_morning'] = {'strategy': 'N/A', 'look_for': 'N/A'}
+
         plan['lunch'] = {
             'strategy': 'NO NEW POSITIONS',
             'reasoning': 'Low volume, choppy price action',
             'manage_existing': 'Trail stops to breakeven on winners'
         }
-        
-        plan['power_hour'] = self._generate_power_hour_strategy(
-            day, spot, flip, call_wall, put_wall, net_gex
-        )
+
+        try:
+            plan['power_hour'] = self._generate_power_hour_strategy(
+                day, spot, flip, call_wall, put_wall, net_gex
+            )
+        except Exception as e:
+            print(f"Power hour error: {e}")
+            plan['power_hour'] = {'strategy': 'N/A', 'watch_for': 'N/A', 'action': 'N/A'}
         
         plan['after_hours'] = {
             'review': 'Log all trades with outcomes',
@@ -902,18 +942,25 @@ class StrategyEngine:
     def format_daily_plan_markdown(self, plan: Dict) -> str:
         """Format daily plan as beautiful markdown with emojis"""
 
-        md = f"""
-# 📊 Daily Trading Plan - {plan['symbol']}
+        # Safe get with defaults
+        symbol = plan.get('symbol', 'N/A')
+        date = plan.get('date', 'N/A')
+        day = plan.get('day', 'N/A')
+        generated_at = plan.get('generated_at', 'N/A')
+        regime = plan.get('regime', {})
 
-**📅 Date:** {plan['date']} ({plan['day']})
-**⏰ Generated:** {plan['generated_at']}
+        md = f"""
+# 📊 Daily Trading Plan - {symbol}
+
+**📅 Date:** {date} ({day})
+**⏰ Generated:** {generated_at}
 
 ---
 
 ## 🎯 Market Regime
-- **Type:** {plan['regime']['type']}
-- **Volatility:** {plan['regime']['volatility']}
-- **Trend:** {plan['regime']['trend']}
+- **Type:** {regime.get('type', 'N/A')}
+- **Volatility:** {regime.get('volatility', 'N/A')}
+- **Trend:** {regime.get('trend', 'N/A')}
 
 ---
 
