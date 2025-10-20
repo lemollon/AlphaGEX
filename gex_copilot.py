@@ -2461,77 +2461,54 @@ class StrategyEngine:
     
     @staticmethod
     def generate_game_plan(market_data: Dict, setups: List[Dict]) -> str:
-        """Generate comprehensive daily game plan"""
-        
-        symbol = market_data.get('symbol', 'SPY')
-        net_gex = market_data.get('net_gex', 0)
-        spot = market_data.get('spot_price', 0)
-        flip = market_data.get('flip_point', 0)
-        
-        day = datetime.now().strftime('%A')
-        time_now = datetime.now().strftime('%H:%M')
-        
-        # Determine MM state
-        claude = ClaudeIntelligence()
-        mm_state = claude._determine_mm_state(net_gex)
-        state_config = MM_STATES[mm_state]
-        
-        plan = f"""
-# 🎯 {symbol} GAME PLAN - {day} {time_now} CT
+ """
+config.py - Configuration and Constants for GEX Trading Co-Pilot
+"""
 
-## 📊 Market Maker Positioning
-- **State: {mm_state}** - {state_config['behavior']}
-- **Net GEX: ${net_gex/1000000000:.2f}B**
-- **Action Required: {state_config['action']}**
-- **Confidence: {state_config['confidence']}%**
+from pathlib import Path
 
-## 📍 Critical Levels
-- **Current: ${spot:.2f}**
-flip_percent = f"{((flip-spot)/spot*100):+.2f}%" if spot != 0 else "N/A"
-        plan = f"""
-# 🎯 {symbol} GAME PLAN - {day} {time_now} CT
+# API Configuration
+TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
+CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
 
-## 📊 Market Maker Positioning
-- **State: {mm_state}** - {state_config['behavior']}
-- **Net GEX: ${net_gex/1e9:.2f}B**
-- **Action Required: {state_config['action']}**
-- **Confidence: {state_config['confidence']}%**
+# Database Path
+DB_PATH = Path("gex_copilot.db")
 
-## 📍 Critical Levels
-- **Current: ${spot:.2f}**
-- **Flip Point: ${flip:.2f}** ({flip_percent} away)
-- **Call Wall: ${market_data.get('call_wall', 0):.2f}**
-- **Put Wall: ${market_data.get('put_wall', 0):.2f}**
-        """
-- **Call Wall: ${market_data.get('call_wall', 0):.2f}**
-- **Put Wall: ${market_data.get('put_wall', 0):.2f}**
-        """
-        
-        if setups:
-            plan += "\n## 🎲 Active Setups Available\n"
-            for i, setup in enumerate(setups[:3], 1):
-                plan += f"""
-### Setup #{i}: {setup['strategy']}
-- **Action: {setup['action']}**
-- **Entry: {setup['entry_zone']}**
-- **Confidence: {setup['confidence']}%**
-- **Risk/Reward: 1:{setup['risk_reward']}**
-- **Reasoning: {setup['reasoning']}**
-                """
-        else:
-            plan += "\n## ⏸️ No High-Confidence Setups\n"
-            plan += "Market conditions not optimal for our strategies. Stand aside.\n"
-        
-        # Add time-based guidance
-        if day == 'Monday' or day == 'Tuesday':
-            plan += "\n## ⏰ Timing: OPTIMAL\nBest days for directional plays. MMs most vulnerable.\n"
-        elif day == 'Wednesday':
-            plan += "\n## ⏰ Timing: CAUTION\n⚠️ EXIT DIRECTIONALS BY 3 PM! Theta acceleration begins.\n"
-        elif day == 'Thursday' or day == 'Friday':
-            plan += "\n## ⏰ Timing: AVOID DIRECTIONALS\n0DTE theta crush zone. Iron Condors only.\n"
-        
-        return plan
-        # Continue from Part 3 - This is the main Streamlit application
+# Market Maker Behavioral States
+MM_STATES = {
+    'TRAPPED': {
+        'threshold': -2e9,
+        'behavior': 'Forced buying on rallies, selling on dips',
+        'confidence': 85,
+        'action': 'HUNT: Buy calls on any approach to flip point'
+    },
+    'DEFENDING': {
+        'threshold': 1e9,
+        'behavior': 'Selling rallies aggressively, buying dips',
+        'confidence': 70,
+        'action': 'FADE: Sell calls at resistance, puts at support'
+    },
+    'HUNTING': {
+        'threshold': -1e9,
+        'behavior': 'Aggressive positioning for direction',
+        'confidence': 60,
+        'action': 'WAIT: Let them show their hand first'
+    },
+    'PANICKING': {
+        'threshold': -3e9,
+        'behavior': 'Capitulation - covering at any price',
+        'confidence': 90,
+        'action': 'RIDE: Maximum aggression on squeeze'
+    },
+    'NEUTRAL': {
+        'threshold': 0,
+        'behavior': 'Balanced positioning',
+        'confidence': 50,
+        'action': 'RANGE: Iron condors between walls'
+    }
+}
+
+# Trading Strategies
 
 # ============================================================================
 # MAIN STREAMLIT APPLICATION
