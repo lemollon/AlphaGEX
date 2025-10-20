@@ -899,13 +899,13 @@ class RiskManager:
     """
     Manages position risk and portfolio exposure
     """
-    
+
     def __init__(self, account_size: float = 100000):
         self.account_size = account_size
         self.positions = []
         self.daily_pnl = 0
         self.max_daily_loss = account_size * 0.02  # 2% max daily loss
-        
+
     def check_new_position(self, setup: TradeSetup) -> Dict[str, any]:
         """
         Verify if new position meets risk criteria
@@ -916,32 +916,240 @@ class RiskManager:
             'current_exposure': 0,
             'available_risk': 0
         }
-        
+
         # Calculate current exposure
         current_exposure = sum([p.get('risk', 0) for p in self.positions])
         risk_check['current_exposure'] = current_exposure
-        
+
         # Check daily loss limit
         if self.daily_pnl <= -self.max_daily_loss:
             risk_check['reason'] = 'Daily loss limit reached'
             return risk_check
-        
+
         # Check position limits
         strategy_positions = [p for p in self.positions if p['strategy'] == setup.strategy_type]
         if len(strategy_positions) >= 3:
             risk_check['reason'] = 'Maximum positions for this strategy'
             return risk_check
-        
+
         # Calculate available risk
         max_portfolio_risk = self.account_size * 0.10  # 10% max portfolio risk
         available_risk = max_portfolio_risk - current_exposure
         risk_check['available_risk'] = available_risk
-        
+
         # Approve if within limits
         if available_risk > 0:
             risk_check['approved'] = True
             risk_check['reason'] = 'Position approved'
         else:
             risk_check['reason'] = 'Portfolio risk limit reached'
-        
+
         return risk_check
+
+
+class TradingVolatilityAPI:
+    """
+    API wrapper for fetching GEX data and options information
+    """
+
+    def __init__(self):
+        self.options_fetcher = None
+        self.gex_analyzer = None
+
+    def get_net_gamma(self, symbol: str) -> Dict:
+        """Fetch net gamma exposure data for a symbol"""
+        try:
+            # Initialize fetcher
+            self.options_fetcher = OptionsDataFetcher(symbol)
+
+            # Get spot price
+            spot = self.options_fetcher.get_spot_price()
+
+            # Get options chain
+            options_chain = self.options_fetcher.get_options_chain()
+
+            if options_chain.empty:
+                return {'error': 'No options data available', 'spot_price': spot}
+
+            # Analyze GEX
+            self.gex_analyzer = GEXAnalyzer(symbol)
+            gex_profile = self.gex_analyzer.calculate_gex(options_chain, spot)
+            key_levels = self.gex_analyzer.identify_key_levels()
+
+            # Build response
+            result = {
+                'symbol': symbol,
+                'spot_price': spot,
+                'net_gex': self.gex_analyzer.net_gex,
+                'flip_point': self.gex_analyzer.gamma_flip,
+                'call_wall': key_levels.get('call_wall_1').strike if key_levels.get('call_wall_1') else 0,
+                'put_wall': key_levels.get('put_wall_1').strike if key_levels.get('put_wall_1') else 0,
+            }
+
+            return result
+
+        except Exception as e:
+            print(f"Error fetching data: {e}")
+            return {'error': str(e)}
+
+    def get_gex_profile(self, symbol: str) -> Dict:
+        """Get detailed GEX profile for visualization"""
+        try:
+            if self.gex_analyzer is None:
+                # Fetch data first
+                self.get_net_gamma(symbol)
+
+            if self.gex_analyzer is None:
+                return {}
+
+            # Aggregate GEX by strike
+            strike_gex = self.gex_analyzer.aggregate_gex_by_strike()
+
+            if strike_gex.empty:
+                return {}
+
+            # Convert to dict format for visualization
+            profile = {
+                'strikes': strike_gex['strike'].tolist(),
+                'gex_values': strike_gex['gex'].tolist(),
+                'spot_price': self.gex_analyzer.spot_price,
+                'flip_point': self.gex_analyzer.gamma_flip
+            }
+
+            return profile
+
+        except Exception as e:
+            print(f"Error getting GEX profile: {e}")
+            return {}
+
+
+class MonteCarloEngine:
+    """
+    Monte Carlo simulation engine for options and squeeze plays
+    """
+
+    def __init__(self, num_simulations: int = 10000):
+        self.num_simulations = num_simulations
+
+    def simulate_squeeze_play(self,
+                              spot_price: float,
+                              flip_point: float,
+                              call_wall: float,
+                              volatility: float = 0.20,
+                              days: int = 5) -> Dict:
+        """
+        Run Monte Carlo simulation for a squeeze play scenario
+        """
+        try:
+            # Convert days to years for calculations
+            time_horizon = days / 252
+
+            # Generate random price paths
+            np.random.seed(42)  # For reproducibility
+
+            # GBM parameters
+            drift = 0  # Assume no drift for short-term
+            vol = volatility
+
+            # Simulate price paths
+            price_paths = []
+            hit_flip_count = 0
+            hit_wall_count = 0
+            max_gains = []
+
+            for _ in range(self.num_simulations):
+                # Generate daily returns
+                daily_returns = np.random.normal(
+                    drift / 252,
+                    vol / np.sqrt(252),
+                    days
+                )
+
+                # Calculate price path
+                price_path = spot_price * np.exp(np.cumsum(daily_returns))
+                price_paths.append(price_path[-1])
+
+                # Check if hit flip point
+                if max(price_path) >= flip_point:
+                    hit_flip_count += 1
+
+                # Check if hit call wall
+                if max(price_path) >= call_wall:
+                    hit_wall_count += 1
+
+                # Calculate max gain
+                max_price = max(price_path)
+                max_gain_pct = (max_price - spot_price) / spot_price * 100
+                max_gains.append(max_gain_pct)
+
+            # Calculate statistics
+            final_prices = np.array(price_paths)
+
+            result = {
+                'probability_hit_flip': (hit_flip_count / self.num_simulations) * 100,
+                'probability_hit_wall': (hit_wall_count / self.num_simulations) * 100,
+                'expected_final_price': np.mean(final_prices),
+                'median_final_price': np.median(final_prices),
+                'std_final_price': np.std(final_prices),
+                'max_gain_percent': np.percentile(max_gains, 95),  # 95th percentile
+                'avg_gain_percent': np.mean(max_gains),
+                'final_price_distribution': final_prices.tolist(),
+            }
+
+            return result
+
+        except Exception as e:
+            print(f"Monte Carlo simulation error: {e}")
+            return {}
+
+
+class BlackScholesPricer:
+    """
+    Black-Scholes option pricing model
+    """
+
+    def __init__(self, risk_free_rate: float = 0.045):
+        self.risk_free_rate = risk_free_rate
+
+    def calculate_option_price(self,
+                              spot: float,
+                              strike: float,
+                              time_to_expiry: float,
+                              volatility: float,
+                              option_type: str = 'call') -> Dict:
+        """
+        Calculate option price using Black-Scholes
+        """
+        try:
+            from scipy.stats import norm
+
+            # Black-Scholes formula
+            d1 = (np.log(spot / strike) + (self.risk_free_rate + 0.5 * volatility**2) * time_to_expiry) / (volatility * np.sqrt(time_to_expiry))
+            d2 = d1 - volatility * np.sqrt(time_to_expiry)
+
+            if option_type.lower() == 'call':
+                price = spot * norm.cdf(d1) - strike * np.exp(-self.risk_free_rate * time_to_expiry) * norm.cdf(d2)
+                delta = norm.cdf(d1)
+            else:  # put
+                price = strike * np.exp(-self.risk_free_rate * time_to_expiry) * norm.cdf(-d2) - spot * norm.cdf(-d1)
+                delta = -norm.cdf(-d1)
+
+            # Calculate Greeks
+            gamma = norm.pdf(d1) / (spot * volatility * np.sqrt(time_to_expiry))
+            vega = spot * norm.pdf(d1) * np.sqrt(time_to_expiry) / 100  # Per 1% vol change
+            theta = (-spot * norm.pdf(d1) * volatility / (2 * np.sqrt(time_to_expiry))
+                    - self.risk_free_rate * strike * np.exp(-self.risk_free_rate * time_to_expiry) * norm.cdf(d2 if option_type.lower() == 'call' else -d2)) / 365
+
+            return {
+                'price': price,
+                'delta': delta,
+                'gamma': gamma,
+                'vega': vega,
+                'theta': theta,
+                'd1': d1,
+                'd2': d2
+            }
+
+        except Exception as e:
+            print(f"Black-Scholes pricing error: {e}")
+            return {}
