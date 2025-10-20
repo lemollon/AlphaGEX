@@ -4,6 +4,15 @@ This is the main entry point that imports all classes from the other files
 Run this with: streamlit run main.py
 """
 
+import sys
+import os
+from pathlib import Path
+
+# Add the current directory to Python path to ensure imports work
+current_dir = Path(__file__).parent
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+
 import streamlit as st
 import pandas as pd
 import sqlite3
