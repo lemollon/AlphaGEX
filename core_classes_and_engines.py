@@ -1013,19 +1013,37 @@ class TradingVolatilityAPI:
                 # Fetch data first
                 self.get_net_gamma(symbol)
 
-            if self.gex_analyzer is None:
+            if self.gex_analyzer is None or self.gex_analyzer.gex_profile is None:
                 return {}
 
-            # Aggregate GEX by strike
-            strike_gex = self.gex_analyzer.aggregate_gex_by_strike()
+            # Get the raw GEX profile data
+            gex_df = self.gex_analyzer.gex_profile
 
-            if strike_gex.empty:
+            if gex_df.empty:
                 return {}
+
+            # Separate calls and puts, then aggregate by strike
+            calls = gex_df[gex_df['type'] == 'call'].groupby('strike')['gex'].sum()
+            puts = gex_df[gex_df['type'] == 'put'].groupby('strike')['gex'].sum()
+
+            # Get all unique strikes
+            all_strikes = sorted(set(calls.index) | set(puts.index))
+
+            # Build the strikes data structure expected by visualization
+            strikes_data = []
+            for strike in all_strikes:
+                call_gamma = calls.get(strike, 0)
+                put_gamma = puts.get(strike, 0)
+
+                strikes_data.append({
+                    'strike': strike,
+                    'call_gamma': abs(call_gamma),  # Call gamma as positive
+                    'put_gamma': abs(put_gamma)     # Put gamma as positive (will be negated in viz)
+                })
 
             # Convert to dict format for visualization
             profile = {
-                'strikes': strike_gex['strike'].tolist(),
-                'gex_values': strike_gex['gex'].tolist(),
+                'strikes': strikes_data,
                 'spot_price': self.gex_analyzer.spot_price,
                 'flip_point': self.gex_analyzer.gamma_flip
             }
@@ -1034,6 +1052,8 @@ class TradingVolatilityAPI:
 
         except Exception as e:
             print(f"Error getting GEX profile: {e}")
+            import traceback
+            traceback.print_exc()
             return {}
 
 
