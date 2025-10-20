@@ -896,5 +896,211 @@ class StrategyEngine:
             plan += "\n## ⏰ Timing: CAUTION\n⚠️ EXIT DIRECTIONALS BY 3 PM! Theta acceleration begins.\n"
         elif day == 'Thursday' or day == 'Friday':
             plan += "\n## ⏰ Timing: AVOID DIRECTIONALS\n0DTE theta crush zone. Iron Condors only.\n"
-        
+
         return plan
+
+    def format_daily_plan_markdown(self, plan: Dict) -> str:
+        """Format daily plan as beautiful markdown with emojis"""
+
+        md = f"""
+# 📊 Daily Trading Plan - {plan['symbol']}
+
+**📅 Date:** {plan['date']} ({plan['day']})
+**⏰ Generated:** {plan['generated_at']}
+
+---
+
+## 🎯 Market Regime
+- **Type:** {plan['regime']['type']}
+- **Volatility:** {plan['regime']['volatility']}
+- **Trend:** {plan['regime']['trend']}
+
+---
+
+## ⏰ Pre-Market Checklist (Before 9:30 AM)
+
+"""
+
+        if 'pre_market' in plan:
+            for item in plan['pre_market'].get('checklist', []):
+                md += f"- ✅ {item}\n"
+            md += f"\n**Key Level:** {plan['pre_market'].get('key_level', 'N/A')}\n"
+            md += f"**Bias:** {plan['pre_market'].get('bias', 'N/A')}\n\n"
+
+        md += "---\n\n## 🔔 Opening 30 Minutes (9:30 - 10:00 AM)\n\n"
+
+        if 'opening_30min' in plan:
+            opening = plan['opening_30min']
+            md += f"**Strategy:** {opening.get('strategy', 'N/A')}\n\n"
+            md += f"**Watch For:** {opening.get('watch_for', 'N/A')}\n\n"
+            md += f"**Action:** {opening.get('action', 'N/A')}\n\n"
+
+        md += "---\n\n## 💼 Exact Trade Setups\n\n"
+
+        if plan.get('exact_trades'):
+            for i, trade in enumerate(plan['exact_trades'], 1):
+                md += f"### Trade #{i}: {trade.get('strategy', 'N/A')}\n\n"
+                md += f"- ⏰ **Time:** {trade.get('time', 'N/A')}\n"
+                md += f"- 📈 **Action:** {trade.get('action', 'N/A')}\n"
+                md += f"- 🎯 **Entry Zone:** {trade.get('entry_zone', 'N/A')}\n"
+                md += f"- 🎯 **Targets:** {', '.join([f'${t:.2f}' for t in trade.get('targets', [])])}\n"
+                md += f"- 🛑 **Stop Loss:** ${trade.get('stop', 0):.2f}\n"
+                md += f"- 💰 **Position Size:** {trade.get('position_size', 'N/A')}\n"
+                md += f"- 📊 **Expected Value:** {trade.get('expected_value', 'N/A')}\n"
+                md += f"- ✅ **Your Success Rate:** {trade.get('your_success_rate', 0):.0f}%\n\n"
+        else:
+            md += "*No exact trade setups available at this time.*\n\n"
+
+        md += "---\n\n## 🌅 Mid-Morning (10:00 AM - 12:00 PM)\n\n"
+
+        if 'mid_morning' in plan:
+            mid = plan['mid_morning']
+            md += f"**Strategy:** {mid.get('strategy', 'N/A')}\n\n"
+            md += f"**Look For:** {mid.get('look_for', 'N/A')}\n\n"
+
+        md += "---\n\n## 🍽️ Lunch Period (12:00 - 2:00 PM)\n\n"
+
+        if 'lunch' in plan:
+            lunch = plan['lunch']
+            md += f"**Strategy:** {lunch.get('strategy', 'N/A')}\n\n"
+            md += f"**Reasoning:** {lunch.get('reasoning', 'N/A')}\n\n"
+            md += f"**Manage Existing:** {lunch.get('manage_existing', 'N/A')}\n\n"
+
+        md += "---\n\n## ⚡ Power Hour (3:00 - 4:00 PM)\n\n"
+
+        if 'power_hour' in plan:
+            power = plan['power_hour']
+            md += f"**Strategy:** {power.get('strategy', 'N/A')}\n\n"
+            md += f"**Watch For:** {power.get('watch_for', 'N/A')}\n\n"
+            md += f"**Action:** {power.get('action', 'N/A')}\n\n"
+
+        md += "---\n\n## 🌙 After Hours\n\n"
+
+        if 'after_hours' in plan:
+            after = plan['after_hours']
+            md += f"- 📝 {after.get('review', 'N/A')}\n"
+            md += f"- 🔮 {after.get('prep_tomorrow', 'N/A')}\n\n"
+
+            if 'alerts_to_set' in after:
+                md += "**🔔 Alerts to Set:**\n"
+                for alert in after['alerts_to_set']:
+                    md += f"- {alert}\n"
+
+        md += "\n---\n\n## 💡 Profitable Zones\n\n"
+
+        if 'profitable_zones' in plan:
+            zones = plan['profitable_zones']
+            md += f"- 🟢 **Best Zone:** {zones.get('best_zone', 'N/A')}\n"
+            md += f"- 🔴 **Avoid Zone:** {zones.get('avoid_zone', 'N/A')}\n"
+            md += f"- 📊 **Expected Win Rate:** {zones.get('win_rate', 0)}%\n"
+
+        return md
+
+    def format_weekly_plan_markdown(self, plan: Dict) -> str:
+        """Format weekly plan as beautiful markdown with emojis"""
+
+        md = f"""
+# 📅 Weekly Trading Plan - {plan['symbol']}
+
+**Week Of:** {plan['week_of']}
+**Net GEX:** {plan.get('net_gex', 'N/A')}
+**Expected Return:** {plan.get('expected_return', 'N/A')}
+
+---
+
+## 🎯 Market Regime
+- **Type:** {plan['regime']['type']}
+- **Volatility:** {plan['regime']['volatility']}
+- **Trend:** {plan['regime']['trend']}
+
+---
+
+"""
+
+        days_emoji = {
+            'Monday': '🌟',
+            'Tuesday': '💼',
+            'Wednesday': '⚠️',
+            'Thursday': '📈',
+            'Friday': '🎯'
+        }
+
+        for day_name, emoji in days_emoji.items():
+            if day_name in plan.get('days', {}):
+                day_plan = plan['days'][day_name]
+                md += f"## {emoji} {day_name}\n\n"
+                md += f"**Focus:** {day_plan.get('focus', 'N/A')}\n\n"
+                md += f"**Strategy:** {day_plan.get('strategy', 'N/A')}\n\n"
+
+                if 'exact_entry' in day_plan:
+                    md += f"**📍 Entry:** {day_plan['exact_entry']}\n\n"
+                if 'target' in day_plan:
+                    md += f"**🎯 Target:** {day_plan['target']}\n\n"
+                if 'stop' in day_plan:
+                    md += f"**🛑 Stop:** {day_plan['stop']}\n\n"
+                if 'expected_profit' in day_plan:
+                    md += f"**💰 Expected:** {day_plan['expected_profit']}\n\n"
+                if 'win_probability' in day_plan:
+                    md += f"**✅ Win Probability:** {day_plan['win_probability']}\n\n"
+
+                if 'reasoning' in day_plan:
+                    md += f"*{day_plan['reasoning']}*\n\n"
+
+                md += "---\n\n"
+
+        return md
+
+    def format_monthly_plan_markdown(self, plan: Dict) -> str:
+        """Format monthly plan as beautiful markdown with emojis"""
+
+        md = f"""
+# 📆 Monthly Trading Plan - {plan['symbol']}
+
+**Month:** {plan.get('month', 'N/A')}
+**Capital Allocation:** {plan.get('capital_allocation', 'N/A')}
+**Target Return:** {plan.get('target_return', 'N/A')}
+
+---
+
+## 🎯 Monthly Objectives
+
+"""
+
+        if 'objectives' in plan:
+            for obj in plan['objectives']:
+                md += f"- {obj}\n"
+
+        md += "\n---\n\n## 📊 Strategy Allocation\n\n"
+
+        if 'strategies' in plan:
+            for strategy_name, allocation in plan['strategies'].items():
+                md += f"- **{strategy_name}:** {allocation}\n"
+
+        md += "\n---\n\n## 📈 Weekly Breakdown\n\n"
+
+        if 'weeks' in plan:
+            for week_num, week_data in plan['weeks'].items():
+                md += f"### Week {week_num}\n\n"
+                md += f"**Focus:** {week_data.get('focus', 'N/A')}\n\n"
+                md += f"**Target:** {week_data.get('target', 'N/A')}\n\n"
+                if 'key_dates' in week_data:
+                    md += "**Key Dates:**\n"
+                    for date in week_data['key_dates']:
+                        md += f"- {date}\n"
+                md += "\n"
+
+        md += "---\n\n## ⚠️ Risk Management\n\n"
+
+        if 'risk_management' in plan:
+            risk = plan['risk_management']
+            md += f"- 💰 **Max Position Size:** {risk.get('max_position_size', 'N/A')}\n"
+            md += f"- 🛑 **Max Daily Loss:** {risk.get('max_daily_loss', 'N/A')}\n"
+            md += f"- 📊 **Max Portfolio Risk:** {risk.get('max_portfolio_risk', 'N/A')}\n"
+
+        md += "\n---\n\n## 📝 Monthly Review Checklist\n\n"
+
+        if 'review_checklist' in plan:
+            for item in plan['review_checklist']:
+                md += f"- [ ] {item}\n"
+
+        return md
