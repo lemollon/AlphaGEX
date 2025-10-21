@@ -18,9 +18,293 @@ from config_and_database import DB_PATH, MM_STATES, STRATEGIES
 # Import the TradingVolatilityAPI if we need it for VIX
 try:
     import yfinance as yf
+    from scipy.stats import norm
+    import math
     YFINANCE_AVAILABLE = True
 except ImportError:
     YFINANCE_AVAILABLE = False
+    norm = None
+    math = None
+
+# ============================================================================
+# CRITICAL NEW FEATURES FOR ULTIMATE COPILOT
+# ============================================================================
+
+class RealOptionsChainFetcher:
+    """Fetches REAL options chain data from Yahoo Finance"""
+
+    def __init__(self):
+        self.cache = {}
+        self.cache_time = {}
+
+    def get_options_chain(self, symbol: str, expiry_date: str = None) -> Dict:
+        """Get real options chain with bid/ask/greeks"""
+
+        cache_key = f"{symbol}_{expiry_date}"
+
+        # Check cache (5 minute expiry)
+        if cache_key in self.cache:
+            if (datetime.now() - self.cache_time[cache_key]).seconds < 300:
+                return self.cache[cache_key]
+
+        try:
+            ticker = yf.Ticker(symbol)
+
+            # Get available expiration dates
+            expirations = ticker.options
+            if not expirations:
+                return {}
+
+            # Use specified expiry or nearest weekly
+            if expiry_date and expiry_date in expirations:
+                expiry = expiry_date
+            else:
+                expiry = expirations[0]  # Nearest expiry
+
+            # Get options chain
+            opt_chain = ticker.option_chain(expiry)
+            calls = opt_chain.calls
+            puts = opt_chain.puts
+
+            # Get current stock price
+            current_price = ticker.history(period='1d')['Close'].iloc[-1]
+
+            result = {
+                'symbol': symbol,
+                'current_price': current_price,
+                'expiry': expiry,
+                'calls': calls.to_dict('records'),
+                'puts': puts.to_dict('records'),
+                'timestamp': datetime.now().isoformat()
+            }
+
+            # Cache it
+            self.cache[cache_key] = result
+            self.cache_time[cache_key] = datetime.now()
+
+            return result
+
+        except Exception as e:
+            st.warning(f"Could not fetch options chain for {symbol}: {e}")
+            return {}
+
+    def find_best_strike(self, symbol: str, option_type: str, delta_target: float = 0.50) -> Dict:
+        """Find option closest to target delta"""
+
+        chain = self.get_options_chain(symbol)
+        if not chain:
+            return {}
+
+        options = chain['calls'] if option_type.lower() == 'call' else chain['puts']
+        current_price = chain['current_price']
+
+        # Find ATM or specified delta
+        best_option = None
+        closest_delta = 999
+
+        for opt in options:
+            # Calculate approx delta if not provided
+            strike = opt['strike']
+            if option_type.lower() == 'call':
+                approx_delta = max(0, min(1, 0.5 + (current_price - strike) / current_price))
+            else:
+                approx_delta = max(0, min(1, 0.5 - (strike - current_price) / current_price))
+
+            delta_diff = abs(approx_delta - delta_target)
+
+            if delta_diff < closest_delta:
+                closest_delta = delta_diff
+                best_option = opt
+
+        return best_option or {}
+
+
+class GreeksCalculator:
+    """Calculate option Greeks using Black-Scholes"""
+
+    @staticmethod
+    def calculate_greeks(spot: float, strike: float, time_to_expiry: float,
+                        volatility: float, rate: float = 0.05,
+                        option_type: str = 'call') -> Dict:
+        """Calculate all Greeks for an option"""
+
+        if not YFINANCE_AVAILABLE or norm is None:
+            return {}
+
+        try:
+            # Prevent division by zero
+            if time_to_expiry <= 0:
+                time_to_expiry = 1/365  # 1 day
+
+            # Calculate d1 and d2
+            d1 = (np.log(spot / strike) + (rate + 0.5 * volatility ** 2) * time_to_expiry) / \
+                 (volatility * np.sqrt(time_to_expiry))
+            d2 = d1 - volatility * np.sqrt(time_to_expiry)
+
+            # Calculate Greeks
+            if option_type.lower() == 'call':
+                delta = norm.cdf(d1)
+                price = spot * norm.cdf(d1) - strike * np.exp(-rate * time_to_expiry) * norm.cdf(d2)
+            else:
+                delta = -norm.cdf(-d1)
+                price = strike * np.exp(-rate * time_to_expiry) * norm.cdf(-d2) - spot * norm.cdf(-d1)
+
+            # Gamma (same for calls and puts)
+            gamma = norm.pdf(d1) / (spot * volatility * np.sqrt(time_to_expiry))
+
+            # Vega (same for calls and puts)
+            vega = spot * norm.pdf(d1) * np.sqrt(time_to_expiry) / 100  # Per 1% change in IV
+
+            # Theta
+            if option_type.lower() == 'call':
+                theta = (-spot * norm.pdf(d1) * volatility / (2 * np.sqrt(time_to_expiry)) - \
+                        rate * strike * np.exp(-rate * time_to_expiry) * norm.cdf(d2)) / 365
+            else:
+                theta = (-spot * norm.pdf(d1) * volatility / (2 * np.sqrt(time_to_expiry)) + \
+                        rate * strike * np.exp(-rate * time_to_expiry) * norm.cdf(-d2)) / 365
+
+            return {
+                'delta': round(delta, 3),
+                'gamma': round(gamma, 4),
+                'theta': round(theta, 3),
+                'vega': round(vega, 3),
+                'price': round(price, 2)
+            }
+
+        except Exception as e:
+            return {}
+
+
+class PositionSizingCalculator:
+    """Calculate exact position sizes based on account and risk"""
+
+    @staticmethod
+    def calculate_contracts(account_size: float, risk_pct: float,
+                          entry_price: float, stop_price: float) -> Dict:
+        """Calculate how many contracts to trade"""
+
+        if account_size <= 0 or risk_pct <= 0:
+            return {'error': 'Invalid account size or risk percentage'}
+
+        # Calculate risk amount
+        risk_dollars = account_size * (risk_pct / 100)
+
+        # Calculate risk per contract
+        risk_per_contract = abs(entry_price - stop_price) * 100  # Options are 100 shares
+
+        if risk_per_contract <= 0:
+            return {'error': 'Stop must be different from entry'}
+
+        # Calculate contracts
+        contracts = int(risk_dollars / risk_per_contract)
+        contracts = max(1, contracts)  # At least 1 contract
+
+        # Calculate actual risk
+        actual_risk = contracts * risk_per_contract
+        actual_risk_pct = (actual_risk / account_size) * 100
+
+        return {
+            'contracts': contracts,
+            'risk_dollars': round(actual_risk, 2),
+            'risk_pct': round(actual_risk_pct, 2),
+            'max_loss': round(actual_risk, 2),
+            'cost_basis': round(contracts * entry_price * 100, 2)
+        }
+
+
+class PsychologicalCoach:
+    """Detects tilt, revenge trading, and emotional patterns"""
+
+    def __init__(self):
+        self.session_trade_count = 0
+        self.last_loss_time = None
+        self.ignored_warnings = []
+
+    def analyze_behavior(self, conversation_history: List[Dict], current_request: str) -> Dict:
+        """Analyze user behavior for psychological red flags"""
+
+        red_flags = []
+        severity = 'normal'
+
+        # Count recent trade requests
+        recent_requests = [msg for msg in conversation_history[-10:]
+                          if msg.get('role') == 'user']
+        trade_keywords = ['trade', 'buy', 'sell', 'calls', 'puts', 'position']
+
+        trade_request_count = sum(
+            1 for msg in recent_requests
+            if any(kw in msg.get('content', '').lower() for kw in trade_keywords)
+        )
+
+        # RED FLAG 1: Overtrading (>4 trade requests in recent history)
+        if trade_request_count >= 4:
+            red_flags.append({
+                'type': 'OVERTRADING',
+                'message': f'🚨 You\'ve made {trade_request_count} trade requests recently. Take a break.',
+                'severity': 'high'
+            })
+            severity = 'high'
+
+        # RED FLAG 2: Revenge trading (mentioning loss + new trade request)
+        loss_keywords = ['loss', 'lost', 'down', 'stopped out', 'wrong', 'failed']
+        recent_content = ' '.join([msg.get('content', '') for msg in recent_requests[-3:]])
+
+        if any(kw in recent_content.lower() for kw in loss_keywords):
+            if any(kw in current_request.lower() for kw in trade_keywords):
+                red_flags.append({
+                    'type': 'REVENGE_TRADING',
+                    'message': '🚨 REVENGE TRADING ALERT: You just mentioned a loss and now want another trade. Step away for 30 minutes.',
+                    'severity': 'critical'
+                })
+                severity = 'critical'
+
+        # RED FLAG 3: Ignoring previous advice
+        if len(conversation_history) >= 4:
+            last_ai_response = None
+            for msg in reversed(conversation_history):
+                if msg.get('role') == 'assistant':
+                    last_ai_response = msg.get('content', '')
+                    break
+
+            if last_ai_response:
+                if 'terrible' in last_ai_response.lower() or 'risky' in last_ai_response.lower():
+                    if 'still' in current_request.lower() or 'but' in current_request.lower():
+                        red_flags.append({
+                            'type': 'IGNORING_ADVICE',
+                            'message': '⚠️ I just warned you this was risky, and you\'re still pushing. Trust the process.',
+                            'severity': 'medium'
+                        })
+                        severity = 'medium' if severity == 'normal' else severity
+
+        # RED FLAG 4: After hours trading (if outside market hours)
+        current_hour = datetime.now().hour
+        if current_hour < 9 or current_hour >= 16:
+            if any(kw in current_request.lower() for kw in trade_keywords):
+                red_flags.append({
+                    'type': 'AFTER_HOURS',
+                    'message': '⚠️ Market is closed. Don\'t plan trades emotionally after hours. Wait for market open.',
+                    'severity': 'low'
+                })
+
+        # RED FLAG 5: Wednesday/Thursday/Friday directional requests
+        day_of_week = datetime.now().strftime('%A')
+        if day_of_week in ['Wednesday', 'Thursday', 'Friday']:
+            hour = datetime.now().hour
+            if day_of_week == 'Wednesday' and hour >= 15:
+                if 'call' in current_request.lower() or 'put' in current_request.lower():
+                    red_flags.append({
+                        'type': 'TIMING_VIOLATION',
+                        'message': '🛑 Wednesday 3PM: CLOSE directional positions, don\'t open new ones!',
+                        'severity': 'critical'
+                    })
+                    severity = 'critical'
+
+        return {
+            'severity': severity,
+            'red_flags': red_flags,
+            'trade_request_count': trade_request_count,
+            'coaching_needed': len(red_flags) > 0
+        }
 
 # ============================================================================
 # RAG SYSTEM FOR INTELLIGENT TRADING
@@ -339,24 +623,52 @@ class FREDIntegration:
 # CLAUDE API INTEGRATION
 # ============================================================================
 class ClaudeIntelligence:
-    """Advanced AI integration for market analysis"""
-    
+    """Advanced AI integration for market analysis - NOW WITH ULTIMATE FEATURES"""
+
     def __init__(self):
         self.api_key = st.secrets.get("claude_api_key", "")
         self.model = "claude-3-5-sonnet-20241022"
         self.conversation_history = []
         self.fred = FREDIntegration()
-        
+
+        # NEW ULTIMATE FEATURES
+        self.options_fetcher = RealOptionsChainFetcher()
+        self.greeks_calc = GreeksCalculator()
+        self.position_sizer = PositionSizingCalculator()
+        self.psych_coach = PsychologicalCoach()
+
+        # Account settings (get from session state if available)
+        self.account_size = st.session_state.get('account_size', 50000)  # Default $50k
+        self.risk_pct = st.session_state.get('risk_per_trade', 2)  # Default 2%
+
         if not self.api_key:
             st.warning("Claude API key not found in secrets. Using fallback analysis.")
     
     def analyze_market(self, market_data: Dict, user_query: str) -> str:
-        """Generate intelligent market analysis with RAG context - ALWAYS provides a trade"""
+        """Generate intelligent market analysis with RAG context - NOW WITH ULTIMATE FEATURES"""
+
+        # STEP 1: PSYCHOLOGICAL COACHING CHECK (FIRST - BEFORE ANYTHING)
+        psych_analysis = self.psych_coach.analyze_behavior(self.conversation_history, user_query)
+
+        if psych_analysis['coaching_needed']:
+            warning_message = "🧠 **PSYCHOLOGICAL CHECK**\n\n"
+            for flag in psych_analysis['red_flags']:
+                warning_message += f"{flag['message']}\n\n"
+
+            # If CRITICAL severity, refuse to provide trade
+            if psych_analysis['severity'] == 'critical':
+                warning_message += "\n❌ **I'm refusing to provide a trade recommendation right now.**\n"
+                warning_message += "Take a break. Clear your head. Come back in 30 minutes.\n"
+                warning_message += "Trading while emotional is the #1 way to blow up an account.\n"
+                return warning_message
+
+            # Otherwise, show warning but continue
+            st.warning(warning_message)
 
         if not self.api_key:
             return self._fallback_analysis_with_rag(market_data, user_query)
 
-        # Extract symbol from query if mentioned
+        # STEP 2: Extract symbol from query if mentioned
         query_upper = user_query.upper()
         mentioned_symbol = None
         for word in query_upper.split():
@@ -364,13 +676,11 @@ class ClaudeIntelligence:
                 mentioned_symbol = word
                 break
 
-        # Get symbol from market data or query
         symbol = market_data.get('symbol', mentioned_symbol or 'SPY')
 
-        # If market_data is empty or incomplete, fetch fresh data
+        # STEP 3: If market_data is empty, fetch fresh data
         if not market_data or not market_data.get('net_gex'):
             try:
-                # Import here to avoid circular dependency
                 from core_classes_and_engines import TradingVolatilityAPI
                 api = TradingVolatilityAPI()
                 fresh_data = api.get_gex_data(symbol)
@@ -380,8 +690,56 @@ class ClaudeIntelligence:
             except Exception as e:
                 st.warning(f"Using analytical approach for {symbol} (live data unavailable)")
 
+        # STEP 4: FETCH REAL OPTIONS CHAIN DATA
+        options_chain = self.options_fetcher.get_options_chain(symbol)
+        real_options_data = {}
+
+        if options_chain:
+            # Find best ATM call and put
+            best_call = self.options_fetcher.find_best_strike(symbol, 'call', delta_target=0.50)
+            best_put = self.options_fetcher.find_best_strike(symbol, 'put', delta_target=-0.50)
+
+            real_options_data = {
+                'atm_call': best_call,
+                'atm_put': best_put,
+                'expiry': options_chain.get('expiry'),
+                'current_price': options_chain.get('current_price')
+            }
+
+            # STEP 5: CALCULATE GREEKS for the ATM options
+            if best_call:
+                greeks_call = self.greeks_calc.calculate_greeks(
+                    spot=options_chain['current_price'],
+                    strike=best_call.get('strike', options_chain['current_price']),
+                    time_to_expiry=7/365,  # Assume 1 week for now
+                    volatility=best_call.get('impliedVolatility', 0.20),
+                    option_type='call'
+                )
+                real_options_data['call_greeks'] = greeks_call
+
+            if best_put:
+                greeks_put = self.greeks_calc.calculate_greeks(
+                    spot=options_chain['current_price'],
+                    strike=best_put.get('strike', options_chain['current_price']),
+                    time_to_expiry=7/365,
+                    volatility=best_put.get('impliedVolatility', 0.20),
+                    option_type='put'
+                )
+                real_options_data['put_greeks'] = greeks_put
+
+        # STEP 6: CALCULATE POSITION SIZING (example for typical trade)
+        example_entry = real_options_data.get('atm_call', {}).get('lastPrice', 5.0)
+        example_stop = example_entry * 0.70  # 30% stop loss
+
+        position_sizing = self.position_sizer.calculate_contracts(
+            account_size=self.account_size,
+            risk_pct=self.risk_pct,
+            entry_price=example_entry,
+            stop_price=example_stop
+        )
+
         context = self._build_context(market_data)
-        context['symbol'] = symbol  # Ensure symbol is in context
+        context['symbol'] = symbol
 
         rag = TradingRAG()
         rag_context = rag.build_context_for_claude(market_data, user_query)
@@ -393,7 +751,6 @@ class ClaudeIntelligence:
         zones = calculator.get_profitable_zones(market_data)
 
         self.conversation_history.append({"role": "user", "content": user_query})
-
         messages = self.conversation_history[-10:]
 
         messages.append({
@@ -403,6 +760,12 @@ class ClaudeIntelligence:
 
             Current Market Data:
             {json.dumps(context, indent=2)}
+
+            REAL OPTIONS CHAIN DATA:
+            {json.dumps(real_options_data, indent=2)}
+
+            POSITION SIZING (Account: ${self.account_size}, Risk: {self.risk_pct}%):
+            {json.dumps(position_sizing, indent=2)}
 
             YOUR PERSONAL TRADING HISTORY:
             {rag_context}
@@ -417,25 +780,21 @@ class ClaudeIntelligence:
 
             CRITICAL REQUIREMENTS - YOU MUST:
             1. ALWAYS start response with "{symbol}" ticker symbol
-            2. ALWAYS provide AT LEAST ONE specific trade setup (there's ALWAYS a tradeable setup)
-            3. Give EXACT strikes with current prices (e.g., "{symbol} 585 Call @ $4.50")
-            4. Include specific entry/exit levels and stop loss
-            5. State probability of profit (even if low - be honest)
-            6. If GEX data is limited, use technical levels and current price action
+            2. Use the REAL OPTIONS DATA above (actual strikes, prices, Greeks)
+            3. Include GREEKS (delta, theta, gamma, vega) in your explanation
+            4. Recommend EXACT number of contracts based on position sizing above
+            5. ALWAYS provide AT LEAST ONE specific trade setup
+            6. State probability of profit (even if low - be honest)
             7. NEVER say "no setup" - options traders ALWAYS find opportunities
-            8. Be aggressive about profit opportunities but honest about probabilities
-            9. Reference the ACTUAL data provided above
-            10. If data shows a pattern, STATE IT CLEARLY with numbers
+            8. Reference the ACTUAL real options prices (bid/ask) from the data above
+            9. Explain how Greeks will affect the trade (theta decay, delta move, etc.)
+            10. Give precise entry/exit based on REAL market prices
 
-            OPTIONS TRADER MINDSET:
-            - Low probability? Sell premium instead of buying
-            - High IV? Iron condor or credit spread
-            - Low IV? Debit spread or naked long
-            - Choppy? ATM strangles or straddles
-            - Trending? Directional with defined risk
+            POSITION SIZING NOTE:
+            The user's account is ${self.account_size} and they risk {self.risk_pct}% per trade.
+            Recommend the appropriate number of contracts from the position sizing data.
 
-            There is ALWAYS a trade. The question is probability and risk/reward.
-            Give the BEST trade for current conditions, even if probability is 45-55%.
+            There is ALWAYS a trade. Use the REAL options data to give specific recommendations.
             """
         })
 
