@@ -155,6 +155,35 @@ def main():
         claude_api_key = st.secrets.get("claude_api_key", "")
         if claude_api_key:
             st.success("🤖 **AI Copilot:** ✅ ACTIVE")
+            st.caption(f"Key: {claude_api_key[:12]}...{claude_api_key[-4:]}")
+
+            # Test API connection button
+            if st.button("🧪 Test API Connection", help="Test if Claude API is working"):
+                with st.spinner("Testing API..."):
+                    try:
+                        import requests
+                        test_response = requests.post(
+                            "https://api.anthropic.com/v1/messages",
+                            headers={
+                                "x-api-key": claude_api_key,
+                                "anthropic-version": "2023-06-01",
+                                "content-type": "application/json"
+                            },
+                            json={
+                                "model": "claude-3-5-sonnet-20241022",
+                                "max_tokens": 50,
+                                "messages": [{"role": "user", "content": "Say 'API working' if you receive this"}]
+                            },
+                            timeout=10
+                        )
+                        if test_response.status_code == 200:
+                            st.success("✅ API Connection Successful!")
+                            result = test_response.json()
+                            st.info(f"Response: {result['content'][0]['text']}")
+                        else:
+                            st.error(f"❌ API Error {test_response.status_code}: {test_response.text}")
+                    except Exception as e:
+                        st.error(f"❌ Connection Failed: {str(e)}")
         else:
             st.warning("🤖 **AI Copilot:** ⚠️ BASIC MODE")
             with st.expander("ℹ️ Enable Advanced AI"):
