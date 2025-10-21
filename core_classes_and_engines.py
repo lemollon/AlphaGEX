@@ -973,22 +973,33 @@ class TradingVolatilityAPI:
 
     def get_net_gamma(self, symbol: str) -> Dict:
         """Fetch net gamma exposure data for a symbol"""
+        import streamlit as st
         try:
+            st.write(f"🔍 get_net_gamma: Initializing fetcher for {symbol}")
             # Initialize fetcher
             self.options_fetcher = OptionsDataFetcher(symbol)
 
+            st.write(f"🔍 get_net_gamma: Getting spot price...")
             # Get spot price
             spot = self.options_fetcher.get_spot_price()
+            st.write(f"✓ Spot price: ${spot:.2f}")
 
+            st.write(f"🔍 get_net_gamma: Fetching options chain...")
             # Get options chain
             options_chain = self.options_fetcher.get_options_chain()
+            st.write(f"📊 Options chain: {len(options_chain)} rows, empty: {options_chain.empty}")
 
             if options_chain.empty:
+                st.error(f"❌ OPTIONS CHAIN IS EMPTY! This is why gex_analyzer is None!")
+                st.warning("💡 The yfinance API might not be returning options data. This could be due to API limits, network issues, or the symbol having no options.")
                 return {'error': 'No options data available', 'spot_price': spot}
 
+            st.write(f"🔍 get_net_gamma: Creating GEXAnalyzer...")
             # Analyze GEX
             self.gex_analyzer = GEXAnalyzer(symbol)
             gex_profile = self.gex_analyzer.calculate_gex(options_chain, spot)
+            st.write(f"✓ GEXAnalyzer created, gex_profile has {len(gex_profile)} rows")
+
             key_levels = self.gex_analyzer.identify_key_levels()
 
             # Build response
@@ -1001,10 +1012,17 @@ class TradingVolatilityAPI:
                 'put_wall': key_levels.get('put_wall_1').strike if key_levels.get('put_wall_1') else 0,
             }
 
+            st.success(f"✅ get_net_gamma completed successfully!")
             return result
 
         except Exception as e:
-            print(f"Error fetching data: {e}")
+            import streamlit as st
+            import traceback
+            error_msg = f"Error fetching data: {e}"
+            st.error(f"❌ {error_msg}")
+            st.code(traceback.format_exc())
+            print(error_msg)
+            traceback.print_exc()
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
