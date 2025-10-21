@@ -43,6 +43,7 @@ from intelligence_and_strategies import (
     DynamicLevelCalculator,
     get_et_time,
     get_utc_time,
+    get_local_time,
     is_market_open
 )
 
@@ -124,11 +125,22 @@ def main():
         st.metric("Today's P&L", f"${today_pnl:,.2f}", delta=f"{today_pnl:+,.2f}")
     
     with col4:
-        utc_time = get_utc_time()
+        # Get user's timezone preference (default to Central)
+        user_tz = st.session_state.get('user_timezone', 'US/Central')
+        local_time = get_local_time(user_tz)
         et_time = get_et_time()
         market_status = "🟢 OPEN" if is_market_open() else "🔴 CLOSED"
-        current_time = f"{utc_time.strftime('%H:%M')} UTC / {et_time.strftime('%I:%M %p')} ET"
-        st.metric("Market Time", current_time, delta=market_status)
+
+        # Determine timezone abbreviation
+        tz_abbrev = {
+            'US/Eastern': 'ET',
+            'US/Central': 'CT',
+            'US/Mountain': 'MT',
+            'US/Pacific': 'PT'
+        }.get(user_tz, 'Local')
+
+        current_time = f"{local_time.strftime('%I:%M %p')} {tz_abbrev}"
+        st.metric("Current Time", current_time, delta=market_status)
 
     with col5:
         day = et_time.strftime('%A')
@@ -168,6 +180,28 @@ def main():
 
         max_risk = account_size * (risk_pct / 100)
         st.caption(f"Max Risk: ${max_risk:,.2f} per trade")
+
+        st.divider()
+
+        # Timezone Settings - NEW!
+        st.subheader("🕐 Timezone Preference")
+        if 'user_timezone' not in st.session_state:
+            st.session_state.user_timezone = 'US/Central'
+
+        timezone_options = {
+            'Eastern Time (ET)': 'US/Eastern',
+            'Central Time (CT)': 'US/Central',
+            'Mountain Time (MT)': 'US/Mountain',
+            'Pacific Time (PT)': 'US/Pacific'
+        }
+
+        selected_tz_display = st.selectbox(
+            "Your Local Timezone",
+            options=list(timezone_options.keys()),
+            index=1,  # Default to Central
+            help="Select your local timezone for time displays"
+        )
+        st.session_state.user_timezone = timezone_options[selected_tz_display]
 
         st.divider()
 
