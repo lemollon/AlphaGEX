@@ -38,6 +38,13 @@ def get_utc_time():
     """Get current time in UTC"""
     return datetime.now(pytz.UTC)
 
+def get_local_time(timezone_name='US/Central'):
+    """Get current time in specified timezone"""
+    try:
+        return datetime.now(pytz.timezone(timezone_name))
+    except:
+        return get_et_time()  # Fallback to ET
+
 def is_market_open():
     """Check if US stock market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri)"""
     et_time = get_et_time()
