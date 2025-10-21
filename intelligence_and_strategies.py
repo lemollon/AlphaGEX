@@ -1018,18 +1018,20 @@ class ClaudeIntelligence:
             # Otherwise, show warning but continue
             st.warning(warning_message)
 
-        # STEP 1.5: SOCRATIC MODE CHECK - Make them think first
-        if self.socratic.should_use_socratic_mode(user_query):
-            questions = self.socratic.generate_questions(user_query, market_data)
-
-            response = "🤔 **SOCRATIC MODE ACTIVATED**\n\n"
-            response += "Before I give you the answer, YOU need to think through this trade.\n\n"
-            response += "**Answer these questions:**\n\n"
-            response += "\n".join(questions)
-            response += "\n\n📝 Once you answer these, I'll provide my analysis and recommendations."
-            response += "\n\n*Hint: Check the dashboard for Net GEX, current price, and key levels.*"
-
-            return response
+        # STEP 1.5: SOCRATIC MODE CHECK - DISABLED (user requested direct answers)
+        # NOTE: Socratic mode has been disabled to allow immediate analysis
+        # To re-enable, uncomment the code below
+        # if self.socratic.should_use_socratic_mode(user_query):
+        #     questions = self.socratic.generate_questions(user_query, market_data)
+        #
+        #     response = "🤔 **SOCRATIC MODE ACTIVATED**\n\n"
+        #     response += "Before I give you the answer, YOU need to think through this trade.\n\n"
+        #     response += "**Answer these questions:**\n\n"
+        #     response += "\n".join(questions)
+        #     response += "\n\n📝 Once you answer these, I'll provide my analysis and recommendations."
+        #     response += "\n\n*Hint: Check the dashboard for Net GEX, current price, and key levels.*"
+        #
+        #     return response
 
         if not self.api_key:
             return self._fallback_analysis_with_rag(market_data, user_query)
