@@ -146,7 +146,7 @@ def main():
         if 'account_size' not in st.session_state:
             st.session_state.account_size = 50000
         if 'risk_per_trade' not in st.session_state:
-            st.session_state.risk_per_trade = 2
+            st.session_state.risk_per_trade = 2.0  # Float for slider compatibility
 
         account_size = st.number_input(
             "Account Size ($)",
@@ -162,7 +162,7 @@ def main():
             "Risk Per Trade (%)",
             min_value=0.5,
             max_value=5.0,
-            value=st.session_state.risk_per_trade,
+            value=float(st.session_state.risk_per_trade),  # Ensure float
             step=0.5,
             help="Percentage of account to risk per trade (1-2% recommended)"
         )
