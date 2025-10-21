@@ -140,7 +140,39 @@ def main():
     # Sidebar Configuration
     with st.sidebar:
         st.header("⚙️ Configuration")
-        
+
+        # Account Settings - NEW!
+        st.subheader("💰 Account Settings")
+        if 'account_size' not in st.session_state:
+            st.session_state.account_size = 50000
+        if 'risk_per_trade' not in st.session_state:
+            st.session_state.risk_per_trade = 2
+
+        account_size = st.number_input(
+            "Account Size ($)",
+            min_value=1000,
+            max_value=10000000,
+            value=st.session_state.account_size,
+            step=1000,
+            help="Your total trading account size for position sizing calculations"
+        )
+        st.session_state.account_size = account_size
+
+        risk_pct = st.slider(
+            "Risk Per Trade (%)",
+            min_value=0.5,
+            max_value=5.0,
+            value=st.session_state.risk_per_trade,
+            step=0.5,
+            help="Percentage of account to risk per trade (1-2% recommended)"
+        )
+        st.session_state.risk_per_trade = risk_pct
+
+        max_risk = account_size * (risk_pct / 100)
+        st.caption(f"Max Risk: ${max_risk:,.2f} per trade")
+
+        st.divider()
+
         # Symbol Selection
         st.subheader("📊 Symbol Analysis")
         
