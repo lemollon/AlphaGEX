@@ -625,53 +625,92 @@ class TradingPlanGenerator:
     
     def generate_monthly_plan(self, symbol: str, market_data: Dict) -> Dict:
         """Generate comprehensive monthly trading plan"""
-        
+
         today = datetime.now()
         month = today.month
         year = today.year
-        
+
         first_day = datetime(year, month, 1)
         first_friday = first_day + timedelta(days=(4 - first_day.weekday() + 7) % 7)
         opex_date = first_friday + timedelta(days=14)
-        
-        plan = {
-            'symbol': symbol,
-            'month': today.strftime('%B %Y'),
-            'generated': today.strftime('%Y-%m-%d'),
-            'key_dates': {},
-            'weekly_strategies': {},
-            'expected_monthly_return': '',
-            'risk_events': []
-        }
-        
-        plan['weekly_strategies'] = self._generate_weekly_strategies(
-            today, opex_date, market_data
-        )
-        
-        plan['key_dates'] = {
-            'CPI': 'Second Tuesday (8:30 AM)',
-            'PPI': 'Second Wednesday (8:30 AM)',
-            'OPEX': opex_date.strftime('%B %d'),
-            'FOMC': 'Check Fed calendar',
-            'Earnings': f"Check {symbol} earnings date",
-            'Month-end': 'Window dressing flows'
-        }
-        
-        plan['risk_events'] = [
-            '🔴 CPI/PPI - High volatility mornings',
-            '🔴 FOMC - No trades until after',
-            '🟡 OPEX - Gamma expiry chaos',
-            '🟡 Month-end - Rebalancing flows',
-            '🟡 Earnings - IV crush risk'
-        ]
-        
+
+        # Calculate expected returns
         week1_return = 0.10
         week2_return = 0.07
         week3_return = 0.12
         week4_return = 0
         total_return = week1_return + week2_return + week3_return + week4_return
-        plan['expected_monthly_return'] = f"+{total_return*100:.1f}% (following all rules)"
-        
+
+        plan = {
+            'symbol': symbol,
+            'month': today.strftime('%B %Y'),
+            'generated': today.strftime('%Y-%m-%d'),
+            'capital_allocation': '$10,000 - $50,000 recommended',
+            'target_return': f"+{total_return*100:.1f}% (following all rules)",
+            'objectives': [
+                '📈 Generate consistent income through theta strategies',
+                '🎯 Capitalize on directional gamma squeezes Mon-Wed',
+                '🛡️ Preserve capital with strict risk management',
+                '📊 Build trading discipline and system adherence',
+                '💡 Learn market maker behavior patterns'
+            ],
+            'strategies': {
+                'Directional Plays (Mon-Wed)': '40% of capital',
+                'Iron Condors (Thu-Fri)': '30% of capital',
+                'Calendar Spreads': '20% of capital',
+                'Cash Reserve': '10% for opportunities'
+            },
+            'weeks': {},
+            'key_dates': {},
+            'risk_management': {
+                'max_position_size': '5% per trade',
+                'max_daily_loss': '3% of total capital',
+                'max_portfolio_risk': '15% at any time'
+            },
+            'review_checklist': [
+                'Track all trades in trading journal',
+                'Review win rate by strategy type',
+                'Analyze best/worst days of week',
+                'Assess Wednesday 3PM exit discipline',
+                'Calculate total P&L vs target',
+                'Review gamma flip accuracy',
+                'Evaluate risk management adherence'
+            ],
+            'risk_events': [
+                '🔴 CPI/PPI - High volatility mornings',
+                '🔴 FOMC - No trades until after',
+                '🟡 OPEX - Gamma expiry chaos',
+                '🟡 Month-end - Rebalancing flows',
+                '🟡 Earnings - IV crush risk'
+            ]
+        }
+
+        # Generate weekly breakdown
+        weekly_strategies = self._generate_weekly_strategies(today, opex_date, market_data)
+
+        # Convert weekly_strategies to weeks format expected by formatter
+        for week_key, week_data in weekly_strategies.items():
+            week_num = week_key.replace('Week ', '').replace(' (OPEX)', '')
+            plan['weeks'][week_num] = {
+                'focus': week_data.get('focus', 'N/A'),
+                'target': week_data.get('expected_return', 'N/A'),
+                'strategy': week_data.get('strategy', week_data.get('monday', 'N/A')),
+                'key_dates': []
+            }
+
+            # Add key dates from this week's data
+            if 'dates' in week_data:
+                plan['weeks'][week_num]['dates'] = week_data['dates']
+
+        plan['key_dates'] = {
+            'CPI': 'Second Tuesday (8:30 AM CT)',
+            'PPI': 'Second Wednesday (8:30 AM CT)',
+            'OPEX': opex_date.strftime('%B %d, %Y'),
+            'FOMC': 'Check Fed calendar - usually mid-month',
+            'Earnings': f"Check {symbol} earnings date",
+            'Month-end': 'Last trading day - window dressing flows'
+        }
+
         return plan
     
     # Helper methods for plan generation
@@ -797,15 +836,15 @@ class TradingPlanGenerator:
     
     def _generate_monday_plan(self, spot, flip, call_wall, put_wall, net_gex, atm_call, pricer, regime):
         """Generate Monday-specific plan"""
-        
-        monday_call = pricer.calculate(spot, atm_call, 5, 0.20, 0.05, 'call')
-        
+
+        monday_call = pricer.calculate_option_price(spot, atm_call, 5/365, 0.20, 'call')
+
         return {
             'strategy': 'DIRECTIONAL HUNTING',
             'conviction': '⭐⭐⭐⭐⭐',
             'entry': {
                 'trigger': f"Break above ${flip:.2f}",
-                'action': f"BUY {atm_call} calls @ ${monday_call['price']:.2f}",
+                'action': f"BUY {atm_call} calls @ ${monday_call.get('price', 2.50):.2f}",
                 'size': f"{3 * regime['size_multiplier']:.1f}% of capital",
                 'stop': f"${put_wall:.2f}",
                 'target_1': f"${flip + 2:.2f}",
@@ -815,18 +854,19 @@ class TradingPlanGenerator:
             'expected_gain': '+8-12%',
             'notes': 'Highest win rate day - be aggressive'
         }
-    
+
     def _generate_tuesday_plan(self, spot, flip, call_wall, atm_call, pricer, regime):
         """Generate Tuesday-specific plan"""
-        
-        tuesday_call = pricer.calculate(spot, atm_call, 4, 0.20, 0.05, 'call')
-        
+
+        tuesday_call = pricer.calculate_option_price(spot, atm_call, 4/365, 0.20, 'call')
+
         return {
             'strategy': 'CONTINUATION',
             'conviction': '⭐⭐⭐⭐',
             'entry': {
                 'morning_action': 'Hold Monday position if profitable',
                 'new_entry': f"Add on dips to ${flip:.2f}",
+                'action': f"BUY {atm_call} calls @ ${tuesday_call.get('price', 2.30):.2f}",
                 'size': f"{2 * regime['size_multiplier']:.1f}% additional",
                 'stop': 'Raised to breakeven',
                 'target': f"${call_wall:.2f}"
@@ -858,18 +898,21 @@ class TradingPlanGenerator:
     
     def _generate_thursday_plan(self, spot, call_wall, put_wall, pricer):
         """Generate Thursday-specific plan"""
-        
-        call_short_price = pricer.calculate(spot, call_wall, 2, 0.15, 0.05, 'call')
-        put_short_price = pricer.calculate(spot, put_wall, 2, 0.15, 0.05, 'put')
-        
+
+        call_short_price = pricer.calculate_option_price(spot, call_wall, 2/365, 0.15, 'call')
+        put_short_price = pricer.calculate_option_price(spot, put_wall, 2/365, 0.15, 'put')
+
+        call_price = call_short_price.get('price', 1.00)
+        put_price = put_short_price.get('price', 1.00)
+
         return {
             'strategy': 'IRON CONDOR',
             'conviction': '⭐⭐⭐',
             'setup': {
-                'call_spread': f"Sell {call_wall}/{call_wall+5} @ ${call_short_price['price']*0.4:.2f}",
-                'put_spread': f"Sell {put_wall}/{put_wall-5} @ ${put_short_price['price']*0.4:.2f}",
-                'total_credit': f"${(call_short_price['price'] + put_short_price['price'])*0.4:.2f}",
-                'max_risk': f"${5 - (call_short_price['price'] + put_short_price['price'])*0.4:.2f}",
+                'call_spread': f"Sell {call_wall:.0f}/{call_wall+5:.0f} @ ${call_price*0.4:.2f}",
+                'put_spread': f"Sell {put_wall:.0f}/{put_wall-5:.0f} @ ${put_price*0.4:.2f}",
+                'total_credit': f"${(call_price + put_price)*0.4:.2f}",
+                'max_risk': f"${5 - (call_price + put_price)*0.4:.2f}",
                 'breakevens': f"${call_wall + 1:.2f} / ${put_wall - 1:.2f}"
             },
             'win_probability': 72,
@@ -1254,10 +1297,10 @@ class StrategyEngine:
                     spot > put_wall + (spot * conditions['min_put_wall_distance'] / 100)):
                     
                     strike = int(flip / 5) * 5 + (5 if flip % 5 > 2.5 else 0)
-                    
+
                     pricer = BlackScholesPricer()
-                    option = pricer.calculate(spot, strike, 5, 0.20)
-                    
+                    option = pricer.calculate_option_price(spot, strike, 5/365, 0.20, 'call')
+
                     setups.append({
                         'strategy': 'NEGATIVE GEX SQUEEZE',
                         'symbol': market_data.get('symbol', 'SPY'),
@@ -1267,9 +1310,9 @@ class StrategyEngine:
                         'target_1': flip + (spot * 0.015),
                         'target_2': call_wall,
                         'stop_loss': spot - (spot * 0.005),
-                        'option_premium': option['price'],
-                        'delta': option['delta'],
-                        'gamma': option['gamma'],
+                        'option_premium': option.get('price', 2.50),
+                        'delta': option.get('delta', 0.50),
+                        'gamma': option.get('gamma', 0.02),
                         'confidence': 75,
                         'risk_reward': 3.0,
                         'reasoning': f'Net GEX at ${net_gex/1e9:.1f}B. MMs trapped short. '
