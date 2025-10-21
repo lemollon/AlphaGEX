@@ -983,8 +983,8 @@ class ClaudeIntelligence:
 
     def __init__(self):
         self.api_key = st.secrets.get("claude_api_key", "")
-        # Use Claude 3 Opus - most capable and widely available model
-        self.model = "claude-3-opus-20240229"
+        # Use Claude 3 Sonnet - basic stable model
+        self.model = "claude-3-sonnet-20240229"
         self.conversation_history = []
         self.fred = FREDIntegration()
 
