@@ -964,61 +964,66 @@ class RiskManager:
 
 class TradingVolatilityAPI:
     """
-    API wrapper for fetching GEX data and options information
+    API wrapper for fetching GEX data from Trading Volatility API
     """
 
     def __init__(self):
-        self.options_fetcher = None
+        import streamlit as st
+        self.api_key = st.secrets.get("trading_volatility_api_key", "")
+        self.endpoint = 'https://stocks.tradingvolatility.net/api'
         self.gex_analyzer = None
 
     def get_net_gamma(self, symbol: str) -> Dict:
-        """Fetch net gamma exposure data for a symbol"""
+        """Fetch net gamma exposure data from Trading Volatility API"""
         import streamlit as st
+        import requests
+
         try:
-            st.write(f"🔍 get_net_gamma: Initializing fetcher for {symbol}")
-            # Initialize fetcher
-            self.options_fetcher = OptionsDataFetcher(symbol)
+            st.write(f"🔍 get_net_gamma: Calling Trading Volatility API for {symbol}")
 
-            st.write(f"🔍 get_net_gamma: Getting spot price...")
-            # Get spot price
-            spot = self.options_fetcher.get_spot_price()
-            st.write(f"✓ Spot price: ${spot:.2f}")
+            if not self.api_key:
+                st.error("❌ Trading Volatility API key not found in secrets!")
+                st.warning("Add 'trading_volatility_api_key' to your Streamlit secrets")
+                return {'error': 'API key not configured'}
 
-            st.write(f"🔍 get_net_gamma: Fetching options chain...")
-            # Get options chain
-            options_chain = self.options_fetcher.get_options_chain()
-            st.write(f"📊 Options chain: {len(options_chain)} rows, empty: {options_chain.empty}")
+            # Call Trading Volatility API
+            response = requests.get(
+                self.endpoint + '/gex/latest',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json'
+                },
+                headers={'Accept': 'application/json'},
+                timeout=30
+            )
 
-            if options_chain.empty:
-                st.error(f"❌ OPTIONS CHAIN IS EMPTY! This is why gex_analyzer is None!")
-                st.warning("💡 The yfinance API might not be returning options data. This could be due to API limits, network issues, or the symbol having no options.")
-                return {'error': 'No options data available', 'spot_price': spot}
+            st.write(f"📡 API Response Status: {response.status_code}")
 
-            st.write(f"🔍 get_net_gamma: Creating GEXAnalyzer...")
-            # Analyze GEX
-            self.gex_analyzer = GEXAnalyzer(symbol)
-            gex_profile = self.gex_analyzer.calculate_gex(options_chain, spot)
-            st.write(f"✓ GEXAnalyzer created, gex_profile has {len(gex_profile)} rows")
+            if response.status_code != 200:
+                st.error(f"❌ API returned status {response.status_code}")
+                st.code(response.text)
+                return {'error': f'API returned {response.status_code}'}
 
-            key_levels = self.gex_analyzer.identify_key_levels()
+            json_response = response.json()
+            st.success(f"✅ Trading Volatility API returned data!")
 
-            # Build response
+            # Extract data from Trading Volatility API response
             result = {
                 'symbol': symbol,
-                'spot_price': spot,
-                'net_gex': self.gex_analyzer.net_gex,
-                'flip_point': self.gex_analyzer.gamma_flip,
-                'call_wall': key_levels.get('call_wall_1').strike if key_levels.get('call_wall_1') else 0,
-                'put_wall': key_levels.get('put_wall_1').strike if key_levels.get('put_wall_1') else 0,
+                'spot_price': json_response.get('spot_price', 0),
+                'net_gex': json_response.get('net_gex', 0),
+                'flip_point': json_response.get('gamma_flip', 0),
+                'call_wall': json_response.get('call_wall', 0),
+                'put_wall': json_response.get('put_wall', 0),
+                'raw_data': json_response  # Store raw response for profile
             }
 
-            st.success(f"✅ get_net_gamma completed successfully!")
             return result
 
         except Exception as e:
-            import streamlit as st
             import traceback
-            error_msg = f"Error fetching data: {e}"
+            error_msg = f"Error fetching data from Trading Volatility API: {e}"
             st.error(f"❌ {error_msg}")
             st.code(traceback.format_exc())
             print(error_msg)
@@ -1026,71 +1031,74 @@ class TradingVolatilityAPI:
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile for visualization"""
+        """Get detailed GEX profile for visualization from Trading Volatility API"""
         import streamlit as st
+        import requests
+
         try:
-            st.write(f"🔍 DEBUG: Starting get_gex_profile for {symbol}")
+            st.write(f"🔍 get_gex_profile: Calling Trading Volatility API for {symbol}")
 
-            if self.gex_analyzer is None:
-                st.write("⚠️ DEBUG: gex_analyzer is None, calling get_net_gamma...")
-                # Fetch data first
-                result = self.get_net_gamma(symbol)
-                st.write(f"📊 DEBUG: get_net_gamma returned: {result.keys() if result else 'None'}")
-
-            if self.gex_analyzer is None:
-                st.error("❌ DEBUG: gex_analyzer is STILL None after fetch!")
+            if not self.api_key:
+                st.error("❌ Trading Volatility API key not found in secrets!")
                 return {}
 
-            if self.gex_analyzer.gex_profile is None:
-                st.error("❌ DEBUG: gex_analyzer.gex_profile is None!")
+            # Call Trading Volatility API for profile data
+            response = requests.get(
+                self.endpoint + '/gex/latest',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json'
+                },
+                headers={'Accept': 'application/json'},
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                st.error(f"❌ API returned status {response.status_code}")
                 return {}
 
-            # Get the raw GEX profile data
-            gex_df = self.gex_analyzer.gex_profile
-            st.write(f"📈 DEBUG: gex_profile type: {type(gex_df)}, empty: {gex_df.empty if hasattr(gex_df, 'empty') else 'N/A'}")
+            json_response = response.json()
 
-            if gex_df.empty:
-                st.error(f"❌ DEBUG: gex_profile DataFrame is empty for {symbol}!")
+            # Extract profile data from API response
+            # The API should return strikes data - adapt based on actual API response structure
+            if 'strikes' in json_response:
+                # Direct strikes data
+                profile = {
+                    'strikes': json_response['strikes'],
+                    'spot_price': json_response.get('spot_price', 0),
+                    'flip_point': json_response.get('gamma_flip', 0)
+                }
+                st.success(f"✅ Profile data loaded: {len(profile['strikes'])} strikes")
+                return profile
+            elif 'gex_by_strike' in json_response:
+                # Alternative format - convert to expected format
+                strikes_data = []
+                for strike_data in json_response['gex_by_strike']:
+                    strikes_data.append({
+                        'strike': strike_data.get('strike', 0),
+                        'call_gamma': abs(strike_data.get('call_gex', 0)),
+                        'put_gamma': abs(strike_data.get('put_gex', 0))
+                    })
+
+                profile = {
+                    'strikes': strikes_data,
+                    'spot_price': json_response.get('spot_price', 0),
+                    'flip_point': json_response.get('gamma_flip', 0)
+                }
+                st.success(f"✅ Profile data loaded: {len(strikes_data)} strikes")
+                return profile
+            else:
+                # Log the actual response structure for debugging
+                st.warning(f"⚠️ Unexpected API response structure. Keys: {list(json_response.keys())}")
+                st.json(json_response)  # Show the actual response
                 return {}
-
-            st.success(f"✅ DEBUG: gex_profile has {len(gex_df)} rows!")
-
-            # Separate calls and puts, then aggregate by strike
-            calls = gex_df[gex_df['type'] == 'call'].groupby('strike')['gex'].sum()
-            puts = gex_df[gex_df['type'] == 'put'].groupby('strike')['gex'].sum()
-
-            # Get all unique strikes
-            all_strikes = sorted(set(calls.index) | set(puts.index))
-
-            # Build the strikes data structure expected by visualization
-            strikes_data = []
-            for strike in all_strikes:
-                call_gamma = calls.get(strike, 0)
-                put_gamma = puts.get(strike, 0)
-
-                strikes_data.append({
-                    'strike': strike,
-                    'call_gamma': abs(call_gamma),  # Call gamma as positive
-                    'put_gamma': abs(put_gamma)     # Put gamma as positive (will be negated in viz)
-                })
-
-            # Convert to dict format for visualization
-            profile = {
-                'strikes': strikes_data,
-                'spot_price': self.gex_analyzer.spot_price,
-                'flip_point': self.gex_analyzer.gamma_flip
-            }
-
-            return profile
 
         except Exception as e:
-            import streamlit as st
             import traceback
             error_msg = f"Error getting GEX profile: {str(e)}"
             st.error(f"❌ {error_msg}")
             st.code(traceback.format_exc())
-            print(error_msg)
-            traceback.print_exc()
             return {}
 
 
