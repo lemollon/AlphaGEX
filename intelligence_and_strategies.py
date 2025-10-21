@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 import time
 import sqlite3
+import pytz
 from typing import List, Dict, Optional
 from config_and_database import DB_PATH, MM_STATES, STRATEGIES
 
@@ -25,6 +26,48 @@ except ImportError:
     YFINANCE_AVAILABLE = False
     norm = None
     math = None
+
+# ============================================================================
+# TIME UTILITIES - ALL TIMES IN UTC/ET
+# ============================================================================
+def get_et_time():
+    """Get current time in Eastern Time (handles EDT/EST automatically)"""
+    return datetime.now(pytz.timezone('US/Eastern'))
+
+def get_utc_time():
+    """Get current time in UTC"""
+    return datetime.now(pytz.UTC)
+
+def is_market_open():
+    """Check if US stock market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri)"""
+    et_time = get_et_time()
+
+    # Check if weekend
+    if et_time.weekday() >= 5:  # Saturday = 5, Sunday = 6
+        return False
+
+    # Market hours: 9:30 AM - 4:00 PM ET
+    market_open = et_time.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = et_time.replace(hour=16, minute=0, second=0, microsecond=0)
+
+    return market_open <= et_time < market_close
+
+def make_json_serializable(obj):
+    """Convert objects to JSON-serializable format"""
+    if isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (datetime, pd.Timestamp)):
+        return obj.isoformat()
+    elif isinstance(obj, (np.integer, np.floating)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif pd.isna(obj):
+        return None
+    else:
+        return obj
 
 # ============================================================================
 # CRITICAL NEW FEATURES FOR ULTIMATE COPILOT
@@ -44,7 +87,7 @@ class RealOptionsChainFetcher:
 
         # Check cache (5 minute expiry)
         if cache_key in self.cache:
-            if (datetime.now() - self.cache_time[cache_key]).seconds < 300:
+            if (get_utc_time() - self.cache_time[cache_key]).seconds < 300:
                 return self.cache[cache_key]
 
         try:
@@ -75,12 +118,12 @@ class RealOptionsChainFetcher:
                 'expiry': expiry,
                 'calls': calls.to_dict('records'),
                 'puts': puts.to_dict('records'),
-                'timestamp': datetime.now().isoformat()
+                'timestamp': get_utc_time().isoformat()
             }
 
             # Cache it
             self.cache[cache_key] = result
-            self.cache_time[cache_key] = datetime.now()
+            self.cache_time[cache_key] = get_utc_time()
 
             return result
 
@@ -277,19 +320,22 @@ class PsychologicalCoach:
                         severity = 'medium' if severity == 'normal' else severity
 
         # RED FLAG 4: After hours trading (if outside market hours)
-        current_hour = datetime.now().hour
-        if current_hour < 9 or current_hour >= 16:
+        if not is_market_open():
             if any(kw in current_request.lower() for kw in trade_keywords):
+                et_time = get_et_time()
+                utc_time = get_utc_time()
                 red_flags.append({
                     'type': 'AFTER_HOURS',
-                    'message': '⚠️ Market is closed. Don\'t plan trades emotionally after hours. Wait for market open.',
+                    'message': f'⚠️ Market is closed. Don\'t plan trades emotionally after hours. Wait for market open.\n'
+                               f'Current time: {utc_time.strftime("%H:%M UTC")} ({et_time.strftime("%I:%M %p ET")})',
                     'severity': 'low'
                 })
 
         # RED FLAG 5: Wednesday/Thursday/Friday directional requests
-        day_of_week = datetime.now().strftime('%A')
+        et_time = get_et_time()
+        day_of_week = et_time.strftime('%A')
         if day_of_week in ['Wednesday', 'Thursday', 'Friday']:
-            hour = datetime.now().hour
+            hour = et_time.hour
             if day_of_week == 'Wednesday' and hour >= 15:
                 if 'call' in current_request.lower() or 'put' in current_request.lower():
                     red_flags.append({
@@ -781,7 +827,7 @@ class TradingRAG:
         
         current_pattern = {
             'net_gex_range': [current_data.get('net_gex', 0) * 0.8, current_data.get('net_gex', 0) * 1.2],
-            'day_of_week': str(datetime.now().weekday())
+            'day_of_week': str(get_et_time().weekday())
         }
         
         success_rate = self.get_pattern_success_rate(current_pattern)
@@ -1079,22 +1125,22 @@ class ClaudeIntelligence:
             SYMBOL: {symbol}
 
             Current Market Data:
-            {json.dumps(context, indent=2)}
+            {json.dumps(make_json_serializable(context), indent=2)}
 
             REAL OPTIONS CHAIN DATA:
-            {json.dumps(real_options_data, indent=2)}
+            {json.dumps(make_json_serializable(real_options_data), indent=2)}
 
             POSITION SIZING (Account: ${self.account_size}, Risk: {self.risk_pct}%):
-            {json.dumps(position_sizing, indent=2)}
+            {json.dumps(make_json_serializable(position_sizing), indent=2)}
 
             YOUR PERSONAL TRADING HISTORY:
             {rag_context}
 
             BEST STRATEGIES RIGHT NOW:
-            {json.dumps(best_strategies, indent=2)}
+            {json.dumps(make_json_serializable(best_strategies), indent=2)}
 
             PROFITABLE ZONES:
-            {json.dumps(zones, indent=2)}
+            {json.dumps(make_json_serializable(zones), indent=2)}
 
             User's Specific Question: {user_query}
 
@@ -1298,8 +1344,9 @@ class ClaudeIntelligence:
 
         idea_lower = idea.lower()
         net_gex = market_data.get('net_gex', 0) / 1e9
-        day_of_week = datetime.now().strftime('%A')
-        hour = datetime.now().hour
+        et_time = get_et_time()
+        day_of_week = et_time.strftime('%A')
+        hour = et_time.hour
 
         risk_factors = []
         risk_level = "MODERATE"
@@ -1354,8 +1401,10 @@ class ClaudeIntelligence:
         fred_data = self.fred.get_economic_data()
         regime = self.fred.get_regime(fred_data)
 
-        current_day = datetime.now().strftime('%A')
-        current_hour = datetime.now().hour
+        et_time = get_et_time()
+        utc_time = get_utc_time()
+        current_day = et_time.strftime('%A')
+        current_hour = et_time.hour
 
         headers = {
             "x-api-key": self.api_key,
@@ -1374,7 +1423,8 @@ CURRENT MARKET REGIME
 💰 Fed Funds Rate: {regime['fed_funds_rate']:.2f}%
 🎯 Regime Signal: {regime['regime_signal']}
 📏 Position Size Multiplier: {regime['size_multiplier']}x
-⏰ Current Time: {current_day} {current_hour}:00
+⏰ Current Time: {utc_time.strftime('%H:%M UTC')} ({current_day} {current_hour:02d}:00 ET)
+📅 Market Status: {'🟢 OPEN' if is_market_open() else '🔴 CLOSED'}
 
 ═══════════════════════════════════════════════════════════
 YOUR CORE MISSION
@@ -1619,9 +1669,9 @@ Your reputation is built on making traders profitable. Protect that reputation f
             'call_wall': market_data.get('call_wall', 0),
             'put_wall': market_data.get('put_wall', 0),
             'mm_state': self._determine_mm_state(market_data.get('net_gex', 0)),
-            'timestamp': market_data.get('timestamp', datetime.now().isoformat()),
-            'day_of_week': datetime.now().strftime('%A'),
-            'dte_to_friday': (4 - datetime.now().weekday()) % 7
+            'timestamp': market_data.get('timestamp', get_utc_time().isoformat()),
+            'day_of_week': get_et_time().strftime('%A'),
+            'dte_to_friday': (4 - get_et_time().weekday()) % 7
         }
     
     def _determine_mm_state(self, net_gex: float) -> str:

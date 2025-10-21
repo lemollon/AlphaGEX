@@ -16,7 +16,8 @@ import json
 from config_and_database import MM_STATES, STRATEGIES
 from intelligence_and_strategies import (
     TradingRAG, FREDIntegration, ClaudeIntelligence,
-    MultiStrategyOptimizer, DynamicLevelCalculator
+    MultiStrategyOptimizer, DynamicLevelCalculator,
+    get_et_time, get_utc_time, is_market_open
 )
 
 # Import engines from file 1
@@ -1249,7 +1250,7 @@ class TradingPlanGenerator:
         """Determine the primary setup for the day"""
         
         if day == 'Wednesday':
-            if datetime.now().hour >= 15:
+            if get_et_time().hour >= 15:
                 return "🚨 NO NEW TRADES - Exit existing positions"
             else:
                 return "Final directional push until 3PM EXIT"
@@ -1711,21 +1712,24 @@ class StrategyEngine:
         spot = market_data.get('spot_price', 0)
         flip = market_data.get('flip_point', 0)
         
-        day = datetime.now().strftime('%A')
-        time_now = datetime.now().strftime('%H:%M')
-        
+        et_time = get_et_time()
+        utc_time = get_utc_time()
+        day = et_time.strftime('%A')
+        time_now_et = et_time.strftime('%I:%M %p')
+        time_now_utc = utc_time.strftime('%H:%M')
+
         claude = ClaudeIntelligence()
         mm_state = claude._determine_mm_state(net_gex)
         state_config = MM_STATES[mm_state]
-        
+
         # Fix for division by zero and f-string errors
         flip_percent = f"{((flip-spot)/spot*100):+.2f}%" if spot != 0 else "N/A"
         net_gex_billions = net_gex / 1000000000
         call_wall_price = market_data.get('call_wall', 0)
         put_wall_price = market_data.get('put_wall', 0)
-        
+
         plan = f"""
-# 🎯 {symbol} GAME PLAN - {day} {time_now} CT
+# 🎯 {symbol} GAME PLAN - {day} {time_now_utc} UTC ({time_now_et} ET)
 
 ## 📊 Market Maker Positioning
 - **State: {mm_state}** - {state_config['behavior']}
