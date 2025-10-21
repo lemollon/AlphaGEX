@@ -33,14 +33,17 @@ from core_classes_and_engines import (
     BlackScholesPricer
 )
 
-# Import intelligence and strategy classes  
+# Import intelligence and strategy classes
 from intelligence_and_strategies import (
     TradingRAG,
     FREDIntegration,
     ClaudeIntelligence,
     SmartStrikeSelector,
     MultiStrategyOptimizer,
-    DynamicLevelCalculator
+    DynamicLevelCalculator,
+    get_et_time,
+    get_utc_time,
+    is_market_open
 )
 
 # Import visualization and planning classes
@@ -121,19 +124,14 @@ def main():
         st.metric("Today's P&L", f"${today_pnl:,.2f}", delta=f"{today_pnl:+,.2f}")
     
     with col4:
-        # US Central Time
-        try:
-            central = pytz.timezone('US/Central')
-            central_time = datetime.now(central)
-            current_time = central_time.strftime('%H:%M CT')
-        except:
-            utc_now = datetime.utcnow()
-            central_time = utc_now - timedelta(hours=6)
-            current_time = central_time.strftime('%H:%M CT')
-        st.metric("Market Time", current_time)
-    
+        utc_time = get_utc_time()
+        et_time = get_et_time()
+        market_status = "🟢 OPEN" if is_market_open() else "🔴 CLOSED"
+        current_time = f"{utc_time.strftime('%H:%M')} UTC / {et_time.strftime('%I:%M %p')} ET"
+        st.metric("Market Time", current_time, delta=market_status)
+
     with col5:
-        day = datetime.now().strftime('%A')
+        day = et_time.strftime('%A')
         day_quality = "🟢" if day in ['Monday', 'Tuesday'] else "🟡" if day == 'Wednesday' else "🔴"
         st.metric("Day Quality", f"{day_quality} {day}")
     
@@ -191,7 +189,7 @@ def main():
                         'symbol': symbol,
                         'gex': gex_data,
                         'profile': profile_data,
-                        'timestamp': datetime.now()
+                        'timestamp': get_utc_time()
                     }
                     
                     st.success("✅ Data refreshed!")

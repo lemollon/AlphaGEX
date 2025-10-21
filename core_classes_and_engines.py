@@ -7,6 +7,7 @@ Handles GEX calculations, data fetching, and trading strategy logic
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import pytz
 import yfinance as yf
 from typing import Dict, List, Tuple, Optional
 import requests
@@ -142,7 +143,7 @@ class OptionsDataFetcher:
             expirations = self.ticker.options
             
             # Filter expirations within our timeframe
-            target_date = datetime.now() + timedelta(days=days_to_expiry)
+            target_date = datetime.now(pytz.UTC) + timedelta(days=days_to_expiry)
             valid_expirations = []
             
             for exp_str in expirations:
@@ -163,7 +164,7 @@ class OptionsDataFetcher:
                     # Get options chain
                     options = self.ticker.option_chain(exp)
                     exp_date = datetime.strptime(exp, '%Y-%m-%d')
-                    dte = (exp_date - datetime.now()).days
+                    dte = (exp_date - datetime.now(pytz.UTC).replace(tzinfo=None)).days
                     
                     # Process calls
                     calls = options.calls.copy()
@@ -441,7 +442,7 @@ class GEXAnalyzer:
             # Calculate charm for this expiration
             # Simplified: charm increases as we approach expiration
             exp_date = pd.to_datetime(exp)
-            dte = (exp_date - datetime.now()).days
+            dte = (exp_date - datetime.now(pytz.UTC).replace(tzinfo=None)).days
             
             if dte > 0:
                 daily_charm = exp_data['gex'].sum() / dte  # Daily decay
