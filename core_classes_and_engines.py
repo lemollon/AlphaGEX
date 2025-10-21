@@ -1009,28 +1009,33 @@ class TradingVolatilityAPI:
 
     def get_gex_profile(self, symbol: str) -> Dict:
         """Get detailed GEX profile for visualization"""
+        import streamlit as st
         try:
-            if self.gex_analyzer is None:
-                print(f"DEBUG: gex_analyzer is None, fetching data for {symbol}")
-                # Fetch data first
-                self.get_net_gamma(symbol)
+            st.write(f"🔍 DEBUG: Starting get_gex_profile for {symbol}")
 
             if self.gex_analyzer is None:
-                print("DEBUG: gex_analyzer is STILL None after fetch!")
+                st.write("⚠️ DEBUG: gex_analyzer is None, calling get_net_gamma...")
+                # Fetch data first
+                result = self.get_net_gamma(symbol)
+                st.write(f"📊 DEBUG: get_net_gamma returned: {result.keys() if result else 'None'}")
+
+            if self.gex_analyzer is None:
+                st.error("❌ DEBUG: gex_analyzer is STILL None after fetch!")
                 return {}
 
             if self.gex_analyzer.gex_profile is None:
-                print("DEBUG: gex_analyzer.gex_profile is None!")
+                st.error("❌ DEBUG: gex_analyzer.gex_profile is None!")
                 return {}
 
             # Get the raw GEX profile data
             gex_df = self.gex_analyzer.gex_profile
+            st.write(f"📈 DEBUG: gex_profile type: {type(gex_df)}, empty: {gex_df.empty if hasattr(gex_df, 'empty') else 'N/A'}")
 
             if gex_df.empty:
-                print(f"DEBUG: gex_profile DataFrame is empty for {symbol}")
+                st.error(f"❌ DEBUG: gex_profile DataFrame is empty for {symbol}!")
                 return {}
 
-            print(f"DEBUG: gex_profile has {len(gex_df)} rows")
+            st.success(f"✅ DEBUG: gex_profile has {len(gex_df)} rows!")
 
             # Separate calls and puts, then aggregate by strike
             calls = gex_df[gex_df['type'] == 'call'].groupby('strike')['gex'].sum()
@@ -1061,8 +1066,12 @@ class TradingVolatilityAPI:
             return profile
 
         except Exception as e:
-            print(f"Error getting GEX profile: {e}")
+            import streamlit as st
             import traceback
+            error_msg = f"Error getting GEX profile: {str(e)}"
+            st.error(f"❌ {error_msg}")
+            st.code(traceback.format_exc())
+            print(error_msg)
             traceback.print_exc()
             return {}
 
