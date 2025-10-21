@@ -1011,17 +1011,26 @@ class TradingVolatilityAPI:
         """Get detailed GEX profile for visualization"""
         try:
             if self.gex_analyzer is None:
+                print(f"DEBUG: gex_analyzer is None, fetching data for {symbol}")
                 # Fetch data first
                 self.get_net_gamma(symbol)
 
-            if self.gex_analyzer is None or self.gex_analyzer.gex_profile is None:
+            if self.gex_analyzer is None:
+                print("DEBUG: gex_analyzer is STILL None after fetch!")
+                return {}
+
+            if self.gex_analyzer.gex_profile is None:
+                print("DEBUG: gex_analyzer.gex_profile is None!")
                 return {}
 
             # Get the raw GEX profile data
             gex_df = self.gex_analyzer.gex_profile
 
             if gex_df.empty:
+                print(f"DEBUG: gex_profile DataFrame is empty for {symbol}")
                 return {}
+
+            print(f"DEBUG: gex_profile has {len(gex_df)} rows")
 
             # Separate calls and puts, then aggregate by strike
             calls = gex_df[gex_df['type'] == 'call'].groupby('strike')['gex'].sum()
