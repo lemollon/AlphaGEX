@@ -1007,10 +1007,10 @@ class TradingPlanGenerator:
                 conf = trade.get('confidence', 0)
                 stars = '⭐' * (conf // 20)  # 5 stars max
 
-                md += f"### {stars} Setup #{i}: {trade.get('strategy', 'Unknown')} ({conf}% Confidence)\\n\\n"
+                md += f"### {stars} Setup #{i}: {trade.get('strategy', 'Unknown')} ({conf}% Confidence)\n\n"
 
                 # Start with WHY - the reasoning/market context
-                md += f"{trade.get('reasoning', 'Strong setup based on current market conditions.')}\\n\\n"
+                md += f"{trade.get('reasoning', 'Strong setup based on current market conditions.')}\n\n"
 
                 # Then describe THE PLAY in narrative form
                 md += f"**The Play:** {trade.get('action', 'N/A')}. "
@@ -1018,39 +1018,42 @@ class TradingPlanGenerator:
 
                 # Add win rate context
                 if trade.get('win_rate'):
-                    md += f"This setup has a {trade.get('win_rate')} win rate based on historical data.\\n\\n"
+                    md += f"This setup has a {trade.get('win_rate')} win rate based on historical data.\n\n"
                 else:
-                    md += f"\\n\\n"
+                    md += f"\n\n"
 
                 # Entry strategy
                 entry_value = trade.get('entry', trade.get('entry_zone', 'N/A'))
-                md += f"**Entry Strategy:** Look to enter around {entry_value}. "
+                md += f"**Entry Strategy:** Look to enter around {entry_value}.\n\n"
 
                 # Profit targets narrative
                 if 'target_1' in trade:
-                    md += f"Your first profit target is {trade.get('target_1', 'N/A')}"
+                    md += f"**Profit Targets:** Your first target is {trade.get('target_1', 'N/A')}"
                     if 'target_2' in trade:
                         md += f", with an extended target at {trade.get('target_2', 'N/A')}. "
                     else:
                         md += ". "
-                    md += f"Consider scaling out at each target to lock in profits.\\n\\n"
+                    md += f"Consider scaling out at each target to lock in profits.\n\n"
                 elif 'max_profit' in trade:
-                    md += f"\\n\\n**Maximum Profit Potential:** {trade.get('max_profit', 'N/A')}. "
-                    if 'credit' in trade:
-                        md += f"You'll collect {trade.get('credit', 'N/A')} in credit when you enter this trade. "
-                    md += f"\\n\\n"
+                    # Special handling for iron condor profit zone
+                    max_profit = trade.get('max_profit', 'N/A')
+                    credit = trade.get('credit', 'N/A')
+
+                    md += f"**Profit Zone:** This iron condor collects approximately {credit} per spread in premium. "
+                    md += f"Your maximum profit of {max_profit} is achieved if the stock stays within your short strike range at expiration. "
+                    md += f"You keep the full credit collected as long as the price doesn't breach either short strike.\n\n"
                 else:
-                    md += f"\\n\\n"
+                    md += f"\n\n"
 
                 # Risk management narrative
                 md += f"**Risk Management:** "
                 if 'stop' in trade:
                     md += f"Set your stop loss at {trade.get('stop', 'N/A')}. "
                 if 'max_risk' in trade:
-                    md += f"Your maximum risk on this trade is {trade.get('max_risk', 'N/A')}. "
+                    md += f"Your maximum risk on this trade is {trade.get('max_risk', 'N/A')} per spread. "
 
                 size_value = trade.get('size', '2-3% of capital')
-                md += f"Position size should be {size_value} to maintain proper risk management.\\n\\n"
+                md += f"Position size should be {size_value} to maintain proper risk management.\n\n"
 
                 # Why this works - wrap up with conviction
                 win_rate_value = trade.get('win_rate', '')
@@ -1060,53 +1063,53 @@ class TradingPlanGenerator:
 
                     # Extract key concept from reasoning for the wrap-up
                     if 'negative gex' in reasoning or 'short gamma' in reasoning:
-                        md += f"when dealers are short gamma (negative GEX), they're forced to buy rallies to hedge, creating upward momentum that pushes prices higher.\\n\\n"
+                        md += f"when dealers are short gamma (negative GEX), they're forced to buy rallies to hedge, creating upward momentum that pushes prices higher.\n\n"
                     elif 'positive gex' in reasoning or 'range' in reasoning:
-                        md += f"high positive GEX creates a volatility-suppressed environment where market makers defend their key levels, making range-bound strategies highly profitable.\\n\\n"
+                        md += f"high positive GEX creates a volatility-suppressed environment where market makers defend their key levels, making range-bound strategies highly profitable.\n\n"
                     elif 'wall' in reasoning:
-                        md += f"gamma walls represent massive positioning by market makers who will defend these levels, creating strong support or resistance zones.\\n\\n"
+                        md += f"gamma walls represent massive positioning by market makers who will defend these levels, creating strong support or resistance zones.\n\n"
                     elif 'theta' in reasoning or 'premium' in reasoning:
-                        md += f"time decay works in your favor, allowing you to collect premium while staying protected within defined risk parameters.\\n\\n"
+                        md += f"time decay works in your favor, allowing you to collect premium while staying protected within defined risk parameters.\n\n"
                     else:
-                        md += f"the market structure creates favorable risk/reward dynamics for this strategy.\\n\\n"
+                        md += f"the market structure creates favorable risk/reward dynamics for this strategy.\n\n"
 
-                md += "---\\n\\n"
+                md += "---\n\n"
         else:
-            md += "*Analyzing market for setups...*\\n\\n"
+            md += "*Analyzing market for setups...*\n\n"
 
         # Show what to do RIGHT NOW
         if 'current_opportunity' in plan:
-            md += f"## ⏰ RIGHT NOW: {plan['current_opportunity']}\\n\\n---\\n\\n"
+            md += f"## ⏰ RIGHT NOW: {plan['current_opportunity']}\n\n---\n\n"
 
         # Intraday Schedule
         if 'intraday_schedule' in plan:
-            md += "## 📅 INTRADAY SCHEDULE\\n\\n"
+            md += "## 📅 INTRADAY SCHEDULE\n\n"
             for time_period, action in plan['intraday_schedule'].items():
-                md += f"**{time_period}**\\n{action}\\n\\n"
-            md += "---\\n\\n"
+                md += f"**{time_period}**\n\n{action}\n\n"
+            md += "---\n\n"
 
         # Risk Management
         if 'risk_management' in plan:
-            md += "## 🛡️ RISK MANAGEMENT\\n\\n"
+            md += "## 🛡️ RISK MANAGEMENT\n\n"
             risk = plan['risk_management']
-            md += f"- **Position Size:** {risk.get('position_size', 'N/A')}\\n"
-            md += f"- **Max Portfolio Risk:** {risk.get('max_portfolio_risk', 'N/A')}\\n"
-            md += f"- **Stop Loss Rule:** {risk.get('stop_loss_rule', 'N/A')}\\n"
-            md += f"- **Directional Stops:** {risk.get('directional_stops', 'N/A')}\\n"
-            md += f"- **Max Trades/Day:** {risk.get('max_trades_per_day', 'N/A')}\\n"
-            md += f"- **Profit Taking:** {risk.get('profit_taking', 'N/A')}\\n\\n"
+            md += f"- **Position Size:** {risk.get('position_size', 'N/A')}\n"
+            md += f"- **Max Portfolio Risk:** {risk.get('max_portfolio_risk', 'N/A')}\n"
+            md += f"- **Stop Loss Rule:** {risk.get('stop_loss_rule', 'N/A')}\n"
+            md += f"- **Directional Stops:** {risk.get('directional_stops', 'N/A')}\n"
+            md += f"- **Max Trades/Day:** {risk.get('max_trades_per_day', 'N/A')}\n"
+            md += f"- **Profit Taking:** {risk.get('profit_taking', 'N/A')}\n\n"
             if 'wednesday_rule' in risk:
-                md += f"**⚠️ {risk['wednesday_rule']}**\\n\\n"
-            md += "---\\n\\n"
+                md += f"**⚠️ {risk['wednesday_rule']}**\n\n"
+            md += "---\n\n"
 
         # Exit Rules
         if 'exit_rules' in plan:
-            md += "## 🚪 EXIT RULES\\n\\n"
+            md += "## 🚪 EXIT RULES\n\n"
             exits = plan['exit_rules']
-            md += f"- **Directional Longs:** {exits.get('directional_longs', 'N/A')}\\n"
-            md += f"- **Iron Condors:** {exits.get('iron_condors', 'N/A')}\\n"
-            md += f"- **Credit Spreads:** {exits.get('credit_spreads', 'N/A')}\\n"
-            md += f"- **Emergency Exit:** {exits.get('emergency_exit', 'N/A')}\\n"
+            md += f"- **Directional Longs:** {exits.get('directional_longs', 'N/A')}\n"
+            md += f"- **Iron Condors:** {exits.get('iron_condors', 'N/A')}\n"
+            md += f"- **Credit Spreads:** {exits.get('credit_spreads', 'N/A')}\n"
+            md += f"- **Emergency Exit:** {exits.get('emergency_exit', 'N/A')}\n"
 
         return md
 
@@ -1142,25 +1145,25 @@ class TradingPlanGenerator:
         for day_name, emoji in days_emoji.items():
             if day_name in plan.get('days', {}):
                 day_plan = plan['days'][day_name]
-                md += f"## {emoji} {day_name}\\n\\n"
-                md += f"**Focus:** {day_plan.get('focus', 'N/A')}\\n\\n"
-                md += f"**Strategy:** {day_plan.get('strategy', 'N/A')}\\n\\n"
+                md += f"## {emoji} {day_name}\n\n"
+                md += f"**Focus:** {day_plan.get('focus', 'N/A')}\n\n"
+                md += f"**Strategy:** {day_plan.get('strategy', 'N/A')}\n\n"
 
                 if 'exact_entry' in day_plan:
-                    md += f"**📍 Entry:** {day_plan['exact_entry']}\\n\\n"
+                    md += f"**📍 Entry:** {day_plan['exact_entry']}\n\n"
                 if 'target' in day_plan:
-                    md += f"**🎯 Target:** {day_plan['target']}\\n\\n"
+                    md += f"**🎯 Target:** {day_plan['target']}\n\n"
                 if 'stop' in day_plan:
-                    md += f"**🛑 Stop:** {day_plan['stop']}\\n\\n"
+                    md += f"**🛑 Stop:** {day_plan['stop']}\n\n"
                 if 'expected_profit' in day_plan:
-                    md += f"**💰 Expected:** {day_plan['expected_profit']}\\n\\n"
+                    md += f"**💰 Expected:** {day_plan['expected_profit']}\n\n"
                 if 'win_probability' in day_plan:
-                    md += f"**✅ Win Probability:** {day_plan['win_probability']}\\n\\n"
+                    md += f"**✅ Win Probability:** {day_plan['win_probability']}\n\n"
 
                 if 'reasoning' in day_plan:
-                    md += f"*{day_plan['reasoning']}*\\n\\n"
+                    md += f"*{day_plan['reasoning']}*\n\n"
 
-                md += "---\\n\\n"
+                md += "---\n\n"
 
         return md
 
@@ -1182,40 +1185,40 @@ class TradingPlanGenerator:
 
         if 'objectives' in plan:
             for obj in plan['objectives']:
-                md += f"- {obj}\\n"
+                md += f"- {obj}\n"
 
-        md += "\\n---\\n\\n## 📊 Strategy Allocation\\n\\n"
+        md += "\n---\n\n## 📊 Strategy Allocation\n\n"
 
         if 'strategies' in plan:
             for strategy_name, allocation in plan['strategies'].items():
-                md += f"- **{strategy_name}:** {allocation}\\n"
+                md += f"- **{strategy_name}:** {allocation}\n"
 
-        md += "\\n---\\n\\n## 📈 Weekly Breakdown\\n\\n"
+        md += "\n---\n\n## 📈 Weekly Breakdown\n\n"
 
         if 'weeks' in plan:
             for week_num, week_data in plan['weeks'].items():
-                md += f"### Week {week_num}\\n\\n"
-                md += f"**Focus:** {week_data.get('focus', 'N/A')}\\n\\n"
-                md += f"**Target:** {week_data.get('target', 'N/A')}\\n\\n"
+                md += f"### Week {week_num}\n\n"
+                md += f"**Focus:** {week_data.get('focus', 'N/A')}\n\n"
+                md += f"**Target:** {week_data.get('target', 'N/A')}\n\n"
                 if 'key_dates' in week_data:
-                    md += "**Key Dates:**\\n"
+                    md += "**Key Dates:**\n"
                     for date in week_data['key_dates']:
-                        md += f"- {date}\\n"
-                md += "\\n"
+                        md += f"- {date}\n"
+                md += "\n"
 
-        md += "---\\n\\n## ⚠️ Risk Management\\n\\n"
+        md += "---\n\n## ⚠️ Risk Management\n\n"
 
         if 'risk_management' in plan:
             risk = plan['risk_management']
-            md += f"- 💰 **Max Position Size:** {risk.get('max_position_size', 'N/A')}\\n"
-            md += f"- 🛑 **Max Daily Loss:** {risk.get('max_daily_loss', 'N/A')}\\n"
-            md += f"- 📊 **Max Portfolio Risk:** {risk.get('max_portfolio_risk', 'N/A')}\\n"
+            md += f"- 💰 **Max Position Size:** {risk.get('max_position_size', 'N/A')}\n"
+            md += f"- 🛑 **Max Daily Loss:** {risk.get('max_daily_loss', 'N/A')}\n"
+            md += f"- 📊 **Max Portfolio Risk:** {risk.get('max_portfolio_risk', 'N/A')}\n"
 
-        md += "\\n---\\n\\n## 📝 Monthly Review Checklist\\n\\n"
+        md += "\n---\n\n## 📝 Monthly Review Checklist\n\n"
 
         if 'review_checklist' in plan:
             for item in plan['review_checklist']:
-                md += f"- [ ] {item}\\n"
+                md += f"- [ ] {item}\n"
 
         return md
 
