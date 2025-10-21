@@ -158,32 +158,56 @@ def main():
             st.caption(f"Key: {claude_api_key[:12]}...{claude_api_key[-4:]}")
 
             # Test API connection button
-            if st.button("🧪 Test API Connection", help="Test if Claude API is working"):
-                with st.spinner("Testing API..."):
-                    try:
-                        import requests
-                        test_response = requests.post(
-                            "https://api.anthropic.com/v1/messages",
-                            headers={
-                                "x-api-key": claude_api_key,
-                                "anthropic-version": "2023-06-01",
-                                "content-type": "application/json"
-                            },
-                            json={
-                                "model": "claude-3-opus-20240229",
-                                "max_tokens": 50,
-                                "messages": [{"role": "user", "content": "Say 'API working' if you receive this"}]
-                            },
-                            timeout=10
-                        )
-                        if test_response.status_code == 200:
-                            st.success("✅ API Connection Successful!")
-                            result = test_response.json()
-                            st.info(f"Response: {result['content'][0]['text']}")
-                        else:
-                            st.error(f"❌ API Error {test_response.status_code}: {test_response.text}")
-                    except Exception as e:
-                        st.error(f"❌ Connection Failed: {str(e)}")
+            if st.button("🧪 Test API Connection", help="Test which Claude models work"):
+                with st.spinner("Testing models..."):
+                    import requests
+
+                    # Try multiple models to find which one works
+                    models_to_test = [
+                        "claude-3-sonnet-20240229",
+                        "claude-3-opus-20240229",
+                        "claude-3-haiku-20240307",
+                        "claude-2.1",
+                        "claude-2.0"
+                    ]
+
+                    working_model = None
+                    for model in models_to_test:
+                        try:
+                            test_response = requests.post(
+                                "https://api.anthropic.com/v1/messages",
+                                headers={
+                                    "x-api-key": claude_api_key,
+                                    "anthropic-version": "2023-06-01",
+                                    "content-type": "application/json"
+                                },
+                                json={
+                                    "model": model,
+                                    "max_tokens": 50,
+                                    "messages": [{"role": "user", "content": "Hi"}]
+                                },
+                                timeout=10
+                            )
+                            if test_response.status_code == 200:
+                                st.success(f"✅ **{model}** WORKS!")
+                                working_model = model
+                                break
+                            else:
+                                st.warning(f"❌ {model}: {test_response.status_code}")
+                        except Exception as e:
+                            st.warning(f"❌ {model}: {str(e)}")
+
+                    if not working_model:
+                        st.error("""
+                        **No working models found!**
+
+                        This means your API key either:
+                        - Is invalid or expired
+                        - Has no credits/payment method
+                        - Doesn't have access to any Claude models
+
+                        Check: https://console.anthropic.com/settings/keys
+                        """)
         else:
             st.warning("🤖 **AI Copilot:** ⚠️ BASIC MODE")
             with st.expander("ℹ️ Enable Advanced AI"):
