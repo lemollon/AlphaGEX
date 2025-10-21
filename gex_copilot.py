@@ -697,7 +697,437 @@ def main():
                     )
                 st.session_state.conversation_history.append({"role": "assistant", "content": response})
                 st.rerun()
-    
+
+        # Advanced Features Section
+        st.divider()
+        st.subheader("🚀 Advanced Trading Tools")
+
+        # Create tabs for advanced features
+        adv_tab1, adv_tab2, adv_tab3, adv_tab4 = st.tabs([
+            "📊 Scenario Planning",
+            "🎯 Portfolio Risk",
+            "📚 Trade Post-Mortem",
+            "🎲 Monte Carlo"
+        ])
+
+        # TAB 1: SCENARIO PLANNING
+        with adv_tab1:
+            st.markdown("### 📊 What-If Scenario Analysis")
+            st.caption("Analyze how your position performs under different market conditions")
+
+            # Get active positions or create example
+            if st.session_state.active_positions:
+                pos_options = [f"{p.get('symbol', 'N/A')} {p.get('type', 'N/A')} {p.get('strike', 'N/A')}"
+                              for p in st.session_state.active_positions]
+                selected_pos_idx = st.selectbox("Select Position", range(len(pos_options)), format_func=lambda x: pos_options[x])
+                current_position = st.session_state.active_positions[selected_pos_idx]
+            else:
+                st.info("💡 No active positions. Using example position for demonstration.")
+                current_position = {
+                    'symbol': 'SPY',
+                    'type': 'call',
+                    'strike': 585,
+                    'entry_price': 4.50,
+                    'contracts': 7,
+                    'delta': 0.45,
+                    'theta': -0.12,
+                    'current_price': 582.50
+                }
+
+            # Scenario inputs
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                price_change = st.slider("Stock Price Change (%)", -10.0, 10.0, -2.0, 0.5)
+            with col2:
+                days_forward = st.slider("Days Forward", 1, 7, 1)
+            with col3:
+                iv_change = st.slider("IV Change (%)", -50.0, 50.0, 0.0, 5.0)
+
+            if st.button("🔮 Run Scenario", use_container_width=True):
+                scenario = {
+                    'name': f"{price_change:+.1f}% move in {days_forward} days",
+                    'price_change_pct': price_change,
+                    'days_forward': days_forward,
+                    'iv_change_pct': iv_change
+                }
+
+                from intelligence_and_strategies import ScenarioPlanner
+                planner = ScenarioPlanner()
+                result = planner.analyze_scenario(current_position, scenario)
+
+                # Display results with visual indicators
+                st.markdown("---")
+                st.markdown(f"### 📊 Scenario: **{result['scenario_name']}**")
+
+                metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+                with metric_col1:
+                    st.metric("Stock Price", f"${result['new_stock_price']:.2f}",
+                             delta=f"{result['stock_move_pct']:+.1f}%")
+                with metric_col2:
+                    st.metric("Option Price", f"${result['estimated_option_price']:.2f}")
+                with metric_col3:
+                    pnl_color = "normal" if result['total_pnl'] >= 0 else "inverse"
+                    st.metric("Total P/L", f"${result['total_pnl']:,.0f}",
+                             delta=f"{result['pnl_pct']:+.1f}%", delta_color=pnl_color)
+                with metric_col4:
+                    st.metric("Days Elapsed", f"{result['days_elapsed']}")
+
+                # Recommendation with color coding
+                if "TAKE PROFITS" in result['recommendation']:
+                    st.success(f"✅ {result['recommendation']}")
+                elif "CUT LOSS" in result['recommendation']:
+                    st.error(f"🛑 {result['recommendation']}")
+                elif "at risk" in result['recommendation'].lower():
+                    st.warning(f"⚠️ {result['recommendation']}")
+                else:
+                    st.info(f"📊 {result['recommendation']}")
+
+                # Interpretation guide
+                with st.expander("📖 How to Interpret This"):
+                    st.markdown("""
+                    **Understanding the Scenario Analysis:**
+
+                    - **Stock Price**: Where the stock would be after the move
+                    - **Option Price**: Estimated option value using delta/theta
+                    - **Total P/L**: Your actual profit/loss in dollars
+                    - **Days Elapsed**: Theta decay impact over time
+
+                    **Action Recommendations:**
+                    - 🎯 **Take Profits**: 50%+ gain - lock it in!
+                    - ✅ **Scale Out**: 30%+ gain - take some off
+                    - 📊 **Hold**: Still profitable, let it run
+                    - ⚠️ **Monitor**: Breaking even or small loss
+                    - 🛑 **Cut Loss**: -50% or worse - exit now
+
+                    **Pro Tip**: Run multiple scenarios to understand your risk/reward range
+                    before entering a trade!
+                    """)
+
+        # TAB 2: PORTFOLIO RISK ANALYSIS
+        with adv_tab2:
+            st.markdown("### 🎯 Portfolio Risk & Correlation Analysis")
+            st.caption("Identify concentration risk and correlated positions")
+
+            if st.button("🔍 Analyze Portfolio", use_container_width=True):
+                from intelligence_and_strategies import PortfolioAnalyzer
+                analyzer = PortfolioAnalyzer()
+
+                # Analyze portfolio
+                analysis = analyzer.analyze_portfolio(st.session_state.active_positions)
+
+                if analysis['status'] == 'empty':
+                    st.info("📭 No active positions to analyze. Add positions to see portfolio risk.")
+                else:
+                    # Display key metrics
+                    metric_col1, metric_col2, metric_col3 = st.columns(3)
+                    with metric_col1:
+                        st.metric("Total Positions", analysis['total_positions'])
+                    with metric_col2:
+                        st.metric("Total Risk", f"${analysis['total_risk']:,.0f}")
+                    with metric_col3:
+                        st.metric("Unique Symbols", len(analysis['symbol_counts']))
+
+                    # Diversification score
+                    st.markdown(f"**Diversification Score**: {analysis['diversification_score']}")
+
+                    # Warnings
+                    if analysis['warnings']:
+                        st.markdown("### ⚠️ Risk Warnings:")
+                        for warning in analysis['warnings']:
+                            if warning['severity'] == 'high':
+                                st.error(warning['message'])
+                            elif warning['severity'] == 'medium':
+                                st.warning(warning['message'])
+                            else:
+                                st.info(warning['message'])
+                    else:
+                        st.success("✅ No major concentration risks detected!")
+
+                    # Breakdown visualizations
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**📊 Sector Exposure**")
+                        sector_data = analysis['sector_exposure']
+                        for sector, count in sector_data.items():
+                            if count > 0:
+                                st.progress(count / analysis['total_positions'],
+                                           text=f"{sector.upper()}: {count} positions")
+
+                    with col2:
+                        st.markdown("**📈 Directional Bias**")
+                        bias_data = analysis['directional_bias']
+                        for direction, count in bias_data.items():
+                            if count > 0:
+                                st.progress(count / analysis['total_positions'],
+                                           text=f"{direction.upper()}: {count} positions")
+
+                    # Interpretation guide
+                    with st.expander("📖 How to Read Portfolio Risk"):
+                        st.markdown("""
+                        **Portfolio Risk Indicators:**
+
+                        🚨 **HIGH SEVERITY** - Take action immediately:
+                        - 3+ positions in same symbol = Overconcentration
+                        - 4+ tech positions = Sector correlation risk
+                        - Total risk >$10K = Too much exposure
+
+                        ⚠️ **MEDIUM SEVERITY** - Monitor closely:
+                        - 3+ market ETF positions = Index correlation
+                        - 75%+ bullish/bearish = One-sided risk
+
+                        **Diversification Scores:**
+                        - 🌟 **EXCELLENT**: 80%+ different symbols
+                        - ✅ **GOOD**: 50-80% different symbols
+                        - ⚠️ **MODERATE**: 30-50% different symbols
+                        - 🚨 **POOR**: <30% different symbols
+
+                        **Why This Matters:**
+                        Correlated positions = Correlated losses. If tech sells off and you have
+                        5 tech positions, they ALL lose together. Diversification protects you.
+                        """)
+
+        # TAB 3: TRADE POST-MORTEM
+        with adv_tab3:
+            st.markdown("### 📚 Trade Post-Mortem Analysis")
+            st.caption("Learn from your closed trades - what went right/wrong?")
+
+            # Manual entry for demonstration
+            with st.expander("➕ Enter Closed Trade Details"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    trade_symbol = st.text_input("Symbol", "SPY", key="pm_symbol")
+                    trade_strategy = st.selectbox("Strategy", ["Call", "Put", "Iron Condor", "Call Spread"], key="pm_strategy")
+                    entry_price = st.number_input("Entry Price", 4.50, key="pm_entry")
+                    exit_price = st.number_input("Exit Price", 2.50, key="pm_exit")
+
+                with col2:
+                    day_entered = st.selectbox("Day Entered", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], key="pm_day")
+                    hold_days = st.number_input("Days Held", 1, 7, 3, key="pm_days")
+                    entry_gex = st.number_input("Entry GEX (Billions)", -5.0, 5.0, 1.5, 0.1, key="pm_gex") * 1e9
+                    exit_reason = st.text_input("Exit Reason", "Target hit", key="pm_reason")
+
+            if st.button("🔍 Analyze Trade", use_container_width=True):
+                pnl = (exit_price - entry_price) * 100  # Per contract
+
+                trade_data = {
+                    'symbol': trade_symbol,
+                    'strategy': trade_strategy,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'pnl': pnl,
+                    'entry_gex': entry_gex,
+                    'exit_reason': exit_reason,
+                    'hold_time_days': hold_days,
+                    'day_entered': day_entered
+                }
+
+                from intelligence_and_strategies import PostMortemAnalyzer
+                analyzer = PostMortemAnalyzer()
+                lessons = analyzer.analyze_trade(trade_data)
+
+                # Display grade prominently
+                st.markdown(f"## Trade Grade: **{lessons['grade']}**")
+
+                # P/L metrics
+                pnl_col1, pnl_col2 = st.columns(2)
+                with pnl_col1:
+                    st.metric("P/L", f"${lessons['pnl']:.2f}", delta=f"{lessons['pnl_pct']:.1f}%")
+                with pnl_col2:
+                    result_emoji = "✅" if lessons['pnl'] > 0 else "❌"
+                    st.metric("Result", f"{result_emoji} {lessons['trade_summary']}")
+
+                # What went right
+                if lessons['what_went_right']:
+                    st.success("### ✅ What Went RIGHT:")
+                    for item in lessons['what_went_right']:
+                        st.markdown(f"- {item}")
+
+                # What went wrong
+                if lessons['what_went_wrong']:
+                    st.error("### ❌ What Went WRONG:")
+                    for item in lessons['what_went_wrong']:
+                        st.markdown(f"- {item}")
+
+                # Key lessons
+                st.info("### 📚 Key Lessons:")
+                for lesson in lessons['key_lessons']:
+                    st.markdown(f"**{lesson}**")
+
+                # Interpretation guide
+                with st.expander("📖 Understanding Trade Grades"):
+                    st.markdown("""
+                    **Grade Meanings:**
+
+                    - **A**: Excellent execution - You did everything right
+                      - Good timing, proper GEX alignment, quick exit
+                      - Keep doing exactly this!
+
+                    - **B**: Profitable but could improve
+                      - Made money but missed some best practices
+                      - Review what could have been better
+
+                    - **D**: Small mistake or bad luck
+                      - Lost money but only one major error
+                      - Learn the lesson and move on
+
+                    - **F**: Multiple mistakes - review needed
+                      - Several errors compounded the loss
+                      - Study the rules before next trade
+
+                    **Common Mistakes to Avoid:**
+                    - ❌ Buying calls when MMs defending (GEX > $2B)
+                    - ❌ Buying puts when MMs trapped (GEX < -$1B)
+                    - ❌ Holding directionals past Wednesday 3PM
+                    - ❌ Long options on Thursday/Friday (theta trap)
+                    - ❌ Holding 4+ days (theta decay kills profits)
+                    """)
+
+        # TAB 4: MONTE CARLO SIMULATION
+        with adv_tab4:
+            st.markdown("### 🎲 Monte Carlo Probability Simulation")
+            st.caption("Run 10,000 simulations to see probability distribution of outcomes")
+
+            # Simulation inputs
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                mc_current_price = st.number_input("Current Price", 580.0, 600.0, 582.5, 0.5, key="mc_price")
+                mc_strike = st.number_input("Strike Price", 570.0, 600.0, 585.0, 1.0, key="mc_strike")
+
+            with col2:
+                mc_volatility = st.slider("Expected Volatility (%)", 10, 50, 20, 1, key="mc_vol")
+                mc_days = st.slider("Days to Expiration", 1, 30, 7, 1, key="mc_days")
+
+            with col3:
+                mc_simulations = st.select_slider("Simulations", [1000, 5000, 10000], 10000, key="mc_sims")
+
+            if st.button("🎲 Run Monte Carlo", use_container_width=True):
+                with st.spinner(f"Running {mc_simulations:,} simulations..."):
+                    import numpy as np
+                    import plotly.graph_objects as go
+
+                    # Monte Carlo simulation
+                    dt = mc_days / 365
+                    volatility = mc_volatility / 100
+
+                    # Generate random price paths
+                    np.random.seed(42)
+                    returns = np.random.normal(0, volatility * np.sqrt(dt), mc_simulations)
+                    final_prices = mc_current_price * np.exp(returns)
+
+                    # Calculate probabilities
+                    prob_above_strike = (final_prices > mc_strike).mean() * 100
+                    prob_below_strike = (final_prices < mc_strike).mean() * 100
+                    prob_at_strike = (np.abs(final_prices - mc_strike) < 1).mean() * 100
+
+                    # Calculate statistics
+                    mean_price = final_prices.mean()
+                    std_price = final_prices.std()
+                    percentile_5 = np.percentile(final_prices, 5)
+                    percentile_95 = np.percentile(final_prices, 95)
+
+                    # Display probabilities
+                    st.markdown("### 📊 Simulation Results")
+                    prob_col1, prob_col2, prob_col3 = st.columns(3)
+                    with prob_col1:
+                        st.metric("Prob Above Strike", f"{prob_above_strike:.1f}%",
+                                 help="Probability price finishes above strike")
+                    with prob_col2:
+                        st.metric("Prob Below Strike", f"{prob_below_strike:.1f}%",
+                                 help="Probability price finishes below strike")
+                    with prob_col3:
+                        st.metric("Expected Price", f"${mean_price:.2f}",
+                                 help="Average price across all simulations")
+
+                    # Price distribution chart
+                    fig = go.Figure()
+
+                    # Histogram of outcomes
+                    fig.add_trace(go.Histogram(
+                        x=final_prices,
+                        nbinsx=50,
+                        name='Price Distribution',
+                        marker_color='lightblue',
+                        opacity=0.7
+                    ))
+
+                    # Add strike line
+                    fig.add_vline(x=mc_strike, line_dash="dash", line_color="red",
+                                 annotation_text=f"Strike ${mc_strike:.0f}")
+
+                    # Add current price line
+                    fig.add_vline(x=mc_current_price, line_dash="dash", line_color="green",
+                                 annotation_text=f"Current ${mc_current_price:.2f}")
+
+                    fig.update_layout(
+                        title=f"Monte Carlo: {mc_simulations:,} Simulations - {mc_days} Days",
+                        xaxis_title="Final Stock Price",
+                        yaxis_title="Frequency",
+                        height=400,
+                        showlegend=False
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # Statistics table
+                    st.markdown("### 📈 Statistical Summary")
+                    stat_col1, stat_col2 = st.columns(2)
+                    with stat_col1:
+                        st.metric("5th Percentile", f"${percentile_5:.2f}", help="95% chance price above this")
+                        st.metric("Mean Price", f"${mean_price:.2f}")
+                    with stat_col2:
+                        st.metric("95th Percentile", f"${percentile_95:.2f}", help="95% chance price below this")
+                        st.metric("Std Deviation", f"${std_price:.2f}")
+
+                    # Trading implications
+                    st.markdown("### 💡 Trading Implications")
+                    if prob_above_strike > 60:
+                        st.success(f"✅ **BULLISH SETUP**: {prob_above_strike:.1f}% chance of finishing above ${mc_strike:.0f}")
+                        st.markdown("- **Consider**: Buying calls at this strike")
+                        st.markdown(f"- **Confidence**: High ({prob_above_strike:.0f}%)")
+                    elif prob_below_strike > 60:
+                        st.error(f"🔻 **BEARISH SETUP**: {prob_below_strike:.1f}% chance of finishing below ${mc_strike:.0f}")
+                        st.markdown("- **Consider**: Buying puts at this strike")
+                        st.markdown(f"- **Confidence**: High ({prob_below_strike:.0f}%)")
+                    else:
+                        st.warning(f"⚠️ **NEUTRAL SETUP**: Probabilities near 50/50")
+                        st.markdown("- **Consider**: Iron condors or theta strategies")
+                        st.markdown("- **Confidence**: Low (choppy/uncertain)")
+
+                    # Interpretation guide
+                    with st.expander("📖 How to Interpret Monte Carlo Results"):
+                        st.markdown("""
+                        **What is Monte Carlo Simulation?**
+
+                        Runs thousands of random price paths to estimate probability distributions.
+                        Think of it as "rolling the dice" 10,000 times to see all possible outcomes.
+
+                        **Key Metrics:**
+
+                        - **Prob Above/Below Strike**: What % of simulations finished above/below your strike
+                        - **Expected Price**: Average outcome across all simulations
+                        - **5th/95th Percentile**: 90% confidence interval for final price
+
+                        **How to Use This:**
+
+                        1. **High Probability (>60%)**: Strong directional signal
+                           - Buy options in that direction
+                           - Higher confidence = larger position size
+
+                        2. **Near 50/50**: Neutral/choppy market
+                           - Sell premium (iron condors)
+                           - Avoid directional bets
+
+                        3. **Check Risk Range**: 5th to 95th percentile = likely price range
+                           - Plan your strikes within this range
+                           - Stops outside this range
+
+                        **Pro Tip**: Combine with GEX analysis!
+                        - Negative GEX + High prob above = Perfect long call setup
+                        - Positive GEX + Near 50/50 = Perfect iron condor setup
+                        """)
+
+
     # Tab 5: Positions & Tracking
     with tabs[4]:
         display_position_management()
