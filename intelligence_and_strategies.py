@@ -2104,10 +2104,10 @@ class DynamicLevelCalculator:
         flip = market_data.get('flip_point', 0)
         call_wall = market_data.get('call_wall', 0)
         put_wall = market_data.get('put_wall', 0)
-        
-        current_time = datetime.now()
+
+        current_time = get_et_time()
         hour = current_time.hour
-        
+
         zones = {
             'timestamp': current_time.strftime('%H:%M:%S'),
             'long_call_zone': None,
