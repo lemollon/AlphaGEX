@@ -847,94 +847,137 @@ class TradingPlanGenerator:
         }
 
     def generate_monthly_plan(self, symbol: str, market_data: Dict) -> Dict:
-        """Generate comprehensive monthly trading plan"""
+        """Generate monthly plan with SPECIFIC TRADES for each week"""
 
-        today = datetime.now()
-        month = today.month
-        year = today.year
+        import pytz
+        central = pytz.timezone('US/Central')
+        today = datetime.now(central)
 
-        first_day = datetime(year, month, 1)
+        # Find first Monday of current month
+        first_day = datetime(today.year, today.month, 1)
+        first_monday = first_day + timedelta(days=(0 - first_day.weekday() + 7) % 7)
+        if first_monday < first_day:
+            first_monday += timedelta(days=7)
+
+        # Calculate OPEX (3rd Friday)
         first_friday = first_day + timedelta(days=(4 - first_day.weekday() + 7) % 7)
         opex_date = first_friday + timedelta(days=14)
 
-        # Calculate expected returns
-        week1_return = 0.10
-        week2_return = 0.07
-        week3_return = 0.12
-        week4_return = 0
-        total_return = week1_return + week2_return + week3_return + week4_return
+        spot = market_data.get('spot_price', 0)
+        net_gex = market_data.get('net_gex', 0)
+        flip = market_data.get('flip_point', 0)
+        call_wall = market_data.get('call_wall', 0)
+        put_wall = market_data.get('put_wall', 0)
+
+        # Calculate regime
+        regime = self._calculate_regime_from_gex(net_gex, spot, flip, call_wall, put_wall)
 
         plan = {
             'symbol': symbol,
             'month': today.strftime('%B %Y'),
-            'generated': today.strftime('%Y-%m-%d'),
-            'capital_allocation': '$10,000 - $50,000 recommended',
-            'target_return': f"+{total_return*100:.1f}% (following all rules)",
-            'objectives': [
-                '📈 Generate consistent income through theta strategies',
-                '🎯 Capitalize on directional gamma squeezes Mon-Wed',
-                '🛡️ Preserve capital with strict risk management',
-                '📊 Build trading discipline and system adherence',
-                '💡 Learn market maker behavior patterns'
-            ],
-            'strategies': {
-                'Directional Plays (Mon-Wed)': '40% of capital',
-                'Iron Condors (Thu-Fri)': '30% of capital',
-                'Calendar Spreads': '20% of capital',
-                'Cash Reserve': '10% for opportunities'
-            },
-            'weeks': {},
-            'key_dates': {},
-            'risk_management': {
-                'max_position_size': '5% per trade',
-                'max_daily_loss': '3% of total capital',
-                'max_portfolio_risk': '15% at any time'
-            },
-            'review_checklist': [
-                'Track all trades in trading journal',
-                'Review win rate by strategy type',
-                'Analyze best/worst days of week',
-                'Assess Wednesday 3PM exit discipline',
-                'Calculate total P&L vs target',
-                'Review gamma flip accuracy',
-                'Evaluate risk management adherence'
-            ],
-            'risk_events': [
-                '🔴 CPI/PPI - High volatility mornings',
-                '🔴 FOMC - No trades until after',
-                '🟡 OPEX - Gamma expiry chaos',
-                '🟡 Month-end - Rebalancing flows',
-                '🟡 Earnings - IV crush risk'
-            ]
+            'current_price': f'${spot:.2f}',
+            'net_gex': f'${net_gex/1e9:.2f}B',
+            'opex_date': opex_date.strftime('%B %d, %Y'),
+            'weeks': {}
         }
 
-        # Generate weekly breakdown
-        weekly_strategies = self._generate_weekly_strategies(today, opex_date, market_data)
+        # Generate 4 weeks of specific trades
+        for week_num in range(1, 5):
+            week_start = first_monday + timedelta(days=(week_num-1)*7)
+            week_label = f"Week {week_num}"
 
-        # Convert weekly_strategies to weeks format expected by formatter
-        for week_key, week_data in weekly_strategies.items():
-            week_num = week_key.replace('Week ', '').replace(' (OPEX)', '')
-            plan['weeks'][week_num] = {
-                'focus': week_data.get('focus', 'N/A'),
-                'target': week_data.get('expected_return', 'N/A'),
-                'strategy': week_data.get('strategy', week_data.get('monday', 'N/A')),
-                'key_dates': []
+            if week_start.date() <= opex_date.date() <= (week_start + timedelta(days=6)).date():
+                week_label += " (OPEX WEEK)"
+
+            # Slight variations for future weeks (prices drift slightly)
+            week_spot = spot + (week_num - 1) * 0.5  # Slight drift assumption
+            week_flip = flip + (week_num - 1) * 0.5
+            week_call_wall = call_wall + (week_num - 1) * 1
+            week_put_wall = put_wall - (week_num - 1) * 1
+
+            plan['weeks'][week_label] = {
+                'dates': f"{week_start.strftime('%m/%d')} - {(week_start + timedelta(days=4)).strftime('%m/%d')}",
+                'focus': 'OPEX gamma expiry - aggressive sizing' if 'OPEX' in week_label else 'Standard directional + theta',
+                'key_trade': self._get_key_weekly_trade(symbol, week_spot, week_flip, week_call_wall, week_put_wall, net_gex, week_num, 'OPEX' in week_label)
             }
 
-            # Add key dates from this week's data
-            if 'dates' in week_data:
-                plan['weeks'][week_num]['dates'] = week_data['dates']
-
         plan['key_dates'] = {
-            'CPI': 'Second Tuesday (8:30 AM CT)',
-            'PPI': 'Second Wednesday (8:30 AM CT)',
-            'OPEX': opex_date.strftime('%B %d, %Y'),
-            'FOMC': 'Check Fed calendar - usually mid-month',
-            'Earnings': f"Check {symbol} earnings date",
-            'Month-end': 'Last trading day - window dressing flows'
+            'OPEX': opex_date.strftime('%A, %B %d at 4:00 PM ET'),
+            'CPI': 'Second Tuesday at 8:30 AM CT - NO TRADES until after',
+            'PPI': 'Second Wednesday at 8:30 AM CT - NO TRADES until after',
+            'FOMC': 'Check Fed calendar - NO TRADES on decision day',
+            'Earnings': f'Check {symbol} earnings - avoid week of earnings'
+        }
+
+        plan['monthly_targets'] = {
+            'Week 1': '+8-12% (Directional + IC)',
+            'Week 2': '+5-10% (CPI week - reduced size)',
+            'Week 3 (OPEX)': '+10-15% (Aggressive gamma plays)',
+            'Week 4': '0% (FOMC week - sit out)',
+            'Total': '+23-37% if following all rules'
         }
 
         return plan
+
+    def _get_key_weekly_trade(self, symbol, spot, flip, call_wall, put_wall, net_gex, week_num, is_opex):
+        """Get the ONE key trade for each week of the month"""
+
+        flip_strike = int(flip / 5) * 5 + (5 if flip % 5 > 2.5 else 0)
+        call_wall_strike = int(call_wall / 5) * 5
+        put_wall_strike = int(put_wall / 5) * 5
+
+        pricer = BlackScholesPricer()
+
+        if week_num == 2:
+            # CPI week - conservative
+            return {
+                'strategy': 'CPI WEEK - WAIT FOR DATA',
+                'action': 'NO TRADES Tuesday/Wednesday mornings',
+                'post_cpi_trade': f'IF data bullish: BUY {symbol} {flip_strike} CALLS, 5 DTE',
+                'size': '1-2 contracts (reduced conviction)',
+                'note': 'CPI can spike vol 50%+ in minutes - wait for dust to settle'
+            }
+        elif is_opex:
+            # OPEX week - aggressive
+            option_price = pricer.calculate_option_price(spot, flip_strike, 5/365, 0.25, 'call')
+            premium = option_price.get('price', 3.00)
+
+            return {
+                'strategy': f'🚨 OPEX GAMMA SQUEEZE - 2X SIZE',
+                'monday_trade': f'BUY {symbol} {flip_strike} CALLS',
+                'strike': f'${flip_strike}',
+                'expiration': 'Friday (OPEX)',
+                'quantity': '5-10 contracts (2x normal size)',
+                'entry': f'${premium:.2f}',
+                'target': f'${call_wall:.2f}',
+                'stop': f'${put_wall:.2f}',
+                'reasoning': 'Massive gamma expiry creates violent moves. MMs forced to cover.',
+                'wednesday_rule': '🚨 MUST EXIT BY 12:00 PM WEDNESDAY (not 3PM) - gamma decay extreme'
+            }
+        elif week_num == 4:
+            # FOMC week - sit out
+            return {
+                'strategy': 'FOMC WEEK - SIT OUT',
+                'action': 'NO DIRECTIONAL TRADES',
+                'alternative': 'Can sell far OTM iron condors 45 DTE (outside news range)',
+                'note': 'Fed decision = binary event. Edge disappears. Cash is a position.'
+            }
+        else:
+            # Week 1 - standard directional
+            option_price = pricer.calculate_option_price(spot, flip_strike, 5/365, 0.20, 'call')
+            premium = option_price.get('price', 2.50)
+
+            return {
+                'strategy': f'STANDARD DIRECTIONAL WEEK',
+                'monday_trade': f'BUY {symbol} {flip_strike} CALLS',
+                'strike': f'${flip_strike}',
+                'expiration': '5 DTE',
+                'quantity': '3-5 contracts',
+                'entry': f'${premium:.2f}',
+                'target': f'${flip + 2:.2f}',
+                'stop': f'${put_wall:.2f}',
+                'thursday_trade': f'SELL iron condor ${put_wall_strike}/{put_wall_strike-10} puts, ${call_wall_strike}/{call_wall_strike+10} calls, 21 DTE'
+            }
     
     # Helper methods for plan generation
     def _build_execution_schedule(self, symbol, spot, flip, call_wall, put_wall, regime, personal_stats, day):
@@ -1497,57 +1540,73 @@ class TradingPlanGenerator:
         return md
 
     def format_monthly_plan_markdown(self, plan: Dict) -> str:
-        """Format monthly plan as beautiful markdown with emojis"""
+        """Format monthly plan with SPECIFIC TRADES for each week"""
 
         md = f"""
-# 📆 Monthly Trading Plan - {plan.get('symbol', 'N/A')}
+# 📆 Monthly Trading Plan - {plan.get('symbol', 'SPY')}
 
 **Month:** {plan.get('month', 'N/A')}
-**Capital Allocation:** {plan.get('capital_allocation', 'N/A')}
-**Target Return:** {plan.get('target_return', 'N/A')}
+
+**Market Snapshot:**
+- Current Price: {plan.get('current_price', 'N/A')}
+- Net GEX: {plan.get('net_gex', 'N/A')}
+- OPEX Date: {plan.get('opex_date', 'N/A')}
 
 ---
 
-## 🎯 Monthly Objectives
+## 📈 Weekly Trading Schedule
 
 """
 
-        if 'objectives' in plan:
-            for obj in plan['objectives']:
-                md += f"- {obj}\n"
-
-        md += "\n---\n\n## 📊 Strategy Allocation\n\n"
-
-        if 'strategies' in plan:
-            for strategy_name, allocation in plan['strategies'].items():
-                md += f"- **{strategy_name}:** {allocation}\n"
-
-        md += "\n---\n\n## 📈 Weekly Breakdown\n\n"
-
         if 'weeks' in plan:
-            for week_num, week_data in plan['weeks'].items():
-                md += f"### Week {week_num}\n\n"
+            for week_label, week_data in plan['weeks'].items():
+                md += f"### {week_label}\n\n"
+                md += f"**Dates:** {week_data.get('dates', 'N/A')}\n\n"
                 md += f"**Focus:** {week_data.get('focus', 'N/A')}\n\n"
-                md += f"**Target:** {week_data.get('target', 'N/A')}\n\n"
-                if 'key_dates' in week_data:
-                    md += "**Key Dates:**\n"
-                    for date in week_data['key_dates']:
-                        md += f"- {date}\n"
-                md += "\n"
 
-        md += "---\n\n## ⚠️ Risk Management\n\n"
+                # Display the key trade for this week
+                key_trade = week_data.get('key_trade', {})
+                if key_trade:
+                    md += f"**Strategy:** {key_trade.get('strategy', 'N/A')}\n\n"
 
-        if 'risk_management' in plan:
-            risk = plan['risk_management']
-            md += f"- 💰 **Max Position Size:** {risk.get('max_position_size', 'N/A')}\n"
-            md += f"- 🛑 **Max Daily Loss:** {risk.get('max_daily_loss', 'N/A')}\n"
-            md += f"- 📊 **Max Portfolio Risk:** {risk.get('max_portfolio_risk', 'N/A')}\n"
+                    # Display all trade details
+                    for key, value in key_trade.items():
+                        if key == 'strategy':
+                            continue  # Already displayed above
 
-        md += "\n---\n\n## 📝 Monthly Review Checklist\n\n"
+                        # Format the key nicely
+                        formatted_key = key.replace('_', ' ').title()
+                        md += f"- **{formatted_key}:** {value}\n"
 
-        if 'review_checklist' in plan:
-            for item in plan['review_checklist']:
-                md += f"- [ ] {item}\n"
+                    md += "\n"
+
+                md += "---\n\n"
+
+        # Monthly targets
+        if 'monthly_targets' in plan:
+            md += "## 🎯 Monthly Targets\n\n"
+            for week, target in plan['monthly_targets'].items():
+                md += f"- **{week}:** {target}\n"
+            md += "\n---\n\n"
+
+        # Key dates
+        if 'key_dates' in plan:
+            md += "## 📅 Critical Dates\n\n"
+            for event, date_info in plan['key_dates'].items():
+                md += f"- **{event}:** {date_info}\n"
+            md += "\n---\n\n"
+
+        md += """
+## ⚠️ Monthly Trading Rules
+
+1. **OPEX Week = 2X Size:** Third week is highest edge - be aggressive
+2. **CPI/PPI = Wait:** NO trades Tuesday/Wednesday 8:30 AM
+3. **FOMC Week = Sit Out:** Cash is a position during Fed decision
+4. **Wednesday 3PM Rule:** ALWAYS exit directionals by 3PM Wed (12PM on OPEX week)
+5. **Max 15% Portfolio Risk:** Never exceed total risk across all positions
+6. **Track Everything:** Every trade logged = learning = long-term edge
+
+"""
 
         return md
 
