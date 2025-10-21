@@ -983,7 +983,7 @@ class ClaudeIntelligence:
 
     def __init__(self):
         self.api_key = st.secrets.get("claude_api_key", "")
-        self.model = "claude-3-5-sonnet-20241022"
+        self.model = "claude-3-5-sonnet-20240620"  # Correct Claude 3.5 Sonnet model
         self.conversation_history = []
         self.fred = FREDIntegration()
 
