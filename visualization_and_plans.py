@@ -572,57 +572,280 @@ class TradingPlanGenerator:
             return "🎯 ACTIVE TRADING HOURS: Execute your plan"
 
     def generate_weekly_plan(self, symbol: str, market_data: Dict) -> Dict:
-        """Generate comprehensive weekly trading plan"""
-        
+        """Generate comprehensive weekly trading plan with SPECIFIC EXECUTABLE TRADES"""
+
         spot = market_data.get('spot_price', 0)
         net_gex = market_data.get('net_gex', 0)
         flip = market_data.get('flip_point', 0)
         call_wall = market_data.get('call_wall', 0)
         put_wall = market_data.get('put_wall', 0)
-        
-        atm_call = int(spot / 5) * 5 + (5 if spot % 5 > 2.5 else 0)
-        
-        fred_data = self.fred.get_economic_data()
-        regime = self.fred.get_regime(fred_data)
-        
+
+        import pytz
+        central = pytz.timezone('US/Central')
+        today = datetime.now(central)
+
+        # Calculate actual strikes for trades
+        atm_strike = int(spot / 5) * 5 + (5 if spot % 5 > 2.5 else 0)
+        flip_strike = int(flip / 5) * 5 + (5 if flip % 5 > 2.5 else 0)
+        call_wall_strike = int(call_wall / 5) * 5
+        put_wall_strike = int(put_wall / 5) * 5
+
+        # Calculate regime
+        regime = self._calculate_regime_from_gex(net_gex, spot, flip, call_wall, put_wall)
+
         pricer = BlackScholesPricer()
-        
+
         plan = {
             'symbol': symbol,
-            'week_of': datetime.now().strftime('%Y-%m-%d'),
-            'regime': regime,
-            'net_gex': f"${net_gex/1e9:.1f}B",
-            'expected_return': 0,
+            'week_of': today.strftime('%B %d, %Y'),
+            'current_price': f'${spot:.2f}',
+            'net_gex': f"${net_gex/1e9:.2f}B",
+            'regime': regime.get('type', 'NORMAL'),
+            'flip_point': f'${flip:.2f}',
+            'call_wall': f'${call_wall:.2f}',
+            'put_wall': f'${put_wall:.2f}',
             'days': {}
         }
-        
-        plan['days']['Monday'] = self._generate_monday_plan(
-            spot, flip, call_wall, put_wall, net_gex, atm_call, pricer, regime
+
+        # MONDAY - Directional hunting
+        monday_date = today + timedelta(days=(0 - today.weekday()))
+        plan['days']['Monday'] = self._generate_specific_monday_trades(
+            symbol, spot, flip, flip_strike, call_wall, call_wall_strike, put_wall, net_gex, pricer, monday_date
         )
-        
-        plan['days']['Tuesday'] = self._generate_tuesday_plan(
-            spot, flip, call_wall, atm_call, pricer, regime
+
+        # TUESDAY - Continuation
+        tuesday_date = monday_date + timedelta(days=1)
+        plan['days']['Tuesday'] = self._generate_specific_tuesday_trades(
+            symbol, spot, flip, flip_strike, call_wall, call_wall_strike, net_gex, pricer, tuesday_date
         )
-        
-        plan['days']['Wednesday'] = self._generate_wednesday_plan(
-            spot, flip, call_wall, put_wall
+
+        # WEDNESDAY - Exit day
+        wednesday_date = monday_date + timedelta(days=2)
+        plan['days']['Wednesday'] = self._generate_specific_wednesday_trades(
+            symbol, spot, flip, call_wall, wednesday_date
         )
-        
-        plan['days']['Thursday'] = self._generate_thursday_plan(
-            spot, call_wall, put_wall, pricer
+
+        # THURSDAY - Iron condor
+        thursday_date = monday_date + timedelta(days=3)
+        plan['days']['Thursday'] = self._generate_specific_thursday_trades(
+            symbol, spot, call_wall_strike, put_wall_strike, pricer, thursday_date
         )
-        
-        plan['days']['Friday'] = self._generate_friday_plan(
-            spot, net_gex
+
+        # FRIDAY - Theta collection
+        friday_date = monday_date + timedelta(days=4)
+        plan['days']['Friday'] = self._generate_specific_friday_trades(
+            symbol, spot, call_wall_strike, put_wall_strike, friday_date
         )
-        
-        monday_return = 0.1 * 0.68 if net_gex < -1e9 else 0.05 * 0.45
-        tuesday_return = 0.08 * 0.62
-        thursday_return = 0.03 * 0.72
-        plan['expected_return'] = f"+{(monday_return + tuesday_return + thursday_return)*100:.1f}%"
-        
+
         return plan
-    
+
+    def _generate_specific_monday_trades(self, symbol, spot, flip, flip_strike, call_wall, call_wall_strike, put_wall, net_gex, pricer, date):
+        """Generate SPECIFIC executable trades for Monday"""
+
+        # Calculate expiration (Friday of same week)
+        expiry_date = date + timedelta(days=4)
+        exp_str = expiry_date.strftime('%m/%d')
+        dte = 5
+
+        # Price the options
+        option_price = pricer.calculate_option_price(spot, flip_strike, dte/365, 0.20, 'call')
+        premium = option_price.get('price', 2.50)
+
+        if net_gex < -1e9:
+            # SQUEEZE SETUP
+            return {
+                'date': date.strftime('%A, %B %d'),
+                'market_setup': f'Net GEX {net_gex/1e9:.1f}B - MMs SHORT GAMMA',
+                'trades': [
+                    {
+                        'trade_num': 1,
+                        'action': f'BUY {symbol} {flip_strike} CALLS',
+                        'strike': f'${flip_strike}',
+                        'expiration': f'{exp_str} ({dte} DTE)',
+                        'entry_price': f'${premium:.2f}',
+                        'entry_zone': f'${premium*0.9:.2f} - ${premium*1.1:.2f}',
+                        'quantity': '3-5 contracts',
+                        'entry_time': '9:45-10:15 AM CT (ONLY if {symbol} breaks ${flip:.2f})',
+                        'target_1': f'${flip + 2:.2f} - Exit 50% of position',
+                        'target_2': f'${call_wall:.2f} - Exit 25% more',
+                        'trailing_stop': 'Trail final 25% with $2 stop',
+                        'hard_stop': f'${put_wall:.2f} break OR -50% loss',
+                        'max_risk': f'${premium * 5 * 100:.0f} (if 5 contracts)',
+                        'expected_profit': f'${(flip + 2 - spot) * 5 * 100 * 0.5:.0f} at Target 1',
+                        'win_probability': '68%'
+                    }
+                ],
+                'notes': 'AGGRESSIVE DAY - Highest edge for directional. MMs forced to buy rallies.'
+            }
+        else:
+            # NEUTRAL/POSITIVE GEX - More conservative
+            return {
+                'date': date.strftime('%A, %B %d'),
+                'market_setup': f'Net GEX {net_gex/1e9:.1f}B - Range-bound likely',
+                'trades': [
+                    {
+                        'trade_num': 1,
+                        'action': f'BUY {symbol} {flip_strike} CALLS (smaller size)',
+                        'strike': f'${flip_strike}',
+                        'expiration': f'{exp_str} ({dte} DTE)',
+                        'entry_price': f'${premium:.2f}',
+                        'quantity': '1-2 contracts only',
+                        'entry_time': '9:45-10:15 AM CT (ONLY if clear breakout)',
+                        'target_1': f'${flip + 1:.2f} - Exit 100%',
+                        'hard_stop': f'${spot - 1:.2f} OR -40% loss',
+                        'win_probability': '45%'
+                    }
+                ],
+                'notes': 'REDUCED CONVICTION - Positive GEX suppresses. Take quick profits.'
+            }
+
+    def _generate_specific_tuesday_trades(self, symbol, spot, flip, flip_strike, call_wall, call_wall_strike, net_gex, pricer, date):
+        """Generate SPECIFIC executable trades for Tuesday"""
+
+        expiry_date = date + timedelta(days=3)
+        exp_str = expiry_date.strftime('%m/%d')
+        dte = 4
+
+        option_price = pricer.calculate_option_price(spot, flip_strike, dte/365, 0.20, 'call')
+        premium = option_price.get('price', 2.30)
+
+        return {
+            'date': date.strftime('%A, %B %d'),
+            'market_setup': 'CONTINUATION DAY - Build on Monday momentum',
+            'trades': [
+                {
+                    'trade_num': 1,
+                    'action': 'IF Monday trade is PROFITABLE:',
+                    'management': [
+                        'Raise stop to breakeven on Monday position',
+                        'Take 25% profit if up >$1 per contract',
+                        'Let remainder run to targets'
+                    ]
+                },
+                {
+                    'trade_num': 2,
+                    'action': f'ADD: BUY {symbol} {flip_strike} or {flip_strike+5} CALLS',
+                    'strike': f'${flip_strike} or ${flip_strike+5} (choose based on momentum)',
+                    'expiration': f'{exp_str} ({dte} DTE)',
+                    'entry_price': f'${premium:.2f}',
+                    'quantity': '2-3 contracts',
+                    'entry_time': f'ONLY on pullbacks to ${flip:.2f} with support',
+                    'target_1': f'${call_wall:.2f}',
+                    'hard_stop': f'${flip:.2f} break = EXIT ALL',
+                    'condition': 'SKIP if Monday trade lost money'
+                }
+            ],
+            'notes': 'Build winners, cut losers fast. Still favorable but less edge than Monday.'
+        }
+
+    def _generate_specific_wednesday_trades(self, symbol, spot, flip, call_wall, date):
+        """Generate SPECIFIC executable trades for Wednesday - EXIT DAY"""
+
+        return {
+            'date': date.strftime('%A, %B %d'),
+            'market_setup': '🚨 MANDATORY EXIT DAY 🚨',
+            'trades': [
+                {
+                    'trade_num': 1,
+                    'action': 'MORNING (9:30 AM - 12:00 PM):',
+                    'management': [
+                        'Take 75% off ALL directional positions',
+                        f'If pushing toward ${call_wall:.2f}, can hold until 12:00 PM',
+                        'Trail stops TIGHT - lock in gains'
+                    ]
+                },
+                {
+                    'trade_num': 2,
+                    'action': 'AFTERNOON (12:00 PM - 3:00 PM):',
+                    'management': [
+                        '🚨 EXIT 100% OF ALL DIRECTIONAL CALLS BY 3:00 PM 🚨',
+                        'NO EXCEPTIONS - Theta decay accelerates exponentially',
+                        'Accepting small loss better than holding into Thursday',
+                        'Any profit is a win - take it and move to theta strategies'
+                    ]
+                }
+            ],
+            'notes': '❌ NO NEW DIRECTIONALS. Exit discipline = long-term profitability.'
+        }
+
+    def _generate_specific_thursday_trades(self, symbol, spot, call_wall_strike, put_wall_strike, pricer, date):
+        """Generate SPECIFIC executable trades for Thursday - Iron Condor"""
+
+        expiry_date = date + timedelta(days=21)  # 21 DTE
+        exp_str = expiry_date.strftime('%m/%d')
+
+        # Calculate iron condor strikes
+        call_short = call_wall_strike
+        call_long = call_short + 10
+        put_short = put_wall_strike
+        put_long = put_short - 10
+
+        # Price the spreads
+        call_option = pricer.calculate_option_price(spot, call_short, 21/365, 0.15, 'call')
+        put_option = pricer.calculate_option_price(spot, put_short, 21/365, 0.15, 'put')
+
+        call_credit = call_option.get('price', 0.80) * 0.4
+        put_credit = put_option.get('price', 0.80) * 0.4
+        total_credit = call_credit + put_credit
+
+        return {
+            'date': date.strftime('%A, %B %d'),
+            'market_setup': 'IRON CONDOR - High probability income',
+            'trades': [
+                {
+                    'trade_num': 1,
+                    'action': f'SELL {symbol} IRON CONDOR',
+                    'call_spread': f'SELL {call_short}/{call_long} call spread',
+                    'put_spread': f'SELL {put_short}/{put_long} put spread',
+                    'expiration': f'{exp_str} (21 DTE)',
+                    'credit_received': f'${total_credit:.2f} per IC',
+                    'quantity': '1-2 iron condors',
+                    'entry_time': 'Market open - collect premium',
+                    'max_profit': f'${total_credit * 100:.0f} per IC',
+                    'max_loss': f'${(10 - total_credit) * 100:.0f} per IC',
+                    'profit_zone': f'{symbol} stays between ${put_short:.0f} and ${call_short:.0f}',
+                    'breakevens': f'${put_short - total_credit:.2f} and ${call_short + total_credit:.2f}',
+                    'management': [
+                        'Close at 50% of max profit (take $' + f'{total_credit * 50:.0f}' + ')',
+                        f'If {symbol} approaches ${call_short:.0f} or ${put_short:.0f}, CLOSE immediately',
+                        'Can roll to next month if challenged before 7 DTE'
+                    ],
+                    'win_probability': '72%'
+                }
+            ],
+            'notes': 'Defined risk, high probability. Let theta work for you.'
+        }
+
+    def _generate_specific_friday_trades(self, symbol, spot, call_wall_strike, put_wall_strike, date):
+        """Generate SPECIFIC executable trades for Friday"""
+
+        return {
+            'date': date.strftime('%A, %B %d'),
+            'market_setup': 'THETA HARVEST DAY',
+            'trades': [
+                {
+                    'trade_num': 1,
+                    'action': 'MANAGE Thursday Iron Condor:',
+                    'management': [
+                        'If at 25% max profit remaining, CLOSE it',
+                        'If threatened, close or roll',
+                        'If safe, let it collect more theta over weekend'
+                    ]
+                },
+                {
+                    'trade_num': 2,
+                    'action': '⚠️ AVOID 0DTE OPTIONS',
+                    'reasoning': [
+                        'Theta crush is extreme on Friday',
+                        'Unless you see CLEAR charm flow setup after 3:30 PM',
+                        'Max 1% risk on any 0DTE scalp',
+                        'Hold time: 15 minutes maximum'
+                    ]
+                }
+            ],
+            'notes': 'Manage existing. Avoid greed. Small wins compound over time.'
+        }
+
     def generate_monthly_plan(self, symbol: str, market_data: Dict) -> Dict:
         """Generate comprehensive monthly trading plan"""
 
@@ -1157,21 +1380,20 @@ class TradingPlanGenerator:
         return md
 
     def format_weekly_plan_markdown(self, plan: Dict) -> str:
-        """Format weekly plan as beautiful markdown with emojis"""
+        """Format weekly plan with SPECIFIC EXECUTABLE TRADES"""
 
         md = f"""
-# 📅 Weekly Trading Plan - {plan.get('symbol', 'N/A')}
+# 📅 Weekly Trading Plan - {plan.get('symbol', 'SPY')}
 
 **Week Of:** {plan.get('week_of', 'N/A')}
-**Net GEX:** {plan.get('net_gex', 'N/A')}
-**Expected Return:** {plan.get('expected_return', 'N/A')}
 
----
-
-## 🎯 Market Regime
-- **Type:** {plan.get('regime', {}).get('type', 'N/A')}
-- **Volatility:** {plan.get('regime', {}).get('volatility', 'N/A')}
-- **Trend:** {plan.get('regime', {}).get('trend', 'N/A')}
+**Market Snapshot:**
+- Current Price: {plan.get('current_price', 'N/A')}
+- Net GEX: {plan.get('net_gex', 'N/A')}
+- Regime: {plan.get('regime', 'N/A')}
+- Flip Point: {plan.get('flip_point', 'N/A')}
+- Call Wall: {plan.get('call_wall', 'N/A')}
+- Put Wall: {plan.get('put_wall', 'N/A')}
 
 ---
 
@@ -1188,23 +1410,87 @@ class TradingPlanGenerator:
         for day_name, emoji in days_emoji.items():
             if day_name in plan.get('days', {}):
                 day_plan = plan['days'][day_name]
-                md += f"## {emoji} {day_name}\n\n"
-                md += f"**Focus:** {day_plan.get('focus', 'N/A')}\n\n"
-                md += f"**Strategy:** {day_plan.get('strategy', 'N/A')}\n\n"
+                md += f"## {emoji} {day_plan.get('date', day_name)}\n\n"
+                md += f"**Market Setup:** {day_plan.get('market_setup', 'N/A')}\n\n"
 
-                if 'exact_entry' in day_plan:
-                    md += f"**📍 Entry:** {day_plan['exact_entry']}\n\n"
-                if 'target' in day_plan:
-                    md += f"**🎯 Target:** {day_plan['target']}\n\n"
-                if 'stop' in day_plan:
-                    md += f"**🛑 Stop:** {day_plan['stop']}\n\n"
-                if 'expected_profit' in day_plan:
-                    md += f"**💰 Expected:** {day_plan['expected_profit']}\n\n"
-                if 'win_probability' in day_plan:
-                    md += f"**✅ Win Probability:** {day_plan['win_probability']}\n\n"
+                # Display each trade
+                trades = day_plan.get('trades', [])
+                for trade in trades:
+                    trade_num = trade.get('trade_num', '')
+                    if trade_num:
+                        md += f"### Trade #{trade_num}\n\n"
 
-                if 'reasoning' in day_plan:
-                    md += f"*{day_plan['reasoning']}*\n\n"
+                    md += f"**{trade.get('action', 'N/A')}**\n\n"
+
+                    # Display specific trade details
+                    if 'strike' in trade:
+                        md += f"- Strike: {trade['strike']}\n"
+                    if 'expiration' in trade:
+                        md += f"- Expiration: {trade['expiration']}\n"
+                    if 'entry_price' in trade:
+                        md += f"- Entry Price: {trade['entry_price']}\n"
+                    if 'entry_zone' in trade:
+                        md += f"- Entry Zone: {trade['entry_zone']}\n"
+                    if 'quantity' in trade:
+                        md += f"- Quantity: {trade['quantity']}\n"
+                    if 'entry_time' in trade:
+                        md += f"- Entry Time: {trade['entry_time']}\n"
+
+                    # Iron condor specific
+                    if 'call_spread' in trade:
+                        md += f"- Call Spread: {trade['call_spread']}\n"
+                    if 'put_spread' in trade:
+                        md += f"- Put Spread: {trade['put_spread']}\n"
+                    if 'credit_received' in trade:
+                        md += f"- Credit Received: {trade['credit_received']}\n"
+                    if 'profit_zone' in trade:
+                        md += f"- Profit Zone: {trade['profit_zone']}\n"
+                    if 'breakevens' in trade:
+                        md += f"- Breakevens: {trade['breakevens']}\n"
+
+                    # Targets and stops
+                    if 'target_1' in trade:
+                        md += f"- **Target 1:** {trade['target_1']}\n"
+                    if 'target_2' in trade:
+                        md += f"- **Target 2:** {trade['target_2']}\n"
+                    if 'trailing_stop' in trade:
+                        md += f"- **Trailing Stop:** {trade['trailing_stop']}\n"
+                    if 'hard_stop' in trade:
+                        md += f"- **Hard Stop:** {trade['hard_stop']}\n"
+
+                    # Risk/Reward
+                    if 'max_risk' in trade:
+                        md += f"- Max Risk: {trade['max_risk']}\n"
+                    if 'max_profit' in trade:
+                        md += f"- Max Profit: {trade['max_profit']}\n"
+                    if 'max_loss' in trade:
+                        md += f"- Max Loss: {trade['max_loss']}\n"
+                    if 'expected_profit' in trade:
+                        md += f"- Expected Profit: {trade['expected_profit']}\n"
+                    if 'win_probability' in trade:
+                        md += f"- **Win Probability: {trade['win_probability']}**\n"
+
+                    # Management rules
+                    if 'management' in trade:
+                        md += f"\n**Management:**\n"
+                        for rule in trade['management']:
+                            md += f"- {rule}\n"
+
+                    # Reasoning
+                    if 'reasoning' in trade:
+                        md += f"\n**Reasoning:**\n"
+                        for reason in trade['reasoning']:
+                            md += f"- {reason}\n"
+
+                    # Condition
+                    if 'condition' in trade:
+                        md += f"\n*{trade['condition']}*\n"
+
+                    md += "\n"
+
+                # Notes for the day
+                if 'notes' in day_plan:
+                    md += f"\n📝 **{day_plan['notes']}**\n\n"
 
                 md += "---\n\n"
 
