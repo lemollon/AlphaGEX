@@ -169,19 +169,30 @@ def main():
         with col2:
             if st.button("🔄 Refresh", type="primary", use_container_width=True):
                 with st.spinner("Fetching latest data..."):
-                    # Fetch all data
-                    gex_data = st.session_state.api_client.get_net_gamma(symbol)
-                    profile_data = st.session_state.api_client.get_gex_profile(symbol)
+                    try:
+                        # Fetch all data
+                        gex_data = st.session_state.api_client.get_net_gamma(symbol)
+                        profile_data = st.session_state.api_client.get_gex_profile(symbol)
 
-                    # Store in session
-                    st.session_state.current_data = {
-                        'symbol': symbol,
-                        'gex': gex_data,
-                        'profile': profile_data,
-                        'timestamp': get_utc_time()
-                    }
+                        # Debug: Check what we got
+                        if not profile_data or len(profile_data) == 0:
+                            st.warning(f"⚠️ No profile data returned for {symbol}. Check API connection.")
+                        else:
+                            st.info(f"✓ Profile data loaded: {len(profile_data.get('strikes', []))} strikes")
 
-                    st.success("✅ Data refreshed!")
+                        # Store in session
+                        st.session_state.current_data = {
+                            'symbol': symbol,
+                            'gex': gex_data,
+                            'profile': profile_data,
+                            'timestamp': get_utc_time()
+                        }
+
+                        st.success(f"✅ Data refreshed for {symbol}!")
+                    except Exception as e:
+                        st.error(f"❌ Error fetching data: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
 
         # Quick symbols
         st.caption("Quick Select:")
