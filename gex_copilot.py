@@ -533,83 +533,137 @@ def main():
     # Tab 4: AI Co-Pilot
     with tabs[3]:
         st.subheader("💬 Intelligent Trading Co-Pilot")
-        
-        # Mode selection
+
+        # Mode selection buttons
         col1, col2, col3 = st.columns(3)
         with col1:
-            analysis_mode = st.button("📊 Analyze Market", use_container_width=True)
+            if st.button("📊 Analyze Market", use_container_width=True):
+                prompt = "Analyze current market conditions and tell me the best trade setup right now with specific strikes, entry price, targets, and stop loss. Include why this trade makes money based on MM positioning."
+                st.session_state.conversation_history.append({
+                    "role": "user",
+                    "content": prompt
+                })
+                with st.spinner("🔍 Deep market analysis in progress..."):
+                    response = st.session_state.claude_ai.analyze_market(
+                        st.session_state.current_data.get('gex', {}),
+                        prompt
+                    )
+                st.session_state.conversation_history.append({
+                    "role": "assistant",
+                    "content": response
+                })
+                st.rerun()
+
         with col2:
-            challenge_mode = st.button("🥊 Challenge My Idea", use_container_width=True)
+            if st.button("🥊 Challenge My Idea", use_container_width=True):
+                # Set up challenge mode
+                st.session_state['challenge_mode'] = True
+                st.info("💡 Challenge Mode Active: Enter your trade idea and I'll critically analyze it, push back on weaknesses, and suggest better alternatives.")
+
         with col3:
-            education_mode = st.button("📚 Teach Me", use_container_width=True)
-        
+            if st.button("📚 Teach Me", use_container_width=True):
+                prompt = "Teach me about gamma exposure and market maker positioning. Explain how I can use this to make profitable trades. Include real examples from current market conditions."
+                st.session_state.conversation_history.append({
+                    "role": "user",
+                    "content": prompt
+                })
+                with st.spinner("📖 Preparing educational content..."):
+                    response = st.session_state.claude_ai.teach_concept(
+                        st.session_state.current_data.get('gex', {}),
+                        prompt
+                    )
+                st.session_state.conversation_history.append({
+                    "role": "assistant",
+                    "content": response
+                })
+                st.rerun()
+
         # Display conversation history
         for msg in st.session_state.conversation_history[-10:]:
             with st.chat_message(msg["role"]):
                 st.write(msg["content"])
-        
-        # Chat input
+
+        # Chat input with intelligent routing
         if prompt := st.chat_input("Ask about gamma, market makers, or trading strategies..."):
             # Add to history
             st.session_state.conversation_history.append({
                 "role": "user",
                 "content": prompt
             })
-            
-            # Get response based on mode
-            with st.spinner("Analyzing..."):
-                if "challenge" in prompt.lower() or "wrong" in prompt.lower():
+
+            # Determine mode based on content and context
+            with st.spinner("🤖 Thinking deeply..."):
+                # Check if in challenge mode or if question is a challenge
+                challenge_keywords = ["challenge", "wrong", "disagree", "bad idea", "risky", "why not", "what if i"]
+                teach_keywords = ["teach", "explain", "how does", "what is", "help me understand", "why"]
+
+                if st.session_state.get('challenge_mode') or any(kw in prompt.lower() for kw in challenge_keywords):
+                    # Challenge mode - be critical and push back
+                    st.session_state['challenge_mode'] = False  # Reset after use
                     response = st.session_state.claude_ai.challenge_trade_idea(
                         prompt,
                         st.session_state.current_data.get('gex', {})
                     )
+                elif any(kw in prompt.lower() for kw in teach_keywords):
+                    # Educational mode
+                    response = st.session_state.claude_ai.teach_concept(
+                        st.session_state.current_data.get('gex', {}),
+                        prompt
+                    )
                 else:
+                    # Analysis mode - provide specific trades
                     response = st.session_state.claude_ai.analyze_market(
                         st.session_state.current_data.get('gex', {}),
                         prompt
                     )
-            
+
             # Add response to history
             st.session_state.conversation_history.append({
                 "role": "assistant",
                 "content": response
             })
-            
+
             st.rerun()
         
         # Quick prompts
         st.divider()
         st.caption("Quick Prompts:")
-        
-        col1, col2 = st.columns(2)
+
+        col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("What should I trade today?"):
-                prompt = "Based on current gamma levels, what's the best trade setup right now?"
-                response = st.session_state.claude_ai.analyze_market(
-                    st.session_state.current_data.get('gex', {}),
-                    prompt
-                )
-                st.session_state.conversation_history.append(
-                    {"role": "user", "content": prompt}
-                )
-                st.session_state.conversation_history.append(
-                    {"role": "assistant", "content": response}
-                )
+            if st.button("💰 Best Trade Now", use_container_width=True):
+                prompt = "Give me the highest probability trade right now with exact strikes, entry, targets, and stop. Show me the math on why this makes money."
+                st.session_state.conversation_history.append({"role": "user", "content": prompt})
+                with st.spinner("Analyzing..."):
+                    response = st.session_state.claude_ai.analyze_market(
+                        st.session_state.current_data.get('gex', {}),
+                        prompt
+                    )
+                st.session_state.conversation_history.append({"role": "assistant", "content": response})
                 st.rerun()
-        
+
         with col2:
-            if st.button("Challenge: Buy puts here"):
-                prompt = "I want to buy puts at these levels"
-                response = st.session_state.claude_ai.challenge_trade_idea(
-                    prompt,
-                    st.session_state.current_data.get('gex', {})
-                )
-                st.session_state.conversation_history.append(
-                    {"role": "user", "content": prompt}
-                )
-                st.session_state.conversation_history.append(
-                    {"role": "assistant", "content": response}
-                )
+            if st.button("🎯 Risk Analysis", use_container_width=True):
+                prompt = "What are the biggest risks in the market right now? Where could I get trapped? What's the worst-case scenario?"
+                st.session_state.conversation_history.append({"role": "user", "content": prompt})
+                with st.spinner("Analyzing risks..."):
+                    response = st.session_state.claude_ai.challenge_trade_idea(
+                        prompt,
+                        st.session_state.current_data.get('gex', {})
+                    )
+                st.session_state.conversation_history.append({"role": "assistant", "content": response})
+                st.rerun()
+
+        with col3:
+            if st.button("📖 Explain Current Setup", use_container_width=True):
+                prompt = "Explain what's happening in the market right now in terms of gamma positioning. Why are MMs acting this way? What does it mean for my trading?"
+                st.session_state.conversation_history.append({"role": "user", "content": prompt})
+                with st.spinner("Preparing explanation..."):
+                    response = st.session_state.claude_ai.teach_concept(
+                        st.session_state.current_data.get('gex', {}),
+                        prompt
+                    )
+                st.session_state.conversation_history.append({"role": "assistant", "content": response})
                 st.rerun()
     
     # Tab 5: Positions & Tracking
