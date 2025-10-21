@@ -151,79 +151,122 @@ def main():
     with st.sidebar:
         st.header("⚙️ Configuration")
 
-        # AI Status Indicator - NEW!
+        # AI Status Indicator (no test button)
         claude_api_key = st.secrets.get("claude_api_key", "")
         if claude_api_key:
             st.success("🤖 **AI Copilot:** ✅ ACTIVE")
-            st.caption(f"Key: {claude_api_key[:12]}...{claude_api_key[-4:]}")
-
-            # Test API connection button
-            if st.button("🧪 Test API Connection", help="Test which Claude models work"):
-                with st.spinner("Testing models..."):
-                    import requests
-
-                    # Try multiple models to find which one works
-                    models_to_test = [
-                        "claude-3-sonnet-20240229",
-                        "claude-3-opus-20240229",
-                        "claude-3-haiku-20240307",
-                        "claude-2.1",
-                        "claude-2.0"
-                    ]
-
-                    working_model = None
-                    for model in models_to_test:
-                        try:
-                            test_response = requests.post(
-                                "https://api.anthropic.com/v1/messages",
-                                headers={
-                                    "x-api-key": claude_api_key,
-                                    "anthropic-version": "2023-06-01",
-                                    "content-type": "application/json"
-                                },
-                                json={
-                                    "model": model,
-                                    "max_tokens": 50,
-                                    "messages": [{"role": "user", "content": "Hi"}]
-                                },
-                                timeout=10
-                            )
-                            if test_response.status_code == 200:
-                                st.success(f"✅ **{model}** WORKS!")
-                                working_model = model
-                                break
-                            else:
-                                st.warning(f"❌ {model}: {test_response.status_code}")
-                        except Exception as e:
-                            st.warning(f"❌ {model}: {str(e)}")
-
-                    if not working_model:
-                        st.error("""
-                        **No working models found!**
-
-                        This means your API key either:
-                        - Is invalid or expired
-                        - Has no credits/payment method
-                        - Doesn't have access to any Claude models
-
-                        Check: https://console.anthropic.com/settings/keys
-                        """)
         else:
             st.warning("🤖 **AI Copilot:** ⚠️ BASIC MODE")
-            with st.expander("ℹ️ Enable Advanced AI"):
-                st.markdown("""
-                **You're using basic fallback analysis.**
-
-                To enable full AI capabilities:
-                1. Get API key: https://console.anthropic.com/
-                2. Create `.streamlit/secrets.toml`
-                3. Add: `claude_api_key = "sk-ant-..."`
-                4. Restart app
-                """)
 
         st.divider()
 
-        # Account Settings - NEW!
+        # 1. Symbol Selection (TOP)
+        st.subheader("📊 Symbol Analysis")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            symbol = st.text_input("Enter Symbol", value="SPY")
+        with col2:
+            if st.button("🔄 Refresh", type="primary", use_container_width=True):
+                with st.spinner("Fetching latest data..."):
+                    # Fetch all data
+                    gex_data = st.session_state.api_client.get_net_gamma(symbol)
+                    profile_data = st.session_state.api_client.get_gex_profile(symbol)
+
+                    # Store in session
+                    st.session_state.current_data = {
+                        'symbol': symbol,
+                        'gex': gex_data,
+                        'profile': profile_data,
+                        'timestamp': get_utc_time()
+                    }
+
+                    st.success("✅ Data refreshed!")
+
+        # Quick symbols
+        st.caption("Quick Select:")
+        cols = st.columns(4)
+        for i, sym in enumerate(['SPY', 'QQQ', 'IWM', 'DIA']):
+            with cols[i]:
+                if st.button(sym, use_container_width=True):
+                    symbol = sym
+                    st.rerun()
+
+        st.divider()
+
+        # 2. Current Analysis Display (SECOND)
+        if st.session_state.current_data:
+            data = st.session_state.current_data.get('gex', {})
+
+            st.subheader("📈 Current Analysis")
+
+            # Net GEX
+            net_gex = data.get('net_gex', 0)
+            st.metric(
+                "Net GEX",
+                f"${net_gex/1e9:.2f}B",
+                delta="Negative" if net_gex < 0 else "Positive",
+                delta_color="inverse" if net_gex < 0 else "normal"
+            )
+
+            # MM State
+            claude = ClaudeIntelligence()
+            mm_state = claude._determine_mm_state(net_gex)
+            state_config = MM_STATES[mm_state]
+
+            st.info(f"""
+            **MM State: {mm_state}**
+            {state_config['behavior']}
+
+            **Action: {state_config['action']}**
+            """)
+
+            # Key Levels
+            st.subheader("📍 Key Levels")
+
+            spot = data.get('spot_price', 0)
+            flip = data.get('flip_point', 0)
+
+            st.metric("Current Price", f"${spot:.2f}")
+            st.metric(
+                "Flip Point",
+                f"${flip:.2f}",
+                delta=f"{((flip-spot)/spot*100):+.2f}%" if spot != 0 else "N/A"
+            )
+
+            call_wall = data.get('call_wall', 0)
+            put_wall = data.get('put_wall', 0)
+
+            if call_wall:
+                st.metric("Call Wall", f"${call_wall:.2f}")
+            if put_wall:
+                st.metric("Put Wall", f"${put_wall:.2f}")
+
+        st.divider()
+
+        # 3. Timezone Settings (THIRD)
+        st.subheader("🕐 Timezone Preference")
+        if 'user_timezone' not in st.session_state:
+            st.session_state.user_timezone = 'US/Central'
+
+        timezone_options = {
+            'Eastern Time (ET)': 'US/Eastern',
+            'Central Time (CT)': 'US/Central',
+            'Mountain Time (MT)': 'US/Mountain',
+            'Pacific Time (PT)': 'US/Pacific'
+        }
+
+        selected_tz_display = st.selectbox(
+            "Your Local Timezone",
+            options=list(timezone_options.keys()),
+            index=1,  # Default to Central
+            help="Select your local timezone for time displays"
+        )
+        st.session_state.user_timezone = timezone_options[selected_tz_display]
+
+        st.divider()
+
+        # 4. Account Settings (FOURTH)
         st.subheader("💰 Account Settings")
         if 'account_size' not in st.session_state:
             st.session_state.account_size = 50000
@@ -253,109 +296,9 @@ def main():
         max_risk = account_size * (risk_pct / 100)
         st.caption(f"Max Risk: ${max_risk:,.2f} per trade")
 
+    # Performance Stats
+    with st.sidebar:
         st.divider()
-
-        # Timezone Settings - NEW!
-        st.subheader("🕐 Timezone Preference")
-        if 'user_timezone' not in st.session_state:
-            st.session_state.user_timezone = 'US/Central'
-
-        timezone_options = {
-            'Eastern Time (ET)': 'US/Eastern',
-            'Central Time (CT)': 'US/Central',
-            'Mountain Time (MT)': 'US/Mountain',
-            'Pacific Time (PT)': 'US/Pacific'
-        }
-
-        selected_tz_display = st.selectbox(
-            "Your Local Timezone",
-            options=list(timezone_options.keys()),
-            index=1,  # Default to Central
-            help="Select your local timezone for time displays"
-        )
-        st.session_state.user_timezone = timezone_options[selected_tz_display]
-
-        st.divider()
-
-        # Symbol Selection
-        st.subheader("📊 Symbol Analysis")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            symbol = st.text_input("Enter Symbol", value="SPY")
-        with col2:
-            if st.button("🔄 Refresh", type="primary", use_container_width=True):
-                with st.spinner("Fetching latest data..."):
-                    # Fetch all data
-                    gex_data = st.session_state.api_client.get_net_gamma(symbol)
-                    profile_data = st.session_state.api_client.get_gex_profile(symbol)
-                    
-                    # Store in session
-                    st.session_state.current_data = {
-                        'symbol': symbol,
-                        'gex': gex_data,
-                        'profile': profile_data,
-                        'timestamp': get_utc_time()
-                    }
-                    
-                    st.success("✅ Data refreshed!")
-        
-        # Quick symbols
-        st.caption("Quick Select:")
-        cols = st.columns(4)
-        for i, sym in enumerate(['SPY', 'QQQ', 'IWM', 'DIA']):
-            with cols[i]:
-                if st.button(sym, use_container_width=True):
-                    symbol = sym
-                    st.rerun()
-        
-        st.divider()
-        
-        # Current Analysis Display
-        if st.session_state.current_data:
-            data = st.session_state.current_data.get('gex', {})
-            
-            st.subheader("📈 Current Analysis")
-            
-            # Net GEX
-            net_gex = data.get('net_gex', 0)
-            st.metric(
-                "Net GEX",
-                f"${net_gex/1e9:.2f}B",
-                delta="Negative" if net_gex < 0 else "Positive",
-                delta_color="inverse" if net_gex < 0 else "normal"
-            )
-            
-            # MM State
-            claude = ClaudeIntelligence()
-            mm_state = claude._determine_mm_state(net_gex)
-            state_config = MM_STATES[mm_state]
-            
-            st.info(f"""
-            **MM State: {mm_state}**
-            {state_config['behavior']}
-            
-            **Action: {state_config['action']}**
-            """)
-            
-            # Key Levels
-            st.subheader("📍 Key Levels")
-            
-            spot = data.get('spot_price', 0)
-            flip = data.get('flip_point', 0)
-            
-            st.metric("Current Price", f"${spot:.2f}")
-            st.metric(
-                "Flip Point",
-                f"${flip:.2f}",
-                delta=f"{((flip-spot)/spot*100):+.1f}%" if spot != 0 else "N/A"
-            )
-            st.metric("Call Wall", f"${data.get('call_wall', 0):.2f}")
-            st.metric("Put Wall", f"${data.get('put_wall', 0):.2f}")
-        
-        st.divider()
-        
-        # Performance Stats
         st.subheader("📊 Performance")
         
         conn = sqlite3.connect(DB_PATH)
@@ -407,21 +350,29 @@ def main():
         if st.session_state.current_data:
             data = st.session_state.current_data
             
+            # Get symbol
+            current_symbol = data.get('symbol', 'SPY')
+
             # Display GEX Profile Chart
+            st.subheader(f"📊 {current_symbol} GEX Profile")
             if data.get('profile'):
                 visualizer = GEXVisualizer()
                 fig = visualizer.create_gex_profile(data['profile'])
                 st.plotly_chart(fig, use_container_width=True)
-            
+            else:
+                st.warning(f"No GEX profile data available for {current_symbol}. Chart cannot be displayed.")
+
             # Display Game Plan
-            st.subheader("📋 Today's Game Plan")
-            
+            st.subheader(f"📋 {current_symbol} Daily Plan")
+
             # Detect setups
             strategy_engine = StrategyEngine()
             setups = strategy_engine.detect_setups(data.get('gex', {}))
-            
-            # Generate plan
-            game_plan = strategy_engine.generate_game_plan(data.get('gex', {}), setups)
+
+            # Generate plan - pass the symbol
+            gex_with_symbol = data.get('gex', {}).copy()
+            gex_with_symbol['symbol'] = current_symbol
+            game_plan = strategy_engine.generate_game_plan(gex_with_symbol, setups)
             st.markdown(game_plan)
             
             # Monte Carlo Analysis
