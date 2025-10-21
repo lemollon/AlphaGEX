@@ -1685,6 +1685,21 @@ Your reputation is built on making traders profitable. Protect that reputation f
             timeout=30
         )
 
+        if response.status_code != 200:
+            error_detail = response.text
+            st.error(f"""
+            🚨 **Claude API Error (Status {response.status_code})**
+
+            Response: {error_detail}
+
+            **Common Issues:**
+            - Invalid API key format
+            - API key doesn't have credits
+            - Rate limit exceeded
+            - Network connectivity issue
+            """)
+            raise Exception(f"API returned {response.status_code}: {error_detail}")
+
         response.raise_for_status()
         result = response.json()
         return result['content'][0]['text']
