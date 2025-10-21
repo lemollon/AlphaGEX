@@ -1204,16 +1204,16 @@ class ClaudeIntelligence:
                 TRADER'S IDEA: {idea}
 
                 CURRENT MARKET STATE:
-                {json.dumps(context, indent=2)}
+                {json.dumps(make_json_serializable(context), indent=2)}
 
                 RISK ASSESSMENT:
-                {json.dumps(risk_score, indent=2)}
+                {json.dumps(make_json_serializable(risk_score), indent=2)}
 
                 TRADER'S PERSONAL STATS:
                 {rag_context}
 
                 BETTER ALTERNATIVE STRATEGIES:
-                {json.dumps(best_strategies, indent=2)}
+                {json.dumps(make_json_serializable(best_strategies), indent=2)}
 
                 YOUR RESPONSE MUST INCLUDE:
 
@@ -1283,10 +1283,10 @@ class ClaudeIntelligence:
                 TOPIC/QUESTION: {topic}
 
                 CURRENT LIVE MARKET DATA:
-                {json.dumps(context, indent=2)}
+                {json.dumps(make_json_serializable(context), indent=2)}
 
                 STUDENT'S TRADING HISTORY:
-                {json.dumps(personal_examples, indent=2)}
+                {json.dumps(make_json_serializable(personal_examples), indent=2)}
 
                 TEACHING FRAMEWORK:
 
@@ -1951,7 +1951,7 @@ Want to dive deeper into a specific concept? Ask me about:
             ''', (
                 query,
                 response,
-                json.dumps(context),
+                json.dumps(make_json_serializable(context)),
                 context.get('confidence', 50)
             ))
             conn.commit()
