@@ -151,6 +151,25 @@ def main():
     with st.sidebar:
         st.header("⚙️ Configuration")
 
+        # AI Status Indicator - NEW!
+        claude_api_key = st.secrets.get("claude_api_key", "")
+        if claude_api_key:
+            st.success("🤖 **AI Copilot:** ✅ ACTIVE")
+        else:
+            st.warning("🤖 **AI Copilot:** ⚠️ BASIC MODE")
+            with st.expander("ℹ️ Enable Advanced AI"):
+                st.markdown("""
+                **You're using basic fallback analysis.**
+
+                To enable full AI capabilities:
+                1. Get API key: https://console.anthropic.com/
+                2. Create `.streamlit/secrets.toml`
+                3. Add: `claude_api_key = "sk-ant-..."`
+                4. Restart app
+                """)
+
+        st.divider()
+
         # Account Settings - NEW!
         st.subheader("💰 Account Settings")
         if 'account_size' not in st.session_state:

@@ -1002,7 +1002,28 @@ class ClaudeIntelligence:
         self.risk_pct = st.session_state.get('risk_per_trade', 2.0)  # Default 2%
 
         if not self.api_key:
-            st.warning("Claude API key not found in secrets. Using fallback analysis.")
+            st.error("""
+            ⚠️ **Claude AI Not Configured** ⚠️
+
+            You're currently using **BASIC FALLBACK ANALYSIS** (generic responses).
+
+            To enable **ADVANCED AI COPILOT** with personalized trading recommendations:
+
+            1. Get a Claude API key from: https://console.anthropic.com/
+            2. Add it to `.streamlit/secrets.toml`:
+               ```
+               claude_api_key = "sk-ant-your-key-here"
+               ```
+            3. Restart the app
+
+            **What you're missing:**
+            - Real-time options chain analysis
+            - Personalized trade recommendations
+            - Greeks calculations
+            - Position sizing based on your account
+            - Historical pattern matching
+            - Advanced risk analysis
+            """)
     
     def analyze_market(self, market_data: Dict, user_query: str) -> str:
         """Generate intelligent market analysis with RAG context - NOW WITH ULTIMATE FEATURES"""
@@ -1180,7 +1201,13 @@ class ClaudeIntelligence:
             return response
 
         except Exception as e:
-            st.error(f"Claude API Error: {e}")
+            st.error(f"""
+            🚨 **Claude API Call Failed**
+
+            Error: {str(e)}
+
+            **Falling back to basic analysis.** For full AI capabilities, check your API key configuration.
+            """)
             return self._fallback_analysis_with_rag(market_data, user_query)
     
     def challenge_trade_idea(self, idea: str, market_data: Dict) -> str:
