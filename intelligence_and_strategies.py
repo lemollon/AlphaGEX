@@ -306,6 +306,309 @@ class PsychologicalCoach:
             'coaching_needed': len(red_flags) > 0
         }
 
+
+class ScenarioPlanner:
+    """What-if analysis for different market scenarios"""
+
+    @staticmethod
+    def analyze_scenario(current_position: Dict, scenario: Dict) -> Dict:
+        """Analyze how position performs under different scenarios"""
+
+        symbol = current_position.get('symbol', 'SPY')
+        option_type = current_position.get('type', 'call')
+        strike = current_position.get('strike', 0)
+        entry_price = current_position.get('entry_price', 0)
+        contracts = current_position.get('contracts', 1)
+        delta = current_position.get('delta', 0.5)
+        theta = current_position.get('theta', -0.10)
+        current_price = current_position.get('current_price', strike)
+
+        # Scenario parameters
+        price_change_pct = scenario.get('price_change_pct', 0)
+        days_forward = scenario.get('days_forward', 1)
+        iv_change = scenario.get('iv_change_pct', 0)
+
+        new_price = current_price * (1 + price_change_pct / 100)
+
+        # Estimate new option price
+        price_move = new_price - current_price
+        delta_pnl = delta * price_move
+        theta_pnl = theta * days_forward
+        iv_pnl = iv_change * 0.01  # Simplified vega impact
+
+        estimated_new_price = entry_price + delta_pnl + theta_pnl + iv_pnl
+        estimated_new_price = max(0.01, estimated_new_price)  # Floor at $0.01
+
+        pnl_per_contract = (estimated_new_price - entry_price) * 100
+        total_pnl = pnl_per_contract * contracts
+        pnl_pct = (estimated_new_price / entry_price - 1) * 100 if entry_price > 0 else 0
+
+        return {
+            'scenario_name': scenario.get('name', 'Unnamed'),
+            'new_stock_price': round(new_price, 2),
+            'stock_move_pct': round(price_change_pct, 2),
+            'estimated_option_price': round(estimated_new_price, 2),
+            'pnl_per_contract': round(pnl_per_contract, 2),
+            'total_pnl': round(total_pnl, 2),
+            'pnl_pct': round(pnl_pct, 2),
+            'days_elapsed': days_forward,
+            'recommendation': ScenarioPlanner._get_recommendation(total_pnl, entry_price, contracts)
+        }
+
+    @staticmethod
+    def _get_recommendation(pnl: float, entry: float, contracts: int) -> str:
+        """Get action recommendation based on P&L"""
+        if pnl > entry * contracts * 100 * 0.5:  # 50% gain
+            return "🎯 TAKE PROFITS - Excellent gain"
+        elif pnl > entry * contracts * 100 * 0.3:  # 30% gain
+            return "✅ Consider scaling out 50%"
+        elif pnl < -entry * contracts * 100 * 0.5:  # -50% loss
+            return "🛑 CUT LOSS - Stop out immediately"
+        elif pnl < 0:
+            return "⚠️ Monitor closely - at risk"
+        else:
+            return "📊 Hold and monitor"
+
+
+class SocraticQuestioner:
+    """Ask probing questions to make user think before giving answers"""
+
+    @staticmethod
+    def generate_questions(user_query: str, market_data: Dict) -> List[str]:
+        """Generate Socratic questions based on query"""
+
+        query_lower = user_query.lower()
+        questions = []
+
+        # General questions everyone should answer
+        base_questions = [
+            "1. What's the current Net GEX? (Check the dashboard)",
+            "2. Are MMs trapped (negative GEX) or defending (positive GEX)?",
+            "3. What day of the week is it, and what does that mean for directionals?",
+            "4. Where will your stop loss be if this trade goes against you?"
+        ]
+
+        # Specific questions based on query type
+        if 'call' in query_lower and 'buy' in query_lower:
+            questions.extend([
+                "5. Why do you think the stock will go UP?",
+                "6. What GEX level supports buying calls right now?",
+                "7. What happens if we're in positive GEX (MMs defending)?"
+            ])
+        elif 'put' in query_lower and 'buy' in query_lower:
+            questions.extend([
+                "5. Why do you think the stock will go DOWN?",
+                "6. What GEX level supports buying puts?",
+                "7. Are MMs forced to buy dips (negative GEX)? If yes, why buy puts?"
+            ])
+        elif 'sell' in query_lower or 'premium' in query_lower:
+            questions.extend([
+                "5. What's the range you expect the stock to stay in?",
+                "6. How much premium can you collect vs risk taken?",
+                "7. What invalidates your range thesis?"
+            ])
+        else:
+            questions.extend([
+                "5. What's your profit target in dollars?",
+                "6. What's your maximum acceptable loss?",
+                "7. What's the timeframe for this trade?"
+            ])
+
+        return base_questions + questions
+
+    @staticmethod
+    def should_use_socratic_mode(user_query: str) -> bool:
+        """Determine if Socratic mode should be activated"""
+
+        # Keywords that suggest user wants an answer without thinking
+        lazy_keywords = ['should i', 'what should', 'tell me', 'give me', 'best trade']
+
+        query_lower = user_query.lower()
+        return any(keyword in query_lower for keyword in lazy_keywords)
+
+
+class PostMortemAnalyzer:
+    """Analyze closed trades to extract lessons"""
+
+    @staticmethod
+    def analyze_trade(trade_data: Dict) -> Dict:
+        """Perform post-mortem on a closed trade"""
+
+        entry_price = trade_data.get('entry_price', 0)
+        exit_price = trade_data.get('exit_price', 0)
+        pnl = trade_data.get('pnl', 0)
+        strategy = trade_data.get('strategy', 'Unknown')
+        entry_gex = trade_data.get('entry_gex', 0)
+        exit_reason = trade_data.get('exit_reason', 'Unknown')
+        hold_time_days = trade_data.get('hold_time_days', 0)
+        day_entered = trade_data.get('day_entered', 'Unknown')
+
+        # Analyze what went right/wrong
+        lessons = {
+            'trade_summary': f"{strategy} - {'WIN' if pnl > 0 else 'LOSS'}",
+            'pnl': pnl,
+            'pnl_pct': ((exit_price / entry_price - 1) * 100) if entry_price > 0 else 0,
+            'what_went_right': [],
+            'what_went_wrong': [],
+            'key_lessons': [],
+            'grade': 'F'
+        }
+
+        # Analyze timing
+        if day_entered in ['Monday', 'Tuesday']:
+            lessons['what_went_right'].append("✅ Good entry timing (Monday/Tuesday)")
+        elif day_entered in ['Thursday', 'Friday'] and 'long' in strategy.lower():
+            lessons['what_went_wrong'].append("❌ Bad timing: Entered directional on Thu/Fri (theta trap)")
+
+        # Analyze hold time
+        if hold_time_days <= 2:
+            lessons['what_went_right'].append(f"✅ Quick trade ({hold_time_days} days) - limited theta decay")
+        elif hold_time_days >= 4:
+            lessons['what_went_wrong'].append(f"❌ Held too long ({hold_time_days} days) - theta decay ate profits")
+
+        # Analyze GEX alignment
+        if 'call' in strategy.lower() and entry_gex < -1e9:
+            lessons['what_went_right'].append("✅ Calls aligned with negative GEX (MM forced buying)")
+        elif 'call' in strategy.lower() and entry_gex > 2e9:
+            lessons['what_went_wrong'].append("❌ Calls against positive GEX (MMs defending/selling rallies)")
+
+        if 'put' in strategy.lower() and entry_gex < -1e9:
+            lessons['what_went_wrong'].append("❌ Puts against negative GEX (MMs forced to buy dips)")
+
+        # Grade the trade
+        if pnl > 0:
+            if len(lessons['what_went_right']) >= 2:
+                lessons['grade'] = 'A'
+                lessons['key_lessons'].append("🌟 Excellent execution - keep doing this")
+            else:
+                lessons['grade'] = 'B'
+                lessons['key_lessons'].append("📊 Profitable but could improve timing/setup")
+        else:
+            if len(lessons['what_went_wrong']) >= 2:
+                lessons['grade'] = 'F'
+                lessons['key_lessons'].append("⚠️ Multiple mistakes - review rules before next trade")
+            else:
+                lessons['grade'] = 'D'
+                lessons['key_lessons'].append("📖 Unlucky or small mistake - learn and move on")
+
+        return lessons
+
+
+class PortfolioAnalyzer:
+    """Analyze portfolio for correlation and concentration risks"""
+
+    @staticmethod
+    def analyze_portfolio(positions: List[Dict]) -> Dict:
+        """Analyze all open positions for risk"""
+
+        if not positions:
+            return {'status': 'empty', 'warnings': []}
+
+        # Count positions by symbol
+        symbol_counts = {}
+        sector_exposure = {'tech': 0, 'market': 0, 'other': 0}
+        directional_bias = {'bullish': 0, 'bearish': 0, 'neutral': 0}
+        total_risk = 0
+
+        tech_symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'AMD']
+        market_symbols = ['SPY', 'QQQ', 'IWM', 'DIA']
+
+        for pos in positions:
+            symbol = pos.get('symbol', 'Unknown')
+            option_type = pos.get('type', 'call')
+            risk = pos.get('max_risk', 0)
+
+            # Count symbols
+            symbol_counts[symbol] = symbol_counts.get(symbol, 0) + 1
+
+            # Sector exposure
+            if symbol in tech_symbols:
+                sector_exposure['tech'] += 1
+            elif symbol in market_symbols:
+                sector_exposure['market'] += 1
+            else:
+                sector_exposure['other'] += 1
+
+            # Directional bias
+            if option_type.lower() in ['call', 'long call']:
+                directional_bias['bullish'] += 1
+            elif option_type.lower() in ['put', 'long put']:
+                directional_bias['bearish'] += 1
+            else:
+                directional_bias['neutral'] += 1
+
+            total_risk += risk
+
+        # Generate warnings
+        warnings = []
+
+        # Check for overconcentration
+        for symbol, count in symbol_counts.items():
+            if count >= 3:
+                warnings.append({
+                    'type': 'OVERCONCENTRATION',
+                    'severity': 'high',
+                    'message': f"🚨 {count} positions in {symbol} - Too concentrated!"
+                })
+
+        # Check for correlated risk
+        if sector_exposure['tech'] >= 4:
+            warnings.append({
+                'type': 'SECTOR_RISK',
+                'severity': 'high',
+                'message': f"🚨 {sector_exposure['tech']} tech positions - Highly correlated risk!"
+            })
+
+        if sector_exposure['market'] >= 3:
+            warnings.append({
+                'type': 'MARKET_RISK',
+                'severity': 'medium',
+                'message': f"⚠️ {sector_exposure['market']} market ETF positions - Correlated exposure"
+            })
+
+        # Check directional bias
+        total_positions = len(positions)
+        if directional_bias['bullish'] >= total_positions * 0.75:
+            warnings.append({
+                'type': 'DIRECTIONAL_BIAS',
+                'severity': 'medium',
+                'message': f"⚠️ {directional_bias['bullish']}/{total_positions} positions bullish - One-sided risk!"
+            })
+
+        # Check total risk
+        if total_risk > 10000:  # Arbitrary threshold
+            warnings.append({
+                'type': 'TOTAL_RISK',
+                'severity': 'high',
+                'message': f"🚨 Total portfolio risk: ${total_risk:,.0f} - Consider reducing exposure"
+            })
+
+        return {
+            'status': 'analyzed',
+            'total_positions': total_positions,
+            'symbol_counts': symbol_counts,
+            'sector_exposure': sector_exposure,
+            'directional_bias': directional_bias,
+            'total_risk': total_risk,
+            'warnings': warnings,
+            'diversification_score': PortfolioAnalyzer._calculate_diversification(symbol_counts, total_positions)
+        }
+
+    @staticmethod
+    def _calculate_diversification(symbol_counts: Dict, total: int) -> str:
+        """Calculate diversification score"""
+        unique_symbols = len(symbol_counts)
+
+        if unique_symbols >= total * 0.8:
+            return "🌟 EXCELLENT - Well diversified"
+        elif unique_symbols >= total * 0.5:
+            return "✅ GOOD - Reasonable diversification"
+        elif unique_symbols >= total * 0.3:
+            return "⚠️ MODERATE - Some concentration risk"
+        else:
+            return "🚨 POOR - Highly concentrated"
+
+
 # ============================================================================
 # RAG SYSTEM FOR INTELLIGENT TRADING
 # ============================================================================
@@ -636,10 +939,14 @@ class ClaudeIntelligence:
         self.greeks_calc = GreeksCalculator()
         self.position_sizer = PositionSizingCalculator()
         self.psych_coach = PsychologicalCoach()
+        self.scenario_planner = ScenarioPlanner()
+        self.socratic = SocraticQuestioner()
+        self.post_mortem = PostMortemAnalyzer()
+        self.portfolio_analyzer = PortfolioAnalyzer()
 
         # Account settings (get from session state if available)
         self.account_size = st.session_state.get('account_size', 50000)  # Default $50k
-        self.risk_pct = st.session_state.get('risk_per_trade', 2)  # Default 2%
+        self.risk_pct = st.session_state.get('risk_per_trade', 2.0)  # Default 2%
 
         if not self.api_key:
             st.warning("Claude API key not found in secrets. Using fallback analysis.")
@@ -664,6 +971,19 @@ class ClaudeIntelligence:
 
             # Otherwise, show warning but continue
             st.warning(warning_message)
+
+        # STEP 1.5: SOCRATIC MODE CHECK - Make them think first
+        if self.socratic.should_use_socratic_mode(user_query):
+            questions = self.socratic.generate_questions(user_query, market_data)
+
+            response = "🤔 **SOCRATIC MODE ACTIVATED**\n\n"
+            response += "Before I give you the answer, YOU need to think through this trade.\n\n"
+            response += "**Answer these questions:**\n\n"
+            response += "\n".join(questions)
+            response += "\n\n📝 Once you answer these, I'll provide my analysis and recommendations."
+            response += "\n\n*Hint: Check the dashboard for Net GEX, current price, and key levels.*"
+
+            return response
 
         if not self.api_key:
             return self._fallback_analysis_with_rag(market_data, user_query)
