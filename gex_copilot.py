@@ -324,85 +324,135 @@ def main():
         else:
             st.info("👈 Enter a symbol and click Refresh to begin analysis")
     
-    # Tab 2: Trade Setups
+    # Tab 2: Trade Setups - USES SAME LOGIC AS TRADING PLAN
     with tabs[1]:
-        st.subheader("🎯 Available Trade Setups")
-        
+        st.subheader("🎯 Trading Setups - Profit Opportunities")
+
         if st.session_state.current_data:
-            # Detect setups
-            strategy_engine = StrategyEngine()
-            setups = strategy_engine.detect_setups(st.session_state.current_data.get('gex', {}))
-            
-            if setups:
-                for setup in setups:
-                    with st.expander(
-                        f"📊 {setup['strategy']} - Confidence: {setup['confidence']}%",
-                        expanded=True
-                    ):
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            st.markdown("**Entry Details**")
-                            st.write(f"Action: **{setup['action']}**")
-                            st.write(f"Entry Zone: {setup['entry_zone']}")
-                            
-                            if 'option_premium' in setup:
-                                st.write(f"Premium: ${setup['option_premium']:.2f}")
-                                st.write(f"Delta: {setup.get('delta', 'N/A')}")
-                                st.write(f"Gamma: {setup.get('gamma', 'N/A')}")
-                        
-                        with col2:
-                            st.markdown("**Risk Management**")
-                            
-                            if 'target_1' in setup:
-                                st.write(f"Target 1: ${setup['target_1']:.2f}")
-                                st.write(f"Target 2: ${setup.get('target_2', 0):.2f}")
-                                st.write(f"Stop Loss: ${setup.get('stop_loss', 0):.2f}")
-                            else:
-                                st.write(f"Profit Zone: {setup.get('max_profit_zone', 'N/A')}")
-                                st.write(f"Breakevens: {setup.get('breakevens', 'N/A')}")
-                            
-                            st.write(f"Risk/Reward: 1:{setup['risk_reward']}")
-                        
-                        with col3:
-                            st.markdown("**Analysis**")
-                            st.write(f"Best Time: {setup.get('best_time', 'Now')}")
-                            
-                            if 'win_probability' in setup:
-                                st.write(f"Win Probability: {setup['win_probability']:.0f}%")
-                            
-                            st.info(setup['reasoning'])
-                        
-                        # Trade execution button
-                        if st.button(f"Execute {setup['strategy']}", key=f"exec_{setup['strategy']}"):
-                            # Log to database
-                            conn = sqlite3.connect(DB_PATH)
-                            c = conn.cursor()
-                            
-                            claude = ClaudeIntelligence()
-                            c.execute('''
-                                INSERT INTO recommendations 
-                                (symbol, strategy, confidence, entry_price, reasoning, mm_behavior)
-                                VALUES (?, ?, ?, ?, ?, ?)
-                            ''', (
-                                setup['symbol'],
-                                setup['strategy'],
-                                setup['confidence'],
-                                setup['current_price'],
-                                setup['reasoning'],
-                                MM_STATES[claude._determine_mm_state(
-                                    st.session_state.current_data['gex'].get('net_gex', 0)
-                                )]['behavior']
-                            ))
-                            
-                            conn.commit()
-                            conn.close()
-                            
-                            st.success(f"✅ {setup['strategy']} logged to positions!")
-            else:
-                st.warning("No high-confidence setups available in current market conditions")
+            try:
+                # Use TradingPlanGenerator to get setups with same logic as Trading Plan
+                plan_generator = TradingPlanGenerator()
+                gex_data = st.session_state.current_data.get('gex', {})
+
+                # Extract market data
+                symbol = st.session_state.current_data.get('symbol', 'SPY')
+                spot = gex_data.get('spot_price', 0)
+                net_gex = gex_data.get('net_gex', 0)
+                flip = gex_data.get('flip_point', 0)
+                call_wall = gex_data.get('call_wall', 0)
+                put_wall = gex_data.get('put_wall', 0)
+
+                # Calculate regime (same as Trading Plan)
+                regime = plan_generator._calculate_regime_from_gex(net_gex, spot, flip, call_wall, put_wall)
+
+                # Get current day
+                import pytz
+                central = pytz.timezone('US/Central')
+                now = datetime.now(central)
+                day = now.strftime('%A')
+
+                # Generate setups using same method as Trading Plan
+                setups = plan_generator._generate_all_setups(symbol, spot, net_gex, flip, call_wall, put_wall, day, regime)
+
+                if setups:
+                    # Display market context first
+                    st.info(f"**Market Regime:** {regime.get('type', 'N/A')} | **Net GEX:** {regime.get('net_gex_billions', 'N/A')} | **MM Behavior:** {regime.get('mm_behavior', 'N/A')}")
+
+                    # Display each setup in blog/narrative format
+                    for i, trade in enumerate(setups, 1):
+                        conf = trade.get('confidence', 0)
+                        stars = '⭐' * (conf // 20)
+
+                        with st.expander(
+                            f"{stars} Setup #{i}: {trade.get('strategy', 'Unknown')} ({conf}% Confidence)",
+                            expanded=True
+                        ):
+                            # Start with WHY - the reasoning
+                            st.markdown(f"**{trade.get('reasoning', 'Strong setup based on current market conditions.')}**")
+                            st.markdown("---")
+
+                            # The Play
+                            st.markdown(f"**The Play:** {trade.get('action', 'N/A')}. Target the {trade.get('strikes', 'N/A')} strikes with {trade.get('expiration', 'N/A')} expiration.")
+
+                            if trade.get('win_rate'):
+                                st.markdown(f"*This setup has a {trade.get('win_rate')} win rate based on historical data.*")
+
+                            # Entry Strategy
+                            entry_value = trade.get('entry', trade.get('entry_zone', 'N/A'))
+                            st.markdown(f"**Entry Strategy:** Look to enter around {entry_value}.")
+
+                            # Profit Targets
+                            if 'target_1' in trade:
+                                st.markdown(f"**Profit Targets:** First target is {trade.get('target_1', 'N/A')}", end="")
+                                if 'target_2' in trade:
+                                    st.markdown(f", with an extended target at {trade.get('target_2', 'N/A')}. Consider scaling out at each target to lock in profits.")
+                                else:
+                                    st.markdown(". Consider taking profits at this level.")
+                            elif 'max_profit' in trade:
+                                st.markdown(f"**Maximum Profit Potential:** {trade.get('max_profit', 'N/A')}.")
+                                if 'credit' in trade:
+                                    st.markdown(f"You'll collect {trade.get('credit', 'N/A')} in credit when you enter this trade.")
+
+                            # Risk Management
+                            risk_text = "**Risk Management:** "
+                            if 'stop' in trade:
+                                risk_text += f"Set your stop loss at {trade.get('stop', 'N/A')}. "
+                            if 'max_risk' in trade:
+                                risk_text += f"Your maximum risk on this trade is {trade.get('max_risk', 'N/A')}. "
+
+                            size_value = trade.get('size', '2-3% of capital')
+                            risk_text += f"Position size should be {size_value} to maintain proper risk management."
+                            st.markdown(risk_text)
+
+                            # Why This Works
+                            win_rate_value = trade.get('win_rate', '')
+                            if win_rate_value:
+                                reasoning = trade.get('reasoning', '').lower()
+                                why_text = f"**Why This Works:** This is a {win_rate_value} win rate setup because "
+
+                                if 'negative gex' in reasoning or 'short gamma' in reasoning:
+                                    why_text += "when dealers are short gamma (negative GEX), they're forced to buy rallies to hedge, creating upward momentum that pushes prices higher."
+                                elif 'positive gex' in reasoning or 'range' in reasoning:
+                                    why_text += "high positive GEX creates a volatility-suppressed environment where market makers defend their key levels, making range-bound strategies highly profitable."
+                                elif 'wall' in reasoning:
+                                    why_text += "gamma walls represent massive positioning by market makers who will defend these levels, creating strong support or resistance zones."
+                                elif 'theta' in reasoning or 'premium' in reasoning:
+                                    why_text += "time decay works in your favor, allowing you to collect premium while staying protected within defined risk parameters."
+                                else:
+                                    why_text += "the market structure creates favorable risk/reward dynamics for this strategy."
+
+                                st.markdown(why_text)
+
+                            # Trade execution button
+                            if st.button(f"Execute {trade.get('strategy')}", key=f"exec_setup_{i}"):
+                                conn = sqlite3.connect(DB_PATH)
+                                c = conn.cursor()
+
+                                claude = ClaudeIntelligence()
+                                c.execute('''
+                                    INSERT INTO recommendations
+                                    (symbol, strategy, confidence, entry_price, reasoning, mm_behavior)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                ''', (
+                                    symbol,
+                                    trade.get('strategy', 'Unknown'),
+                                    conf,
+                                    spot,
+                                    trade.get('reasoning', 'N/A'),
+                                    regime.get('mm_behavior', 'N/A')
+                                ))
+
+                                conn.commit()
+                                conn.close()
+
+                                st.success(f"✅ {trade.get('strategy')} logged to positions!")
+                else:
+                    st.warning("No high-confidence setups available (all setups below 50% confidence threshold)")
+            except Exception as e:
+                st.error(f"⚠️ Error generating setups: {str(e)}")
+                st.info("💡 Trading setups work best with high-volume symbols like SPY, QQQ, TSLA, AAPL")
         else:
-            st.info("Fetch market data first to see available setups")
+            st.info("👈 Enter a symbol and click Refresh to see available setups")
     
     # Tab 3: Trading Plans
     with tabs[2]:
