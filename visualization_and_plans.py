@@ -1000,38 +1000,76 @@ class TradingPlanGenerator:
 
 """
 
-        # Show ALL trading setups with confidence >= 50%
+        # Show ALL trading setups with confidence >= 50% - BLOG NARRATIVE STYLE
         exact_trades = plan.get('exact_trades', [])
         if exact_trades:
             for i, trade in enumerate(exact_trades, 1):
                 conf = trade.get('confidence', 0)
                 stars = '⭐' * (conf // 20)  # 5 stars max
 
-                md += f"### Setup #{i}: {trade.get('strategy', 'Unknown')} {stars} ({conf}% confidence)\\n\\n"
-                md += f"**📋 ACTION:** {trade.get('action', 'N/A')}\\n\\n"
-                md += f"**🎯 STRIKES:** {trade.get('strikes', 'N/A')}\\n"
-                md += f"**📅 EXPIRATION:** {trade.get('expiration', 'N/A')}\\n"
-                md += f"**💵 ENTRY:** {trade.get('entry', trade.get('entry_zone', 'N/A'))}\\n\\n"
+                md += f"### {stars} Setup #{i}: {trade.get('strategy', 'Unknown')} ({conf}% Confidence)\\n\\n"
 
+                # Start with WHY - the reasoning/market context
+                md += f"{trade.get('reasoning', 'Strong setup based on current market conditions.')}\\n\\n"
+
+                # Then describe THE PLAY in narrative form
+                md += f"**The Play:** {trade.get('action', 'N/A')}. "
+                md += f"Target the {trade.get('strikes', 'N/A')} strikes with {trade.get('expiration', 'N/A')} expiration. "
+
+                # Add win rate context
+                if trade.get('win_rate'):
+                    md += f"This setup has a {trade.get('win_rate')} win rate based on historical data.\\n\\n"
+                else:
+                    md += f"\\n\\n"
+
+                # Entry strategy
+                entry_value = trade.get('entry', trade.get('entry_zone', 'N/A'))
+                md += f"**Entry Strategy:** Look to enter around {entry_value}. "
+
+                # Profit targets narrative
                 if 'target_1' in trade:
-                    md += f"**🎯 TARGETS:**\\n"
-                    md += f"- Target 1: {trade.get('target_1', 'N/A')}\\n"
+                    md += f"Your first profit target is {trade.get('target_1', 'N/A')}"
                     if 'target_2' in trade:
-                        md += f"- Target 2: {trade.get('target_2', 'N/A')}\\n"
+                        md += f", with an extended target at {trade.get('target_2', 'N/A')}. "
+                    else:
+                        md += ". "
+                    md += f"Consider scaling out at each target to lock in profits.\\n\\n"
+                elif 'max_profit' in trade:
+                    md += f"\\n\\n**Maximum Profit Potential:** {trade.get('max_profit', 'N/A')}. "
+                    if 'credit' in trade:
+                        md += f"You'll collect {trade.get('credit', 'N/A')} in credit when you enter this trade. "
+                    md += f"\\n\\n"
+                else:
+                    md += f"\\n\\n"
 
+                # Risk management narrative
+                md += f"**Risk Management:** "
                 if 'stop' in trade:
-                    md += f"\\n**🛑 STOP LOSS:** {trade.get('stop', 'N/A')}\\n"
-
-                if 'credit' in trade:
-                    md += f"**💰 CREDIT:** {trade.get('credit', 'N/A')}\\n"
-                if 'max_profit' in trade:
-                    md += f"**📈 MAX PROFIT:** {trade.get('max_profit', 'N/A')}\\n"
+                    md += f"Set your stop loss at {trade.get('stop', 'N/A')}. "
                 if 'max_risk' in trade:
-                    md += f"**📉 MAX RISK:** {trade.get('max_risk', 'N/A')}\\n"
+                    md += f"Your maximum risk on this trade is {trade.get('max_risk', 'N/A')}. "
 
-                md += f"\\n**📊 SIZE:** {trade.get('size', '2-3% of capital')}\\n"
-                md += f"**✅ WIN RATE:** {trade.get('win_rate', 'N/A')}\\n\\n"
-                md += f"**💡 WHY:** {trade.get('reasoning', 'N/A')}\\n\\n"
+                size_value = trade.get('size', '2-3% of capital')
+                md += f"Position size should be {size_value} to maintain proper risk management.\\n\\n"
+
+                # Why this works - wrap up with conviction
+                win_rate_value = trade.get('win_rate', '')
+                if win_rate_value:
+                    md += f"**Why This Works:** This is a {win_rate_value} win rate setup because "
+                    reasoning = trade.get('reasoning', '').lower()
+
+                    # Extract key concept from reasoning for the wrap-up
+                    if 'negative gex' in reasoning or 'short gamma' in reasoning:
+                        md += f"when dealers are short gamma (negative GEX), they're forced to buy rallies to hedge, creating upward momentum that pushes prices higher.\\n\\n"
+                    elif 'positive gex' in reasoning or 'range' in reasoning:
+                        md += f"high positive GEX creates a volatility-suppressed environment where market makers defend their key levels, making range-bound strategies highly profitable.\\n\\n"
+                    elif 'wall' in reasoning:
+                        md += f"gamma walls represent massive positioning by market makers who will defend these levels, creating strong support or resistance zones.\\n\\n"
+                    elif 'theta' in reasoning or 'premium' in reasoning:
+                        md += f"time decay works in your favor, allowing you to collect premium while staying protected within defined risk parameters.\\n\\n"
+                    else:
+                        md += f"the market structure creates favorable risk/reward dynamics for this strategy.\\n\\n"
+
                 md += "---\\n\\n"
         else:
             md += "*Analyzing market for setups...*\\n\\n"
