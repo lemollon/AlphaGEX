@@ -91,11 +91,12 @@ class GEXVisualizer:
         )
         
         fig.add_trace(
-            go.Scatter(
+            go.Bar(
                 x=strikes,
                 y=total_gamma,
                 name='Net Gamma',
-                line=dict(color='blue', width=2),
+                marker_color='blue',
+                opacity=0.8,
                 hovertemplate='Strike: %{x}<br>Net Gamma: $%{y:.1f}M<extra></extra>'
             ),
             row=2, col=1
