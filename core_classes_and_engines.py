@@ -1204,6 +1204,19 @@ class TradingVolatilityAPI:
                 st.error(f"❌ No data found for {symbol} in gammaOI response")
                 return {}
 
+            # DEBUG: Show what fields are available in ticker_data
+            st.write(f"🔍 **Debug: gammaOI API Response Fields for {symbol}:**")
+            available_fields = [k for k in ticker_data.keys() if k != 'gamma_array']
+            st.write(f"Available fields: {', '.join(available_fields)}")
+
+            # Check for spot price field
+            if 'price' in ticker_data:
+                st.write(f"✅ Found 'price' field: ${ticker_data['price']}")
+            if 'spot_price' in ticker_data:
+                st.write(f"✅ Found 'spot_price' field: ${ticker_data['spot_price']}")
+            if 'underlying_price' in ticker_data:
+                st.write(f"✅ Found 'underlying_price' field: ${ticker_data['underlying_price']}")
+
             # Extract gamma_array (strike-level data)
             gamma_array = ticker_data.get('gamma_array', [])
 
@@ -1291,6 +1304,14 @@ class TradingVolatilityAPI:
                 'put_wall': put_wall,
                 'symbol': symbol
             }
+
+            # DEBUG: Show profile summary
+            st.write(f"📊 **Profile Summary:**")
+            st.write(f"- Spot Price: ${profile['spot_price']:.2f}")
+            st.write(f"- Call Wall: ${profile['call_wall']:.2f}")
+            st.write(f"- Put Wall: ${profile['put_wall']:.2f}")
+            st.write(f"- Flip Point: ${profile['flip_point']:.2f}")
+            st.write(f"- Number of strikes: {len(profile['strikes'])}")
 
             return profile
 

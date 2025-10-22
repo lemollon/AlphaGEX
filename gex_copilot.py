@@ -345,9 +345,14 @@ def main():
                 st.metric("Put Wall", f"${put_wall:.2f}")
 
             # Advanced Skew Metrics (if available)
+            st.write(f"🔍 **Debug: Skew data check** - current_data exists: {bool(st.session_state.current_data)}, has skew: {bool(st.session_state.current_data.get('skew') if st.session_state.current_data else False)}")
+
             if st.session_state.current_data and st.session_state.current_data.get('skew'):
                 st.subheader("📊 Skew Analysis")
                 skew = st.session_state.current_data['skew']
+
+                # DEBUG: Show skew fields
+                st.write(f"Available skew fields: {', '.join(skew.keys())}")
 
                 # Expected Moves
                 one_day_std = float(skew.get('one_day_std', 0)) * 100
