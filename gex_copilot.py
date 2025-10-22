@@ -173,13 +173,15 @@ def main():
                         # Fetch GEX aggregate data from Trading Volatility API
                         gex_data = st.session_state.api_client.get_net_gamma(symbol)
 
-                        # Fetch detailed profile with walls from yfinance
+                        # Fetch detailed profile (will use TV API walls if available, otherwise yfinance)
                         profile_data = st.session_state.api_client.get_gex_profile(symbol)
 
-                        # Update gex_data with wall values from profile
+                        # Update gex_data with wall values from profile (only if not already set by TV API)
                         if profile_data and not gex_data.get('error'):
-                            gex_data['call_wall'] = profile_data.get('call_wall', 0)
-                            gex_data['put_wall'] = profile_data.get('put_wall', 0)
+                            if not gex_data.get('call_wall'):
+                                gex_data['call_wall'] = profile_data.get('call_wall', 0)
+                            if not gex_data.get('put_wall'):
+                                gex_data['put_wall'] = profile_data.get('put_wall', 0)
 
                         # Store in session
                         st.session_state.current_data = {

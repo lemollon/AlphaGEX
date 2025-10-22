@@ -1061,19 +1061,42 @@ class TradingVolatilityAPI:
                 st.error(f"❌ No data found for {symbol} in API response")
                 return {'error': 'No ticker data in response'}
 
+            # DEBUG: Show ALL available fields from Trading Volatility API
+            st.info("📋 All available fields in Trading Volatility API response:")
+            st.json(list(ticker_data.keys()))
+
+            # Show all data values
+            with st.expander("🔍 View all Trading Volatility API data"):
+                st.json(ticker_data)
+
             # Extract data from Trading Volatility API response
+            # Check if walls are directly provided
+            call_wall = ticker_data.get('call_wall', 0)
+            put_wall = ticker_data.get('put_wall', 0)
+
+            # Try alternate field names for resistance/support
+            if not call_wall:
+                call_wall = ticker_data.get('resistance_1', ticker_data.get('call_resistance', ticker_data.get('gex_call_wall', 0)))
+            if not put_wall:
+                put_wall = ticker_data.get('support_1', ticker_data.get('put_support', ticker_data.get('gex_put_wall', 0)))
+
             result = {
                 'symbol': symbol,
                 'spot_price': float(ticker_data.get('price', 0)),
                 'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
                 'flip_point': float(ticker_data.get('gex_flip_price', 0)),
-                'call_wall': 0,  # Will be calculated from profile data
-                'put_wall': 0,   # Will be calculated from profile data
+                'call_wall': float(call_wall) if call_wall else 0,
+                'put_wall': float(put_wall) if put_wall else 0,
                 'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
                 'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
                 'collection_date': ticker_data.get('collection_date', ''),
                 'raw_data': ticker_data
             }
+
+            if result['call_wall'] or result['put_wall']:
+                st.success(f"✅ Found walls in TV API! Call Wall=${result['call_wall']:.2f}, Put Wall=${result['put_wall']:.2f}")
+            else:
+                st.warning("⚠️ No wall data found in TV API response. Will need to calculate from yfinance.")
 
             return result
 
@@ -1086,10 +1109,35 @@ class TradingVolatilityAPI:
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile for visualization - calculate from yfinance since TV API doesn't provide strike data"""
+        """Get detailed GEX profile for visualization - use TV API if available, otherwise calculate from yfinance"""
         import streamlit as st
 
         try:
+            # Check if we already have complete data from Trading Volatility API
+            if self.last_response:
+                ticker_data = self.last_response.get(symbol, {})
+
+                # Check if TV API has wall data we can use
+                call_wall = ticker_data.get('call_wall', 0)
+                put_wall = ticker_data.get('put_wall', 0)
+
+                # Try alternate field names
+                if not call_wall:
+                    call_wall = ticker_data.get('resistance_1', ticker_data.get('call_resistance', ticker_data.get('gex_call_wall', 0)))
+                if not put_wall:
+                    put_wall = ticker_data.get('support_1', ticker_data.get('put_support', ticker_data.get('gex_put_wall', 0)))
+
+                if call_wall and put_wall:
+                    st.success(f"✅ Using wall data from Trading Volatility API - no need for yfinance!")
+                    # Return simple profile with just the walls
+                    return {
+                        'strikes': [],  # No strike-level data needed for now
+                        'spot_price': float(ticker_data.get('price', 0)),
+                        'flip_point': float(ticker_data.get('gex_flip_price', 0)),
+                        'call_wall': float(call_wall),
+                        'put_wall': float(put_wall)
+                    }
+
             st.info(f"📊 Fetching options chain from yfinance for {symbol}...")
 
             # Use yfinance to get options chain and calculate GEX profile
