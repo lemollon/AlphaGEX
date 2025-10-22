@@ -1204,18 +1204,8 @@ class TradingVolatilityAPI:
                 st.error(f"❌ No data found for {symbol} in gammaOI response")
                 return {}
 
-            # DEBUG: Show what fields are available in ticker_data
-            st.write(f"🔍 **Debug: gammaOI API Response Fields for {symbol}:**")
-            available_fields = [k for k in ticker_data.keys() if k != 'gamma_array']
-            st.write(f"Available fields: {', '.join(available_fields)}")
-
-            # Check for spot price field
-            if 'price' in ticker_data:
-                st.write(f"✅ Found 'price' field: ${ticker_data['price']}")
-            if 'spot_price' in ticker_data:
-                st.write(f"✅ Found 'spot_price' field: ${ticker_data['spot_price']}")
-            if 'underlying_price' in ticker_data:
-                st.write(f"✅ Found 'underlying_price' field: ${ticker_data['underlying_price']}")
+            # Check if gammaOI includes aggregate fields (to avoid separate /gex/latest call)
+            has_aggregate_data = all(field in ticker_data for field in ['implied_volatility', 'gex_flip_price', 'skew_adjusted_gex'])
 
             # Extract gamma_array (strike-level data)
             gamma_array = ticker_data.get('gamma_array', [])
@@ -1258,10 +1248,13 @@ class TradingVolatilityAPI:
             # Get spot price and flip point
             spot_price = float(ticker_data.get('price', 0))
 
-            # Calculate 7-day standard deviation range for filtering
-            # Use implied volatility from the /gex/latest call (stored in last_response)
+            # Get implied volatility - try gammaOI first, then fall back to last_response
             implied_vol = 0.20  # Default 20% IV
-            if self.last_response:
+            if 'implied_volatility' in ticker_data:
+                # gammaOI includes aggregate data - use it directly!
+                implied_vol = float(ticker_data.get('implied_volatility', 0.20))
+            elif self.last_response:
+                # Fall back to /gex/latest response if gammaOI doesn't include it
                 last_ticker_data = self.last_response.get(symbol, {})
                 implied_vol = float(last_ticker_data.get('implied_volatility', 0.20))
 
@@ -1271,11 +1264,8 @@ class TradingVolatilityAPI:
             min_strike = spot_price - seven_day_std
             max_strike = spot_price + seven_day_std
 
-            st.write(f"📊 7-Day Range Filter: ${min_strike:.2f} to ${max_strike:.2f} (IV: {implied_vol*100:.1f}%)")
-
             # Filter strikes to +/- 7 day std range
             strikes_data_filtered = [s for s in strikes_data if min_strike <= s['strike'] <= max_strike]
-            st.write(f"✅ Filtered to {len(strikes_data_filtered)} strikes within 7-day std range")
 
             # Calculate flip point from gamma_array (where net gamma crosses zero)
             flip_point = 0
@@ -1294,8 +1284,6 @@ class TradingVolatilityAPI:
                         )
                         break
 
-            st.success(f"✅ Calculated: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}, Flip Point ${flip_point:.2f}")
-
             profile = {
                 'strikes': strikes_data_filtered,  # Use filtered strikes
                 'spot_price': spot_price,
@@ -1305,13 +1293,14 @@ class TradingVolatilityAPI:
                 'symbol': symbol
             }
 
-            # DEBUG: Show profile summary
-            st.write(f"📊 **Profile Summary:**")
-            st.write(f"- Spot Price: ${profile['spot_price']:.2f}")
-            st.write(f"- Call Wall: ${profile['call_wall']:.2f}")
-            st.write(f"- Put Wall: ${profile['put_wall']:.2f}")
-            st.write(f"- Flip Point: ${profile['flip_point']:.2f}")
-            st.write(f"- Number of strikes: {len(profile['strikes'])}")
+            # If gammaOI includes aggregate data, add it to profile to avoid separate /gex/latest call
+            if has_aggregate_data:
+                profile['aggregate_from_gammaOI'] = {
+                    'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
+                    'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
+                    'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
+                    'collection_date': ticker_data.get('collection_date', '')
+                }
 
             return profile
 

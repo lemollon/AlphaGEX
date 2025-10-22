@@ -188,21 +188,38 @@ def main():
             if st.button("🔄 Refresh", type="primary", use_container_width=True):
                 with st.spinner("Fetching latest data..."):
                     try:
-                        # Fetch GEX aggregate data from Trading Volatility API
-                        gex_data = st.session_state.api_client.get_net_gamma(symbol)
-
-                        # Fetch detailed profile from gammaOI endpoint
+                        # OPTIMIZATION: Fetch gammaOI first to check if it includes aggregate data
                         profile_data = st.session_state.api_client.get_gex_profile(symbol)
+
+                        # Check if gammaOI includes aggregate metrics
+                        if profile_data and 'aggregate_from_gammaOI' in profile_data:
+                            # Use aggregate data from gammaOI - NO NEED for separate /gex/latest call!
+                            agg = profile_data['aggregate_from_gammaOI']
+                            gex_data = {
+                                'symbol': symbol,
+                                'spot_price': profile_data['spot_price'],
+                                'net_gex': agg['net_gex'],
+                                'flip_point': profile_data['flip_point'],
+                                'call_wall': profile_data['call_wall'],
+                                'put_wall': profile_data['put_wall'],
+                                'put_call_ratio': agg['put_call_ratio'],
+                                'implied_volatility': agg['implied_volatility'],
+                                'collection_date': agg['collection_date']
+                            }
+                            st.success("⚡ Optimized: Using consolidated gammaOI endpoint (saved 1 API call)")
+                        else:
+                            # Fall back to separate /gex/latest call
+                            gex_data = st.session_state.api_client.get_net_gamma(symbol)
+
+                            # Update gex_data with wall values from profile
+                            if profile_data and not gex_data.get('error'):
+                                if not gex_data.get('call_wall'):
+                                    gex_data['call_wall'] = profile_data.get('call_wall', 0)
+                                if not gex_data.get('put_wall'):
+                                    gex_data['put_wall'] = profile_data.get('put_wall', 0)
 
                         # Fetch skew data for enhanced analysis
                         skew_data = st.session_state.api_client.get_skew_data(symbol)
-
-                        # Update gex_data with wall values from profile
-                        if profile_data and not gex_data.get('error'):
-                            if not gex_data.get('call_wall'):
-                                gex_data['call_wall'] = profile_data.get('call_wall', 0)
-                            if not gex_data.get('put_wall'):
-                                gex_data['put_wall'] = profile_data.get('put_wall', 0)
 
                         # Store in session
                         st.session_state.current_data = {
@@ -261,67 +278,50 @@ def main():
             **Action: {state_config['action']}**
             """)
 
-            # Day-Over-Day Changes
-            st.subheader("📊 Day-Over-Day Trends")
+            # Day-Over-Day Changes (lazy-loaded to save API calls)
+            with st.expander("📊 Day-Over-Day Trends (Click to Load)", expanded=False):
+                if st.button("📈 Load Yesterday's Data", key="load_dod_trends"):
+                    # Fetch yesterday's data for comparison (historical API call)
+                    yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
 
-            # Fetch yesterday's data for comparison
-            yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
+                    if yesterday_data:
+                        changes = st.session_state.api_client.calculate_day_over_day_changes(data, yesterday_data)
 
-            if yesterday_data:
-                changes = st.session_state.api_client.calculate_day_over_day_changes(data, yesterday_data)
+                        if changes:
+                            col1, col2, col3 = st.columns(3)
 
-                if changes:
-                    col1, col2, col3 = st.columns(3)
+                            with col1:
+                                if 'flip_point' in changes:
+                                    fc = changes['flip_point']
+                                    st.metric(
+                                        "Flip Point Trend",
+                                        f"{fc['trend']} ${fc['current']:.2f}",
+                                        delta=f"{fc['change']:+.2f} ({fc['pct_change']:+.1f}%)"
+                                    )
 
-                    with col1:
-                        if 'flip_point' in changes:
-                            fc = changes['flip_point']
-                            st.metric(
-                                "Flip Point Trend",
-                                f"{fc['trend']} ${fc['current']:.2f}",
-                                delta=f"{fc['change']:+.2f} ({fc['pct_change']:+.1f}%)"
-                            )
+                            with col2:
+                                if 'implied_volatility' in changes:
+                                    iv = changes['implied_volatility']
+                                    st.metric(
+                                        "IV Trend",
+                                        f"{iv['trend']} {iv['current']*100:.1f}%",
+                                        delta=f"{iv['pct_change']:+.1f}%"
+                                    )
 
-                    with col2:
-                        if 'implied_volatility' in changes:
-                            iv = changes['implied_volatility']
-                            st.metric(
-                                "IV Trend",
-                                f"{iv['trend']} {iv['current']*100:.1f}%",
-                                delta=f"{iv['pct_change']:+.1f}%"
-                            )
-
-                    with col3:
-                        if 'rating' in changes:
-                            rt = changes['rating']
-                            st.metric(
-                                "TV Rating",
-                                f"{rt['trend']} {rt['current']:.0f}",
-                                delta=f"{rt['change']:+.0f}"
-                            )
-
-                    # Explanation of why this matters
-                    with st.expander("💡 Why Day-Over-Day Trends Matter"):
-                        st.markdown("""
-                        **Flip Point Movement:**
-                        - **↑ Up**: Market makers raising hedging levels → Bullish sentiment building
-                        - **↓ Down**: MM lowering hedge levels → Bearish pressure increasing
-                        - **→ Flat**: Equilibrium → Range-bound likely
-
-                        **IV Movement:**
-                        - **↑ Up**: Fear/uncertainty rising → Options premium expensive, consider selling
-                        - **↓ Down**: Calm returning → Options cheaper, consider buying
-
-                        **TV Rating (1-10):**
-                        - **Higher**: Better setup quality → More conviction in trades
-                        - **Lower**: Deteriorating setup → Exercise caution
-
-                        **Gamma Formation:**
-                        - Tracks if positive/negative gamma is building
-                        - Helps predict volatility expansion/compression
-                        """)
-            else:
-                st.info("📈 Historical data will show after market close")
+                            with col3:
+                                if 'rating' in changes:
+                                    rt = changes['rating']
+                                    st.metric(
+                                        "TV Rating",
+                                        f"{rt['trend']} {rt['current']:.0f}",
+                                        delta=f"{rt['change']:+.0f}"
+                                    )
+                        else:
+                            st.info("No trend data available for yesterday")
+                    else:
+                        st.info("No historical data available for yesterday")
+                else:
+                    st.caption("💡 Click 'Load Yesterday's Data' to see day-over-day changes in flip point, IV, and rating")
 
             # Key Levels
             st.subheader("📍 Key Levels")
@@ -345,14 +345,9 @@ def main():
                 st.metric("Put Wall", f"${put_wall:.2f}")
 
             # Advanced Skew Metrics (if available)
-            st.write(f"🔍 **Debug: Skew data check** - current_data exists: {bool(st.session_state.current_data)}, has skew: {bool(st.session_state.current_data.get('skew') if st.session_state.current_data else False)}")
-
             if st.session_state.current_data and st.session_state.current_data.get('skew'):
                 st.subheader("📊 Skew Analysis")
                 skew = st.session_state.current_data['skew']
-
-                # DEBUG: Show skew fields
-                st.write(f"Available skew fields: {', '.join(skew.keys())}")
 
                 # Expected Moves
                 one_day_std = float(skew.get('one_day_std', 0)) * 100
