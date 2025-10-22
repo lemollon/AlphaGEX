@@ -1303,6 +1303,105 @@ class TradingVolatilityAPI:
             traceback.print_exc()
             return {}
 
+    def get_historical_gamma(self, symbol: str, days_back: int = 5) -> List[Dict]:
+        """Fetch historical gamma data from Trading Volatility API"""
+        import streamlit as st
+        import requests
+        from datetime import datetime, timedelta
+
+        try:
+            if not self.api_key:
+                st.error("❌ Trading Volatility username not found in secrets!")
+                return []
+
+            # Calculate date range
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days_back)
+
+            # Call Trading Volatility /gex/history endpoint
+            response = requests.get(
+                self.endpoint + '/gex/history',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json',
+                    'start': start_date.strftime('%Y-%m-%d'),
+                    'end': end_date.strftime('%Y-%m-%d')
+                },
+                headers={'Accept': 'application/json'},
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                st.warning(f"⚠️ History endpoint returned status {response.status_code}")
+                return []
+
+            json_response = response.json()
+            history_data = json_response.get(symbol, [])
+
+            return history_data if isinstance(history_data, list) else []
+
+        except Exception as e:
+            print(f"Error fetching historical gamma: {e}")
+            return []
+
+    def get_yesterday_data(self, symbol: str) -> Dict:
+        """Get yesterday's GEX data for day-over-day comparison"""
+        import streamlit as st
+
+        history = self.get_historical_gamma(symbol, days_back=2)
+
+        if len(history) >= 2:
+            # Return second most recent (yesterday)
+            return history[-2]
+        elif len(history) == 1:
+            # Only have today's data
+            return {}
+        else:
+            return {}
+
+    def calculate_day_over_day_changes(self, current_data: Dict, yesterday_data: Dict) -> Dict:
+        """Calculate day-over-day changes in key GEX metrics"""
+        if not yesterday_data:
+            return {}
+
+        changes = {}
+
+        metrics = [
+            ('flip_point', 'gex_flip_price'),
+            ('net_gex', 'skew_adjusted_gex'),
+            ('implied_volatility', 'implied_volatility'),
+            ('put_call_ratio', 'put_call_ratio_open_interest'),
+            ('rating', 'rating'),
+            ('gamma_formation', 'gamma_formation')
+        ]
+
+        for current_key, yesterday_key in metrics:
+            current_val = float(current_data.get(current_key, 0))
+            yesterday_val = float(yesterday_data.get(yesterday_key, 0))
+
+            if yesterday_val != 0:
+                change = current_val - yesterday_val
+                pct_change = (change / yesterday_val) * 100
+
+                # Determine trend
+                if abs(pct_change) < 0.5:
+                    trend = '→'  # Flat
+                elif change > 0:
+                    trend = '↑'  # Up
+                else:
+                    trend = '↓'  # Down
+
+                changes[current_key] = {
+                    'current': current_val,
+                    'yesterday': yesterday_val,
+                    'change': change,
+                    'pct_change': pct_change,
+                    'trend': trend
+                }
+
+        return changes
+
 
 class MonteCarloEngine:
     """

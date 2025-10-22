@@ -126,6 +126,30 @@ class GEXVisualizer:
                 annotation_text=f"Flip ${flip_point:.2f}",
                 row='all'
             )
+
+        # Add call wall marker
+        call_wall = gex_data.get('call_wall', 0)
+        if call_wall:
+            fig.add_vline(
+                x=call_wall,
+                line_dash="dot",
+                line_color="green",
+                annotation_text=f"Call Wall ${call_wall:.2f}",
+                annotation_position="top",
+                row='all'
+            )
+
+        # Add put wall marker
+        put_wall = gex_data.get('put_wall', 0)
+        if put_wall:
+            fig.add_vline(
+                x=put_wall,
+                line_dash="dot",
+                line_color="red",
+                annotation_text=f"Put Wall ${put_wall:.2f}",
+                annotation_position="bottom",
+                row='all'
+            )
         
         fig.update_layout(
             title=f'GEX Profile Analysis - {gex_data.get("symbol", "N/A")}',

@@ -238,6 +238,68 @@ def main():
             **Action: {state_config['action']}**
             """)
 
+            # Day-Over-Day Changes
+            st.subheader("📊 Day-Over-Day Trends")
+
+            # Fetch yesterday's data for comparison
+            yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
+
+            if yesterday_data:
+                changes = st.session_state.api_client.calculate_day_over_day_changes(data, yesterday_data)
+
+                if changes:
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        if 'flip_point' in changes:
+                            fc = changes['flip_point']
+                            st.metric(
+                                "Flip Point Trend",
+                                f"{fc['trend']} ${fc['current']:.2f}",
+                                delta=f"{fc['change']:+.2f} ({fc['pct_change']:+.1f}%)"
+                            )
+
+                    with col2:
+                        if 'implied_volatility' in changes:
+                            iv = changes['implied_volatility']
+                            st.metric(
+                                "IV Trend",
+                                f"{iv['trend']} {iv['current']*100:.1f}%",
+                                delta=f"{iv['pct_change']:+.1f}%"
+                            )
+
+                    with col3:
+                        if 'rating' in changes:
+                            rt = changes['rating']
+                            st.metric(
+                                "TV Rating",
+                                f"{rt['trend']} {rt['current']:.0f}",
+                                delta=f"{rt['change']:+.0f}"
+                            )
+
+                    # Explanation of why this matters
+                    with st.expander("💡 Why Day-Over-Day Trends Matter"):
+                        st.markdown("""
+                        **Flip Point Movement:**
+                        - **↑ Up**: Market makers raising hedging levels → Bullish sentiment building
+                        - **↓ Down**: MM lowering hedge levels → Bearish pressure increasing
+                        - **→ Flat**: Equilibrium → Range-bound likely
+
+                        **IV Movement:**
+                        - **↑ Up**: Fear/uncertainty rising → Options premium expensive, consider selling
+                        - **↓ Down**: Calm returning → Options cheaper, consider buying
+
+                        **TV Rating (1-10):**
+                        - **Higher**: Better setup quality → More conviction in trades
+                        - **Lower**: Deteriorating setup → Exercise caution
+
+                        **Gamma Formation:**
+                        - Tracks if positive/negative gamma is building
+                        - Helps predict volatility expansion/compression
+                        """)
+            else:
+                st.info("📈 Historical data will show after market close")
+
             # Key Levels
             st.subheader("📍 Key Levels")
 
