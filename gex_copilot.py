@@ -170,32 +170,16 @@ def main():
             if st.button("🔄 Refresh", type="primary", use_container_width=True):
                 with st.spinner("Fetching latest data..."):
                     try:
-                        st.write(f"🔍 Step 1: Calling get_net_gamma for {symbol}...")
-                        # Fetch all data
+                        # Fetch GEX aggregate data from Trading Volatility API
                         gex_data = st.session_state.api_client.get_net_gamma(symbol)
-                        st.write(f"📊 Step 2: GEX data received: {list(gex_data.keys()) if gex_data else 'None'}")
 
-                        # Check analyzer state
-                        analyzer = st.session_state.api_client.gex_analyzer
-                        if analyzer:
-                            st.write(f"✓ Analyzer exists, gex_profile type: {type(analyzer.gex_profile)}")
-                            if analyzer.gex_profile is not None:
-                                st.write(f"✓ gex_profile has {len(analyzer.gex_profile)} rows")
-                            else:
-                                st.error("❌ analyzer.gex_profile is None!")
-                        else:
-                            st.error("❌ api_client.gex_analyzer is None!")
-
-                        st.write(f"🔍 Step 3: Calling get_gex_profile for {symbol}...")
+                        # Fetch detailed profile with walls from yfinance
                         profile_data = st.session_state.api_client.get_gex_profile(symbol)
 
-                        st.write(f"📈 Step 4: Profile data type: {type(profile_data)}, keys: {list(profile_data.keys()) if profile_data else 'Empty'}")
-
-                        # Debug: Check what we got
-                        if not profile_data or len(profile_data) == 0:
-                            st.warning(f"⚠️ No profile data returned for {symbol}.")
-                        else:
-                            st.success(f"✓ Profile data loaded: {len(profile_data.get('strikes', []))} strikes")
+                        # Update gex_data with wall values from profile
+                        if profile_data and not gex_data.get('error'):
+                            gex_data['call_wall'] = profile_data.get('call_wall', 0)
+                            gex_data['put_wall'] = profile_data.get('put_wall', 0)
 
                         # Store in session
                         st.session_state.current_data = {

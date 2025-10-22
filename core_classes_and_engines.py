@@ -986,9 +986,6 @@ class TradingVolatilityAPI:
         import requests
 
         try:
-            st.write(f"🔍 get_net_gamma: Calling Trading Volatility API for {symbol}")
-            st.write(f"📡 Endpoint: {self.endpoint}")
-
             if not self.api_key:
                 st.error("❌ Trading Volatility username not found in secrets!")
                 st.warning("Add 'tv_username' to your Streamlit secrets")
@@ -1006,21 +1003,14 @@ class TradingVolatilityAPI:
                 timeout=30
             )
 
-            st.write(f"📡 API Response Status: {response.status_code}")
-
             if response.status_code != 200:
-                st.error(f"❌ API returned status {response.status_code}")
-                st.code(response.text)
+                st.error(f"❌ Trading Volatility API returned status {response.status_code}")
                 return {'error': f'API returned {response.status_code}'}
 
             json_response = response.json()
-            st.success(f"✅ Trading Volatility API returned data!")
 
             # Store the full response for get_gex_profile to use
             self.last_response = json_response
-
-            # Show what keys are in the response for debugging
-            st.write(f"📊 API Response keys: {list(json_response.keys())}")
 
             # Parse nested response - data is under the ticker symbol
             ticker_data = json_response.get(symbol, {})
@@ -1029,16 +1019,14 @@ class TradingVolatilityAPI:
                 st.error(f"❌ No data found for {symbol} in API response")
                 return {'error': 'No ticker data in response'}
 
-            st.write(f"📈 Ticker data keys: {list(ticker_data.keys())}")
-
             # Extract data from Trading Volatility API response
             result = {
                 'symbol': symbol,
                 'spot_price': float(ticker_data.get('price', 0)),
                 'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
                 'flip_point': float(ticker_data.get('gex_flip_price', 0)),
-                'call_wall': 0,  # Will calculate from profile data
-                'put_wall': 0,   # Will calculate from profile data
+                'call_wall': 0,  # Will be calculated from profile data
+                'put_wall': 0,   # Will be calculated from profile data
                 'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
                 'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
                 'collection_date': ticker_data.get('collection_date', ''),
@@ -1051,7 +1039,6 @@ class TradingVolatilityAPI:
             import traceback
             error_msg = f"Error fetching data from Trading Volatility API: {e}"
             st.error(f"❌ {error_msg}")
-            st.code(traceback.format_exc())
             print(error_msg)
             traceback.print_exc()
             return {'error': str(e)}
@@ -1061,9 +1048,6 @@ class TradingVolatilityAPI:
         import streamlit as st
 
         try:
-            st.write(f"🔍 get_gex_profile: Trading Volatility API doesn't provide strike-level data")
-            st.write(f"📊 Falling back to yfinance to calculate GEX profile and walls...")
-
             # Use yfinance to get options chain and calculate GEX profile
             from core_classes_and_engines import OptionsDataFetcher, GEXAnalyzer
 
@@ -1074,27 +1058,21 @@ class TradingVolatilityAPI:
                 spot_price = float(ticker_data.get('price', 0))
 
             # Fetch options data using yfinance
-            st.write(f"🔍 Fetching options chain from yfinance...")
             options_fetcher = OptionsDataFetcher(symbol)
 
             if not spot_price:
                 spot_price = options_fetcher.get_spot_price()
-                st.write(f"✓ Spot price: ${spot_price:.2f}")
 
             options_chain = options_fetcher.get_options_chain()
-            st.write(f"📊 Options chain: {len(options_chain)} rows")
 
             if options_chain.empty:
-                st.error("❌ No options data from yfinance")
+                st.warning(f"⚠️ No options data available for {symbol}")
                 return {}
 
             # Calculate GEX using our analyzer
-            st.write(f"🔍 Calculating GEX profile and walls...")
             gex_analyzer = GEXAnalyzer(symbol)
             gex_profile = gex_analyzer.calculate_gex(options_chain, spot_price)
             key_levels = gex_analyzer.identify_key_levels()
-
-            st.write(f"✓ GEX profile calculated: {len(gex_profile)} strikes")
 
             # Separate calls and puts
             calls = gex_profile[gex_profile['type'] == 'call'].groupby('strike')['gex'].sum()
@@ -1116,8 +1094,6 @@ class TradingVolatilityAPI:
             call_wall = key_levels.get('call_wall_1').strike if key_levels.get('call_wall_1') else 0
             put_wall = key_levels.get('put_wall_1').strike if key_levels.get('put_wall_1') else 0
 
-            st.write(f"✓ Call Wall: ${call_wall:.2f}, Put Wall: ${put_wall:.2f}")
-
             profile = {
                 'strikes': strikes_data,
                 'spot_price': spot_price,
@@ -1126,14 +1102,14 @@ class TradingVolatilityAPI:
                 'put_wall': put_wall
             }
 
-            st.success(f"✅ Profile data loaded: {len(strikes_data)} strikes with walls!")
             return profile
 
         except Exception as e:
             import traceback
             error_msg = f"Error getting GEX profile: {str(e)}"
             st.error(f"❌ {error_msg}")
-            st.code(traceback.format_exc())
+            print(error_msg)
+            traceback.print_exc()
             return {}
 
 
