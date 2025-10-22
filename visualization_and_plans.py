@@ -126,6 +126,30 @@ class GEXVisualizer:
                 annotation_text=f"Flip ${flip_point:.2f}",
                 row='all'
             )
+
+        # Add call wall marker
+        call_wall = gex_data.get('call_wall', 0)
+        if call_wall:
+            fig.add_vline(
+                x=call_wall,
+                line_dash="dot",
+                line_color="green",
+                annotation_text=f"Call Wall ${call_wall:.2f}",
+                annotation_position="top",
+                row='all'
+            )
+
+        # Add put wall marker
+        put_wall = gex_data.get('put_wall', 0)
+        if put_wall:
+            fig.add_vline(
+                x=put_wall,
+                line_dash="dot",
+                line_color="red",
+                annotation_text=f"Put Wall ${put_wall:.2f}",
+                annotation_position="bottom",
+                row='all'
+            )
         
         fig.update_layout(
             title=f'GEX Profile Analysis - {gex_data.get("symbol", "N/A")}',
@@ -139,7 +163,147 @@ class GEXVisualizer:
         )
         
         return fig
-    
+
+    @staticmethod
+    def create_historical_chart(gamma_history: List[Dict], skew_history: List[Dict], symbol: str) -> go.Figure:
+        """Create historical trends chart for gamma and skew metrics"""
+        from plotly.subplots import make_subplots
+        import pandas as pd
+        from datetime import datetime
+
+        if not gamma_history and not skew_history:
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No historical data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False
+            )
+            return fig
+
+        # Create subplots: 3 rows
+        fig = make_subplots(
+            rows=3, cols=1,
+            row_heights=[0.4, 0.3, 0.3],
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            subplot_titles=(
+                'Flip Point & Net GEX Trend',
+                'Implied Volatility Trend',
+                'Put/Call Ratio Trend'
+            )
+        )
+
+        # Process gamma history
+        if gamma_history:
+            dates = []
+            flip_points = []
+            net_gex_values = []
+
+            for entry in gamma_history:
+                try:
+                    date_str = entry.get('collection_date', '')
+                    if '_' in date_str:
+                        date_str = date_str.split('_')[0]
+                    dates.append(datetime.strptime(date_str, '%Y-%m-%d'))
+                    flip_points.append(float(entry.get('gex_flip_price', 0)))
+                    net_gex_values.append(float(entry.get('skew_adjusted_gex', 0)) / 1e9)
+                except:
+                    continue
+
+            # Flip Point line
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=flip_points,
+                    name='Flip Point',
+                    line=dict(color='orange', width=2),
+                    hovertemplate='%{x|%Y-%m-%d}<br>Flip: $%{y:.2f}<extra></extra>'
+                ),
+                row=1, col=1
+            )
+
+            # Net GEX bars
+            colors = ['green' if x > 0 else 'red' for x in net_gex_values]
+            fig.add_trace(
+                go.Bar(
+                    x=dates,
+                    y=net_gex_values,
+                    name='Net GEX',
+                    marker_color=colors,
+                    opacity=0.6,
+                    yaxis='y2',
+                    hovertemplate='%{x|%Y-%m-%d}<br>Net GEX: $%{y:.2f}B<extra></extra>'
+                ),
+                row=1, col=1
+            )
+
+        # Process skew history for IV
+        if skew_history:
+            dates_iv = []
+            iv_values = []
+            pcr_values = []
+
+            for entry in skew_history:
+                try:
+                    date_str = entry.get('collection_date', '')
+                    if '_' in date_str:
+                        date_str = date_str.split('_')[0]
+                    dates_iv.append(datetime.strptime(date_str, '%Y-%m-%d'))
+                    iv_values.append(float(entry.get('implied_volatility', 0)) * 100)
+                    pcr_values.append(float(entry.get('pcr_oi', 0)))
+                except:
+                    continue
+
+            # IV line
+            fig.add_trace(
+                go.Scatter(
+                    x=dates_iv,
+                    y=iv_values,
+                    name='Implied Vol',
+                    line=dict(color='purple', width=2),
+                    fill='tozeroy',
+                    fillcolor='rgba(128, 0, 128, 0.2)',
+                    hovertemplate='%{x|%Y-%m-%d}<br>IV: %{y:.1f}%<extra></extra>'
+                ),
+                row=2, col=1
+            )
+
+            # PCR line
+            fig.add_trace(
+                go.Scatter(
+                    x=dates_iv,
+                    y=pcr_values,
+                    name='Put/Call Ratio',
+                    line=dict(color='cyan', width=2),
+                    hovertemplate='%{x|%Y-%m-%d}<br>PCR: %{y:.2f}<extra></extra>'
+                ),
+                row=3, col=1
+            )
+
+        fig.update_layout(
+            title=f'{symbol} - Historical Gamma & Skew Analysis',
+            height=800,
+            showlegend=True,
+            hovermode='x unified',
+            template='plotly_dark',
+            xaxis3_title='Date',
+            yaxis_title='Flip Point ($)',
+            yaxis2_title='Net GEX ($B)',
+            yaxis3_title='IV (%)',
+            yaxis4_title='PCR'
+        )
+
+        # Add reference line for PCR = 1.0
+        fig.add_hline(
+            y=1.0,
+            line_dash="dash",
+            line_color="gray",
+            row=3, col=1,
+            annotation_text="PCR = 1.0 (Neutral)"
+        )
+
+        return fig
+
     @staticmethod
     def create_monte_carlo_chart(simulation_results: Dict, current_price: float) -> go.Figure:
         """Create Monte Carlo simulation visualization with clear explanation"""
