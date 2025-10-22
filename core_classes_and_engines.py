@@ -1402,6 +1402,76 @@ class TradingVolatilityAPI:
 
         return changes
 
+    def get_skew_data(self, symbol: str) -> Dict:
+        """Fetch latest skew data from Trading Volatility API"""
+        import streamlit as st
+        import requests
+
+        try:
+            if not self.api_key:
+                return {}
+
+            response = requests.get(
+                self.endpoint + '/skew/latest',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json'
+                },
+                headers={'Accept': 'application/json'},
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                return {}
+
+            json_response = response.json()
+            skew_data = json_response.get(symbol, {})
+
+            return skew_data
+
+        except Exception as e:
+            print(f"Error fetching skew data: {e}")
+            return {}
+
+    def get_historical_skew(self, symbol: str, days_back: int = 30) -> List[Dict]:
+        """Fetch historical skew data from Trading Volatility API"""
+        import streamlit as st
+        import requests
+        from datetime import datetime, timedelta
+
+        try:
+            if not self.api_key:
+                return []
+
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days_back)
+
+            response = requests.get(
+                self.endpoint + '/skew/history',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json',
+                    'start': start_date.strftime('%Y-%m-%d'),
+                    'end': end_date.strftime('%Y-%m-%d')
+                },
+                headers={'Accept': 'application/json'},
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                return []
+
+            json_response = response.json()
+            history_data = json_response.get(symbol, [])
+
+            return history_data if isinstance(history_data, list) else []
+
+        except Exception as e:
+            print(f"Error fetching historical skew: {e}")
+            return []
+
 
 class MonteCarloEngine:
     """
