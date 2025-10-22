@@ -1221,148 +1221,116 @@ class TradingVolatilityAPI:
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile for visualization - use TV API if available, otherwise calculate from yfinance"""
+        """Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint"""
         import streamlit as st
+        import requests
 
         try:
-            # Check if we already have complete data from Trading Volatility API
-            if self.last_response:
-                ticker_data = self.last_response.get(symbol, {})
+            st.info(f"📊 Fetching strike-level gamma data from Trading Volatility API...")
 
-                # Look for strike-level data to build full profile
-                strike_data_fields = ['strikes', 'gex_profile', 'gamma_profile', 'option_chain',
-                                     'gex_by_strike', 'strike_data', 'levels', 'gex_strikes']
-
-                strikes_data = []
-                for field in strike_data_fields:
-                    if field in ticker_data:
-                        st.info(f"📊 Found strike data in TV API field '{field}' - building profile...")
-                        strike_info = ticker_data[field]
-
-                        # Try to parse strike-level data
-                        if isinstance(strike_info, list):
-                            for strike_obj in strike_info:
-                                if isinstance(strike_obj, dict):
-                                    strikes_data.append({
-                                        'strike': float(strike_obj.get('strike', strike_obj.get('strike_price', 0))),
-                                        'call_gamma': abs(float(strike_obj.get('call_gamma', strike_obj.get('call_gex', strike_obj.get('calls', 0))))),
-                                        'put_gamma': abs(float(strike_obj.get('put_gamma', strike_obj.get('put_gex', strike_obj.get('puts', 0)))))
-                                    })
-
-                        if strikes_data:
-                            st.success(f"✅ Built profile from TV API with {len(strikes_data)} strikes!")
-                            break
-
-                # Check if TV API has wall data (either pre-calculated or from strike data)
-                call_wall = ticker_data.get('call_wall', 0)
-                put_wall = ticker_data.get('put_wall', 0)
-
-                # Try alternate field names
-                if not call_wall:
-                    call_wall = ticker_data.get('resistance_1', ticker_data.get('call_resistance', ticker_data.get('gex_call_wall', 0)))
-                if not put_wall:
-                    put_wall = ticker_data.get('support_1', ticker_data.get('put_support', ticker_data.get('gex_put_wall', 0)))
-
-                # If we have strike data, calculate walls from it
-                if not call_wall and not put_wall and strikes_data:
-                    max_call_gamma = 0
-                    max_put_gamma = 0
-                    for strike_info in strikes_data:
-                        if strike_info['call_gamma'] > max_call_gamma:
-                            max_call_gamma = strike_info['call_gamma']
-                            call_wall = strike_info['strike']
-                        if strike_info['put_gamma'] > max_put_gamma:
-                            max_put_gamma = strike_info['put_gamma']
-                            put_wall = strike_info['strike']
-                    st.success(f"✅ Calculated walls from strike data: Call ${call_wall:.2f}, Put ${put_wall:.2f}")
-
-                if call_wall and put_wall:
-                    st.success(f"✅ Using data from Trading Volatility API - no need for yfinance!")
-                    # Return profile with walls and strike data if available
-                    return {
-                        'strikes': strikes_data,
-                        'spot_price': float(ticker_data.get('price', 0)),
-                        'flip_point': float(ticker_data.get('gex_flip_price', 0)),
-                        'call_wall': float(call_wall),
-                        'put_wall': float(put_wall)
-                    }
-
-            st.info(f"📊 Fetching options chain from yfinance for {symbol}...")
-
-            # Use yfinance to get options chain and calculate GEX profile
-            from core_classes_and_engines import OptionsDataFetcher, GEXAnalyzer
-
-            # Get spot price from stored TV API response if available
-            spot_price = 0
-            if self.last_response:
-                ticker_data = self.last_response.get(symbol, {})
-                spot_price = float(ticker_data.get('price', 0))
-                st.write(f"✓ Using spot price from TV API: ${spot_price:.2f}")
-
-            # Fetch options data using yfinance
-            options_fetcher = OptionsDataFetcher(symbol)
-
-            if not spot_price:
-                spot_price = options_fetcher.get_spot_price()
-                st.write(f"✓ Fetched spot price: ${spot_price:.2f}")
-
-            # Fetch options chain with retry logic
-            options_chain = options_fetcher.get_options_chain()
-
-            if options_chain.empty:
-                st.error(f"❌ yfinance returned no options data for {symbol}")
-                st.warning("This could be due to:")
-                st.warning("• Rate limiting from Yahoo Finance")
-                st.warning("• Network connectivity issues")
-                st.warning("• Invalid symbol or no options available")
-                st.info("💡 The app will still show aggregate GEX data from Trading Volatility API")
+            if not self.api_key:
+                st.error("❌ Trading Volatility username not found in secrets!")
                 return {}
 
-            st.success(f"✓ Loaded {len(options_chain)} options from yfinance")
+            # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
+            response = requests.get(
+                self.endpoint + '/gex/gammaOI',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json'
+                },
+                headers={'Accept': 'application/json'},
+                timeout=30
+            )
 
-            # Calculate GEX using our analyzer
-            st.write(f"🔍 Calculating GEX profile...")
-            gex_analyzer = GEXAnalyzer(symbol)
-            gex_profile = gex_analyzer.calculate_gex(options_chain, spot_price)
-            key_levels = gex_analyzer.identify_key_levels()
+            if response.status_code != 200:
+                st.error(f"❌ gammaOI endpoint returned status {response.status_code}")
+                return {}
 
-            st.write(f"✓ GEX calculated for {len(gex_profile)} options")
+            json_response = response.json()
+            ticker_data = json_response.get(symbol, {})
 
-            # Separate calls and puts
-            calls = gex_profile[gex_profile['type'] == 'call'].groupby('strike')['gex'].sum()
-            puts = gex_profile[gex_profile['type'] == 'put'].groupby('strike')['gex'].sum()
+            if not ticker_data:
+                st.error(f"❌ No data found for {symbol} in gammaOI response")
+                return {}
 
-            # Get all unique strikes
-            all_strikes = sorted(set(calls.index) | set(puts.index))
+            # Extract gamma_array (strike-level data)
+            gamma_array = ticker_data.get('gamma_array', [])
 
-            # Build strikes data
+            if not gamma_array or len(gamma_array) == 0:
+                st.warning(f"⚠️ No gamma_array found in response")
+                return {}
+
+            st.success(f"✅ Received {len(gamma_array)} strikes from Trading Volatility API")
+
+            # Parse strike-level data
             strikes_data = []
-            for strike in all_strikes:
+            max_call_gamma = 0
+            max_put_gamma = 0
+            call_wall = 0
+            put_wall = 0
+
+            for strike_obj in gamma_array:
+                # Skip empty objects
+                if not strike_obj or 'strike' not in strike_obj:
+                    continue
+
+                strike = float(strike_obj['strike'])
+                call_gamma = abs(float(strike_obj.get('call_gamma', 0)))
+                put_gamma = abs(float(strike_obj.get('put_gamma', 0)))
+
                 strikes_data.append({
                     'strike': strike,
-                    'call_gamma': abs(calls.get(strike, 0)),
-                    'put_gamma': abs(puts.get(strike, 0))
+                    'call_gamma': call_gamma,
+                    'put_gamma': put_gamma
                 })
 
-            # Get call/put walls
-            call_wall = key_levels.get('call_wall_1').strike if key_levels.get('call_wall_1') else 0
-            put_wall = key_levels.get('put_wall_1').strike if key_levels.get('put_wall_1') else 0
+                # Track max gamma for walls
+                if call_gamma > max_call_gamma:
+                    max_call_gamma = call_gamma
+                    call_wall = strike
 
-            st.success(f"✅ Profile complete: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+                if put_gamma > max_put_gamma:
+                    max_put_gamma = put_gamma
+                    put_wall = strike
+
+            # Get spot price and flip point
+            spot_price = float(ticker_data.get('price', 0))
+
+            # Calculate flip point from gamma_array (where net gamma crosses zero)
+            flip_point = 0
+            for i in range(len(gamma_array) - 1):
+                if 'net_gamma_$_at_strike' in gamma_array[i] and 'net_gamma_$_at_strike' in gamma_array[i + 1]:
+                    net_gamma_current = float(gamma_array[i].get('net_gamma_$_at_strike', 0))
+                    net_gamma_next = float(gamma_array[i + 1].get('net_gamma_$_at_strike', 0))
+
+                    # Check for sign change (zero crossing)
+                    if net_gamma_current * net_gamma_next < 0:
+                        strike_current = float(gamma_array[i]['strike'])
+                        strike_next = float(gamma_array[i + 1]['strike'])
+                        # Linear interpolation
+                        flip_point = strike_current + (strike_next - strike_current) * (
+                            -net_gamma_current / (net_gamma_next - net_gamma_current)
+                        )
+                        break
+
+            st.success(f"✅ Calculated: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}, Flip Point ${flip_point:.2f}")
 
             profile = {
                 'strikes': strikes_data,
                 'spot_price': spot_price,
-                'flip_point': gex_analyzer.gamma_flip,
+                'flip_point': flip_point if flip_point else spot_price,
                 'call_wall': call_wall,
-                'put_wall': put_wall
+                'put_wall': put_wall,
+                'symbol': symbol
             }
 
             return profile
 
         except Exception as e:
             import traceback
-            error_msg = f"Error getting GEX profile: {str(e)}"
+            error_msg = f"Error getting GEX profile from gammaOI: {str(e)}"
             st.error(f"❌ {error_msg}")
             st.code(traceback.format_exc())
             print(error_msg)
