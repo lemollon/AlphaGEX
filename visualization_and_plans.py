@@ -102,14 +102,7 @@ class GEXVisualizer:
             row=2, col=1
         )
         
-        fig.add_vline(
-            x=spot,
-            line_dash="dash",
-            line_color="yellow",
-            annotation_text=f"Spot ${spot:.2f}",
-            row='all'
-        )
-        
+        # Calculate flip point
         flip_point = None
         for i in range(len(total_gamma) - 1):
             if total_gamma[i] * total_gamma[i + 1] < 0:
@@ -117,38 +110,110 @@ class GEXVisualizer:
                     -total_gamma[i] / (total_gamma[i + 1] - total_gamma[i])
                 )
                 break
-        
+
+        # Get wall values
+        call_wall = gex_data.get('call_wall', 0)
+        put_wall = gex_data.get('put_wall', 0)
+
+        # Add vertical lines WITHOUT annotations to avoid overlap
+        # Spot price
+        fig.add_vline(
+            x=spot,
+            line_dash="dash",
+            line_color="yellow",
+            line_width=2,
+            row='all'
+        )
+
+        # Flip point
         if flip_point:
             fig.add_vline(
                 x=flip_point,
                 line_dash="dash",
                 line_color="orange",
-                annotation_text=f"Flip ${flip_point:.2f}",
+                line_width=2,
                 row='all'
             )
 
-        # Add call wall marker
-        call_wall = gex_data.get('call_wall', 0)
+        # Call wall
         if call_wall:
             fig.add_vline(
                 x=call_wall,
                 line_dash="dot",
                 line_color="green",
-                annotation_text=f"Call Wall ${call_wall:.2f}",
-                annotation_position="top",
+                line_width=2,
                 row='all'
             )
 
-        # Add put wall marker
-        put_wall = gex_data.get('put_wall', 0)
+        # Put wall
         if put_wall:
             fig.add_vline(
                 x=put_wall,
                 line_dash="dot",
                 line_color="red",
-                annotation_text=f"Put Wall ${put_wall:.2f}",
-                annotation_position="bottom",
+                line_width=2,
                 row='all'
+            )
+
+        # Add annotations at TOP of chart only (row 1), with smart positioning
+        # This prevents overlap by using different y positions
+        annotations_to_add = []
+
+        # Spot (yellow) - position at y=1.0 (top)
+        annotations_to_add.append({
+            'x': spot,
+            'y': 1.0,
+            'text': f'Spot: ${spot:.2f}',
+            'color': 'yellow'
+        })
+
+        # Flip point (orange) - position at y=0.95
+        if flip_point:
+            annotations_to_add.append({
+                'x': flip_point,
+                'y': 0.95,
+                'text': f'Flip: ${flip_point:.2f}',
+                'color': 'orange'
+            })
+
+        # Call wall (green) - position at y=0.90
+        if call_wall:
+            annotations_to_add.append({
+                'x': call_wall,
+                'y': 0.90,
+                'text': f'Call Wall: ${call_wall:.0f}',
+                'color': 'green'
+            })
+
+        # Put wall (red) - position at y=0.85
+        if put_wall:
+            annotations_to_add.append({
+                'x': put_wall,
+                'y': 0.85,
+                'text': f'Put Wall: ${put_wall:.0f}',
+                'color': 'red'
+            })
+
+        # Add all annotations to the figure
+        for ann in annotations_to_add:
+            fig.add_annotation(
+                x=ann['x'],
+                y=ann['y'],
+                xref='x',
+                yref='paper',
+                text=ann['text'],
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=1,
+                arrowwidth=1,
+                arrowcolor=ann['color'],
+                ax=0,
+                ay=-30,
+                font=dict(size=10, color=ann['color']),
+                bgcolor='rgba(0,0,0,0.6)',
+                bordercolor=ann['color'],
+                borderwidth=1,
+                borderpad=3
             )
         
         fig.update_layout(
