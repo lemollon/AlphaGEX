@@ -131,88 +131,130 @@ class OptionsDataFetcher:
         
         return option_data
     
-    def get_options_chain(self, days_to_expiry: int = 30) -> pd.DataFrame:
+    def get_options_chain(self, days_to_expiry: int = 30, max_retries: int = 3) -> pd.DataFrame:
         """
         Fetch complete options chain with Greeks
+        Includes retry logic for rate limiting
         """
-        try:
-            # Update spot price first
-            self.get_spot_price()
-            
-            # Get available expiration dates
-            expirations = self.ticker.options
-            
-            # Filter expirations within our timeframe
-            target_date = datetime.now(pytz.UTC) + timedelta(days=days_to_expiry)
-            valid_expirations = []
-            
-            for exp_str in expirations:
-                exp_date = datetime.strptime(exp_str, '%Y-%m-%d')
-                if exp_date <= target_date:
-                    valid_expirations.append(exp_str)
-            
-            # Limit to first 5 expirations for performance
-            valid_expirations = valid_expirations[:5] if len(valid_expirations) > 5 else valid_expirations
-            
-            all_options = []
-            
-            for exp in valid_expirations:
-                try:
-                    # Cache key
-                    cache_key = f"{self.symbol}_{exp}"
-                    
-                    # Get options chain
-                    options = self.ticker.option_chain(exp)
-                    exp_date = datetime.strptime(exp, '%Y-%m-%d')
-                    dte = (exp_date - datetime.now(pytz.UTC).replace(tzinfo=None)).days
-                    
-                    # Process calls
-                    calls = options.calls.copy()
-                    calls['optionType'] = 'call'
-                    calls['expiration'] = exp
-                    calls['dte'] = dte
-                    
-                    # Process puts
-                    puts = options.puts.copy()
-                    puts['optionType'] = 'put'
-                    puts['expiration'] = exp
-                    puts['dte'] = dte
-                    
-                    # Calculate Greeks for both
-                    calls = self.calculate_greeks(calls)
-                    puts = self.calculate_greeks(puts)
-                    
-                    all_options.append(calls)
-                    all_options.append(puts)
-                    
-                except Exception as e:
-                    print(f"Error processing expiration {exp}: {e}")
-                    continue
-            
-            if all_options:
-                self.options_chain = pd.concat(all_options, ignore_index=True)
-                
-                # Clean and standardize column names
-                self.options_chain.columns = [col.lower() for col in self.options_chain.columns]
-                
-                # Ensure required columns exist
-                required_cols = ['strike', 'optiontype', 'openinterest', 'volume', 
-                                'impliedvolatility', 'gamma', 'delta', 'expiration', 'dte']
-                
-                for col in required_cols:
-                    if col not in self.options_chain.columns:
-                        self.options_chain[col] = 0
-                
-                # Fill NaN values
-                self.options_chain = self.options_chain.fillna(0)
-                
-                return self.options_chain
-            else:
-                return pd.DataFrame()
-                
-        except Exception as e:
-            print(f"Error fetching options chain: {e}")
-            return pd.DataFrame()
+        import time
+
+        for attempt in range(max_retries):
+            try:
+                # Update spot price first
+                self.get_spot_price()
+
+                # Get available expiration dates with retry
+                print(f"Attempt {attempt + 1}/{max_retries}: Fetching options expirations for {self.symbol}...")
+                expirations = self.ticker.options
+
+                if not expirations or len(expirations) == 0:
+                    print(f"⚠️ No expirations found for {self.symbol}")
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                        print(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        return pd.DataFrame()
+
+                print(f"✓ Found {len(expirations)} expirations: {expirations[:5]}")
+
+                # Filter expirations within our timeframe
+                target_date = datetime.now(pytz.UTC) + timedelta(days=days_to_expiry)
+                valid_expirations = []
+
+                for exp_str in expirations:
+                    exp_date = datetime.strptime(exp_str, '%Y-%m-%d')
+                    if exp_date <= target_date:
+                        valid_expirations.append(exp_str)
+
+                # Limit to first 5 expirations for performance
+                valid_expirations = valid_expirations[:5] if len(valid_expirations) > 5 else valid_expirations
+                print(f"✓ Using {len(valid_expirations)} valid expirations")
+
+                all_options = []
+
+                for exp in valid_expirations:
+                    try:
+                        # Get options chain
+                        print(f"  Fetching options for {exp}...")
+                        options = self.ticker.option_chain(exp)
+                        exp_date = datetime.strptime(exp, '%Y-%m-%d')
+                        dte = (exp_date - datetime.now(pytz.UTC).replace(tzinfo=None)).days
+
+                        # Process calls
+                        calls = options.calls.copy()
+                        if len(calls) == 0:
+                            print(f"  ⚠️ No calls found for {exp}")
+                            continue
+
+                        calls['optionType'] = 'call'
+                        calls['expiration'] = exp
+                        calls['dte'] = dte
+
+                        # Process puts
+                        puts = options.puts.copy()
+                        if len(puts) == 0:
+                            print(f"  ⚠️ No puts found for {exp}")
+                            continue
+
+                        puts['optionType'] = 'put'
+                        puts['expiration'] = exp
+                        puts['dte'] = dte
+
+                        # Calculate Greeks for both
+                        calls = self.calculate_greeks(calls)
+                        puts = self.calculate_greeks(puts)
+
+                        all_options.append(calls)
+                        all_options.append(puts)
+                        print(f"  ✓ Loaded {len(calls)} calls, {len(puts)} puts")
+
+                    except Exception as e:
+                        print(f"  Error processing expiration {exp}: {e}")
+                        continue
+
+                if all_options:
+                    self.options_chain = pd.concat(all_options, ignore_index=True)
+
+                    # Clean and standardize column names
+                    self.options_chain.columns = [col.lower() for col in self.options_chain.columns]
+
+                    # Ensure required columns exist
+                    required_cols = ['strike', 'optiontype', 'openinterest', 'volume',
+                                    'impliedvolatility', 'gamma', 'delta', 'expiration', 'dte']
+
+                    for col in required_cols:
+                        if col not in self.options_chain.columns:
+                            self.options_chain[col] = 0
+
+                    # Fill NaN values
+                    self.options_chain = self.options_chain.fillna(0)
+
+                    print(f"✓ Options chain loaded: {len(self.options_chain)} total options")
+                    return self.options_chain
+                else:
+                    print(f"⚠️ No options data collected")
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        return pd.DataFrame()
+
+            except Exception as e:
+                print(f"Error fetching options chain (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    print(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    import traceback
+                    traceback.print_exc()
+                    return pd.DataFrame()
+
+        return pd.DataFrame()
     
     def get_option_flow(self) -> pd.DataFrame:
         """
@@ -980,6 +1022,89 @@ class TradingVolatilityAPI:
 
         self.last_response = None  # Store last API response for profile data
 
+    def _calculate_walls_from_strike_data(self, strike_data, st):
+        """
+        Try to extract call wall and put wall from strike-level data
+        Handles various data formats: list of dicts, dict of arrays, etc.
+        Returns (call_wall, put_wall) as floats
+        """
+        try:
+            call_wall = 0
+            put_wall = 0
+
+            # Format 1: List of strike objects with gamma values
+            if isinstance(strike_data, list):
+                st.write(f"  Parsing list format with {len(strike_data)} strikes...")
+                max_call_gamma = 0
+                max_put_gamma = 0
+
+                for strike_obj in strike_data:
+                    if isinstance(strike_obj, dict):
+                        # Look for strike price and gamma values
+                        strike = strike_obj.get('strike', strike_obj.get('strike_price', 0))
+
+                        # Try different field names for call/put gamma
+                        call_gamma = abs(float(strike_obj.get('call_gamma', strike_obj.get('call_gex', strike_obj.get('calls', 0)))))
+                        put_gamma = abs(float(strike_obj.get('put_gamma', strike_obj.get('put_gex', strike_obj.get('puts', 0)))))
+
+                        if call_gamma > max_call_gamma:
+                            max_call_gamma = call_gamma
+                            call_wall = float(strike)
+
+                        if put_gamma > max_put_gamma:
+                            max_put_gamma = put_gamma
+                            put_wall = float(strike)
+
+                if call_wall and put_wall:
+                    st.success(f"  ✅ Calculated from strike list: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+                    return call_wall, put_wall
+
+            # Format 2: Dict with strike keys and gamma values
+            elif isinstance(strike_data, dict):
+                st.write(f"  Parsing dict format with {len(strike_data)} entries...")
+
+                # Check if keys are strike prices
+                try:
+                    # Try to parse first key as a number
+                    first_key = list(strike_data.keys())[0]
+                    float(first_key)  # Will throw if not a number
+
+                    # Keys are strikes, values might be gamma or dict with call/put
+                    max_call_gamma = 0
+                    max_put_gamma = 0
+
+                    for strike_key, value in strike_data.items():
+                        strike = float(strike_key)
+
+                        if isinstance(value, dict):
+                            call_gamma = abs(float(value.get('call', value.get('call_gamma', value.get('calls', 0)))))
+                            put_gamma = abs(float(value.get('put', value.get('put_gamma', value.get('puts', 0)))))
+                        else:
+                            # Value is just a number - might be total gamma
+                            continue
+
+                        if call_gamma > max_call_gamma:
+                            max_call_gamma = call_gamma
+                            call_wall = strike
+
+                        if put_gamma > max_put_gamma:
+                            max_put_gamma = put_gamma
+                            put_wall = strike
+
+                    if call_wall and put_wall:
+                        st.success(f"  ✅ Calculated from strike dict: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+                        return call_wall, put_wall
+
+                except (ValueError, IndexError):
+                    # Keys are not strikes, might be field names
+                    st.write("  Dict keys are not strikes, checking for call/put arrays...")
+
+            return 0, 0
+
+        except Exception as e:
+            st.warning(f"  ⚠️ Could not parse strike data: {e}")
+            return 0, 0
+
     def get_net_gamma(self, symbol: str) -> Dict:
         """Fetch net gamma exposure data from Trading Volatility API"""
         import streamlit as st
@@ -1019,19 +1144,71 @@ class TradingVolatilityAPI:
                 st.error(f"❌ No data found for {symbol} in API response")
                 return {'error': 'No ticker data in response'}
 
+            # DEBUG: Show ALL available fields from Trading Volatility API
+            st.info("📋 All available fields in Trading Volatility API response:")
+            st.json(list(ticker_data.keys()))
+
+            # Show all data values
+            with st.expander("🔍 View all Trading Volatility API data"):
+                st.json(ticker_data)
+
+            # Look for arrays or nested objects that might contain strike-level data
+            st.write("🔍 Looking for strike-level data arrays...")
+            for key, value in ticker_data.items():
+                if isinstance(value, (list, dict)):
+                    st.write(f"  • Found array/object: '{key}' (type: {type(value).__name__}, length: {len(value) if isinstance(value, (list, dict)) else 'N/A'})")
+                    if isinstance(value, list) and len(value) > 0:
+                        st.write(f"    First element: {value[0]}")
+                    elif isinstance(value, dict) and len(value) > 0:
+                        st.write(f"    Keys: {list(value.keys())[:5]}")
+
             # Extract data from Trading Volatility API response
+            # First, try to calculate walls from strike-level data if available
+            call_wall = 0
+            put_wall = 0
+
+            # Look for strike-level gamma data in common field names
+            strike_data_fields = ['strikes', 'gex_profile', 'gamma_profile', 'option_chain',
+                                 'gex_by_strike', 'strike_data', 'levels', 'gex_strikes']
+
+            for field in strike_data_fields:
+                if field in ticker_data:
+                    st.success(f"✅ Found potential strike data in field: '{field}'")
+                    strike_data = ticker_data[field]
+                    st.write(f"Strike data type: {type(strike_data)}")
+                    if isinstance(strike_data, list) and len(strike_data) > 0:
+                        st.write(f"First few strikes: {strike_data[:3]}")
+                    elif isinstance(strike_data, dict):
+                        st.write(f"Strike data keys: {list(strike_data.keys())[:10]}")
+
+                    # Try to calculate walls from this data
+                    call_wall, put_wall = self._calculate_walls_from_strike_data(strike_data, st)
+                    if call_wall and put_wall:
+                        break
+
+            # If no strike data found, try pre-calculated wall fields
+            if not call_wall:
+                call_wall = ticker_data.get('call_wall', ticker_data.get('resistance_1', ticker_data.get('call_resistance', ticker_data.get('gex_call_wall', 0))))
+            if not put_wall:
+                put_wall = ticker_data.get('put_wall', ticker_data.get('support_1', ticker_data.get('put_support', ticker_data.get('gex_put_wall', 0))))
+
             result = {
                 'symbol': symbol,
                 'spot_price': float(ticker_data.get('price', 0)),
                 'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
                 'flip_point': float(ticker_data.get('gex_flip_price', 0)),
-                'call_wall': 0,  # Will be calculated from profile data
-                'put_wall': 0,   # Will be calculated from profile data
+                'call_wall': float(call_wall) if call_wall else 0,
+                'put_wall': float(put_wall) if put_wall else 0,
                 'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
                 'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
                 'collection_date': ticker_data.get('collection_date', ''),
                 'raw_data': ticker_data
             }
+
+            if result['call_wall'] or result['put_wall']:
+                st.success(f"✅ Found walls in TV API! Call Wall=${result['call_wall']:.2f}, Put Wall=${result['put_wall']:.2f}")
+            else:
+                st.warning("⚠️ No wall data found in TV API response. Will need to calculate from yfinance.")
 
             return result
 
@@ -1044,10 +1221,74 @@ class TradingVolatilityAPI:
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile for visualization - calculate from yfinance since TV API doesn't provide strike data"""
+        """Get detailed GEX profile for visualization - use TV API if available, otherwise calculate from yfinance"""
         import streamlit as st
 
         try:
+            # Check if we already have complete data from Trading Volatility API
+            if self.last_response:
+                ticker_data = self.last_response.get(symbol, {})
+
+                # Look for strike-level data to build full profile
+                strike_data_fields = ['strikes', 'gex_profile', 'gamma_profile', 'option_chain',
+                                     'gex_by_strike', 'strike_data', 'levels', 'gex_strikes']
+
+                strikes_data = []
+                for field in strike_data_fields:
+                    if field in ticker_data:
+                        st.info(f"📊 Found strike data in TV API field '{field}' - building profile...")
+                        strike_info = ticker_data[field]
+
+                        # Try to parse strike-level data
+                        if isinstance(strike_info, list):
+                            for strike_obj in strike_info:
+                                if isinstance(strike_obj, dict):
+                                    strikes_data.append({
+                                        'strike': float(strike_obj.get('strike', strike_obj.get('strike_price', 0))),
+                                        'call_gamma': abs(float(strike_obj.get('call_gamma', strike_obj.get('call_gex', strike_obj.get('calls', 0))))),
+                                        'put_gamma': abs(float(strike_obj.get('put_gamma', strike_obj.get('put_gex', strike_obj.get('puts', 0)))))
+                                    })
+
+                        if strikes_data:
+                            st.success(f"✅ Built profile from TV API with {len(strikes_data)} strikes!")
+                            break
+
+                # Check if TV API has wall data (either pre-calculated or from strike data)
+                call_wall = ticker_data.get('call_wall', 0)
+                put_wall = ticker_data.get('put_wall', 0)
+
+                # Try alternate field names
+                if not call_wall:
+                    call_wall = ticker_data.get('resistance_1', ticker_data.get('call_resistance', ticker_data.get('gex_call_wall', 0)))
+                if not put_wall:
+                    put_wall = ticker_data.get('support_1', ticker_data.get('put_support', ticker_data.get('gex_put_wall', 0)))
+
+                # If we have strike data, calculate walls from it
+                if not call_wall and not put_wall and strikes_data:
+                    max_call_gamma = 0
+                    max_put_gamma = 0
+                    for strike_info in strikes_data:
+                        if strike_info['call_gamma'] > max_call_gamma:
+                            max_call_gamma = strike_info['call_gamma']
+                            call_wall = strike_info['strike']
+                        if strike_info['put_gamma'] > max_put_gamma:
+                            max_put_gamma = strike_info['put_gamma']
+                            put_wall = strike_info['strike']
+                    st.success(f"✅ Calculated walls from strike data: Call ${call_wall:.2f}, Put ${put_wall:.2f}")
+
+                if call_wall and put_wall:
+                    st.success(f"✅ Using data from Trading Volatility API - no need for yfinance!")
+                    # Return profile with walls and strike data if available
+                    return {
+                        'strikes': strikes_data,
+                        'spot_price': float(ticker_data.get('price', 0)),
+                        'flip_point': float(ticker_data.get('gex_flip_price', 0)),
+                        'call_wall': float(call_wall),
+                        'put_wall': float(put_wall)
+                    }
+
+            st.info(f"📊 Fetching options chain from yfinance for {symbol}...")
+
             # Use yfinance to get options chain and calculate GEX profile
             from core_classes_and_engines import OptionsDataFetcher, GEXAnalyzer
 
@@ -1056,23 +1297,36 @@ class TradingVolatilityAPI:
             if self.last_response:
                 ticker_data = self.last_response.get(symbol, {})
                 spot_price = float(ticker_data.get('price', 0))
+                st.write(f"✓ Using spot price from TV API: ${spot_price:.2f}")
 
             # Fetch options data using yfinance
             options_fetcher = OptionsDataFetcher(symbol)
 
             if not spot_price:
                 spot_price = options_fetcher.get_spot_price()
+                st.write(f"✓ Fetched spot price: ${spot_price:.2f}")
 
+            # Fetch options chain with retry logic
             options_chain = options_fetcher.get_options_chain()
 
             if options_chain.empty:
-                st.warning(f"⚠️ No options data available for {symbol}")
+                st.error(f"❌ yfinance returned no options data for {symbol}")
+                st.warning("This could be due to:")
+                st.warning("• Rate limiting from Yahoo Finance")
+                st.warning("• Network connectivity issues")
+                st.warning("• Invalid symbol or no options available")
+                st.info("💡 The app will still show aggregate GEX data from Trading Volatility API")
                 return {}
 
+            st.success(f"✓ Loaded {len(options_chain)} options from yfinance")
+
             # Calculate GEX using our analyzer
+            st.write(f"🔍 Calculating GEX profile...")
             gex_analyzer = GEXAnalyzer(symbol)
             gex_profile = gex_analyzer.calculate_gex(options_chain, spot_price)
             key_levels = gex_analyzer.identify_key_levels()
+
+            st.write(f"✓ GEX calculated for {len(gex_profile)} options")
 
             # Separate calls and puts
             calls = gex_profile[gex_profile['type'] == 'call'].groupby('strike')['gex'].sum()
@@ -1094,6 +1348,8 @@ class TradingVolatilityAPI:
             call_wall = key_levels.get('call_wall_1').strike if key_levels.get('call_wall_1') else 0
             put_wall = key_levels.get('put_wall_1').strike if key_levels.get('put_wall_1') else 0
 
+            st.success(f"✅ Profile complete: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+
             profile = {
                 'strikes': strikes_data,
                 'spot_price': spot_price,
@@ -1108,6 +1364,7 @@ class TradingVolatilityAPI:
             import traceback
             error_msg = f"Error getting GEX profile: {str(e)}"
             st.error(f"❌ {error_msg}")
+            st.code(traceback.format_exc())
             print(error_msg)
             traceback.print_exc()
             return {}
