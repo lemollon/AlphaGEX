@@ -1226,40 +1226,60 @@ class TradingVolatilityAPI:
         import requests
 
         try:
-            st.info(f"📊 Fetching strike-level gamma data from Trading Volatility API...")
+            st.write(f"🔍 DEBUG: Starting get_gex_profile for {symbol}")
+            st.write(f"🔍 DEBUG: API key present: {bool(self.api_key)}")
+            st.write(f"🔍 DEBUG: Endpoint: {self.endpoint}")
 
             if not self.api_key:
                 st.error("❌ Trading Volatility username not found in secrets!")
                 return {}
 
             # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
+            url = self.endpoint + '/gex/gammaOI'
+            params = {
+                'ticker': symbol,
+                'username': self.api_key,
+                'format': 'json'
+            }
+
+            st.write(f"🔍 DEBUG: Calling URL: {url}")
+            st.write(f"🔍 DEBUG: Params: ticker={symbol}, username=*****, format=json")
+
             response = requests.get(
-                self.endpoint + '/gex/gammaOI',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                },
+                url,
+                params=params,
                 headers={'Accept': 'application/json'},
                 timeout=30
             )
 
+            st.write(f"🔍 DEBUG: Response status code: {response.status_code}")
+
             if response.status_code != 200:
                 st.error(f"❌ gammaOI endpoint returned status {response.status_code}")
+                st.code(f"Response text: {response.text[:500]}")
                 return {}
 
             json_response = response.json()
+            st.write(f"🔍 DEBUG: Response keys: {list(json_response.keys())}")
+
             ticker_data = json_response.get(symbol, {})
+            st.write(f"🔍 DEBUG: Ticker data present: {bool(ticker_data)}")
+
+            if ticker_data:
+                st.write(f"🔍 DEBUG: Ticker data keys: {list(ticker_data.keys())}")
 
             if not ticker_data:
                 st.error(f"❌ No data found for {symbol} in gammaOI response")
+                st.json(json_response)
                 return {}
 
             # Extract gamma_array (strike-level data)
             gamma_array = ticker_data.get('gamma_array', [])
+            st.write(f"🔍 DEBUG: gamma_array length: {len(gamma_array) if gamma_array else 0}")
 
             if not gamma_array or len(gamma_array) == 0:
                 st.warning(f"⚠️ No gamma_array found in response")
+                st.json(ticker_data)
                 return {}
 
             st.success(f"✅ Received {len(gamma_array)} strikes from Trading Volatility API")
