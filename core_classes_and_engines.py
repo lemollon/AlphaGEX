@@ -131,88 +131,130 @@ class OptionsDataFetcher:
         
         return option_data
     
-    def get_options_chain(self, days_to_expiry: int = 30) -> pd.DataFrame:
+    def get_options_chain(self, days_to_expiry: int = 30, max_retries: int = 3) -> pd.DataFrame:
         """
         Fetch complete options chain with Greeks
+        Includes retry logic for rate limiting
         """
-        try:
-            # Update spot price first
-            self.get_spot_price()
-            
-            # Get available expiration dates
-            expirations = self.ticker.options
-            
-            # Filter expirations within our timeframe
-            target_date = datetime.now(pytz.UTC) + timedelta(days=days_to_expiry)
-            valid_expirations = []
-            
-            for exp_str in expirations:
-                exp_date = datetime.strptime(exp_str, '%Y-%m-%d')
-                if exp_date <= target_date:
-                    valid_expirations.append(exp_str)
-            
-            # Limit to first 5 expirations for performance
-            valid_expirations = valid_expirations[:5] if len(valid_expirations) > 5 else valid_expirations
-            
-            all_options = []
-            
-            for exp in valid_expirations:
-                try:
-                    # Cache key
-                    cache_key = f"{self.symbol}_{exp}"
-                    
-                    # Get options chain
-                    options = self.ticker.option_chain(exp)
-                    exp_date = datetime.strptime(exp, '%Y-%m-%d')
-                    dte = (exp_date - datetime.now(pytz.UTC).replace(tzinfo=None)).days
-                    
-                    # Process calls
-                    calls = options.calls.copy()
-                    calls['optionType'] = 'call'
-                    calls['expiration'] = exp
-                    calls['dte'] = dte
-                    
-                    # Process puts
-                    puts = options.puts.copy()
-                    puts['optionType'] = 'put'
-                    puts['expiration'] = exp
-                    puts['dte'] = dte
-                    
-                    # Calculate Greeks for both
-                    calls = self.calculate_greeks(calls)
-                    puts = self.calculate_greeks(puts)
-                    
-                    all_options.append(calls)
-                    all_options.append(puts)
-                    
-                except Exception as e:
-                    print(f"Error processing expiration {exp}: {e}")
-                    continue
-            
-            if all_options:
-                self.options_chain = pd.concat(all_options, ignore_index=True)
-                
-                # Clean and standardize column names
-                self.options_chain.columns = [col.lower() for col in self.options_chain.columns]
-                
-                # Ensure required columns exist
-                required_cols = ['strike', 'optiontype', 'openinterest', 'volume', 
-                                'impliedvolatility', 'gamma', 'delta', 'expiration', 'dte']
-                
-                for col in required_cols:
-                    if col not in self.options_chain.columns:
-                        self.options_chain[col] = 0
-                
-                # Fill NaN values
-                self.options_chain = self.options_chain.fillna(0)
-                
-                return self.options_chain
-            else:
-                return pd.DataFrame()
-                
-        except Exception as e:
-            print(f"Error fetching options chain: {e}")
-            return pd.DataFrame()
+        import time
+
+        for attempt in range(max_retries):
+            try:
+                # Update spot price first
+                self.get_spot_price()
+
+                # Get available expiration dates with retry
+                print(f"Attempt {attempt + 1}/{max_retries}: Fetching options expirations for {self.symbol}...")
+                expirations = self.ticker.options
+
+                if not expirations or len(expirations) == 0:
+                    print(f"⚠️ No expirations found for {self.symbol}")
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                        print(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        return pd.DataFrame()
+
+                print(f"✓ Found {len(expirations)} expirations: {expirations[:5]}")
+
+                # Filter expirations within our timeframe
+                target_date = datetime.now(pytz.UTC) + timedelta(days=days_to_expiry)
+                valid_expirations = []
+
+                for exp_str in expirations:
+                    exp_date = datetime.strptime(exp_str, '%Y-%m-%d')
+                    if exp_date <= target_date:
+                        valid_expirations.append(exp_str)
+
+                # Limit to first 5 expirations for performance
+                valid_expirations = valid_expirations[:5] if len(valid_expirations) > 5 else valid_expirations
+                print(f"✓ Using {len(valid_expirations)} valid expirations")
+
+                all_options = []
+
+                for exp in valid_expirations:
+                    try:
+                        # Get options chain
+                        print(f"  Fetching options for {exp}...")
+                        options = self.ticker.option_chain(exp)
+                        exp_date = datetime.strptime(exp, '%Y-%m-%d')
+                        dte = (exp_date - datetime.now(pytz.UTC).replace(tzinfo=None)).days
+
+                        # Process calls
+                        calls = options.calls.copy()
+                        if len(calls) == 0:
+                            print(f"  ⚠️ No calls found for {exp}")
+                            continue
+
+                        calls['optionType'] = 'call'
+                        calls['expiration'] = exp
+                        calls['dte'] = dte
+
+                        # Process puts
+                        puts = options.puts.copy()
+                        if len(puts) == 0:
+                            print(f"  ⚠️ No puts found for {exp}")
+                            continue
+
+                        puts['optionType'] = 'put'
+                        puts['expiration'] = exp
+                        puts['dte'] = dte
+
+                        # Calculate Greeks for both
+                        calls = self.calculate_greeks(calls)
+                        puts = self.calculate_greeks(puts)
+
+                        all_options.append(calls)
+                        all_options.append(puts)
+                        print(f"  ✓ Loaded {len(calls)} calls, {len(puts)} puts")
+
+                    except Exception as e:
+                        print(f"  Error processing expiration {exp}: {e}")
+                        continue
+
+                if all_options:
+                    self.options_chain = pd.concat(all_options, ignore_index=True)
+
+                    # Clean and standardize column names
+                    self.options_chain.columns = [col.lower() for col in self.options_chain.columns]
+
+                    # Ensure required columns exist
+                    required_cols = ['strike', 'optiontype', 'openinterest', 'volume',
+                                    'impliedvolatility', 'gamma', 'delta', 'expiration', 'dte']
+
+                    for col in required_cols:
+                        if col not in self.options_chain.columns:
+                            self.options_chain[col] = 0
+
+                    # Fill NaN values
+                    self.options_chain = self.options_chain.fillna(0)
+
+                    print(f"✓ Options chain loaded: {len(self.options_chain)} total options")
+                    return self.options_chain
+                else:
+                    print(f"⚠️ No options data collected")
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt
+                        print(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        return pd.DataFrame()
+
+            except Exception as e:
+                print(f"Error fetching options chain (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    print(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    import traceback
+                    traceback.print_exc()
+                    return pd.DataFrame()
+
+        return pd.DataFrame()
     
     def get_option_flow(self) -> pd.DataFrame:
         """
@@ -1048,6 +1090,8 @@ class TradingVolatilityAPI:
         import streamlit as st
 
         try:
+            st.info(f"📊 Fetching options chain from yfinance for {symbol}...")
+
             # Use yfinance to get options chain and calculate GEX profile
             from core_classes_and_engines import OptionsDataFetcher, GEXAnalyzer
 
@@ -1056,23 +1100,36 @@ class TradingVolatilityAPI:
             if self.last_response:
                 ticker_data = self.last_response.get(symbol, {})
                 spot_price = float(ticker_data.get('price', 0))
+                st.write(f"✓ Using spot price from TV API: ${spot_price:.2f}")
 
             # Fetch options data using yfinance
             options_fetcher = OptionsDataFetcher(symbol)
 
             if not spot_price:
                 spot_price = options_fetcher.get_spot_price()
+                st.write(f"✓ Fetched spot price: ${spot_price:.2f}")
 
+            # Fetch options chain with retry logic
             options_chain = options_fetcher.get_options_chain()
 
             if options_chain.empty:
-                st.warning(f"⚠️ No options data available for {symbol}")
+                st.error(f"❌ yfinance returned no options data for {symbol}")
+                st.warning("This could be due to:")
+                st.warning("• Rate limiting from Yahoo Finance")
+                st.warning("• Network connectivity issues")
+                st.warning("• Invalid symbol or no options available")
+                st.info("💡 The app will still show aggregate GEX data from Trading Volatility API")
                 return {}
 
+            st.success(f"✓ Loaded {len(options_chain)} options from yfinance")
+
             # Calculate GEX using our analyzer
+            st.write(f"🔍 Calculating GEX profile...")
             gex_analyzer = GEXAnalyzer(symbol)
             gex_profile = gex_analyzer.calculate_gex(options_chain, spot_price)
             key_levels = gex_analyzer.identify_key_levels()
+
+            st.write(f"✓ GEX calculated for {len(gex_profile)} options")
 
             # Separate calls and puts
             calls = gex_profile[gex_profile['type'] == 'call'].groupby('strike')['gex'].sum()
@@ -1094,6 +1151,8 @@ class TradingVolatilityAPI:
             call_wall = key_levels.get('call_wall_1').strike if key_levels.get('call_wall_1') else 0
             put_wall = key_levels.get('put_wall_1').strike if key_levels.get('put_wall_1') else 0
 
+            st.success(f"✅ Profile complete: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+
             profile = {
                 'strikes': strikes_data,
                 'spot_price': spot_price,
@@ -1108,6 +1167,7 @@ class TradingVolatilityAPI:
             import traceback
             error_msg = f"Error getting GEX profile: {str(e)}"
             st.error(f"❌ {error_msg}")
+            st.code(traceback.format_exc())
             print(error_msg)
             traceback.print_exc()
             return {}
