@@ -176,6 +176,12 @@ def main():
                         # Fetch detailed profile (will use TV API walls if available, otherwise yfinance)
                         profile_data = st.session_state.api_client.get_gex_profile(symbol)
 
+                        # DEBUG: Check what we got
+                        st.write("DEBUG - GEX Data keys:", list(gex_data.keys()) if gex_data else "None")
+                        st.write("DEBUG - Profile Data keys:", list(profile_data.keys()) if profile_data else "None")
+                        if profile_data:
+                            st.write("DEBUG - Profile 'strikes' length:", len(profile_data.get('strikes', [])))
+
                         # Update gex_data with wall values from profile (only if not already set by TV API)
                         if profile_data and not gex_data.get('error'):
                             if not gex_data.get('call_wall'):
@@ -187,11 +193,14 @@ def main():
                         st.session_state.current_data = {
                             'symbol': symbol,
                             'gex': gex_data,
-                            'profile': profile_data,
+                            'profile': profile_data if profile_data and profile_data.get('strikes') else None,  # Only store if has strikes
                             'timestamp': get_utc_time()
                         }
 
-                        st.success(f"✅ Data refreshed for {symbol}!")
+                        if profile_data and profile_data.get('strikes'):
+                            st.success(f"✅ Data refreshed for {symbol}! Profile has {len(profile_data['strikes'])} strikes")
+                        else:
+                            st.warning(f"⚠️ Data refreshed but no strike-level profile data available")
                     except Exception as e:
                         st.error(f"❌ Error fetching data: {str(e)}")
                         import traceback
