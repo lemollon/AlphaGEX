@@ -978,7 +978,7 @@ class TradingVolatilityAPI:
                        st.secrets.get("api_key",
                        "https://stocks.tradingvolatility.net/api"))
 
-        self.gex_analyzer = None
+        self.last_response = None  # Store last API response for profile data
 
     def get_net_gamma(self, symbol: str) -> Dict:
         """Fetch net gamma exposure data from Trading Volatility API"""
@@ -1016,6 +1016,12 @@ class TradingVolatilityAPI:
             json_response = response.json()
             st.success(f"✅ Trading Volatility API returned data!")
 
+            # Store the full response for get_gex_profile to use
+            self.last_response = json_response
+
+            # Show what keys are in the response for debugging
+            st.write(f"📊 API Response keys: {list(json_response.keys())}")
+
             # Extract data from Trading Volatility API response
             result = {
                 'symbol': symbol,
@@ -1039,36 +1045,19 @@ class TradingVolatilityAPI:
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile for visualization from Trading Volatility API"""
+        """Get detailed GEX profile for visualization using stored API response"""
         import streamlit as st
-        import requests
 
         try:
-            st.write(f"🔍 get_gex_profile: Calling Trading Volatility API for {symbol}")
-            st.write(f"📡 Endpoint: {self.endpoint}")
+            st.write(f"🔍 get_gex_profile: Using stored API response for {symbol}")
 
-            if not self.api_key:
-                st.error("❌ Trading Volatility username not found in secrets!")
-                st.warning("Add 'tv_username' to your Streamlit secrets")
+            # Use the stored response from get_net_gamma
+            if not self.last_response:
+                st.warning("⚠️ No API response stored. Call get_net_gamma first.")
                 return {}
 
-            # Call Trading Volatility API for profile data
-            response = requests.get(
-                self.endpoint + '/gex/latest',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=30
-            )
-
-            if response.status_code != 200:
-                st.error(f"❌ API returned status {response.status_code}")
-                return {}
-
-            json_response = response.json()
+            json_response = self.last_response
+            st.write(f"📊 Stored response keys: {list(json_response.keys())}")
 
             # Extract profile data from API response
             # The API should return strikes data - adapt based on actual API response structure
@@ -1101,6 +1090,7 @@ class TradingVolatilityAPI:
             else:
                 # Log the actual response structure for debugging
                 st.warning(f"⚠️ Unexpected API response structure. Keys: {list(json_response.keys())}")
+                st.write("🔍 Full API response structure:")
                 st.json(json_response)  # Show the actual response
                 return {}
 
