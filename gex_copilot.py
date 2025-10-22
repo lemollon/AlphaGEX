@@ -236,6 +236,7 @@ def main():
         # 2. Current Analysis Display (SECOND)
         if st.session_state.current_data:
             data = st.session_state.current_data.get('gex', {})
+            current_symbol = st.session_state.current_data.get('symbol', 'SPY')
 
             st.subheader("📈 Current Analysis")
 
