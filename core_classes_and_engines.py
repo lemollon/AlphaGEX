@@ -969,8 +969,15 @@ class TradingVolatilityAPI:
 
     def __init__(self):
         import streamlit as st
-        self.api_key = st.secrets.get("trading_volatility_api_key", "")
-        self.endpoint = 'https://stocks.tradingvolatility.net/api'
+        # Read username/API key from secrets
+        self.api_key = st.secrets.get("tv_username", "")
+
+        # Read endpoint from secrets (with fallback)
+        # First try 'endpoint', then 'api_key', then use default
+        self.endpoint = st.secrets.get("endpoint",
+                       st.secrets.get("api_key",
+                       "https://stocks.tradingvolatility.net/api"))
+
         self.gex_analyzer = None
 
     def get_net_gamma(self, symbol: str) -> Dict:
@@ -980,10 +987,11 @@ class TradingVolatilityAPI:
 
         try:
             st.write(f"🔍 get_net_gamma: Calling Trading Volatility API for {symbol}")
+            st.write(f"📡 Endpoint: {self.endpoint}")
 
             if not self.api_key:
-                st.error("❌ Trading Volatility API key not found in secrets!")
-                st.warning("Add 'trading_volatility_api_key' to your Streamlit secrets")
+                st.error("❌ Trading Volatility username not found in secrets!")
+                st.warning("Add 'tv_username' to your Streamlit secrets")
                 return {'error': 'API key not configured'}
 
             # Call Trading Volatility API
@@ -1037,9 +1045,11 @@ class TradingVolatilityAPI:
 
         try:
             st.write(f"🔍 get_gex_profile: Calling Trading Volatility API for {symbol}")
+            st.write(f"📡 Endpoint: {self.endpoint}")
 
             if not self.api_key:
-                st.error("❌ Trading Volatility API key not found in secrets!")
+                st.error("❌ Trading Volatility username not found in secrets!")
+                st.warning("Add 'tv_username' to your Streamlit secrets")
                 return {}
 
             # Call Trading Volatility API for profile data
