@@ -173,16 +173,10 @@ def main():
                         # Fetch GEX aggregate data from Trading Volatility API
                         gex_data = st.session_state.api_client.get_net_gamma(symbol)
 
-                        # Fetch detailed profile (will use TV API walls if available, otherwise yfinance)
+                        # Fetch detailed profile from gammaOI endpoint
                         profile_data = st.session_state.api_client.get_gex_profile(symbol)
 
-                        # DEBUG: Check what we got
-                        st.write("DEBUG - GEX Data keys:", list(gex_data.keys()) if gex_data else "None")
-                        st.write("DEBUG - Profile Data keys:", list(profile_data.keys()) if profile_data else "None")
-                        if profile_data:
-                            st.write("DEBUG - Profile 'strikes' length:", len(profile_data.get('strikes', [])))
-
-                        # Update gex_data with wall values from profile (only if not already set by TV API)
+                        # Update gex_data with wall values from profile
                         if profile_data and not gex_data.get('error'):
                             if not gex_data.get('call_wall'):
                                 gex_data['call_wall'] = profile_data.get('call_wall', 0)

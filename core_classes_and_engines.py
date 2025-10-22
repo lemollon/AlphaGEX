@@ -1144,53 +1144,9 @@ class TradingVolatilityAPI:
                 st.error(f"❌ No data found for {symbol} in API response")
                 return {'error': 'No ticker data in response'}
 
-            # DEBUG: Show ALL available fields from Trading Volatility API
-            st.info("📋 All available fields in Trading Volatility API response:")
-            st.json(list(ticker_data.keys()))
-
-            # Show all data values
-            with st.expander("🔍 View all Trading Volatility API data"):
-                st.json(ticker_data)
-
-            # Look for arrays or nested objects that might contain strike-level data
-            st.write("🔍 Looking for strike-level data arrays...")
-            for key, value in ticker_data.items():
-                if isinstance(value, (list, dict)):
-                    st.write(f"  • Found array/object: '{key}' (type: {type(value).__name__}, length: {len(value) if isinstance(value, (list, dict)) else 'N/A'})")
-                    if isinstance(value, list) and len(value) > 0:
-                        st.write(f"    First element: {value[0]}")
-                    elif isinstance(value, dict) and len(value) > 0:
-                        st.write(f"    Keys: {list(value.keys())[:5]}")
-
-            # Extract data from Trading Volatility API response
-            # First, try to calculate walls from strike-level data if available
+            # Extract aggregate metrics from Trading Volatility API
             call_wall = 0
             put_wall = 0
-
-            # Look for strike-level gamma data in common field names
-            strike_data_fields = ['strikes', 'gex_profile', 'gamma_profile', 'option_chain',
-                                 'gex_by_strike', 'strike_data', 'levels', 'gex_strikes']
-
-            for field in strike_data_fields:
-                if field in ticker_data:
-                    st.success(f"✅ Found potential strike data in field: '{field}'")
-                    strike_data = ticker_data[field]
-                    st.write(f"Strike data type: {type(strike_data)}")
-                    if isinstance(strike_data, list) and len(strike_data) > 0:
-                        st.write(f"First few strikes: {strike_data[:3]}")
-                    elif isinstance(strike_data, dict):
-                        st.write(f"Strike data keys: {list(strike_data.keys())[:10]}")
-
-                    # Try to calculate walls from this data
-                    call_wall, put_wall = self._calculate_walls_from_strike_data(strike_data, st)
-                    if call_wall and put_wall:
-                        break
-
-            # If no strike data found, try pre-calculated wall fields
-            if not call_wall:
-                call_wall = ticker_data.get('call_wall', ticker_data.get('resistance_1', ticker_data.get('call_resistance', ticker_data.get('gex_call_wall', 0))))
-            if not put_wall:
-                put_wall = ticker_data.get('put_wall', ticker_data.get('support_1', ticker_data.get('put_support', ticker_data.get('gex_put_wall', 0))))
 
             result = {
                 'symbol': symbol,
@@ -1204,11 +1160,6 @@ class TradingVolatilityAPI:
                 'collection_date': ticker_data.get('collection_date', ''),
                 'raw_data': ticker_data
             }
-
-            if result['call_wall'] or result['put_wall']:
-                st.success(f"✅ Found walls in TV API! Call Wall=${result['call_wall']:.2f}, Put Wall=${result['put_wall']:.2f}")
-            else:
-                st.warning("⚠️ No wall data found in TV API response. Will need to calculate from yfinance.")
 
             return result
 
@@ -1226,63 +1177,39 @@ class TradingVolatilityAPI:
         import requests
 
         try:
-            st.write(f"🔍 DEBUG: Starting get_gex_profile for {symbol}")
-            st.write(f"🔍 DEBUG: API key present: {bool(self.api_key)}")
-            st.write(f"🔍 DEBUG: Endpoint: {self.endpoint}")
-
             if not self.api_key:
                 st.error("❌ Trading Volatility username not found in secrets!")
                 return {}
 
             # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
-            url = self.endpoint + '/gex/gammaOI'
-            params = {
-                'ticker': symbol,
-                'username': self.api_key,
-                'format': 'json'
-            }
-
-            st.write(f"🔍 DEBUG: Calling URL: {url}")
-            st.write(f"🔍 DEBUG: Params: ticker={symbol}, username=*****, format=json")
-
             response = requests.get(
-                url,
-                params=params,
+                self.endpoint + '/gex/gammaOI',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json'
+                },
                 headers={'Accept': 'application/json'},
                 timeout=30
             )
 
-            st.write(f"🔍 DEBUG: Response status code: {response.status_code}")
-
             if response.status_code != 200:
                 st.error(f"❌ gammaOI endpoint returned status {response.status_code}")
-                st.code(f"Response text: {response.text[:500]}")
                 return {}
 
             json_response = response.json()
-            st.write(f"🔍 DEBUG: Response keys: {list(json_response.keys())}")
-
             ticker_data = json_response.get(symbol, {})
-            st.write(f"🔍 DEBUG: Ticker data present: {bool(ticker_data)}")
-
-            if ticker_data:
-                st.write(f"🔍 DEBUG: Ticker data keys: {list(ticker_data.keys())}")
 
             if not ticker_data:
                 st.error(f"❌ No data found for {symbol} in gammaOI response")
-                st.json(json_response)
                 return {}
 
             # Extract gamma_array (strike-level data)
             gamma_array = ticker_data.get('gamma_array', [])
-            st.write(f"🔍 DEBUG: gamma_array length: {len(gamma_array) if gamma_array else 0}")
 
             if not gamma_array or len(gamma_array) == 0:
                 st.warning(f"⚠️ No gamma_array found in response")
-                st.json(ticker_data)
                 return {}
-
-            st.success(f"✅ Received {len(gamma_array)} strikes from Trading Volatility API")
 
             # Parse strike-level data
             strikes_data = []
@@ -1318,6 +1245,25 @@ class TradingVolatilityAPI:
             # Get spot price and flip point
             spot_price = float(ticker_data.get('price', 0))
 
+            # Calculate 7-day standard deviation range for filtering
+            # Use implied volatility from the /gex/latest call (stored in last_response)
+            implied_vol = 0.20  # Default 20% IV
+            if self.last_response:
+                last_ticker_data = self.last_response.get(symbol, {})
+                implied_vol = float(last_ticker_data.get('implied_volatility', 0.20))
+
+            # 7-day expected move: spot * IV * sqrt(7/252)
+            import math
+            seven_day_std = spot_price * implied_vol * math.sqrt(7 / 252)
+            min_strike = spot_price - seven_day_std
+            max_strike = spot_price + seven_day_std
+
+            st.write(f"📊 7-Day Range Filter: ${min_strike:.2f} to ${max_strike:.2f} (IV: {implied_vol*100:.1f}%)")
+
+            # Filter strikes to +/- 7 day std range
+            strikes_data_filtered = [s for s in strikes_data if min_strike <= s['strike'] <= max_strike]
+            st.write(f"✅ Filtered to {len(strikes_data_filtered)} strikes within 7-day std range")
+
             # Calculate flip point from gamma_array (where net gamma crosses zero)
             flip_point = 0
             for i in range(len(gamma_array) - 1):
@@ -1338,7 +1284,7 @@ class TradingVolatilityAPI:
             st.success(f"✅ Calculated: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}, Flip Point ${flip_point:.2f}")
 
             profile = {
-                'strikes': strikes_data,
+                'strikes': strikes_data_filtered,  # Use filtered strikes
                 'spot_price': spot_price,
                 'flip_point': flip_point if flip_point else spot_price,
                 'call_wall': call_wall,
