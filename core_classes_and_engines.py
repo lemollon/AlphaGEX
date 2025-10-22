@@ -986,9 +986,6 @@ class TradingVolatilityAPI:
         import requests
 
         try:
-            st.write(f"🔍 get_net_gamma: Calling Trading Volatility API for {symbol}")
-            st.write(f"📡 Endpoint: {self.endpoint}")
-
             if not self.api_key:
                 st.error("❌ Trading Volatility username not found in secrets!")
                 st.warning("Add 'tv_username' to your Streamlit secrets")
@@ -1006,31 +1003,34 @@ class TradingVolatilityAPI:
                 timeout=30
             )
 
-            st.write(f"📡 API Response Status: {response.status_code}")
-
             if response.status_code != 200:
-                st.error(f"❌ API returned status {response.status_code}")
-                st.code(response.text)
+                st.error(f"❌ Trading Volatility API returned status {response.status_code}")
                 return {'error': f'API returned {response.status_code}'}
 
             json_response = response.json()
-            st.success(f"✅ Trading Volatility API returned data!")
 
             # Store the full response for get_gex_profile to use
             self.last_response = json_response
 
-            # Show what keys are in the response for debugging
-            st.write(f"📊 API Response keys: {list(json_response.keys())}")
+            # Parse nested response - data is under the ticker symbol
+            ticker_data = json_response.get(symbol, {})
+
+            if not ticker_data:
+                st.error(f"❌ No data found for {symbol} in API response")
+                return {'error': 'No ticker data in response'}
 
             # Extract data from Trading Volatility API response
             result = {
                 'symbol': symbol,
-                'spot_price': json_response.get('spot_price', 0),
-                'net_gex': json_response.get('net_gex', 0),
-                'flip_point': json_response.get('gamma_flip', 0),
-                'call_wall': json_response.get('call_wall', 0),
-                'put_wall': json_response.get('put_wall', 0),
-                'raw_data': json_response  # Store raw response for profile
+                'spot_price': float(ticker_data.get('price', 0)),
+                'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
+                'flip_point': float(ticker_data.get('gex_flip_price', 0)),
+                'call_wall': 0,  # Will be calculated from profile data
+                'put_wall': 0,   # Will be calculated from profile data
+                'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
+                'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
+                'collection_date': ticker_data.get('collection_date', ''),
+                'raw_data': ticker_data
             }
 
             return result
@@ -1039,66 +1039,77 @@ class TradingVolatilityAPI:
             import traceback
             error_msg = f"Error fetching data from Trading Volatility API: {e}"
             st.error(f"❌ {error_msg}")
-            st.code(traceback.format_exc())
             print(error_msg)
             traceback.print_exc()
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile for visualization using stored API response"""
+        """Get detailed GEX profile for visualization - calculate from yfinance since TV API doesn't provide strike data"""
         import streamlit as st
 
         try:
-            st.write(f"🔍 get_gex_profile: Using stored API response for {symbol}")
+            # Use yfinance to get options chain and calculate GEX profile
+            from core_classes_and_engines import OptionsDataFetcher, GEXAnalyzer
 
-            # Use the stored response from get_net_gamma
-            if not self.last_response:
-                st.warning("⚠️ No API response stored. Call get_net_gamma first.")
+            # Get spot price from stored TV API response if available
+            spot_price = 0
+            if self.last_response:
+                ticker_data = self.last_response.get(symbol, {})
+                spot_price = float(ticker_data.get('price', 0))
+
+            # Fetch options data using yfinance
+            options_fetcher = OptionsDataFetcher(symbol)
+
+            if not spot_price:
+                spot_price = options_fetcher.get_spot_price()
+
+            options_chain = options_fetcher.get_options_chain()
+
+            if options_chain.empty:
+                st.warning(f"⚠️ No options data available for {symbol}")
                 return {}
 
-            json_response = self.last_response
-            st.write(f"📊 Stored response keys: {list(json_response.keys())}")
+            # Calculate GEX using our analyzer
+            gex_analyzer = GEXAnalyzer(symbol)
+            gex_profile = gex_analyzer.calculate_gex(options_chain, spot_price)
+            key_levels = gex_analyzer.identify_key_levels()
 
-            # Extract profile data from API response
-            # The API should return strikes data - adapt based on actual API response structure
-            if 'strikes' in json_response:
-                # Direct strikes data
-                profile = {
-                    'strikes': json_response['strikes'],
-                    'spot_price': json_response.get('spot_price', 0),
-                    'flip_point': json_response.get('gamma_flip', 0)
-                }
-                st.success(f"✅ Profile data loaded: {len(profile['strikes'])} strikes")
-                return profile
-            elif 'gex_by_strike' in json_response:
-                # Alternative format - convert to expected format
-                strikes_data = []
-                for strike_data in json_response['gex_by_strike']:
-                    strikes_data.append({
-                        'strike': strike_data.get('strike', 0),
-                        'call_gamma': abs(strike_data.get('call_gex', 0)),
-                        'put_gamma': abs(strike_data.get('put_gex', 0))
-                    })
+            # Separate calls and puts
+            calls = gex_profile[gex_profile['type'] == 'call'].groupby('strike')['gex'].sum()
+            puts = gex_profile[gex_profile['type'] == 'put'].groupby('strike')['gex'].sum()
 
-                profile = {
-                    'strikes': strikes_data,
-                    'spot_price': json_response.get('spot_price', 0),
-                    'flip_point': json_response.get('gamma_flip', 0)
-                }
-                st.success(f"✅ Profile data loaded: {len(strikes_data)} strikes")
-                return profile
-            else:
-                # Log the actual response structure for debugging
-                st.warning(f"⚠️ Unexpected API response structure. Keys: {list(json_response.keys())}")
-                st.write("🔍 Full API response structure:")
-                st.json(json_response)  # Show the actual response
-                return {}
+            # Get all unique strikes
+            all_strikes = sorted(set(calls.index) | set(puts.index))
+
+            # Build strikes data
+            strikes_data = []
+            for strike in all_strikes:
+                strikes_data.append({
+                    'strike': strike,
+                    'call_gamma': abs(calls.get(strike, 0)),
+                    'put_gamma': abs(puts.get(strike, 0))
+                })
+
+            # Get call/put walls
+            call_wall = key_levels.get('call_wall_1').strike if key_levels.get('call_wall_1') else 0
+            put_wall = key_levels.get('put_wall_1').strike if key_levels.get('put_wall_1') else 0
+
+            profile = {
+                'strikes': strikes_data,
+                'spot_price': spot_price,
+                'flip_point': gex_analyzer.gamma_flip,
+                'call_wall': call_wall,
+                'put_wall': put_wall
+            }
+
+            return profile
 
         except Exception as e:
             import traceback
             error_msg = f"Error getting GEX profile: {str(e)}"
             st.error(f"❌ {error_msg}")
-            st.code(traceback.format_exc())
+            print(error_msg)
+            traceback.print_exc()
             return {}
 
 
