@@ -54,6 +54,24 @@ from visualization_and_plans import (
     StrategyEngine
 )
 
+# Force module reload to pick up latest changes (fixes AttributeError issues)
+import importlib
+import core_classes_and_engines
+import intelligence_and_strategies
+import visualization_and_plans
+importlib.reload(core_classes_and_engines)
+importlib.reload(intelligence_and_strategies)
+importlib.reload(visualization_and_plans)
+
+# Re-import classes after reload
+from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
+from intelligence_and_strategies import (
+    TradingRAG, FREDIntegration, ClaudeIntelligence,
+    SmartStrikeSelector, MultiStrategyOptimizer, DynamicLevelCalculator,
+    get_et_time, get_utc_time, get_local_time, is_market_open
+)
+from visualization_and_plans import GEXVisualizer, TradingPlanGenerator, StrategyEngine
+
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
