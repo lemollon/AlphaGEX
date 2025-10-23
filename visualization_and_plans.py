@@ -236,10 +236,27 @@ class GEXVisualizer:
         import pandas as pd
         from datetime import datetime
 
+        # DEBUG: Print what we received
+        print("\n" + "="*60)
+        print("HISTORICAL CHART DEBUG INFO")
+        print("="*60)
+        print(f"Symbol: {symbol}")
+        print(f"Gamma history records: {len(gamma_history) if gamma_history else 0}")
+        print(f"Skew history records: {len(skew_history) if skew_history else 0}")
+
+        if gamma_history and len(gamma_history) > 0:
+            print(f"\nFirst gamma record keys: {list(gamma_history[0].keys())}")
+            print(f"First gamma record: {gamma_history[0]}")
+
+        if skew_history and len(skew_history) > 0:
+            print(f"\nFirst skew record keys: {list(skew_history[0].keys())}")
+            print(f"First skew record: {skew_history[0]}")
+        print("="*60 + "\n")
+
         if not gamma_history and not skew_history:
             fig = go.Figure()
             fig.add_annotation(
-                text="No historical data available",
+                text="No historical data available<br>Check Streamlit logs for API response details",
                 xref="paper", yref="paper",
                 x=0.5, y=0.5, showarrow=False,
                 font=dict(size=16, color="white")
