@@ -529,12 +529,17 @@ def main():
     with tabs[0]:
         if st.session_state.current_data:
             data = st.session_state.current_data
-            
+
             # Get symbol
             current_symbol = data.get('symbol', 'SPY')
 
+            # ==================================================================
+            # SECTION 1: CURRENT MARKET ANALYSIS
+            # ==================================================================
+            st.header(f"🎯 {current_symbol} - Current Market Analysis")
+
             # Display GEX Profile Chart
-            st.subheader(f"📊 {current_symbol} GEX Profile")
+            st.subheader(f"📊 GEX Profile")
             if data.get('profile'):
                 visualizer = GEXVisualizer()
                 fig = visualizer.create_gex_profile(data['profile'])
@@ -543,7 +548,7 @@ def main():
                 st.warning(f"No GEX profile data available for {current_symbol}. Chart cannot be displayed.")
 
             # Display Game Plan
-            st.subheader(f"📋 {current_symbol} Daily Plan")
+            st.subheader(f"📋 Today's Trading Plan")
 
             # Detect setups
             strategy_engine = StrategyEngine()
@@ -554,44 +559,12 @@ def main():
             gex_with_symbol['symbol'] = current_symbol
             game_plan = strategy_engine.generate_game_plan(gex_with_symbol, setups)
             st.markdown(game_plan)
-            
-            # Monte Carlo Analysis
-            if setups and st.button("🎲 Run Monte Carlo Simulation"):
-                with st.spinner("Running 10,000 simulations..."):
-                    setup = setups[0]
-                    
-                    monte_carlo = MonteCarloEngine()
-                    sim_results = monte_carlo.simulate_squeeze_play(
-                        data['gex'].get('spot_price', 100),
-                        data['gex'].get('flip_point', 101),
-                        data['gex'].get('call_wall', 105),
-                        volatility=0.20,
-                        days=5
-                    )
-                    
-                    # Display results
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric("Hit Flip %", f"{sim_results['probability_hit_flip']:.1f}%")
-                    with col2:
-                        st.metric("Hit Wall %", f"{sim_results['probability_hit_wall']:.1f}%")
-                    with col3:
-                        st.metric("Expected Price", f"${sim_results['expected_final_price']:.2f}")
-                    with col4:
-                        st.metric("Max Gain", f"{sim_results['max_gain_percent']:.1f}%")
-                    
-                    # Display chart
-                    visualizer = GEXVisualizer()
-                    mc_fig = visualizer.create_monte_carlo_chart(
-                        sim_results,
-                        data['gex'].get('spot_price', 100)
-                    )
-                    st.plotly_chart(mc_fig, use_container_width=True)
 
-            # Standard Deviation Level Tracking
+            # ==================================================================
+            # SECTION 2: DAY-OVER-DAY COMPARISON
+            # ==================================================================
             st.divider()
-            st.subheader(f"📏 {current_symbol} Std Deviation Level Tracking")
+            st.header(f"📏 Day-Over-Day Analysis")
 
             # Get yesterday's data for comparison
             yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
@@ -599,11 +572,13 @@ def main():
             if yesterday_data:
                 display_std_level_changes(data.get('gex', {}), yesterday_data)
             else:
-                st.info("📊 Yesterday's data not available. Need 2+ days of data to show std level changes.")
+                st.info("📊 Yesterday's data not available yet. Day-over-day comparison will appear tomorrow once we have 2+ days of data in the system.")
 
-            # Historical Trends Analysis
+            # ==================================================================
+            # SECTION 3: HISTORICAL TRENDS (30 DAYS)
+            # ==================================================================
             st.divider()
-            st.subheader(f"📈 {current_symbol} Historical Trends (30 Days)")
+            st.header(f"📈 30-Day Historical Trends")
 
             if st.button("📊 Load Historical Data"):
                 with st.spinner("Fetching 30 days of historical data..."):
@@ -658,6 +633,45 @@ def main():
                                 )
                     else:
                         st.warning("No historical data available for this symbol")
+
+            # ==================================================================
+            # SECTION 4: MONTE CARLO SIMULATION (PREDICTIVE)
+            # ==================================================================
+            st.divider()
+            st.header(f"🎲 Monte Carlo Price Prediction")
+
+            if setups and st.button("🎲 Run Monte Carlo Simulation (10,000 paths)"):
+                with st.spinner("Running 10,000 simulations..."):
+                    setup = setups[0]
+
+                    monte_carlo = MonteCarloEngine()
+                    sim_results = monte_carlo.simulate_squeeze_play(
+                        data['gex'].get('spot_price', 100),
+                        data['gex'].get('flip_point', 101),
+                        data['gex'].get('call_wall', 105),
+                        volatility=0.20,
+                        days=5
+                    )
+
+                    # Display results
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric("Hit Flip %", f"{sim_results['probability_hit_flip']:.1f}%")
+                    with col2:
+                        st.metric("Hit Wall %", f"{sim_results['probability_hit_wall']:.1f}%")
+                    with col3:
+                        st.metric("Expected Price", f"${sim_results['expected_final_price']:.2f}")
+                    with col4:
+                        st.metric("Max Gain", f"{sim_results['max_gain_percent']:.1f}%")
+
+                    # Display chart
+                    visualizer = GEXVisualizer()
+                    mc_fig = visualizer.create_monte_carlo_chart(
+                        sim_results,
+                        data['gex'].get('spot_price', 100)
+                    )
+                    st.plotly_chart(mc_fig, use_container_width=True)
 
         else:
             st.info("👈 Enter a symbol and click Refresh to begin analysis")
@@ -721,11 +735,12 @@ def main():
 
                             # Profit Targets
                             if 'target_1' in trade:
-                                st.markdown(f"**Profit Targets:** First target is {trade.get('target_1', 'N/A')}", end="")
+                                profit_text = f"**Profit Targets:** First target is {trade.get('target_1', 'N/A')}"
                                 if 'target_2' in trade:
-                                    st.markdown(f", with an extended target at {trade.get('target_2', 'N/A')}. Consider scaling out at each target to lock in profits.")
+                                    profit_text += f", with an extended target at {trade.get('target_2', 'N/A')}. Consider scaling out at each target to lock in profits."
                                 else:
-                                    st.markdown(". Consider taking profits at this level.")
+                                    profit_text += ". Consider taking profits at this level."
+                                st.markdown(profit_text)
                             elif 'max_profit' in trade:
                                 st.markdown(f"**Maximum Profit Potential:** {trade.get('max_profit', 'N/A')}.")
                                 if 'credit' in trade:
