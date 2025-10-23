@@ -106,6 +106,11 @@ from trade_journal_agent import (
     display_trade_journal,
     display_journal_settings
 )
+from position_management_agent import (
+    PositionManagementAgent,
+    display_position_monitoring,
+    display_position_monitoring_widget
+)
 
 # ============================================================================
 # PAGE CONFIG
@@ -147,6 +152,8 @@ def main():
         st.session_state.level_calculator = DynamicLevelCalculator()
     if 'trade_journal_agent' not in st.session_state:
         st.session_state.trade_journal_agent = TradeJournalAgent()
+    if 'position_management_agent' not in st.session_state:
+        st.session_state.position_management_agent = PositionManagementAgent()
 
     # Header with better styling
     st.markdown("""
@@ -301,6 +308,9 @@ def main():
         # Alert Monitoring Widget
         if st.session_state.current_data:
             display_alert_monitor_widget(st.session_state.current_data.get('gex', {}))
+
+        # Position Monitoring Widget
+        display_position_monitoring_widget()
 
         st.divider()
 
@@ -1590,7 +1600,12 @@ def main():
 def display_position_management():
     """Display position management interface"""
     st.subheader("📊 Position Management")
-    
+
+    # Position Monitoring Agent
+    display_position_monitoring(st.session_state.position_management_agent)
+
+    st.divider()
+
     # Position Entry Form
     with st.expander("➕ Add New Position", expanded=False):
         col1, col2, col3, col4 = st.columns(4)
