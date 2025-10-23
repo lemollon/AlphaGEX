@@ -19,6 +19,28 @@ class IntradayTracker:
         if 'intraday_snapshots' not in st.session_state:
             st.session_state.intraday_snapshots = {}  # {symbol: [snapshots]}
 
+    def _safe_float(self, value, default=0.0):
+        """Safely convert value to float, handling corrupted/invalid data"""
+        try:
+            # Handle None
+            if value is None:
+                return default
+
+            # If already a number, convert to float
+            if isinstance(value, (int, float)):
+                return float(value)
+
+            # If string, try to convert
+            if isinstance(value, str):
+                # Check if string looks corrupted (repeated values)
+                if len(value) > 50:  # Suspiciously long number
+                    return default
+                return float(value)
+
+            return default
+        except (ValueError, TypeError):
+            return default
+
     def capture_snapshot(self, symbol: str, gex_data: Dict, skew_data: Dict = None):
         """
         Capture current GEX state
@@ -35,13 +57,13 @@ class IntradayTracker:
         snapshot = {
             'timestamp': datetime.now(),
             'time_str': datetime.now().strftime('%H:%M'),
-            'spot_price': float(gex_data.get('spot_price', 0)),
-            'net_gex': float(gex_data.get('net_gex', 0)),
-            'flip_point': float(gex_data.get('flip_point', 0)),
-            'call_wall': float(gex_data.get('call_wall', 0)),
-            'put_wall': float(gex_data.get('put_wall', 0)),
-            'iv': float(skew_data.get('implied_volatility', 0)) * 100 if skew_data else 0.0,
-            'pcr': float(skew_data.get('pcr_oi', 0)) if skew_data else 0.0
+            'spot_price': self._safe_float(gex_data.get('spot_price', 0)),
+            'net_gex': self._safe_float(gex_data.get('net_gex', 0)),
+            'flip_point': self._safe_float(gex_data.get('flip_point', 0)),
+            'call_wall': self._safe_float(gex_data.get('call_wall', 0)),
+            'put_wall': self._safe_float(gex_data.get('put_wall', 0)),
+            'iv': self._safe_float(skew_data.get('implied_volatility', 0)) * 100 if skew_data else 0.0,
+            'pcr': self._safe_float(skew_data.get('pcr_oi', 0)) if skew_data else 0.0
         }
 
         # Check if we already have a snapshot from this minute (avoid duplicates)
@@ -64,6 +86,21 @@ class IntradayTracker:
         """Get number of snapshots for a symbol"""
         return len(self.get_snapshots(symbol))
 
+    def _validate_snapshots(self, snapshots: List[Dict]) -> List[Dict]:
+        """Remove corrupted snapshots"""
+        valid_snapshots = []
+        for snapshot in snapshots:
+            # Check if all numeric values are valid
+            try:
+                self._safe_float(snapshot.get('spot_price', 0))
+                self._safe_float(snapshot.get('net_gex', 0))
+                self._safe_float(snapshot.get('flip_point', 0))
+                valid_snapshots.append(snapshot)
+            except:
+                # Skip corrupted snapshot
+                continue
+        return valid_snapshots
+
     def calculate_changes(self, symbol: str) -> Dict:
         """
         Calculate intraday changes
@@ -74,6 +111,9 @@ class IntradayTracker:
 
         snapshots = self.get_snapshots(symbol)
 
+        # Clean up any corrupted snapshots
+        snapshots = self._validate_snapshots(snapshots)
+
         if len(snapshots) < 2:
             return None
 
@@ -81,16 +121,16 @@ class IntradayTracker:
         latest = snapshots[-1]
 
         # Convert to float to handle any legacy string values
-        first_net_gex = float(first.get('net_gex', 0))
-        latest_net_gex = float(latest.get('net_gex', 0))
-        first_flip = float(first.get('flip_point', 0))
-        latest_flip = float(latest.get('flip_point', 0))
-        first_spot = float(first.get('spot_price', 0))
-        latest_spot = float(latest.get('spot_price', 0))
-        first_iv = float(first.get('iv', 0))
-        latest_iv = float(latest.get('iv', 0))
-        first_pcr = float(first.get('pcr', 0))
-        latest_pcr = float(latest.get('pcr', 0))
+        first_net_gex = self._safe_float(first.get('net_gex', 0))
+        latest_net_gex = self._safe_float(latest.get('net_gex', 0))
+        first_flip = self._safe_float(first.get('flip_point', 0))
+        latest_flip = self._safe_float(latest.get('flip_point', 0))
+        first_spot = self._safe_float(first.get('spot_price', 0))
+        latest_spot = self._safe_float(latest.get('spot_price', 0))
+        first_iv = self._safe_float(first.get('iv', 0))
+        latest_iv = self._safe_float(latest.get('iv', 0))
+        first_pcr = self._safe_float(first.get('pcr', 0))
+        latest_pcr = self._safe_float(latest.get('pcr', 0))
 
         changes = {
             'net_gex_change': latest_net_gex - first_net_gex,
@@ -144,9 +184,20 @@ def display_intraday_dashboard(symbol: str):
 
         # Calculate changes
         changes = tracker.calculate_changes(symbol)
+
+        if not changes:
+            st.info("Need at least 2 valid snapshots to show trends. Please capture more snapshots.")
+            return
     except Exception as e:
-        st.warning(f"⚠️ Unable to display intraday tracking: {str(e)}")
-        st.caption("Intraday tracking will resume on next refresh. Try refreshing the symbol data.")
+        st.error(f"⚠️ Unable to display intraday tracking: {str(e)}")
+        st.warning("""
+        **Data may be corrupted.** Click the button below to clear and restart tracking.
+        """)
+        if st.button("🗑️ Clear Corrupted Data", key="clear_corrupted"):
+            tracker = IntradayTracker()
+            tracker.clear_snapshots(symbol)
+            st.success("✅ Data cleared! Refresh the page to start tracking again.")
+            st.rerun()
         return
 
     # Display key changes
