@@ -73,6 +73,35 @@ from intelligence_and_strategies import (
 from visualization_and_plans import GEXVisualizer, TradingPlanGenerator, StrategyEngine
 from std_tracking_component import display_std_level_changes
 
+# Import new feature modules
+from position_sizing import (
+    calculate_optimal_position_size,
+    display_position_sizing,
+    display_position_size_controls,
+    display_kelly_criterion_calculator
+)
+from multi_symbol_scanner import (
+    SmartCache,
+    scan_symbols,
+    display_scanner_dashboard,
+    display_watchlist_manager,
+    display_scanner_controls
+)
+from alerts_system import (
+    Alert,
+    AlertManager,
+    display_alert_dashboard,
+    display_alert_monitor_widget,
+    display_alert_settings,
+    display_quick_alert_setup
+)
+from intraday_tracking import (
+    IntradayTracker,
+    display_intraday_dashboard,
+    display_snapshot_widget,
+    get_intraday_summary
+)
+
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
@@ -262,6 +291,12 @@ def main():
 
         st.divider()
 
+        # Alert Monitoring Widget
+        if st.session_state.current_data:
+            display_alert_monitor_widget(st.session_state.current_data.get('gex', {}))
+
+        st.divider()
+
         # 2. Timezone Settings (SECOND)
         st.subheader("🕐 Timezone Preference")
         if 'user_timezone' not in st.session_state:
@@ -356,7 +391,9 @@ def main():
     # Main Content Area - Tabs
     tabs = st.tabs([
         "📈 GEX Analysis",
-        "🎯 Trade Setups", 
+        "🎯 Trade Setups",
+        "🔍 Multi-Symbol Scanner",
+        "🔔 Alerts",
         "📅 Trading Plans",
         "💬 AI Co-Pilot",
         "📊 Positions",
@@ -680,6 +717,23 @@ def main():
             else:
                 st.info("💡 Monte Carlo simulation requires valid GEX data. Refresh the symbol to load data.")
 
+            # ==================================================================
+            # SECTION 5: INTRADAY GEX TRACKING
+            # ==================================================================
+            st.divider()
+            st.header(f"📸 Intraday GEX Tracking")
+
+            # Auto-capture snapshot on refresh
+            tracker = IntradayTracker()
+            tracker.capture_snapshot(
+                current_symbol,
+                gex_data,
+                data.get('skew', {})
+            )
+
+            # Display intraday dashboard
+            display_intraday_dashboard(current_symbol)
+
         else:
             st.info("👈 Enter a symbol and click Refresh to begin analysis")
     
@@ -764,6 +818,17 @@ def main():
                             risk_text += f"Position size should be {size_value} to maintain proper risk management."
                             st.markdown(risk_text)
 
+                            # Position Sizing Calculator
+                            st.markdown("---")
+                            account_size = st.session_state.get('account_size', 50000)
+                            risk_pct = st.session_state.get('risk_per_trade', 2.0)
+
+                            # Add option premium to trade dict if not present (default estimate)
+                            if 'option_premium' not in trade:
+                                trade['option_premium'] = 2.50
+
+                            display_position_sizing(trade, account_size, risk_pct)
+
                             # Why This Works
                             win_rate_value = trade.get('win_rate', '')
                             if win_rate_value:
@@ -813,9 +878,51 @@ def main():
                 st.info("💡 Trading setups work best with high-volume symbols like SPY, QQQ, TSLA, AAPL")
         else:
             st.info("👈 Enter a symbol and click Refresh to see available setups")
-    
-    # Tab 3: Trading Plans
+
+    # Tab 3: Multi-Symbol Scanner
     with tabs[2]:
+        st.subheader("🔍 Multi-Symbol Scanner")
+        st.markdown("**Find the best trading opportunities across your watchlist**")
+
+        # Watchlist Manager
+        watchlist = display_watchlist_manager()
+
+        st.divider()
+
+        # Scan controls
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info(f"💡 Ready to scan {len(watchlist)} symbols from your watchlist")
+        with col2:
+            force_refresh = st.checkbox("Force Refresh", help="Bypass cache and fetch fresh data")
+
+        # Scan button
+        if st.button("🔍 Scan Watchlist", type="primary", use_container_width=True):
+            with st.spinner(f"Scanning {len(watchlist)} symbols..."):
+                try:
+                    scan_results = scan_symbols(
+                        watchlist,
+                        st.session_state.api_client,
+                        force_refresh=force_refresh
+                    )
+                    st.session_state.scan_results = scan_results
+                except Exception as e:
+                    st.error(f"❌ Error scanning symbols: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+        # Display results
+        if 'scan_results' in st.session_state and not st.session_state.scan_results.empty:
+            display_scanner_dashboard(st.session_state.scan_results)
+        else:
+            st.info("👆 Click 'Scan Watchlist' to find trading opportunities")
+
+    # Tab 4: Alerts
+    with tabs[3]:
+        display_alert_dashboard()
+
+    # Tab 5: Trading Plans
+    with tabs[4]:
         st.subheader("📅 Comprehensive Trading Plans")
         
         # Plan type selector
@@ -889,9 +996,9 @@ def main():
                 st.info("💡 Trading plans work best with high-volume symbols like SPY, QQQ, TSLA, AAPL")
         else:
             st.info("👈 Enter a symbol and click 'Generate Plan' to create a comprehensive trading plan")
-    
-    # Tab 4: AI Co-Pilot
-    with tabs[3]:
+
+    # Tab 6: AI Co-Pilot
+    with tabs[5]:
         st.subheader("💬 Intelligent Trading Co-Pilot")
 
         # Mode selection buttons
@@ -1456,12 +1563,12 @@ def main():
                         """)
 
 
-    # Tab 5: Positions & Tracking
-    with tabs[4]:
+    # Tab 7: Positions & Tracking
+    with tabs[6]:
         display_position_management()
-    
-    # Tab 6: Education
-    with tabs[5]:
+
+    # Tab 8: Education
+    with tabs[7]:
         display_education_content()
 
 def display_position_management():
