@@ -164,6 +164,7 @@ def init_database():
             direction TEXT,
             entry_price REAL,
             current_price REAL,
+            exit_price REAL,
             target REAL,
             stop REAL,
             size REAL,
@@ -225,6 +226,7 @@ def _migrate_positions_table(cursor):
     # Define new columns to add
     new_columns = {
         'quantity': 'INTEGER',
+        'exit_price': 'REAL',
         'entry_net_gex': 'REAL',
         'entry_flip_point': 'REAL',
         'entry_spot_price': 'REAL',
