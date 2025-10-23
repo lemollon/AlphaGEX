@@ -167,9 +167,15 @@ def init_database():
             target REAL,
             stop REAL,
             size REAL,
+            quantity INTEGER,
             status TEXT DEFAULT 'ACTIVE',
             closed_at DATETIME,
-            pnl REAL
+            pnl REAL,
+            entry_net_gex REAL,
+            entry_flip_point REAL,
+            entry_spot_price REAL,
+            entry_regime TEXT,
+            notes TEXT
         )
     ''')
     
@@ -202,5 +208,35 @@ def init_database():
         )
     ''')
     
+    # Migrate existing databases to add new columns
+    _migrate_positions_table(c)
+
     conn.commit()
     conn.close()
+
+
+def _migrate_positions_table(cursor):
+    """Add new columns to existing positions table if they don't exist"""
+
+    # Get existing columns
+    cursor.execute("PRAGMA table_info(positions)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+
+    # Define new columns to add
+    new_columns = {
+        'quantity': 'INTEGER',
+        'entry_net_gex': 'REAL',
+        'entry_flip_point': 'REAL',
+        'entry_spot_price': 'REAL',
+        'entry_regime': 'TEXT',
+        'notes': 'TEXT'
+    }
+
+    # Add missing columns
+    for column_name, column_type in new_columns.items():
+        if column_name not in existing_columns:
+            try:
+                cursor.execute(f"ALTER TABLE positions ADD COLUMN {column_name} {column_type}")
+            except sqlite3.OperationalError:
+                # Column might already exist or table doesn't exist yet
+                pass
