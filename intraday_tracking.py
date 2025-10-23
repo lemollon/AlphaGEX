@@ -35,13 +35,13 @@ class IntradayTracker:
         snapshot = {
             'timestamp': datetime.now(),
             'time_str': datetime.now().strftime('%H:%M'),
-            'spot_price': gex_data.get('spot_price', 0),
-            'net_gex': gex_data.get('net_gex', 0),
-            'flip_point': gex_data.get('flip_point', 0),
-            'call_wall': gex_data.get('call_wall', 0),
-            'put_wall': gex_data.get('put_wall', 0),
-            'iv': skew_data.get('implied_volatility', 0) * 100 if skew_data else 0,
-            'pcr': skew_data.get('pcr_oi', 0) if skew_data else 0
+            'spot_price': float(gex_data.get('spot_price', 0)),
+            'net_gex': float(gex_data.get('net_gex', 0)),
+            'flip_point': float(gex_data.get('flip_point', 0)),
+            'call_wall': float(gex_data.get('call_wall', 0)),
+            'put_wall': float(gex_data.get('put_wall', 0)),
+            'iv': float(skew_data.get('implied_volatility', 0)) * 100 if skew_data else 0.0,
+            'pcr': float(skew_data.get('pcr_oi', 0)) if skew_data else 0.0
         }
 
         # Check if we already have a snapshot from this minute (avoid duplicates)
@@ -80,18 +80,30 @@ class IntradayTracker:
         first = snapshots[0]
         latest = snapshots[-1]
 
+        # Convert to float to handle any legacy string values
+        first_net_gex = float(first.get('net_gex', 0))
+        latest_net_gex = float(latest.get('net_gex', 0))
+        first_flip = float(first.get('flip_point', 0))
+        latest_flip = float(latest.get('flip_point', 0))
+        first_spot = float(first.get('spot_price', 0))
+        latest_spot = float(latest.get('spot_price', 0))
+        first_iv = float(first.get('iv', 0))
+        latest_iv = float(latest.get('iv', 0))
+        first_pcr = float(first.get('pcr', 0))
+        latest_pcr = float(latest.get('pcr', 0))
+
         changes = {
-            'net_gex_change': latest.get('net_gex', 0) - first.get('net_gex', 0),
-            'net_gex_change_pct': ((latest.get('net_gex', 0) - first.get('net_gex', 0)) / abs(first.get('net_gex', 1)) * 100)
-                                  if first.get('net_gex', 0) != 0 else 0,
-            'flip_change': latest.get('flip_point', 0) - first.get('flip_point', 0),
-            'flip_change_pct': ((latest.get('flip_point', 0) - first.get('flip_point', 0)) / first.get('flip_point', 1) * 100)
-                              if first.get('flip_point', 0) != 0 else 0,
-            'price_change': latest.get('spot_price', 0) - first.get('spot_price', 0),
-            'price_change_pct': ((latest.get('spot_price', 0) - first.get('spot_price', 0)) / first.get('spot_price', 1) * 100)
-                               if first.get('spot_price', 0) != 0 else 0,
-            'iv_change': latest.get('iv', 0) - first.get('iv', 0),
-            'pcr_change': latest.get('pcr', 0) - first.get('pcr', 0),
+            'net_gex_change': latest_net_gex - first_net_gex,
+            'net_gex_change_pct': ((latest_net_gex - first_net_gex) / abs(first_net_gex) * 100)
+                                  if first_net_gex != 0 else 0,
+            'flip_change': latest_flip - first_flip,
+            'flip_change_pct': ((latest_flip - first_flip) / first_flip * 100)
+                              if first_flip != 0 else 0,
+            'price_change': latest_spot - first_spot,
+            'price_change_pct': ((latest_spot - first_spot) / first_spot * 100)
+                               if first_spot != 0 else 0,
+            'iv_change': latest_iv - first_iv,
+            'pcr_change': latest_pcr - first_pcr,
             'num_snapshots': len(snapshots),
             'first_time': first.get('time_str', 'N/A'),
             'latest_time': latest.get('time_str', 'N/A')
