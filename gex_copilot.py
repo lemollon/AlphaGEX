@@ -101,6 +101,11 @@ from intraday_tracking import (
     display_snapshot_widget,
     get_intraday_summary
 )
+from trade_journal_agent import (
+    TradeJournalAgent,
+    display_trade_journal,
+    display_journal_settings
+)
 
 # ============================================================================
 # PAGE CONFIG
@@ -140,7 +145,9 @@ def main():
         st.session_state.strategy_optimizer = MultiStrategyOptimizer()
     if 'level_calculator' not in st.session_state:
         st.session_state.level_calculator = DynamicLevelCalculator()
-    
+    if 'trade_journal_agent' not in st.session_state:
+        st.session_state.trade_journal_agent = TradeJournalAgent()
+
     # Header with better styling
     st.markdown("""
     <h1 style='text-align: center; color: #00D4FF;'>
@@ -397,6 +404,7 @@ def main():
         "📅 Trading Plans",
         "💬 AI Co-Pilot",
         "📊 Positions",
+        "📔 Trade Journal",
         "📚 Education"
     ])
     
@@ -1570,8 +1578,13 @@ def main():
     with tabs[6]:
         display_position_management()
 
-    # Tab 8: Education
+    # Tab 8: Trade Journal - AI Performance Analysis
     with tabs[7]:
+        journal_period = display_journal_settings()
+        display_trade_journal(st.session_state.trade_journal_agent, days_back=journal_period)
+
+    # Tab 9: Education
+    with tabs[8]:
         display_education_content()
 
 def display_position_management():
