@@ -231,17 +231,35 @@ class GEXVisualizer:
 
     @staticmethod
     def create_historical_chart(gamma_history: List[Dict], skew_history: List[Dict], symbol: str) -> go.Figure:
-        """Create historical trends chart for gamma and skew metrics"""
+        """Create historical trends chart for gamma and skew metrics with trading insights"""
         from plotly.subplots import make_subplots
         import pandas as pd
         from datetime import datetime
 
+        # DEBUG: Print what we received
+        print("\n" + "="*60)
+        print("HISTORICAL CHART DEBUG INFO")
+        print("="*60)
+        print(f"Symbol: {symbol}")
+        print(f"Gamma history records: {len(gamma_history) if gamma_history else 0}")
+        print(f"Skew history records: {len(skew_history) if skew_history else 0}")
+
+        if gamma_history and len(gamma_history) > 0:
+            print(f"\nFirst gamma record keys: {list(gamma_history[0].keys())}")
+            print(f"First gamma record: {gamma_history[0]}")
+
+        if skew_history and len(skew_history) > 0:
+            print(f"\nFirst skew record keys: {list(skew_history[0].keys())}")
+            print(f"First skew record: {skew_history[0]}")
+        print("="*60 + "\n")
+
         if not gamma_history and not skew_history:
             fig = go.Figure()
             fig.add_annotation(
-                text="No historical data available",
+                text="No historical data available<br>Check Streamlit logs for API response details",
                 xref="paper", yref="paper",
-                x=0.5, y=0.5, showarrow=False
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=16, color="white")
             )
             return fig
 
@@ -250,7 +268,7 @@ class GEXVisualizer:
             rows=3, cols=1,
             row_heights=[0.4, 0.3, 0.3],
             shared_xaxes=True,
-            vertical_spacing=0.05,
+            vertical_spacing=0.08,
             specs=[[{"secondary_y": True}], [{"secondary_y": False}], [{"secondary_y": False}]],
             subplot_titles=(
                 'Flip Point & Net GEX Trend',
@@ -260,10 +278,12 @@ class GEXVisualizer:
         )
 
         # Process gamma history
+        current_price = None
         if gamma_history:
             dates = []
             flip_points = []
             net_gex_values = []
+            spot_prices = []
 
             for entry in gamma_history:
                 try:
@@ -273,36 +293,79 @@ class GEXVisualizer:
                     dates.append(datetime.strptime(date_str, '%Y-%m-%d'))
                     flip_points.append(float(entry.get('gex_flip_price', 0)))
                     net_gex_values.append(float(entry.get('skew_adjusted_gex', 0)) / 1e9)
-                except:
+                    spot = float(entry.get('spot_price', 0))
+                    if spot > 0:
+                        spot_prices.append(spot)
+                except Exception as e:
+                    print(f"Error processing gamma entry: {e}, entry: {entry}")
                     continue
 
-            # Flip Point line
-            fig.add_trace(
-                go.Scatter(
-                    x=dates,
-                    y=flip_points,
-                    name='Flip Point',
-                    line=dict(color='orange', width=2),
-                    hovertemplate='%{x|%Y-%m-%d}<br>Flip: $%{y:.2f}<extra></extra>'
-                ),
-                row=1, col=1,
-                secondary_y=False
-            )
+            # Get current price (most recent)
+            if spot_prices:
+                current_price = spot_prices[-1]
 
-            # Net GEX bars
-            colors = ['green' if x > 0 else 'red' for x in net_gex_values]
-            fig.add_trace(
-                go.Bar(
-                    x=dates,
-                    y=net_gex_values,
-                    name='Net GEX',
-                    marker_color=colors,
-                    opacity=0.6,
-                    hovertemplate='%{x|%Y-%m-%d}<br>Net GEX: $%{y:.2f}B<extra></extra>'
-                ),
-                row=1, col=1,
-                secondary_y=True
-            )
+            if dates and flip_points:
+                # Flip Point line
+                fig.add_trace(
+                    go.Scatter(
+                        x=dates,
+                        y=flip_points,
+                        name='Flip Point',
+                        line=dict(color='orange', width=3),
+                        hovertemplate='%{x|%Y-%m-%d}<br>Flip: $%{y:.2f}<extra></extra>'
+                    ),
+                    row=1, col=1,
+                    secondary_y=False
+                )
+
+                # Add current price line if available
+                if current_price:
+                    fig.add_hline(
+                        y=current_price,
+                        line_dash="dot",
+                        line_color="white",
+                        line_width=2,
+                        row=1, col=1,
+                        annotation_text=f"Current: ${current_price:.2f}",
+                        annotation_position="right",
+                        annotation=dict(font_size=10, font_color="white")
+                    )
+
+                # Calculate and show trend
+                if len(flip_points) >= 2:
+                    trend = "RISING" if flip_points[-1] > flip_points[0] else "FALLING"
+                    trend_color = "lime" if trend == "RISING" else "red"
+                    change_pct = ((flip_points[-1] - flip_points[0]) / flip_points[0] * 100) if flip_points[0] != 0 else 0
+
+                    fig.add_annotation(
+                        text=f"Flip Trend: {trend} ({change_pct:+.1f}%)",
+                        xref="x", yref="y",
+                        x=dates[-1], y=flip_points[-1],
+                        showarrow=True,
+                        arrowhead=2,
+                        arrowcolor=trend_color,
+                        font=dict(size=11, color=trend_color, family="monospace"),
+                        bgcolor="rgba(0,0,0,0.8)",
+                        bordercolor=trend_color,
+                        borderwidth=2,
+                        row=1, col=1
+                    )
+
+            if dates and net_gex_values:
+                # Net GEX bars
+                colors = ['green' if x > 0 else 'red' for x in net_gex_values]
+                fig.add_trace(
+                    go.Bar(
+                        x=dates,
+                        y=net_gex_values,
+                        name='Net GEX',
+                        marker_color=colors,
+                        opacity=0.6,
+                        hovertemplate='%{x|%Y-%m-%d}<br>Net GEX: $%{y:.2f}B<extra></extra>'
+                    ),
+                    row=1, col=1,
+                    secondary_y=True
+                )
 
         # Process skew history for IV
         if skew_history:
@@ -318,38 +381,74 @@ class GEXVisualizer:
                     dates_iv.append(datetime.strptime(date_str, '%Y-%m-%d'))
                     iv_values.append(float(entry.get('implied_volatility', 0)) * 100)
                     pcr_values.append(float(entry.get('pcr_oi', 0)))
-                except:
+                except Exception as e:
+                    print(f"Error processing skew entry: {e}, entry: {entry}")
                     continue
 
-            # IV line
-            fig.add_trace(
-                go.Scatter(
-                    x=dates_iv,
-                    y=iv_values,
-                    name='Implied Vol',
-                    line=dict(color='purple', width=2),
-                    fill='tozeroy',
-                    fillcolor='rgba(128, 0, 128, 0.2)',
-                    hovertemplate='%{x|%Y-%m-%d}<br>IV: %{y:.1f}%<extra></extra>'
-                ),
-                row=2, col=1
-            )
+            if dates_iv and iv_values:
+                # IV line with trend indicator
+                fig.add_trace(
+                    go.Scatter(
+                        x=dates_iv,
+                        y=iv_values,
+                        name='Implied Vol',
+                        line=dict(color='purple', width=3),
+                        fill='tozeroy',
+                        fillcolor='rgba(128, 0, 128, 0.2)',
+                        hovertemplate='%{x|%Y-%m-%d}<br>IV: %{y:.1f}%<extra></extra>'
+                    ),
+                    row=2, col=1
+                )
 
-            # PCR line
-            fig.add_trace(
-                go.Scatter(
-                    x=dates_iv,
-                    y=pcr_values,
-                    name='Put/Call Ratio',
-                    line=dict(color='cyan', width=2),
-                    hovertemplate='%{x|%Y-%m-%d}<br>PCR: %{y:.2f}<extra></extra>'
-                ),
-                row=3, col=1
-            )
+                # Add IV interpretation
+                if len(iv_values) >= 2:
+                    avg_iv = np.mean(iv_values)
+                    current_iv = iv_values[-1]
+                    iv_level = "HIGH" if current_iv > avg_iv * 1.1 else "LOW" if current_iv < avg_iv * 0.9 else "NORMAL"
+                    iv_color = "red" if iv_level == "HIGH" else "lime" if iv_level == "LOW" else "yellow"
+
+                    fig.add_hline(
+                        y=avg_iv,
+                        line_dash="dash",
+                        line_color="gray",
+                        line_width=1,
+                        row=2, col=1,
+                        annotation_text=f"Avg: {avg_iv:.1f}%",
+                        annotation_position="left"
+                    )
+
+            if dates_iv and pcr_values:
+                # PCR line with sentiment zones
+                fig.add_trace(
+                    go.Scatter(
+                        x=dates_iv,
+                        y=pcr_values,
+                        name='Put/Call Ratio',
+                        line=dict(color='cyan', width=3),
+                        hovertemplate='%{x|%Y-%m-%d}<br>PCR: %{y:.2f}<extra></extra>'
+                    ),
+                    row=3, col=1
+                )
+
+                # Add PCR interpretation zones
+                fig.add_hrect(
+                    y0=0, y1=0.7,
+                    fillcolor="green", opacity=0.1,
+                    layer="below", line_width=0,
+                    row=3, col=1,
+                    annotation_text="BULLISH ZONE", annotation_position="top left"
+                )
+                fig.add_hrect(
+                    y0=1.3, y1=max(pcr_values) * 1.1 if pcr_values else 2.0,
+                    fillcolor="red", opacity=0.1,
+                    layer="below", line_width=0,
+                    row=3, col=1,
+                    annotation_text="BEARISH ZONE", annotation_position="top left"
+                )
 
         fig.update_layout(
-            title=f'{symbol} - Historical Gamma & Skew Analysis',
-            height=800,
+            title=f'{symbol} - Historical Gamma & Skew Analysis (30 Days)',
+            height=900,
             showlegend=True,
             hovermode='x unified',
             template='plotly_dark'
@@ -366,9 +465,36 @@ class GEXVisualizer:
         fig.add_hline(
             y=1.0,
             line_dash="dash",
-            line_color="gray",
+            line_color="white",
+            line_width=2,
             row=3, col=1,
-            annotation_text="PCR = 1.0 (Neutral)"
+            annotation_text="NEUTRAL (PCR = 1.0)",
+            annotation_position="right"
+        )
+
+        # Add trading insights annotation
+        insights_text = (
+            "📊 TRADING SIGNALS:<br>"
+            "• Price ABOVE Flip = Bullish GEX support<br>"
+            "• Price BELOW Flip = Bearish GEX pressure<br>"
+            "• HIGH IV = Premium selling opportunity<br>"
+            "• LOW IV = Option buying opportunity<br>"
+            "• PCR > 1.3 = Bearish sentiment<br>"
+            "• PCR < 0.7 = Bullish sentiment"
+        )
+
+        fig.add_annotation(
+            text=insights_text,
+            xref="paper", yref="paper",
+            x=0.02, y=0.98,
+            showarrow=False,
+            bordercolor="cyan",
+            borderwidth=2,
+            bgcolor="rgba(0,0,0,0.9)",
+            font=dict(size=10, color="white", family="monospace"),
+            align="left",
+            xanchor="left",
+            yanchor="top"
         )
 
         return fig

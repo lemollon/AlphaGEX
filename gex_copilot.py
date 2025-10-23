@@ -71,6 +71,7 @@ from intelligence_and_strategies import (
     get_et_time, get_utc_time, get_local_time, is_market_open
 )
 from visualization_and_plans import GEXVisualizer, TradingPlanGenerator, StrategyEngine
+from std_tracking_component import display_std_level_changes
 
 # ============================================================================
 # PAGE CONFIG
@@ -587,6 +588,18 @@ def main():
                         data['gex'].get('spot_price', 100)
                     )
                     st.plotly_chart(mc_fig, use_container_width=True)
+
+            # Standard Deviation Level Tracking
+            st.divider()
+            st.subheader(f"📏 {current_symbol} Std Deviation Level Tracking")
+
+            # Get yesterday's data for comparison
+            yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
+
+            if yesterday_data:
+                display_std_level_changes(data.get('gex', {}), yesterday_data)
+            else:
+                st.info("📊 Yesterday's data not available. Need 2+ days of data to show std level changes.")
 
             # Historical Trends Analysis
             st.divider()
