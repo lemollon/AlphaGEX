@@ -185,21 +185,16 @@ def display_scanner_dashboard(df: pd.DataFrame):
     # Sort by confidence (best opportunities first)
     df_sorted = df.sort_values('confidence', ascending=False)
 
-    # Color coding
-    def highlight_confidence(row):
-        if row['confidence'] >= 70:
-            return ['background-color: rgba(0, 255, 0, 0.2)'] * len(row)
-        elif row['confidence'] >= 60:
-            return ['background-color: rgba(255, 255, 0, 0.1)'] * len(row)
-        else:
-            return ['background-color: rgba(255, 0, 0, 0.1)'] * len(row)
-
     # Display formatted table
     display_df = df_sorted[[
         'symbol', 'spot_price', 'net_gex', 'distance_to_flip',
         'iv', 'setup_type', 'confidence', 'action', 'cache_status'
     ]].copy()
 
+    # Keep raw confidence values for styling
+    confidence_values = display_df['confidence'].copy()
+
+    # Rename columns
     display_df.columns = [
         'Symbol', 'Price', 'Net GEX ($B)', 'Dist to Flip (%)',
         'IV (%)', 'Setup', 'Conf %', 'Action', 'Status'
@@ -241,6 +236,20 @@ def display_scanner_dashboard(df: pd.DataFrame):
     display_df['Dist to Flip (%)'] = display_df['Dist to Flip (%)'].apply(safe_format_percent)
     display_df['IV (%)'] = display_df['IV (%)'].apply(safe_format_iv)
     display_df['Conf %'] = display_df['Conf %'].apply(safe_format_conf)
+
+    # Color coding based on raw confidence values
+    def highlight_confidence(row):
+        idx = row.name
+        try:
+            conf = float(confidence_values.iloc[idx])
+            if conf >= 70:
+                return ['background-color: rgba(0, 255, 0, 0.2)'] * len(row)
+            elif conf >= 60:
+                return ['background-color: rgba(255, 255, 0, 0.1)'] * len(row)
+            else:
+                return ['background-color: rgba(255, 0, 0, 0.1)'] * len(row)
+        except (ValueError, TypeError, IndexError):
+            return [''] * len(row)
 
     st.dataframe(
         display_df.style.apply(highlight_confidence, axis=1),
