@@ -205,12 +205,42 @@ def display_scanner_dashboard(df: pd.DataFrame):
         'IV (%)', 'Setup', 'Conf %', 'Action', 'Status'
     ]
 
-    # Format numeric columns
-    display_df['Price'] = display_df['Price'].apply(lambda x: f"${x:.2f}")
-    display_df['Net GEX ($B)'] = display_df['Net GEX ($B)'].apply(lambda x: f"{x:.2f}B")
-    display_df['Dist to Flip (%)'] = display_df['Dist to Flip (%)'].apply(lambda x: f"{x:+.1f}%")
-    display_df['IV (%)'] = display_df['IV (%)'].apply(lambda x: f"{x:.1f}%")
-    display_df['Conf %'] = display_df['Conf %'].apply(lambda x: f"{x}%")
+    # Format numeric columns (safely handle non-numeric values)
+    def safe_format_price(x):
+        try:
+            return f"${float(x):.2f}" if x != 'N/A' else 'N/A'
+        except (ValueError, TypeError):
+            return 'N/A'
+
+    def safe_format_gex(x):
+        try:
+            return f"{float(x):.2f}B" if x != 'N/A' else 'N/A'
+        except (ValueError, TypeError):
+            return 'N/A'
+
+    def safe_format_percent(x):
+        try:
+            return f"{float(x):+.1f}%" if x != 'N/A' else 'N/A'
+        except (ValueError, TypeError):
+            return 'N/A'
+
+    def safe_format_iv(x):
+        try:
+            return f"{float(x):.1f}%" if x != 'N/A' else 'N/A'
+        except (ValueError, TypeError):
+            return 'N/A'
+
+    def safe_format_conf(x):
+        try:
+            return f"{int(x)}%" if x != 'N/A' else 'N/A'
+        except (ValueError, TypeError):
+            return 'N/A'
+
+    display_df['Price'] = display_df['Price'].apply(safe_format_price)
+    display_df['Net GEX ($B)'] = display_df['Net GEX ($B)'].apply(safe_format_gex)
+    display_df['Dist to Flip (%)'] = display_df['Dist to Flip (%)'].apply(safe_format_percent)
+    display_df['IV (%)'] = display_df['IV (%)'].apply(safe_format_iv)
+    display_df['Conf %'] = display_df['Conf %'].apply(safe_format_conf)
 
     st.dataframe(
         display_df.style.apply(highlight_confidence, axis=1),
