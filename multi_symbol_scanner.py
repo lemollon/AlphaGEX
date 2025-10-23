@@ -103,7 +103,7 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
         else:
             # Fetch fresh data
             try:
-                gex_data = api_client.get_gex_data(symbol)
+                gex_data = api_client.get_net_gamma(symbol)
                 skew_data = api_client.get_skew_data(symbol)
 
                 # Import here to avoid circular dependency
@@ -141,8 +141,17 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                 st.warning(f"⚠️ Error scanning {symbol}: {str(e)}")
                 scan_result = {
                     'symbol': symbol,
-                    'cache_status': f'Error: {str(e)}',
-                    'confidence': 0
+                    'spot_price': 0,
+                    'net_gex': 0,
+                    'flip_point': 0,
+                    'distance_to_flip': 0,
+                    'iv': 0,
+                    'pcr': 0,
+                    'setup_type': 'Error',
+                    'confidence': 0,
+                    'action': 'N/A',
+                    'cache_status': f'Error',
+                    'timestamp': datetime.now()
                 }
 
         results.append(scan_result)
@@ -165,6 +174,13 @@ def display_scanner_dashboard(df: pd.DataFrame):
         return
 
     st.subheader("📊 Multi-Symbol Scanner Results")
+
+    # Ensure all required columns exist
+    required_columns = ['symbol', 'spot_price', 'net_gex', 'distance_to_flip',
+                       'iv', 'setup_type', 'confidence', 'action', 'cache_status']
+    for col in required_columns:
+        if col not in df.columns:
+            df[col] = 0 if col not in ['symbol', 'setup_type', 'action', 'cache_status'] else 'N/A'
 
     # Sort by confidence (best opportunities first)
     df_sorted = df.sort_values('confidence', ascending=False)
