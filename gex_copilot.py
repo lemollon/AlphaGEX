@@ -539,7 +539,11 @@ def main():
             st.subheader(f"📊 GEX Profile")
             if data.get('profile'):
                 visualizer = GEXVisualizer()
-                fig = visualizer.create_gex_profile(data['profile'])
+                # Add flip_point from GEX data to profile for chart consistency
+                profile_with_levels = data['profile'].copy()
+                profile_with_levels['flip_point'] = gex_data.get('flip_point', 0)
+                profile_with_levels['spot_price'] = gex_data.get('spot_price', 0)
+                fig = visualizer.create_gex_profile(profile_with_levels)
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.warning(f"No GEX profile data available for {current_symbol}. Chart cannot be displayed.")
