@@ -262,169 +262,7 @@ def main():
 
         st.divider()
 
-        # 2. Current Analysis Display (SECOND)
-        if st.session_state.current_data:
-            data = st.session_state.current_data.get('gex', {})
-            current_symbol = st.session_state.current_data.get('symbol', 'SPY')
-
-            st.subheader("📈 Current Analysis")
-
-            # Net GEX
-            net_gex = data.get('net_gex', 0)
-            st.metric(
-                "Net GEX",
-                f"${net_gex/1e9:.2f}B",
-                delta="Negative" if net_gex < 0 else "Positive",
-                delta_color="inverse" if net_gex < 0 else "normal"
-            )
-
-            # MM State
-            claude = ClaudeIntelligence()
-            mm_state = claude._determine_mm_state(net_gex)
-            state_config = MM_STATES[mm_state]
-
-            st.info(f"""
-            **MM State: {mm_state}**
-            {state_config['behavior']}
-
-            **Action: {state_config['action']}**
-            """)
-
-            # Day-Over-Day Changes (lazy-loaded to save API calls)
-            with st.expander("📊 Day-Over-Day Trends (Click to Load)", expanded=False):
-                if st.button("📈 Load Yesterday's Data", key="load_dod_trends"):
-                    # Fetch yesterday's data for comparison (historical API call)
-                    yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
-
-                    if yesterday_data:
-                        changes = st.session_state.api_client.calculate_day_over_day_changes(data, yesterday_data)
-
-                        if changes:
-                            col1, col2, col3 = st.columns(3)
-
-                            with col1:
-                                if 'flip_point' in changes:
-                                    fc = changes['flip_point']
-                                    st.metric(
-                                        "Flip Point Trend",
-                                        f"{fc['trend']} ${fc['current']:.2f}",
-                                        delta=f"{fc['change']:+.2f} ({fc['pct_change']:+.1f}%)"
-                                    )
-
-                            with col2:
-                                if 'implied_volatility' in changes:
-                                    iv = changes['implied_volatility']
-                                    st.metric(
-                                        "IV Trend",
-                                        f"{iv['trend']} {iv['current']*100:.1f}%",
-                                        delta=f"{iv['pct_change']:+.1f}%"
-                                    )
-
-                            with col3:
-                                if 'rating' in changes:
-                                    rt = changes['rating']
-                                    st.metric(
-                                        "TV Rating",
-                                        f"{rt['trend']} {rt['current']:.0f}",
-                                        delta=f"{rt['change']:+.0f}"
-                                    )
-                        else:
-                            st.info("No trend data available for yesterday")
-                    else:
-                        st.info("No historical data available for yesterday")
-                else:
-                    st.caption("💡 Click 'Load Yesterday's Data' to see day-over-day changes in flip point, IV, and rating")
-
-            # Key Levels
-            st.subheader("📍 Key Levels")
-
-            spot = data.get('spot_price', 0)
-            flip = data.get('flip_point', 0)
-
-            st.metric("Current Price", f"${spot:.2f}")
-            st.metric(
-                "Flip Point",
-                f"${flip:.2f}",
-                delta=f"{((flip-spot)/spot*100):+.2f}%" if spot != 0 else "N/A"
-            )
-
-            call_wall = data.get('call_wall', 0)
-            put_wall = data.get('put_wall', 0)
-
-            if call_wall:
-                st.metric("Call Wall", f"${call_wall:.2f}")
-            if put_wall:
-                st.metric("Put Wall", f"${put_wall:.2f}")
-
-            # Advanced Skew Metrics (if available)
-            if st.session_state.current_data and st.session_state.current_data.get('skew'):
-                st.subheader("📊 Skew Analysis")
-                skew = st.session_state.current_data['skew']
-
-                # Expected Moves
-                one_day_std = float(skew.get('one_day_std', 0)) * 100
-                one_week_std = float(skew.get('one_week_std', 0)) * 100
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("1-Day Expected Move", f"{one_day_std:.2f}%")
-                with col2:
-                    st.metric("7-Day Expected Move", f"{one_week_std:.2f}%")
-
-                # Delta Spread (Put/Call skew indicator)
-                delta_spread = float(skew.get('put_call_delta_spread', 0))
-                avg_spread = float(skew.get('avg_PC_delta_spread', 0))
-
-                skew_status = "BEARISH" if delta_spread < -0.03 else "BULLISH" if delta_spread > 0.03 else "NEUTRAL"
-                skew_color = "🔴" if delta_spread < -0.03 else "🟢" if delta_spread > 0.03 else "🟡"
-
-                st.metric(
-                    "Delta Spread",
-                    f"{skew_color} {delta_spread:.4f}",
-                    delta=f"Avg: {avg_spread:.4f}"
-                )
-                st.caption(f"Skew: **{skew_status}** - {'Puts expensive' if delta_spread < -0.03 else 'Calls expensive' if delta_spread > 0.03 else 'Balanced'}")
-
-                # Bollinger Band Width (volatility)
-                bb_width = float(skew.get('bollinger_band_width', 0)) * 100
-                st.metric("Bollinger Band Width", f"{bb_width:.1f}%")
-
-                # PCR Changes
-                pcr_30d = float(skew.get('pcr_oi_30_day_change', 0))
-                pcr_60d = float(skew.get('pcr_oi_60_day_change', 0))
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("PCR 30d Change", f"{pcr_30d:+.2f}")
-                with col2:
-                    st.metric("PCR 60d Change", f"{pcr_60d:+.2f}")
-
-                with st.expander("💡 How to Use Skew Data"):
-                    st.markdown("""
-                    **Delta Spread:**
-                    - **Negative (<-0.03)**: Puts more expensive than calls → Fear in market
-                      - **Action**: Consider selling put spreads, be cautious on longs
-                    - **Positive (>0.03)**: Calls more expensive → Greed/bullish positioning
-                      - **Action**: Consider selling call spreads, look for reversal
-                    - **Neutral**: Balanced positioning
-
-                    **Expected Moves:**
-                    - Use these for strike selection boundaries
-                    - 1-Day: For 0DTE trades
-                    - 7-Day: For weekly options
-
-                    **Bollinger Band Width:**
-                    - **Narrow (<15%)**: Low volatility, potential breakout coming
-                    - **Wide (>25%)**: High volatility, potential mean reversion
-
-                    **PCR Changes:**
-                    - **Increasing**: More puts being bought → Defensive positioning
-                    - **Decreasing**: Less fear → Bullish sentiment
-                    """)
-
-        st.divider()
-
-        # 3. Timezone Settings (THIRD)
+        # 2. Timezone Settings (SECOND)
         st.subheader("🕐 Timezone Preference")
         if 'user_timezone' not in st.session_state:
             st.session_state.user_timezone = 'US/Central'
@@ -538,6 +376,165 @@ def main():
             # ==================================================================
             st.header(f"🎯 {current_symbol} - Current Market Analysis")
 
+            # Current Analysis Metrics
+            gex_data = data.get('gex', {})
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                # Net GEX
+                net_gex = gex_data.get('net_gex', 0)
+                st.metric(
+                    "Net GEX",
+                    f"${net_gex/1e9:.2f}B",
+                    delta="Negative" if net_gex < 0 else "Positive",
+                    delta_color="inverse" if net_gex < 0 else "normal"
+                )
+
+                # MM State
+                claude = ClaudeIntelligence()
+                mm_state = claude._determine_mm_state(net_gex)
+                state_config = MM_STATES[mm_state]
+
+                st.info(f"""
+                **MM State: {mm_state}**
+                {state_config['behavior']}
+
+                **Action: {state_config['action']}**
+                """)
+
+            with col2:
+                # Key Levels
+                st.subheader("📍 Key Levels")
+
+                spot = gex_data.get('spot_price', 0)
+                flip = gex_data.get('flip_point', 0)
+
+                st.metric("Current Price", f"${spot:.2f}")
+                st.metric(
+                    "Flip Point",
+                    f"${flip:.2f}",
+                    delta=f"{((flip-spot)/spot*100):+.2f}%" if spot != 0 else "N/A"
+                )
+
+                call_wall = gex_data.get('call_wall', 0)
+                put_wall = gex_data.get('put_wall', 0)
+
+                if call_wall:
+                    st.metric("Call Wall", f"${call_wall:.2f}")
+                if put_wall:
+                    st.metric("Put Wall", f"${put_wall:.2f}")
+
+            with col3:
+                # Advanced Skew Metrics (if available)
+                if st.session_state.current_data and st.session_state.current_data.get('skew'):
+                    st.subheader("📊 Skew Analysis")
+                    skew = st.session_state.current_data['skew']
+
+                    # Expected Moves
+                    one_day_std = float(skew.get('one_day_std', 0)) * 100
+                    one_week_std = float(skew.get('one_week_std', 0)) * 100
+
+                    st.metric("1-Day Expected Move", f"{one_day_std:.2f}%")
+                    st.metric("7-Day Expected Move", f"{one_week_std:.2f}%")
+
+                    # Delta Spread (Put/Call skew indicator)
+                    delta_spread = float(skew.get('put_call_delta_spread', 0))
+                    avg_spread = float(skew.get('avg_PC_delta_spread', 0))
+
+                    skew_status = "BEARISH" if delta_spread < -0.03 else "BULLISH" if delta_spread > 0.03 else "NEUTRAL"
+                    skew_color = "🔴" if delta_spread < -0.03 else "🟢" if delta_spread > 0.03 else "🟡"
+
+                    st.metric(
+                        "Delta Spread",
+                        f"{skew_color} {delta_spread:.4f}",
+                        delta=f"Avg: {avg_spread:.4f}"
+                    )
+                    st.caption(f"Skew: **{skew_status}** - {'Puts expensive' if delta_spread < -0.03 else 'Calls expensive' if delta_spread > 0.03 else 'Balanced'}")
+
+                    # Bollinger Band Width
+                    bb_width = float(skew.get('bollinger_band_width', 0)) * 100
+                    st.metric("Bollinger Band Width", f"{bb_width:.1f}%")
+
+                    # PCR Changes
+                    pcr_30d = float(skew.get('pcr_oi_30_day_change', 0))
+                    pcr_60d = float(skew.get('pcr_oi_60_day_change', 0))
+
+                    st.metric("PCR 30d Change", f"{pcr_30d:+.2f}")
+                    st.metric("PCR 60d Change", f"{pcr_60d:+.2f}")
+
+            # Day-Over-Day Changes (lazy-loaded to save API calls)
+            with st.expander("📊 Day-Over-Day Trends (Click to Load)", expanded=False):
+                if st.button("📈 Load Yesterday's Data", key="load_dod_trends"):
+                    # Fetch yesterday's data for comparison (historical API call)
+                    yesterday_data_quick = st.session_state.api_client.get_yesterday_data(current_symbol)
+
+                    if yesterday_data_quick:
+                        changes = st.session_state.api_client.calculate_day_over_day_changes(gex_data, yesterday_data_quick)
+
+                        if changes:
+                            col1, col2, col3 = st.columns(3)
+
+                            with col1:
+                                if 'flip_point' in changes:
+                                    fc = changes['flip_point']
+                                    st.metric(
+                                        "Flip Point Trend",
+                                        f"{fc['trend']} ${fc['current']:.2f}",
+                                        delta=f"{fc['change']:+.2f} ({fc['pct_change']:+.1f}%)"
+                                    )
+
+                            with col2:
+                                if 'implied_volatility' in changes:
+                                    iv = changes['implied_volatility']
+                                    st.metric(
+                                        "IV Trend",
+                                        f"{iv['trend']} {iv['current']*100:.1f}%",
+                                        delta=f"{iv['pct_change']:+.1f}%"
+                                    )
+
+                            with col3:
+                                if 'rating' in changes:
+                                    rt = changes['rating']
+                                    st.metric(
+                                        "TV Rating",
+                                        f"{rt['trend']} {rt['current']:.0f}",
+                                        delta=f"{rt['change']:+.0f}"
+                                    )
+                        else:
+                            st.info("No trend data available for yesterday")
+                    else:
+                        st.info("No historical data available for yesterday")
+                else:
+                    st.caption("💡 Click 'Load Yesterday's Data' to see day-over-day changes in flip point, IV, and rating")
+
+            # Skew data educational expander
+            if st.session_state.current_data and st.session_state.current_data.get('skew'):
+                with st.expander("💡 How to Use Skew Data"):
+                    st.markdown("""
+                    **Delta Spread:**
+                    - **Negative (<-0.03)**: Puts more expensive than calls → Fear in market
+                      - **Action**: Consider selling put spreads, be cautious on longs
+                    - **Positive (>0.03)**: Calls more expensive → Greed/bullish positioning
+                      - **Action**: Consider selling call spreads, look for reversal
+                    - **Neutral**: Balanced positioning
+
+                    **Expected Moves:**
+                    - Use these for strike selection boundaries
+                    - 1-Day: For 0DTE trades
+                    - 7-Day: For weekly options
+
+                    **Bollinger Band Width:**
+                    - **Narrow (<15%)**: Low volatility, potential breakout coming
+                    - **Wide (>25%)**: High volatility, potential mean reversion
+
+                    **PCR Changes:**
+                    - **Increasing**: More puts being bought → Defensive positioning
+                    - **Decreasing**: Less fear → Bullish sentiment
+                    """)
+
+            st.divider()
+
             # Display GEX Profile Chart
             st.subheader(f"📊 GEX Profile")
             if data.get('profile'):
@@ -579,6 +576,8 @@ def main():
             # ==================================================================
             st.divider()
             st.header(f"📈 30-Day Historical Trends")
+
+            st.info("📅 **Note**: Historical charts require 30 days of data to display properly. If the chart appears blank, the API may not have accumulated 30 days of history yet. Check back in a few days as data is collected daily.")
 
             if st.button("📊 Load Historical Data"):
                 with st.spinner("Fetching 30 days of historical data..."):
