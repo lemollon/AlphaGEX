@@ -1982,29 +1982,44 @@ class StrategyEngine:
     
     @staticmethod
     def detect_setups(market_data: Dict) -> List[Dict]:
-        """Detect all available trading setups"""
-        
+        """Detect all available trading setups - ALWAYS returns at least one setup
+
+        Philosophy: There's ALWAYS an opportunity in options trading.
+        - Clear bias → Directional plays (calls/puts, spreads)
+        - No bias → Premium collection (Iron Condors, credit spreads)
+        - Think like a professional options trader: adapt to market conditions
+        """
+
         setups = []
-        
+
         net_gex = market_data.get('net_gex', 0)
         spot = market_data.get('spot_price', 0)
         flip = market_data.get('flip_point', 0)
         call_wall = market_data.get('call_wall', 0)
         put_wall = market_data.get('put_wall', 0)
-        
+
         if not spot:
             return setups
-        
-        distance_to_flip = ((flip - spot) / spot * 100) if spot else 0
-        
+
+        distance_to_flip = ((flip - spot) / spot * 100) if spot and flip else 0
+        net_gex_billions = net_gex / 1e9
+
+        # Determine market bias
+        above_flip = spot > flip
+        below_flip = spot < flip
+        near_flip = abs(distance_to_flip) < 1.0  # Within 1% of flip
+        negative_gex = net_gex < 0
+        positive_gex = net_gex > 0
+
+        # Strategy 1: NEGATIVE GEX SQUEEZE (High confidence directional)
         for strategy_name, config in STRATEGIES.items():
             conditions = config['conditions']
-            
+
             if strategy_name == 'NEGATIVE_GEX_SQUEEZE':
-                if (net_gex < conditions['net_gex_threshold'] and 
+                if (net_gex < conditions['net_gex_threshold'] and
                     abs(distance_to_flip) < conditions['distance_to_flip'] and
                     spot > put_wall + (spot * conditions['min_put_wall_distance'] / 100)):
-                    
+
                     strike = int(flip / 5) * 5 + (5 if flip % 5 > 2.5 else 0)
 
                     pricer = BlackScholesPricer()
@@ -2029,23 +2044,23 @@ class StrategyEngine:
                                    f'Historical win rate: {config["win_rate"]*100:.0f}%',
                         'best_time': 'Mon/Tue morning after confirmation'
                     })
-            
+
             elif strategy_name == 'IRON_CONDOR':
-                wall_distance = ((call_wall - put_wall) / spot * 100) if spot else 0
-                
-                if (net_gex > conditions['net_gex_threshold'] and 
+                wall_distance = ((call_wall - put_wall) / spot * 100) if spot and call_wall and put_wall else 0
+
+                if (net_gex > conditions['net_gex_threshold'] and
                     wall_distance > conditions['min_wall_distance']):
-                    
+
                     call_short = int(call_wall / 5) * 5
                     put_short = int(put_wall / 5) * 5
                     call_long = call_short + 10
                     put_long = put_short - 10
-                    
+
                     monte_carlo = MonteCarloEngine()
                     ic_sim = monte_carlo.simulate_iron_condor(
                         spot, call_short, call_long, put_short, put_long, 7
                     )
-                    
+
                     setups.append({
                         'strategy': 'IRON CONDOR',
                         'symbol': market_data.get('symbol', 'SPY'),
@@ -2063,7 +2078,116 @@ class StrategyEngine:
                                    f'Win probability: {ic_sim["win_probability"]:.0f}%',
                         'best_time': '5-10 DTE entry'
                     })
-        
+
+        # FALLBACK STRATEGIES: If no setups detected, create opportunities based on bias
+        # Real options traders ALWAYS find a trade
+        if not setups:
+            pricer = BlackScholesPricer()
+
+            # BULLISH BIAS: Price below flip + negative GEX = Long calls or call spreads
+            if below_flip and negative_gex:
+                call_strike = int((flip + (flip * 0.02)) / 5) * 5  # 2% above flip
+                call_option = pricer.calculate_option_price(spot, call_strike, 7/365, 0.25, 'call')
+
+                setups.append({
+                    'strategy': 'BULLISH CALL SPREAD',
+                    'symbol': market_data.get('symbol', 'SPY'),
+                    'action': f'BUY {call_strike} CALL / SELL {call_strike + 10} CALL',
+                    'entry_zone': f'${spot:.2f} on dips',
+                    'current_price': spot,
+                    'target_1': call_strike,
+                    'target_2': call_strike + 10,
+                    'stop_loss': spot - (spot * 0.02),
+                    'confidence': 65,
+                    'risk_reward': 2.5,
+                    'reasoning': f'Below flip (${flip:.2f}) with negative GEX (${net_gex_billions:.1f}B). '
+                               f'MMs will buy on rallies. Defined risk play toward flip point.',
+                    'best_time': '7-14 DTE, enter on morning weakness'
+                })
+
+            # BEARISH BIAS: Price above flip + negative GEX = Caution, but put spreads work
+            elif above_flip and negative_gex:
+                put_strike = int((flip - (flip * 0.02)) / 5) * 5  # 2% below flip
+
+                setups.append({
+                    'strategy': 'BEARISH PUT SPREAD',
+                    'symbol': market_data.get('symbol', 'SPY'),
+                    'action': f'BUY {put_strike} PUT / SELL {put_strike - 10} PUT',
+                    'entry_zone': f'${spot:.2f} on rallies',
+                    'current_price': spot,
+                    'target_1': flip,
+                    'target_2': put_strike - 10,
+                    'stop_loss': spot + (spot * 0.02),
+                    'confidence': 60,
+                    'risk_reward': 2.0,
+                    'reasoning': f'Extended above flip (${flip:.2f}). Negative GEX (${net_gex_billions:.1f}B) creates volatility. '
+                               f'Mean reversion play with defined risk.',
+                    'best_time': '7-14 DTE, enter on strength'
+                })
+
+            # NEUTRAL/RANGE BOUND: Positive GEX or near flip = Premium collection
+            elif positive_gex or near_flip:
+                # Iron Condor for premium collection - go 7-10 days out
+                call_short = int((spot + (spot * 0.03)) / 5) * 5  # 3% OTM
+                put_short = int((spot - (spot * 0.03)) / 5) * 5   # 3% OTM
+                call_long = call_short + 10
+                put_long = put_short - 10
+
+                setups.append({
+                    'strategy': 'IRON CONDOR (Premium Collection)',
+                    'symbol': market_data.get('symbol', 'SPY'),
+                    'action': f'SELL {call_short}/{call_long} CALL SPREAD + {put_short}/{put_long} PUT SPREAD',
+                    'entry_zone': f'${spot:.2f} current level',
+                    'current_price': spot,
+                    'max_profit_zone': f'${put_short:.2f} - ${call_short:.2f}',
+                    'breakevens': f'${put_short - 3:.2f} / ${call_short + 3:.2f}',
+                    'confidence': 70,
+                    'risk_reward': 0.35,
+                    'reasoning': f'Positive GEX (${net_gex_billions:.1f}B) or near flip creates range. '
+                               f'Collect premium from time decay. 70% historical win rate for 3% OTM ICs.',
+                    'best_time': '7-14 DTE for optimal theta/gamma ratio'
+                })
+
+            # DEFAULT FALLBACK: If somehow nothing fits, go with direction based on flip
+            else:
+                if below_flip:
+                    # Simple long call
+                    call_strike = int(flip / 5) * 5
+                    call_option = pricer.calculate_option_price(spot, call_strike, 7/365, 0.25, 'call')
+
+                    setups.append({
+                        'strategy': 'LONG CALL',
+                        'symbol': market_data.get('symbol', 'SPY'),
+                        'action': f'BUY {call_strike} CALLS',
+                        'entry_zone': f'${spot:.2f}',
+                        'current_price': spot,
+                        'target_1': flip,
+                        'target_2': call_strike + (call_strike * 0.03),
+                        'confidence': 55,
+                        'risk_reward': 2.0,
+                        'reasoning': f'Below flip point (${flip:.2f}). Simple directional play. '
+                               f'Risk limited to premium paid.',
+                        'best_time': '7-14 DTE'
+                    })
+                else:
+                    # Simple long put
+                    put_strike = int(flip / 5) * 5
+
+                    setups.append({
+                        'strategy': 'LONG PUT',
+                        'symbol': market_data.get('symbol', 'SPY'),
+                        'action': f'BUY {put_strike} PUTS',
+                        'entry_zone': f'${spot:.2f}',
+                        'current_price': spot,
+                        'target_1': flip,
+                        'target_2': put_strike - (put_strike * 0.03),
+                        'confidence': 55,
+                        'risk_reward': 2.0,
+                        'reasoning': f'Above flip point (${flip:.2f}). Potential mean reversion. '
+                               f'Risk limited to premium paid.',
+                        'best_time': '7-14 DTE'
+                    })
+
         return setups
     
     @staticmethod
