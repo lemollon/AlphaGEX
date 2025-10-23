@@ -189,8 +189,9 @@ def create_risk_reward_chart(setup: Dict, sizing: Dict):
         title=f"Risk/Reward Profile - {sizing['num_contracts']} Contracts",
         yaxis_title="Profit/Loss ($)",
         template='plotly_dark',
-        height=350,
-        showlegend=False
+        height=450,
+        showlegend=False,
+        margin=dict(t=80, b=60, l=60, r=60)
     )
 
     # Add break-even line
