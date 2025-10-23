@@ -81,20 +81,20 @@ class IntradayTracker:
         latest = snapshots[-1]
 
         changes = {
-            'net_gex_change': latest['net_gex'] - first['net_gex'],
-            'net_gex_change_pct': ((latest['net_gex'] - first['net_gex']) / abs(first['net_gex']) * 100)
-                                  if first['net_gex'] != 0 else 0,
-            'flip_change': latest['flip_point'] - first['flip_point'],
-            'flip_change_pct': ((latest['flip_point'] - first['flip_point']) / first['flip_point'] * 100)
-                              if first['flip_point'] != 0 else 0,
-            'price_change': latest['spot_price'] - first['spot_price'],
-            'price_change_pct': ((latest['spot_price'] - first['spot_price']) / first['spot_price'] * 100)
-                               if first['spot_price'] != 0 else 0,
-            'iv_change': latest['iv'] - first['iv'],
-            'pcr_change': latest['pcr'] - first['pcr'],
+            'net_gex_change': latest.get('net_gex', 0) - first.get('net_gex', 0),
+            'net_gex_change_pct': ((latest.get('net_gex', 0) - first.get('net_gex', 0)) / abs(first.get('net_gex', 1)) * 100)
+                                  if first.get('net_gex', 0) != 0 else 0,
+            'flip_change': latest.get('flip_point', 0) - first.get('flip_point', 0),
+            'flip_change_pct': ((latest.get('flip_point', 0) - first.get('flip_point', 0)) / first.get('flip_point', 1) * 100)
+                              if first.get('flip_point', 0) != 0 else 0,
+            'price_change': latest.get('spot_price', 0) - first.get('spot_price', 0),
+            'price_change_pct': ((latest.get('spot_price', 0) - first.get('spot_price', 0)) / first.get('spot_price', 1) * 100)
+                               if first.get('spot_price', 0) != 0 else 0,
+            'iv_change': latest.get('iv', 0) - first.get('iv', 0),
+            'pcr_change': latest.get('pcr', 0) - first.get('pcr', 0),
             'num_snapshots': len(snapshots),
-            'first_time': first['time_str'],
-            'latest_time': latest['time_str']
+            'first_time': first.get('time_str', 'N/A'),
+            'latest_time': latest.get('time_str', 'N/A')
         }
 
         return changes
@@ -112,25 +112,30 @@ def display_intraday_dashboard(symbol: str):
 
     st.subheader(f"📊 {symbol} - Intraday GEX Tracking")
 
-    tracker = IntradayTracker()
-    snapshots = tracker.get_snapshots(symbol)
+    try:
+        tracker = IntradayTracker()
+        snapshots = tracker.get_snapshots(symbol)
 
-    if len(snapshots) < 2:
-        st.info(f"""
-        📈 **Intraday Tracking**: Need at least 2 data points to show trends.
+        if len(snapshots) < 2:
+            st.info(f"""
+            📈 **Intraday Tracking**: Need at least 2 data points to show trends.
 
-        **How it works**:
-        - Every time you refresh {symbol}, we save a snapshot
-        - Compare snapshots to see how dealer positioning changes during the day
-        - Identify intraday regime shifts (bullish → bearish or vice versa)
+            **How it works**:
+            - Every time you refresh {symbol}, we save a snapshot
+            - Compare snapshots to see how dealer positioning changes during the day
+            - Identify intraday regime shifts (bullish → bearish or vice versa)
 
-        **Current snapshots**: {len(snapshots)}
-        **Need**: 2+ snapshots (refresh {symbol} again)
-        """)
+            **Current snapshots**: {len(snapshots)}
+            **Need**: 2+ snapshots (refresh {symbol} again)
+            """)
+            return
+
+        # Calculate changes
+        changes = tracker.calculate_changes(symbol)
+    except Exception as e:
+        st.warning(f"⚠️ Unable to display intraday tracking: {str(e)}")
+        st.caption("Intraday tracking will resume on next refresh. Try refreshing the symbol data.")
         return
-
-    # Calculate changes
-    changes = tracker.calculate_changes(symbol)
 
     # Display key changes
     st.markdown(f"**Tracking Period**: {changes['first_time']} → {changes['latest_time']} ({changes['num_snapshots']} snapshots)")

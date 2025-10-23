@@ -723,16 +723,19 @@ def main():
             st.divider()
             st.header(f"📸 Intraday GEX Tracking")
 
-            # Auto-capture snapshot on refresh
-            tracker = IntradayTracker()
-            tracker.capture_snapshot(
-                current_symbol,
-                gex_data,
-                data.get('skew', {})
-            )
+            # Auto-capture snapshot on refresh (only if we have valid GEX data)
+            if gex_data and gex_data.get('spot_price', 0) > 0:
+                tracker = IntradayTracker()
+                tracker.capture_snapshot(
+                    current_symbol,
+                    gex_data,
+                    data.get('skew', {})
+                )
 
-            # Display intraday dashboard
-            display_intraday_dashboard(current_symbol)
+                # Display intraday dashboard
+                display_intraday_dashboard(current_symbol)
+            else:
+                st.info("💡 Intraday tracking requires valid GEX data. Refresh the symbol to start tracking.")
 
         else:
             st.info("👈 Enter a symbol and click Refresh to begin analysis")
