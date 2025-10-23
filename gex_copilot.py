@@ -183,7 +183,18 @@ def main():
 
         col1, col2 = st.columns(2)
         with col1:
-            symbol = st.text_input("Enter Symbol", value="SPY")
+            # Initialize default symbol in session state
+            if 'selected_symbol' not in st.session_state:
+                st.session_state.selected_symbol = "SPY"
+
+            symbol = st.text_input(
+                "Enter Symbol",
+                value=st.session_state.selected_symbol,
+                key="symbol_input"
+            ).upper().strip()
+
+            # Update session state
+            st.session_state.selected_symbol = symbol
         with col2:
             if st.button("🔄 Refresh", type="primary", use_container_width=True):
                 with st.spinner("Fetching latest data..."):
@@ -245,7 +256,7 @@ def main():
         for i, sym in enumerate(['SPY', 'QQQ', 'IWM', 'DIA']):
             with cols[i]:
                 if st.button(sym, use_container_width=True):
-                    symbol = sym
+                    st.session_state.selected_symbol = sym
                     st.rerun()
 
         st.divider()
