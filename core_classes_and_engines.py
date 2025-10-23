@@ -1512,7 +1512,8 @@ class MonteCarloEngine:
             vol = volatility
 
             # Simulate price paths
-            price_paths = []
+            final_prices = []
+            all_price_paths = []
             hit_flip_count = 0
             hit_wall_count = 0
             max_gains = []
@@ -1525,9 +1526,10 @@ class MonteCarloEngine:
                     days
                 )
 
-                # Calculate price path
-                price_path = spot_price * np.exp(np.cumsum(daily_returns))
-                price_paths.append(price_path[-1])
+                # Calculate price path - include starting price
+                price_path = spot_price * np.exp(np.cumsum(np.insert(daily_returns, 0, 0)))
+                all_price_paths.append(price_path)
+                final_prices.append(price_path[-1])
 
                 # Check if hit flip point
                 if max(price_path) >= flip_point:
@@ -1543,7 +1545,12 @@ class MonteCarloEngine:
                 max_gains.append(max_gain_pct)
 
             # Calculate statistics
-            final_prices = np.array(price_paths)
+            final_prices = np.array(final_prices)
+            all_price_paths = np.array(all_price_paths)
+
+            # Sample some paths for visualization (max 100 paths)
+            sample_indices = np.linspace(0, self.num_simulations - 1, min(100, self.num_simulations), dtype=int)
+            price_paths_sample = all_price_paths[sample_indices]
 
             result = {
                 'probability_hit_flip': (hit_flip_count / self.num_simulations) * 100,
@@ -1554,6 +1561,7 @@ class MonteCarloEngine:
                 'max_gain_percent': np.percentile(max_gains, 95),  # 95th percentile
                 'avg_gain_percent': np.mean(max_gains),
                 'final_price_distribution': final_prices.tolist(),
+                'price_paths_sample': price_paths_sample,
             }
 
             return result

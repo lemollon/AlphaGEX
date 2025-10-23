@@ -245,12 +245,13 @@ class GEXVisualizer:
             )
             return fig
 
-        # Create subplots: 3 rows
+        # Create subplots: 3 rows with secondary y-axis for first row
         fig = make_subplots(
             rows=3, cols=1,
             row_heights=[0.4, 0.3, 0.3],
             shared_xaxes=True,
             vertical_spacing=0.05,
+            specs=[[{"secondary_y": True}], [{"secondary_y": False}], [{"secondary_y": False}]],
             subplot_titles=(
                 'Flip Point & Net GEX Trend',
                 'Implied Volatility Trend',
@@ -284,7 +285,8 @@ class GEXVisualizer:
                     line=dict(color='orange', width=2),
                     hovertemplate='%{x|%Y-%m-%d}<br>Flip: $%{y:.2f}<extra></extra>'
                 ),
-                row=1, col=1
+                row=1, col=1,
+                secondary_y=False
             )
 
             # Net GEX bars
@@ -296,10 +298,10 @@ class GEXVisualizer:
                     name='Net GEX',
                     marker_color=colors,
                     opacity=0.6,
-                    yaxis='y2',
                     hovertemplate='%{x|%Y-%m-%d}<br>Net GEX: $%{y:.2f}B<extra></extra>'
                 ),
-                row=1, col=1
+                row=1, col=1,
+                secondary_y=True
             )
 
         # Process skew history for IV
@@ -350,13 +352,15 @@ class GEXVisualizer:
             height=800,
             showlegend=True,
             hovermode='x unified',
-            template='plotly_dark',
-            xaxis3_title='Date',
-            yaxis_title='Flip Point ($)',
-            yaxis2_title='Net GEX ($B)',
-            yaxis3_title='IV (%)',
-            yaxis4_title='PCR'
+            template='plotly_dark'
         )
+
+        # Update axis labels for each subplot
+        fig.update_xaxes(title_text="Date", row=3, col=1)
+        fig.update_yaxes(title_text="Flip Point ($)", row=1, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="Net GEX ($B)", row=1, col=1, secondary_y=True)
+        fig.update_yaxes(title_text="IV (%)", row=2, col=1)
+        fig.update_yaxes(title_text="PCR", row=3, col=1)
 
         # Add reference line for PCR = 1.0
         fig.add_hline(
