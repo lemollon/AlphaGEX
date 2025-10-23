@@ -639,38 +639,42 @@ def main():
             st.divider()
             st.header(f"🎲 Monte Carlo Price Prediction")
 
-            if setups and st.button("🎲 Run Monte Carlo Simulation (10,000 paths)"):
-                with st.spinner("Running 10,000 simulations..."):
-                    setup = setups[0]
+            # Show button if we have GEX data (not dependent on setups)
+            gex_data_available = data.get('gex', {}).get('spot_price', 0) > 0
 
-                    monte_carlo = MonteCarloEngine()
-                    sim_results = monte_carlo.simulate_squeeze_play(
-                        data['gex'].get('spot_price', 100),
-                        data['gex'].get('flip_point', 101),
-                        data['gex'].get('call_wall', 105),
-                        volatility=0.20,
-                        days=5
-                    )
+            if gex_data_available:
+                if st.button("🎲 Run Monte Carlo Simulation (10,000 paths)"):
+                    with st.spinner("Running 10,000 simulations..."):
+                        monte_carlo = MonteCarloEngine()
+                        sim_results = monte_carlo.simulate_squeeze_play(
+                            data['gex'].get('spot_price', 100),
+                            data['gex'].get('flip_point', 101),
+                            data['gex'].get('call_wall', 105),
+                            volatility=0.20,
+                            days=5
+                        )
 
-                    # Display results
-                    col1, col2, col3, col4 = st.columns(4)
+                        # Display results
+                        col1, col2, col3, col4 = st.columns(4)
 
-                    with col1:
-                        st.metric("Hit Flip %", f"{sim_results['probability_hit_flip']:.1f}%")
-                    with col2:
-                        st.metric("Hit Wall %", f"{sim_results['probability_hit_wall']:.1f}%")
-                    with col3:
-                        st.metric("Expected Price", f"${sim_results['expected_final_price']:.2f}")
-                    with col4:
-                        st.metric("Max Gain", f"{sim_results['max_gain_percent']:.1f}%")
+                        with col1:
+                            st.metric("Hit Flip %", f"{sim_results['probability_hit_flip']:.1f}%")
+                        with col2:
+                            st.metric("Hit Wall %", f"{sim_results['probability_hit_wall']:.1f}%")
+                        with col3:
+                            st.metric("Expected Price", f"${sim_results['expected_final_price']:.2f}")
+                        with col4:
+                            st.metric("Max Gain", f"{sim_results['max_gain_percent']:.1f}%")
 
-                    # Display chart
-                    visualizer = GEXVisualizer()
-                    mc_fig = visualizer.create_monte_carlo_chart(
-                        sim_results,
-                        data['gex'].get('spot_price', 100)
-                    )
-                    st.plotly_chart(mc_fig, use_container_width=True)
+                        # Display chart
+                        visualizer = GEXVisualizer()
+                        mc_fig = visualizer.create_monte_carlo_chart(
+                            sim_results,
+                            data['gex'].get('spot_price', 100)
+                        )
+                        st.plotly_chart(mc_fig, use_container_width=True)
+            else:
+                st.info("💡 Monte Carlo simulation requires valid GEX data. Refresh the symbol to load data.")
 
         else:
             st.info("👈 Enter a symbol and click Refresh to begin analysis")
