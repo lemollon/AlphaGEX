@@ -102,14 +102,17 @@ class GEXVisualizer:
             row=2, col=1
         )
         
-        # Calculate flip point
-        flip_point = None
-        for i in range(len(total_gamma) - 1):
-            if total_gamma[i] * total_gamma[i + 1] < 0:
-                flip_point = strikes[i] + (strikes[i + 1] - strikes[i]) * (
-                    -total_gamma[i] / (total_gamma[i + 1] - total_gamma[i])
-                )
-                break
+        # Get flip point from API data (preferred) or calculate as fallback
+        flip_point = gex_data.get('flip_point', None)
+
+        # If not provided by API, calculate from gamma data
+        if not flip_point:
+            for i in range(len(total_gamma) - 1):
+                if total_gamma[i] * total_gamma[i + 1] < 0:
+                    flip_point = strikes[i] + (strikes[i + 1] - strikes[i]) * (
+                        -total_gamma[i] / (total_gamma[i + 1] - total_gamma[i])
+                    )
+                    break
 
         # Get wall values
         call_wall = gex_data.get('call_wall', 0)
