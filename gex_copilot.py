@@ -646,23 +646,12 @@ def main():
 
             st.divider()
 
-            # Display GEX Profile Chart
+            # Display GEX Profile Chart with STD Movement
             st.subheader(f"📊 GEX Profile")
 
-            # STD Movement toggle - OPTIONAL to reduce API calls
-            show_std_movement = st.checkbox(
-                "📈 Show ±1 STD Movement from Yesterday (requires extra API call)",
-                value=False,
-                key="show_std_movement"
-            )
-
-            # Only fetch yesterday's data if user explicitly wants STD movement
-            yesterday_data = None
-            if show_std_movement:
-                with st.spinner("Fetching yesterday's data for STD comparison..."):
-                    yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
-                    if not yesterday_data:
-                        st.warning("⚠️ Could not load yesterday's data - showing chart without STD movement")
+            # Fetch yesterday's data for STD movement tracking
+            # Now uses 5-min cache + 15s rate limiting to prevent API errors
+            yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
 
             if data.get('profile'):
                 visualizer = GEXVisualizer()
