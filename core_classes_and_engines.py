@@ -1511,11 +1511,11 @@ class TradingVolatilityAPI:
                 st.error("❌ Trading Volatility username not found in secrets!")
                 return []
 
-            # Check cache first (cache key includes symbol + days_back)
+            # Check cache first (cache key includes symbol + days_back) - USING SHARED CACHE
             cache_key = f"history_{symbol}_{days_back}"
-            if cache_key in self.response_cache:
-                cached_data, cached_time = self.response_cache[cache_key]
-                if time.time() - cached_time < self.cache_duration:
+            if cache_key in TradingVolatilityAPI._shared_response_cache:
+                cached_data, cached_time = TradingVolatilityAPI._shared_response_cache[cache_key]
+                if time.time() - cached_time < TradingVolatilityAPI._shared_cache_duration:
                     print(f"✓ Using cached historical data for {symbol} (age: {time.time() - cached_time:.0f}s)")
                     return cached_data
 
@@ -1571,8 +1571,8 @@ class TradingVolatilityAPI:
             history_data = json_response.get(symbol, [])
             result = history_data if isinstance(history_data, list) else []
 
-            # Cache the successful result
-            self.response_cache[cache_key] = (result, time.time())
+            # Cache the successful result (USING SHARED CACHE)
+            TradingVolatilityAPI._shared_response_cache[cache_key] = (result, time.time())
             self._reset_rate_limit_errors()  # Success, reset error counter
 
             return result
@@ -1582,17 +1582,35 @@ class TradingVolatilityAPI:
             return []
 
     def get_yesterday_data(self, symbol: str) -> Dict:
-        """Get yesterday's GEX data for day-over-day comparison"""
-        import streamlit as st
+        """Get yesterday's GEX data for day-over-day comparison
 
+        Uses extended cache (1 hour) since yesterday's data only updates once per day
+        """
+        import streamlit as st
+        import time
+
+        # Check cache first with extended TTL (1 hour = 3600 seconds)
+        cache_key = f"yesterday_{symbol}"
+        if cache_key in TradingVolatilityAPI._shared_response_cache:
+            cached_data, cached_time = TradingVolatilityAPI._shared_response_cache[cache_key]
+            if time.time() - cached_time < 3600:  # 1 hour cache for yesterday's data
+                print(f"✓ Using cached yesterday data for {symbol} (age: {(time.time() - cached_time)/60:.0f} min)")
+                return cached_data
+
+        # Fetch from API
         history = self.get_historical_gamma(symbol, days_back=2)
 
         if len(history) >= 2:
             # Return second most recent (yesterday)
-            return history[-2]
+            result = history[-2]
+            # Cache for 1 hour
+            TradingVolatilityAPI._shared_response_cache[cache_key] = (result, time.time())
+            return result
         elif len(history) == 1:
             # Only have today's data
-            return {}
+            empty_result = {}
+            TradingVolatilityAPI._shared_response_cache[cache_key] = (empty_result, time.time())
+            return empty_result
         else:
             return {}
 
