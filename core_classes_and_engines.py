@@ -1008,7 +1008,24 @@ class TradingVolatilityAPI:
     """
     API wrapper for fetching GEX data from Trading Volatility API
     With built-in rate limiting to prevent API limit errors
+
+    IMPORTANT: Rate limiting and circuit breaker state is SHARED across ALL instances
+    to prevent multiple instances from overwhelming the API
     """
+
+    # CLASS-LEVEL (SHARED) rate limiting state - applies to ALL instances
+    _shared_last_request_time = 0
+    _shared_min_request_interval = 15.0  # 15 SECONDS between requests
+    _shared_circuit_breaker_active = False
+    _shared_circuit_breaker_until = 0
+    _shared_consecutive_rate_limit_errors = 0
+    _shared_api_call_count = 0
+    _shared_api_call_count_minute = 0
+    _shared_minute_reset_time = 0
+
+    # CLASS-LEVEL (SHARED) response cache - shared across ALL instances
+    _shared_response_cache = {}
+    _shared_cache_duration = 300  # Cache for 5 MINUTES (300 seconds)
 
     def __init__(self):
         import streamlit as st
@@ -1024,88 +1041,74 @@ class TradingVolatilityAPI:
 
         self.last_response = None  # Store last API response for profile data
 
-        # ULTRA-AGGRESSIVE Rate limiting to prevent "API limit exceeded"
-        self.last_request_time = 0
-        self.min_request_interval = 15.0  # 15 SECONDS between requests (EXTREMELY conservative)
-
-        # LONG-TERM Response cache to reduce API calls
-        self.response_cache = {}
-        self.cache_duration = 300  # Cache for 5 MINUTES (300 seconds)
-
-        # API usage tracking
-        self.api_call_count = 0  # Total calls this session
-        self.api_call_count_minute = 0  # Calls in current minute
-        self.minute_reset_time = time.time() + 60  # Reset counter every minute
-
-        # Circuit breaker for rate limit errors
-        self.consecutive_rate_limit_errors = 0
-        self.circuit_breaker_active = False
-        self.circuit_breaker_until = 0
+        # Initialize shared minute reset time if not set
+        if TradingVolatilityAPI._shared_minute_reset_time == 0:
+            TradingVolatilityAPI._shared_minute_reset_time = time.time() + 60
 
     def _wait_for_rate_limit(self):
-        """Enforce rate limiting by waiting between requests + circuit breaker"""
+        """Enforce rate limiting by waiting between requests + circuit breaker (SHARED across all instances)"""
         import time
         current_time = time.time()
 
-        # Check circuit breaker
-        if self.circuit_breaker_active:
-            if current_time < self.circuit_breaker_until:
-                wait_time = self.circuit_breaker_until - current_time
+        # Check circuit breaker (SHARED)
+        if TradingVolatilityAPI._shared_circuit_breaker_active:
+            if current_time < TradingVolatilityAPI._shared_circuit_breaker_until:
+                wait_time = TradingVolatilityAPI._shared_circuit_breaker_until - current_time
                 print(f"⚠️ Circuit breaker active, waiting {wait_time:.0f} more seconds...")
                 time.sleep(wait_time)
             else:
                 # Circuit breaker expired, reset
-                self.circuit_breaker_active = False
-                self.consecutive_rate_limit_errors = 0
+                TradingVolatilityAPI._shared_circuit_breaker_active = False
+                TradingVolatilityAPI._shared_consecutive_rate_limit_errors = 0
                 print("✅ Circuit breaker reset")
 
-        # Reset minute counter if needed
-        if current_time >= self.minute_reset_time:
-            self.api_call_count_minute = 0
-            self.minute_reset_time = current_time + 60
+        # Reset minute counter if needed (SHARED)
+        if current_time >= TradingVolatilityAPI._shared_minute_reset_time:
+            TradingVolatilityAPI._shared_api_call_count_minute = 0
+            TradingVolatilityAPI._shared_minute_reset_time = current_time + 60
 
-        time_since_last = current_time - self.last_request_time
+        time_since_last = current_time - TradingVolatilityAPI._shared_last_request_time
 
-        if time_since_last < self.min_request_interval:
-            wait_time = self.min_request_interval - time_since_last
+        if time_since_last < TradingVolatilityAPI._shared_min_request_interval:
+            wait_time = TradingVolatilityAPI._shared_min_request_interval - time_since_last
             time.sleep(wait_time)
 
-        self.last_request_time = time.time()
+        TradingVolatilityAPI._shared_last_request_time = time.time()
 
-        # Increment counters
-        self.api_call_count += 1
-        self.api_call_count_minute += 1
+        # Increment counters (SHARED)
+        TradingVolatilityAPI._shared_api_call_count += 1
+        TradingVolatilityAPI._shared_api_call_count_minute += 1
 
     def _handle_rate_limit_error(self):
-        """Handle API rate limit error with exponential backoff"""
+        """Handle API rate limit error with exponential backoff (SHARED across all instances)"""
         import time
-        self.consecutive_rate_limit_errors += 1
+        TradingVolatilityAPI._shared_consecutive_rate_limit_errors += 1
 
         # Exponential backoff: 30s, 60s, 120s, 300s
         backoff_times = [30, 60, 120, 300]
-        backoff_index = min(self.consecutive_rate_limit_errors - 1, len(backoff_times) - 1)
+        backoff_index = min(TradingVolatilityAPI._shared_consecutive_rate_limit_errors - 1, len(backoff_times) - 1)
         backoff_seconds = backoff_times[backoff_index]
 
-        # Activate circuit breaker
-        self.circuit_breaker_active = True
-        self.circuit_breaker_until = time.time() + backoff_seconds
+        # Activate circuit breaker (SHARED)
+        TradingVolatilityAPI._shared_circuit_breaker_active = True
+        TradingVolatilityAPI._shared_circuit_breaker_until = time.time() + backoff_seconds
 
-        print(f"🚨 API RATE LIMIT HIT ({self.consecutive_rate_limit_errors}x) - Circuit breaker active for {backoff_seconds}s")
+        print(f"🚨 API RATE LIMIT HIT ({TradingVolatilityAPI._shared_consecutive_rate_limit_errors}x) - Circuit breaker active for {backoff_seconds}s")
 
     def _reset_rate_limit_errors(self):
-        """Reset rate limit error counter on successful request"""
-        if self.consecutive_rate_limit_errors > 0:
-            self.consecutive_rate_limit_errors = 0
+        """Reset rate limit error counter on successful request (SHARED across all instances)"""
+        if TradingVolatilityAPI._shared_consecutive_rate_limit_errors > 0:
+            TradingVolatilityAPI._shared_consecutive_rate_limit_errors = 0
             print("✅ API calls successful again")
 
     def get_api_usage_stats(self) -> dict:
-        """Get current API usage statistics"""
+        """Get current API usage statistics (SHARED across all instances)"""
         import time
         return {
-            'total_calls': self.api_call_count,
-            'calls_this_minute': self.api_call_count_minute,
-            'cache_size': len(self.response_cache),
-            'time_until_minute_reset': max(0, int(self.minute_reset_time - time.time()))
+            'total_calls': TradingVolatilityAPI._shared_api_call_count,
+            'calls_this_minute': TradingVolatilityAPI._shared_api_call_count_minute,
+            'cache_size': len(TradingVolatilityAPI._shared_response_cache),
+            'time_until_minute_reset': max(0, int(TradingVolatilityAPI._shared_minute_reset_time - time.time()))
         }
 
     def _get_cache_key(self, endpoint: str, symbol: str) -> str:
@@ -1113,18 +1116,18 @@ class TradingVolatilityAPI:
         return f"{endpoint}_{symbol}"
 
     def _get_cached_response(self, cache_key: str):
-        """Get cached response if still valid"""
+        """Get cached response if still valid (SHARED cache across all instances)"""
         import time
-        if cache_key in self.response_cache:
-            cached_data, timestamp = self.response_cache[cache_key]
-            if time.time() - timestamp < self.cache_duration:
+        if cache_key in TradingVolatilityAPI._shared_response_cache:
+            cached_data, timestamp = TradingVolatilityAPI._shared_response_cache[cache_key]
+            if time.time() - timestamp < TradingVolatilityAPI._shared_cache_duration:
                 return cached_data
         return None
 
     def _cache_response(self, cache_key: str, data):
-        """Cache API response with timestamp"""
+        """Cache API response with timestamp (SHARED cache across all instances)"""
         import time
-        self.response_cache[cache_key] = (data, time.time())
+        TradingVolatilityAPI._shared_response_cache[cache_key] = (data, time.time())
 
     def _calculate_walls_from_strike_data(self, strike_data, st):
         """

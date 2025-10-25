@@ -54,7 +54,18 @@ def run_autonomous_trader_cycle():
 
     # Initialize
     trader = AutonomousPaperTrader()
-    api_client = TradingVolatilityAPI()
+
+    # Use shared API client from session state if running in Streamlit context
+    try:
+        if 'api_client' in st.session_state:
+            api_client = st.session_state.api_client
+        else:
+            api_client = TradingVolatilityAPI()
+            st.session_state.api_client = api_client
+    except:
+        # Running outside Streamlit context (e.g., standalone script)
+        # Shared rate limiting still applies via class-level variables
+        api_client = TradingVolatilityAPI()
 
     # Step 1: Check if we should find a new trade
     if is_morning_session():
