@@ -1024,13 +1024,13 @@ class TradingVolatilityAPI:
 
         self.last_response = None  # Store last API response for profile data
 
-        # AGGRESSIVE Rate limiting to prevent "API limit exceeded"
+        # ULTRA-AGGRESSIVE Rate limiting to prevent "API limit exceeded"
         self.last_request_time = 0
-        self.min_request_interval = 5.0  # 5 SECONDS between requests (conservative)
+        self.min_request_interval = 15.0  # 15 SECONDS between requests (EXTREMELY conservative)
 
-        # EXTENDED Response cache to reduce API calls
+        # LONG-TERM Response cache to reduce API calls
         self.response_cache = {}
-        self.cache_duration = 120  # Cache for 2 MINUTES (was 30 seconds)
+        self.cache_duration = 300  # Cache for 5 MINUTES (300 seconds)
 
         # API usage tracking
         self.api_call_count = 0  # Total calls this session

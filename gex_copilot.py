@@ -298,8 +298,10 @@ def main():
                                 if not gex_data.get('put_wall'):
                                     gex_data['put_wall'] = profile_data.get('put_wall', 0)
 
-                        # Fetch skew data for enhanced analysis
-                        skew_data = st.session_state.api_client.get_skew_data(symbol)
+                        # SKIP skew data to save API calls (reduces calls from 2-3 to just 1 per refresh)
+                        # Skew data is nice-to-have but not critical for core GEX analysis
+                        # This dramatically reduces API usage and prevents rate limit errors
+                        skew_data = {}  # Skip for now - can add back as optional button later
 
                         # Store in session
                         st.session_state.current_data = {
