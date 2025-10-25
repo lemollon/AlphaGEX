@@ -1024,13 +1024,13 @@ class TradingVolatilityAPI:
 
         self.last_response = None  # Store last API response for profile data
 
-        # AGGRESSIVE Rate limiting to prevent "API limit exceeded"
+        # ULTRA-AGGRESSIVE Rate limiting to prevent "API limit exceeded"
         self.last_request_time = 0
-        self.min_request_interval = 5.0  # 5 SECONDS between requests (conservative)
+        self.min_request_interval = 15.0  # 15 SECONDS between requests (EXTREMELY conservative)
 
-        # EXTENDED Response cache to reduce API calls
+        # LONG-TERM Response cache to reduce API calls
         self.response_cache = {}
-        self.cache_duration = 120  # Cache for 2 MINUTES (was 30 seconds)
+        self.cache_duration = 300  # Cache for 5 MINUTES (300 seconds)
 
         # API usage tracking
         self.api_call_count = 0  # Total calls this session
@@ -1483,7 +1483,7 @@ class TradingVolatilityAPI:
             return {}
 
     def get_historical_gamma(self, symbol: str, days_back: int = 5) -> List[Dict]:
-        """Fetch historical gamma data from Trading Volatility API"""
+        """Fetch historical gamma data from Trading Volatility API with rate limiting"""
         import streamlit as st
         import requests
         from datetime import datetime, timedelta
@@ -1492,6 +1492,17 @@ class TradingVolatilityAPI:
             if not self.api_key:
                 st.error("❌ Trading Volatility username not found in secrets!")
                 return []
+
+            # Check cache first (cache key includes symbol + days_back)
+            cache_key = f"history_{symbol}_{days_back}"
+            if cache_key in self.response_cache:
+                cached_data, cached_time = self.response_cache[cache_key]
+                if time.time() - cached_time < self.cache_duration:
+                    print(f"✓ Using cached historical data for {symbol} (age: {time.time() - cached_time:.0f}s)")
+                    return cached_data
+
+            # RATE LIMITING: Wait before making API call
+            self._wait_for_rate_limit()
 
             # Calculate date range
             end_date = datetime.now()
@@ -1520,16 +1531,33 @@ class TradingVolatilityAPI:
                 st.warning(f"⚠️ History endpoint returned empty response")
                 return []
 
+            # Check for rate limit error BEFORE parsing JSON
+            if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
+                st.error(f"⚠️ API Rate Limit Hit (history endpoint) - Circuit breaker activating")
+                self._handle_rate_limit_error()
+                return []
+
             # Try to parse JSON with better error handling
             try:
                 json_response = response.json()
             except ValueError as json_err:
-                st.warning(f"⚠️ Invalid JSON from history endpoint: {str(json_err)}")
+                # Check if error is due to rate limiting
+                if "API limit exceeded" in response.text:
+                    st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                    self._handle_rate_limit_error()
+                else:
+                    st.warning(f"⚠️ Invalid JSON from history endpoint: {str(json_err)}")
+                    st.caption(f"Response preview: {response.text[:200]}")
                 return []
 
             history_data = json_response.get(symbol, [])
+            result = history_data if isinstance(history_data, list) else []
 
-            return history_data if isinstance(history_data, list) else []
+            # Cache the successful result
+            self.response_cache[cache_key] = (result, time.time())
+            self._reset_rate_limit_errors()  # Success, reset error counter
+
+            return result
 
         except Exception as e:
             print(f"Error fetching historical gamma: {e}")
