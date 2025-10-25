@@ -991,6 +991,9 @@ def main():
         col1, col2 = st.columns([3, 1])
         with col1:
             st.info(f"💡 Ready to scan {len(watchlist)} symbols from your watchlist")
+            if len(watchlist) > 0:
+                scan_time_minutes = (len(watchlist) * 15) / 60
+                st.caption(f"⏱️ Estimated scan time: ~{scan_time_minutes:.1f} minutes (15s delay per symbol to prevent rate limits)")
         with col2:
             force_refresh = st.checkbox("Force Refresh", help="Bypass cache and fetch fresh data")
 
