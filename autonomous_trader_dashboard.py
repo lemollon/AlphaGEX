@@ -16,15 +16,18 @@ def display_autonomous_trader():
     st.title("🤖 Autonomous SPY Paper Trader")
 
     st.info("""
-    **FULLY AUTOMATED** - This trader runs on its own with ZERO manual intervention!
+    **🤖 AI-POWERED AUTONOMOUS TRADER** - Thinks like a real options trader!
 
     ✅ **Starting Capital**: $5,000
-    ✅ **Finds trades automatically**: Every market day
-    ✅ **Executes automatically**: Based on GEX analysis
-    ✅ **Manages exits automatically**: +50% profit, -30% stop, or expiration
+    ✅ **GUARANTEED Daily Trade**: Always has a position working
+    ✅ **AI-Powered Exits**: Claude AI makes intelligent close decisions
+    ✅ **Dual Strategy**:
+       - Primary: Directional trades (calls/puts) based on GEX
+       - Fallback: Iron Condors for premium collection
     ✅ **Uses REAL option prices**: From Yahoo Finance
 
-    **You don't need to do anything!** Just watch it work.
+    **New: If no clear GEX setup → Iron Condor automatically!**
+    **New: AI analyzes each position to decide HOLD or CLOSE!**
     """)
 
     # Initialize trader
@@ -404,21 +407,29 @@ def display_settings(trader: AutonomousPaperTrader):
     st.header("⚙️ Settings")
 
     st.success("""
-    **Autonomous Trading Settings:**
+    **🤖 AI-Powered Trading Settings:**
 
     🤖 **Auto-Execute**: ON (always)
     💰 **Starting Capital**: $5,000
-    📊 **Max Position Size**: 25% ($1,250 per trade)
-    🎯 **Profit Target**: +50%
-    🛑 **Stop Loss**: -30%
-    📅 **Trading Frequency**: Once per market day
+    📊 **Position Sizing**:
+       - Directional (calls/puts): 25% max ($1,250)
+       - Iron Condors: 20% max ($1,000)
+    📅 **Trading Frequency**: GUARANTEED 1 trade per day
 
-    **Exit Rules (Automatic)**:
-    - +50% profit → Close immediately
-    - -30% loss → Close immediately
-    - 1 DTE or less → Close before expiration
-    - GEX regime flip → Close (thesis invalidated)
-    - +25% with 5+ DTE → Close early (take profit)
+    **🧠 AI Exit Strategy (Flexible & Intelligent)**:
+    - Hard Stop: -50% loss (protect capital)
+    - Expiration Safety: Close on expiration day
+    - **AI Decision**: Claude analyzes P&L, GEX changes, time left, thesis validity
+    - **Fallback Rules**: If AI unavailable (±40%, ±30%, 1 DTE, GEX flip)
+
+    **🎯 Dual Strategy System**:
+    1. **Primary**: Directional trades based on GEX regime
+       - Negative GEX squeeze/breakdown setups
+       - 5-7 DTE for quick moves
+    2. **Fallback**: Iron Condor premium collection
+       - Used when no clear GEX signal (< 70% confidence)
+       - 30-45 DTE for theta decay
+       - ±6% wings for safety on $5K account
     """)
 
     st.divider()
@@ -486,33 +497,38 @@ def display_control_panel(trader: AutonomousPaperTrader):
     st.markdown("### 📅 Autonomous Trading Schedule")
 
     st.info("""
-    **WHEN IT TRADES (Flexible Opportunity-Based)**
+    **🤖 HOW THE AI TRADER WORKS**
 
-    The autonomous trader is **FLEXIBLE** and waits for the right opportunity:
+    The system thinks like a professional options trader:
 
-    ✅ **Once Per Market Day**: Maximum 1 new trade per day
-    ✅ **Market Hours Required**: Trades only during 9:30 AM - 4:00 PM ET
-    ✅ **Opportunity-Based**: Waits for clear GEX setups, doesn't force trades
-    ✅ **No Fixed Time**: Not locked to "30 mins after open" - it's smarter than that!
+    ✅ **GUARANTEED Daily Trade**: Never sits idle
+    ✅ **Smart Strategy Selection**:
+       - Strong GEX signal → Directional trade (calls/puts)
+       - Unclear GEX → Iron Condor (collect premium)
+    ✅ **Timing**: Checks hourly 9:30 AM - 4:00 PM ET
+    ✅ **AI-Powered Exits**: Claude analyzes each position intelligently
 
-    **EXECUTION LOGIC:**
-    1. **9:30 AM - 4:00 PM ET**: Checks every hour for opportunities
-    2. **Analyzes GEX**: Waits for negative GEX with clear regime
-    3. **Confirms Setup**: 75%+ confidence required
-    4. **Executes**: First valid setup of the day wins
-    5. **Stops Looking**: After 1 trade, waits until next market day
+    **TRADE SELECTION LOGIC:**
+    1. **Get GEX Data**: Analyze SPY gamma exposure
+    2. **Find Setup**:
+       - High confidence (70%+) → Execute directional trade
+       - Low confidence → Execute Iron Condor fallback
+    3. **GUARANTEED**: Always makes 1 trade per day
+    4. **Reset**: Next market day, repeat
 
-    **This means:**
-    - If perfect setup at 10:00 AM → Executes then
-    - If market unclear at 10:00 AM → Waits for 11:00 AM check
-    - If no clear setup all day → No trade (better than forcing bad trades)
-    - Next market day → Resets, looks for new opportunity
+    **Examples:**
+    - Negative GEX at 10 AM → Buys calls for squeeze
+    - Neutral GEX at 10 AM → Iron Condor for premium
+    - Strong setup at 2 PM → Executes immediately
 
-    **POSITION MANAGEMENT (Continuous)**
-    - Checks every hour during market hours
-    - Monitors for profit targets: +50%, -30% stop
-    - Closes 1 DTE positions automatically
-    - Exits on GEX regime flip (thesis invalidated)
+    **AI EXIT MANAGEMENT:**
+    - **Hourly Checks**: Monitors all open positions
+    - **AI Analysis**: Claude evaluates:
+      - Is thesis still valid? (GEX regime changes)
+      - Should we take profit or let it run?
+      - Has risk/reward shifted?
+    - **Safety Stops**: -50% hard stop, expiration day
+    - **Fallback**: Simple rules if AI unavailable
     """)
 
     st.divider()
