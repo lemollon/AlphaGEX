@@ -1024,23 +1024,40 @@ class TradingVolatilityAPI:
 
         self.last_response = None  # Store last API response for profile data
 
-        # Rate limiting: Track last request time and implement delays
+        # AGGRESSIVE Rate limiting to prevent "API limit exceeded"
         self.last_request_time = 0
-        self.min_request_interval = 2.0  # Minimum 2 seconds between requests
+        self.min_request_interval = 5.0  # 5 SECONDS between requests (conservative)
 
-        # Response cache to reduce API calls
+        # EXTENDED Response cache to reduce API calls
         self.response_cache = {}
-        self.cache_duration = 30  # Cache responses for 30 seconds
+        self.cache_duration = 120  # Cache for 2 MINUTES (was 30 seconds)
 
         # API usage tracking
         self.api_call_count = 0  # Total calls this session
         self.api_call_count_minute = 0  # Calls in current minute
         self.minute_reset_time = time.time() + 60  # Reset counter every minute
 
+        # Circuit breaker for rate limit errors
+        self.consecutive_rate_limit_errors = 0
+        self.circuit_breaker_active = False
+        self.circuit_breaker_until = 0
+
     def _wait_for_rate_limit(self):
-        """Enforce rate limiting by waiting between requests"""
+        """Enforce rate limiting by waiting between requests + circuit breaker"""
         import time
         current_time = time.time()
+
+        # Check circuit breaker
+        if self.circuit_breaker_active:
+            if current_time < self.circuit_breaker_until:
+                wait_time = self.circuit_breaker_until - current_time
+                print(f"⚠️ Circuit breaker active, waiting {wait_time:.0f} more seconds...")
+                time.sleep(wait_time)
+            else:
+                # Circuit breaker expired, reset
+                self.circuit_breaker_active = False
+                self.consecutive_rate_limit_errors = 0
+                print("✅ Circuit breaker reset")
 
         # Reset minute counter if needed
         if current_time >= self.minute_reset_time:
@@ -1058,6 +1075,28 @@ class TradingVolatilityAPI:
         # Increment counters
         self.api_call_count += 1
         self.api_call_count_minute += 1
+
+    def _handle_rate_limit_error(self):
+        """Handle API rate limit error with exponential backoff"""
+        import time
+        self.consecutive_rate_limit_errors += 1
+
+        # Exponential backoff: 30s, 60s, 120s, 300s
+        backoff_times = [30, 60, 120, 300]
+        backoff_index = min(self.consecutive_rate_limit_errors - 1, len(backoff_times) - 1)
+        backoff_seconds = backoff_times[backoff_index]
+
+        # Activate circuit breaker
+        self.circuit_breaker_active = True
+        self.circuit_breaker_until = time.time() + backoff_seconds
+
+        print(f"🚨 API RATE LIMIT HIT ({self.consecutive_rate_limit_errors}x) - Circuit breaker active for {backoff_seconds}s")
+
+    def _reset_rate_limit_errors(self):
+        """Reset rate limit error counter on successful request"""
+        if self.consecutive_rate_limit_errors > 0:
+            self.consecutive_rate_limit_errors = 0
+            print("✅ API calls successful again")
 
     def get_api_usage_stats(self) -> dict:
         """Get current API usage statistics"""
@@ -1208,6 +1247,12 @@ class TradingVolatilityAPI:
                     st.error(f"❌ Trading Volatility API returned status {response.status_code}")
                     return {'error': f'API returned {response.status_code}'}
 
+                # Check for rate limit error in response text
+                if "API limit exceeded" in response.text:
+                    st.error(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
+                    self._handle_rate_limit_error()
+                    return {'error': 'API rate limit exceeded'}
+
                 # Check if response has content before parsing JSON
                 if not response.text or len(response.text.strip()) == 0:
                     st.error(f"❌ Trading Volatility API returned empty response")
@@ -1218,9 +1263,18 @@ class TradingVolatilityAPI:
                 try:
                     json_response = response.json()
                 except ValueError as json_err:
-                    st.error(f"❌ Invalid JSON from Trading Volatility API")
-                    st.warning(f"Response text (first 200 chars): {response.text[:200]}")
-                    return {'error': f'Invalid JSON: {str(json_err)}'}
+                    # Check if error message contains rate limit info
+                    if "API limit exceeded" in response.text:
+                        st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                        self._handle_rate_limit_error()
+                        return {'error': 'API rate limit exceeded'}
+                    else:
+                        st.error(f"❌ Invalid JSON from Trading Volatility API")
+                        st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                        return {'error': f'Invalid JSON: {str(json_err)}'}
+
+                # Success! Reset error counter
+                self._reset_rate_limit_errors()
 
                 # Cache the response
                 self._cache_response(cache_key, json_response)
@@ -1539,7 +1593,7 @@ class TradingVolatilityAPI:
         return changes
 
     def get_skew_data(self, symbol: str) -> Dict:
-        """Fetch latest skew data from Trading Volatility API with rate limiting"""
+        """Fetch latest skew data from Trading Volatility API with aggressive rate limiting"""
         import streamlit as st
         import requests
 
@@ -1547,13 +1601,13 @@ class TradingVolatilityAPI:
             if not self.api_key:
                 return {}
 
-            # Check cache first
+            # Check cache first (2-minute cache)
             cache_key = self._get_cache_key('skew/latest', symbol)
             cached_data = self._get_cached_response(cache_key)
             if cached_data:
                 return cached_data.get(symbol, {})
 
-            # Wait for rate limit before making request
+            # Wait for rate limit before making request (includes circuit breaker check)
             self._wait_for_rate_limit()
 
             response = requests.get(
@@ -1570,20 +1624,34 @@ class TradingVolatilityAPI:
             if response.status_code != 200:
                 return {}
 
+            # Check for rate limit error in response text
+            if "API limit exceeded" in response.text:
+                st.error(f"⚠️ API Rate Limit Hit - Using cached data for next few minutes")
+                self._handle_rate_limit_error()
+                # Return empty dict, let caller handle gracefully
+                return {}
+
             # Check if response has content before parsing JSON
             if not response.text or len(response.text.strip()) == 0:
-                st.error(f"❌ Skew endpoint returned empty response")
+                st.warning(f"⚠️ Skew endpoint returned empty response - skipping for now")
                 return {}
 
             # Try to parse JSON with better error handling
             try:
                 json_response = response.json()
             except ValueError as json_err:
-                st.error(f"❌ Invalid JSON from skew endpoint")
-                st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                # Check if error message contains rate limit info
+                if "API limit exceeded" in response.text:
+                    st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                    self._handle_rate_limit_error()
+                else:
+                    st.warning(f"⚠️ Invalid JSON from skew endpoint - skipping")
                 return {}
 
-            # Cache the response
+            # Success! Reset error counter
+            self._reset_rate_limit_errors()
+
+            # Cache the response for 2 minutes
             self._cache_response(cache_key, json_response)
 
             skew_data = json_response.get(symbol, {})
