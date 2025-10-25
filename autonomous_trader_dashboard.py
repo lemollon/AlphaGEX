@@ -126,6 +126,107 @@ def display_performance(trader: AutonomousPaperTrader):
         with col4:
             st.metric("Unrealized P&L", f"${perf['unrealized_pnl']:+,.2f}")
 
+    # Performance Line Graph
+    st.divider()
+    st.subheader("📈 Account Value Over Time")
+
+    # Get historical performance data
+    conn = sqlite3.connect(trader.db_path)
+
+    # Get all trades chronologically
+    trades = pd.read_sql_query("""
+        SELECT
+            entry_date,
+            entry_time,
+            closed_date,
+            closed_time,
+            realized_pnl,
+            status
+        FROM autonomous_positions
+        ORDER BY entry_date, entry_time
+    """, conn)
+    conn.close()
+
+    if not trades.empty:
+        # Build performance timeline
+        timeline = []
+        running_capital = perf['starting_capital']
+
+        # Add starting point
+        if len(trades) > 0:
+            first_date = trades.iloc[0]['entry_date']
+            timeline.append({
+                'date': first_date,
+                'account_value': running_capital,
+                'event': 'Start'
+            })
+
+        # Add each completed trade
+        for _, trade in trades.iterrows():
+            if trade['status'] == 'CLOSED' and trade['closed_date']:
+                running_capital += trade['realized_pnl']
+                timeline.append({
+                    'date': trade['closed_date'],
+                    'account_value': running_capital,
+                    'event': f"${trade['realized_pnl']:+,.0f}"
+                })
+
+        # Add current value
+        today = datetime.now().strftime('%Y-%m-%d')
+        timeline.append({
+            'date': today,
+            'account_value': perf['current_value'],
+            'event': 'Now'
+        })
+
+        # Create DataFrame
+        df = pd.DataFrame(timeline)
+        df['date'] = pd.to_datetime(df['date'])
+
+        # Plot
+        import plotly.graph_objects as go
+
+        fig = go.Figure()
+
+        # Account value line
+        fig.add_trace(go.Scatter(
+            x=df['date'],
+            y=df['account_value'],
+            mode='lines+markers',
+            name='Account Value',
+            line=dict(color='#00D4FF', width=3),
+            marker=dict(size=8),
+            hovertemplate='%{x}<br>$%{y:,.2f}<extra></extra>'
+        ))
+
+        # Starting capital reference line
+        fig.add_hline(
+            y=perf['starting_capital'],
+            line_dash="dash",
+            line_color="gray",
+            annotation_text=f"Starting Capital: ${perf['starting_capital']:,.0f}",
+            annotation_position="right"
+        )
+
+        # Styling
+        fig.update_layout(
+            title="",
+            xaxis_title="Date",
+            yaxis_title="Account Value ($)",
+            hovermode='x unified',
+            height=400,
+            showlegend=False,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+        )
+
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("📊 Performance chart will appear after your first trade is closed")
+
 
 def display_current_positions(trader: AutonomousPaperTrader):
     """Display current open positions"""
@@ -338,61 +439,106 @@ def display_settings(trader: AutonomousPaperTrader):
 
 
 def display_control_panel(trader: AutonomousPaperTrader):
-    """Display control panel for manual operations"""
+    """Display automation status - NO manual controls"""
 
-    st.header("🎮 Control Panel")
+    st.header("🤖 Automation Status")
 
-    col1, col2 = st.columns(2)
+    # Get last trade date
+    last_trade_date = trader.get_config('last_trade_date')
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # Check if traded today
+    traded_today = (last_trade_date == today)
+
+    # Get open positions count
+    conn = sqlite3.connect(trader.db_path)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM autonomous_positions WHERE status = 'OPEN'")
+    open_positions = c.fetchone()[0]
+    conn.close()
+
+    # Display status
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("🔍 Find & Execute Trade Now", use_container_width=True, type="primary"):
-            if 'api_client' not in st.session_state:
-                st.error("❌ API client not initialized")
-                return
-
-            with st.spinner("🤖 Finding and executing trade..."):
-                position_id = trader.find_and_execute_daily_trade(st.session_state.api_client)
-
-            if position_id:
-                st.success(f"✅ Trade executed! Position #{position_id}")
-                st.balloons()
-                st.rerun()
-            else:
-                st.warning("⚠️ No trade executed (already traded today or market closed)")
+        if traded_today:
+            st.success("✅ **Trade Finding**")
+            st.caption(f"Executed today ({last_trade_date})")
+        else:
+            st.info("🔍 **Trade Finding**")
+            st.caption("Ready for next market day")
 
     with col2:
-        if st.button("🔄 Manage Open Positions", use_container_width=True):
-            if 'api_client' not in st.session_state:
-                st.error("❌ API client not initialized")
-                return
+        if open_positions > 0:
+            st.success("👀 **Position Monitoring**")
+            st.caption(f"{open_positions} position(s) being monitored")
+        else:
+            st.info("✋ **Position Monitoring**")
+            st.caption("No open positions")
 
-            with st.spinner("🤖 Checking exit conditions..."):
-                actions = trader.auto_manage_positions(st.session_state.api_client)
-
-            if actions:
-                st.success(f"✅ Closed {len(actions)} position(s)")
-                for action in actions:
-                    st.markdown(f"- {action['strategy']}: P&L ${action['pnl']:+,.2f} ({action['pnl_pct']:+.1f}%) - {action['reason']}")
-                st.rerun()
-            else:
-                st.info("ℹ️ All positions look good - no exits needed")
+    with col3:
+        st.success("🟢 **System Status**")
+        st.caption("Fully autonomous - running")
 
     st.divider()
 
-    st.markdown("""
-    **🤖 Automation Status**
+    # Trading schedule
+    st.markdown("### 📅 Autonomous Trading Schedule")
 
-    The system will automatically:
-    - Find and execute 1 trade per market day (once per day)
-    - Monitor all open positions continuously
-    - Close positions when profit/loss targets are hit
-    - Close positions before expiration
-    - Log all activity
+    st.info("""
+    **WHEN IT TRADES (Flexible Opportunity-Based)**
 
-    **For Render deployment**, add a scheduler to run these functions:
-    ```python
-    # Run every hour during market hours
-    trader.find_and_execute_daily_trade(api_client)  # Once per day
-    trader.auto_manage_positions(api_client)  # Check exits
-    ```
+    The autonomous trader is **FLEXIBLE** and waits for the right opportunity:
+
+    ✅ **Once Per Market Day**: Maximum 1 new trade per day
+    ✅ **Market Hours Required**: Trades only during 9:30 AM - 4:00 PM ET
+    ✅ **Opportunity-Based**: Waits for clear GEX setups, doesn't force trades
+    ✅ **No Fixed Time**: Not locked to "30 mins after open" - it's smarter than that!
+
+    **EXECUTION LOGIC:**
+    1. **9:30 AM - 4:00 PM ET**: Checks every hour for opportunities
+    2. **Analyzes GEX**: Waits for negative GEX with clear regime
+    3. **Confirms Setup**: 75%+ confidence required
+    4. **Executes**: First valid setup of the day wins
+    5. **Stops Looking**: After 1 trade, waits until next market day
+
+    **This means:**
+    - If perfect setup at 10:00 AM → Executes then
+    - If market unclear at 10:00 AM → Waits for 11:00 AM check
+    - If no clear setup all day → No trade (better than forcing bad trades)
+    - Next market day → Resets, looks for new opportunity
+
+    **POSITION MANAGEMENT (Continuous)**
+    - Checks every hour during market hours
+    - Monitors for profit targets: +50%, -30% stop
+    - Closes 1 DTE positions automatically
+    - Exits on GEX regime flip (thesis invalidated)
+    """)
+
+    st.divider()
+
+    # Deployment instructions
+    st.markdown("### 🚀 Render Deployment (For True Automation)")
+
+    st.code("""
+# Add to Render cron job (runs every hour during market hours):
+# Schedule: "0 9-16 * * 1-5" (every hour, 9 AM-4 PM ET, Mon-Fri)
+
+from autonomous_paper_trader import AutonomousPaperTrader
+from core_classes_and_engines import TradingVolatilityAPI
+
+trader = AutonomousPaperTrader()
+api_client = TradingVolatilityAPI()
+
+# Step 1: Find new trade if haven't traded today
+trader.find_and_execute_daily_trade(api_client)
+
+# Step 2: Manage existing positions
+trader.auto_manage_positions(api_client)
+""", language="python")
+
+    st.success("""
+    **Current Mode**: Manual Dashboard View
+    **Deploy to Render**: For 24/7 autonomous operation
+    **API Usage**: ~2-4 calls per hour (well within limits)
     """)

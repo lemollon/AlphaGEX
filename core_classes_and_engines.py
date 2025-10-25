@@ -1032,10 +1032,21 @@ class TradingVolatilityAPI:
         self.response_cache = {}
         self.cache_duration = 30  # Cache responses for 30 seconds
 
+        # API usage tracking
+        self.api_call_count = 0  # Total calls this session
+        self.api_call_count_minute = 0  # Calls in current minute
+        self.minute_reset_time = time.time() + 60  # Reset counter every minute
+
     def _wait_for_rate_limit(self):
         """Enforce rate limiting by waiting between requests"""
         import time
         current_time = time.time()
+
+        # Reset minute counter if needed
+        if current_time >= self.minute_reset_time:
+            self.api_call_count_minute = 0
+            self.minute_reset_time = current_time + 60
+
         time_since_last = current_time - self.last_request_time
 
         if time_since_last < self.min_request_interval:
@@ -1043,6 +1054,20 @@ class TradingVolatilityAPI:
             time.sleep(wait_time)
 
         self.last_request_time = time.time()
+
+        # Increment counters
+        self.api_call_count += 1
+        self.api_call_count_minute += 1
+
+    def get_api_usage_stats(self) -> dict:
+        """Get current API usage statistics"""
+        import time
+        return {
+            'total_calls': self.api_call_count,
+            'calls_this_minute': self.api_call_count_minute,
+            'cache_size': len(self.response_cache),
+            'time_until_minute_reset': max(0, int(self.minute_reset_time - time.time()))
+        }
 
     def _get_cache_key(self, endpoint: str, symbol: str) -> str:
         """Generate cache key for API responses"""

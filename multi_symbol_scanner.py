@@ -291,6 +291,9 @@ def display_watchlist_manager():
 
     st.subheader("📋 Watchlist Manager")
 
+    # API Protection: Max watchlist size
+    MAX_WATCHLIST_SIZE = 20
+
     # Initialize watchlist in session state
     if 'watchlist' not in st.session_state:
         st.session_state.watchlist = ['SPY', 'QQQ', 'IWM', 'DIA', 'TSLA']
@@ -305,13 +308,21 @@ def display_watchlist_manager():
         ).upper()
     with col2:
         if st.button("➕ Add", use_container_width=True):
-            if new_symbol and new_symbol not in st.session_state.watchlist:
+            # Check watchlist size limit
+            if len(st.session_state.watchlist) >= MAX_WATCHLIST_SIZE:
+                st.error(f"❌ Watchlist limit reached ({MAX_WATCHLIST_SIZE} symbols max)")
+                st.warning("💡 Remove symbols to add new ones. This limit protects against excessive API usage.")
+            elif new_symbol and new_symbol not in st.session_state.watchlist:
                 st.session_state.watchlist.append(new_symbol)
                 st.success(f"✅ Added {new_symbol}")
                 st.rerun()
+            elif new_symbol in st.session_state.watchlist:
+                st.warning(f"⚠️ {new_symbol} already in watchlist")
 
-    # Display current watchlist
-    st.write(f"**Current Watchlist** ({len(st.session_state.watchlist)} symbols):")
+    # Display current watchlist with limit indicator
+    remaining = MAX_WATCHLIST_SIZE - len(st.session_state.watchlist)
+    color = "🟢" if remaining > 5 else "🟡" if remaining > 0 else "🔴"
+    st.write(f"**Current Watchlist** ({len(st.session_state.watchlist)}/{MAX_WATCHLIST_SIZE} symbols) {color}")
 
     # Show watchlist with remove buttons
     for symbol in st.session_state.watchlist:
@@ -330,7 +341,9 @@ def display_watchlist_manager():
         for idx, sym in enumerate(popular):
             with cols[idx % 4]:
                 if st.button(sym, key=f"quick_{sym}", use_container_width=True):
-                    if sym not in st.session_state.watchlist:
+                    if len(st.session_state.watchlist) >= MAX_WATCHLIST_SIZE:
+                        st.error(f"Watchlist limit reached ({MAX_WATCHLIST_SIZE} max)")
+                    elif sym not in st.session_state.watchlist:
                         st.session_state.watchlist.append(sym)
                         st.rerun()
 

@@ -223,6 +223,28 @@ def main():
         else:
             st.warning("🤖 **AI Copilot:** ⚠️ BASIC MODE")
 
+        # API Usage Stats
+        if 'api_client' in st.session_state:
+            stats = st.session_state.api_client.get_api_usage_stats()
+
+            with st.expander("📊 API Usage (This Session)", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Total Calls", stats['total_calls'])
+                with col2:
+                    st.metric("This Minute", stats['calls_this_minute'])
+
+                st.caption(f"🗃️ Cache: {stats['cache_size']} entries (30s)")
+                st.caption(f"⏱️ Minute resets in: {stats['time_until_minute_reset']}s")
+
+                # Color indicator based on usage
+                if stats['calls_this_minute'] < 10:
+                    st.success("🟢 Normal usage")
+                elif stats['calls_this_minute'] < 20:
+                    st.warning("🟡 Moderate usage")
+                else:
+                    st.error("🔴 Heavy usage - slow down!")
+
         st.divider()
 
         # 1. Symbol Selection (TOP)
