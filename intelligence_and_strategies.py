@@ -1078,8 +1078,15 @@ class ClaudeIntelligence:
         # STEP 3: If market_data is empty, fetch fresh data
         if not market_data or not market_data.get('net_gex'):
             try:
-                from core_classes_and_engines import TradingVolatilityAPI
-                api = TradingVolatilityAPI()
+                # Use shared API client from session state to respect rate limiting
+                if 'api_client' in st.session_state:
+                    api = st.session_state.api_client
+                else:
+                    # Fallback: create new instance only if session state doesn't have one
+                    from core_classes_and_engines import TradingVolatilityAPI
+                    api = TradingVolatilityAPI()
+                    st.session_state.api_client = api
+
                 fresh_data = api.get_gex_data(symbol)
                 if fresh_data:
                     market_data = fresh_data
