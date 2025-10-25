@@ -646,11 +646,13 @@ def main():
 
             st.divider()
 
-            # Get yesterday's data for comparison (used in GEX chart and later)
+            # Display GEX Profile Chart with STD Movement
+            st.subheader(f"📊 GEX Profile")
+
+            # Fetch yesterday's data for STD movement tracking
+            # Now uses 5-min cache + 15s rate limiting to prevent API errors
             yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
 
-            # Display GEX Profile Chart with STD movement tracking
-            st.subheader(f"📊 GEX Profile")
             if data.get('profile'):
                 visualizer = GEXVisualizer()
                 # Add flip_point and STD levels from GEX data to profile for chart consistency
@@ -663,7 +665,7 @@ def main():
                     profile_with_levels['std_1_pos'] = gex_data.get('std_1_pos', 0)
                     profile_with_levels['std_1_neg'] = gex_data.get('std_1_neg', 0)
 
-                # Pass yesterday_data for STD movement tracking
+                # Pass yesterday_data for STD movement tracking (None if not requested)
                 fig = visualizer.create_gex_profile(profile_with_levels, yesterday_data)
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -978,6 +980,9 @@ def main():
         col1, col2 = st.columns([3, 1])
         with col1:
             st.info(f"💡 Ready to scan {len(watchlist)} symbols from your watchlist")
+            if len(watchlist) > 0:
+                scan_time_minutes = (len(watchlist) * 15) / 60
+                st.caption(f"⏱️ Estimated scan time: ~{scan_time_minutes:.1f} minutes (15s delay per symbol to prevent rate limits)")
         with col2:
             force_refresh = st.checkbox("Force Refresh", help="Bypass cache and fetch fresh data")
 

@@ -103,8 +103,8 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
         else:
             # Fetch fresh data
             try:
+                # ONLY fetch GEX data - skip skew_data to reduce API calls
                 gex_data = api_client.get_net_gamma(symbol)
-                skew_data = api_client.get_skew_data(symbol)
 
                 # Import here to avoid circular dependency
                 from visualization_and_plans import StrategyEngine
@@ -122,8 +122,6 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                     'flip_point': gex_data.get('flip_point', 0),
                     'distance_to_flip': ((gex_data.get('flip_point', 0) - gex_data.get('spot_price', 0)) /
                                          gex_data.get('spot_price', 1) * 100) if gex_data.get('spot_price') else 0,
-                    'iv': skew_data.get('implied_volatility', 0) * 100 if skew_data else 0,
-                    'pcr': skew_data.get('pcr_oi', 0) if skew_data else 0,
                     'setup_type': best_setup.get('strategy', 'N/A') if best_setup else 'N/A',
                     'confidence': best_setup.get('confidence', 0) if best_setup else 0,
                     'action': best_setup.get('action', 'N/A') if best_setup else 'N/A',
@@ -134,8 +132,10 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                 # Cache the result
                 cache.set(symbol, scan_result)
 
-                # Small delay to avoid hammering API
-                time.sleep(0.5)
+                # CRITICAL DELAY: Match main app rate limiting (15 seconds)
+                # This prevents circuit breaker activation when scanning multiple symbols
+                if idx < len(symbols) - 1:  # Don't wait after last symbol
+                    time.sleep(15)
 
             except Exception as e:
                 st.warning(f"⚠️ Error scanning {symbol}: {str(e)}")
@@ -145,8 +145,6 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                     'net_gex': 0,
                     'flip_point': 0,
                     'distance_to_flip': 0,
-                    'iv': 0,
-                    'pcr': 0,
                     'setup_type': 'Error',
                     'confidence': 0,
                     'action': 'N/A',
@@ -175,9 +173,9 @@ def display_scanner_dashboard(df: pd.DataFrame):
 
     st.subheader("📊 Multi-Symbol Scanner Results")
 
-    # Ensure all required columns exist
+    # Ensure all required columns exist (IV and PCR removed to reduce API calls by 50%)
     required_columns = ['symbol', 'spot_price', 'net_gex', 'distance_to_flip',
-                       'iv', 'setup_type', 'confidence', 'action', 'cache_status']
+                       'setup_type', 'confidence', 'action', 'cache_status']
     for col in required_columns:
         if col not in df.columns:
             df[col] = 0 if col not in ['symbol', 'setup_type', 'action', 'cache_status'] else 'N/A'
@@ -185,19 +183,19 @@ def display_scanner_dashboard(df: pd.DataFrame):
     # Sort by confidence (best opportunities first)
     df_sorted = df.sort_values('confidence', ascending=False)
 
-    # Display formatted table
+    # Display formatted table (IV column removed - not essential for finding setups)
     display_df = df_sorted[[
         'symbol', 'spot_price', 'net_gex', 'distance_to_flip',
-        'iv', 'setup_type', 'confidence', 'action', 'cache_status'
+        'setup_type', 'confidence', 'action', 'cache_status'
     ]].copy()
 
     # Keep raw confidence values for styling
     confidence_values = display_df['confidence'].copy()
 
-    # Rename columns
+    # Rename columns (IV removed - not essential for finding trade setups)
     display_df.columns = [
         'Symbol', 'Price', 'Net GEX ($B)', 'Dist to Flip (%)',
-        'IV (%)', 'Setup', 'Conf %', 'Action', 'Status'
+        'Setup', 'Conf %', 'Action', 'Status'
     ]
 
     # Format numeric columns (safely handle non-numeric values)
@@ -219,12 +217,6 @@ def display_scanner_dashboard(df: pd.DataFrame):
         except (ValueError, TypeError):
             return 'N/A'
 
-    def safe_format_iv(x):
-        try:
-            return f"{float(x):.1f}%" if x != 'N/A' else 'N/A'
-        except (ValueError, TypeError):
-            return 'N/A'
-
     def safe_format_conf(x):
         try:
             return f"{int(x)}%" if x != 'N/A' else 'N/A'
@@ -234,7 +226,6 @@ def display_scanner_dashboard(df: pd.DataFrame):
     display_df['Price'] = display_df['Price'].apply(safe_format_price)
     display_df['Net GEX ($B)'] = display_df['Net GEX ($B)'].apply(safe_format_gex)
     display_df['Dist to Flip (%)'] = display_df['Dist to Flip (%)'].apply(safe_format_percent)
-    display_df['IV (%)'] = display_df['IV (%)'].apply(safe_format_iv)
     display_df['Conf %'] = display_df['Conf %'].apply(safe_format_conf)
 
     # Color coding based on raw confidence values
