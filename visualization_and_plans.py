@@ -30,9 +30,12 @@ class GEXVisualizer:
     """Create professional trading visualizations"""
     
     @staticmethod
-    def create_gex_profile(gex_data: Dict) -> go.Figure:
-        """Create interactive GEX profile chart"""
-        
+    def create_gex_profile(gex_data: Dict, yesterday_data: Dict = None) -> go.Figure:
+        """
+        Create interactive GEX profile chart
+        Shows ±1 STD movement from previous day if yesterday_data provided
+        """
+
         if not gex_data or 'strikes' not in gex_data:
             fig = go.Figure()
             fig.add_annotation(
@@ -218,7 +221,150 @@ class GEXVisualizer:
                 borderwidth=1,
                 borderpad=3
             )
-        
+
+        # Add ±1 STD lines with movement tracking
+        if 'std_1_pos' in gex_data and 'std_1_neg' in gex_data:
+            current_std_pos = gex_data['std_1_pos']
+            current_std_neg = gex_data['std_1_neg']
+
+            # Add current ±1 STD lines (bright, solid)
+            fig.add_vline(
+                x=current_std_pos,
+                line_dash="solid",
+                line_color="cyan",
+                line_width=2,
+                opacity=0.8,
+                row='all'
+            )
+            fig.add_vline(
+                x=current_std_neg,
+                line_dash="solid",
+                line_color="magenta",
+                line_width=2,
+                opacity=0.8,
+                row='all'
+            )
+
+            # If yesterday's data provided, show movement
+            if yesterday_data and 'std_1_pos' in yesterday_data and 'std_1_neg' in yesterday_data:
+                yesterday_std_pos = yesterday_data['std_1_pos']
+                yesterday_std_neg = yesterday_data['std_1_neg']
+
+                # Add yesterday's ±1 STD lines (faded, dashed)
+                fig.add_vline(
+                    x=yesterday_std_pos,
+                    line_dash="dash",
+                    line_color="cyan",
+                    line_width=1,
+                    opacity=0.3,
+                    row='all'
+                )
+                fig.add_vline(
+                    x=yesterday_std_neg,
+                    line_dash="dash",
+                    line_color="magenta",
+                    line_width=1,
+                    opacity=0.3,
+                    row='all'
+                )
+
+                # Calculate movement
+                std_pos_change = current_std_pos - yesterday_std_pos
+                std_neg_change = current_std_neg - yesterday_std_neg
+                std_range_change = (current_std_pos - current_std_neg) - (yesterday_std_pos - yesterday_std_neg)
+
+                # Add ±1 STD annotations with movement indicators
+                # Upper STD
+                if abs(std_pos_change) > 0.5:
+                    arrow = "↑" if std_pos_change > 0 else "↓"
+                    color = "lime" if std_pos_change > 0 else "red"
+                    annotations_to_add.append({
+                        'x': current_std_pos,
+                        'y': 0.75,
+                        'text': f'{arrow} +1σ: ${current_std_pos:.2f} ({std_pos_change:+.2f})',
+                        'color': color
+                    })
+                else:
+                    annotations_to_add.append({
+                        'x': current_std_pos,
+                        'y': 0.75,
+                        'text': f'+1σ: ${current_std_pos:.2f}',
+                        'color': 'cyan'
+                    })
+
+                # Lower STD
+                if abs(std_neg_change) > 0.5:
+                    arrow = "↑" if std_neg_change > 0 else "↓"
+                    color = "lime" if std_neg_change > 0 else "red"
+                    annotations_to_add.append({
+                        'x': current_std_neg,
+                        'y': 0.70,
+                        'text': f'{arrow} -1σ: ${current_std_neg:.2f} ({std_neg_change:+.2f})',
+                        'color': color
+                    })
+                else:
+                    annotations_to_add.append({
+                        'x': current_std_neg,
+                        'y': 0.70,
+                        'text': f'-1σ: ${current_std_neg:.2f}',
+                        'color': 'magenta'
+                    })
+
+                # Add range expansion/contraction indicator at top
+                if abs(std_range_change) > 1.0:
+                    range_text = f"STD Range: {'📈 Expanding' if std_range_change > 0 else '📉 Contracting'} ({std_range_change:+.2f})"
+                    range_color = "lime" if std_range_change > 0 else "orange"
+
+                    fig.add_annotation(
+                        x=0.5,
+                        y=1.05,
+                        xref='paper',
+                        yref='paper',
+                        text=range_text,
+                        showarrow=False,
+                        font=dict(size=12, color=range_color, weight='bold'),
+                        bgcolor='rgba(0,0,0,0.8)',
+                        bordercolor=range_color,
+                        borderwidth=2,
+                        borderpad=5
+                    )
+            else:
+                # No yesterday data, just show current STD
+                annotations_to_add.append({
+                    'x': current_std_pos,
+                    'y': 0.75,
+                    'text': f'+1σ: ${current_std_pos:.2f}',
+                    'color': 'cyan'
+                })
+                annotations_to_add.append({
+                    'x': current_std_neg,
+                    'y': 0.70,
+                    'text': f'-1σ: ${current_std_neg:.2f}',
+                    'color': 'magenta'
+                })
+
+        # Re-add all annotations (including new STD annotations)
+        for ann in annotations_to_add:
+            fig.add_annotation(
+                x=ann['x'],
+                y=ann['y'],
+                xref='x',
+                yref='paper',
+                text=ann['text'],
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=1,
+                arrowwidth=1,
+                arrowcolor=ann['color'],
+                ax=0,
+                ay=-30,
+                font=dict(size=10, color=ann['color']),
+                bgcolor='rgba(0,0,0,0.6)',
+                bordercolor=ann['color'],
+                borderwidth=1,
+                borderpad=3
+            )
+
         fig.update_layout(
             title=f'GEX Profile Analysis - {gex_data.get("symbol", "N/A")}',
             height=600,
@@ -229,7 +375,7 @@ class GEXVisualizer:
             yaxis_title='Gamma Exposure ($M)',
             yaxis2_title='Net Gamma ($M)'
         )
-        
+
         return fig
 
     @staticmethod

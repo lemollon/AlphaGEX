@@ -616,15 +616,25 @@ def main():
 
             st.divider()
 
-            # Display GEX Profile Chart
+            # Get yesterday's data for comparison (used in GEX chart and later)
+            yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
+
+            # Display GEX Profile Chart with STD movement tracking
             st.subheader(f"📊 GEX Profile")
             if data.get('profile'):
                 visualizer = GEXVisualizer()
-                # Add flip_point from GEX data to profile for chart consistency
+                # Add flip_point and STD levels from GEX data to profile for chart consistency
                 profile_with_levels = data['profile'].copy()
                 profile_with_levels['flip_point'] = gex_data.get('flip_point', 0)
                 profile_with_levels['spot_price'] = gex_data.get('spot_price', 0)
-                fig = visualizer.create_gex_profile(profile_with_levels)
+
+                # Add ±1 STD levels if available
+                if 'std_1_pos' in gex_data:
+                    profile_with_levels['std_1_pos'] = gex_data.get('std_1_pos', 0)
+                    profile_with_levels['std_1_neg'] = gex_data.get('std_1_neg', 0)
+
+                # Pass yesterday_data for STD movement tracking
+                fig = visualizer.create_gex_profile(profile_with_levels, yesterday_data)
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.warning(f"No GEX profile data available for {current_symbol}. Chart cannot be displayed.")
@@ -648,9 +658,7 @@ def main():
             st.divider()
             st.header(f"📏 Day-Over-Day Analysis")
 
-            # Get yesterday's data for comparison
-            yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
-
+            # Use yesterday_data already fetched above
             if yesterday_data:
                 display_std_level_changes(data.get('gex', {}), yesterday_data)
             else:
