@@ -462,10 +462,10 @@ def main():
             # Current Analysis Metrics
             gex_data = data.get('gex', {})
 
-            col1, col2, col3 = st.columns(3)
+            # ROW 1: Core Metrics (Net GEX, Price, Flip Point)
+            col1, col2, col3, col4 = st.columns(4)
 
             with col1:
-                # Net GEX
                 net_gex = gex_data.get('net_gex', 0)
                 st.metric(
                     "Net GEX",
@@ -474,77 +474,105 @@ def main():
                     delta_color="inverse" if net_gex < 0 else "normal"
                 )
 
-                # MM State
-                claude = ClaudeIntelligence()
-                mm_state = claude._determine_mm_state(net_gex)
-                state_config = MM_STATES[mm_state]
-
-                st.info(f"""
-                **MM State: {mm_state}**
-                {state_config['behavior']}
-
-                **Action: {state_config['action']}**
-                """)
-
             with col2:
-                # Key Levels
-                st.subheader("📍 Key Levels")
-
                 spot = gex_data.get('spot_price', 0)
-                flip = gex_data.get('flip_point', 0)
-
                 st.metric("Current Price", f"${spot:.2f}")
+
+            with col3:
+                flip = gex_data.get('flip_point', 0)
                 st.metric(
                     "Flip Point",
                     f"${flip:.2f}",
                     delta=f"{((flip-spot)/spot*100):+.2f}%" if spot != 0 else "N/A"
                 )
 
+            with col4:
                 call_wall = gex_data.get('call_wall', 0)
                 put_wall = gex_data.get('put_wall', 0)
+                if call_wall and put_wall:
+                    wall_range = call_wall - put_wall
+                    st.metric("Wall Range", f"${wall_range:.2f}",
+                             delta=f"${put_wall:.2f} → ${call_wall:.2f}")
 
-                if call_wall:
-                    st.metric("Call Wall", f"${call_wall:.2f}")
-                if put_wall:
-                    st.metric("Put Wall", f"${put_wall:.2f}")
+            # ROW 2: Market Maker State + Key Support/Resistance
+            col1, col2 = st.columns([1, 1])
 
-            with col3:
-                # Advanced Skew Metrics (if available)
+            with col1:
+                st.markdown("### 🏦 Market Maker State")
+                claude = ClaudeIntelligence()
+                mm_state = claude._determine_mm_state(net_gex)
+                state_config = MM_STATES[mm_state]
+
+                st.info(f"""
+                **State: {mm_state}**
+                {state_config['behavior']}
+
+                **Recommended Action:**
+                {state_config['action']}
+                """)
+
+            with col2:
+                st.markdown("### 📍 Key Support & Resistance")
+
+                # Show walls and flip in organized way
+                metrics_col1, metrics_col2 = st.columns(2)
+
+                with metrics_col1:
+                    if put_wall:
+                        st.metric("📉 Put Wall (Support)", f"${put_wall:.2f}")
+                    st.metric("🔄 Gamma Flip", f"${flip:.2f}")
+
+                with metrics_col2:
+                    if call_wall:
+                        st.metric("📈 Call Wall (Resistance)", f"${call_wall:.2f}")
+                    if spot:
+                        position_vs_flip = "Above ✅" if spot > flip else "Below ⚠️"
+                        st.metric("Position vs Flip", position_vs_flip)
+
+            # ROW 3: Expected Moves & Skew Analysis (Collapsible)
+            with st.expander("📊 Expected Moves & Skew Analysis (Click to Expand)", expanded=False):
                 if st.session_state.current_data and st.session_state.current_data.get('skew'):
-                    st.subheader("📊 Skew Analysis")
                     skew = st.session_state.current_data['skew']
 
-                    # Expected Moves
-                    one_day_std = float(skew.get('one_day_std', 0)) * 100
-                    one_week_std = float(skew.get('one_week_std', 0)) * 100
+                    # Expected Moves Row
+                    st.markdown("#### Expected Price Moves")
+                    move_col1, move_col2, move_col3, move_col4 = st.columns(4)
 
-                    st.metric("1-Day Expected Move", f"{one_day_std:.2f}%")
-                    st.metric("7-Day Expected Move", f"{one_week_std:.2f}%")
+                    with move_col1:
+                        one_day_std = float(skew.get('one_day_std', 0)) * 100
+                        st.metric("1-Day Move", f"±{one_day_std:.2f}%")
 
-                    # Delta Spread (Put/Call skew indicator)
-                    delta_spread = float(skew.get('put_call_delta_spread', 0))
-                    avg_spread = float(skew.get('avg_PC_delta_spread', 0))
+                    with move_col2:
+                        one_week_std = float(skew.get('one_week_std', 0)) * 100
+                        st.metric("7-Day Move", f"±{one_week_std:.2f}%")
 
-                    skew_status = "BEARISH" if delta_spread < -0.03 else "BULLISH" if delta_spread > 0.03 else "NEUTRAL"
-                    skew_color = "🔴" if delta_spread < -0.03 else "🟢" if delta_spread > 0.03 else "🟡"
+                    with move_col3:
+                        bb_width = float(skew.get('bollinger_band_width', 0)) * 100
+                        st.metric("BB Width", f"{bb_width:.1f}%")
 
-                    st.metric(
-                        "Delta Spread",
-                        f"{skew_color} {delta_spread:.4f}",
-                        delta=f"Avg: {avg_spread:.4f}"
-                    )
-                    st.caption(f"Skew: **{skew_status}** - {'Puts expensive' if delta_spread < -0.03 else 'Calls expensive' if delta_spread > 0.03 else 'Balanced'}")
+                    with move_col4:
+                        delta_spread = float(skew.get('put_call_delta_spread', 0))
+                        skew_status = "BEARISH" if delta_spread < -0.03 else "BULLISH" if delta_spread > 0.03 else "NEUTRAL"
+                        skew_color = "🔴" if delta_spread < -0.03 else "🟢" if delta_spread > 0.03 else "🟡"
+                        st.metric("Skew Bias", f"{skew_color} {skew_status}")
 
-                    # Bollinger Band Width
-                    bb_width = float(skew.get('bollinger_band_width', 0)) * 100
-                    st.metric("Bollinger Band Width", f"{bb_width:.1f}%")
+                    # Detailed Skew Metrics
+                    st.markdown("#### Put/Call Skew Details")
+                    skew_col1, skew_col2, skew_col3 = st.columns(3)
 
-                    # PCR Changes
-                    pcr_30d = float(skew.get('pcr_oi_30_day_change', 0))
-                    pcr_60d = float(skew.get('pcr_oi_60_day_change', 0))
+                    with skew_col1:
+                        delta_spread = float(skew.get('put_call_delta_spread', 0))
+                        st.metric("Delta Spread", f"{delta_spread:.4f}")
 
-                    st.metric("PCR 30d Change", f"{pcr_30d:+.2f}")
-                    st.metric("PCR 60d Change", f"{pcr_60d:+.2f}")
+                    with skew_col2:
+                        pcr_30d = float(skew.get('pcr_oi_30_day_change', 0))
+                        st.metric("PCR 30d Change", f"{pcr_30d:+.2f}")
+
+                    with skew_col3:
+                        pcr_60d = float(skew.get('pcr_oi_60_day_change', 0))
+                        st.metric("PCR 60d Change", f"{pcr_60d:+.2f}")
+                else:
+                    st.info("💡 Skew data not available. This data is optional and skipped to reduce API usage.")
 
             # Day-Over-Day Changes (lazy-loaded to save API calls)
             with st.expander("📊 Day-Over-Day Trends (Click to Load)", expanded=False):
