@@ -111,6 +111,9 @@ from position_management_agent import (
     display_position_monitoring,
     display_position_monitoring_widget
 )
+from autonomous_trader_dashboard import (
+    display_autonomous_trader
+)
 
 # ============================================================================
 # PAGE CONFIG
@@ -413,6 +416,7 @@ def main():
         "🔔 Alerts",
         "📅 Trading Plans",
         "💬 AI Co-Pilot",
+        "🤖 Auto Trader",
         "📊 Positions",
         "📔 Trade Journal",
         "📚 Education"
@@ -1584,17 +1588,21 @@ def main():
                         """)
 
 
-    # Tab 7: Positions & Tracking
+    # Tab 7: Autonomous Paper Trader
     with tabs[6]:
+        display_autonomous_trader()
+
+    # Tab 8: Positions & Tracking
+    with tabs[7]:
         display_position_management()
 
-    # Tab 8: Trade Journal - AI Performance Analysis
-    with tabs[7]:
+    # Tab 9: Trade Journal - AI Performance Analysis
+    with tabs[8]:
         journal_period = display_journal_settings()
         display_trade_journal(st.session_state.trade_journal_agent, days_back=journal_period)
 
-    # Tab 9: Education
-    with tabs[8]:
+    # Tab 10: Education
+    with tabs[9]:
         display_education_content()
 
 def display_position_management():

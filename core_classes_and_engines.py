@@ -1007,10 +1007,12 @@ class RiskManager:
 class TradingVolatilityAPI:
     """
     API wrapper for fetching GEX data from Trading Volatility API
+    With built-in rate limiting to prevent API limit errors
     """
 
     def __init__(self):
         import streamlit as st
+        import time
         # Read username/API key from secrets
         self.api_key = st.secrets.get("tv_username", "")
 
@@ -1021,6 +1023,44 @@ class TradingVolatilityAPI:
                        "https://stocks.tradingvolatility.net/api"))
 
         self.last_response = None  # Store last API response for profile data
+
+        # Rate limiting: Track last request time and implement delays
+        self.last_request_time = 0
+        self.min_request_interval = 2.0  # Minimum 2 seconds between requests
+
+        # Response cache to reduce API calls
+        self.response_cache = {}
+        self.cache_duration = 30  # Cache responses for 30 seconds
+
+    def _wait_for_rate_limit(self):
+        """Enforce rate limiting by waiting between requests"""
+        import time
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+
+        if time_since_last < self.min_request_interval:
+            wait_time = self.min_request_interval - time_since_last
+            time.sleep(wait_time)
+
+        self.last_request_time = time.time()
+
+    def _get_cache_key(self, endpoint: str, symbol: str) -> str:
+        """Generate cache key for API responses"""
+        return f"{endpoint}_{symbol}"
+
+    def _get_cached_response(self, cache_key: str):
+        """Get cached response if still valid"""
+        import time
+        if cache_key in self.response_cache:
+            cached_data, timestamp = self.response_cache[cache_key]
+            if time.time() - timestamp < self.cache_duration:
+                return cached_data
+        return None
+
+    def _cache_response(self, cache_key: str, data):
+        """Cache API response with timestamp"""
+        import time
+        self.response_cache[cache_key] = (data, time.time())
 
     def _calculate_walls_from_strike_data(self, strike_data, st):
         """
@@ -1106,7 +1146,7 @@ class TradingVolatilityAPI:
             return 0, 0
 
     def get_net_gamma(self, symbol: str) -> Dict:
-        """Fetch net gamma exposure data from Trading Volatility API"""
+        """Fetch net gamma exposure data from Trading Volatility API with rate limiting"""
         import streamlit as st
         import requests
 
@@ -1116,38 +1156,52 @@ class TradingVolatilityAPI:
                 st.warning("Add 'tv_username' to your Streamlit secrets")
                 return {'error': 'API key not configured'}
 
-            # Call Trading Volatility API
-            response = requests.get(
-                self.endpoint + '/gex/latest',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=30
-            )
+            # Check cache first
+            cache_key = self._get_cache_key('gex/latest', symbol)
+            cached_data = self._get_cached_response(cache_key)
+            if cached_data:
+                # Use cached response
+                self.last_response = cached_data
+                json_response = cached_data
+            else:
+                # Wait for rate limit before making request
+                self._wait_for_rate_limit()
 
-            if response.status_code != 200:
-                st.error(f"❌ Trading Volatility API returned status {response.status_code}")
-                return {'error': f'API returned {response.status_code}'}
+                # Call Trading Volatility API
+                response = requests.get(
+                    self.endpoint + '/gex/latest',
+                    params={
+                        'ticker': symbol,
+                        'username': self.api_key,
+                        'format': 'json'
+                    },
+                    headers={'Accept': 'application/json'},
+                    timeout=30
+                )
 
-            # Check if response has content before parsing JSON
-            if not response.text or len(response.text.strip()) == 0:
-                st.error(f"❌ Trading Volatility API returned empty response")
-                st.warning(f"URL: {response.url}")
-                return {'error': 'Empty response from API'}
+                if response.status_code != 200:
+                    st.error(f"❌ Trading Volatility API returned status {response.status_code}")
+                    return {'error': f'API returned {response.status_code}'}
 
-            # Try to parse JSON with better error handling
-            try:
-                json_response = response.json()
-            except ValueError as json_err:
-                st.error(f"❌ Invalid JSON from Trading Volatility API")
-                st.warning(f"Response text (first 200 chars): {response.text[:200]}")
-                return {'error': f'Invalid JSON: {str(json_err)}'}
+                # Check if response has content before parsing JSON
+                if not response.text or len(response.text.strip()) == 0:
+                    st.error(f"❌ Trading Volatility API returned empty response")
+                    st.warning(f"URL: {response.url}")
+                    return {'error': 'Empty response from API'}
 
-            # Store the full response for get_gex_profile to use
-            self.last_response = json_response
+                # Try to parse JSON with better error handling
+                try:
+                    json_response = response.json()
+                except ValueError as json_err:
+                    st.error(f"❌ Invalid JSON from Trading Volatility API")
+                    st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                    return {'error': f'Invalid JSON: {str(json_err)}'}
+
+                # Cache the response
+                self._cache_response(cache_key, json_response)
+
+                # Store the full response for get_gex_profile to use
+                self.last_response = json_response
 
             # Parse nested response - data is under the ticker symbol
             ticker_data = json_response.get(symbol, {})
@@ -1184,7 +1238,7 @@ class TradingVolatilityAPI:
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint"""
+        """Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint with rate limiting"""
         import streamlit as st
         import requests
 
@@ -1193,34 +1247,47 @@ class TradingVolatilityAPI:
                 st.error("❌ Trading Volatility username not found in secrets!")
                 return {}
 
-            # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
-            response = requests.get(
-                self.endpoint + '/gex/gammaOI',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=30
-            )
+            # Check cache first
+            cache_key = self._get_cache_key('gex/gammaOI', symbol)
+            cached_data = self._get_cached_response(cache_key)
+            if cached_data:
+                json_response = cached_data
+            else:
+                # Wait for rate limit before making request
+                self._wait_for_rate_limit()
 
-            if response.status_code != 200:
-                st.error(f"❌ gammaOI endpoint returned status {response.status_code}")
-                return {}
+                # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
+                response = requests.get(
+                    self.endpoint + '/gex/gammaOI',
+                    params={
+                        'ticker': symbol,
+                        'username': self.api_key,
+                        'format': 'json'
+                    },
+                    headers={'Accept': 'application/json'},
+                    timeout=30
+                )
 
-            # Check if response has content before parsing JSON
-            if not response.text or len(response.text.strip()) == 0:
-                st.error(f"❌ gammaOI endpoint returned empty response")
-                return {}
+                if response.status_code != 200:
+                    st.error(f"❌ gammaOI endpoint returned status {response.status_code}")
+                    return {}
 
-            # Try to parse JSON with better error handling
-            try:
-                json_response = response.json()
-            except ValueError as json_err:
-                st.error(f"❌ Invalid JSON from gammaOI endpoint")
-                st.warning(f"Response text (first 200 chars): {response.text[:200]}")
-                return {}
+                # Check if response has content before parsing JSON
+                if not response.text or len(response.text.strip()) == 0:
+                    st.error(f"❌ gammaOI endpoint returned empty response")
+                    return {}
+
+                # Try to parse JSON with better error handling
+                try:
+                    json_response = response.json()
+                except ValueError as json_err:
+                    st.error(f"❌ Invalid JSON from gammaOI endpoint")
+                    st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                    return {}
+
+                # Cache the response
+                self._cache_response(cache_key, json_response)
+
             ticker_data = json_response.get(symbol, {})
 
             if not ticker_data:
@@ -1447,13 +1514,22 @@ class TradingVolatilityAPI:
         return changes
 
     def get_skew_data(self, symbol: str) -> Dict:
-        """Fetch latest skew data from Trading Volatility API"""
+        """Fetch latest skew data from Trading Volatility API with rate limiting"""
         import streamlit as st
         import requests
 
         try:
             if not self.api_key:
                 return {}
+
+            # Check cache first
+            cache_key = self._get_cache_key('skew/latest', symbol)
+            cached_data = self._get_cached_response(cache_key)
+            if cached_data:
+                return cached_data.get(symbol, {})
+
+            # Wait for rate limit before making request
+            self._wait_for_rate_limit()
 
             response = requests.get(
                 self.endpoint + '/skew/latest',
@@ -1481,6 +1557,9 @@ class TradingVolatilityAPI:
                 st.error(f"❌ Invalid JSON from skew endpoint")
                 st.warning(f"Response text (first 200 chars): {response.text[:200]}")
                 return {}
+
+            # Cache the response
+            self._cache_response(cache_key, json_response)
 
             skew_data = json_response.get(symbol, {})
 
