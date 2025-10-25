@@ -1132,7 +1132,19 @@ class TradingVolatilityAPI:
                 st.error(f"❌ Trading Volatility API returned status {response.status_code}")
                 return {'error': f'API returned {response.status_code}'}
 
-            json_response = response.json()
+            # Check if response has content before parsing JSON
+            if not response.text or len(response.text.strip()) == 0:
+                st.error(f"❌ Trading Volatility API returned empty response")
+                st.warning(f"URL: {response.url}")
+                return {'error': 'Empty response from API'}
+
+            # Try to parse JSON with better error handling
+            try:
+                json_response = response.json()
+            except ValueError as json_err:
+                st.error(f"❌ Invalid JSON from Trading Volatility API")
+                st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                return {'error': f'Invalid JSON: {str(json_err)}'}
 
             # Store the full response for get_gex_profile to use
             self.last_response = json_response
@@ -1197,7 +1209,18 @@ class TradingVolatilityAPI:
                 st.error(f"❌ gammaOI endpoint returned status {response.status_code}")
                 return {}
 
-            json_response = response.json()
+            # Check if response has content before parsing JSON
+            if not response.text or len(response.text.strip()) == 0:
+                st.error(f"❌ gammaOI endpoint returned empty response")
+                return {}
+
+            # Try to parse JSON with better error handling
+            try:
+                json_response = response.json()
+            except ValueError as json_err:
+                st.error(f"❌ Invalid JSON from gammaOI endpoint")
+                st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                return {}
             ticker_data = json_response.get(symbol, {})
 
             if not ticker_data:
@@ -1346,7 +1369,18 @@ class TradingVolatilityAPI:
                 st.warning(f"⚠️ History endpoint returned status {response.status_code}")
                 return []
 
-            json_response = response.json()
+            # Check if response has content before parsing JSON
+            if not response.text or len(response.text.strip()) == 0:
+                st.warning(f"⚠️ History endpoint returned empty response")
+                return []
+
+            # Try to parse JSON with better error handling
+            try:
+                json_response = response.json()
+            except ValueError as json_err:
+                st.warning(f"⚠️ Invalid JSON from history endpoint: {str(json_err)}")
+                return []
+
             history_data = json_response.get(symbol, [])
 
             return history_data if isinstance(history_data, list) else []
@@ -1435,12 +1469,25 @@ class TradingVolatilityAPI:
             if response.status_code != 200:
                 return {}
 
-            json_response = response.json()
+            # Check if response has content before parsing JSON
+            if not response.text or len(response.text.strip()) == 0:
+                st.error(f"❌ Skew endpoint returned empty response")
+                return {}
+
+            # Try to parse JSON with better error handling
+            try:
+                json_response = response.json()
+            except ValueError as json_err:
+                st.error(f"❌ Invalid JSON from skew endpoint")
+                st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                return {}
+
             skew_data = json_response.get(symbol, {})
 
             return skew_data
 
         except Exception as e:
+            st.error(f"❌ Error fetching skew data: {e}")
             print(f"Error fetching skew data: {e}")
             return {}
 
@@ -1473,7 +1520,17 @@ class TradingVolatilityAPI:
             if response.status_code != 200:
                 return []
 
-            json_response = response.json()
+            # Check if response has content before parsing JSON
+            if not response.text or len(response.text.strip()) == 0:
+                return []
+
+            # Try to parse JSON with better error handling
+            try:
+                json_response = response.json()
+            except ValueError as json_err:
+                print(f"Invalid JSON from historical skew endpoint: {str(json_err)}")
+                return []
+
             history_data = json_response.get(symbol, [])
 
             return history_data if isinstance(history_data, list) else []
