@@ -1351,6 +1351,12 @@ class TradingVolatilityAPI:
                     st.error(f"❌ gammaOI endpoint returned status {response.status_code}")
                     return {}
 
+                # Check for rate limit error in response text
+                if "API limit exceeded" in response.text:
+                    st.error(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
+                    self._handle_rate_limit_error()
+                    return {}
+
                 # Check if response has content before parsing JSON
                 if not response.text or len(response.text.strip()) == 0:
                     st.error(f"❌ gammaOI endpoint returned empty response")
@@ -1360,9 +1366,18 @@ class TradingVolatilityAPI:
                 try:
                     json_response = response.json()
                 except ValueError as json_err:
-                    st.error(f"❌ Invalid JSON from gammaOI endpoint")
-                    st.warning(f"Response text (first 200 chars): {response.text[:200]}")
-                    return {}
+                    # Check if error message contains rate limit info
+                    if "API limit exceeded" in response.text:
+                        st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                        self._handle_rate_limit_error()
+                        return {}
+                    else:
+                        st.error(f"❌ Invalid JSON from gammaOI endpoint")
+                        st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                        return {}
+
+                # Success! Reset error counter
+                self._reset_rate_limit_errors()
 
                 # Cache the response
                 self._cache_response(cache_key, json_response)
@@ -1701,6 +1716,9 @@ class TradingVolatilityAPI:
             if not self.api_key:
                 return []
 
+            # Wait for rate limit before making request
+            self._wait_for_rate_limit()
+
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days_back)
 
@@ -1720,6 +1738,12 @@ class TradingVolatilityAPI:
             if response.status_code != 200:
                 return []
 
+            # Check for rate limit error in response text
+            if "API limit exceeded" in response.text:
+                st.warning(f"⚠️ API Rate Limit Hit (skew history) - Circuit breaker activating")
+                self._handle_rate_limit_error()
+                return []
+
             # Check if response has content before parsing JSON
             if not response.text or len(response.text.strip()) == 0:
                 return []
@@ -1728,8 +1752,16 @@ class TradingVolatilityAPI:
             try:
                 json_response = response.json()
             except ValueError as json_err:
-                print(f"Invalid JSON from historical skew endpoint: {str(json_err)}")
+                # Check if error is due to rate limiting
+                if "API limit exceeded" in response.text:
+                    st.warning(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                    self._handle_rate_limit_error()
+                else:
+                    print(f"Invalid JSON from historical skew endpoint: {str(json_err)}")
                 return []
+
+            # Success! Reset error counter
+            self._reset_rate_limit_errors()
 
             history_data = json_response.get(symbol, [])
 
