@@ -86,6 +86,13 @@ class GammaTrackingDB:
             )
         """)
 
+        # Performance optimization: Add indexes for frequently queried columns
+        # These indexes significantly speed up date range and symbol-based queries
+        c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_history_symbol_date ON gamma_history(symbol, date)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_history_timestamp ON gamma_history(timestamp)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_daily_summary_symbol_date ON gamma_daily_summary(symbol, date)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_spy_correlation_symbol_date ON spy_correlation(symbol, date)")
+
         conn.commit()
         conn.close()
 

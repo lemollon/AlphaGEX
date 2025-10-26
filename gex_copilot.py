@@ -54,16 +54,8 @@ from visualization_and_plans import (
     StrategyEngine
 )
 
-# Force module reload to pick up latest changes (fixes AttributeError issues)
-import importlib
-import core_classes_and_engines
-import intelligence_and_strategies
-import visualization_and_plans
-importlib.reload(core_classes_and_engines)
-importlib.reload(intelligence_and_strategies)
-importlib.reload(visualization_and_plans)
-
-# Re-import classes after reload
+# Direct imports without reload - significant performance improvement
+# Module reloading was causing 6,600 lines of code to reload on every interaction
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
 from intelligence_and_strategies import (
     TradingRAG, FREDIntegration, ClaudeIntelligence,
@@ -114,6 +106,40 @@ from position_management_agent import (
 from autonomous_trader_dashboard import (
     display_autonomous_trader
 )
+
+# ============================================================================
+# PERFORMANCE OPTIMIZATION: CACHED HELPER FUNCTIONS
+# ============================================================================
+
+@st.cache_data(ttl=60)  # Cache for 60 seconds
+def get_todays_pnl(db_path: str) -> float:
+    """Get today's P&L from database with caching to reduce DB queries"""
+    conn = sqlite3.connect(db_path)
+    try:
+        today_pnl_query = pd.read_sql_query(
+            "SELECT SUM(pnl) as total FROM positions WHERE DATE(closed_at) = DATE('now')",
+            conn
+        )
+        return today_pnl_query.iloc[0]['total'] if not today_pnl_query.empty and today_pnl_query.iloc[0]['total'] is not None else 0.0
+    finally:
+        conn.close()
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_yesterday_data_cached(symbol: str, api_client_id: int) -> dict:
+    """Cached wrapper for yesterday's data to prevent redundant API calls
+
+    Args:
+        symbol: Stock symbol
+        api_client_id: ID of the API client (to bust cache when client changes)
+
+    Returns:
+        Yesterday's GEX data
+    """
+    # Note: We pass api_client_id to make the cache key unique per client instance
+    # but we need to get the actual client from session state
+    if 'api_client' in st.session_state:
+        return st.session_state.api_client.get_yesterday_data(symbol)
+    return {}
 
 # ============================================================================
 # PAGE CONFIG
@@ -179,14 +205,8 @@ def main():
         st.metric("Active Positions", positions_count)
     
     with col3:
-        # Calculate today's P&L
-        conn = sqlite3.connect(DB_PATH)
-        today_pnl_query = pd.read_sql_query(
-            "SELECT SUM(pnl) as total FROM positions WHERE DATE(closed_at) = DATE('now')",
-            conn
-        )
-        today_pnl = today_pnl_query.iloc[0]['total'] if not today_pnl_query.empty and today_pnl_query.iloc[0]['total'] is not None else 0.0
-        conn.close()
+        # Calculate today's P&L (cached for 60 seconds)
+        today_pnl = get_todays_pnl(DB_PATH)
         st.metric("Today's P&L", f"${today_pnl:,.2f}", delta=f"{today_pnl:+,.2f}")
     
     with col4:
@@ -585,8 +605,8 @@ def main():
             # Day-Over-Day Changes (lazy-loaded to save API calls)
             with st.expander("📊 Day-Over-Day Trends (Click to Load)", expanded=False):
                 if st.button("📈 Load Yesterday's Data", key="load_dod_trends"):
-                    # Fetch yesterday's data for comparison (historical API call)
-                    yesterday_data_quick = st.session_state.api_client.get_yesterday_data(current_symbol)
+                    # Fetch yesterday's data for comparison using cached version
+                    yesterday_data_quick = get_yesterday_data_cached(current_symbol, id(st.session_state.api_client))
 
                     if yesterday_data_quick:
                         changes = st.session_state.api_client.calculate_day_over_day_changes(gex_data, yesterday_data_quick)
@@ -657,27 +677,9 @@ def main():
             # Display GEX Profile Chart with STD Movement
             st.subheader(f"📊 GEX Profile")
 
-            # Fetch yesterday's data for STD movement tracking with session state caching
-            # Initialize session state cache for yesterday's data if not exists
-            if 'yesterday_data_cache' not in st.session_state:
-                st.session_state.yesterday_data_cache = {}
-
-            # Create date-based cache key
-            from datetime import datetime
-            today_date = datetime.now().strftime('%Y-%m-%d')
-            yesterday_cache_key = f"{current_symbol}_{today_date}"
-
-            # Check session state cache first (survives Streamlit reruns)
-            if yesterday_cache_key in st.session_state.yesterday_data_cache:
-                yesterday_data = st.session_state.yesterday_data_cache[yesterday_cache_key]
-                print(f"✓ Using session-cached yesterday data for {current_symbol}")
-            else:
-                # Only fetch from API if not in session cache
-                print(f"⚡ Fetching yesterday data for {current_symbol} (first time this session)")
-                yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
-                # Cache in session state for this session
-                st.session_state.yesterday_data_cache[yesterday_cache_key] = yesterday_data
-                print(f"✓ Cached yesterday data for {current_symbol} in session state")
+            # Fetch yesterday's data using Streamlit cache (5-minute TTL)
+            # This replaces the manual session state caching with proper @st.cache_data
+            yesterday_data = get_yesterday_data_cached(current_symbol, id(st.session_state.api_client))
 
             if data.get('profile'):
                 visualizer = GEXVisualizer()
