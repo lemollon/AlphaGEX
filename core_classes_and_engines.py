@@ -1584,26 +1584,35 @@ class TradingVolatilityAPI:
     def get_yesterday_data(self, symbol: str) -> Dict:
         """Get yesterday's GEX data for day-over-day comparison
 
-        Uses extended cache (1 hour) since yesterday's data only updates once per day
+        Uses date-based caching - yesterday's data is immutable for a given date,
+        so we cache it for the entire day (until midnight when the date changes).
+        This minimizes API calls to once per symbol per day.
         """
         import streamlit as st
         import time
+        from datetime import datetime
 
-        # Check cache first with extended TTL (1 hour = 3600 seconds)
-        cache_key = f"yesterday_{symbol}"
+        # Date-based cache key - includes today's date
+        # Yesterday's data for 2025-10-26 is immutable, so cache remains valid all day
+        today_date = datetime.now().strftime('%Y-%m-%d')
+        cache_key = f"yesterday_{symbol}_{today_date}"
+
+        # Check if we have cached data for today's date
         if cache_key in TradingVolatilityAPI._shared_response_cache:
             cached_data, cached_time = TradingVolatilityAPI._shared_response_cache[cache_key]
-            if time.time() - cached_time < 3600:  # 1 hour cache for yesterday's data
-                print(f"✓ Using cached yesterday data for {symbol} (age: {(time.time() - cached_time)/60:.0f} min)")
-                return cached_data
+            # Cache is valid for the entire day (no time expiration check needed)
+            # It will naturally expire when date changes and cache key changes
+            print(f"✓ Using cached yesterday data for {symbol} from {today_date}")
+            return cached_data
 
-        # Fetch from API
+        # Fetch from API - only happens once per symbol per day
+        print(f"⚡ Fetching yesterday data for {symbol} (will cache for entire day)")
         history = self.get_historical_gamma(symbol, days_back=2)
 
         if len(history) >= 2:
             # Return second most recent (yesterday)
             result = history[-2]
-            # Cache for 1 hour
+            # Cache with today's date - valid until tomorrow
             TradingVolatilityAPI._shared_response_cache[cache_key] = (result, time.time())
             return result
         elif len(history) == 1:
