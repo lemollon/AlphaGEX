@@ -217,7 +217,15 @@ def main():
         st.header("⚙️ Configuration")
 
         # AI Status Indicator (no test button)
-        claude_api_key = st.secrets.get("claude_api_key", "")
+        # Check environment variables first (for Render), then secrets (for local)
+        import os
+        claude_api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if not claude_api_key:
+            try:
+                claude_api_key = st.secrets.get("claude_api_key", "")
+            except:
+                claude_api_key = ""
+
         if claude_api_key:
             st.success("🤖 **AI Copilot:** ✅ ACTIVE")
         else:
