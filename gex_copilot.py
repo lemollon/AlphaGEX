@@ -649,18 +649,9 @@ def main():
             # Display GEX Profile Chart with STD Movement
             st.subheader(f"📊 GEX Profile")
 
-            # Option to enable STD movement visualization (requires history API call)
-            enable_std_viz = st.checkbox(
-                "📈 Show ±1 STD Movement (requires historical data)",
-                value=False,
-                help="Enable this to see how yesterday's ±1 standard deviation levels compare to today's. Uses the /gex/history endpoint."
-            )
-
-            # Only fetch yesterday's data if user enabled STD visualization
-            yesterday_data = None
-            if enable_std_viz:
-                with st.spinner("Loading yesterday's data for STD visualization..."):
-                    yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
+            # Fetch yesterday's data for STD movement tracking
+            # Uses date-based caching - yesterday's data is immutable and cached for entire day
+            yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
 
             if data.get('profile'):
                 visualizer = GEXVisualizer()
@@ -699,11 +690,9 @@ def main():
             st.divider()
             st.header(f"📏 Day-Over-Day Analysis")
 
-            # Use yesterday_data already fetched above (if user enabled STD viz)
+            # Use yesterday_data already fetched above
             if yesterday_data:
                 display_std_level_changes(data.get('gex', {}), yesterday_data)
-            elif not enable_std_viz:
-                st.info("📊 Enable 'Show ±1 STD Movement' above to see day-over-day analysis. This helps reduce API usage by making historical data optional.")
             else:
                 st.info("📊 Yesterday's data not available yet. Day-over-day comparison will appear tomorrow once we have 2+ days of data in the system.")
 
