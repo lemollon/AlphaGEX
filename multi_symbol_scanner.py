@@ -132,10 +132,9 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                 # Cache the result
                 cache.set(symbol, scan_result)
 
-                # CRITICAL DELAY: Match main app rate limiting (15 seconds)
-                # This prevents circuit breaker activation when scanning multiple symbols
-                if idx < len(symbols) - 1:  # Don't wait after last symbol
-                    time.sleep(15)
+                # NOTE: Removed redundant sleep here - the API client already handles
+                # rate limiting with its built-in 15-second minimum interval and circuit breaker.
+                # Double throttling was causing circuit breaker activation due to timing misalignment.
 
             except Exception as e:
                 st.warning(f"⚠️ Error scanning {symbol}: {str(e)}")
@@ -254,7 +253,9 @@ def display_scanner_dashboard(df: pd.DataFrame):
     top_3 = df_sorted.head(3)
 
     cols = st.columns(3)
-    for idx, (_, row) in enumerate(top_3.iterrows()):
+    # Use .iloc instead of .iterrows() for better performance
+    for idx in range(len(top_3)):
+        row = top_3.iloc[idx]
         with cols[idx]:
             st.metric(
                 f"#{idx + 1}: {row['symbol']}",

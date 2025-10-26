@@ -2188,7 +2188,8 @@ class StrategyEngine:
                         'reasoning': f'Net GEX at ${net_gex/1e9:.1f}B. MMs trapped short. '
                                    f'Distance to flip: {distance_to_flip:.1f}%. '
                                    f'Historical win rate: {config["win_rate"]*100:.0f}%',
-                        'best_time': 'Mon/Tue morning after confirmation'
+                        'best_time': 'Mon/Tue morning after confirmation',
+                        'dte': 5  # 5 days to expiration for directional squeeze plays
                     })
 
             elif strategy_name == 'IRON_CONDOR':
@@ -2222,7 +2223,8 @@ class StrategyEngine:
                         'reasoning': f'High positive GEX ${net_gex/1e9:.1f}B creates range. '
                                    f'Walls {wall_distance:.1f}% apart. '
                                    f'Win probability: {ic_sim["win_probability"]:.0f}%',
-                        'best_time': '5-10 DTE entry'
+                        'best_time': '5-10 DTE entry',
+                        'dte': 7  # 7 days to expiration for iron condors (optimal theta decay)
                     })
 
         # FALLBACK STRATEGIES: If no setups detected, create opportunities based on bias
@@ -2248,7 +2250,8 @@ class StrategyEngine:
                     'risk_reward': 2.5,
                     'reasoning': f'Below flip (${flip:.2f}) with negative GEX (${net_gex_billions:.1f}B). '
                                f'MMs will buy on rallies. Defined risk play toward flip point.',
-                    'best_time': '7-14 DTE, enter on morning weakness'
+                    'best_time': '7-14 DTE, enter on morning weakness',
+                    'dte': 10  # 10 days to expiration for call spreads
                 })
 
             # BEARISH BIAS: Price above flip + negative GEX = Caution, but put spreads work
@@ -2268,7 +2271,8 @@ class StrategyEngine:
                     'risk_reward': 2.0,
                     'reasoning': f'Extended above flip (${flip:.2f}). Negative GEX (${net_gex_billions:.1f}B) creates volatility. '
                                f'Mean reversion play with defined risk.',
-                    'best_time': '7-14 DTE, enter on strength'
+                    'best_time': '7-14 DTE, enter on strength',
+                    'dte': 10  # 10 days to expiration for put spreads
                 })
 
             # NEUTRAL/RANGE BOUND: Positive GEX or near flip = Premium collection
@@ -2291,7 +2295,8 @@ class StrategyEngine:
                     'risk_reward': 0.35,
                     'reasoning': f'Positive GEX (${net_gex_billions:.1f}B) or near flip creates range. '
                                f'Collect premium from time decay. 70% historical win rate for 3% OTM ICs.',
-                    'best_time': '7-14 DTE for optimal theta/gamma ratio'
+                    'best_time': '7-14 DTE for optimal theta/gamma ratio',
+                    'dte': 10  # 10 days to expiration for premium collection
                 })
 
             # DEFAULT FALLBACK: If somehow nothing fits, go with direction based on flip
@@ -2313,7 +2318,8 @@ class StrategyEngine:
                         'risk_reward': 2.0,
                         'reasoning': f'Below flip point (${flip:.2f}). Simple directional play. '
                                f'Risk limited to premium paid.',
-                        'best_time': '7-14 DTE'
+                        'best_time': '7-14 DTE',
+                        'dte': 10  # 10 days to expiration for long calls
                     })
                 else:
                     # Simple long put
@@ -2331,7 +2337,8 @@ class StrategyEngine:
                         'risk_reward': 2.0,
                         'reasoning': f'Above flip point (${flip:.2f}). Potential mean reversion. '
                                f'Risk limited to premium paid.',
-                        'best_time': '7-14 DTE'
+                        'best_time': '7-14 DTE',
+                        'dte': 10  # 10 days to expiration for long puts
                     })
 
         return setups
@@ -2380,12 +2387,16 @@ class StrategyEngine:
         if setups:
             plan += "\n## 🎲 Active Setups Available\n"
             for i, setup in enumerate(setups[:3], 1):
+                # Include expiration/DTE info if available
+                best_time = setup.get('best_time', 'N/A')
+                dte_display = f"\n- **⏰ Timing/DTE: {best_time}**" if best_time != 'N/A' else ""
+
                 plan += f"""
 ### Setup #{i}: {setup['strategy']}
 - **Action: {setup['action']}**
 - **Entry: {setup['entry_zone']}**
 - **Confidence: {setup['confidence']}%**
-- **Risk/Reward: 1:{setup['risk_reward']}**
+- **Risk/Reward: 1:{setup['risk_reward']}**{dte_display}
 - **Reasoning: {setup['reasoning']}**
                 """
         else:
