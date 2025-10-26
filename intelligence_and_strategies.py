@@ -2067,7 +2067,8 @@ class SmartStrikeSelector:
                     'premium': self._estimate_premium(spot, strike, 'call'),
                     'success_rate': success_rate,
                     'breakeven': strike + self._estimate_premium(spot, strike, 'call'),
-                    'expected_value': self._calculate_ev(spot, strike, success_rate, 'call')
+                    'expected_value': self._calculate_ev(spot, strike, success_rate, 'call'),
+                    'dte': 7  # 7 days to expiration for optimal strike selection
                 })
         
         strikes.sort(key=lambda x: x['expected_value'], reverse=True)
@@ -2151,7 +2152,9 @@ class MultiStrategyOptimizer:
                     'probability': call_strike['success_rate'],
                     'expected_value': call_strike['expected_value'],
                     'your_historical': f"{personal_stats['win_rate']:.0f}% win rate",
-                    'action': f"BUY {call_strike['strike']} calls @ ${call_strike['premium']:.2f}"
+                    'action': f"BUY {call_strike['strike']} calls @ ${call_strike['premium']:.2f}",
+                    'dte': call_strike.get('dte', 7),  # Days to expiration
+                    'best_time': f"{call_strike.get('dte', 7)} DTE"
                 })
         
         strategies.sort(key=lambda x: x['expected_value'], reverse=True)
@@ -2201,7 +2204,9 @@ class DynamicLevelCalculator:
                 'stop': put_wall,
                 'time_window': self._get_time_window('call', hour),
                 'confidence': 75 if hour < 11 else 60,
-                'action': f"BUY when SPY enters ${spot-0.20:.2f} - ${spot+0.30:.2f}"
+                'action': f"BUY when SPY enters ${spot-0.20:.2f} - ${spot+0.30:.2f}",
+                'dte': 7,  # 7 days to expiration for directional plays
+                'best_time': '7 DTE'
             }
         
         if zones['long_call_zone'] and zones['long_call_zone']['confidence'] > 70:
