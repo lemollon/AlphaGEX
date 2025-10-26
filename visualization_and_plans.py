@@ -2136,6 +2136,10 @@ class StrategyEngine:
         - Think like a professional options trader: adapt to market conditions
         """
 
+        # Import SmartDTECalculator here to avoid circular imports
+        from intelligence_and_strategies import SmartDTECalculator
+        dte_calculator = SmartDTECalculator()
+
         setups = []
 
         net_gex = market_data.get('net_gex', 0)
@@ -2168,8 +2172,12 @@ class StrategyEngine:
 
                     strike = int(flip / 5) * 5 + (5 if flip % 5 > 2.5 else 0)
 
+                    # Calculate smart DTE for this directional squeeze play
+                    dte_analysis = dte_calculator.calculate_optimal_dte(market_data, 'DIRECTIONAL_LONG')
+                    optimal_dte = dte_analysis['dte']
+
                     pricer = BlackScholesPricer()
-                    option = pricer.calculate_option_price(spot, strike, 5/365, 0.20, 'call')
+                    option = pricer.calculate_option_price(spot, strike, optimal_dte/365, 0.20, 'call')
 
                     setups.append({
                         'strategy': 'NEGATIVE GEX SQUEEZE',
@@ -2188,8 +2196,9 @@ class StrategyEngine:
                         'reasoning': f'Net GEX at ${net_gex/1e9:.1f}B. MMs trapped short. '
                                    f'Distance to flip: {distance_to_flip:.1f}%. '
                                    f'Historical win rate: {config["win_rate"]*100:.0f}%',
-                        'best_time': 'Mon/Tue morning after confirmation',
-                        'dte': 5  # 5 days to expiration for directional squeeze plays
+                        'best_time': dte_analysis['display'],  # Smart DTE with reasoning
+                        'dte': optimal_dte,
+                        'dte_reasoning': dte_analysis['reasoning']
                     })
 
             elif strategy_name == 'IRON_CONDOR':
@@ -2203,9 +2212,13 @@ class StrategyEngine:
                     call_long = call_short + 10
                     put_long = put_short - 10
 
+                    # Calculate smart DTE for iron condor
+                    dte_analysis = dte_calculator.calculate_optimal_dte(market_data, 'IRON_CONDOR')
+                    optimal_dte = dte_analysis['dte']
+
                     monte_carlo = MonteCarloEngine()
                     ic_sim = monte_carlo.simulate_iron_condor(
-                        spot, call_short, call_long, put_short, put_long, 7
+                        spot, call_short, call_long, put_short, put_long, optimal_dte
                     )
 
                     setups.append({
@@ -2223,8 +2236,9 @@ class StrategyEngine:
                         'reasoning': f'High positive GEX ${net_gex/1e9:.1f}B creates range. '
                                    f'Walls {wall_distance:.1f}% apart. '
                                    f'Win probability: {ic_sim["win_probability"]:.0f}%',
-                        'best_time': '5-10 DTE entry',
-                        'dte': 7  # 7 days to expiration for iron condors (optimal theta decay)
+                        'best_time': dte_analysis['display'],
+                        'dte': optimal_dte,
+                        'dte_reasoning': dte_analysis['reasoning']
                     })
 
         # FALLBACK STRATEGIES: If no setups detected, create opportunities based on bias
@@ -2234,8 +2248,12 @@ class StrategyEngine:
 
             # BULLISH BIAS: Price below flip + negative GEX = Long calls or call spreads
             if below_flip and negative_gex:
+                # Calculate smart DTE for bullish spread
+                dte_analysis = dte_calculator.calculate_optimal_dte(market_data, 'SPREAD')
+                optimal_dte = dte_analysis['dte']
+
                 call_strike = int((flip + (flip * 0.02)) / 5) * 5  # 2% above flip
-                call_option = pricer.calculate_option_price(spot, call_strike, 7/365, 0.25, 'call')
+                call_option = pricer.calculate_option_price(spot, call_strike, optimal_dte/365, 0.25, 'call')
 
                 setups.append({
                     'strategy': 'BULLISH CALL SPREAD',
@@ -2250,12 +2268,17 @@ class StrategyEngine:
                     'risk_reward': 2.5,
                     'reasoning': f'Below flip (${flip:.2f}) with negative GEX (${net_gex_billions:.1f}B). '
                                f'MMs will buy on rallies. Defined risk play toward flip point.',
-                    'best_time': '7-14 DTE, enter on morning weakness',
-                    'dte': 10  # 10 days to expiration for call spreads
+                    'best_time': dte_analysis['display'],
+                    'dte': optimal_dte,
+                    'dte_reasoning': dte_analysis['reasoning']
                 })
 
             # BEARISH BIAS: Price above flip + negative GEX = Caution, but put spreads work
             elif above_flip and negative_gex:
+                # Calculate smart DTE for bearish spread
+                dte_analysis = dte_calculator.calculate_optimal_dte(market_data, 'SPREAD')
+                optimal_dte = dte_analysis['dte']
+
                 put_strike = int((flip - (flip * 0.02)) / 5) * 5  # 2% below flip
 
                 setups.append({
@@ -2271,13 +2294,18 @@ class StrategyEngine:
                     'risk_reward': 2.0,
                     'reasoning': f'Extended above flip (${flip:.2f}). Negative GEX (${net_gex_billions:.1f}B) creates volatility. '
                                f'Mean reversion play with defined risk.',
-                    'best_time': '7-14 DTE, enter on strength',
-                    'dte': 10  # 10 days to expiration for put spreads
+                    'best_time': dte_analysis['display'],
+                    'dte': optimal_dte,
+                    'dte_reasoning': dte_analysis['reasoning']
                 })
 
             # NEUTRAL/RANGE BOUND: Positive GEX or near flip = Premium collection
             elif positive_gex or near_flip:
-                # Iron Condor for premium collection - go 7-10 days out
+                # Calculate smart DTE for iron condor
+                dte_analysis = dte_calculator.calculate_optimal_dte(market_data, 'IRON_CONDOR')
+                optimal_dte = dte_analysis['dte']
+
+                # Iron Condor for premium collection
                 call_short = int((spot + (spot * 0.03)) / 5) * 5  # 3% OTM
                 put_short = int((spot - (spot * 0.03)) / 5) * 5   # 3% OTM
                 call_long = call_short + 10
@@ -2295,16 +2323,21 @@ class StrategyEngine:
                     'risk_reward': 0.35,
                     'reasoning': f'Positive GEX (${net_gex_billions:.1f}B) or near flip creates range. '
                                f'Collect premium from time decay. 70% historical win rate for 3% OTM ICs.',
-                    'best_time': '7-14 DTE for optimal theta/gamma ratio',
-                    'dte': 10  # 10 days to expiration for premium collection
+                    'best_time': dte_analysis['display'],
+                    'dte': optimal_dte,
+                    'dte_reasoning': dte_analysis['reasoning']
                 })
 
             # DEFAULT FALLBACK: If somehow nothing fits, go with direction based on flip
             else:
                 if below_flip:
+                    # Calculate smart DTE for long call
+                    dte_analysis = dte_calculator.calculate_optimal_dte(market_data, 'DIRECTIONAL_LONG')
+                    optimal_dte = dte_analysis['dte']
+
                     # Simple long call
                     call_strike = int(flip / 5) * 5
-                    call_option = pricer.calculate_option_price(spot, call_strike, 7/365, 0.25, 'call')
+                    call_option = pricer.calculate_option_price(spot, call_strike, optimal_dte/365, 0.25, 'call')
 
                     setups.append({
                         'strategy': 'LONG CALL',
@@ -2318,10 +2351,15 @@ class StrategyEngine:
                         'risk_reward': 2.0,
                         'reasoning': f'Below flip point (${flip:.2f}). Simple directional play. '
                                f'Risk limited to premium paid.',
-                        'best_time': '7-14 DTE',
-                        'dte': 10  # 10 days to expiration for long calls
+                        'best_time': dte_analysis['display'],
+                        'dte': optimal_dte,
+                        'dte_reasoning': dte_analysis['reasoning']
                     })
                 else:
+                    # Calculate smart DTE for long put
+                    dte_analysis = dte_calculator.calculate_optimal_dte(market_data, 'DIRECTIONAL_SHORT')
+                    optimal_dte = dte_analysis['dte']
+
                     # Simple long put
                     put_strike = int(flip / 5) * 5
 
@@ -2337,8 +2375,9 @@ class StrategyEngine:
                         'risk_reward': 2.0,
                         'reasoning': f'Above flip point (${flip:.2f}). Potential mean reversion. '
                                f'Risk limited to premium paid.',
-                        'best_time': '7-14 DTE',
-                        'dte': 10  # 10 days to expiration for long puts
+                        'best_time': dte_analysis['display'],
+                        'dte': optimal_dte,
+                        'dte_reasoning': dte_analysis['reasoning']
                     })
 
         return setups
