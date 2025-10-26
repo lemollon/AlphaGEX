@@ -1045,18 +1045,21 @@ class TradingVolatilityAPI:
     def _wait_for_rate_limit(self):
         """Enforce rate limiting by waiting between requests + circuit breaker"""
         import time
+        import streamlit as st
         current_time = time.time()
 
         # Check circuit breaker
         if self.circuit_breaker_active:
             if current_time < self.circuit_breaker_until:
                 wait_time = self.circuit_breaker_until - current_time
+                st.warning(f"🚨 Circuit breaker active - waiting {wait_time:.0f} more seconds before next API call...")
                 print(f"⚠️ Circuit breaker active, waiting {wait_time:.0f} more seconds...")
                 time.sleep(wait_time)
             else:
                 # Circuit breaker expired, reset
                 self.circuit_breaker_active = False
                 self.consecutive_rate_limit_errors = 0
+                st.info("✅ Circuit breaker reset - resuming normal operation")
                 print("✅ Circuit breaker reset")
 
         # Reset minute counter if needed
@@ -1068,6 +1071,8 @@ class TradingVolatilityAPI:
 
         if time_since_last < self.min_request_interval:
             wait_time = self.min_request_interval - time_since_last
+            if wait_time > 1:  # Only show message if wait is significant
+                st.info(f"⏱️ Rate limiting: waiting {wait_time:.0f}s before next API call (15s minimum between requests)")
             time.sleep(wait_time)
 
         self.last_request_time = time.time()
@@ -1330,8 +1335,13 @@ class TradingVolatilityAPI:
             cache_key = self._get_cache_key('gex/gammaOI', symbol)
             cached_data = self._get_cached_response(cache_key)
             if cached_data:
+                # Cache HIT - no API call needed
+                cache_age = time.time() - self.response_cache.get(cache_key, (None, 0))[1]
+                st.success(f"✅ Using cached data (age: {cache_age:.0f}s / {self.cache_duration}s max) - No API call")
                 json_response = cached_data
             else:
+                # Cache MISS - need to make API call
+                st.info(f"📡 Cache miss - Making API call to gammaOI endpoint...")
                 # Wait for rate limit before making request
                 self._wait_for_rate_limit()
 
@@ -1356,16 +1366,28 @@ class TradingVolatilityAPI:
                     st.error(f"❌ gammaOI endpoint returned empty response")
                     return {}
 
+                # Check for rate limit error BEFORE parsing JSON
+                if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
+                    st.error(f"⚠️ API Rate Limit Hit (gammaOI endpoint) - Circuit breaker activating")
+                    self._handle_rate_limit_error()
+                    return {}
+
                 # Try to parse JSON with better error handling
                 try:
                     json_response = response.json()
                 except ValueError as json_err:
-                    st.error(f"❌ Invalid JSON from gammaOI endpoint")
-                    st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                    # Double-check if this is a rate limit error
+                    if "API limit exceeded" in response.text:
+                        st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                        self._handle_rate_limit_error()
+                    else:
+                        st.error(f"❌ Invalid JSON from gammaOI endpoint")
+                        st.warning(f"Response text (first 200 chars): {response.text[:200]}")
                     return {}
 
                 # Cache the response
                 self._cache_response(cache_key, json_response)
+                self._reset_rate_limit_errors()  # Success, reset error counter
 
             ticker_data = json_response.get(symbol, {})
 
