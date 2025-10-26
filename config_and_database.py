@@ -212,6 +212,18 @@ def init_database():
     # Migrate existing databases to add new columns
     _migrate_positions_table(c)
 
+    # Performance optimization: Add indexes for frequently queried columns
+    # These indexes significantly speed up queries by symbol, date, and status
+    c.execute("CREATE INDEX IF NOT EXISTS idx_gex_history_symbol ON gex_history(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_gex_history_timestamp ON gex_history(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_recommendations_symbol ON recommendations(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_recommendations_timestamp ON recommendations(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_positions_closed_at ON positions(closed_at)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_performance_date ON performance(date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_conversations_timestamp ON conversations(timestamp)")
+
     conn.commit()
     conn.close()
 
