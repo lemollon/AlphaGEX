@@ -649,9 +649,27 @@ def main():
             # Display GEX Profile Chart with STD Movement
             st.subheader(f"📊 GEX Profile")
 
-            # Fetch yesterday's data for STD movement tracking
-            # Uses date-based caching - yesterday's data is immutable and cached for entire day
-            yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
+            # Fetch yesterday's data for STD movement tracking with session state caching
+            # Initialize session state cache for yesterday's data if not exists
+            if 'yesterday_data_cache' not in st.session_state:
+                st.session_state.yesterday_data_cache = {}
+
+            # Create date-based cache key
+            from datetime import datetime
+            today_date = datetime.now().strftime('%Y-%m-%d')
+            yesterday_cache_key = f"{current_symbol}_{today_date}"
+
+            # Check session state cache first (survives Streamlit reruns)
+            if yesterday_cache_key in st.session_state.yesterday_data_cache:
+                yesterday_data = st.session_state.yesterday_data_cache[yesterday_cache_key]
+                print(f"✓ Using session-cached yesterday data for {current_symbol}")
+            else:
+                # Only fetch from API if not in session cache
+                print(f"⚡ Fetching yesterday data for {current_symbol} (first time this session)")
+                yesterday_data = st.session_state.api_client.get_yesterday_data(current_symbol)
+                # Cache in session state for this session
+                st.session_state.yesterday_data_cache[yesterday_cache_key] = yesterday_data
+                print(f"✓ Cached yesterday data for {current_symbol} in session state")
 
             if data.get('profile'):
                 visualizer = GEXVisualizer()
