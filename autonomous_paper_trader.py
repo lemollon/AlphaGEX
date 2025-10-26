@@ -746,9 +746,17 @@ RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
         Returns: {'should_close': bool, 'reason': str}
         """
         import streamlit as st
+        import os
 
         # Check if Claude API is available
-        claude_api_key = st.secrets.get("claude_api_key", "")
+        # Check environment variables first (for Render), then secrets (for local)
+        claude_api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if not claude_api_key:
+            try:
+                claude_api_key = st.secrets.get("claude_api_key", "")
+            except:
+                claude_api_key = ""
+
         if not claude_api_key:
             # No AI available, use fallback
             return {'should_close': False, 'reason': 'AI unavailable'}

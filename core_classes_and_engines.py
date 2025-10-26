@@ -1030,14 +1030,26 @@ class TradingVolatilityAPI:
     def __init__(self):
         import streamlit as st
         import time
-        # Read username/API key from secrets
-        self.api_key = st.secrets.get("tv_username", "")
+        import os
 
-        # Read endpoint from secrets (with fallback)
-        # First try 'endpoint', then 'api_key', then use default
-        self.endpoint = st.secrets.get("endpoint",
-                       st.secrets.get("api_key",
-                       "https://stocks.tradingvolatility.net/api"))
+        # Read username/API key from environment variables (for Render) or secrets (for local)
+        # Priority: ENV VAR > st.secrets > empty string
+        self.api_key = os.getenv("TV_USERNAME") or os.getenv("tv_username", "")
+        if not self.api_key:
+            try:
+                self.api_key = st.secrets.get("tv_username", "")
+            except:
+                self.api_key = ""
+
+        # Read endpoint from environment variables or secrets (with fallback)
+        self.endpoint = os.getenv("ENDPOINT") or os.getenv("endpoint", "")
+        if not self.endpoint:
+            try:
+                self.endpoint = st.secrets.get("endpoint",
+                               st.secrets.get("api_key",
+                               "https://stocks.tradingvolatility.net/api"))
+            except:
+                self.endpoint = "https://stocks.tradingvolatility.net/api"
 
         self.last_response = None  # Store last API response for profile data
 

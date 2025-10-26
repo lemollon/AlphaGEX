@@ -850,7 +850,15 @@ class FREDIntegration:
     """Federal Reserve Economic Data integration for macro context"""
     
     def __init__(self):
-        self.api_key = st.secrets.get("fred_api_key", "")
+        import os
+        # Check environment variables first (for Render), then secrets (for local)
+        self.api_key = os.getenv("FRED_API_KEY") or os.getenv("fred_api_key", "")
+        if not self.api_key:
+            try:
+                self.api_key = st.secrets.get("fred_api_key", "")
+            except:
+                self.api_key = ""
+
         self.base_url = "https://api.stlouisfed.org/fred/series/observations"
         self.cache = {}
         self.cache_ttl = 3600
@@ -982,7 +990,15 @@ class ClaudeIntelligence:
     """Advanced AI integration for market analysis - NOW WITH ULTIMATE FEATURES"""
 
     def __init__(self):
-        self.api_key = st.secrets.get("claude_api_key", "")
+        import os
+        # Check environment variables first (for Render), then secrets (for local)
+        self.api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if not self.api_key:
+            try:
+                self.api_key = st.secrets.get("claude_api_key", "")
+            except:
+                self.api_key = ""
+
         # Use Claude 3 Haiku - fast and efficient model
         self.model = "claude-3-haiku-20240307"
         self.conversation_history = []
