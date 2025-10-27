@@ -1,5 +1,6 @@
 """
-main.py - Main Streamlit Application for GEX Trading Co-Pilot v7.0
+main.py - Main Streamlit Application for AlphaGEX
+Professional Options Intelligence Platform
 This is the main entry point that imports all classes from the other files
 Run this with: streamlit run main.py
 """
@@ -146,8 +147,8 @@ def get_yesterday_data_cached(symbol: str, api_client_id: int) -> dict:
 # PAGE CONFIG
 # ============================================================================
 st.set_page_config(
-    page_title="GEX Trading Co-Pilot v7.0",
-    page_icon="🎯",
+    page_title="AlphaGEX - Options Intelligence",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -185,31 +186,164 @@ def main():
     if 'position_management_agent' not in st.session_state:
         st.session_state.position_management_agent = PositionManagementAgent()
 
-    # Header with better styling
+    # Professional CSS Styling
     st.markdown("""
-    <h1 style='text-align: center; color: #00D4FF;'>
-    🎯 GEX Trading Co-Pilot v7.0
-    </h1>
-    <p style='text-align: center; font-size: 18px; color: #888;'>
-    The Ultimate Market Maker Hunting Platform
-    </p>
+    <style>
+    /* Professional Dark Theme */
+    .stApp {
+        background: linear-gradient(180deg, #0E1117 0%, #1a1d26 100%);
+    }
+
+    /* Enhanced Metric Cards */
+    [data-testid="stMetricValue"] {
+        font-size: 28px;
+        font-weight: 700;
+        color: #00D4FF;
+    }
+
+    [data-testid="stMetricDelta"] {
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    /* Card Styling */
+    .stMarkdown div[data-testid="stMarkdownContainer"] > p {
+        font-size: 16px;
+        line-height: 1.6;
+    }
+
+    /* Button Styling */
+    .stButton>button {
+        background: linear-gradient(90deg, #00D4FF 0%, #0099CC 100%);
+        color: white;
+        font-weight: 600;
+        border: none;
+        border-radius: 8px;
+        padding: 0.6rem 1.2rem;
+        transition: all 0.3s ease;
+    }
+
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 212, 255, 0.4);
+    }
+
+    /* Tab Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: rgba(30, 35, 41, 0.5);
+        padding: 8px;
+        border-radius: 10px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        background-color: transparent;
+        border-radius: 8px;
+        color: #888;
+        font-weight: 600;
+        padding: 12px 24px;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(90deg, #00D4FF 0%, #0099CC 100%);
+        color: white;
+    }
+
+    /* Expander Styling */
+    .streamlit-expanderHeader {
+        background-color: rgba(30, 35, 41, 0.8);
+        border-radius: 8px;
+        border: 1px solid rgba(0, 212, 255, 0.2);
+        font-weight: 600;
+        font-size: 16px;
+    }
+
+    .streamlit-expanderHeader:hover {
+        border-color: rgba(0, 212, 255, 0.5);
+        background-color: rgba(30, 35, 41, 1);
+    }
+
+    /* DataFrames */
+    .stDataFrame {
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    /* Header Gradient */
+    .main-header {
+        background: linear-gradient(135deg, #00D4FF 0%, #0099CC 50%, #006699 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 48px;
+        font-weight: 800;
+        text-align: center;
+        margin-bottom: 10px;
+        letter-spacing: 2px;
+    }
+
+    .sub-header {
+        text-align: center;
+        font-size: 18px;
+        color: #888;
+        margin-bottom: 30px;
+    }
+
+    /* Success/Warning/Error Cards */
+    .stAlert {
+        border-radius: 8px;
+        border: none;
+    }
+
+    /* Tooltips */
+    .tooltip {
+        position: relative;
+        display: inline-block;
+        border-bottom: 1px dotted #00D4FF;
+        cursor: help;
+    }
+    </style>
+
+    <div class="main-header">
+    ⚡ AlphaGEX
+    </div>
+    <div class="sub-header">
+    Professional Options Intelligence Platform
+    </div>
     """, unsafe_allow_html=True)
     
-    # Top metrics row
+    # Top metrics row with enhanced styling
     col1, col2, col3, col4, col5 = st.columns(5)
-    
+
     with col1:
-        st.metric("System Status", "🟢 ACTIVE")
-    
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, rgba(0,212,255,0.15) 0%, rgba(0,153,204,0.15) 100%);
+                    padding: 20px; border-radius: 10px; border: 1px solid rgba(0,212,255,0.3);'>
+        """, unsafe_allow_html=True)
+        st.metric("System Status", "🟢 ACTIVE", help="AlphaGEX is online and processing market data")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with col2:
         positions_count = len(st.session_state.active_positions)
-        st.metric("Active Positions", positions_count)
-    
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, rgba(255,184,0,0.15) 0%, rgba(255,153,0,0.15) 100%);
+                    padding: 20px; border-radius: 10px; border: 1px solid rgba(255,184,0,0.3);'>
+        """, unsafe_allow_html=True)
+        st.metric("Active Positions", positions_count, help="Number of currently open trades")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with col3:
         # Calculate today's P&L (cached for 60 seconds)
         today_pnl = get_todays_pnl(DB_PATH)
-        st.metric("Today's P&L", f"${today_pnl:,.2f}", delta=f"{today_pnl:+,.2f}")
-    
+        pnl_color = "rgba(0,255,136,0.15)" if today_pnl >= 0 else "rgba(255,68,68,0.15)"
+        pnl_border = "rgba(0,255,136,0.3)" if today_pnl >= 0 else "rgba(255,68,68,0.3)"
+        st.markdown(f"""
+        <div style='background: linear-gradient(135deg, {pnl_color} 0%, {pnl_color} 100%);
+                    padding: 20px; border-radius: 10px; border: 1px solid {pnl_border};'>
+        """, unsafe_allow_html=True)
+        st.metric("Today's P&L", f"${today_pnl:,.2f}", delta=f"{today_pnl:+,.2f}",
+                 help="Your profit/loss for today's trading session")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with col4:
         # Get user's timezone preference (default to Central)
         user_tz = st.session_state.get('user_timezone', 'US/Central')
@@ -226,12 +360,27 @@ def main():
         }.get(user_tz, 'Local')
 
         current_time = f"{local_time.strftime('%I:%M %p')} {tz_abbrev}"
-        st.metric("Current Time", current_time, delta=market_status)
+        market_open = is_market_open()
+        time_color = "rgba(0,255,136,0.15)" if market_open else "rgba(255,68,68,0.15)"
+        time_border = "rgba(0,255,136,0.3)" if market_open else "rgba(255,68,68,0.3)"
+        st.markdown(f"""
+        <div style='background: linear-gradient(135deg, {time_color} 0%, {time_color} 100%);
+                    padding: 20px; border-radius: 10px; border: 1px solid {time_border};'>
+        """, unsafe_allow_html=True)
+        st.metric("Market Time", current_time, delta=market_status,
+                 help="Current market time and trading status (9:30 AM - 4:00 PM ET)")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with col5:
         day = et_time.strftime('%A')
         day_quality = "🟢" if day in ['Monday', 'Tuesday'] else "🟡" if day == 'Wednesday' else "🔴"
-        st.metric("Day Quality", f"{day_quality} {day}")
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, rgba(138,43,226,0.15) 0%, rgba(75,0,130,0.15) 100%);
+                    padding: 20px; border-radius: 10px; border: 1px solid rgba(138,43,226,0.3);'>
+        """, unsafe_allow_html=True)
+        st.metric("Trading Day", f"{day_quality} {day}",
+                 help="Day of week quality: Mon/Tue (Best), Wed (Good), Thu/Fri (Avoid new positions)")
+        st.markdown("</div>", unsafe_allow_html=True)
     
     # Sidebar Configuration
     with st.sidebar:
@@ -468,7 +617,7 @@ def main():
         "🔍 Multi-Symbol Scanner",
         "🔔 Alerts",
         "📅 Trading Plans",
-        "💬 AI Co-Pilot",
+        "🤖 AI Assistant",
         "🤖 Auto Trader",
         "📊 Positions",
         "📔 Trade Journal",
@@ -1041,9 +1190,9 @@ def main():
         else:
             st.info("👈 Enter a symbol and click 'Generate Plan' to create a comprehensive trading plan")
 
-    # Tab 6: AI Co-Pilot
+    # Tab 6: AI Assistant
     with tabs[5]:
-        st.subheader("💬 Intelligent Trading Co-Pilot")
+        st.subheader("🤖 AI Trading Assistant")
 
         # Mode selection buttons
         col1, col2, col3 = st.columns(3)
