@@ -304,6 +304,239 @@ def display_performance(trader: AutonomousPaperTrader):
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
 
         st.plotly_chart(fig, use_container_width=True, key="autonomous_trader_performance_chart")
+
+        # ============================================================================
+        # PROFITABILITY ANALYTICS - Help Identify What Makes Money
+        # ============================================================================
+
+        st.divider()
+        st.subheader("💰 Profitability Analytics - Optimize Your Edge")
+
+        # Get all closed trades for analysis
+        conn = sqlite3.connect(trader.db_path)
+        all_trades = pd.read_sql_query("""
+            SELECT
+                strategy,
+                action,
+                realized_pnl,
+                entry_date,
+                closed_date,
+                confidence,
+                CASE
+                    WHEN realized_pnl > 0 THEN 'Win'
+                    ELSE 'Loss'
+                END as outcome
+            FROM autonomous_positions
+            WHERE status = 'CLOSED'
+            ORDER BY closed_date, closed_time
+        """, conn)
+        conn.close()
+
+        if len(all_trades) >= 5:  # Need at least 5 trades for meaningful analysis
+
+            # Row 1: Advanced Performance Metrics
+            st.markdown("#### 🎯 Key Performance Indicators")
+            col1, col2, col3, col4 = st.columns(4)
+
+            wins = all_trades[all_trades['realized_pnl'] > 0]
+            losses = all_trades[all_trades['realized_pnl'] <= 0]
+
+            avg_win = wins['realized_pnl'].mean() if len(wins) > 0 else 0
+            avg_loss = abs(losses['realized_pnl'].mean()) if len(losses) > 0 else 0
+
+            # Profit Factor (total wins / total losses)
+            total_wins = wins['realized_pnl'].sum()
+            total_losses = abs(losses['realized_pnl'].sum())
+            profit_factor = total_wins / total_losses if total_losses > 0 else 0
+
+            # Expectancy (average $ per trade)
+            expectancy = all_trades['realized_pnl'].mean()
+
+            # Win/Loss Ratio
+            win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+
+            with col1:
+                pf_color = "🟢" if profit_factor >= 2.0 else "🟡" if profit_factor >= 1.5 else "🔴"
+                st.metric(
+                    "Profit Factor",
+                    f"{pf_color} {profit_factor:.2f}",
+                    help="Total Wins / Total Losses (Target: 2.0+)"
+                )
+
+            with col2:
+                exp_color = "🟢" if expectancy >= 100 else "🟡" if expectancy >= 50 else "🔴"
+                st.metric(
+                    "Expectancy",
+                    f"{exp_color} ${expectancy:+,.2f}",
+                    help="Average $ per trade (higher is better)"
+                )
+
+            with col3:
+                ratio_color = "🟢" if win_loss_ratio >= 2.0 else "🟡" if win_loss_ratio >= 1.5 else "🔴"
+                st.metric(
+                    "Win/Loss Ratio",
+                    f"{ratio_color} {win_loss_ratio:.2f}x",
+                    help="Avg Win / Avg Loss (Target: 2.0x+)"
+                )
+
+            with col4:
+                # Consecutive streak
+                streaks = []
+                current_streak = 0
+                for _, trade in all_trades.iterrows():
+                    if trade['realized_pnl'] > 0:
+                        current_streak = current_streak + 1 if current_streak > 0 else 1
+                    else:
+                        current_streak = current_streak - 1 if current_streak < 0 else -1
+                    streaks.append(current_streak)
+
+                current_streak = streaks[-1] if streaks else 0
+                streak_emoji = "🔥" if current_streak > 0 else "❄️"
+                streak_color = "green" if current_streak > 0 else "red"
+                st.metric(
+                    "Current Streak",
+                    f"{streak_emoji} {abs(current_streak)} {'W' if current_streak > 0 else 'L'}",
+                    help="Consecutive wins or losses"
+                )
+
+            # Row 2: Strategy Performance Leaderboard
+            st.divider()
+            st.markdown("#### 🏆 Strategy Performance Leaderboard - What Actually Makes Money")
+
+            strategy_perf = all_trades.groupby('strategy').agg({
+                'realized_pnl': ['sum', 'mean', 'count'],
+                'outcome': lambda x: (x == 'Win').sum() / len(x) * 100
+            }).round(2)
+
+            strategy_perf.columns = ['Total P&L', 'Avg P&L', 'Trades', 'Win Rate %']
+            strategy_perf = strategy_perf.sort_values('Total P&L', ascending=False)
+
+            # Display as styled dataframe with color coding
+            def highlight_pnl(val):
+                if isinstance(val, (int, float)):
+                    if val > 0:
+                        return 'background-color: rgba(0, 255, 136, 0.2); color: #00FF88; font-weight: 700'
+                    elif val < 0:
+                        return 'background-color: rgba(255, 68, 68, 0.2); color: #FF4444; font-weight: 700'
+                return ''
+
+            st.dataframe(
+                strategy_perf.style.applymap(highlight_pnl, subset=['Total P&L', 'Avg P&L']),
+                use_container_width=True
+            )
+
+            # Best vs Worst Strategy Callout
+            best_strategy = strategy_perf.index[0]
+            best_pnl = strategy_perf.iloc[0]['Total P&L']
+            worst_strategy = strategy_perf.index[-1]
+            worst_pnl = strategy_perf.iloc[-1]['Total P&L']
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.success(f"**🏆 Best Strategy:** {best_strategy}\n\n**Total P&L:** ${best_pnl:+,.2f}")
+            with col2:
+                if worst_pnl < 0:
+                    st.error(f"**⚠️ Worst Strategy:** {worst_strategy}\n\n**Total P&L:** ${worst_pnl:+,.2f}")
+                else:
+                    st.info(f"**Lowest Performer:** {worst_strategy}\n\n**Total P&L:** ${worst_pnl:+,.2f}")
+
+            # Row 3: Win Rate Trend (Rolling Average)
+            st.divider()
+            st.markdown("#### 📈 Win Rate Trend - Is Your Edge Improving?")
+
+            # Calculate rolling 5-trade win rate
+            all_trades['is_win'] = (all_trades['realized_pnl'] > 0).astype(int)
+            all_trades['rolling_win_rate'] = all_trades['is_win'].rolling(window=min(5, len(all_trades)), min_periods=1).mean() * 100
+            all_trades['trade_number'] = range(1, len(all_trades) + 1)
+
+            fig2 = go.Figure()
+
+            # Win rate line
+            fig2.add_trace(go.Scatter(
+                x=all_trades['trade_number'],
+                y=all_trades['rolling_win_rate'],
+                mode='lines+markers',
+                name='Win Rate',
+                line=dict(color='#00FF88', width=3),
+                marker=dict(size=8),
+                fill='tozeroy',
+                fillcolor='rgba(0, 255, 136, 0.1)'
+            ))
+
+            # Target line at 75%
+            fig2.add_hline(
+                y=75,
+                line_dash="dash",
+                line_color="#FFB800",
+                annotation_text="Target: 75%",
+                annotation_position="right"
+            )
+
+            fig2.update_layout(
+                xaxis_title="Trade Number",
+                yaxis_title="Win Rate (%)",
+                hovermode='x',
+                height=350,
+                showlegend=False,
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+            )
+
+            fig2.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+            fig2.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)', range=[0, 100])
+
+            st.plotly_chart(fig2, use_container_width=True, key="win_rate_trend_chart")
+
+            # Row 4: Day of Week Performance
+            if len(all_trades) >= 10:
+                st.divider()
+                st.markdown("#### 📅 Day of Week Performance - When Do You Make Money?")
+
+                all_trades['day_of_week'] = pd.to_datetime(all_trades['entry_date']).dt.day_name()
+                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+
+                day_perf = all_trades.groupby('day_of_week').agg({
+                    'realized_pnl': ['sum', 'mean', 'count']
+                }).round(2)
+
+                day_perf.columns = ['Total P&L', 'Avg P&L', 'Trades']
+                day_perf = day_perf.reindex([d for d in day_order if d in day_perf.index])
+
+                # Bar chart
+                fig3 = go.Figure()
+
+                colors = ['#00FF88' if x > 0 else '#FF4444' for x in day_perf['Total P&L']]
+
+                fig3.add_trace(go.Bar(
+                    x=day_perf.index,
+                    y=day_perf['Total P&L'],
+                    marker_color=colors,
+                    text=day_perf['Total P&L'].apply(lambda x: f'${x:+,.0f}'),
+                    textposition='outside'
+                ))
+
+                fig3.update_layout(
+                    xaxis_title="Day of Week",
+                    yaxis_title="Total P&L ($)",
+                    height=350,
+                    showlegend=False,
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                )
+
+                fig3.update_xaxes(showgrid=False)
+                fig3.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+
+                st.plotly_chart(fig3, use_container_width=True, key="day_of_week_chart")
+
+                # Best day callout
+                best_day = day_perf['Total P&L'].idxmax()
+                best_day_pnl = day_perf.loc[best_day, 'Total P&L']
+                st.info(f"💡 **Best Trading Day:** {best_day} with ${best_day_pnl:+,.2f} total P&L")
+
+        elif len(all_trades) > 0:
+            st.info("📊 **Coming Soon!** Advanced analytics will appear after 5+ closed trades")
+
     else:
         st.info("📊 Performance chart will appear after your first trade is closed")
 
@@ -809,30 +1042,3 @@ def display_control_panel(trader: AutonomousPaperTrader):
     - **Fallback**: Simple rules if AI unavailable
     """)
 
-    st.divider()
-
-    # Deployment instructions
-    st.markdown("### 🚀 Render Deployment (For True Automation)")
-
-    st.code("""
-# Add to Render cron job (runs every hour during market hours):
-# Schedule: "0 9-16 * * 1-5" (every hour, 9 AM-4 PM ET, Mon-Fri)
-
-from autonomous_paper_trader import AutonomousPaperTrader
-from core_classes_and_engines import TradingVolatilityAPI
-
-trader = AutonomousPaperTrader()
-api_client = TradingVolatilityAPI()
-
-# Step 1: Find new trade if haven't traded today
-trader.find_and_execute_daily_trade(api_client)
-
-# Step 2: Manage existing positions
-trader.auto_manage_positions(api_client)
-""", language="python")
-
-    st.success("""
-    **Current Mode**: Manual Dashboard View
-    **Deploy to Render**: For 24/7 autonomous operation
-    **API Usage**: ~2-4 calls per hour (well within limits)
-    """)
