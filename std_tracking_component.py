@@ -226,4 +226,4 @@ def create_std_movement_chart(current_data: Dict, yesterday_data: Dict):
         showlegend=False
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="std_level_changes_chart")

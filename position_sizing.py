@@ -72,7 +72,7 @@ def calculate_optimal_position_size(
     }
 
 
-def display_position_sizing(setup: Dict, account_size: float, risk_percent: float):
+def display_position_sizing(setup: Dict, account_size: float, risk_percent: float, key_suffix: str = ""):
     """Display position sizing calculator for a trading setup"""
 
     st.subheader(f"💰 Position Sizing: {setup.get('strategy', 'Unknown')}")
@@ -157,12 +157,12 @@ def display_position_sizing(setup: Dict, account_size: float, risk_percent: floa
         """)
 
     # Risk/Reward visualization
-    create_risk_reward_chart(setup, sizing)
+    create_risk_reward_chart(setup, sizing, key_suffix)
 
     return sizing
 
 
-def create_risk_reward_chart(setup: Dict, sizing: Dict):
+def create_risk_reward_chart(setup: Dict, sizing: Dict, key_suffix: str = ""):
     """Create visual risk/reward chart for the position"""
 
     max_risk = sizing['total_risk']
@@ -197,7 +197,9 @@ def create_risk_reward_chart(setup: Dict, sizing: Dict):
     # Add break-even line
     fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1)
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Use unique key to avoid duplicate ID errors when multiple charts are displayed
+    chart_key = f"risk_reward_chart_{key_suffix}" if key_suffix else "risk_reward_chart"
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
 
 def display_position_size_controls():

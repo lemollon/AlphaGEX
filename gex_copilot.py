@@ -867,7 +867,8 @@ def main():
                             if 'option_premium' not in trade:
                                 trade['option_premium'] = 2.50
 
-                            display_position_sizing(trade, account_size, risk_pct)
+                            # Pass unique key suffix to avoid duplicate plotly chart IDs
+                            display_position_sizing(trade, account_size, risk_pct, key_suffix=f"setup_{i}")
 
                             # Why This Works
                             win_rate_value = trade.get('win_rate', '')

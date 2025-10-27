@@ -440,7 +440,7 @@ def create_performance_chart(trades: pd.DataFrame):
         height=400
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="trade_journal_performance_chart")
 
 
 def display_journal_settings():
