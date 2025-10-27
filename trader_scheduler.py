@@ -17,12 +17,14 @@ except ImportError:
 
 from autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
+from config_and_database import DB_PATH
 from datetime import datetime
 import pytz
 import logging
 import traceback
 from pathlib import Path
 import json
+import sqlite3
 
 # Setup logging
 LOG_DIR = Path("logs")
@@ -43,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 class AutonomousTraderScheduler:
-    """Manages background scheduling of autonomous trading operations"""
+    """Manages background scheduling of autonomous trading operations with persistent state"""
 
     def __init__(self):
         if not APSCHEDULER_AVAILABLE:
@@ -60,6 +62,111 @@ class AutonomousTraderScheduler:
         self.last_position_check = None
         self.last_error = None
         self.execution_count = 0
+
+        # Load saved state from database
+        self._load_state()
+
+    def _load_state(self):
+        """Load scheduler state from database"""
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+
+            c.execute('''
+                SELECT is_running, last_trade_check, last_position_check,
+                       execution_count, should_auto_restart, restart_reason
+                FROM scheduler_state WHERE id = 1
+            ''')
+
+            row = c.fetchone()
+            if row:
+                was_running, last_trade, last_position, exec_count, should_restart, reason = row
+                self.execution_count = exec_count or 0
+                self.last_trade_check = last_trade
+                self.last_position_check = last_position
+
+                logger.info(f"Loaded scheduler state: was_running={bool(was_running)}, "
+                           f"should_restart={bool(should_restart)}, "
+                           f"execution_count={self.execution_count}")
+
+                # Auto-restart if it was running before
+                if should_restart and was_running:
+                    logger.info(f"Previous session detected as running. Reason: {reason or 'App restart'}")
+                    return True  # Signal that auto-restart is needed
+
+            conn.close()
+            return False
+
+        except Exception as e:
+            logger.error(f"Error loading scheduler state: {str(e)}")
+            return False
+
+    def _save_state(self):
+        """Save current scheduler state to database"""
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+
+            c.execute('''
+                UPDATE scheduler_state
+                SET is_running = ?,
+                    last_trade_check = ?,
+                    last_position_check = ?,
+                    execution_count = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+            ''', (
+                1 if self.is_running else 0,
+                str(self.last_trade_check) if self.last_trade_check else None,
+                str(self.last_position_check) if self.last_position_check else None,
+                self.execution_count
+            ))
+
+            conn.commit()
+            conn.close()
+            logger.debug("Scheduler state saved to database")
+
+        except Exception as e:
+            logger.error(f"Error saving scheduler state: {str(e)}")
+
+    def _mark_auto_restart(self, reason="App restart"):
+        """Mark that scheduler should auto-restart on next launch"""
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+
+            c.execute('''
+                UPDATE scheduler_state
+                SET should_auto_restart = 1,
+                    restart_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+            ''', (reason,))
+
+            conn.commit()
+            conn.close()
+
+        except Exception as e:
+            logger.error(f"Error marking auto-restart: {str(e)}")
+
+    def _clear_auto_restart(self):
+        """Clear auto-restart flag after successful restart"""
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+
+            c.execute('''
+                UPDATE scheduler_state
+                SET should_auto_restart = 0,
+                    restart_reason = NULL
+                WHERE id = 1
+            ''')
+
+            conn.commit()
+            conn.close()
+
+        except Exception as e:
+            logger.error(f"Error clearing auto-restart: {str(e)}")
 
     def is_market_open(self) -> bool:
         """Check if US market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri)"""
@@ -126,6 +233,9 @@ class AutonomousTraderScheduler:
             self.execution_count += 1
             self.last_error = None
 
+            # Save state after each execution
+            self._save_state()
+
             logger.info(f"Autonomous trading cycle completed successfully (run #{self.execution_count})")
             logger.info(f"=" * 80)
 
@@ -184,7 +294,13 @@ class AutonomousTraderScheduler:
         self.scheduler.start()
         self.is_running = True
 
+        # Mark that auto-restart should be enabled
+        self._mark_auto_restart("User started")
+        self._clear_auto_restart()  # Clear immediately - we're running now
+        self._save_state()  # Save running state
+
         logger.info("✓ Scheduler started successfully")
+        logger.info("✓ Auto-restart enabled - will survive app restarts")
         logger.info("Next scheduled runs:")
 
         # Log next 3 scheduled runs
@@ -212,7 +328,13 @@ class AutonomousTraderScheduler:
             self.scheduler = None
 
         self.is_running = False
+
+        # Clear auto-restart flag - user manually stopped
+        self._clear_auto_restart()
+        self._save_state()  # Save stopped state
+
         logger.info("✓ Scheduler stopped")
+        logger.info("✓ Auto-restart disabled - won't restart on app reload")
 
     def get_status(self) -> dict:
         """Get current scheduler status for monitoring dashboard"""
