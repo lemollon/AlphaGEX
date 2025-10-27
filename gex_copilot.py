@@ -186,123 +186,233 @@ def main():
     if 'position_management_agent' not in st.session_state:
         st.session_state.position_management_agent = PositionManagementAgent()
 
-    # Professional CSS Styling
+    # PROFESSIONAL CSS DESIGN SYSTEM v2.0 - Premium Trading Platform
     st.markdown("""
     <style>
-    /* Professional Dark Theme */
+    /* ============================================================
+       ALPHAGEX PROFESSIONAL DESIGN SYSTEM
+       Premium Trading Intelligence Platform
+       ============================================================ */
+
+    /* Core Theme - Ultra Professional Dark */
     .stApp {
-        background: linear-gradient(180deg, #0E1117 0%, #1a1d26 100%);
+        background: radial-gradient(ellipse at top, #0f1419 0%, #0a0e14 50%, #060810 100%);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
-    /* Enhanced Metric Cards */
+    /* Enhanced Sidebar with Glassmorphism */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgba(15, 20, 25, 0.95) 0%, rgba(26, 31, 46, 0.95) 100%);
+        border-right: 1px solid rgba(0, 212, 255, 0.15);
+        backdrop-filter: blur(20px);
+    }
+
+    [data-testid="stSidebar"] > div:first-child {
+        background: transparent;
+    }
+
+    /* Professional Metric Cards - Enhanced */
     [data-testid="stMetricValue"] {
-        font-size: 28px;
-        font-weight: 700;
-        color: #00D4FF;
+        font-size: 34px !important;
+        font-weight: 900 !important;
+        color: #00D4FF !important;
+        text-shadow: 0 0 30px rgba(0, 212, 255, 0.4);
+        letter-spacing: -1px;
     }
 
     [data-testid="stMetricDelta"] {
-        font-size: 16px;
-        font-weight: 600;
+        font-size: 14px !important;
+        font-weight: 700 !important;
+        padding: 4px 10px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.4);
     }
 
-    /* Card Styling */
+    [data-testid="stMetricLabel"] {
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        color: #8b92a7 !important;
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+    }
+
+    /* Premium Card Styling */
     .stMarkdown div[data-testid="stMarkdownContainer"] > p {
-        font-size: 16px;
-        line-height: 1.6;
+        font-size: 15px;
+        line-height: 1.8;
+        color: #d4d8e1;
     }
 
-    /* Button Styling */
+    /* Elite Button System */
     .stButton>button {
-        background: linear-gradient(90deg, #00D4FF 0%, #0099CC 100%);
+        background: linear-gradient(135deg, #0099ff 0%, #00d4ff 100%);
         color: white;
-        font-weight: 600;
+        font-weight: 800;
+        font-size: 13px;
         border: none;
-        border-radius: 8px;
-        padding: 0.6rem 1.2rem;
-        transition: all 0.3s ease;
+        border-radius: 12px;
+        padding: 0.8rem 1.8rem;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        box-shadow: 0 6px 20px rgba(0, 153, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
 
     .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 212, 255, 0.4);
+        transform: translateY(-4px) scale(1.02);
+        box-shadow: 0 10px 30px rgba(0, 212, 255, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        background: linear-gradient(135deg, #00aff5 0%, #00e4ff 100%);
     }
 
-    /* Tab Styling */
+    .stButton>button:active {
+        transform: translateY(-2px) scale(1.01);
+    }
+
+    /* Primary Button - Success Variant */
+    .stButton>button[kind="primary"] {
+        background: linear-gradient(135deg, #00ff88 0%, #00d4a1 100%);
+        box-shadow: 0 6px 20px rgba(0, 255, 136, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    }
+
+    .stButton>button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #1aff98 0%, #00e4b1 100%);
+        box-shadow: 0 10px 30px rgba(0, 255, 136, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+
+    /* Premium Tab Navigation */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: rgba(30, 35, 41, 0.5);
+        gap: 6px;
+        background: linear-gradient(135deg, rgba(10, 14, 20, 0.98) 0%, rgba(20, 25, 35, 0.98) 100%);
         padding: 8px;
-        border-radius: 10px;
+        border-radius: 16px;
+        border: 1px solid rgba(0, 212, 255, 0.2);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     }
 
     .stTabs [data-baseweb="tab"] {
-        background-color: transparent;
-        border-radius: 8px;
-        color: #888;
-        font-weight: 600;
-        padding: 12px 24px;
+        background: transparent;
+        border-radius: 12px;
+        color: #6b7280;
+        font-weight: 800;
+        font-size: 12px;
+        padding: 16px 28px;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+    }
+
+    .stTabs [data-baseweb="tab"]:hover {
+        background: rgba(0, 212, 255, 0.05);
+        color: #9ca3af;
     }
 
     .stTabs [aria-selected="true"] {
-        background: linear-gradient(90deg, #00D4FF 0%, #0099CC 100%);
-        color: white;
+        background: linear-gradient(135deg, #0099ff 0%, #00d4ff 100%) !important;
+        color: white !important;
+        box-shadow: 0 6px 16px rgba(0, 212, 255, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
 
-    /* Expander Styling */
+    /* Luxury Expander Design */
     .streamlit-expanderHeader {
-        background-color: rgba(30, 35, 41, 0.8);
-        border-radius: 8px;
-        border: 1px solid rgba(0, 212, 255, 0.2);
-        font-weight: 600;
-        font-size: 16px;
+        background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 153, 204, 0.1) 100%);
+        border-radius: 14px;
+        border: 2px solid rgba(0, 212, 255, 0.3);
+        font-weight: 800;
+        font-size: 14px;
+        color: #00D4FF;
+        padding: 18px 24px;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     }
 
     .streamlit-expanderHeader:hover {
-        border-color: rgba(0, 212, 255, 0.5);
-        background-color: rgba(30, 35, 41, 1);
+        border-color: rgba(0, 212, 255, 0.7);
+        background: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(0, 153, 204, 0.15) 100%);
+        box-shadow: 0 6px 25px rgba(0, 212, 255, 0.3);
+        transform: translateY(-2px);
     }
 
-    /* DataFrames */
+    /* Executive DataFrames */
     .stDataFrame {
-        border-radius: 8px;
+        border-radius: 14px;
         overflow: hidden;
+        border: 1px solid rgba(0, 212, 255, 0.25);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     }
 
-    /* Header Gradient */
+    .stDataFrame [data-testid="stDataFrameResizable"] {
+        background: rgba(10, 14, 20, 0.7);
+    }
+
+    /* Stunning Header Design with Animated Gradient */
     .main-header {
-        background: linear-gradient(135deg, #00D4FF 0%, #0099CC 50%, #006699 100%);
+        background: linear-gradient(135deg, #00D4FF 0%, #0099ff 20%, #0066cc 40%, #0099ff 60%, #00D4FF 80%, #00ffff 100%);
+        background-size: 300% auto;
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        font-size: 48px;
-        font-weight: 800;
+        background-clip: text;
+        font-size: 62px;
+        font-weight: 900;
         text-align: center;
-        margin-bottom: 10px;
-        letter-spacing: 2px;
+        margin-bottom: 12px;
+        letter-spacing: 4px;
+        animation: shimmer-text 10s ease-in-out infinite;
+        filter: drop-shadow(0 0 40px rgba(0, 212, 255, 0.6));
+    }
+
+    @keyframes shimmer-text {
+        0%, 100% {
+            background-position: 0% 50%;
+        }
+        50% {
+            background-position: 100% 50%;
+        }
     }
 
     .sub-header {
         text-align: center;
-        font-size: 18px;
-        color: #888;
-        margin-bottom: 30px;
+        font-size: 15px;
+        font-weight: 700;
+        color: #6b7280;
+        margin-bottom: 40px;
+        letter-spacing: 3px;
+        text-transform: uppercase;
     }
 
-    /* Success/Warning/Error Cards */
+    /* Premium Alert Cards with Glassmorphism */
     .stAlert {
-        border-radius: 8px;
-        border: none;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 18px 24px;
+        backdrop-filter: blur(15px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     }
 
-    /* Tooltips */
-    .tooltip {
-        position: relative;
-        display: inline-block;
-        border-bottom: 1px dotted #00D4FF;
-        cursor: help;
+    div[data-baseweb="notification"] {
+        border-radius: 14px;
+        border-left: 5px solid;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     }
 
-    /* Advanced Animations */
+    /* Elite Text Input */
+    .stTextInput>div>div>input {
+        background: rgba(10, 14, 20, 0.9);
+        border: 2px solid rgba(0, 212, 255, 0.25);
+        border-radius: 12px;
+        color: white;
+        font-weight: 700;
+        font-size: 15px;
+        padding: 14px 18px;
+        transition: all 0.3s ease;
+    }
+
+    .stTextInput>div>div>input:focus {
+        border-color: #00D4FF;
+        box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.15), 0 0 20px rgba(0, 212, 255, 0.3);
+        background: rgba(10, 14, 20, 1);
+    }
+
+    /* Advanced Premium Animations */
     @keyframes slideInRight {
         from {
             transform: translateX(100%);
@@ -316,7 +426,7 @@ def main():
 
     @keyframes fadeInUp {
         from {
-            transform: translateY(20px);
+            transform: translateY(40px);
             opacity: 0;
         }
         to {
@@ -327,72 +437,199 @@ def main():
 
     @keyframes shimmer {
         0% {
-            background-position: -1000px 0;
+            background-position: -1200px 0;
         }
         100% {
-            background-position: 1000px 0;
+            background-position: 1200px 0;
+        }
+    }
+
+    @keyframes glow {
+        0%, 100% {
+            box-shadow: 0 0 25px rgba(0, 212, 255, 0.6);
+        }
+        50% {
+            box-shadow: 0 0 50px rgba(0, 212, 255, 0.9);
         }
     }
 
     .fade-in-up {
-        animation: fadeInUp 0.6s ease-out;
+        animation: fadeInUp 0.8s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .slide-in-right {
-        animation: slideInRight 0.5s ease-out;
+        animation: slideInRight 0.6s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    /* Hover Effects */
+    /* Elite Hover Effects */
     .hover-lift {
-        transition: all 0.3s ease;
+        transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .hover-lift:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 8px 16px rgba(0, 212, 255, 0.3);
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 16px 40px rgba(0, 212, 255, 0.5);
     }
 
-    /* Success notification animation */
+    /* Success notification with enhanced bounce */
     @keyframes notify {
         0%, 100% {
-            transform: translateY(0);
+            transform: translateY(0) scale(1);
         }
         10%, 30%, 50%, 70%, 90% {
-            transform: translateY(-10px);
+            transform: translateY(-14px) scale(1.03);
         }
         20%, 40%, 60%, 80% {
-            transform: translateY(-5px);
+            transform: translateY(-7px) scale(1.015);
         }
     }
 
     .notification {
-        animation: notify 2s ease-in-out;
+        animation: notify 3s ease-in-out;
     }
 
-    /* Loading shimmer effect */
+    /* Premium shimmer effect with color */
     .shimmer {
-        background: linear-gradient(90deg, rgba(255,255,255,0.0) 0%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.0) 100%);
-        background-size: 1000px 100%;
-        animation: shimmer 2s infinite;
+        background: linear-gradient(90deg,
+            rgba(255,255,255,0) 0%,
+            rgba(255,255,255,0.08) 25%,
+            rgba(0,212,255,0.25) 50%,
+            rgba(255,255,255,0.08) 75%,
+            rgba(255,255,255,0) 100%
+        );
+        background-size: 250% 100%;
+        animation: shimmer 3.5s ease-in-out infinite;
     }
 
-    /* Pulsing dot for live indicators */
+    /* Pulsing dot with enhanced glow */
     .pulse-dot {
-        width: 8px;
-        height: 8px;
+        width: 12px;
+        height: 12px;
         border-radius: 50%;
         background: #00FF88;
-        box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7);
-        animation: pulse-ring 1.5s ease-out infinite;
+        box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.8);
+        animation: pulse-ring 2.5s ease-out infinite;
     }
 
     @keyframes pulse-ring {
         0% {
-            box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7);
+            box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.8), 0 0 10px rgba(0, 255, 136, 0.6);
+        }
+        40% {
+            box-shadow: 0 0 0 12px rgba(0, 255, 136, 0.4), 0 0 15px rgba(0, 255, 136, 0.4);
         }
         100% {
-            box-shadow: 0 0 0 15px rgba(0, 255, 136, 0);
+            box-shadow: 0 0 0 25px rgba(0, 255, 136, 0), 0 0 20px rgba(0, 255, 136, 0);
         }
+    }
+
+    /* Professional Number Input */
+    .stNumberInput>div>div>input {
+        background: rgba(10, 14, 20, 0.9);
+        border: 2px solid rgba(0, 212, 255, 0.25);
+        border-radius: 12px;
+        color: white;
+        font-weight: 700;
+        font-size: 15px;
+        padding: 14px 18px;
+    }
+
+    /* Premium Slider */
+    .stSlider>div>div>div>div {
+        background: linear-gradient(90deg, #0099ff 0%, #00d4ff 100%);
+        box-shadow: 0 2px 10px rgba(0, 212, 255, 0.4);
+    }
+
+    .stSlider>div>div>div>div:hover {
+        box-shadow: 0 2px 15px rgba(0, 212, 255, 0.6);
+    }
+
+    /* Selectbox Enhancement */
+    .stSelectbox>div>div>div {
+        background: rgba(10, 14, 20, 0.9);
+        border: 2px solid rgba(0, 212, 255, 0.25);
+        border-radius: 12px;
+        font-weight: 600;
+    }
+
+    /* Luxury Scrollbar */
+    ::-webkit-scrollbar {
+        width: 14px;
+        height: 14px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: rgba(10, 14, 20, 0.6);
+        border-radius: 12px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #0099ff 0%, #00d4ff 100%);
+        border-radius: 12px;
+        box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(135deg, #00aff5 0%, #00e4ff 100%);
+        box-shadow: 0 0 15px rgba(0, 212, 255, 0.7);
+    }
+
+    /* Professional Divider with Glow */
+    hr {
+        margin: 2.5rem 0;
+        border: none;
+        height: 2px;
+        background: linear-gradient(90deg,
+            transparent 0%,
+            rgba(0, 212, 255, 0.5) 50%,
+            transparent 100%
+        );
+        box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+    }
+
+    /* Premium Status Badges */
+    .status-badge {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: 24px;
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .status-active {
+        background: linear-gradient(135deg, rgba(0, 255, 136, 0.25) 0%, rgba(0, 212, 161, 0.25) 100%);
+        border: 2px solid rgba(0, 255, 136, 0.6);
+        color: #00FF88;
+        box-shadow: 0 4px 15px rgba(0, 255, 136, 0.3);
+    }
+
+    .status-warning {
+        background: linear-gradient(135deg, rgba(255, 184, 0, 0.25) 0%, rgba(255, 153, 0, 0.25) 100%);
+        border: 2px solid rgba(255, 184, 0, 0.6);
+        color: #FFB800;
+        box-shadow: 0 4px 15px rgba(255, 184, 0, 0.3);
+    }
+
+    .status-error {
+        background: linear-gradient(135deg, rgba(255, 68, 68, 0.25) 0%, rgba(255, 34, 34, 0.25) 100%);
+        border: 2px solid rgba(255, 68, 68, 0.6);
+        color: #FF4444;
+        box-shadow: 0 4px 15px rgba(255, 68, 68, 0.3);
+    }
+
+    /* Professional Code Blocks */
+    .stCodeBlock {
+        border-radius: 12px;
+        border: 1px solid rgba(0, 212, 255, 0.2);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Enhanced Spinner */
+    .stSpinner > div {
+        border-top-color: #00D4FF !important;
+        border-right-color: #00D4FF !important;
     }
     </style>
 
@@ -443,57 +680,67 @@ def main():
             confidence = 60
 
         st.markdown(f"""
-        <div style='position: fixed; top: 80px; right: 20px; z-index: 9999;
-                    background: linear-gradient(135deg, {pulse_bg} 0%, rgba(0, 0, 0, 0.9) 100%);
-                    border: 2px solid {pulse_color};
-                    border-radius: 12px;
-                    padding: 15px;
-                    min-width: 220px;
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-                    animation: pulse 2s ease-in-out infinite;'>
-            <div style='text-align: center; margin-bottom: 10px;'>
-                <div style='color: {pulse_color}; font-size: 12px; font-weight: 600; letter-spacing: 1px;'>
-                    LIVE PULSE
+        <div style='position: fixed; top: 90px; right: 25px; z-index: 9999;
+                    background: linear-gradient(135deg, {pulse_bg} 0%, rgba(5, 8, 12, 0.98) 100%);
+                    border: 3px solid {pulse_color};
+                    border-radius: 18px;
+                    padding: 20px;
+                    min-width: 260px;
+                    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.7), 0 0 30px {pulse_color}40;
+                    backdrop-filter: blur(20px);
+                    animation: pulse 3s ease-in-out infinite;'>
+            <div style='text-align: center; margin-bottom: 14px;'>
+                <div style='color: {pulse_color}; font-size: 11px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase;'>
+                    ⚡ LIVE MARKET PULSE
                 </div>
-                <div style='color: {pulse_color}; font-size: 16px; font-weight: 800; margin-top: 5px;'>
+                <div style='color: {pulse_color}; font-size: 18px; font-weight: 900; margin-top: 8px; text-shadow: 0 0 15px {pulse_color}80;'>
                     {pulse_status}
                 </div>
             </div>
-            <div style='background: rgba(0, 0, 0, 0.5); padding: 10px; border-radius: 8px; margin-bottom: 10px;'>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 5px;'>
-                    <span style='color: #888; font-size: 11px;'>Net GEX:</span>
-                    <span style='color: white; font-weight: 700; font-size: 12px;'>{net_gex_billions:.1f}B</span>
+            <div style='background: linear-gradient(135deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.8) 100%);
+                        padding: 14px; border-radius: 12px; margin-bottom: 12px;
+                        border: 1px solid rgba(255, 255, 255, 0.05);'>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                    <span style='color: #8b92a7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>Net GEX</span>
+                    <span style='color: white; font-weight: 900; font-size: 14px; text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);'>{net_gex_billions:.2f}B</span>
                 </div>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 5px;'>
-                    <span style='color: #888; font-size: 11px;'>Spot:</span>
-                    <span style='color: white; font-weight: 700; font-size: 12px;'>${spot:.2f}</span>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                    <span style='color: #8b92a7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>Spot Price</span>
+                    <span style='color: white; font-weight: 900; font-size: 14px; text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);'>${spot:.2f}</span>
                 </div>
-                <div style='display: flex; justify-content: space-between;'>
-                    <span style='color: #888; font-size: 11px;'>Confidence:</span>
-                    <span style='color: {pulse_color}; font-weight: 700; font-size: 12px;'>{confidence:.0f}%</span>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <span style='color: #8b92a7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>Confidence</span>
+                    <span style='color: {pulse_color}; font-weight: 900; font-size: 14px; text-shadow: 0 0 10px {pulse_color}80;'>{confidence:.0f}%</span>
                 </div>
             </div>
-            <div style='background: {pulse_bg}; padding: 8px; border-radius: 6px; text-align: center;'>
-                <div style='color: #00D4FF; font-size: 10px; font-weight: 600; margin-bottom: 3px;'>→ ACTION</div>
-                <div style='color: white; font-size: 13px; font-weight: 700;'>{pulse_action}</div>
+            <div style='background: linear-gradient(135deg, {pulse_color}30 0%, {pulse_color}20 100%);
+                        padding: 12px; border-radius: 10px; text-align: center;
+                        border: 2px solid {pulse_color}50;
+                        box-shadow: 0 4px 15px {pulse_color}30;'>
+                <div style='color: #00D4FF; font-size: 10px; font-weight: 800; margin-bottom: 5px; letter-spacing: 1px; text-transform: uppercase;'>→ RECOMMENDED ACTION</div>
+                <div style='color: white; font-size: 14px; font-weight: 900; text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);'>{pulse_action}</div>
             </div>
         </div>
 
         <style>
         @keyframes pulse {{
-            0%, 100% {{ transform: scale(1); }}
-            50% {{ transform: scale(1.02); }}
+            0%, 100% {{ transform: scale(1) translateY(0); box-shadow: 0 12px 48px rgba(0, 0, 0, 0.7), 0 0 30px {pulse_color}40; }}
+            50% {{ transform: scale(1.03) translateY(-2px); box-shadow: 0 16px 56px rgba(0, 0, 0, 0.8), 0 0 40px {pulse_color}60; }}
         }}
         </style>
         """, unsafe_allow_html=True)
     
-    # Top metrics row with enhanced styling
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Premium Top Metrics Row - Executive Dashboard Style
+    col1, col2, col3, col4, col5 = st.columns(5, gap="medium")
 
     with col1:
         st.markdown("""
-        <div style='background: linear-gradient(135deg, rgba(0,212,255,0.15) 0%, rgba(0,153,204,0.15) 100%);
-                    padding: 20px; border-radius: 10px; border: 1px solid rgba(0,212,255,0.3);'>
+        <div class='hover-lift' style='background: linear-gradient(135deg, rgba(0,212,255,0.18) 0%, rgba(0,153,204,0.12) 100%);
+                    padding: 24px; border-radius: 16px;
+                    border: 2px solid rgba(0,212,255,0.4);
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                    backdrop-filter: blur(10px);
+                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
         """, unsafe_allow_html=True)
         st.metric("System Status", "🟢 ACTIVE", help="AlphaGEX is online and processing market data")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -501,8 +748,12 @@ def main():
     with col2:
         positions_count = len(st.session_state.active_positions)
         st.markdown("""
-        <div style='background: linear-gradient(135deg, rgba(255,184,0,0.15) 0%, rgba(255,153,0,0.15) 100%);
-                    padding: 20px; border-radius: 10px; border: 1px solid rgba(255,184,0,0.3);'>
+        <div class='hover-lift' style='background: linear-gradient(135deg, rgba(255,184,0,0.18) 0%, rgba(255,153,0,0.12) 100%);
+                    padding: 24px; border-radius: 16px;
+                    border: 2px solid rgba(255,184,0,0.4);
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                    backdrop-filter: blur(10px);
+                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
         """, unsafe_allow_html=True)
         st.metric("Active Positions", positions_count, help="Number of currently open trades")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -510,11 +761,16 @@ def main():
     with col3:
         # Calculate today's P&L (cached for 60 seconds)
         today_pnl = get_todays_pnl(DB_PATH)
-        pnl_color = "rgba(0,255,136,0.15)" if today_pnl >= 0 else "rgba(255,68,68,0.15)"
-        pnl_border = "rgba(0,255,136,0.3)" if today_pnl >= 0 else "rgba(255,68,68,0.3)"
+        pnl_color = "rgba(0,255,136,0.18)" if today_pnl >= 0 else "rgba(255,68,68,0.18)"
+        pnl_color2 = "rgba(0,255,136,0.12)" if today_pnl >= 0 else "rgba(255,68,68,0.12)"
+        pnl_border = "rgba(0,255,136,0.5)" if today_pnl >= 0 else "rgba(255,68,68,0.5)"
         st.markdown(f"""
-        <div style='background: linear-gradient(135deg, {pnl_color} 0%, {pnl_color} 100%);
-                    padding: 20px; border-radius: 10px; border: 1px solid {pnl_border};'>
+        <div class='hover-lift' style='background: linear-gradient(135deg, {pnl_color} 0%, {pnl_color2} 100%);
+                    padding: 24px; border-radius: 16px;
+                    border: 2px solid {pnl_border};
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                    backdrop-filter: blur(10px);
+                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
         """, unsafe_allow_html=True)
         st.metric("Today's P&L", f"${today_pnl:,.2f}", delta=f"{today_pnl:+,.2f}",
                  help="Your profit/loss for today's trading session")
@@ -537,11 +793,16 @@ def main():
 
         current_time = f"{local_time.strftime('%I:%M %p')} {tz_abbrev}"
         market_open = is_market_open()
-        time_color = "rgba(0,255,136,0.15)" if market_open else "rgba(255,68,68,0.15)"
-        time_border = "rgba(0,255,136,0.3)" if market_open else "rgba(255,68,68,0.3)"
+        time_color = "rgba(0,255,136,0.18)" if market_open else "rgba(255,68,68,0.18)"
+        time_color2 = "rgba(0,255,136,0.12)" if market_open else "rgba(255,68,68,0.12)"
+        time_border = "rgba(0,255,136,0.5)" if market_open else "rgba(255,68,68,0.5)"
         st.markdown(f"""
-        <div style='background: linear-gradient(135deg, {time_color} 0%, {time_color} 100%);
-                    padding: 20px; border-radius: 10px; border: 1px solid {time_border};'>
+        <div class='hover-lift' style='background: linear-gradient(135deg, {time_color} 0%, {time_color2} 100%);
+                    padding: 24px; border-radius: 16px;
+                    border: 2px solid {time_border};
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                    backdrop-filter: blur(10px);
+                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
         """, unsafe_allow_html=True)
         st.metric("Market Time", current_time, delta=market_status,
                  help="Current market time and trading status (9:30 AM - 4:00 PM ET)")
@@ -551,8 +812,12 @@ def main():
         day = et_time.strftime('%A')
         day_quality = "🟢" if day in ['Monday', 'Tuesday'] else "🟡" if day == 'Wednesday' else "🔴"
         st.markdown("""
-        <div style='background: linear-gradient(135deg, rgba(138,43,226,0.15) 0%, rgba(75,0,130,0.15) 100%);
-                    padding: 20px; border-radius: 10px; border: 1px solid rgba(138,43,226,0.3);'>
+        <div class='hover-lift' style='background: linear-gradient(135deg, rgba(138,43,226,0.18) 0%, rgba(75,0,130,0.12) 100%);
+                    padding: 24px; border-radius: 16px;
+                    border: 2px solid rgba(138,43,226,0.4);
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                    backdrop-filter: blur(10px);
+                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
         """, unsafe_allow_html=True)
         st.metric("Trading Day", f"{day_quality} {day}",
                  help="Day of week quality: Mon/Tue (Best), Wed (Good), Thu/Fri (Avoid new positions)")
