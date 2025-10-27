@@ -36,12 +36,26 @@ def display_autonomous_trader():
 
     trader = st.session_state.autonomous_trader
 
+    # Initialize scheduler (auto-start on first load)
+    from trader_scheduler import get_scheduler
+    scheduler = get_scheduler()
+
+    # Auto-start scheduler on first load (Render deployment ready)
+    if 'scheduler_auto_started' not in st.session_state:
+        if not scheduler.is_running:
+            try:
+                scheduler.start()
+                st.session_state.scheduler_auto_started = True
+            except Exception as e:
+                st.error(f"Failed to auto-start scheduler: {str(e)}")
+
     # Main tabs
     tabs = st.tabs([
         "📊 Performance",
         "📈 Current Positions",
         "📜 Trade History",
         "📋 Activity Log",
+        "🔄 Auto-Pilot",
         "⚙️ Settings"
     ])
 
@@ -61,8 +75,12 @@ def display_autonomous_trader():
     with tabs[3]:
         display_activity_log(trader)
 
-    # TAB 5: Settings
+    # TAB 5: Auto-Pilot Scheduler
     with tabs[4]:
+        display_autopilot_scheduler(scheduler)
+
+    # TAB 6: Settings
+    with tabs[5]:
         display_settings(trader)
 
     # Control Panel
@@ -447,6 +465,207 @@ def display_settings(trader: AutonomousPaperTrader):
 
     with col3:
         st.metric("Max Drawdown", "< 20%")
+
+
+def display_autopilot_scheduler(scheduler):
+    """Display Auto-Pilot scheduler monitoring dashboard"""
+
+    st.header("🔄 Auto-Pilot Scheduler")
+
+    st.info("""
+    **🤖 FULLY AUTOMATED TRADING** - Runs in background during market hours!
+
+    ✅ **APScheduler Integration**: Background scheduler runs with Streamlit web service
+    ✅ **Market Hours**: Every hour from 10:00 AM - 3:00 PM ET, Monday-Friday
+    ✅ **Automatic Execution**: Finds trades and manages positions without manual intervention
+    ✅ **Persistent Logging**: All activity logged to logs/autonomous_trader.log
+    ✅ **Render Compatible**: Designed for Render standard plan deployment
+    """)
+
+    st.divider()
+
+    # Get scheduler status
+    status = scheduler.get_status()
+
+    # Status Overview
+    st.subheader("📊 Scheduler Status")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        if status['is_running']:
+            st.success("✅ **RUNNING**")
+            st.caption("Scheduler active")
+        else:
+            st.warning("⏸️ **STOPPED**")
+            st.caption("Scheduler inactive")
+
+    with col2:
+        if status['market_open']:
+            st.success("📈 **MARKET OPEN**")
+            st.caption("Trading hours")
+        else:
+            st.info("🔒 **MARKET CLOSED**")
+            st.caption("Outside hours")
+
+    with col3:
+        st.metric("Executions", status['execution_count'])
+        st.caption("Total runs completed")
+
+    with col4:
+        st.metric("Current Time ET", "")
+        st.caption(status['current_time_et'])
+
+    st.divider()
+
+    # Control Buttons
+    st.subheader("🎮 Controls")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("▶️ START SCHEDULER", type="primary", disabled=status['is_running']):
+            try:
+                scheduler.start()
+                st.success("✅ Scheduler started successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error starting scheduler: {str(e)}")
+
+    with col2:
+        if st.button("⏸️ STOP SCHEDULER", type="secondary", disabled=not status['is_running']):
+            try:
+                scheduler.stop()
+                st.warning("⏸️ Scheduler stopped")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error stopping scheduler: {str(e)}")
+
+    with col3:
+        if st.button("🔄 REFRESH STATUS"):
+            st.rerun()
+
+    st.divider()
+
+    # Schedule Information
+    st.subheader("📅 Schedule Information")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Next Scheduled Run**")
+        next_run = status.get('next_run', 'Not scheduled')
+        if status['is_running'] and next_run != 'Scheduler not running':
+            st.info(f"🕐 {next_run}")
+        else:
+            st.caption(next_run)
+
+    with col2:
+        st.markdown("**Last Activity**")
+        st.caption(f"Trade Check: {status['last_trade_check']}")
+        st.caption(f"Position Check: {status['last_position_check']}")
+
+    st.divider()
+
+    # Error Display
+    if status['last_error']:
+        st.subheader("⚠️ Last Error")
+        with st.expander("View Error Details", expanded=True):
+            st.error(f"**Timestamp**: {status['last_error']['timestamp']}")
+            st.error(f"**Error**: {status['last_error']['error']}")
+            st.code(status['last_error']['traceback'], language='python')
+
+    st.divider()
+
+    # Recent Logs
+    st.subheader("📜 Recent Logs")
+
+    log_lines = st.slider("Number of log lines to display", min_value=10, max_value=200, value=50, step=10)
+
+    try:
+        recent_logs = scheduler.get_recent_logs(lines=log_lines)
+
+        if recent_logs:
+            # Display in code block for better readability
+            log_text = "".join(recent_logs)
+            st.code(log_text, language='log')
+
+            # Download button
+            st.download_button(
+                label="📥 Download Full Log",
+                data=log_text,
+                file_name=f"autonomous_trader_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain"
+            )
+        else:
+            st.info("No log entries yet. Logs will appear after the scheduler starts running.")
+
+    except Exception as e:
+        st.error(f"Error reading logs: {str(e)}")
+
+    st.divider()
+
+    # How It Works
+    st.subheader("🤖 How Auto-Pilot Works")
+
+    st.markdown("""
+    **Scheduled Execution (Every Hour, 10 AM - 3 PM ET, Mon-Fri)**:
+
+    1. **Check Market Status**
+       - Verify market is open (9:30 AM - 4:00 PM ET)
+       - Skip execution if market closed
+
+    2. **Find Daily Trade**
+       - Check if already traded today
+       - If not, scan for high-confidence GEX setups
+       - Execute directional trade OR Iron Condor fallback
+       - GUARANTEED one trade per day
+
+    3. **Manage Open Positions**
+       - Check all open positions
+       - Apply AI-powered exit logic
+       - Execute stops, take profits, or hold
+       - Log all decisions
+
+    4. **Log Everything**
+       - All actions logged to persistent file
+       - Accessible via this dashboard
+       - Render maintains logs across restarts
+
+    **Why APScheduler?**
+    - Runs in background with Streamlit web service
+    - No separate processes needed (Render compatible)
+    - Timezone-aware (America/New_York)
+    - Survives web service restarts
+    - More reliable than cron jobs on Render
+    """)
+
+    st.divider()
+
+    # Deployment Info
+    st.subheader("🚀 Render Deployment Notes")
+
+    st.success("""
+    **✅ Ready for Render Standard Plan**
+
+    This scheduler is designed to run seamlessly on Render:
+
+    1. **Starts Automatically**: When Streamlit app starts, scheduler initializes
+    2. **Background Operation**: Runs independently of user dashboard interactions
+    3. **Persistent Logging**: Logs stored in logs/ directory (Render maintains this)
+    4. **Low Resource Usage**: Minimal CPU/memory footprint
+    5. **API Friendly**: Respects rate limits with built-in throttling
+
+    **To Deploy**:
+    1. Push code to GitHub
+    2. Connect Render to your repo
+    3. Add environment variables (if needed)
+    4. Deploy as Web Service
+    5. Scheduler auto-starts with the app
+    6. Monitor via this dashboard
+
+    **No manual intervention needed after deployment!**
+    """)
 
 
 def display_control_panel(trader: AutonomousPaperTrader):
