@@ -212,6 +212,28 @@ def init_database():
     # Migrate existing databases to add new columns
     _migrate_positions_table(c)
 
+    # Scheduler state table (for auto-restart persistence)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS scheduler_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            is_running INTEGER DEFAULT 0,
+            last_started TEXT,
+            last_stopped TEXT,
+            last_trade_check TEXT,
+            last_position_check TEXT,
+            execution_count INTEGER DEFAULT 0,
+            should_auto_restart INTEGER DEFAULT 1,
+            restart_reason TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Initialize scheduler state if not exists
+    c.execute('''
+        INSERT OR IGNORE INTO scheduler_state (id, is_running, should_auto_restart)
+        VALUES (1, 0, 1)
+    ''')
+
     # Performance optimization: Add indexes for frequently queried columns
     # These indexes significantly speed up queries by symbol, date, and status
     c.execute("CREATE INDEX IF NOT EXISTS idx_gex_history_symbol ON gex_history(symbol)")

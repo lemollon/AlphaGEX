@@ -36,19 +36,28 @@ def display_autonomous_trader():
 
     trader = st.session_state.autonomous_trader
 
-    # Initialize scheduler (auto-start on first load) - handle gracefully if APScheduler not available
+    # Initialize scheduler with auto-restart capability
     try:
         from trader_scheduler import get_scheduler, APSCHEDULER_AVAILABLE
         scheduler = get_scheduler()
 
-        # Auto-start scheduler on first load (Render deployment ready)
+        # Auto-restart logic (survives app restarts)
         if 'scheduler_auto_started' not in st.session_state:
-            if APSCHEDULER_AVAILABLE and not scheduler.is_running:
-                try:
-                    scheduler.start()
+            if APSCHEDULER_AVAILABLE:
+                # Check if scheduler should auto-restart
+                should_restart = scheduler._load_state()
+
+                if should_restart and not scheduler.is_running:
+                    try:
+                        scheduler.start()
+                        st.session_state.scheduler_auto_started = True
+                        st.success("🔄 **Autonomous Trader Auto-Restarted** - Resumed from previous session")
+                    except Exception as e:
+                        st.warning(f"Auto-restart failed: {str(e)}")
+                elif not scheduler.is_running:
+                    st.info("💡 Autonomous trader is stopped. Enable it in the Auto-Pilot tab to start trading.")
+                else:
                     st.session_state.scheduler_auto_started = True
-                except Exception as e:
-                    st.warning(f"Scheduler auto-start failed: {str(e)}")
             elif not APSCHEDULER_AVAILABLE:
                 st.warning("⚠️ APScheduler not installed. Auto-pilot features are disabled. Install with: pip install apscheduler")
     except Exception as e:
