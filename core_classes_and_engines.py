@@ -1552,21 +1552,21 @@ class TradingVolatilityAPI:
             )
 
             if response.status_code != 200:
-                if response.status_code == 500:
-                    st.error(f"⚠️ History endpoint error (500): Server-side issue. This endpoint may not be working properly.")
-                    st.caption("The API server encountered an internal error. This is not a rate limit issue - the endpoint may be broken.")
-                else:
-                    st.warning(f"⚠️ History endpoint returned status {response.status_code}")
+                # Silently handle errors - don't display to user
+                # The history endpoint is optional and errors shouldn't break the UI
+                print(f"History endpoint returned status {response.status_code} for {symbol}")
                 return []
 
             # Check if response has content before parsing JSON
             if not response.text or len(response.text.strip()) == 0:
-                st.warning(f"⚠️ History endpoint returned empty response")
+                # Silently handle empty response
+                print(f"History endpoint returned empty response for {symbol}")
                 return []
 
             # Check for rate limit error BEFORE parsing JSON
             if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
-                st.error(f"⚠️ API Rate Limit Hit (history endpoint) - Circuit breaker activating")
+                # Silently handle rate limit - don't spam UI
+                print(f"History endpoint rate limit hit for {symbol}")
                 self._handle_rate_limit_error()
                 return []
 
@@ -1576,11 +1576,12 @@ class TradingVolatilityAPI:
             except ValueError as json_err:
                 # Check if error is due to rate limiting
                 if "API limit exceeded" in response.text:
-                    st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                    # Silently handle rate limit
+                    print(f"History endpoint rate limit (JSON parse) for {symbol}")
                     self._handle_rate_limit_error()
                 else:
-                    st.warning(f"⚠️ Invalid JSON from history endpoint: {str(json_err)}")
-                    st.caption(f"Response preview: {response.text[:200]}")
+                    # Silently handle invalid JSON
+                    print(f"Invalid JSON from history endpoint: {str(json_err)}")
                 return []
 
             history_data = json_response.get(symbol, [])

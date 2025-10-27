@@ -87,12 +87,13 @@ from alerts_system import (
     display_alert_settings,
     display_quick_alert_setup
 )
-from intraday_tracking import (
-    IntradayTracker,
-    display_intraday_dashboard,
-    display_snapshot_widget,
-    get_intraday_summary
-)
+# Removed: Intraday tracking feature (not needed)
+# from intraday_tracking import (
+#     IntradayTracker,
+#     display_intraday_dashboard,
+#     display_snapshot_widget,
+#     get_intraday_summary
+# )
 from trade_journal_agent import (
     TradeJournalAgent,
     display_trade_journal,
@@ -695,7 +696,7 @@ def main():
 
                 # Pass yesterday_data for STD movement tracking (None if not requested)
                 fig = visualizer.create_gex_profile(profile_with_levels, yesterday_data)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="gex_profile_chart")
             else:
                 st.warning(f"No GEX profile data available for {current_symbol}. Chart cannot be displayed.")
 
@@ -763,7 +764,7 @@ def main():
                             sim_results,
                             data['gex'].get('spot_price', 100)
                         )
-                        st.plotly_chart(mc_fig, use_container_width=True)
+                        st.plotly_chart(mc_fig, use_container_width=True, key="monte_carlo_chart")
             else:
                 st.info("💡 Monte Carlo simulation requires valid GEX data. Refresh the symbol to load data.")
 
@@ -1544,7 +1545,7 @@ def main():
                         showlegend=False
                     )
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="monte_carlo_histogram")
 
                     # Statistics table
                     st.markdown("### 📈 Statistical Summary")
