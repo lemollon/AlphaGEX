@@ -125,6 +125,7 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                                          gex_data.get('spot_price', 1) * 100) if gex_data.get('spot_price') else 0,
                     'setup_type': best_setup.get('strategy', 'N/A') if best_setup else 'N/A',
                     'confidence': best_setup.get('confidence', 0) if best_setup else 0,
+                    'dte': best_setup.get('dte', 'N/A') if best_setup else 'N/A',
                     'action': best_setup.get('action', 'N/A') if best_setup else 'N/A',
                     'cache_status': 'Fresh',
                     'timestamp': datetime.now()
@@ -155,6 +156,7 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                     'distance_to_flip': 0,
                     'setup_type': 'Timeout' if "timeout" in error_msg.lower() else 'Error',
                     'confidence': 0,
+                    'dte': 'N/A',
                     'action': 'Retry later',
                     'cache_status': 'Error',
                     'timestamp': datetime.now()
@@ -181,29 +183,34 @@ def display_scanner_dashboard(df: pd.DataFrame):
 
     st.subheader("📊 Multi-Symbol Scanner Results")
 
-    # Ensure all required columns exist (IV and PCR removed to reduce API calls by 50%)
+    # Ensure all required columns exist
     required_columns = ['symbol', 'spot_price', 'net_gex', 'distance_to_flip',
-                       'setup_type', 'confidence', 'action', 'cache_status']
+                       'setup_type', 'confidence', 'dte', 'action', 'cache_status']
     for col in required_columns:
         if col not in df.columns:
-            df[col] = 0 if col not in ['symbol', 'setup_type', 'action', 'cache_status'] else 'N/A'
+            if col == 'dte':
+                df[col] = 'N/A'
+            elif col in ['symbol', 'setup_type', 'action', 'cache_status']:
+                df[col] = 'N/A'
+            else:
+                df[col] = 0
 
     # Sort by confidence (best opportunities first)
     df_sorted = df.sort_values('confidence', ascending=False)
 
-    # Display formatted table (IV column removed - not essential for finding setups)
+    # Display formatted table with DTE column
     display_df = df_sorted[[
         'symbol', 'spot_price', 'net_gex', 'distance_to_flip',
-        'setup_type', 'confidence', 'action', 'cache_status'
+        'setup_type', 'confidence', 'dte', 'action', 'cache_status'
     ]].copy()
 
     # Keep raw confidence values for styling
     confidence_values = display_df['confidence'].copy()
 
-    # Rename columns (IV removed - not essential for finding trade setups)
+    # Rename columns with DTE included
     display_df.columns = [
         'Symbol', 'Price', 'Net GEX ($B)', 'Dist to Flip (%)',
-        'Setup', 'Conf %', 'Action', 'Status'
+        'Setup', 'Conf %', 'DTE', 'Action', 'Status'
     ]
 
     # Format numeric columns (safely handle non-numeric values)
@@ -277,6 +284,12 @@ def display_scanner_dashboard(df: pd.DataFrame):
 
             st.markdown(f"**{row['setup_type']}**")
             st.markdown(f"Confidence: **{row['confidence']}%**")
+
+            # Show DTE if available
+            dte_text = f"DTE: **{row['dte']}**" if row['dte'] != 'N/A' else ""
+            if dte_text:
+                st.markdown(dte_text)
+
             st.caption(f"💡 {row['action']}")
 
     # Legend
