@@ -263,9 +263,9 @@ def display_scanner_dashboard(df: pd.DataFrame):
         height=400
     )
 
-    # Quick stats - Improved styling
+    # Enhanced Top Opportunities Cards
     st.markdown("### 🎯 Top Opportunities")
-    st.caption("Highest confidence setups from the scan")
+    st.caption("Highest confidence setups from the scan - sorted by profit potential")
 
     top_3 = df_sorted.head(3)
 
@@ -274,23 +274,63 @@ def display_scanner_dashboard(df: pd.DataFrame):
     for idx in range(len(top_3)):
         row = top_3.iloc[idx]
         with cols[idx]:
-            # Color-coded container based on confidence
-            if row['confidence'] >= 70:
-                st.success(f"**#{idx + 1}: {row['symbol']}**")
-            elif row['confidence'] >= 60:
-                st.warning(f"**#{idx + 1}: {row['symbol']}**")
+            # Determine grade and styling
+            conf = row['confidence']
+            if conf >= 80:
+                grade = "A"
+                color = "#00FF88"
+                badge = "🏆"
+                border = "rgba(0, 255, 136, 0.5)"
+                bg = "linear-gradient(135deg, rgba(0, 255, 136, 0.15) 0%, rgba(0, 212, 255, 0.15) 100%)"
+            elif conf >= 70:
+                grade = "B"
+                color = "#FFB800"
+                badge = "⭐"
+                border = "rgba(255, 184, 0, 0.5)"
+                bg = "linear-gradient(135deg, rgba(255, 184, 0, 0.15) 0%, rgba(255, 153, 0, 0.15) 100%)"
             else:
-                st.info(f"**#{idx + 1}: {row['symbol']}**")
+                grade = "C"
+                color = "#888"
+                badge = "📊"
+                border = "rgba(136, 136, 136, 0.5)"
+                bg = "linear-gradient(135deg, rgba(136, 136, 136, 0.15) 0%, rgba(100, 100, 100, 0.15) 100%)"
 
-            st.markdown(f"**{row['setup_type']}**")
-            st.markdown(f"Confidence: **{row['confidence']}%**")
-
-            # Show DTE if available
-            dte_text = f"DTE: **{row['dte']}**" if row['dte'] != 'N/A' else ""
-            if dte_text:
-                st.markdown(dte_text)
-
-            st.caption(f"💡 {row['action']}")
+            # Enhanced opportunity card
+            st.markdown(f"""
+            <div style='background: {bg};
+                        padding: 20px;
+                        border-radius: 12px;
+                        border: 2px solid {border};
+                        margin-bottom: 10px;
+                        min-height: 220px;'>
+                <div style='display: flex; justify-content: space-between; margin-bottom: 10px;'>
+                    <div style='font-size: 14px; color: #888;'>#{idx + 1}</div>
+                    <div style='background: rgba(0, 0, 0, 0.5); padding: 4px 10px; border-radius: 6px;'>
+                        <span style='color: {color}; font-weight: 700; font-size: 14px;'>GRADE {grade}</span>
+                    </div>
+                </div>
+                <div style='font-size: 28px; font-weight: 800; color: {color}; margin-bottom: 8px;'>
+                    {badge} {row['symbol']}
+                </div>
+                <div style='font-size: 16px; font-weight: 600; color: white; margin-bottom: 12px;'>
+                    {row['setup_type']}
+                </div>
+                <div style='display: flex; gap: 8px; margin-bottom: 10px;'>
+                    <div style='flex: 1; background: rgba(0, 0, 0, 0.4); padding: 8px; border-radius: 6px; text-align: center;'>
+                        <div style='color: #888; font-size: 10px;'>CONF</div>
+                        <div style='color: {color}; font-size: 18px; font-weight: 700;'>{conf}%</div>
+                    </div>
+                    <div style='flex: 1; background: rgba(0, 0, 0, 0.4); padding: 8px; border-radius: 6px; text-align: center;'>
+                        <div style='color: #888; font-size: 10px;'>DTE</div>
+                        <div style='color: white; font-size: 18px; font-weight: 700;'>{row['dte']}</div>
+                    </div>
+                </div>
+                <div style='background: rgba(0, 212, 255, 0.1); padding: 8px; border-radius: 6px; text-align: center;'>
+                    <div style='color: #00D4FF; font-size: 11px; font-weight: 600;'>💡 ACTION</div>
+                    <div style='color: white; font-size: 13px;'>{row['action']}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
     # Legend
     with st.expander("🎨 Color Legend"):

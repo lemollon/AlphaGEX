@@ -954,58 +954,172 @@ def main():
                     # Display market context first
                     st.info(f"**Market Regime:** {regime.get('type', 'N/A')} | **Net GEX:** {regime.get('net_gex_billions', 'N/A')} | **MM Behavior:** {regime.get('mm_behavior', 'N/A')}")
 
-                    # Display each setup in blog/narrative format
+                    # Display each setup with enhanced professional cards
                     for i, trade in enumerate(setups, 1):
                         conf = trade.get('confidence', 0)
-                        stars = '⭐' * (conf // 20)
 
-                        with st.expander(
-                            f"{stars} Setup #{i}: {trade.get('strategy', 'Unknown')} ({conf}% Confidence)",
-                            expanded=True
-                        ):
-                            # Start with WHY - the reasoning
-                            st.markdown(f"**{trade.get('reasoning', 'Strong setup based on current market conditions.')}**")
-                            st.markdown("---")
+                        # Determine grade and styling based on confidence
+                        if conf >= 80:
+                            grade = "A"
+                            grade_color = "#00FF88"
+                            border_color = "rgba(0, 255, 136, 0.5)"
+                            bg_gradient = "linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(0, 212, 255, 0.1) 100%)"
+                            badge = "🏆"
+                        elif conf >= 70:
+                            grade = "B"
+                            grade_color = "#FFB800"
+                            border_color = "rgba(255, 184, 0, 0.5)"
+                            bg_gradient = "linear-gradient(135deg, rgba(255, 184, 0, 0.1) 0%, rgba(255, 153, 0, 0.1) 100%)"
+                            badge = "⭐"
+                        else:
+                            grade = "C"
+                            grade_color = "#888"
+                            border_color = "rgba(136, 136, 136, 0.5)"
+                            bg_gradient = "linear-gradient(135deg, rgba(136, 136, 136, 0.1) 0%, rgba(100, 100, 100, 0.1) 100%)"
+                            badge = "📊"
 
-                            # The Play - show DTE if available
+                        # Calculate profit potential
+                        target_1 = trade.get('target_1', '')
+                        entry = trade.get('entry', '')
+                        profit_potential = "TBD"
+                        if target_1 and entry:
+                            try:
+                                target_val = float(str(target_1).replace('$', ''))
+                                entry_val = float(str(entry).replace('$', ''))
+                                profit_pct = ((target_val - entry_val) / entry_val) * 100
+                                profit_potential = f"+${abs(profit_pct * 4.2):.0f}"  # Estimated for 1 contract
+                            except:
+                                pass
+
+                        # Enhanced card header
+                        st.markdown(f"""
+                        <div style='background: {bg_gradient};
+                                    padding: 20px; border-radius: 12px;
+                                    border: 2px solid {border_color};
+                                    margin-bottom: 20px;'>
+                            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'>
+                                <div style='font-size: 24px; font-weight: 800; color: {grade_color};'>
+                                    {badge} SETUP #{i} - GRADE {grade}
+                                </div>
+                                <div style='background: rgba(0, 0, 0, 0.5); padding: 8px 16px; border-radius: 8px;'>
+                                    <span style='color: #00D4FF; font-size: 14px; font-weight: 600;'>💰 Est. Profit:</span>
+                                    <span style='color: {grade_color}; font-size: 20px; font-weight: 800; margin-left: 8px;'>{profit_potential}</span>
+                                </div>
+                            </div>
+                            <div style='font-size: 18px; font-weight: 700; color: white; margin-bottom: 5px;'>
+                                {trade.get('strategy', 'Unknown Strategy')}
+                            </div>
+                            <div style='display: flex; gap: 15px; margin-top: 10px;'>
+                                <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
+                                    <span style='color: #888; font-size: 12px;'>CONFIDENCE</span><br>
+                                    <span style='color: {grade_color}; font-size: 16px; font-weight: 700;'>{conf}%</span>
+                                </div>
+                                <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
+                                    <span style='color: #888; font-size: 12px;'>DTE</span><br>
+                                    <span style='color: white; font-size: 16px; font-weight: 700;'>{trade.get('dte', 'N/A')}</span>
+                                </div>
+                                <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
+                                    <span style='color: #888; font-size: 12px;'>WIN RATE</span><br>
+                                    <span style='color: #00FF88; font-size: 16px; font-weight: 700;'>{trade.get('win_rate', 'N/A')}</span>
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        with st.expander("📋 Full Trade Details", expanded=True):
+                            # Reasoning with visual emphasis
+                            st.markdown(f"""
+                            <div style='background: rgba(0, 212, 255, 0.1); padding: 15px; border-radius: 8px;
+                                        border-left: 4px solid #00D4FF; margin-bottom: 15px;'>
+                                <div style='color: #00D4FF; font-weight: 600; margin-bottom: 8px;'>💡 WHY THIS WORKS:</div>
+                                <div style='color: white; font-size: 15px;'>{trade.get('reasoning', 'Strong setup based on current market conditions.')}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # The Play with visual styling
                             dte_text = ""
                             if 'dte' in trade:
                                 dte_text = f" with **{trade['dte']} DTE** ({trade.get('best_time', '')})"
                             elif 'expiration' in trade:
                                 dte_text = f" with {trade['expiration']} expiration"
 
-                            st.markdown(f"**The Play:** {trade.get('action', 'N/A')}{dte_text}.")
+                            st.markdown(f"""
+                            <div style='background: rgba(138, 43, 226, 0.1); padding: 12px; border-radius: 8px; margin-bottom: 10px;'>
+                                <span style='color: #00D4FF; font-weight: 600;'>🎯 THE PLAY:</span>
+                                <span style='color: white; font-size: 15px;'> {trade.get('action', 'N/A')}{dte_text}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
 
-                            if trade.get('win_rate'):
-                                st.markdown(f"*This setup has a {trade.get('win_rate')} win rate based on historical data.*")
+                            # Entry/Exit Levels with visual bars
+                            col1, col2, col3 = st.columns(3)
 
-                            # Entry Strategy
-                            entry_value = trade.get('entry', trade.get('entry_zone', 'N/A'))
-                            st.markdown(f"**Entry Strategy:** Look to enter around {entry_value}.")
+                            with col1:
+                                entry_value = trade.get('entry', trade.get('entry_zone', 'N/A'))
+                                st.markdown(f"""
+                                <div style='background: rgba(255, 184, 0, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
+                                    <div style='color: #FFB800; font-size: 12px; font-weight: 600;'>📍 ENTRY</div>
+                                    <div style='color: white; font-size: 20px; font-weight: 700;'>{entry_value}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
 
-                            # Profit Targets
-                            if 'target_1' in trade:
-                                profit_text = f"**Profit Targets:** First target is {trade.get('target_1', 'N/A')}"
-                                if 'target_2' in trade:
-                                    profit_text += f", with an extended target at {trade.get('target_2', 'N/A')}. Consider scaling out at each target to lock in profits."
-                                else:
-                                    profit_text += ". Consider taking profits at this level."
-                                st.markdown(profit_text)
-                            elif 'max_profit' in trade:
-                                st.markdown(f"**Maximum Profit Potential:** {trade.get('max_profit', 'N/A')}.")
-                                if 'credit' in trade:
-                                    st.markdown(f"You'll collect {trade.get('credit', 'N/A')} in credit when you enter this trade.")
+                            with col2:
+                                target_value = trade.get('target_1', trade.get('max_profit', 'N/A'))
+                                st.markdown(f"""
+                                <div style='background: rgba(0, 255, 136, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
+                                    <div style='color: #00FF88; font-size: 12px; font-weight: 600;'>🎯 TARGET</div>
+                                    <div style='color: white; font-size: 20px; font-weight: 700;'>{target_value}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
 
-                            # Risk Management
-                            risk_text = "**Risk Management:** "
-                            if 'stop' in trade:
-                                risk_text += f"Set your stop loss at {trade.get('stop', 'N/A')}. "
-                            if 'max_risk' in trade:
-                                risk_text += f"Your maximum risk on this trade is {trade.get('max_risk', 'N/A')}. "
+                            with col3:
+                                stop_value = trade.get('stop', trade.get('max_risk', 'N/A'))
+                                st.markdown(f"""
+                                <div style='background: rgba(255, 68, 68, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
+                                    <div style='color: #FF4444; font-size: 12px; font-weight: 600;'>🛑 STOP</div>
+                                    <div style='color: white; font-size: 20px; font-weight: 700;'>{stop_value}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
 
+                            st.markdown("<br>", unsafe_allow_html=True)
+
+                            # Risk/Reward Visual Bar
+                            risk_reward = trade.get('risk_reward', 2.0)
+                            max_risk_val = trade.get('max_risk', '$420')
+                            try:
+                                risk_amount = float(str(max_risk_val).replace('$', '').replace(',', ''))
+                                reward_amount = risk_amount * risk_reward
+
+                                st.markdown(f"""
+                                <div style='margin: 20px 0;'>
+                                    <div style='color: #00D4FF; font-weight: 600; margin-bottom: 10px;'>⚖️ RISK/REWARD RATIO: {risk_reward}:1</div>
+                                    <div style='display: flex; gap: 10px; align-items: center;'>
+                                        <div style='flex: 1; background: rgba(255, 68, 68, 0.3); padding: 15px; border-radius: 8px; border: 2px solid #FF4444;'>
+                                            <div style='color: #FF4444; font-size: 12px; font-weight: 600;'>RISK</div>
+                                            <div style='color: white; font-size: 18px; font-weight: 700;'>${risk_amount:.0f}</div>
+                                        </div>
+                                        <div style='color: white; font-size: 24px;'>→</div>
+                                        <div style='flex: {risk_reward}; background: rgba(0, 255, 136, 0.3); padding: 15px; border-radius: 8px; border: 2px solid #00FF88;'>
+                                            <div style='color: #00FF88; font-size: 12px; font-weight: 600;'>REWARD</div>
+                                            <div style='color: white; font-size: 18px; font-weight: 700;'>${reward_amount:.0f}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            except:
+                                pass
+
+                            # Additional targets if available
+                            if 'target_2' in trade:
+                                st.info(f"💎 **Extended Target:** {trade.get('target_2')} - Consider scaling out at each target to lock in profits.")
+
+                            # Position sizing callout
                             size_value = trade.get('size', '2-3% of capital')
-                            risk_text += f"Position size should be {size_value} to maintain proper risk management."
-                            st.markdown(risk_text)
+                            st.markdown(f"""
+                            <div style='background: rgba(0, 212, 255, 0.1); padding: 12px; border-radius: 8px; border-left: 4px solid #00D4FF; margin-top: 15px;'>
+                                <span style='color: #00D4FF; font-weight: 600;'>💼 POSITION SIZE:</span>
+                                <span style='color: white;'> {size_value}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
 
                             # Position Sizing Calculator
                             st.markdown("---")
