@@ -301,6 +301,99 @@ def main():
         border-bottom: 1px dotted #00D4FF;
         cursor: help;
     }
+
+    /* Advanced Animations */
+    @keyframes slideInRight {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+
+    @keyframes fadeInUp {
+        from {
+            transform: translateY(20px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    @keyframes shimmer {
+        0% {
+            background-position: -1000px 0;
+        }
+        100% {
+            background-position: 1000px 0;
+        }
+    }
+
+    .fade-in-up {
+        animation: fadeInUp 0.6s ease-out;
+    }
+
+    .slide-in-right {
+        animation: slideInRight 0.5s ease-out;
+    }
+
+    /* Hover Effects */
+    .hover-lift {
+        transition: all 0.3s ease;
+    }
+
+    .hover-lift:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 16px rgba(0, 212, 255, 0.3);
+    }
+
+    /* Success notification animation */
+    @keyframes notify {
+        0%, 100% {
+            transform: translateY(0);
+        }
+        10%, 30%, 50%, 70%, 90% {
+            transform: translateY(-10px);
+        }
+        20%, 40%, 60%, 80% {
+            transform: translateY(-5px);
+        }
+    }
+
+    .notification {
+        animation: notify 2s ease-in-out;
+    }
+
+    /* Loading shimmer effect */
+    .shimmer {
+        background: linear-gradient(90deg, rgba(255,255,255,0.0) 0%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.0) 100%);
+        background-size: 1000px 100%;
+        animation: shimmer 2s infinite;
+    }
+
+    /* Pulsing dot for live indicators */
+    .pulse-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #00FF88;
+        box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7);
+        animation: pulse-ring 1.5s ease-out infinite;
+    }
+
+    @keyframes pulse-ring {
+        0% {
+            box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7);
+        }
+        100% {
+            box-shadow: 0 0 0 15px rgba(0, 255, 136, 0);
+        }
+    }
     </style>
 
     <div class="main-header">
@@ -310,6 +403,89 @@ def main():
     Professional Options Intelligence Platform
     </div>
     """, unsafe_allow_html=True)
+
+    # Live Market Pulse Widget (Floating)
+    if st.session_state.current_data:
+        data = st.session_state.current_data
+        gex_data = data.get('gex', {})
+        net_gex = gex_data.get('net_gex', 0)
+        spot = gex_data.get('spot_price', 0)
+        flip = gex_data.get('flip_point', 0)
+
+        # Determine market pulse
+        net_gex_billions = net_gex / 1e9
+        if net_gex < -2e9:
+            pulse_status = "🔴 SQUEEZE ACTIVE"
+            pulse_color = "#FF4444"
+            pulse_bg = "rgba(255, 68, 68, 0.2)"
+            pulse_action = "BUY CALLS AGGRESSIVE"
+        elif net_gex < -1e9:
+            pulse_status = "🟠 HIGH VOLATILITY"
+            pulse_color = "#FFB800"
+            pulse_bg = "rgba(255, 184, 0, 0.2)"
+            pulse_action = "DIRECTIONAL PLAYS"
+        elif net_gex > 2e9:
+            pulse_status = "🟢 RANGE BOUND"
+            pulse_color = "#00FF88"
+            pulse_bg = "rgba(0, 255, 136, 0.2)"
+            pulse_action = "IRON CONDORS"
+        else:
+            pulse_status = "🟡 NEUTRAL"
+            pulse_color = "#888"
+            pulse_bg = "rgba(136, 136, 136, 0.2)"
+            pulse_action = "WAIT & WATCH"
+
+        # Calculate confidence
+        distance_to_flip = abs((flip - spot) / spot * 100) if spot and flip else 0
+        if abs(net_gex_billions) > 2:
+            confidence = min(95, 75 + abs(net_gex_billions) * 5)
+        else:
+            confidence = 60
+
+        st.markdown(f"""
+        <div style='position: fixed; top: 80px; right: 20px; z-index: 9999;
+                    background: linear-gradient(135deg, {pulse_bg} 0%, rgba(0, 0, 0, 0.9) 100%);
+                    border: 2px solid {pulse_color};
+                    border-radius: 12px;
+                    padding: 15px;
+                    min-width: 220px;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+                    animation: pulse 2s ease-in-out infinite;'>
+            <div style='text-align: center; margin-bottom: 10px;'>
+                <div style='color: {pulse_color}; font-size: 12px; font-weight: 600; letter-spacing: 1px;'>
+                    LIVE PULSE
+                </div>
+                <div style='color: {pulse_color}; font-size: 16px; font-weight: 800; margin-top: 5px;'>
+                    {pulse_status}
+                </div>
+            </div>
+            <div style='background: rgba(0, 0, 0, 0.5); padding: 10px; border-radius: 8px; margin-bottom: 10px;'>
+                <div style='display: flex; justify-content: space-between; margin-bottom: 5px;'>
+                    <span style='color: #888; font-size: 11px;'>Net GEX:</span>
+                    <span style='color: white; font-weight: 700; font-size: 12px;'>{net_gex_billions:.1f}B</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; margin-bottom: 5px;'>
+                    <span style='color: #888; font-size: 11px;'>Spot:</span>
+                    <span style='color: white; font-weight: 700; font-size: 12px;'>${spot:.2f}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between;'>
+                    <span style='color: #888; font-size: 11px;'>Confidence:</span>
+                    <span style='color: {pulse_color}; font-weight: 700; font-size: 12px;'>{confidence:.0f}%</span>
+                </div>
+            </div>
+            <div style='background: {pulse_bg}; padding: 8px; border-radius: 6px; text-align: center;'>
+                <div style='color: #00D4FF; font-size: 10px; font-weight: 600; margin-bottom: 3px;'>→ ACTION</div>
+                <div style='color: white; font-size: 13px; font-weight: 700;'>{pulse_action}</div>
+            </div>
+        </div>
+
+        <style>
+        @keyframes pulse {{
+            0%, 100% {{ transform: scale(1); }}
+            50% {{ transform: scale(1.02); }}
+        }}
+        </style>
+        """, unsafe_allow_html=True)
     
     # Top metrics row with enhanced styling
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -635,7 +811,14 @@ def main():
             # ==================================================================
             # SECTION 1: CURRENT MARKET ANALYSIS
             # ==================================================================
-            st.header(f"🎯 {current_symbol} - Current Market Analysis")
+            # Analysis header with live indicator
+            st.markdown(f"""
+            <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 20px;'>
+                <h2 style='margin: 0; color: white;'>🎯 {current_symbol} - Current Market Analysis</h2>
+                <div class='pulse-dot'></div>
+                <span style='color: #00FF88; font-size: 12px; font-weight: 600;'>LIVE</span>
+            </div>
+            """, unsafe_allow_html=True)
 
             # Current Analysis Metrics
             gex_data = data.get('gex', {})
@@ -953,6 +1136,30 @@ def main():
                 if setups:
                     # Display market context first
                     st.info(f"**Market Regime:** {regime.get('type', 'N/A')} | **Net GEX:** {regime.get('net_gex_billions', 'N/A')} | **MM Behavior:** {regime.get('mm_behavior', 'N/A')}")
+
+                    # Show notification for high-confidence setups
+                    high_conf_setups = [s for s in setups if s.get('confidence', 0) >= 80]
+                    if high_conf_setups:
+                        st.markdown(f"""
+                        <div class='notification' style='background: linear-gradient(135deg, rgba(0, 255, 136, 0.2) 0%, rgba(0, 212, 255, 0.2) 100%);
+                                    border: 2px solid #00FF88;
+                                    border-radius: 10px;
+                                    padding: 15px;
+                                    margin-bottom: 20px;
+                                    box-shadow: 0 4px 12px rgba(0, 255, 136, 0.3);'>
+                            <div style='display: flex; align-items: center; gap: 10px;'>
+                                <div class='pulse-dot'></div>
+                                <div>
+                                    <div style='color: #00FF88; font-weight: 800; font-size: 16px;'>
+                                        🚨 {len(high_conf_setups)} HIGH-CONFIDENCE SETUP{'S' if len(high_conf_setups) > 1 else ''} DETECTED!
+                                    </div>
+                                    <div style='color: white; font-size: 13px; margin-top: 5px;'>
+                                        Grade A opportunities with 80%+ confidence are available below
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
                     # Display each setup with enhanced professional cards
                     for i, trade in enumerate(setups, 1):
