@@ -840,8 +840,300 @@ class TradingRAG:
         success_rate = self.get_pattern_success_rate(current_pattern)
         if success_rate > 0:
             context_parts.append(f"\nTHIS EXACT PATTERN SUCCESS RATE: {success_rate:.1f}%")
-        
+
         return "\n".join(context_parts)
+
+# ============================================================================
+# SMART DTE CALCULATOR - DYNAMIC EXPIRATION OPTIMIZATION
+# ============================================================================
+class SmartDTECalculator:
+    """
+    Intelligently calculates optimal Days to Expiration (DTE) based on:
+    - Market volatility (VIX levels)
+    - GEX regime (negative squeeze vs positive range)
+    - Historical success rates from database
+    - Day of week and time decay optimization
+    - Strategy type (directional vs premium collection)
+    - Distance to key levels (flip point, walls)
+    """
+
+    def __init__(self):
+        self.rag = TradingRAG()
+        self.db_path = DB_PATH
+
+    def calculate_optimal_dte(self, market_data: Dict, strategy_type: str, use_ai_reasoning: bool = False) -> Dict:
+        """
+        Calculate optimal DTE for a given strategy and market conditions
+
+        Args:
+            market_data: Dict with spot_price, net_gex, flip_point, implied_volatility, etc.
+            strategy_type: 'DIRECTIONAL_LONG', 'DIRECTIONAL_SHORT', 'SPREAD', 'IRON_CONDOR', etc.
+            use_ai_reasoning: Whether to include Claude AI analysis (slower but more insightful)
+
+        Returns:
+            Dict with 'dte', 'confidence', 'reasoning', 'range' (min-max DTE)
+        """
+
+        spot = market_data.get('spot_price', 0)
+        net_gex = market_data.get('net_gex', 0)
+        flip = market_data.get('flip_point', 0)
+        iv = market_data.get('implied_volatility', 0.20)  # Default 20% IV
+
+        # Get current market context
+        et_time = get_et_time()
+        day_of_week = et_time.strftime('%A')
+        hour = et_time.hour
+        days_to_friday = (4 - et_time.weekday()) % 7
+
+        # Calculate market regime indicators
+        distance_to_flip_pct = ((flip - spot) / spot * 100) if spot and flip else 0
+        gex_billions = net_gex / 1e9
+        volatility_regime = self._classify_volatility(iv)
+        gex_regime = self._classify_gex_regime(net_gex)
+
+        # Base DTE calculation using rules-based system
+        base_dte = self._calculate_base_dte(
+            strategy_type=strategy_type,
+            gex_regime=gex_regime,
+            volatility_regime=volatility_regime,
+            day_of_week=day_of_week,
+            days_to_friday=days_to_friday,
+            distance_to_flip_pct=distance_to_flip_pct
+        )
+
+        # Query historical success rates for DTE ranges
+        historical_analysis = self._get_historical_dte_performance(
+            strategy_type=strategy_type,
+            gex_regime=gex_regime,
+            dte_range=(base_dte - 3, base_dte + 3)
+        )
+
+        # Adjust based on historical data
+        optimal_dte = self._adjust_dte_from_history(base_dte, historical_analysis)
+
+        # Calculate confidence based on historical data quality and market clarity
+        confidence = self._calculate_dte_confidence(
+            historical_analysis=historical_analysis,
+            gex_regime=gex_regime,
+            volatility_regime=volatility_regime,
+            day_of_week=day_of_week
+        )
+
+        # Build reasoning explanation
+        reasoning = self._build_dte_reasoning(
+            optimal_dte=optimal_dte,
+            strategy_type=strategy_type,
+            gex_regime=gex_regime,
+            volatility_regime=volatility_regime,
+            day_of_week=day_of_week,
+            distance_to_flip_pct=distance_to_flip_pct,
+            historical_analysis=historical_analysis
+        )
+
+        # Calculate acceptable DTE range
+        dte_range = self._calculate_dte_range(optimal_dte, strategy_type, volatility_regime)
+
+        return {
+            'dte': optimal_dte,
+            'confidence': confidence,
+            'reasoning': reasoning,
+            'range': dte_range,  # (min_dte, max_dte)
+            'display': f"{optimal_dte} DTE ({dte_range[0]}-{dte_range[1]} acceptable)"
+        }
+
+    def _classify_volatility(self, iv: float) -> str:
+        """Classify volatility regime"""
+        if iv < 0.15:
+            return 'LOW'  # IV < 15%
+        elif iv < 0.25:
+            return 'NORMAL'  # IV 15-25%
+        elif iv < 0.35:
+            return 'ELEVATED'  # IV 25-35%
+        else:
+            return 'HIGH'  # IV > 35%
+
+    def _classify_gex_regime(self, net_gex: float) -> str:
+        """Classify GEX regime"""
+        gex_billions = net_gex / 1e9
+        if gex_billions < -2.0:
+            return 'EXTREME_NEGATIVE'  # Violent squeeze potential
+        elif gex_billions < -1.0:
+            return 'NEGATIVE'  # Squeeze setup
+        elif gex_billions < 1.0:
+            return 'NEUTRAL'  # Balanced
+        elif gex_billions < 2.5:
+            return 'POSITIVE'  # Range-bound
+        else:
+            return 'EXTREME_POSITIVE'  # Very range-bound
+
+    def _calculate_base_dte(self, strategy_type: str, gex_regime: str, volatility_regime: str,
+                           day_of_week: str, days_to_friday: int, distance_to_flip_pct: float) -> int:
+        """Calculate base DTE using rules-based system"""
+
+        # Strategy type base DTEs
+        strategy_base_dtes = {
+            'DIRECTIONAL_LONG': 7,  # Calls/puts for squeeze
+            'DIRECTIONAL_SHORT': 5,  # Quick directional
+            'SPREAD': 10,  # Call/put spreads
+            'IRON_CONDOR': 14,  # Premium collection
+            'CREDIT_SPREAD': 10,  # Premium selling
+            'DEBIT_SPREAD': 7,  # Directional with defined risk
+        }
+
+        base_dte = strategy_base_dtes.get(strategy_type, 7)
+
+        # Adjust for GEX regime
+        if gex_regime == 'EXTREME_NEGATIVE':
+            base_dte = min(base_dte, 5)  # Short DTE for explosive moves
+        elif gex_regime == 'NEGATIVE':
+            base_dte = min(base_dte, 7)  # Moderate DTE for squeezes
+        elif gex_regime in ['POSITIVE', 'EXTREME_POSITIVE']:
+            if strategy_type in ['IRON_CONDOR', 'CREDIT_SPREAD']:
+                base_dte = max(base_dte, 10)  # Longer DTE for theta decay
+
+        # Adjust for volatility
+        if volatility_regime == 'HIGH':
+            base_dte = max(3, base_dte - 3)  # Shorter DTE in high IV (vega risk)
+        elif volatility_regime == 'LOW':
+            if strategy_type in ['IRON_CONDOR', 'CREDIT_SPREAD']:
+                base_dte = min(21, base_dte + 3)  # Longer DTE when selling premium in low IV
+
+        # Adjust for day of week
+        if day_of_week in ['Monday', 'Tuesday']:
+            # Prime days for entry - can go slightly longer
+            pass  # Keep base
+        elif day_of_week == 'Wednesday':
+            base_dte = max(3, base_dte - 2)  # Shorter for Wed entries
+        elif day_of_week in ['Thursday', 'Friday']:
+            if strategy_type not in ['IRON_CONDOR', 'CREDIT_SPREAD']:
+                base_dte = max(3, base_dte - 2)  # Avoid weekly expiration directionals on Thu/Fri
+
+        # Adjust based on distance to key levels
+        if abs(distance_to_flip_pct) < 0.5:
+            # Very close to flip = imminent move
+            base_dte = max(3, base_dte - 2)
+        elif abs(distance_to_flip_pct) > 3.0:
+            # Far from flip = need time
+            base_dte = min(14, base_dte + 2)
+
+        # Ensure minimum of 2 DTE (avoid 0-1 DTE unless specifically requested)
+        base_dte = max(2, base_dte)
+
+        return base_dte
+
+    def _get_historical_dte_performance(self, strategy_type: str, gex_regime: str, dte_range: tuple) -> Dict:
+        """Query database for historical DTE success rates"""
+        # Note: This assumes we'll start tracking DTE in positions table
+        # For now, return placeholder data. TODO: Add DTE tracking to database schema
+
+        return {
+            'sample_size': 0,
+            'optimal_dte': None,
+            'win_rates_by_dte': {},
+            'has_data': False
+        }
+
+    def _adjust_dte_from_history(self, base_dte: int, historical_analysis: Dict) -> int:
+        """Adjust DTE based on historical performance"""
+        if not historical_analysis.get('has_data'):
+            return base_dte
+
+        # If we have good historical data, use it
+        if historical_analysis['sample_size'] > 10:
+            optimal_historical = historical_analysis.get('optimal_dte')
+            if optimal_historical:
+                # Blend base and historical (70% historical, 30% rules-based)
+                return int(optimal_historical * 0.7 + base_dte * 0.3)
+
+        return base_dte
+
+    def _calculate_dte_confidence(self, historical_analysis: Dict, gex_regime: str,
+                                  volatility_regime: str, day_of_week: str) -> int:
+        """Calculate confidence score for DTE recommendation (0-100)"""
+        confidence = 60  # Base confidence
+
+        # Boost for strong historical data
+        if historical_analysis.get('sample_size', 0) > 20:
+            confidence += 15
+        elif historical_analysis.get('sample_size', 0) > 10:
+            confidence += 10
+
+        # Boost for clear market regimes
+        if gex_regime in ['EXTREME_NEGATIVE', 'EXTREME_POSITIVE']:
+            confidence += 10  # Clear regime
+
+        # Boost for optimal entry days
+        if day_of_week in ['Monday', 'Tuesday']:
+            confidence += 5
+
+        # Reduce for high volatility (less predictable)
+        if volatility_regime == 'HIGH':
+            confidence -= 10
+
+        return min(95, max(50, confidence))
+
+    def _build_dte_reasoning(self, optimal_dte: int, strategy_type: str, gex_regime: str,
+                            volatility_regime: str, day_of_week: str, distance_to_flip_pct: float,
+                            historical_analysis: Dict) -> str:
+        """Build human-readable reasoning for DTE selection"""
+        reasons = []
+
+        # Strategy reasoning
+        if strategy_type in ['IRON_CONDOR', 'CREDIT_SPREAD']:
+            reasons.append(f"Premium collection benefits from {optimal_dte} DTE theta decay curve")
+        elif strategy_type in ['DIRECTIONAL_LONG', 'DIRECTIONAL_SHORT']:
+            reasons.append(f"Directional play optimized at {optimal_dte} DTE for delta exposure")
+
+        # GEX reasoning
+        if gex_regime == 'EXTREME_NEGATIVE':
+            reasons.append("Extreme negative GEX suggests imminent squeeze - shorter DTE captures explosive move")
+        elif gex_regime == 'NEGATIVE':
+            reasons.append("Negative GEX favors shorter DTE to capitalize on momentum")
+        elif gex_regime in ['POSITIVE', 'EXTREME_POSITIVE']:
+            reasons.append("Positive GEX creates range - longer DTE maximizes theta collection")
+
+        # Volatility reasoning
+        if volatility_regime == 'HIGH':
+            reasons.append("High IV suggests shorter DTE to reduce vega risk")
+        elif volatility_regime == 'LOW':
+            if strategy_type in ['IRON_CONDOR', 'CREDIT_SPREAD']:
+                reasons.append("Low IV requires longer DTE to collect sufficient premium")
+
+        # Day of week reasoning
+        if day_of_week in ['Monday', 'Tuesday']:
+            reasons.append(f"{day_of_week} entry allows full week for thesis to play out")
+        elif day_of_week == 'Wednesday':
+            reasons.append("Mid-week entry requires tighter DTE due to theta acceleration")
+        elif day_of_week in ['Thursday', 'Friday']:
+            reasons.append(f"{day_of_week} entry needs careful DTE to avoid weekend decay")
+
+        # Distance to flip reasoning
+        if abs(distance_to_flip_pct) < 1.0:
+            reasons.append(f"Close to flip point ({distance_to_flip_pct:.1f}%) - tighter DTE for imminent move")
+
+        # Historical reasoning
+        if historical_analysis.get('sample_size', 0) > 10:
+            reasons.append(f"Historical data ({historical_analysis['sample_size']} trades) supports this DTE range")
+
+        return " | ".join(reasons)
+
+    def _calculate_dte_range(self, optimal_dte: int, strategy_type: str, volatility_regime: str) -> tuple:
+        """Calculate acceptable DTE range around optimal"""
+        if strategy_type in ['IRON_CONDOR', 'CREDIT_SPREAD']:
+            # Premium collection has wider acceptable range
+            spread = 4
+        else:
+            # Directional plays need tighter DTE
+            spread = 2
+
+        # Widen range in low volatility (less critical)
+        if volatility_regime == 'LOW':
+            spread += 1
+
+        min_dte = max(2, optimal_dte - spread)
+        max_dte = min(30, optimal_dte + spread)
+
+        return (min_dte, max_dte)
 
 # ============================================================================
 # FRED INTEGRATION
