@@ -1552,7 +1552,11 @@ class TradingVolatilityAPI:
             )
 
             if response.status_code != 200:
-                st.warning(f"⚠️ History endpoint returned status {response.status_code}")
+                if response.status_code == 500:
+                    st.error(f"⚠️ History endpoint error (500): Server-side issue. This endpoint may not be working properly.")
+                    st.caption("The API server encountered an internal error. This is not a rate limit issue - the endpoint may be broken.")
+                else:
+                    st.warning(f"⚠️ History endpoint returned status {response.status_code}")
                 return []
 
             # Check if response has content before parsing JSON

@@ -247,8 +247,9 @@ def display_scanner_dashboard(df: pd.DataFrame):
         height=400
     )
 
-    # Quick stats
-    st.subheader("🎯 Best Opportunities")
+    # Quick stats - Improved styling
+    st.markdown("### 🎯 Top Opportunities")
+    st.caption("Highest confidence setups from the scan")
 
     top_3 = df_sorted.head(3)
 
@@ -257,11 +258,16 @@ def display_scanner_dashboard(df: pd.DataFrame):
     for idx in range(len(top_3)):
         row = top_3.iloc[idx]
         with cols[idx]:
-            st.metric(
-                f"#{idx + 1}: {row['symbol']}",
-                row['setup_type'],
-                f"{row['confidence']}% confidence"
-            )
+            # Color-coded container based on confidence
+            if row['confidence'] >= 70:
+                st.success(f"**#{idx + 1}: {row['symbol']}**")
+            elif row['confidence'] >= 60:
+                st.warning(f"**#{idx + 1}: {row['symbol']}**")
+            else:
+                st.info(f"**#{idx + 1}: {row['symbol']}**")
+
+            st.markdown(f"**{row['setup_type']}**")
+            st.markdown(f"Confidence: **{row['confidence']}%**")
             st.caption(f"💡 {row['action']}")
 
     # Legend

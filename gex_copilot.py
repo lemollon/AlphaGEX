@@ -725,69 +725,7 @@ def main():
                 st.info("📊 Yesterday's data not available yet. Day-over-day comparison will appear tomorrow once we have 2+ days of data in the system.")
 
             # ==================================================================
-            # SECTION 3: HISTORICAL TRENDS (30 DAYS)
-            # ==================================================================
-            st.divider()
-            st.header(f"📈 30-Day Historical Trends")
-
-            st.info("📅 **Note**: Historical charts require 30 days of data to display properly. If the chart appears blank, the API may not have accumulated 30 days of history yet. Check back in a few days as data is collected daily.")
-
-            if st.button("📊 Load Historical Data"):
-                with st.spinner("Fetching 30 days of historical data..."):
-                    # Fetch historical gamma and skew data
-                    gamma_history = st.session_state.api_client.get_historical_gamma(current_symbol, days_back=30)
-                    skew_history = st.session_state.api_client.get_historical_skew(current_symbol, days_back=30)
-
-                    if gamma_history or skew_history:
-                        visualizer = GEXVisualizer()
-                        hist_fig = visualizer.create_historical_chart(gamma_history, skew_history, current_symbol)
-                        st.plotly_chart(hist_fig, use_container_width=True)
-
-                        # Key insights
-                        st.subheader("💡 Historical Insights")
-
-                        col1, col2, col3 = st.columns(3)
-
-                        with col1:
-                            if gamma_history and len(gamma_history) >= 2:
-                                first_flip = float(gamma_history[0].get('gex_flip_price', 0))
-                                last_flip = float(gamma_history[-1].get('gex_flip_price', 0))
-                                flip_change = ((last_flip - first_flip) / first_flip * 100) if first_flip != 0 else 0
-
-                                st.metric(
-                                    "Flip Point 30d Change",
-                                    f"${last_flip:.2f}",
-                                    delta=f"{flip_change:+.1f}%"
-                                )
-
-                        with col2:
-                            if skew_history and len(skew_history) >= 2:
-                                first_iv = float(skew_history[0].get('implied_volatility', 0)) * 100
-                                last_iv = float(skew_history[-1].get('implied_volatility', 0)) * 100
-                                iv_change = last_iv - first_iv
-
-                                st.metric(
-                                    "IV 30d Change",
-                                    f"{last_iv:.1f}%",
-                                    delta=f"{iv_change:+.1f}%"
-                                )
-
-                        with col3:
-                            if skew_history and len(skew_history) >= 2:
-                                first_pcr = float(skew_history[0].get('pcr_oi', 0))
-                                last_pcr = float(skew_history[-1].get('pcr_oi', 0))
-                                pcr_change = last_pcr - first_pcr
-
-                                st.metric(
-                                    "PCR 30d Change",
-                                    f"{last_pcr:.2f}",
-                                    delta=f"{pcr_change:+.2f}"
-                                )
-                    else:
-                        st.warning("No historical data available for this symbol")
-
-            # ==================================================================
-            # SECTION 4: MONTE CARLO SIMULATION (PREDICTIVE)
+            # SECTION 3: MONTE CARLO SIMULATION (PREDICTIVE)
             # ==================================================================
             st.divider()
             st.header(f"🎲 Monte Carlo Price Prediction")
@@ -828,26 +766,6 @@ def main():
                         st.plotly_chart(mc_fig, use_container_width=True)
             else:
                 st.info("💡 Monte Carlo simulation requires valid GEX data. Refresh the symbol to load data.")
-
-            # ==================================================================
-            # SECTION 5: INTRADAY GEX TRACKING
-            # ==================================================================
-            st.divider()
-            st.header(f"📸 Intraday GEX Tracking")
-
-            # Auto-capture snapshot on refresh (only if we have valid GEX data)
-            if gex_data and gex_data.get('spot_price', 0) > 0:
-                tracker = IntradayTracker()
-                tracker.capture_snapshot(
-                    current_symbol,
-                    gex_data,
-                    data.get('skew', {})
-                )
-
-                # Display intraday dashboard
-                display_intraday_dashboard(current_symbol)
-            else:
-                st.info("💡 Intraday tracking requires valid GEX data. Refresh the symbol to start tracking.")
 
         else:
             st.info("👈 Enter a symbol and click Refresh to begin analysis")
@@ -899,8 +817,14 @@ def main():
                             st.markdown(f"**{trade.get('reasoning', 'Strong setup based on current market conditions.')}**")
                             st.markdown("---")
 
-                            # The Play
-                            st.markdown(f"**The Play:** {trade.get('action', 'N/A')}. Target the {trade.get('strikes', 'N/A')} strikes with {trade.get('expiration', 'N/A')} expiration.")
+                            # The Play - show DTE if available
+                            dte_text = ""
+                            if 'dte' in trade:
+                                dte_text = f" with **{trade['dte']} DTE** ({trade.get('best_time', '')})"
+                            elif 'expiration' in trade:
+                                dte_text = f" with {trade['expiration']} expiration"
+
+                            st.markdown(f"**The Play:** {trade.get('action', 'N/A')}{dte_text}.")
 
                             if trade.get('win_rate'):
                                 st.markdown(f"*This setup has a {trade.get('win_rate')} win rate based on historical data.*")
