@@ -8,3 +8,4 @@ scipy>=1.11.0
 py_vollib>=1.0.1
 twilio>=8.10.0
 pytz>=2023.3
+apscheduler>=3.10.0
