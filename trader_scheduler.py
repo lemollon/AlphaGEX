@@ -4,8 +4,17 @@ Uses APScheduler to run trading logic during market hours
 Integrates seamlessly with Streamlit web service
 """
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
+# Try to import APScheduler, but make it optional
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    APSCHEDULER_AVAILABLE = True
+except ImportError:
+    APSCHEDULER_AVAILABLE = False
+    BackgroundScheduler = None
+    CronTrigger = None
+    print("Warning: APScheduler not installed. Autonomous trading scheduler will be disabled.")
+
 from autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
 from datetime import datetime
@@ -37,6 +46,12 @@ class AutonomousTraderScheduler:
     """Manages background scheduling of autonomous trading operations"""
 
     def __init__(self):
+        if not APSCHEDULER_AVAILABLE:
+            logger.warning("APScheduler not available - scheduler will not run")
+            self.scheduler = None
+            self.is_running = False
+            return
+
         self.scheduler = None
         self.trader = AutonomousPaperTrader()
         self.api_client = TradingVolatilityAPI()
@@ -131,6 +146,11 @@ class AutonomousTraderScheduler:
 
     def start(self):
         """Start the autonomous trading scheduler"""
+        if not APSCHEDULER_AVAILABLE:
+            logger.error("Cannot start scheduler - APScheduler not installed")
+            logger.info("To enable autonomous trading, install: pip install apscheduler")
+            return
+
         if self.is_running:
             logger.warning("Scheduler is already running")
             return
@@ -177,6 +197,10 @@ class AutonomousTraderScheduler:
 
     def stop(self):
         """Stop the autonomous trading scheduler"""
+        if not APSCHEDULER_AVAILABLE:
+            logger.warning("Cannot stop scheduler - APScheduler not available")
+            return
+
         if not self.is_running:
             logger.warning("Scheduler is not running")
             return

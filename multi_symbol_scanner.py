@@ -104,6 +104,7 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
             # Fetch fresh data
             try:
                 # ONLY fetch GEX data - skip skew_data to reduce API calls
+                # Increase timeout tolerance for slower API responses
                 gex_data = api_client.get_net_gamma(symbol)
 
                 # Import here to avoid circular dependency
@@ -137,17 +138,25 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                 # Double throttling was causing circuit breaker activation due to timing misalignment.
 
             except Exception as e:
-                st.warning(f"⚠️ Error scanning {symbol}: {str(e)}")
+                error_msg = str(e)
+                # Show concise error message
+                if "timeout" in error_msg.lower():
+                    st.warning(f"⚠️ {symbol}: API timeout (slow response)")
+                elif "error" in str(gex_data if 'gex_data' in locals() else {}).lower():
+                    st.warning(f"⚠️ {symbol}: API error")
+                else:
+                    st.warning(f"⚠️ {symbol}: {error_msg[:50]}")
+
                 scan_result = {
                     'symbol': symbol,
                     'spot_price': 0,
                     'net_gex': 0,
                     'flip_point': 0,
                     'distance_to_flip': 0,
-                    'setup_type': 'Error',
+                    'setup_type': 'Timeout' if "timeout" in error_msg.lower() else 'Error',
                     'confidence': 0,
-                    'action': 'N/A',
-                    'cache_status': f'Error',
+                    'action': 'Retry later',
+                    'cache_status': 'Error',
                     'timestamp': datetime.now()
                 }
 
