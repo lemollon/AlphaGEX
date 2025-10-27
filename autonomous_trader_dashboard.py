@@ -13,22 +13,66 @@ from autonomous_paper_trader import AutonomousPaperTrader
 def display_autonomous_trader():
     """Display autonomous trader dashboard"""
 
-    st.title("🤖 Autonomous SPY Paper Trader")
+    st.markdown("""
+    <div style='text-align: center; margin-bottom: 30px;'>
+        <h1 style='font-size: 48px; font-weight: 900; margin-bottom: 10px;
+                   background: linear-gradient(135deg, #00D4FF 0%, #0099ff 50%, #00ffaa 100%);
+                   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+                   text-shadow: 0 0 40px rgba(0, 212, 255, 0.3);'>
+            🤖 Autonomous SPY Paper Trader
+        </h1>
+        <p style='color: #8b92a7; font-size: 14px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase;'>
+            AI-Powered Fully Automated Trading System
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    st.info("""
-    **🤖 AI-POWERED AUTONOMOUS TRADER** - Thinks like a real options trader!
-
-    ✅ **Starting Capital**: $5,000
-    ✅ **GUARANTEED Daily Trade**: Always has a position working
-    ✅ **AI-Powered Exits**: Claude AI makes intelligent close decisions
-    ✅ **Dual Strategy**:
-       - Primary: Directional trades (calls/puts) based on GEX
-       - Fallback: Iron Condors for premium collection
-    ✅ **Uses REAL option prices**: From Yahoo Finance
-
-    **New: If no clear GEX setup → Iron Condor automatically!**
-    **New: AI analyzes each position to decide HOLD or CLOSE!**
-    """)
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.12) 0%, rgba(0, 153, 204, 0.08) 100%);
+                padding: 28px; border-radius: 16px;
+                border: 2px solid rgba(0, 212, 255, 0.3);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                margin-bottom: 30px;'>
+        <div style='text-align: center; margin-bottom: 20px;'>
+            <span style='font-size: 16px; font-weight: 900; color: #00D4FF; text-transform: uppercase; letter-spacing: 1px;'>
+                🤖 AI-POWERED AUTONOMOUS TRADER
+            </span>
+            <div style='color: #d4d8e1; font-size: 14px; margin-top: 5px;'>
+                Thinks like a real options trader!
+            </div>
+        </div>
+        <div style='display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-top: 20px;'>
+            <div style='background: rgba(0, 0, 0, 0.3); padding: 15px; border-radius: 10px; border: 1px solid rgba(0, 212, 255, 0.2);'>
+                <div style='color: #00FF88; font-size: 13px; font-weight: 800; margin-bottom: 8px;'>✅ STARTING CAPITAL</div>
+                <div style='color: white; font-size: 18px; font-weight: 900;'>$5,000</div>
+            </div>
+            <div style='background: rgba(0, 0, 0, 0.3); padding: 15px; border-radius: 10px; border: 1px solid rgba(0, 212, 255, 0.2);'>
+                <div style='color: #00FF88; font-size: 13px; font-weight: 800; margin-bottom: 8px;'>✅ GUARANTEED DAILY TRADE</div>
+                <div style='color: white; font-size: 14px; font-weight: 700;'>Always has a position working</div>
+            </div>
+            <div style='background: rgba(0, 0, 0, 0.3); padding: 15px; border-radius: 10px; border: 1px solid rgba(0, 212, 255, 0.2);'>
+                <div style='color: #00FF88; font-size: 13px; font-weight: 800; margin-bottom: 8px;'>✅ AI-POWERED EXITS</div>
+                <div style='color: white; font-size: 14px; font-weight: 700;'>Claude AI makes intelligent close decisions</div>
+            </div>
+            <div style='background: rgba(0, 0, 0, 0.3); padding: 15px; border-radius: 10px; border: 1px solid rgba(0, 212, 255, 0.2);'>
+                <div style='color: #00FF88; font-size: 13px; font-weight: 800; margin-bottom: 8px;'>✅ REAL OPTION PRICES</div>
+                <div style='color: white; font-size: 14px; font-weight: 700;'>From Yahoo Finance</div>
+            </div>
+        </div>
+        <div style='margin-top: 20px; padding: 15px; background: rgba(0, 255, 136, 0.1); border-radius: 10px; border: 1px solid rgba(0, 255, 136, 0.3);'>
+            <div style='color: #00FF88; font-size: 13px; font-weight: 800; margin-bottom: 8px;'>🎯 DUAL STRATEGY SYSTEM:</div>
+            <div style='color: #d4d8e1; font-size: 13px; line-height: 1.6;'>
+                <strong>Primary:</strong> Directional trades (calls/puts) based on GEX<br>
+                <strong>Fallback:</strong> Iron Condors for premium collection
+            </div>
+        </div>
+        <div style='margin-top: 15px; text-align: center;'>
+            <div style='color: #FFB800; font-size: 12px; font-weight: 800; text-transform: uppercase;'>
+                🚀 Auto Iron Condor when no clear GEX setup | AI analyzes positions to decide HOLD or CLOSE
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Initialize trader
     if 'autonomous_trader' not in st.session_state:
