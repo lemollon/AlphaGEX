@@ -1254,7 +1254,7 @@ class TradingVolatilityAPI:
                         'format': 'json'
                     },
                     headers={'Accept': 'application/json'},
-                    timeout=30
+                    timeout=60  # Increased from 30 to handle slower API responses
                 )
 
                 if response.status_code != 200:
