@@ -1403,7 +1403,8 @@ def main():
 
                     # Display gamma decay timeline
                     for i, exp in enumerate(expiration_data):
-                        is_today = exp['day_name'] == day_of_week
+                        # Compare actual dates, not just day names, to correctly identify today
+                        is_today = exp['date'] == current_time.strftime('%Y-%m-%d')
 
                         if exp['has_expiration']:
                             # This day has an expiration
