@@ -279,37 +279,51 @@ def main():
         box-shadow: 0 10px 30px rgba(0, 255, 136, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.25);
     }
 
-    /* Premium Tab Navigation */
+    /* Premium Tab Navigation - Compact & Desktop Optimized */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 6px;
+        gap: 4px;
         background: linear-gradient(135deg, rgba(10, 14, 20, 0.98) 0%, rgba(20, 25, 35, 0.98) 100%);
-        padding: 8px;
-        border-radius: 16px;
+        padding: 6px;
+        border-radius: 14px;
         border: 1px solid rgba(0, 212, 255, 0.2);
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        flex-wrap: wrap !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
     }
 
     .stTabs [data-baseweb="tab"] {
         background: transparent;
-        border-radius: 12px;
+        border-radius: 10px;
         color: #6b7280;
-        font-weight: 800;
-        font-size: 12px;
-        padding: 16px 28px;
+        font-weight: 700;
+        font-size: 11px;
+        padding: 12px 16px;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         text-transform: uppercase;
-        letter-spacing: 0.8px;
+        letter-spacing: 0.5px;
+        white-space: nowrap;
+        flex-shrink: 0;
     }
 
     .stTabs [data-baseweb="tab"]:hover {
-        background: rgba(0, 212, 255, 0.05);
+        background: rgba(0, 212, 255, 0.08);
         color: #9ca3af;
+        transform: translateY(-1px);
     }
 
     .stTabs [aria-selected="true"] {
         background: linear-gradient(135deg, #0099ff 0%, #00d4ff 100%) !important;
         color: white !important;
-        box-shadow: 0 6px 16px rgba(0, 212, 255, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        box-shadow: 0 4px 12px rgba(0, 212, 255, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+
+    /* Mobile responsive tabs */
+    @media (max-width: 768px) {
+        .stTabs [data-baseweb="tab"] {
+            font-size: 10px;
+            padding: 10px 12px;
+        }
     }
 
     /* Luxury Expander Design */
@@ -1011,6 +1025,36 @@ def main():
 
         max_risk = account_size * (risk_pct / 100)
         st.caption(f"Max Risk: ${max_risk:,.2f} per trade")
+
+        st.divider()
+
+        # Professional Navigation Guide
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 153, 204, 0.08) 100%);
+                    padding: 16px; border-radius: 12px;
+                    border: 1px solid rgba(0, 212, 255, 0.25);
+                    margin-bottom: 15px;'>
+            <div style='color: #00D4FF; font-weight: 800; font-size: 13px; margin-bottom: 12px; text-align: center;'>
+                🗺️ QUICK NAVIGATION GUIDE
+            </div>
+            <div style='color: #d4d8e1; font-size: 11px; line-height: 1.7;'>
+                <div style='margin-bottom: 10px;'>
+                    <strong style='color: #00FF88;'>📊 Analysis & Data:</strong><br>
+                    <span style='color: #8b92a7;'>GEX Analysis • Trade Setups • Scanner • Plans</span>
+                </div>
+
+                <div style='margin-bottom: 10px;'>
+                    <strong style='color: #FFB800;'>🤖 AI & Automation:</strong><br>
+                    <span style='color: #8b92a7;'>AI Assistant • Auto Trader • Alerts</span>
+                </div>
+
+                <div>
+                    <strong style='color: #8888FF;'>📈 Tracking & Learning:</strong><br>
+                    <span style='color: #8b92a7;'>Positions • Trade Journal • Education</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Performance Stats
     with st.sidebar:
