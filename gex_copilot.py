@@ -1323,8 +1323,7 @@ def main():
                 gex_levels = st.session_state.api_client.get_gex_levels(current_symbol)
 
                 # Fetch gamma by expiration to calculate decay
-                from datetime import timedelta
-                import pandas as pd
+                # timedelta and pandas already imported at top of file
 
                 # Get next 10 trading days to capture all this week's expirations
                 expiration_data = []
