@@ -1869,6 +1869,19 @@ Gamma represents dealer hedging pressure. When options expire, dealers no longer
 
                 # Claude AI Strategy Generator
                 st.divider()
+
+                # Center the AI recommendation section for better readability
+                st.markdown("""
+<style>
+.ai-recommendation-container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+</style>
+<div class="ai-recommendation-container">
+""", unsafe_allow_html=True)
+
                 st.markdown("### 🤖 AI-Powered Strategy Generator")
                 st.markdown("Get a custom trade recommendation based on current market conditions using Claude AI")
 
@@ -1968,6 +1981,9 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                             except Exception as e:
                                 st.error(f"Could not generate AI recommendation: {str(e)}")
                                 st.info("💡 Tip: Check your API configuration in intelligence_and_strategies.py")
+
+                # Close AI recommendation container
+                st.markdown("</div>", unsafe_allow_html=True)
 
             else:
                 # Symbol doesn't have daily expirations
