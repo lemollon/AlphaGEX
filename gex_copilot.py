@@ -1075,39 +1075,37 @@ def main():
 
         # Professional Navigation Guide
         st.markdown("""
-        <div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 153, 204, 0.08) 100%);
-                    padding: 16px; border-radius: 12px;
-                    border: 1px solid rgba(0, 212, 255, 0.25);
-                    margin-bottom: 15px;'>
-            <div style='color: #00D4FF; font-weight: 800; font-size: 13px; margin-bottom: 12px; text-align: center;'>
-                🗺️ QUICK NAVIGATION GUIDE
-            </div>
-            <div style='color: #d4d8e1; font-size: 11px; line-height: 1.7;'>
-                <div style='margin-bottom: 10px;'>
-                    <strong style='color: #00FF88;'>📊 Analysis & Data:</strong><br>
-                    <span style='color: #8b92a7;'>GEX Analysis • Trade Setups • Scanner • Plans</span>
-                </div>
-
-                <div style='margin-bottom: 10px;'>
-                    <strong style='color: #FFB800;'>🤖 AI & Automation:</strong><br>
-                    <span style='color: #8b92a7;'>AI Assistant • Auto Trader • Alerts</span>
-                </div>
-
-                <div>
-                    <strong style='color: #8888FF;'>📈 Tracking & Learning:</strong><br>
-                    <span style='color: #8b92a7;'>Positions • Trade Journal • Education</span>
-                </div>
-            </div>
+<div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 153, 204, 0.08) 100%);
+            padding: 16px; border-radius: 12px;
+            border: 1px solid rgba(0, 212, 255, 0.25);
+            margin-bottom: 15px;'>
+    <div style='color: #00D4FF; font-weight: 800; font-size: 13px; margin-bottom: 12px; text-align: center;'>
+        🗺️ QUICK NAVIGATION GUIDE
+    </div>
+    <div style='color: #d4d8e1; font-size: 11px; line-height: 1.7;'>
+        <div style='margin-bottom: 10px;'>
+            <strong style='color: #00FF88;'>📊 Analysis & Data:</strong><br>
+            <span style='color: #8b92a7;'>GEX Analysis • Trade Setups • Scanner • Plans</span>
         </div>
-        """, unsafe_allow_html=True)
+        <div style='margin-bottom: 10px;'>
+            <strong style='color: #FFB800;'>🤖 AI & Automation:</strong><br>
+            <span style='color: #8b92a7;'>AI Assistant • Auto Trader • Alerts</span>
+        </div>
+        <div>
+            <strong style='color: #8888FF;'>📈 Tracking & Learning:</strong><br>
+            <span style='color: #8b92a7;'>Positions • Trade Journal • Education</span>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
         # Market Pulse Toggle Control
         st.divider()
         st.markdown("""
-        <div style='color: #00D4FF; font-weight: 700; font-size: 12px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;'>
-            ⚡ Display Controls
-        </div>
-        """, unsafe_allow_html=True)
+<div style='color: #00D4FF; font-weight: 700; font-size: 12px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;'>
+    ⚡ Display Controls
+</div>
+""", unsafe_allow_html=True)
 
         # Initialize session state for Market Pulse visibility
         if 'show_market_pulse' not in st.session_state:
