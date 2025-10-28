@@ -1302,12 +1302,19 @@ def main():
             hour = current_time.hour
             minute = current_time.minute
 
-            # Daily expiration schedule for major tickers
+            # Daily expiration schedule for major tickers (VERIFIED AS OF 2024)
+            # Note: CBOE expanded daily (0DTE) options to major ETFs in recent years
             daily_exp_schedule = {
-                'SPY': ['Monday', 'Wednesday', 'Friday'],
-                'QQQ': ['Monday', 'Wednesday', 'Friday'],
-                'IWM': ['Monday', 'Wednesday', 'Friday'],
-                'SPX': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+                'SPY': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],  # 5 days - Daily 0DTE
+                'QQQ': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],  # 5 days - Daily 0DTE
+                'IWM': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],  # 5 days - Daily 0DTE
+                'SPX': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],  # 5 days - Daily 0DTE
+                'XSP': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],  # 5 days - Mini-SPX Daily
+                'DIA': ['Monday', 'Wednesday', 'Friday'],  # 3 days - MWF schedule
+                'EEM': ['Friday'],  # 1 day - Weekly only (standard monthlies + weeklies)
+                'TLT': ['Friday'],  # 1 day - Weekly only
+                'GLD': ['Friday'],  # 1 day - Weekly only
+                'SLV': ['Friday'],  # 1 day - Weekly only
             }
 
             # Check if current symbol has daily expirations
