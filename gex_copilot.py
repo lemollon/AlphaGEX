@@ -665,10 +665,11 @@ def main():
         flip = gex_data.get('flip_point', 0)
 
         # Calculate data age
-        from datetime import datetime
         data_timestamp = data.get('timestamp')
         if data_timestamp:
-            data_age_minutes = (datetime.now() - data_timestamp).total_seconds() / 60
+            # Use timezone-aware datetime to avoid TypeError
+            current_time = get_utc_time()
+            data_age_minutes = (current_time - data_timestamp).total_seconds() / 60
             if data_age_minutes < 1:
                 age_display = "Just now"
                 age_color = "#00FF88"
