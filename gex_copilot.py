@@ -287,9 +287,10 @@ def main():
         border-radius: 14px;
         border: 1px solid rgba(0, 212, 255, 0.2);
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        flex-wrap: wrap !important;
+        flex-wrap: nowrap !important;
         overflow-x: auto !important;
         overflow-y: hidden !important;
+        display: flex !important;
     }
 
     .stTabs [data-baseweb="tab"] {
@@ -655,8 +656,8 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Live Market Pulse Widget (Floating)
-    if st.session_state.current_data:
+    # Live Market Pulse Widget (Floating) - Controlled by toggle
+    if st.session_state.current_data and st.session_state.get('show_market_pulse', True):
         data = st.session_state.current_data
         gex_data = data.get('gex', {})
         net_gex = gex_data.get('net_gex', 0)
@@ -1081,6 +1082,26 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
+        # Market Pulse Toggle Control
+        st.divider()
+        st.markdown("""
+        <div style='color: #00D4FF; font-weight: 700; font-size: 12px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;'>
+            ⚡ Display Controls
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Initialize session state for Market Pulse visibility
+        if 'show_market_pulse' not in st.session_state:
+            st.session_state.show_market_pulse = True
+
+        # Toggle checkbox
+        show_pulse = st.checkbox(
+            "Show Live Market Pulse Widget",
+            value=st.session_state.show_market_pulse,
+            help="Toggle the floating Market Pulse widget in the top-right corner"
+        )
+        st.session_state.show_market_pulse = show_pulse
+
     # Performance Stats
     with st.sidebar:
         st.divider()
@@ -1263,6 +1284,407 @@ def main():
             gex_with_symbol['symbol'] = current_symbol
             game_plan = strategy_engine.generate_game_plan(gex_with_symbol, setups)
             st.markdown(game_plan)
+
+            # ==================================================================
+            # SECTION 1.5: DAILY EXPIRATION GEX TRACKER (0DTE Trading)
+            # ==================================================================
+            st.divider()
+            st.header(f"⏰ Daily Expiration Gamma Tracker - 0DTE Opportunities")
+
+            # Get current day of week and time
+            from datetime import datetime
+            import pytz
+
+            # Use user's timezone or default to Eastern
+            user_tz = st.session_state.get('user_timezone', 'US/Eastern')
+            current_time = datetime.now(pytz.timezone(user_tz))
+            day_of_week = current_time.strftime('%A')
+            hour = current_time.hour
+            minute = current_time.minute
+
+            # Daily expiration schedule for major tickers
+            daily_exp_schedule = {
+                'SPY': ['Monday', 'Wednesday', 'Friday'],
+                'QQQ': ['Monday', 'Wednesday', 'Friday'],
+                'IWM': ['Monday', 'Wednesday', 'Friday'],
+                'SPX': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+            }
+
+            # Check if current symbol has daily expirations
+            has_daily_exp = current_symbol in daily_exp_schedule
+            exp_days = daily_exp_schedule.get(current_symbol, [])
+
+            if has_daily_exp:
+                # Check if today is an expiration day
+                is_expiration_day = day_of_week in exp_days
+
+                # Market phases
+                market_closed = hour < 9 or (hour == 9 and minute < 30) or hour >= 16
+                morning_session = 9 <= hour < 12 and minute >= 30 if hour == 9 else True
+                afternoon_session = 12 <= hour < 16
+
+                # Calculate gamma regime based on day of week and time
+                st.markdown(f"""
+                <div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(0, 153, 204, 0.1) 100%);
+                            padding: 24px; border-radius: 16px; border: 2px solid rgba(0, 212, 255, 0.3);
+                            margin-bottom: 20px;'>
+                    <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;'>
+                        <div>
+                            <div style='color: #00D4FF; font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;'>
+                                {day_of_week} | {current_time.strftime('%I:%M %p')} {user_tz.split('/')[-1]}
+                            </div>
+                            <div style='color: {'#00FF88' if is_expiration_day else '#FFB800'}; font-size: 20px; font-weight: 900; margin-top: 8px;'>
+                                {'🔴 EXPIRATION DAY' if is_expiration_day else '🟢 NON-EXPIRATION DAY'}
+                            </div>
+                        </div>
+                        <div style='text-align: right;'>
+                            <div style='color: #8b92a7; font-size: 11px; font-weight: 600; text-transform: uppercase; margin-bottom: 4px;'>
+                                Daily Exp Schedule
+                            </div>
+                            <div style='color: white; font-size: 13px; font-weight: 700;'>
+                                {' • '.join(exp_days)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Gamma Decay Timeline
+                st.markdown("### 📊 Weekly Gamma Decay Pattern")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.markdown("""
+                    <div style='background: linear-gradient(135deg, rgba(0, 255, 136, 0.15) 0%, rgba(0, 153, 102, 0.1) 100%);
+                                padding: 16px; border-radius: 12px; border: 2px solid rgba(0, 255, 136, 0.3);'>
+                        <div style='color: #00FF88; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;'>
+                            🟢 HIGH GAMMA DAYS
+                        </div>
+                        <div style='color: white; font-size: 13px; font-weight: 700; margin-bottom: 12px;'>
+                            Monday - Tuesday
+                        </div>
+                        <div style='color: #d4d8e1; font-size: 11px; line-height: 1.6;'>
+                            <strong>Gamma Effect:</strong> Maximum dealer hedging<br>
+                            <strong>Volatility:</strong> Suppressed (range-bound)<br>
+                            <strong>Strategy:</strong> Iron Condors, Theta harvesting
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with col2:
+                    st.markdown("""
+                    <div style='background: linear-gradient(135deg, rgba(255, 184, 0, 0.15) 0%, rgba(204, 147, 0, 0.1) 100%);
+                                padding: 16px; border-radius: 12px; border: 2px solid rgba(255, 184, 0, 0.3);'>
+                        <div style='color: #FFB800; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;'>
+                            🟡 MID GAMMA DAYS
+                        </div>
+                        <div style='color: white; font-size: 13px; font-weight: 700; margin-bottom: 12px;'>
+                            Wednesday
+                        </div>
+                        <div style='color: #d4d8e1; font-size: 11px; line-height: 1.6;'>
+                            <strong>Gamma Effect:</strong> Moderate decay begins<br>
+                            <strong>Volatility:</strong> Increasing<br>
+                            <strong>Strategy:</strong> Vertical spreads, directional plays
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with col3:
+                    st.markdown("""
+                    <div style='background: linear-gradient(135deg, rgba(255, 68, 68, 0.15) 0%, rgba(204, 54, 54, 0.1) 100%);
+                                padding: 16px; border-radius: 12px; border: 2px solid rgba(255, 68, 68, 0.3);'>
+                        <div style='color: #FF4444; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;'>
+                            🔴 LOW GAMMA DAYS
+                        </div>
+                        <div style='color: white; font-size: 13px; font-weight: 700; margin-bottom: 12px;'>
+                            Thursday - Friday
+                        </div>
+                        <div style='color: #d4d8e1; font-size: 11px; line-height: 1.6;'>
+                            <strong>Gamma Effect:</strong> Massive decay<br>
+                            <strong>Volatility:</strong> High (breakout potential)<br>
+                            <strong>Strategy:</strong> 0DTE Straddles, Long Gamma
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # Actionable Trade Playbook
+                st.divider()
+                st.markdown("### 🎯 Actionable Trade Playbook - Today's Opportunity")
+
+                # Determine today's strategy based on day of week and current GEX
+                net_gex = gex_data.get('net_gex', 0)
+                net_gex_billions = net_gex / 1e9
+                spot = gex_data.get('spot_price', 0)
+                flip = gex_data.get('flip_point', 0)
+
+                # Build trade recommendation based on day and GEX structure
+                trade_recommendations = []
+
+                if day_of_week in ['Monday', 'Tuesday']:
+                    # High Gamma Period - Range Bound Strategies
+                    if net_gex > 2e9:
+                        trade_recommendations.append({
+                            'title': '🟢 Iron Condor - High Probability Income',
+                            'scenario': 'High positive GEX + Early week = Maximum range compression',
+                            'strategy': 'Iron Condor',
+                            'entry_timing': 'Market open (9:30 AM ET) - Capture morning theta',
+                            'structure': f"""
+                            **Sell Call Spread:** ${spot + 2:.2f} / ${spot + 4:.2f}
+                            **Sell Put Spread:** ${spot - 2:.2f} / ${spot - 4:.2f}
+                            **Expiration:** This Friday (Weekly)
+                            **Credit Target:** $0.40 - $0.60 per contract
+                            """,
+                            'profit_target': 'Close at 50% max profit or Thursday 3 PM',
+                            'stop_loss': 'Exit if price breaches flip point or touches a short strike',
+                            'position_size': '1-2% of account per side (2-4% total)',
+                            'edge': 'Dealers will pin price between strikes through Friday, theta decay accelerates Wed-Fri'
+                        })
+                    else:
+                        trade_recommendations.append({
+                            'title': '🟡 Vertical Spread - Directional with Protection',
+                            'scenario': 'Neutral GEX + Early week = Moderate volatility',
+                            'strategy': 'Bull Put Spread' if spot > flip else 'Bear Call Spread',
+                            'entry_timing': 'Wait for morning volatility to settle (10:30 AM ET)',
+                            'structure': f"""
+                            **Direction:** {'Bullish' if spot > flip else 'Bearish'} (Price {'above' if spot > flip else 'below'} flip)
+                            **Sell Strike:** ${(spot - 1.5) if spot > flip else (spot + 1.5):.2f}
+                            **Buy Strike:** ${(spot - 3) if spot > flip else (spot + 3):.2f}
+                            **Expiration:** This Friday (Weekly)
+                            **Credit Target:** $0.50 - $0.80 per contract
+                            """,
+                            'profit_target': 'Close at 60% max profit or Thursday 2 PM',
+                            'stop_loss': 'Exit if GEX flips or price approaches flip point',
+                            'position_size': '2-3% of account',
+                            'edge': 'Moderate gamma allows controlled directional movement'
+                        })
+
+                elif day_of_week == 'Wednesday':
+                    # Mid-week - Transition Period
+                    if is_expiration_day:
+                        trade_recommendations.append({
+                            'title': '⏰ 0DTE Decay Play - Wednesday Expiration',
+                            'scenario': 'Wednesday 0DTE expiration + Gamma decay begins',
+                            'strategy': 'Short 0DTE Iron Fly (if high IV) or Calendar Spread',
+                            'entry_timing': 'Morning: 10:00 AM - 11:00 AM ET',
+                            'structure': f"""
+                            **ATM Short Iron Fly:**
+                            **Sell Call:** ${spot + 0.5:.2f}
+                            **Sell Put:** ${spot - 0.5:.2f}
+                            **Buy Call:** ${spot + 2:.2f}
+                            **Buy Put:** ${spot - 2:.2f}
+                            **Expiration:** TODAY (0DTE)
+                            **Credit Target:** $0.80 - $1.20 per contract
+                            """,
+                            'profit_target': 'Hold until 3:30 PM or 75% profit',
+                            'stop_loss': 'Exit if price moves $2+ from entry or at $150 loss per contract',
+                            'position_size': '1% of account (higher risk due to 0DTE)',
+                            'edge': 'Theta decay accelerates exponentially in final hours, gamma decay increases volatility'
+                        })
+                    else:
+                        trade_recommendations.append({
+                            'title': '📈 Volatility Expansion Play',
+                            'scenario': 'Mid-week + Gamma decay starting = Volatility increases',
+                            'strategy': 'Long Call/Put Spread or Butterfly',
+                            'entry_timing': 'Early morning (9:45 AM - 10:15 AM ET) before volatility spike',
+                            'structure': f"""
+                            **Long Butterfly (Cheap Lotto):**
+                            **Buy Call:** ${spot + 2:.2f}
+                            **Sell 2x Call:** ${spot + 4:.2f}
+                            **Buy Call:** ${spot + 6:.2f}
+                            **Expiration:** This Friday (Weekly)
+                            **Debit:** $0.20 - $0.40 per contract
+                            """,
+                            'profit_target': 'Close when price reaches body strikes or 200% profit',
+                            'stop_loss': 'Let it expire worthless (defined risk)',
+                            'position_size': '0.5% of account (lottery ticket)',
+                            'edge': 'As gamma decays Thu/Fri, volatility will expand - cheap asymmetric bet'
+                        })
+
+                elif day_of_week in ['Thursday', 'Friday']:
+                    # Low Gamma Period - High Volatility Strategies
+                    if is_expiration_day:
+                        if hour < 14:  # Before 2 PM
+                            trade_recommendations.append({
+                                'title': '🔥 0DTE Straddle - Volatility Explosion',
+                                'scenario': f'{day_of_week} Expiration + Massive gamma decay = Volatility spike',
+                                'strategy': 'Long 0DTE ATM Straddle',
+                                'entry_timing': '9:30 AM - 10:30 AM ET (Early to capture full move)',
+                                'structure': f"""
+                                **Buy ATM Call:** ${spot:.2f} strike
+                                **Buy ATM Put:** ${spot:.2f} strike
+                                **Expiration:** TODAY (0DTE)
+                                **Debit:** $1.50 - $2.50 per straddle
+                                **Breakevens:** ${spot - 2:.2f} / ${spot + 2:.2f}
+                                """,
+                                'profit_target': 'Exit when either leg is ITM by $2+ OR at 1:00 PM ET',
+                                'stop_loss': 'Exit at 11:30 AM if no movement (down 30-40%) or at $100 loss per straddle',
+                                'position_size': '1-2% of account (aggressive but defined risk)',
+                                'edge': 'Low gamma = dealers stop hedging = big intraday moves. Friday afternoon typically sees 1-2% swings'
+                            })
+                        else:
+                            trade_recommendations.append({
+                                'title': '⚡ Final Hour Scalp - Pure Theta',
+                                'scenario': 'Final trading hour + 0DTE = Extreme theta decay',
+                                'strategy': 'Sell OTM 0DTE options (directional)',
+                                'entry_timing': '3:00 PM - 3:30 PM ET',
+                                'structure': f"""
+                                **Sell OTM Option:**
+                                **Strike:** ${(spot + 2) if net_gex < 0 else (spot - 2):.2f}
+                                **Premium:** $0.10 - $0.25 per contract
+                                **Expiration:** TODAY (0DTE - expires in 1-1.5 hours!)
+                                """,
+                                'profit_target': 'Hold until 3:55 PM or worthless',
+                                'stop_loss': 'Exit immediately if price moves toward strike ($30 loss max)',
+                                'position_size': '0.5% of account (very aggressive)',
+                                'edge': 'Theta decay is $0.10-0.15 per 10 minutes in final hour - collect pennies but high win rate'
+                            })
+                    else:
+                        trade_recommendations.append({
+                            'title': '💥 Gamma Squeeze Setup - Big Move Ahead',
+                            'scenario': f'{day_of_week} + Low gamma = Next expiration day will see explosive move',
+                            'strategy': 'Long Straddle or Strangle (Weekly expiration)',
+                            'entry_timing': 'Afternoon (2:00 PM - 3:00 PM ET) - Position for next day',
+                            'structure': f"""
+                            **Long Weekly Straddle:**
+                            **Buy Call:** ${spot:.2f} (ATM)
+                            **Buy Put:** ${spot:.2f} (ATM)
+                            **Expiration:** Next Friday (Weekly)
+                            **Debit:** $3.00 - $4.50 per straddle
+                            """,
+                            'profit_target': 'Hold through next expiration day volatility, exit when 50% ITM',
+                            'stop_loss': 'Exit Monday if no movement by 11 AM (gamma rebuilds)',
+                            'position_size': '2% of account',
+                            'edge': 'Gamma vacuum into next Monday expiration = dealers will be forced to hedge aggressively = big move'
+                        })
+
+                elif day_of_week in ['Saturday', 'Sunday']:
+                    trade_recommendations.append({
+                        'title': '📚 Weekend Planning - Prepare for Monday',
+                        'scenario': 'Markets closed - Use this time to analyze',
+                        'strategy': 'Pre-Market Setup',
+                        'entry_timing': 'Monday market open (9:30 AM ET)',
+                        'structure': """
+                        **Weekend Checklist:**
+                        1. Review Friday's closing GEX levels
+                        2. Identify key support/resistance from last week
+                        3. Check Monday's economic calendar (high impact events?)
+                        4. Plan Iron Condor strikes based on expected high-gamma range
+                        5. Set alerts for flip point breaches
+                        """,
+                        'profit_target': 'N/A - Planning phase',
+                        'stop_loss': 'N/A - Planning phase',
+                        'position_size': 'Review account balance and adjust sizing rules',
+                        'edge': 'Monday typically opens with maximum gamma = tight range = perfect for IC setup'
+                    })
+
+                # Display trade recommendations
+                for i, trade in enumerate(trade_recommendations):
+                    with st.expander(f"📊 {trade['title']}", expanded=(i == 0)):
+                        col1, col2 = st.columns([2, 1])
+
+                        with col1:
+                            st.markdown(f"**📍 Current Market Scenario:**")
+                            st.info(trade['scenario'])
+
+                            st.markdown(f"**💼 Strategy:** {trade['strategy']}")
+                            st.markdown(f"**⏰ Entry Timing:** {trade['entry_timing']}")
+
+                            st.markdown("**📋 Trade Structure:**")
+                            st.code(trade['structure'], language=None)
+
+                        with col2:
+                            st.markdown("**🎯 Exit Rules:**")
+                            st.success(f"**Target:** {trade['profit_target']}")
+                            st.error(f"**Stop:** {trade['stop_loss']}")
+
+                            st.markdown("**💰 Risk Management:**")
+                            st.warning(f"**Size:** {trade['position_size']}")
+
+                            st.markdown("**🧠 Edge:**")
+                            st.markdown(f"_{trade['edge']}_")
+
+                # Claude AI Strategy Generator
+                st.divider()
+                st.markdown("### 🤖 AI-Powered Strategy Generator")
+                st.markdown("Get a custom trade recommendation based on current market conditions using Claude AI")
+
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"""
+                    **Current Conditions:**
+                    - Symbol: **{current_symbol}**
+                    - Net GEX: **${net_gex_billions:.2f}B**
+                    - Spot Price: **${spot:.2f}**
+                    - Flip Point: **${flip:.2f}**
+                    - Day: **{day_of_week}**
+                    - Time: **{current_time.strftime('%I:%M %p')}**
+                    - Expiration Today: **{'Yes' if is_expiration_day else 'No'}**
+                    """)
+
+                with col2:
+                    if st.button("🤖 Generate AI Trade", type="primary", use_container_width=True):
+                        with st.spinner("Claude is analyzing market structure..."):
+                            # Call Claude AI for recommendation
+                            from intelligence_and_strategies import ClaudeIntelligence
+                            claude = ClaudeIntelligence()
+
+                            # Build context for Claude
+                            context = {
+                                'symbol': current_symbol,
+                                'net_gex': net_gex_billions,
+                                'spot': spot,
+                                'flip': flip,
+                                'day': day_of_week,
+                                'time': current_time.strftime('%H:%M'),
+                                'is_expiration_day': is_expiration_day,
+                                'exp_days': exp_days
+                            }
+
+                            # Generate recommendation
+                            prompt = f"""You are an expert options trader analyzing GEX data for {current_symbol}.
+
+Current Market Conditions:
+- Net GEX: ${net_gex_billions:.2f}B ({'Positive - dealers long gamma, suppressing vol' if net_gex > 0 else 'Negative - dealers short gamma, amplifying moves'})
+- Spot Price: ${spot:.2f}
+- Flip Point: ${flip:.2f} (Price is {'above' if spot > flip else 'below'} flip)
+- Day: {day_of_week}
+- Time: {current_time.strftime('%I:%M %p %Z')}
+- Is Expiration Day: {'Yes' if is_expiration_day else 'No'}
+- Weekly Expiration Days: {', '.join(exp_days)}
+
+Based on the gamma structure, day of week, and current time, provide ONE specific, actionable trade recommendation.
+
+Format your response as:
+**Strategy**: [strategy name]
+**Entry**: [specific time and price levels]
+**Structure**: [exact strikes and expiration]
+**Profit Target**: [specific exit price or %]
+**Stop Loss**: [specific price or %]
+**Size**: [% of account]
+**Rationale**: [2-3 sentences on why this trade has edge RIGHT NOW]
+
+Be specific with strikes, timing, and risk management. This should be a trade I can execute immediately."""
+
+                            try:
+                                ai_response = claude.ask_claude(prompt)
+                                st.markdown("#### 🎯 Claude's Custom Trade Recommendation")
+                                st.markdown(ai_response)
+                            except Exception as e:
+                                st.error(f"Could not generate AI recommendation: {str(e)}")
+                                st.info("💡 Tip: Check your API configuration in intelligence_and_strategies.py")
+
+            else:
+                # Symbol doesn't have daily expirations
+                st.info(f"""
+                ℹ️ **{current_symbol} does not have daily expirations** (0DTE)
+
+                Daily expiration tracking is currently available for:
+                - **SPY, QQQ, IWM** (Mon/Wed/Fri)
+                - **SPX** (Mon-Fri)
+
+                Select one of these symbols to access the Daily Expiration Gamma Tracker and 0DTE trading strategies.
+                """)
 
             # ==================================================================
             # SECTION 2: DAY-OVER-DAY COMPARISON
