@@ -1315,6 +1315,238 @@ def main():
             exp_days = daily_exp_schedule.get(current_symbol, [])
 
             if has_daily_exp:
+                # ==================================================================
+                # GAMMA EXPIRATION INTELLIGENCE - Fetch real data from API
+                # ==================================================================
+
+                # Fetch GEX levels for precise strike selection
+                gex_levels = st.session_state.api_client.get_gex_levels(current_symbol)
+
+                # Fetch gamma by expiration to calculate decay
+                from datetime import timedelta
+                import pandas as pd
+
+                # Get next 10 trading days to capture all this week's expirations
+                expiration_data = []
+                trading_days = []
+
+                # Calculate next 7 calendar days (covers all weekly expirations)
+                for i in range(1, 8):
+                    future_date = current_time + timedelta(days=i)
+                    # Skip weekends
+                    if future_date.weekday() < 5:  # Monday=0, Friday=4
+                        trading_days.append(future_date)
+
+                # Fetch gamma for each upcoming trading day
+                with st.spinner("📊 Fetching gamma expiration data..."):
+                    for i, future_date in enumerate(trading_days[:5], start=1):  # Next 5 trading days
+                        date_str = future_date.strftime('%Y-%m-%d')
+                        day_name = future_date.strftime('%A')
+
+                        # Fetch gamma for this specific date
+                        gamma_data = st.session_state.api_client.get_gamma_by_expiration(
+                            current_symbol,
+                            date_str
+                        )
+
+                        if gamma_data and gamma_data.get('total_gamma', 0) > 0:
+                            expiration_data.append({
+                                'date': date_str,
+                                'day_name': day_name,
+                                'total_gamma': gamma_data.get('total_gamma', 0),
+                                'expiry_date': gamma_data.get('expiry_date', date_str),
+                                'has_expiration': day_name in exp_days
+                            })
+
+                # Calculate cumulative gamma and decay
+                if expiration_data:
+                    # Sort by date
+                    expiration_data = sorted(expiration_data, key=lambda x: x['date'])
+
+                    # Calculate cumulative gamma (how much is "protecting" the market each day)
+                    total_gamma_all = sum(exp['total_gamma'] for exp in expiration_data)
+                    cumulative = total_gamma_all
+
+                    for exp in expiration_data:
+                        exp['cumulative_gamma_before'] = cumulative
+                        if exp['has_expiration']:
+                            cumulative -= exp['total_gamma']
+                            exp['cumulative_gamma_after'] = cumulative
+                            exp['gamma_decay_pct'] = (exp['total_gamma'] / exp['cumulative_gamma_before'] * 100) if exp['cumulative_gamma_before'] > 0 else 0
+                        else:
+                            exp['cumulative_gamma_after'] = cumulative
+                            exp['gamma_decay_pct'] = 0
+
+                # Display Gamma Expiration Timeline
+                st.markdown("### 📊 Gamma Expiration Intelligence - This Week's Roll-Off")
+
+                if expiration_data:
+                    st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, rgba(255, 184, 0, 0.15) 0%, rgba(204, 147, 0, 0.1) 100%);
+                                padding: 16px; border-radius: 12px; border: 2px solid rgba(255, 184, 0, 0.3);
+                                margin-bottom: 20px;'>
+                        <div style='color: #FFB800; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;'>
+                            🎯 EXPIRATION FREQUENCY DETECTED
+                        </div>
+                        <div style='color: white; font-size: 16px; font-weight: 700;'>
+                            {current_symbol} has {len(exp_days)} expirations per week: {', '.join(exp_days)}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Display gamma decay timeline
+                    for i, exp in enumerate(expiration_data):
+                        is_today = exp['day_name'] == day_of_week
+
+                        if exp['has_expiration']:
+                            # This day has an expiration
+                            decay_color = '#FF4444' if exp['gamma_decay_pct'] > 30 else '#FFB800' if exp['gamma_decay_pct'] > 15 else '#00FF88'
+
+                            col1, col2 = st.columns([3, 1])
+
+                            with col1:
+                                st.markdown(f"""
+                                <div style='background: linear-gradient(135deg, rgba(255, 68, 68, 0.15) 0%, rgba(204, 54, 54, 0.1) 100%);
+                                            padding: 16px; border-radius: 12px; border: 2px solid {decay_color};
+                                            margin-bottom: 12px; {'box-shadow: 0 0 20px rgba(0, 212, 255, 0.5);' if is_today else ''}'>
+                                    <div style='display: flex; justify-content: space-between; align-items: center;'>
+                                        <div>
+                                            <div style='color: {decay_color}; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;'>
+                                                {'📍 TODAY → ' if is_today else ''}🔴 {exp['day_name']} {exp['date']} - EXPIRATION DAY
+                                            </div>
+                                            <div style='color: #d4d8e1; font-size: 11px; margin-top: 6px;'>
+                                                <strong>Gamma Expiring:</strong> {exp['total_gamma']:,.0f} ({exp['gamma_decay_pct']:.1f}% of total)
+                                            </div>
+                                            <div style='color: #8b92a7; font-size: 10px; margin-top: 4px;'>
+                                                Before: {exp['cumulative_gamma_before']:,.0f} → After: {exp['cumulative_gamma_after']:,.0f}
+                                            </div>
+                                        </div>
+                                        <div style='text-align: right;'>
+                                            <div style='color: {decay_color}; font-size: 20px; font-weight: 900;'>
+                                                -{exp['gamma_decay_pct']:.0f}%
+                                            </div>
+                                            <div style='color: #8b92a7; font-size: 9px; text-transform: uppercase;'>Decay</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                            with col2:
+                                # Show trading implication
+                                if exp['gamma_decay_pct'] > 30:
+                                    st.error("**MASSIVE DECAY**\n\nVolatility will spike")
+                                elif exp['gamma_decay_pct'] > 15:
+                                    st.warning("**MODERATE DECAY**\n\nIncreased movement")
+                                else:
+                                    st.info("**MINOR DECAY**\n\nLimited impact")
+                        else:
+                            # Non-expiration day
+                            st.markdown(f"""
+                            <div style='background: linear-gradient(135deg, rgba(0, 255, 136, 0.08) 0%, rgba(0, 153, 102, 0.05) 100%);
+                                        padding: 12px; border-radius: 10px; border: 1px solid rgba(0, 255, 136, 0.2);
+                                        margin-bottom: 12px; opacity: 0.7;'>
+                                <div style='color: #00FF88; font-size: 11px; font-weight: 700;'>
+                                    {'📍 TODAY → ' if is_today else ''}🟢 {exp['day_name']} {exp['date']} - No Expiration
+                                </div>
+                                <div style='color: #8b92a7; font-size: 10px; margin-top: 4px;'>
+                                    Gamma Stable: {exp['cumulative_gamma_before']:,.0f} (No decay)
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                    st.divider()
+
+                    # Add Gamma Decay Trading Playbook
+                    st.markdown("### 💡 Gamma Decay Trading Context - How to Profit")
+
+                    st.markdown("""
+                    <div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 153, 204, 0.08) 100%);
+                                padding: 20px; border-radius: 14px; border: 2px solid rgba(0, 212, 255, 0.25);
+                                margin-bottom: 20px;'>
+                        <div style='color: white; font-size: 13px; line-height: 1.8;'>
+                            <strong style='color: #00D4FF; font-size: 14px;'>🧠 Understanding Gamma Decay:</strong><br><br>
+
+                            <strong style='color: #00FF88;'>What It Means:</strong><br>
+                            Gamma represents dealer hedging pressure. When options expire, dealers no longer need to hedge those positions,
+                            reducing their buying/selling activity. This creates <strong>volatility vacuums</strong>.<br><br>
+
+                            <strong style='color: #FFB800;'>The Money-Making Pattern:</strong><br>
+                            • <strong>High Gamma (Early Week)</strong> → Dealers actively hedge → Price stays in tight range → <strong>Sell premium</strong><br>
+                            • <strong>Gamma Decay (Mid-Week)</strong> → Hedging pressure reduces → Movement increases → <strong>Adjust positions</strong><br>
+                            • <strong>Low Gamma (Late Week)</strong> → Minimal hedging → Large price swings → <strong>Buy volatility</strong><br><br>
+
+                            <strong style='color: #FF4444;'>Critical Thresholds:</strong><br>
+                            • <strong>>30% Decay</strong> → EXPLOSIVE - Price can move 2-3x normal range<br>
+                            • <strong>15-30% Decay</strong> → ELEVATED - Expect 1.5x normal volatility<br>
+                            • <strong><15% Decay</strong> → NORMAL - Standard market behavior<br>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Specific strategy based on upcoming decay
+                    next_big_decay = next((exp for exp in expiration_data if exp['gamma_decay_pct'] > 15), None)
+
+                    if next_big_decay:
+                        days_until = (datetime.strptime(next_big_decay['date'], '%Y-%m-%d').replace(tzinfo=pytz.UTC) -
+                                     current_time.astimezone(pytz.UTC)).days
+
+                        st.markdown(f"""
+                        <div style='background: linear-gradient(135deg, rgba(255, 68, 68, 0.2) 0%, rgba(204, 54, 54, 0.15) 100%);
+                                    padding: 20px; border-radius: 14px; border: 3px solid #FF4444;
+                                    margin-bottom: 20px;'>
+                            <div style='color: #FF4444; font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;'>
+                                🚨 ALERT: MAJOR GAMMA DECAY COMING
+                            </div>
+                            <div style='color: white; font-size: 13px; line-height: 1.7;'>
+                                <strong>{next_big_decay['day_name']} {next_big_decay['date']}</strong> ({days_until} days away)<br>
+                                <strong>Decay Amount:</strong> {next_big_decay['gamma_decay_pct']:.1f}% of total gamma<br>
+                                <strong>Gamma Expiring:</strong> {next_big_decay['total_gamma']:,.0f}<br><br>
+
+                                <strong style='color: #00D4FF;'>💰 PROFIT STRATEGY:</strong><br>
+                                {'<strong>SAME-DAY:</strong> Buy 0DTE straddle at open, sell at 1PM. Expect ±2% move.' if days_until == 0 else
+                                 f'<strong>PREPARATION:</strong> In {days_until} days, volatility will spike {next_big_decay["gamma_decay_pct"]:.0f}%. Position for expansion plays.<br>Enter long gamma (straddles/strangles) 1 day before, exit same day by 2PM.'}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                # Display GEX Levels if available
+                if gex_levels:
+                    st.markdown("### 🎯 Precise Strike Selection - GEX Levels")
+                    st.markdown("""
+                    These are the exact price levels where gamma is concentrated. Use these for:
+                    - **GEX_0/GEX_1**: Iron Condor short strikes (dealers will defend these)
+                    - **GEX_2/GEX_3**: Stop loss levels (price tends to bounce here)
+                    - **±1STD**: Expected move for straddle breakevens
+                    """)
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric("GEX_0 (Primary)", f"${gex_levels.get('gex_0', 0):.2f}",
+                                 help="Strongest gamma support/resistance")
+                    with col2:
+                        st.metric("GEX_1 (Secondary)", f"${gex_levels.get('gex_1', 0):.2f}",
+                                 help="Second strongest level")
+                    with col3:
+                        st.metric("GEX_2", f"${gex_levels.get('gex_2', 0):.2f}",
+                                 help="Tertiary level")
+                    with col4:
+                        st.metric("GEX_3", f"${gex_levels.get('gex_3', 0):.2f}",
+                                 help="Fourth level")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("1-Day Expected Range",
+                                 f"${gex_levels.get('std_1day_neg', 0):.2f} - ${gex_levels.get('std_1day_pos', 0):.2f}",
+                                 help="±1 standard deviation for 0DTE trades")
+                    with col2:
+                        st.metric("7-Day Expected Range",
+                                 f"${gex_levels.get('std_7day_neg', 0):.2f} - ${gex_levels.get('std_7day_pos', 0):.2f}",
+                                 help="±1 standard deviation for weekly trades")
+
+                st.divider()
+
+            if has_daily_exp:
                 # Check if today is an expiration day
                 is_expiration_day = day_of_week in exp_days
 
@@ -1624,24 +1856,32 @@ def main():
 
                 with col2:
                     if st.button("🤖 Generate AI Trade", type="primary", use_container_width=True):
-                        with st.spinner("Claude is analyzing market structure..."):
+                        with st.spinner("Claude is analyzing gamma decay and market structure..."):
                             # Call Claude AI for recommendation
                             from intelligence_and_strategies import ClaudeIntelligence
                             claude = ClaudeIntelligence()
 
-                            # Build context for Claude
-                            context = {
-                                'symbol': current_symbol,
-                                'net_gex': net_gex_billions,
-                                'spot': spot,
-                                'flip': flip,
-                                'day': day_of_week,
-                                'time': current_time.strftime('%H:%M'),
-                                'is_expiration_day': is_expiration_day,
-                                'exp_days': exp_days
-                            }
+                            # Build enhanced context with expiration data
+                            gamma_context = ""
+                            if expiration_data:
+                                gamma_context = "\n\n**Gamma Expiration Data (Next 5 Days):**\n"
+                                for exp in expiration_data[:5]:
+                                    if exp['has_expiration']:
+                                        gamma_context += f"- {exp['day_name']} {exp['date']}: **{exp['gamma_decay_pct']:.1f}% decay** ({exp['total_gamma']:,.0f} gamma expiring)\n"
+                                    else:
+                                        gamma_context += f"- {exp['day_name']} {exp['date']}: No expiration (stable gamma)\n"
 
-                            # Generate recommendation
+                            gex_levels_context = ""
+                            if gex_levels:
+                                gex_levels_context = f"""
+
+**GEX Levels (Key Strikes):**
+- GEX_0: ${gex_levels.get('gex_0', 0):.2f} (Primary resistance/support)
+- GEX_1: ${gex_levels.get('gex_1', 0):.2f} (Secondary level)
+- 1-Day Expected Range: ${gex_levels.get('std_1day_neg', 0):.2f} - ${gex_levels.get('std_1day_pos', 0):.2f}
+- 7-Day Expected Range: ${gex_levels.get('std_7day_neg', 0):.2f} - ${gex_levels.get('std_7day_pos', 0):.2f}"""
+
+                            # Generate recommendation with enhanced data
                             prompt = f"""You are an expert options trader analyzing GEX data for {current_symbol}.
 
 Current Market Conditions:
@@ -1652,24 +1892,41 @@ Current Market Conditions:
 - Time: {current_time.strftime('%I:%M %p %Z')}
 - Is Expiration Day: {'Yes' if is_expiration_day else 'No'}
 - Weekly Expiration Days: {', '.join(exp_days)}
+{gamma_context}{gex_levels_context}
 
-Based on the gamma structure, day of week, and current time, provide ONE specific, actionable trade recommendation.
+**Critical Context:**
+The gamma expiration data shows EXACTLY how much dealer hedging pressure is rolling off each day. When >15% of gamma expires, volatility expands significantly. Use GEX levels for precise strike selection.
+
+Based on this complete picture of gamma structure, decay patterns, and key levels, provide ONE specific, actionable trade recommendation that exploits the current gamma regime.
 
 Format your response as:
 **Strategy**: [strategy name]
-**Entry**: [specific time and price levels]
-**Structure**: [exact strikes and expiration]
+**Entry**: [specific time and price levels - use GEX levels if relevant]
+**Structure**: [exact strikes using GEX levels and expiration date]
 **Profit Target**: [specific exit price or %]
-**Stop Loss**: [specific price or %]
+**Stop Loss**: [specific price, ideally near a GEX level]
 **Size**: [% of account]
-**Rationale**: [2-3 sentences on why this trade has edge RIGHT NOW]
+**Rationale**: [2-3 sentences explaining how gamma decay and current levels create edge RIGHT NOW]
 
-Be specific with strikes, timing, and risk management. This should be a trade I can execute immediately."""
+Be specific with strikes (use the GEX levels provided), timing based on gamma decay schedule, and risk management. This should be a trade I can execute immediately."""
 
                             try:
                                 ai_response = claude.ask_claude(prompt)
-                                st.markdown("#### 🎯 Claude's Custom Trade Recommendation")
+                                st.markdown("#### 🎯 Claude's Gamma-Optimized Trade Recommendation")
                                 st.markdown(ai_response)
+
+                                # Show the data Claude used
+                                with st.expander("📊 Data Used by Claude AI"):
+                                    st.markdown(f"**Net GEX:** ${net_gex_billions:.2f}B")
+                                    st.markdown(f"**Spot:** ${spot:.2f} | **Flip:** ${flip:.2f}")
+                                    if gex_levels:
+                                        st.markdown("**GEX Levels:**")
+                                        st.json(gex_levels)
+                                    if expiration_data:
+                                        st.markdown("**Gamma Expiration Schedule:**")
+                                        exp_df = pd.DataFrame(expiration_data)
+                                        st.dataframe(exp_df[['day_name', 'date', 'has_expiration', 'gamma_decay_pct', 'total_gamma']])
+
                             except Exception as e:
                                 st.error(f"Could not generate AI recommendation: {str(e)}")
                                 st.info("💡 Tip: Check your API configuration in intelligence_and_strategies.py")
