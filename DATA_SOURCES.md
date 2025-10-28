@@ -268,3 +268,222 @@ All data sources are configured and ready:
 - Data sources: Trading Volatility API + Yahoo Finance (yfinance)
 
 **Total setup time**: 0 minutes (everything already works!)
+
+---
+
+## ⚠️ Yahoo Finance Rate Limiting & Alternative Data Sources
+
+### Current Rate Limiting Issues
+
+Yahoo Finance (via yfinance) has rate limits that can cause issues during:
+- Multi-symbol scanning
+- Rapid consecutive requests
+- Peak market hours
+
+**Current Implementation** (`intelligence_and_strategies.py` lines 100-158):
+- Max retries: 3 attempts
+- Exponential backoff: 2s → 5s → 10s
+- 5-minute response cache
+- Error detection for HTTP 429 (Too Many Requests)
+
+### Alternative Options Data Providers
+
+If you experience persistent rate limiting, consider these alternatives:
+
+#### 1. **Interactive Brokers (IBKR) API**
+**Cost**: Free with IBKR account (requires margin account)
+**Data Quality**: Excellent (direct from exchange)
+**Rate Limits**: Generous for account holders
+**Setup Complexity**: Medium (requires TWS/Gateway running)
+
+**Pros**:
+- Real-time data with no delays
+- Very accurate bid/ask spreads
+- Low rate limits for account holders
+- Can execute actual trades
+
+**Cons**:
+- Requires IBKR account
+- Must run TWS or IB Gateway locally
+- More complex API authentication
+
+**Implementation**: Use `ib_insync` library
+```python
+pip install ib_insync
+
+from ib_insync import IB, Stock, Option
+ib = IB()
+ib.connect('127.0.0.1', 7497, clientId=1)  # TWS paper trading port
+
+# Get option chain
+contract = Stock('SPY', 'SMART', 'USD')
+chains = ib.reqSecDefOptParams(contract.symbol, '', contract.secType, contract.conId)
+```
+
+---
+
+#### 2. **Polygon.io**
+**Cost**: $29-$199/month (options data on Premium+ plan)
+**Data Quality**: Excellent (aggregated from multiple exchanges)
+**Rate Limits**: Generous (100+ requests/min on paid plans)
+**Setup Complexity**: Easy (REST API)
+
+**Pros**:
+- Professional-grade data
+- Historical data included
+- Good rate limits
+- Simple REST API
+
+**Cons**:
+- Monthly subscription cost
+- Options data requires Premium+ plan ($199/mo)
+
+**Implementation**:
+```python
+pip install polygon-api-client
+
+from polygon import RESTClient
+client = RESTClient(api_key="YOUR_API_KEY")
+
+# Get option contract
+snapshot = client.get_snapshot_option(
+    "SPY",
+    option_contract="O:SPY250124C00580000"
+)
+```
+
+---
+
+#### 3. **Alpaca Markets**
+**Cost**: Free tier available, Unlimited plan $99/month
+**Data Quality**: Good (consolidated from multiple sources)
+**Rate Limits**: 200 requests/min (free), unlimited (paid)
+**Setup Complexity**: Easy (REST API)
+
+**Pros**:
+- Free tier available
+- Good documentation
+- Can execute trades
+- WebSocket streaming available
+
+**Cons**:
+- Free tier has limited historical data
+- Options data quality varies
+
+**Implementation**:
+```python
+pip install alpaca-trade-api
+
+import alpaca_trade_api as tradeapi
+api = tradeapi.REST('YOUR_API_KEY', 'YOUR_SECRET_KEY', base_url='https://paper-api.alpaca.markets')
+
+# Get option chain
+options = api.list_options_contracts(underlying_symbol='SPY')
+```
+
+---
+
+#### 4. **CBOE DataShop**
+**Cost**: Varies (enterprise pricing)
+**Data Quality**: Excellent (direct from CBOE)
+**Rate Limits**: High (enterprise-grade)
+**Setup Complexity**: High (requires enterprise agreement)
+
+**Pros**:
+- Highest quality data (direct from CBOE)
+- Official exchange data
+- Historical data available
+
+**Cons**:
+- Expensive (enterprise pricing)
+- Complex onboarding
+- Overkill for most retail traders
+
+---
+
+### Recommended Approach: Hybrid Fallback System
+
+For the best reliability, implement a fallback system:
+
+**Priority Order**:
+1. **Yahoo Finance** (free, try first)
+2. **IBKR API** (if available and connected)
+3. **Polygon.io** (if API key configured)
+4. **Alpaca** (if API key configured)
+
+**Implementation Pseudocode**:
+```python
+def get_options_chain_with_fallback(symbol):
+    # Try Yahoo Finance first (free)
+    try:
+        return get_yahoo_options(symbol)
+    except RateLimitError:
+        st.warning("Yahoo Finance rate limited, trying IBKR...")
+
+        # Try IBKR if connected
+        if ibkr_is_connected():
+            try:
+                return get_ibkr_options(symbol)
+            except Exception as e:
+                st.warning(f"IBKR failed: {e}")
+
+        # Try Polygon if API key exists
+        if polygon_api_key:
+            try:
+                return get_polygon_options(symbol)
+            except Exception as e:
+                st.warning(f"Polygon failed: {e}")
+
+        # Try Alpaca as last resort
+        if alpaca_api_key:
+            return get_alpaca_options(symbol)
+
+        # All failed
+        raise Exception("All options data sources failed")
+```
+
+---
+
+### Rate Limiting Best Practices
+
+To minimize rate limiting with Yahoo Finance:
+
+1. **Increase cache duration** (current: 5 minutes)
+   ```python
+   # In intelligence_and_strategies.py line 96
+   cache_duration = 300  # Increase to 600 (10 minutes) or 900 (15 minutes)
+   ```
+
+2. **Batch requests** - Request multiple expirations at once instead of individual strikes
+
+3. **Add request throttling** - Enforce minimum delay between requests
+   ```python
+   import time
+   last_request_time = 0
+   min_delay = 1.0  # 1 second between requests
+
+   def throttled_request():
+       global last_request_time
+       elapsed = time.time() - last_request_time
+       if elapsed < min_delay:
+           time.sleep(min_delay - elapsed)
+       last_request_time = time.time()
+       return make_request()
+   ```
+
+4. **Use session-wide caching** - Store results in `st.session_state` to avoid re-fetching
+
+5. **Limit concurrent users** - If self-hosting, rate limiting affects all users sharing the same IP
+
+---
+
+### Current Status
+
+✅ **Implemented**: Yahoo Finance with retry logic and caching
+⚠️ **Not Implemented**: Alternative data sources (IBKR, Polygon, Alpaca)
+💡 **Recommendation**: For production use with multiple users, consider adding Polygon.io or IBKR as fallback
+
+**Files to Modify for Fallback**:
+- `intelligence_and_strategies.py` - `RealOptionsChainFetcher` class (line 83+)
+- `config_and_database.py` - Add API keys for alternative sources
+- `.streamlit/secrets.toml` - Store API credentials securely

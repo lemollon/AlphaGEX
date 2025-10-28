@@ -1962,7 +1962,10 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                                 }
                                 ai_response = claude.analyze_market(market_data, prompt)
                                 st.markdown("#### 🎯 Claude's Gamma-Optimized Trade Recommendation")
-                                st.markdown(ai_response)
+
+                                # Display in a container with better formatting to ensure proper text rendering
+                                with st.container():
+                                    st.markdown(ai_response)
 
                                 # Show the data Claude used
                                 with st.expander("📊 Data Used by Claude AI"):

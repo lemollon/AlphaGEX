@@ -86,19 +86,26 @@ class RealOptionsChainFetcher:
     def __init__(self):
         self.cache = {}
         self.cache_time = {}
+        self.last_request_time = 0  # For request throttling
 
     def get_options_chain(self, symbol: str, expiry_date: str = None) -> Dict:
         """Get real options chain with bid/ask/greeks - with retry logic for rate limits"""
 
         cache_key = f"{symbol}_{expiry_date}"
 
-        # Check cache (5 minute expiry)
+        # Check cache (10 minute expiry - increased from 5 to reduce rate limiting)
         if cache_key in self.cache:
-            if (get_utc_time() - self.cache_time[cache_key]).seconds < 300:
+            if (get_utc_time() - self.cache_time[cache_key]).seconds < 600:
                 return self.cache[cache_key]
 
-        # Retry with exponential backoff for rate limiting
+        # Request throttling: ensure minimum 1 second between requests
         import time
+        min_request_delay = 1.0  # seconds
+        elapsed = time.time() - self.last_request_time
+        if elapsed < min_request_delay:
+            time.sleep(min_request_delay - elapsed)
+
+        # Retry with exponential backoff for rate limiting
         max_retries = 3
         retry_delays = [2, 5, 10]  # seconds
 
@@ -137,6 +144,7 @@ class RealOptionsChainFetcher:
                 # Cache it
                 self.cache[cache_key] = result
                 self.cache_time[cache_key] = get_utc_time()
+                self.last_request_time = time.time()  # Update last request time
 
                 return result
 
@@ -346,7 +354,14 @@ class PsychologicalCoach:
                         severity = 'medium' if severity == 'normal' else severity
 
         # RED FLAG 4: After hours trading (if outside market hours)
-        if not is_market_open():
+        # Skip this check if it's a system-generated query (AI strategy generator)
+        is_system_query = any(phrase in current_request for phrase in [
+            'You are an expert',
+            'Format your response as:',
+            'Based on this complete picture'
+        ])
+
+        if not is_market_open() and not is_system_query:
             if any(kw in current_request.lower() for kw in trade_keywords):
                 et_time = get_et_time()
                 utc_time = get_utc_time()
@@ -2055,7 +2070,26 @@ Your reputation is built on making traders profitable. Protect that reputation f
 
         response.raise_for_status()
         result = response.json()
-        return result['content'][0]['text']
+        response_text = result['content'][0]['text']
+
+        # Normalize text to ensure proper spacing and formatting
+        # Remove any potential encoding issues or zero-width characters
+        import unicodedata
+        import re
+        response_text = unicodedata.normalize('NFKC', response_text)
+
+        # Fix any instances where spaces are missing between sentences or words
+        # Add space after periods if missing
+        response_text = re.sub(r'\.([A-Z])', r'. \1', response_text)
+        # Add space after numbers followed by letters (like "5.86Bindicates" -> "5.86B indicates")
+        response_text = re.sub(r'(\d)([A-Z][a-z])', r'\1 \2', response_text)
+        # Ensure space before markdown bold/italic markers if preceded by alphanumeric
+        response_text = re.sub(r'(\w)(\*\*)', r'\1 \2', response_text)
+        response_text = re.sub(r'(\*\*)(\w)', r'\1 \2', response_text)
+        # Remove multiple consecutive spaces
+        response_text = re.sub(r' {2,}', ' ', response_text)
+
+        return response_text.strip()
     
     def _build_context(self, market_data: Dict) -> Dict:
         """Build comprehensive context for AI"""
