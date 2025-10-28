@@ -166,7 +166,13 @@ def main():
     if 'api_client' not in st.session_state:
         st.session_state.api_client = TradingVolatilityAPI()
     if 'claude_ai' not in st.session_state:
-        st.session_state.claude_ai = ClaudeIntelligence()
+        try:
+            st.session_state.claude_ai = ClaudeIntelligence()
+        except Exception as e:
+            st.error(f"Failed to initialize ClaudeIntelligence: {type(e).__name__}: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+            raise
     if 'current_data' not in st.session_state:
         st.session_state.current_data = {}
     if 'conversation_history' not in st.session_state:
