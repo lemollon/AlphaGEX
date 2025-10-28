@@ -1310,7 +1310,18 @@ class ClaudeIntelligence:
         self.account_size = 50000  # Default $50k
         self.risk_pct = 2.0  # Default 2%
 
-        if not self.api_key:
+        # Track if we've shown the API key warning
+        self._api_key_warning_shown = False
+
+    def update_account_settings(self):
+        """Update account settings from session state if available"""
+        if hasattr(st, 'session_state'):
+            self.account_size = st.session_state.get('account_size', self.account_size)
+            self.risk_pct = st.session_state.get('risk_per_trade', self.risk_pct)
+
+    def show_api_key_warning(self):
+        """Display API key configuration warning once"""
+        if not self.api_key and not self._api_key_warning_shown:
             st.error("""
             ⚠️ **Claude AI Not Configured** ⚠️
 
@@ -1333,18 +1344,16 @@ class ClaudeIntelligence:
             - Historical pattern matching
             - Advanced risk analysis
             """)
-
-    def update_account_settings(self):
-        """Update account settings from session state if available"""
-        if hasattr(st, 'session_state'):
-            self.account_size = st.session_state.get('account_size', self.account_size)
-            self.risk_pct = st.session_state.get('risk_per_trade', self.risk_pct)
+            self._api_key_warning_shown = True
 
     def analyze_market(self, market_data: Dict, user_query: str) -> str:
         """Generate intelligent market analysis with RAG context - NOW WITH ULTIMATE FEATURES"""
 
         # Update account settings from session state
         self.update_account_settings()
+
+        # Show API key warning if needed
+        self.show_api_key_warning()
 
         # STEP 1: PSYCHOLOGICAL COACHING CHECK (FIRST - BEFORE ANYTHING)
         psych_analysis = self.psych_coach.analyze_behavior(self.conversation_history, user_query)
