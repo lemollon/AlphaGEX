@@ -1869,24 +1869,23 @@ Gamma represents dealer hedging pressure. When options expire, dealers no longer
 
                 # Claude AI Strategy Generator
                 st.divider()
-
-                # Center the AI recommendation section for better readability
-                st.markdown("""
-<style>
-.ai-recommendation-container {
-    max-width: 1000px;
-    margin: 0 auto;
-    padding: 0 20px;
-}
-</style>
-<div class="ai-recommendation-container">
-""", unsafe_allow_html=True)
-
                 st.markdown("### 🤖 AI-Powered Strategy Generator")
-                st.markdown("Get a custom trade recommendation based on current market conditions using Claude AI")
 
-                col1, col2 = st.columns([3, 1])
-                with col1:
+                # Use container for centered content
+                with st.container():
+                    # Add CSS for centering just this section
+                    st.markdown("""
+                    <style>
+                    div[data-testid="stVerticalBlock"] > div:has(div.ai-trade-section) {
+                        max-width: 900px;
+                        margin: 0 auto;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+
+                    st.markdown('<div class="ai-trade-section">', unsafe_allow_html=True)
+                    st.markdown("Get a custom trade recommendation based on current market conditions using Claude AI")
+
                     st.markdown(f"""
                     **Current Conditions:**
                     - Symbol: **{current_symbol}**
@@ -1898,7 +1897,6 @@ Gamma represents dealer hedging pressure. When options expire, dealers no longer
                     - Expiration Today: **{'Yes' if is_expiration_day else 'No'}**
                     """)
 
-                with col2:
                     if st.button("🤖 Generate AI Trade", type="primary", use_container_width=True):
                         with st.spinner("Claude is analyzing gamma decay and market structure..."):
                             # Call Claude AI for recommendation
@@ -1982,8 +1980,8 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                                 st.error(f"Could not generate AI recommendation: {str(e)}")
                                 st.info("💡 Tip: Check your API configuration in intelligence_and_strategies.py")
 
-                # Close AI recommendation container
-                st.markdown("</div>", unsafe_allow_html=True)
+                    # Close the ai-trade-section div
+                    st.markdown("</div>", unsafe_allow_html=True)
 
             else:
                 # Symbol doesn't have daily expirations
