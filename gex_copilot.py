@@ -1357,20 +1357,29 @@ def main():
                 # Fetch gamma by expiration to calculate decay
                 # timedelta and pandas already imported at top of file
 
-                # Get next 10 trading days to capture all this week's expirations
+                # Calculate trading days for the current week and next week
                 expiration_data = []
                 trading_days = []
 
-                # Calculate next 7 calendar days (covers all weekly expirations)
-                for i in range(1, 8):
+                # Get trading days remaining in current week (Mon-Fri)
+                days_until_friday = (4 - current_time.weekday()) % 7  # Friday is 4
+                if days_until_friday == 0 and current_time.weekday() == 4:
+                    # If today is Friday, include it and go to next Friday
+                    days_until_friday = 7
+
+                # Calculate up to 2 weeks of trading days
+                for i in range(1, 15):  # Up to 2 weeks ahead
                     future_date = current_time + timedelta(days=i)
                     # Skip weekends
                     if future_date.weekday() < 5:  # Monday=0, Friday=4
                         trading_days.append(future_date)
+                        # Stop after we've captured at least one full week cycle
+                        if len(trading_days) >= 10:
+                            break
 
-                # Fetch gamma for each upcoming trading day
+                # Fetch gamma for each upcoming trading day (limit to next 10 trading days)
                 with st.spinner("📊 Fetching gamma expiration data..."):
-                    for i, future_date in enumerate(trading_days[:5], start=1):  # Next 5 trading days
+                    for i, future_date in enumerate(trading_days[:10], start=1):
                         date_str = future_date.strftime('%Y-%m-%d')
                         day_name = future_date.strftime('%A')
 
@@ -1492,26 +1501,20 @@ def main():
                     st.markdown("### 💡 Gamma Decay Trading Context - How to Profit")
 
                     st.markdown("""
-<div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 153, 204, 0.08) 100%);
-            padding: 20px; border-radius: 14px; border: 2px solid rgba(0, 212, 255, 0.25);
-            margin-bottom: 20px;'>
-    <div style='color: white; font-size: 13px; line-height: 1.8;'>
-        <strong style='color: #00D4FF; font-size: 14px;'>🧠 Understanding Gamma Decay:</strong><br><br>
-
-        <strong style='color: #00FF88;'>What It Means:</strong><br>
-        Gamma represents dealer hedging pressure. When options expire, dealers no longer need to hedge those positions,
-        reducing their buying/selling activity. This creates <strong>volatility vacuums</strong>.<br><br>
-
-        <strong style='color: #FFB800;'>The Money-Making Pattern:</strong><br>
-        • <strong>High Gamma (Early Week)</strong> → Dealers actively hedge → Price stays in tight range → <strong>Sell premium</strong><br>
-        • <strong>Gamma Decay (Mid-Week)</strong> → Hedging pressure reduces → Movement increases → <strong>Adjust positions</strong><br>
-        • <strong>Low Gamma (Late Week)</strong> → Minimal hedging → Large price swings → <strong>Buy volatility</strong><br><br>
-
-        <strong style='color: #FF4444;'>Critical Thresholds:</strong><br>
-        • <strong>>30% Decay</strong> → EXPLOSIVE - Price can move 2-3x normal range<br>
-        • <strong>15-30% Decay</strong> → ELEVATED - Expect 1.5x normal volatility<br>
-        • <strong><15% Decay</strong> → NORMAL - Standard market behavior<br>
-    </div>
+<div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 153, 204, 0.08) 100%); padding: 20px; border-radius: 14px; border: 2px solid rgba(0, 212, 255, 0.25); margin-bottom: 20px;'>
+<div style='color: white; font-size: 13px; line-height: 1.8;'>
+<strong style='color: #00D4FF; font-size: 14px;'>🧠 Understanding Gamma Decay:</strong><br><br>
+<strong style='color: #00FF88;'>What It Means:</strong><br>
+Gamma represents dealer hedging pressure. When options expire, dealers no longer need to hedge those positions, reducing their buying/selling activity. This creates <strong>volatility vacuums</strong>.<br><br>
+<strong style='color: #FFB800;'>The Money-Making Pattern:</strong><br>
+• <strong>High Gamma (Early Week)</strong> → Dealers actively hedge → Price stays in tight range → <strong>Sell premium</strong><br>
+• <strong>Gamma Decay (Mid-Week)</strong> → Hedging pressure reduces → Movement increases → <strong>Adjust positions</strong><br>
+• <strong>Low Gamma (Late Week)</strong> → Minimal hedging → Large price swings → <strong>Buy volatility</strong><br><br>
+<strong style='color: #FF4444;'>Critical Thresholds:</strong><br>
+• <strong>>30% Decay</strong> → EXPLOSIVE - Price can move 2-3x normal range<br>
+• <strong>15-30% Decay</strong> → ELEVATED - Expect 1.5x normal volatility<br>
+• <strong><15% Decay</strong> → NORMAL - Standard market behavior<br>
+</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1523,21 +1526,17 @@ def main():
                                      current_time.astimezone(pytz.UTC)).days
 
                         st.markdown(f"""
-<div style='background: linear-gradient(135deg, rgba(255, 68, 68, 0.2) 0%, rgba(204, 54, 54, 0.15) 100%);
-            padding: 20px; border-radius: 14px; border: 3px solid #FF4444;
-            margin-bottom: 20px;'>
-    <div style='color: #FF4444; font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;'>
-        🚨 ALERT: MAJOR GAMMA DECAY COMING
-    </div>
-    <div style='color: white; font-size: 13px; line-height: 1.7;'>
-        <strong>{next_big_decay['day_name']} {next_big_decay['date']}</strong> ({days_until} days away)<br>
-        <strong>Decay Amount:</strong> {next_big_decay['gamma_decay_pct']:.1f}% of total gamma<br>
-        <strong>Gamma Expiring:</strong> {next_big_decay['total_gamma']:,.0f}<br><br>
-
-        <strong style='color: #00D4FF;'>💰 PROFIT STRATEGY:</strong><br>
-        {'<strong>SAME-DAY:</strong> Buy 0DTE straddle at open, sell at 1PM. Expect ±2% move.' if days_until == 0 else
-         f'<strong>PREPARATION:</strong> In {days_until} days, volatility will spike {next_big_decay["gamma_decay_pct"]:.0f}%. Position for expansion plays.<br>Enter long gamma (straddles/strangles) 1 day before, exit same day by 2PM.'}
-    </div>
+<div style='background: linear-gradient(135deg, rgba(255, 68, 68, 0.2) 0%, rgba(204, 54, 54, 0.15) 100%); padding: 20px; border-radius: 14px; border: 3px solid #FF4444; margin-bottom: 20px;'>
+<div style='color: #FF4444; font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;'>
+🚨 ALERT: MAJOR GAMMA DECAY COMING
+</div>
+<div style='color: white; font-size: 13px; line-height: 1.7;'>
+<strong>{next_big_decay['day_name']} {next_big_decay['date']}</strong> ({days_until} days away)<br>
+<strong>Decay Amount:</strong> {next_big_decay['gamma_decay_pct']:.1f}% of total gamma<br>
+<strong>Gamma Expiring:</strong> {next_big_decay['total_gamma']:,.0f}<br><br>
+<strong style='color: #00D4FF;'>💰 PROFIT STRATEGY:</strong><br>
+{'<strong>SAME-DAY:</strong> Buy 0DTE straddle at open, sell at 1PM. Expect ±2% move.' if days_until == 0 else f'<strong>PREPARATION:</strong> In {days_until} days, volatility will spike {next_big_decay["gamma_decay_pct"]:.0f}%. Position for expansion plays.<br>Enter long gamma (straddles/strangles) 1 day before, exit same day by 2PM.'}
+</div>
 </div>
 """, unsafe_allow_html=True)
 
