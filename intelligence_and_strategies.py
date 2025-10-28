@@ -1306,9 +1306,9 @@ class ClaudeIntelligence:
         self.post_mortem = PostMortemAnalyzer()
         self.portfolio_analyzer = PortfolioAnalyzer()
 
-        # Account settings (get from session state if available)
-        self.account_size = st.session_state.get('account_size', 50000)  # Default $50k
-        self.risk_pct = st.session_state.get('risk_per_trade', 2.0)  # Default 2%
+        # Account settings - use defaults, can be updated later
+        self.account_size = 50000  # Default $50k
+        self.risk_pct = 2.0  # Default 2%
 
         if not self.api_key:
             st.error("""
@@ -1333,9 +1333,18 @@ class ClaudeIntelligence:
             - Historical pattern matching
             - Advanced risk analysis
             """)
-    
+
+    def update_account_settings(self):
+        """Update account settings from session state if available"""
+        if hasattr(st, 'session_state'):
+            self.account_size = st.session_state.get('account_size', self.account_size)
+            self.risk_pct = st.session_state.get('risk_per_trade', self.risk_pct)
+
     def analyze_market(self, market_data: Dict, user_query: str) -> str:
         """Generate intelligent market analysis with RAG context - NOW WITH ULTIMATE FEATURES"""
+
+        # Update account settings from session state
+        self.update_account_settings()
 
         # STEP 1: PSYCHOLOGICAL COACHING CHECK (FIRST - BEFORE ANYTHING)
         psych_analysis = self.psych_coach.analyze_behavior(self.conversation_history, user_query)
