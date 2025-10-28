@@ -668,7 +668,8 @@ def main():
         from datetime import datetime
         data_timestamp = data.get('timestamp')
         if data_timestamp:
-            data_age_minutes = (datetime.now() - data_timestamp).total_seconds() / 60
+            # Use timezone-aware datetime to match data_timestamp (which is UTC)
+            data_age_minutes = (datetime.now(pytz.UTC) - data_timestamp).total_seconds() / 60
             if data_age_minutes < 1:
                 age_display = "Just now"
                 age_color = "#00FF88"
