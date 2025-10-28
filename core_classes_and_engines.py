@@ -1254,7 +1254,7 @@ class TradingVolatilityAPI:
                         'format': 'json'
                     },
                     headers={'Accept': 'application/json'},
-                    timeout=60  # Increased from 30 to handle slower API responses
+                    timeout=120  # Increased to 120 seconds for multi-symbol scanner with slow API responses
                 )
 
                 if response.status_code != 200:
@@ -1358,7 +1358,7 @@ class TradingVolatilityAPI:
                         'format': 'json'
                     },
                     headers={'Accept': 'application/json'},
-                    timeout=30
+                    timeout=120
                 )
 
                 if response.status_code != 200:
@@ -1548,7 +1548,7 @@ class TradingVolatilityAPI:
                     'end': end_date.strftime('%Y-%m-%d')
                 },
                 headers={'Accept': 'application/json'},
-                timeout=30
+                timeout=120
             )
 
             if response.status_code != 200:
@@ -1707,7 +1707,7 @@ class TradingVolatilityAPI:
                     'format': 'json'
                 },
                 headers={'Accept': 'application/json'},
-                timeout=30
+                timeout=120
             )
 
             if response.status_code != 200:
@@ -1778,7 +1778,7 @@ class TradingVolatilityAPI:
                     'end': end_date.strftime('%Y-%m-%d')
                 },
                 headers={'Accept': 'application/json'},
-                timeout=30
+                timeout=120
             )
 
             if response.status_code != 200:
@@ -1846,7 +1846,7 @@ class TradingVolatilityAPI:
                     'format': 'json'
                 },
                 headers={'Accept': 'application/json'},
-                timeout=30
+                timeout=120
             )
 
             if response.status_code != 200:
@@ -1957,7 +1957,7 @@ class TradingVolatilityAPI:
                     'format': 'json'
                 },
                 headers={'Accept': 'application/json'},
-                timeout=30
+                timeout=120
             )
 
             if response.status_code != 200:
