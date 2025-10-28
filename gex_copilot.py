@@ -2004,10 +2004,15 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
             st.header(f"📏 Day-Over-Day Analysis")
 
             # Use yesterday_data already fetched above
-            if yesterday_data:
+            # Check if yesterday_data actually has GEX data, not just an empty dict
+            has_yesterday_data = yesterday_data and isinstance(yesterday_data, dict) and yesterday_data.get('spot_price', 0) > 0
+
+            if has_yesterday_data:
                 display_std_level_changes(data.get('gex', {}), yesterday_data)
             else:
                 st.info("📊 Yesterday's data not available yet. Day-over-day comparison will appear tomorrow once we have 2+ days of data in the system.")
+                if yesterday_data:
+                    st.caption(f"Debug: yesterday_data = {yesterday_data}")
 
             # ==================================================================
             # SECTION 3: MONTE CARLO SIMULATION (PREDICTIVE)
