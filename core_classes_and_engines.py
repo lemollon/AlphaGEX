@@ -1875,27 +1875,39 @@ class TradingVolatilityAPI:
             # Cache the response
             self._cache_response(cache_key, json_response)
 
-            # Parse the response - it comes as CSV-like format
-            # Format: Gex Flip,69.09,GEX_0,70.0,GEX_1,69.0,GEX_2,66.0,GEX_3,67.0,+1STD (1-day),70.1,-1STD (1-day),67.1,+1STD (7-day),71.9,-1STD (7-day),65.3
-            ticker_data = json_response.get(symbol, {})
+            # Debug: Log the raw response structure
+            print(f"DEBUG GEX Levels API Response for {symbol}: {json_response}")
+
+            # Parse the response - API may return data directly or nested under symbol
+            # Try direct access first, then nested
+            ticker_data = json_response if isinstance(json_response, dict) and 'GEX_0' in json_response else json_response.get(symbol, {})
 
             if not ticker_data:
+                st.warning(f"⚠️ No GEX Levels data found for {symbol}. API Response: {json_response}")
                 return {}
 
-            # Extract levels
+            # Extract levels with better error handling
+            def safe_float(value, default=0):
+                """Safely convert to float"""
+                try:
+                    return float(value) if value not in [None, '', 'null'] else default
+                except (ValueError, TypeError):
+                    return default
+
             levels = {
-                'gex_flip': float(ticker_data.get('gex_flip', 0)),
-                'gex_0': float(ticker_data.get('GEX_0', 0)),
-                'gex_1': float(ticker_data.get('GEX_1', 0)),
-                'gex_2': float(ticker_data.get('GEX_2', 0)),
-                'gex_3': float(ticker_data.get('GEX_3', 0)),
-                'std_1day_pos': float(ticker_data.get('+1STD (1-day)', 0)),
-                'std_1day_neg': float(ticker_data.get('-1STD (1-day)', 0)),
-                'std_7day_pos': float(ticker_data.get('+1STD (7-day)', 0)),
-                'std_7day_neg': float(ticker_data.get('-1STD (7-day)', 0)),
+                'gex_flip': safe_float(ticker_data.get('gex_flip') or ticker_data.get('Gex Flip')),
+                'gex_0': safe_float(ticker_data.get('GEX_0')),
+                'gex_1': safe_float(ticker_data.get('GEX_1')),
+                'gex_2': safe_float(ticker_data.get('GEX_2')),
+                'gex_3': safe_float(ticker_data.get('GEX_3')),
+                'std_1day_pos': safe_float(ticker_data.get('+1STD (1-day)')),
+                'std_1day_neg': safe_float(ticker_data.get('-1STD (1-day)')),
+                'std_7day_pos': safe_float(ticker_data.get('+1STD (7-day)')),
+                'std_7day_neg': safe_float(ticker_data.get('-1STD (7-day)')),
                 'symbol': symbol
             }
 
+            print(f"DEBUG Parsed GEX Levels: {levels}")
             return levels
 
         except Exception as e:

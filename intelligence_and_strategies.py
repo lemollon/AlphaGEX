@@ -88,7 +88,7 @@ class RealOptionsChainFetcher:
         self.cache_time = {}
 
     def get_options_chain(self, symbol: str, expiry_date: str = None) -> Dict:
-        """Get real options chain with bid/ask/greeks"""
+        """Get real options chain with bid/ask/greeks - with retry logic for rate limits"""
 
         cache_key = f"{symbol}_{expiry_date}"
 
@@ -97,46 +97,65 @@ class RealOptionsChainFetcher:
             if (get_utc_time() - self.cache_time[cache_key]).seconds < 300:
                 return self.cache[cache_key]
 
-        try:
-            ticker = yf.Ticker(symbol)
+        # Retry with exponential backoff for rate limiting
+        import time
+        max_retries = 3
+        retry_delays = [2, 5, 10]  # seconds
 
-            # Get available expiration dates
-            expirations = ticker.options
-            if not expirations:
+        for attempt in range(max_retries):
+            try:
+                ticker = yf.Ticker(symbol)
+
+                # Get available expiration dates
+                expirations = ticker.options
+                if not expirations:
+                    return {}
+
+                # Use specified expiry or nearest weekly
+                if expiry_date and expiry_date in expirations:
+                    expiry = expiry_date
+                else:
+                    expiry = expirations[0]  # Nearest expiry
+
+                # Get options chain
+                opt_chain = ticker.option_chain(expiry)
+                calls = opt_chain.calls
+                puts = opt_chain.puts
+
+                # Get current stock price
+                current_price = ticker.history(period='1d')['Close'].iloc[-1]
+
+                result = {
+                    'symbol': symbol,
+                    'current_price': current_price,
+                    'expiry': expiry,
+                    'calls': calls.to_dict('records'),
+                    'puts': puts.to_dict('records'),
+                    'timestamp': get_utc_time().isoformat()
+                }
+
+                # Cache it
+                self.cache[cache_key] = result
+                self.cache_time[cache_key] = get_utc_time()
+
+                return result
+
+            except Exception as e:
+                error_msg = str(e).lower()
+
+                # Check if it's a rate limit error
+                if 'too many requests' in error_msg or 'rate limit' in error_msg or '429' in error_msg:
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delays[attempt]
+                        st.warning(f"⚠️ Rate limited by Yahoo Finance. Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        st.error(f"❌ Could not fetch options chain for {symbol}: Too Many Requests. Rate limited. Try after a while.")
+                else:
+                    st.warning(f"Could not fetch options chain for {symbol}: {e}")
+
                 return {}
-
-            # Use specified expiry or nearest weekly
-            if expiry_date and expiry_date in expirations:
-                expiry = expiry_date
-            else:
-                expiry = expirations[0]  # Nearest expiry
-
-            # Get options chain
-            opt_chain = ticker.option_chain(expiry)
-            calls = opt_chain.calls
-            puts = opt_chain.puts
-
-            # Get current stock price
-            current_price = ticker.history(period='1d')['Close'].iloc[-1]
-
-            result = {
-                'symbol': symbol,
-                'current_price': current_price,
-                'expiry': expiry,
-                'calls': calls.to_dict('records'),
-                'puts': puts.to_dict('records'),
-                'timestamp': get_utc_time().isoformat()
-            }
-
-            # Cache it
-            self.cache[cache_key] = result
-            self.cache_time[cache_key] = get_utc_time()
-
-            return result
-
-        except Exception as e:
-            st.warning(f"Could not fetch options chain for {symbol}: {e}")
-            return {}
 
     def find_best_strike(self, symbol: str, option_type: str, delta_target: float = 0.50) -> Dict:
         """Find option closest to target delta"""
