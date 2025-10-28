@@ -668,20 +668,38 @@ def main():
         from datetime import datetime
         data_timestamp = data.get('timestamp')
         if data_timestamp:
-            # Use timezone-aware datetime to match data_timestamp (which is UTC)
-            data_age_minutes = (datetime.now(pytz.UTC) - data_timestamp).total_seconds() / 60
-            if data_age_minutes < 1:
+            try:
+                # Ensure both datetimes are timezone-aware for comparison
+                current_time = datetime.now(pytz.UTC)
+
+                # Handle different timestamp formats
+                if isinstance(data_timestamp, str):
+                    # Parse string timestamp
+                    data_timestamp = datetime.fromisoformat(data_timestamp.replace('Z', '+00:00'))
+                elif not hasattr(data_timestamp, 'tzinfo') or data_timestamp.tzinfo is None:
+                    # Make timezone-naive datetime aware (assume UTC)
+                    data_timestamp = pytz.UTC.localize(data_timestamp)
+
+                data_age_minutes = (current_time - data_timestamp).total_seconds() / 60
+            except Exception as e:
+                # If timestamp calculation fails, show unknown age
+                data_age_minutes = None
+
+            if data_age_minutes is not None and data_age_minutes < 1:
                 age_display = "Just now"
                 age_color = "#00FF88"
-            elif data_age_minutes < 5:
+            elif data_age_minutes is not None and data_age_minutes < 5:
                 age_display = f"{int(data_age_minutes)}m ago"
                 age_color = "#00FF88"
-            elif data_age_minutes < 15:
+            elif data_age_minutes is not None and data_age_minutes < 15:
                 age_display = f"{int(data_age_minutes)}m ago"
                 age_color = "#FFB800"
-            else:
+            elif data_age_minutes is not None:
                 age_display = f"{int(data_age_minutes)}m ago"
                 age_color = "#FF4444"
+            else:
+                age_display = "Unknown"
+                age_color = "#888"
         else:
             age_display = "Unknown"
             age_color = "#888"
