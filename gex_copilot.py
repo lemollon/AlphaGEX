@@ -663,6 +663,27 @@ def main():
         spot = gex_data.get('spot_price', 0)
         flip = gex_data.get('flip_point', 0)
 
+        # Calculate data age
+        from datetime import datetime
+        data_timestamp = data.get('timestamp')
+        if data_timestamp:
+            data_age_minutes = (datetime.now() - data_timestamp).total_seconds() / 60
+            if data_age_minutes < 1:
+                age_display = "Just now"
+                age_color = "#00FF88"
+            elif data_age_minutes < 5:
+                age_display = f"{int(data_age_minutes)}m ago"
+                age_color = "#00FF88"
+            elif data_age_minutes < 15:
+                age_display = f"{int(data_age_minutes)}m ago"
+                age_color = "#FFB800"
+            else:
+                age_display = f"{int(data_age_minutes)}m ago"
+                age_color = "#FF4444"
+        else:
+            age_display = "Unknown"
+            age_color = "#888"
+
         # Determine market pulse
         net_gex_billions = net_gex / 1e9
         if net_gex < -2e9:
@@ -726,6 +747,10 @@ def main():
                     <span style='color: #8b92a7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>Confidence</span>
                     <span style='color: {pulse_color}; font-weight: 900; font-size: 14px; text-shadow: 0 0 10px {pulse_color}80;'>{confidence:.0f}%</span>
                 </div>
+            </div>
+            <div style='text-align: center; margin-bottom: 12px; padding: 8px; background: rgba(0, 0, 0, 0.3); border-radius: 8px;'>
+                <div style='color: #8b92a7; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px;'>Last Updated</div>
+                <div style='color: {age_color}; font-size: 12px; font-weight: 800;'>{age_display}</div>
             </div>
             <div style='background: linear-gradient(135deg, {pulse_color}30 0%, {pulse_color}20 100%);
                         padding: 12px; border-radius: 10px; text-align: center;
