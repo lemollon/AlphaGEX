@@ -101,42 +101,78 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
             scan_result = cached_data
             scan_result['cache_status'] = f"Cached ({cache.get_cache_age(symbol)})"
         else:
-            # Fetch fresh data
+            # Fetch fresh data with retry logic for timeouts
             try:
-                # ONLY fetch GEX data - skip skew_data to reduce API calls
-                # Increase timeout tolerance for slower API responses
-                gex_data = api_client.get_net_gamma(symbol)
+                max_retries = 2
+                retry_count = 0
+                gex_data = None
 
-                # Import here to avoid circular dependency
-                from visualization_and_plans import StrategyEngine
+                while retry_count <= max_retries:
+                    try:
+                        # ONLY fetch GEX data - skip skew_data to reduce API calls
+                        # Timeout increased to 120 seconds in API client
+                        gex_data = api_client.get_net_gamma(symbol)
 
-                strategy_engine = StrategyEngine()
-                setups = strategy_engine.detect_setups(gex_data)
+                        # Check if we got valid data
+                        if gex_data and 'error' not in gex_data:
+                            break  # Success, exit retry loop
 
-                # Get best setup (highest confidence)
-                best_setup = max(setups, key=lambda x: x.get('confidence', 0)) if setups else None
+                        # If error in response, retry
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            time.sleep(2)  # Brief pause before retry
+                            continue
+                        else:
+                            break  # Exhausted retries
 
-                scan_result = {
-                    'symbol': symbol,
-                    'spot_price': gex_data.get('spot_price', 0),
-                    'net_gex': gex_data.get('net_gex', 0) / 1e9,  # In billions
-                    'flip_point': gex_data.get('flip_point', 0),
-                    'distance_to_flip': ((gex_data.get('flip_point', 0) - gex_data.get('spot_price', 0)) /
-                                         gex_data.get('spot_price', 1) * 100) if gex_data.get('spot_price') else 0,
-                    'setup_type': best_setup.get('strategy', 'N/A') if best_setup else 'N/A',
-                    'confidence': best_setup.get('confidence', 0) if best_setup else 0,
-                    'dte': best_setup.get('dte', 'N/A') if best_setup else 'N/A',
-                    'action': best_setup.get('action', 'N/A') if best_setup else 'N/A',
-                    'cache_status': 'Fresh',
-                    'timestamp': datetime.now()
-                }
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        # If timeout error, retry
+                        if 'timeout' in error_msg or 'timed out' in error_msg:
+                            retry_count += 1
+                            if retry_count <= max_retries:
+                                st.caption(f"⚠️ {symbol}: Timeout, retrying... ({retry_count}/{max_retries})")
+                                time.sleep(3)  # Wait before retry
+                                continue
+                        # Non-timeout error, break out
+                        raise
 
-                # Cache the result
-                cache.set(symbol, scan_result)
+                # Process data if we got it
+                if gex_data and 'error' not in gex_data:
+                    # Import here to avoid circular dependency
+                    from visualization_and_plans import StrategyEngine
 
-                # NOTE: Removed redundant sleep here - the API client already handles
-                # rate limiting with its built-in 15-second minimum interval and circuit breaker.
-                # Double throttling was causing circuit breaker activation due to timing misalignment.
+                    strategy_engine = StrategyEngine()
+                    setups = strategy_engine.detect_setups(gex_data)
+
+                    # Get best setup (highest confidence)
+                    best_setup = max(setups, key=lambda x: x.get('confidence', 0)) if setups else None
+
+                    scan_result = {
+                        'symbol': symbol,
+                        'spot_price': gex_data.get('spot_price', 0),
+                        'net_gex': gex_data.get('net_gex', 0) / 1e9,  # In billions
+                        'flip_point': gex_data.get('flip_point', 0),
+                        'distance_to_flip': ((gex_data.get('flip_point', 0) - gex_data.get('spot_price', 0)) /
+                                             gex_data.get('spot_price', 1) * 100) if gex_data.get('spot_price') else 0,
+                        'setup_type': best_setup.get('strategy', 'N/A') if best_setup else 'N/A',
+                        'confidence': best_setup.get('confidence', 0) if best_setup else 0,
+                        'dte': best_setup.get('dte', 'N/A') if best_setup else 'N/A',
+                        'action': best_setup.get('action', 'N/A') if best_setup else 'N/A',
+                        'cache_status': 'Fresh',
+                        'timestamp': datetime.now()
+                    }
+
+                    # Cache the result
+                    cache.set(symbol, scan_result)
+
+                    # NOTE: Removed redundant sleep here - the API client already handles
+                    # rate limiting with its built-in 15-second minimum interval and circuit breaker.
+                    # Double throttling was causing circuit breaker activation due to timing misalignment.
+
+                else:
+                    # Failed to get data after retries
+                    raise Exception(gex_data.get('error', 'Unknown error') if gex_data else 'Failed to fetch data')
 
             except Exception as e:
                 error_msg = str(e)
