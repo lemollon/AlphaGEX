@@ -1817,6 +1817,188 @@ class TradingVolatilityAPI:
             print(f"Error fetching historical skew: {e}")
             return []
 
+    def get_gex_levels(self, symbol: str) -> Dict:
+        """
+        Fetch GEX levels (GEX_0, GEX_1, GEX_2, GEX_3) and STD levels from Trading Volatility API
+        These levels represent key gamma support/resistance zones where dealers hedge heavily
+        """
+        import streamlit as st
+        import requests
+
+        try:
+            if not self.api_key:
+                return {}
+
+            # Check cache first (5-minute cache like other endpoints)
+            cache_key = self._get_cache_key('gex/levels', symbol)
+            cached_data = self._get_cached_response(cache_key)
+            if cached_data:
+                return cached_data
+
+            # Wait for rate limit before making request
+            self._wait_for_rate_limit()
+
+            response = requests.get(
+                self.endpoint + '/gex/levels',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json'
+                },
+                headers={'Accept': 'application/json'},
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                st.warning(f"⚠️ GEX Levels endpoint returned status {response.status_code}")
+                return {}
+
+            # Check for rate limit error
+            if "API limit exceeded" in response.text:
+                st.error(f"⚠️ API Rate Limit Hit")
+                self._handle_rate_limit_error()
+                return {}
+
+            if not response.text or len(response.text.strip()) == 0:
+                return {}
+
+            try:
+                json_response = response.json()
+            except ValueError:
+                if "API limit exceeded" in response.text:
+                    self._handle_rate_limit_error()
+                return {}
+
+            # Success! Reset error counter
+            self._reset_rate_limit_errors()
+
+            # Cache the response
+            self._cache_response(cache_key, json_response)
+
+            # Parse the response - it comes as CSV-like format
+            # Format: Gex Flip,69.09,GEX_0,70.0,GEX_1,69.0,GEX_2,66.0,GEX_3,67.0,+1STD (1-day),70.1,-1STD (1-day),67.1,+1STD (7-day),71.9,-1STD (7-day),65.3
+            ticker_data = json_response.get(symbol, {})
+
+            if not ticker_data:
+                return {}
+
+            # Extract levels
+            levels = {
+                'gex_flip': float(ticker_data.get('gex_flip', 0)),
+                'gex_0': float(ticker_data.get('GEX_0', 0)),
+                'gex_1': float(ticker_data.get('GEX_1', 0)),
+                'gex_2': float(ticker_data.get('GEX_2', 0)),
+                'gex_3': float(ticker_data.get('GEX_3', 0)),
+                'std_1day_pos': float(ticker_data.get('+1STD (1-day)', 0)),
+                'std_1day_neg': float(ticker_data.get('-1STD (1-day)', 0)),
+                'std_7day_pos': float(ticker_data.get('+1STD (7-day)', 0)),
+                'std_7day_neg': float(ticker_data.get('-1STD (7-day)', 0)),
+                'symbol': symbol
+            }
+
+            return levels
+
+        except Exception as e:
+            st.error(f"❌ Error fetching GEX levels: {e}")
+            print(f"Error fetching GEX levels: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
+
+    def get_gamma_by_expiration(self, symbol: str, expiration: str = '1') -> Dict:
+        """
+        Fetch gamma data for a specific expiration date
+
+        Args:
+            symbol: Ticker symbol (e.g., 'SPY')
+            expiration: Expiration identifier:
+                - '0' = combined (all expirations)
+                - '1' = nearest expiration
+                - '2' = nearest monthly expiration
+                - '2024-10-30' = specific date (YYYY-MM-DD format)
+
+        Returns:
+            Dict with gamma_array showing strike-level gamma for that expiration
+        """
+        import streamlit as st
+        import requests
+
+        try:
+            if not self.api_key:
+                return {}
+
+            # Check cache first (5-minute cache)
+            cache_key = self._get_cache_key(f'gex/gamma_exp_{expiration}', symbol)
+            cached_data = self._get_cached_response(cache_key)
+            if cached_data:
+                return cached_data
+
+            # Wait for rate limit before making request
+            self._wait_for_rate_limit()
+
+            response = requests.get(
+                self.endpoint + '/gex/gamma',
+                params={
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'exp': expiration,
+                    'format': 'json'
+                },
+                headers={'Accept': 'application/json'},
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                return {}
+
+            # Check for rate limit error
+            if "API limit exceeded" in response.text:
+                self._handle_rate_limit_error()
+                return {}
+
+            if not response.text or len(response.text.strip()) == 0:
+                return {}
+
+            try:
+                json_response = response.json()
+            except ValueError:
+                if "API limit exceeded" in response.text:
+                    self._handle_rate_limit_error()
+                return {}
+
+            # Success! Reset error counter
+            self._reset_rate_limit_errors()
+
+            # Cache the response
+            self._cache_response(cache_key, json_response)
+
+            ticker_data = json_response.get(symbol, {})
+
+            if not ticker_data:
+                return {}
+
+            # Calculate total gamma for this expiration
+            gamma_array = ticker_data.get('gamma_array', [])
+            total_gamma = sum(abs(float(strike.get('gamma', 0))) for strike in gamma_array if strike)
+
+            result = {
+                'symbol': symbol,
+                'expiration': expiration,
+                'expiry_date': ticker_data.get('expiry', 'unknown'),
+                'price': float(ticker_data.get('price', 0)),
+                'collection_date': ticker_data.get('collection_date', ''),
+                'gamma_array': gamma_array,
+                'total_gamma': total_gamma
+            }
+
+            return result
+
+        except Exception as e:
+            print(f"Error fetching gamma by expiration: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
+
 
 class MonteCarloEngine:
     """
