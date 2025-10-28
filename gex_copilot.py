@@ -2044,6 +2044,18 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
     with tabs[1]:
         st.subheader("🎯 Trading Setups - Profit Opportunities")
 
+        # Center the content with max-width for better readability
+        st.markdown("""
+<style>
+.trade-setup-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+</style>
+<div class="trade-setup-container">
+""", unsafe_allow_html=True)
+
         if st.session_state.current_data:
             try:
                 # Use TradingPlanGenerator to get setups with same logic as Trading Plan
@@ -2078,25 +2090,25 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                     high_conf_setups = [s for s in setups if s.get('confidence', 0) >= 80]
                     if high_conf_setups:
                         st.markdown(f"""
-                        <div class='notification' style='background: linear-gradient(135deg, rgba(0, 255, 136, 0.2) 0%, rgba(0, 212, 255, 0.2) 100%);
-                                    border: 2px solid #00FF88;
-                                    border-radius: 10px;
-                                    padding: 15px;
-                                    margin-bottom: 20px;
-                                    box-shadow: 0 4px 12px rgba(0, 255, 136, 0.3);'>
-                            <div style='display: flex; align-items: center; gap: 10px;'>
-                                <div class='pulse-dot'></div>
-                                <div>
-                                    <div style='color: #00FF88; font-weight: 800; font-size: 16px;'>
-                                        🚨 {len(high_conf_setups)} HIGH-CONFIDENCE SETUP{'S' if len(high_conf_setups) > 1 else ''} DETECTED!
-                                    </div>
-                                    <div style='color: white; font-size: 13px; margin-top: 5px;'>
-                                        Grade A opportunities with 80%+ confidence are available below
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+<div class='notification' style='background: linear-gradient(135deg, rgba(0, 255, 136, 0.2) 0%, rgba(0, 212, 255, 0.2) 100%);
+            border: 2px solid #00FF88;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 12px rgba(0, 255, 136, 0.3);'>
+    <div style='display: flex; align-items: center; gap: 10px;'>
+        <div class='pulse-dot'></div>
+        <div>
+            <div style='color: #00FF88; font-weight: 800; font-size: 16px;'>
+                🚨 {len(high_conf_setups)} HIGH-CONFIDENCE SETUP{'S' if len(high_conf_setups) > 1 else ''} DETECTED!
+            </div>
+            <div style='color: white; font-size: 13px; margin-top: 5px;'>
+                Grade A opportunities with 80%+ confidence are available below
+            </div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
                     # Display each setup with enhanced professional cards
                     for i, trade in enumerate(setups, 1):
@@ -2137,48 +2149,48 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
 
                         # Enhanced card header
                         st.markdown(f"""
-                        <div style='background: {bg_gradient};
-                                    padding: 20px; border-radius: 12px;
-                                    border: 2px solid {border_color};
-                                    margin-bottom: 20px;'>
-                            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'>
-                                <div style='font-size: 24px; font-weight: 800; color: {grade_color};'>
-                                    {badge} SETUP #{i} - GRADE {grade}
-                                </div>
-                                <div style='background: rgba(0, 0, 0, 0.5); padding: 8px 16px; border-radius: 8px;'>
-                                    <span style='color: #00D4FF; font-size: 14px; font-weight: 600;'>💰 Est. Profit:</span>
-                                    <span style='color: {grade_color}; font-size: 20px; font-weight: 800; margin-left: 8px;'>{profit_potential}</span>
-                                </div>
-                            </div>
-                            <div style='font-size: 18px; font-weight: 700; color: white; margin-bottom: 5px;'>
-                                {trade.get('strategy', 'Unknown Strategy')}
-                            </div>
-                            <div style='display: flex; gap: 15px; margin-top: 10px;'>
-                                <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
-                                    <span style='color: #888; font-size: 12px;'>CONFIDENCE</span><br>
-                                    <span style='color: {grade_color}; font-size: 16px; font-weight: 700;'>{conf}%</span>
-                                </div>
-                                <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
-                                    <span style='color: #888; font-size: 12px;'>DTE</span><br>
-                                    <span style='color: white; font-size: 16px; font-weight: 700;'>{trade.get('dte', 'N/A')}</span>
-                                </div>
-                                <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
-                                    <span style='color: #888; font-size: 12px;'>WIN RATE</span><br>
-                                    <span style='color: #00FF88; font-size: 16px; font-weight: 700;'>{trade.get('win_rate', 'N/A')}</span>
-                                </div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+<div style='background: {bg_gradient};
+            padding: 20px; border-radius: 12px;
+            border: 2px solid {border_color};
+            margin-bottom: 20px;'>
+    <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'>
+        <div style='font-size: 24px; font-weight: 800; color: {grade_color};'>
+            {badge} SETUP #{i} - GRADE {grade}
+        </div>
+        <div style='background: rgba(0, 0, 0, 0.5); padding: 8px 16px; border-radius: 8px;'>
+            <span style='color: #00D4FF; font-size: 14px; font-weight: 600;'>💰 Est. Profit:</span>
+            <span style='color: {grade_color}; font-size: 20px; font-weight: 800; margin-left: 8px;'>{profit_potential}</span>
+        </div>
+    </div>
+    <div style='font-size: 18px; font-weight: 700; color: white; margin-bottom: 5px;'>
+        {trade.get('strategy', 'Unknown Strategy')}
+    </div>
+    <div style='display: flex; gap: 15px; margin-top: 10px;'>
+        <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
+            <span style='color: #888; font-size: 12px;'>CONFIDENCE</span><br>
+            <span style='color: {grade_color}; font-size: 16px; font-weight: 700;'>{conf}%</span>
+        </div>
+        <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
+            <span style='color: #888; font-size: 12px;'>DTE</span><br>
+            <span style='color: white; font-size: 16px; font-weight: 700;'>{trade.get('dte', 'N/A')}</span>
+        </div>
+        <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
+            <span style='color: #888; font-size: 12px;'>WIN RATE</span><br>
+            <span style='color: #00FF88; font-size: 16px; font-weight: 700;'>{trade.get('win_rate', 'N/A')}</span>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
                         with st.expander("📋 Full Trade Details", expanded=True):
                             # Reasoning with visual emphasis
                             st.markdown(f"""
-                            <div style='background: rgba(0, 212, 255, 0.1); padding: 15px; border-radius: 8px;
-                                        border-left: 4px solid #00D4FF; margin-bottom: 15px;'>
-                                <div style='color: #00D4FF; font-weight: 600; margin-bottom: 8px;'>💡 WHY THIS WORKS:</div>
-                                <div style='color: white; font-size: 15px;'>{trade.get('reasoning', 'Strong setup based on current market conditions.')}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
+<div style='background: rgba(0, 212, 255, 0.1); padding: 15px; border-radius: 8px;
+            border-left: 4px solid #00D4FF; margin-bottom: 15px;'>
+    <div style='color: #00D4FF; font-weight: 600; margin-bottom: 8px;'>💡 WHY THIS WORKS:</div>
+    <div style='color: white; font-size: 15px;'>{trade.get('reasoning', 'Strong setup based on current market conditions.')}</div>
+</div>
+""", unsafe_allow_html=True)
 
                             # The Play with visual styling
                             dte_text = ""
@@ -2188,11 +2200,11 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                                 dte_text = f" with {trade['expiration']} expiration"
 
                             st.markdown(f"""
-                            <div style='background: rgba(138, 43, 226, 0.1); padding: 12px; border-radius: 8px; margin-bottom: 10px;'>
-                                <span style='color: #00D4FF; font-weight: 600;'>🎯 THE PLAY:</span>
-                                <span style='color: white; font-size: 15px;'> {trade.get('action', 'N/A')}{dte_text}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
+<div style='background: rgba(138, 43, 226, 0.1); padding: 12px; border-radius: 8px; margin-bottom: 10px;'>
+    <span style='color: #00D4FF; font-weight: 600;'>🎯 THE PLAY:</span>
+    <span style='color: white; font-size: 15px;'> {trade.get('action', 'N/A')}{dte_text}</span>
+</div>
+""", unsafe_allow_html=True)
 
                             # Entry/Exit Levels with visual bars
                             col1, col2, col3 = st.columns(3)
@@ -2200,29 +2212,29 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                             with col1:
                                 entry_value = trade.get('entry', trade.get('entry_zone', 'N/A'))
                                 st.markdown(f"""
-                                <div style='background: rgba(255, 184, 0, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
-                                    <div style='color: #FFB800; font-size: 12px; font-weight: 600;'>📍 ENTRY</div>
-                                    <div style='color: white; font-size: 20px; font-weight: 700;'>{entry_value}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
+<div style='background: rgba(255, 184, 0, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
+    <div style='color: #FFB800; font-size: 12px; font-weight: 600;'>📍 ENTRY</div>
+    <div style='color: white; font-size: 20px; font-weight: 700;'>{entry_value}</div>
+</div>
+""", unsafe_allow_html=True)
 
                             with col2:
                                 target_value = trade.get('target_1', trade.get('max_profit', 'N/A'))
                                 st.markdown(f"""
-                                <div style='background: rgba(0, 255, 136, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
-                                    <div style='color: #00FF88; font-size: 12px; font-weight: 600;'>🎯 TARGET</div>
-                                    <div style='color: white; font-size: 20px; font-weight: 700;'>{target_value}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
+<div style='background: rgba(0, 255, 136, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
+    <div style='color: #00FF88; font-size: 12px; font-weight: 600;'>🎯 TARGET</div>
+    <div style='color: white; font-size: 20px; font-weight: 700;'>{target_value}</div>
+</div>
+""", unsafe_allow_html=True)
 
                             with col3:
                                 stop_value = trade.get('stop', trade.get('max_risk', 'N/A'))
                                 st.markdown(f"""
-                                <div style='background: rgba(255, 68, 68, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
-                                    <div style='color: #FF4444; font-size: 12px; font-weight: 600;'>🛑 STOP</div>
-                                    <div style='color: white; font-size: 20px; font-weight: 700;'>{stop_value}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
+<div style='background: rgba(255, 68, 68, 0.2); padding: 12px; border-radius: 8px; text-align: center;'>
+    <div style='color: #FF4444; font-size: 12px; font-weight: 600;'>🛑 STOP</div>
+    <div style='color: white; font-size: 20px; font-weight: 700;'>{stop_value}</div>
+</div>
+""", unsafe_allow_html=True)
 
                             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2234,21 +2246,21 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                                 reward_amount = risk_amount * risk_reward
 
                                 st.markdown(f"""
-                                <div style='margin: 20px 0;'>
-                                    <div style='color: #00D4FF; font-weight: 600; margin-bottom: 10px;'>⚖️ RISK/REWARD RATIO: {risk_reward}:1</div>
-                                    <div style='display: flex; gap: 10px; align-items: center;'>
-                                        <div style='flex: 1; background: rgba(255, 68, 68, 0.3); padding: 15px; border-radius: 8px; border: 2px solid #FF4444;'>
-                                            <div style='color: #FF4444; font-size: 12px; font-weight: 600;'>RISK</div>
-                                            <div style='color: white; font-size: 18px; font-weight: 700;'>${risk_amount:.0f}</div>
-                                        </div>
-                                        <div style='color: white; font-size: 24px;'>→</div>
-                                        <div style='flex: {risk_reward}; background: rgba(0, 255, 136, 0.3); padding: 15px; border-radius: 8px; border: 2px solid #00FF88;'>
-                                            <div style='color: #00FF88; font-size: 12px; font-weight: 600;'>REWARD</div>
-                                            <div style='color: white; font-size: 18px; font-weight: 700;'>${reward_amount:.0f}</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                """, unsafe_allow_html=True)
+<div style='margin: 20px 0;'>
+    <div style='color: #00D4FF; font-weight: 600; margin-bottom: 10px;'>⚖️ RISK/REWARD RATIO: {risk_reward}:1</div>
+    <div style='display: flex; gap: 10px; align-items: center;'>
+        <div style='flex: 1; background: rgba(255, 68, 68, 0.3); padding: 15px; border-radius: 8px; border: 2px solid #FF4444;'>
+            <div style='color: #FF4444; font-size: 12px; font-weight: 600;'>RISK</div>
+            <div style='color: white; font-size: 18px; font-weight: 700;'>${risk_amount:.0f}</div>
+        </div>
+        <div style='color: white; font-size: 24px;'>→</div>
+        <div style='flex: {risk_reward}; background: rgba(0, 255, 136, 0.3); padding: 15px; border-radius: 8px; border: 2px solid #00FF88;'>
+            <div style='color: #00FF88; font-size: 12px; font-weight: 600;'>REWARD</div>
+            <div style='color: white; font-size: 18px; font-weight: 700;'>${reward_amount:.0f}</div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
                             except:
                                 pass
 
@@ -2259,11 +2271,11 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                             # Position sizing callout
                             size_value = trade.get('size', '2-3% of capital')
                             st.markdown(f"""
-                            <div style='background: rgba(0, 212, 255, 0.1); padding: 12px; border-radius: 8px; border-left: 4px solid #00D4FF; margin-top: 15px;'>
-                                <span style='color: #00D4FF; font-weight: 600;'>💼 POSITION SIZE:</span>
-                                <span style='color: white;'> {size_value}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
+<div style='background: rgba(0, 212, 255, 0.1); padding: 12px; border-radius: 8px; border-left: 4px solid #00D4FF; margin-top: 15px;'>
+    <span style='color: #00D4FF; font-weight: 600;'>💼 POSITION SIZE:</span>
+    <span style='color: white;'> {size_value}</span>
+</div>
+""", unsafe_allow_html=True)
 
                             # Position Sizing Calculator
                             st.markdown("---")
@@ -2326,6 +2338,9 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                 st.info("💡 Trading setups work best with high-volume symbols like SPY, QQQ, TSLA, AAPL")
         else:
             st.info("👈 Enter a symbol and click Refresh to see available setups")
+
+        # Close container div
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # Tab 3: Multi-Symbol Scanner
     with tabs[2]:
