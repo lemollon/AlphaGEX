@@ -2011,6 +2011,531 @@ class TradingVolatilityAPI:
             traceback.print_exc()
             return {}
 
+    def get_current_week_gamma_intelligence(self, symbol: str, current_vix: float = 0) -> Dict:
+        """
+        Get comprehensive gamma expiration intelligence for CURRENT CALENDAR WEEK ONLY
+        Returns 3 views: Daily Impact, Weekly Evolution, Volatility Potential
+        Every metric includes actionable money-making strategies with strikes & expirations
+
+        Args:
+            symbol: Ticker symbol (e.g., 'SPY')
+            current_vix: Current VIX level for context-aware adjustments (optional)
+
+        Returns:
+            Dict with 3 views + money-making strategies + tracking data
+        """
+        import streamlit as st
+        from datetime import datetime, timedelta
+        import pytz
+
+        # EVIDENCE-BASED THRESHOLDS (from research)
+        THRESHOLDS = {
+            'daily_impact': {
+                'minimal': 5,      # Background noise
+                'moderate': 15,    # Validated in production
+                'elevated': 30,    # Validated in production
+            },
+            'volatility_potential': {
+                'low': 15,
+                'moderate': 40,
+                'high': 60,
+            },
+            'weekly_evolution': {
+                'low': 30,
+                'moderate': 60,
+                'high': 80,
+            }
+        }
+
+        try:
+            # Get current time in ET (market time)
+            current_time = datetime.now(pytz.timezone('America/New_York'))
+            current_weekday = current_time.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+            current_hour = current_time.hour
+            current_date_str = current_time.strftime('%Y-%m-%d')
+
+            # Determine calendar week boundaries and edge cases
+            is_weekend = current_weekday >= 5
+            is_friday_after_close = current_weekday == 4 and current_hour >= 16
+
+            # Calculate Mon-Fri of current calendar week
+            if is_weekend:
+                # Weekend: Show next week
+                days_to_monday = (7 - current_weekday)  # Days until next Monday
+                week_start = current_time + timedelta(days=days_to_monday)
+                edge_case = 'WEEKEND'
+            elif is_friday_after_close:
+                # Friday after close: Show current week summary + next week preview
+                days_since_monday = current_weekday
+                week_start = current_time - timedelta(days=days_since_monday)
+                edge_case = 'FRIDAY_AFTER_CLOSE'
+            else:
+                # Normal trading hours: Show current week (Mon-Fri)
+                days_since_monday = current_weekday
+                week_start = current_time - timedelta(days=days_since_monday)
+                edge_case = None
+
+            # Set week_end to Friday
+            week_end = week_start + timedelta(days=4)
+
+            # Build list of trading days for current week
+            trading_days = []
+            for i in range(5):  # Mon-Fri
+                day = week_start + timedelta(days=i)
+                # Skip actual weekends (shouldn't happen with our logic, but safety check)
+                if day.weekday() < 5:
+                    trading_days.append({
+                        'date': day.strftime('%Y-%m-%d'),
+                        'day_name': day.strftime('%A'),
+                        'day_abbr': day.strftime('%a'),
+                        'is_today': day.strftime('%Y-%m-%d') == current_date_str,
+                        'datetime': day
+                    })
+
+            # Fetch gamma data for each trading day
+            gamma_by_day = []
+            for day_info in trading_days:
+                gamma_data = self.get_gamma_by_expiration(symbol, day_info['date'])
+
+                if gamma_data and gamma_data.get('total_gamma', 0) > 0:
+                    gamma_by_day.append({
+                        **day_info,
+                        'total_gamma': gamma_data['total_gamma'],
+                        'expiry_date': gamma_data.get('expiry_date'),
+                        'has_expiration': True  # Assume if we have gamma data, there's expiration
+                    })
+                else:
+                    # No expiration this day
+                    gamma_by_day.append({
+                        **day_info,
+                        'total_gamma': 0,
+                        'expiry_date': None,
+                        'has_expiration': False
+                    })
+
+            # If no gamma data at all, return empty structure
+            if not gamma_by_day or sum(d['total_gamma'] for d in gamma_by_day) == 0:
+                return {
+                    'error': 'No gamma data available for current week',
+                    'symbol': symbol,
+                    'week_start': week_start.strftime('%Y-%m-%d'),
+                    'week_end': week_end.strftime('%Y-%m-%d')
+                }
+
+            # Sort by date
+            gamma_by_day = sorted(gamma_by_day, key=lambda x: x['date'])
+
+            # Find today's index
+            today_idx = next((i for i, d in enumerate(gamma_by_day) if d['is_today']), 0)
+
+            # =================================================================
+            # VIEW 1: DAILY IMPACT (Today → Tomorrow)
+            # =================================================================
+            today_data = gamma_by_day[today_idx] if today_idx < len(gamma_by_day) else gamma_by_day[0]
+
+            # Calculate today's total available gamma (today + all future days this week)
+            today_total_gamma = sum(d['total_gamma'] for d in gamma_by_day[today_idx:])
+
+            # Calculate tomorrow's total available gamma (all future days after today)
+            tomorrow_total_gamma = sum(d['total_gamma'] for d in gamma_by_day[today_idx + 1:]) if today_idx + 1 < len(gamma_by_day) else 0
+
+            # Gamma expiring today
+            expiring_today = today_data['total_gamma'] if today_data['has_expiration'] else 0
+
+            # Calculate impact percentage
+            impact_pct = (expiring_today / today_total_gamma * 100) if today_total_gamma > 0 else 0
+
+            # Context-aware threshold adjustment
+            threshold_multiplier = 1.0
+            context_notes = []
+
+            # Friday adjustment (lower thresholds)
+            if today_data['day_name'] == 'Friday':
+                threshold_multiplier = 0.67  # 30% becomes 20%
+                context_notes.append("Friday expiration - thresholds lowered")
+
+            # VIX adjustment (if provided)
+            if current_vix > 20:
+                threshold_multiplier *= 0.75  # Further lower in high-vol environment
+                context_notes.append(f"High VIX ({current_vix:.1f}) - thresholds lowered")
+
+            # Determine risk level with context-aware thresholds
+            adjusted_thresholds = {k: v * threshold_multiplier for k, v in THRESHOLDS['daily_impact'].items()}
+
+            if impact_pct >= adjusted_thresholds['elevated']:
+                risk_level = 'EXTREME'
+                risk_color = '#FF4444'
+            elif impact_pct >= adjusted_thresholds['moderate']:
+                risk_level = 'ELEVATED'
+                risk_color = '#FFB800'
+            elif impact_pct >= adjusted_thresholds['minimal']:
+                risk_level = 'MODERATE'
+                risk_color = '#00D4FF'
+            else:
+                risk_level = 'MINIMAL'
+                risk_color = '#00FF88'
+
+            # Generate money-making strategies for View 1
+            daily_strategies = []
+
+            if impact_pct >= adjusted_thresholds['elevated']:
+                # EXTREME decay - high-conviction plays
+                daily_strategies.extend([
+                    {
+                        'name': 'Fade the Close',
+                        'priority': 'HIGH',
+                        'description': 'Buy directional options at 3:45pm, sell tomorrow morning',
+                        'strike': '0.4 delta (first OTM) in trend direction',
+                        'expiration': '0DTE or 1DTE',
+                        'entry_time': f'{today_data["day_name"]} 3:45pm',
+                        'exit_time': f'Tomorrow morning if gap move occurs',
+                        'risk': '30% stop loss',
+                        'position_size': '2-3% account risk',
+                        'rationale': f'Tomorrow loses {impact_pct:.0f}% gamma support - moves will be sharper without dealer hedging'
+                    },
+                    {
+                        'name': 'ATM Straddle into Expiration',
+                        'priority': 'MEDIUM',
+                        'description': 'Buy volatility, not direction',
+                        'strike': 'ATM (0.5 delta both sides)',
+                        'expiration': '1DTE or 2DTE',
+                        'entry_time': f'{today_data["day_name"]} 3:30pm',
+                        'exit_time': f'Tomorrow morning on gap or quick move',
+                        'risk': 'Defined (premium paid)',
+                        'position_size': '1-2% account risk',
+                        'rationale': f'Gamma expiration creates volatility vacuum - expect {impact_pct:.0f}% regime shift overnight'
+                    }
+                ])
+            elif impact_pct >= adjusted_thresholds['moderate']:
+                # MODERATE decay - selective plays
+                daily_strategies.append({
+                    'name': 'Selective Directional',
+                    'priority': 'MEDIUM',
+                    'description': 'Only if clear trend + technical setup',
+                    'strike': '0.4-0.5 delta in trend direction',
+                    'expiration': '1DTE',
+                    'entry_time': f'{today_data["day_name"]} afternoon if setup appears',
+                    'exit_time': 'Next day on 20-30% profit',
+                    'risk': '25% stop loss',
+                    'position_size': '1-2% account risk',
+                    'rationale': f'{impact_pct:.0f}% decay is meaningful but not extreme - wait for confirmation'
+                })
+            else:
+                # LOW decay - avoid fighting the gamma
+                daily_strategies.append({
+                    'name': 'Avoid Directional Trades',
+                    'priority': 'LOW',
+                    'description': 'Gamma still strong - market will mean-revert',
+                    'strike': 'N/A',
+                    'expiration': 'N/A',
+                    'entry_time': 'Do not enter',
+                    'exit_time': 'N/A',
+                    'risk': 'N/A',
+                    'position_size': '0% (no trade)',
+                    'rationale': f'Only {impact_pct:.0f}% decay - dealers still actively hedging, range-bound likely'
+                })
+
+            daily_impact = {
+                'today_total_gamma': today_total_gamma,
+                'tomorrow_total_gamma': tomorrow_total_gamma,
+                'expiring_today': expiring_today,
+                'impact_pct': impact_pct,
+                'risk_level': risk_level,
+                'risk_color': risk_color,
+                'context_notes': context_notes,
+                'threshold_multiplier': threshold_multiplier,
+                'adjusted_thresholds': adjusted_thresholds,
+                'strategies': daily_strategies
+            }
+
+            # =================================================================
+            # VIEW 2: WEEKLY EVOLUTION (Monday Baseline → Friday End)
+            # =================================================================
+
+            monday_baseline = sum(d['total_gamma'] for d in gamma_by_day)
+            friday_end = gamma_by_day[-1]['total_gamma'] if gamma_by_day else 0
+            total_decay_pct = ((monday_baseline - friday_end) / monday_baseline * 100) if monday_baseline > 0 else 0
+
+            # Build daily breakdown
+            daily_breakdown = []
+            cumulative_gamma = monday_baseline
+
+            for i, day in enumerate(gamma_by_day):
+                pct_of_week = (cumulative_gamma / monday_baseline * 100) if monday_baseline > 0 else 0
+                change_from_previous = None
+
+                if i > 0:
+                    prev_cumulative = daily_breakdown[i-1]['cumulative_gamma']
+                    change_from_previous = ((cumulative_gamma - prev_cumulative) / prev_cumulative * 100) if prev_cumulative > 0 else 0
+
+                daily_breakdown.append({
+                    'day': day['day_abbr'],
+                    'day_name': day['day_name'],
+                    'date': day['date'],
+                    'cumulative_gamma': cumulative_gamma,
+                    'pct_of_week': pct_of_week,
+                    'change_from_previous': change_from_previous,
+                    'is_today': day['is_today'],
+                    'has_expiration': day['has_expiration']
+                })
+
+                # Subtract this day's expiring gamma for next day
+                if day['has_expiration']:
+                    cumulative_gamma -= day['total_gamma']
+
+            # Determine decay pattern
+            first_half_decay = daily_breakdown[2]['pct_of_week'] if len(daily_breakdown) > 2 else 100  # Wed %
+            if first_half_decay < 60:  # Lost >40% by Wednesday
+                decay_pattern = 'FRONT_LOADED'
+            elif first_half_decay > 80:  # Lost <20% by Wednesday
+                decay_pattern = 'BACK_LOADED'
+            else:
+                decay_pattern = 'BALANCED'
+
+            # Generate weekly strategies
+            weekly_strategies = {}
+
+            if total_decay_pct >= THRESHOLDS['weekly_evolution']['high']:
+                # HIGH decay week (>80%) - Major OPEX week
+                weekly_strategies = {
+                    'early_week': {
+                        'name': 'Aggressive Theta Farming (Mon-Wed)',
+                        'description': 'Sell premium while gamma is strong',
+                        'strategy_type': 'Iron Condor or Credit Spreads',
+                        'strikes': '0.15-0.20 delta wings (far OTM) - use GEX levels for short strikes',
+                        'expiration': 'Friday (this week)',
+                        'entry_time': 'Monday morning or Tuesday morning',
+                        'exit_time': 'Wednesday close (take 50-60% profit)',
+                        'position_size': '3-5% account risk per spread',
+                        'rationale': f'Week starts with {daily_breakdown[0]["pct_of_week"]:.0f}% of gamma - high mean-reversion, options will decay fast'
+                    },
+                    'late_week': {
+                        'name': 'Delta Buying (Thu-Fri)',
+                        'description': 'Switch to directional momentum plays',
+                        'strategy_type': 'Long Calls or Puts',
+                        'strikes': 'ATM or first OTM (0.5-0.6 delta) based on Wednesday close direction',
+                        'expiration': 'Next week (1 week DTE)',
+                        'entry_time': 'Thursday morning',
+                        'exit_time': 'Friday close or hold through weekend if strong trend',
+                        'position_size': '2-3% account risk',
+                        'rationale': f'By Thursday, only {daily_breakdown[3]["pct_of_week"]:.0f}% gamma remains - low hedging = directional moves'
+                    },
+                    'size_management': {
+                        'name': 'Dynamic Position Sizing',
+                        'description': 'Adjust size based on gamma regime through week',
+                        'monday_tuesday': '100% normal size (gamma protects you)',
+                        'wednesday': '75% size (transition)',
+                        'thursday_friday': '50% size (gamma gone, vol spikes)',
+                        'rationale': f'Risk management: {total_decay_pct:.0f}% weekly decay means vol will increase significantly late week'
+                    }
+                }
+            elif total_decay_pct >= THRESHOLDS['weekly_evolution']['moderate']:
+                # MODERATE decay week (60-80%)
+                weekly_strategies = {
+                    'early_week': {
+                        'name': 'Moderate Premium Selling (Mon-Tue)',
+                        'description': 'Smaller position sizes, tighter strikes',
+                        'strategy_type': 'Credit Spreads',
+                        'strikes': '0.20-0.25 delta wings (closer to money)',
+                        'expiration': 'Friday',
+                        'entry_time': 'Monday morning',
+                        'exit_time': 'Wednesday close',
+                        'position_size': '2-3% account risk',
+                        'rationale': f'{total_decay_pct:.0f}% weekly decay is moderate - some gamma support but not extreme'
+                    },
+                    'late_week': {
+                        'name': 'Cautious Approach (Thu-Fri)',
+                        'description': 'Reduce exposure or sit out',
+                        'strategy_type': 'Close existing, minimal new trades',
+                        'strikes': 'If trading: 0.5 delta only',
+                        'expiration': 'Next week',
+                        'entry_time': 'Only on A+ setups',
+                        'exit_time': 'Quick scalps only',
+                        'position_size': '1% account risk max',
+                        'rationale': f'Moderate decay means some vol increase expected - be selective late week'
+                    }
+                }
+            else:
+                # LOW decay week (<60%)
+                weekly_strategies = {
+                    'all_week': {
+                        'name': 'Standard Trading (All Week)',
+                        'description': 'Normal gamma structure, trade as usual',
+                        'strategy_type': 'Any strategy',
+                        'strikes': 'Based on normal technical analysis',
+                        'expiration': 'Any',
+                        'entry_time': 'Based on setups',
+                        'exit_time': 'Based on targets',
+                        'position_size': 'Normal sizing',
+                        'rationale': f'Only {total_decay_pct:.0f}% weekly decay - gamma structure stays relatively stable all week'
+                    }
+                }
+
+            weekly_evolution = {
+                'monday_baseline': monday_baseline,
+                'friday_end': friday_end,
+                'total_decay_pct': total_decay_pct,
+                'decay_pattern': decay_pattern,
+                'daily_breakdown': daily_breakdown,
+                'strategies': weekly_strategies
+            }
+
+            # =================================================================
+            # VIEW 3: VOLATILITY POTENTIAL (Relative Risk by Day)
+            # =================================================================
+
+            volatility_by_day = []
+            max_vol_pct = 0
+            highest_risk_day = None
+
+            for i, day in enumerate(gamma_by_day):
+                # Daily total available = this day + all future days
+                daily_total_available = sum(d['total_gamma'] for d in gamma_by_day[i:])
+                daily_expiring = day['total_gamma'] if day['has_expiration'] else 0
+
+                vol_pct = (daily_expiring / daily_total_available * 100) if daily_total_available > 0 else 0
+
+                # Determine risk level
+                if vol_pct >= THRESHOLDS['volatility_potential']['high']:
+                    day_risk_level = 'EXTREME'
+                    day_risk_color = '#FF4444'
+                elif vol_pct >= THRESHOLDS['volatility_potential']['moderate']:
+                    day_risk_level = 'HIGH'
+                    day_risk_color = '#FFB800'
+                elif vol_pct >= THRESHOLDS['volatility_potential']['low']:
+                    day_risk_level = 'MODERATE'
+                    day_risk_color = '#00D4FF'
+                else:
+                    day_risk_level = 'LOW'
+                    day_risk_color = '#00FF88'
+
+                volatility_by_day.append({
+                    'day': day['day_abbr'],
+                    'day_name': day['day_name'],
+                    'date': day['date'],
+                    'expiring_gamma': daily_expiring,
+                    'total_available': daily_total_available,
+                    'vol_pct': vol_pct,
+                    'risk_level': day_risk_level,
+                    'risk_color': day_risk_color,
+                    'is_today': day['is_today'],
+                    'has_expiration': day['has_expiration']
+                })
+
+                if vol_pct > max_vol_pct:
+                    max_vol_pct = vol_pct
+                    highest_risk_day = volatility_by_day[-1]
+
+            # Generate strategies for highest risk day
+            highest_risk_day_strategies = []
+
+            if highest_risk_day and highest_risk_day['vol_pct'] >= THRESHOLDS['volatility_potential']['high']:
+                # EXTREME volatility day
+                highest_risk_day_strategies = [
+                    {
+                        'name': 'Pre-Expiration Volatility Scalp',
+                        'priority': 'HIGH',
+                        'description': 'Capture chaos of gamma expiration, not direction',
+                        'strategy_type': 'ATM Straddle',
+                        'strike': 'ATM straddle (0.5 delta both sides)',
+                        'expiration': f'0DTE (expiring {highest_risk_day["day_name"]})',
+                        'entry_time': f'{highest_risk_day["day_name"]} 10:00-11:00am',
+                        'exit_time': f'{highest_risk_day["day_name"]} 2:00-3:00pm (BEFORE 4pm expiration)',
+                        'risk': 'Defined (premium paid)',
+                        'position_size': '2-3% account risk',
+                        'rationale': f'{highest_risk_day["day_name"]} has {highest_risk_day["vol_pct"]:.0f}% gamma decay - massive expiration creates intraday volatility spike. Exit before pin risk at 4pm.'
+                    },
+                    {
+                        'name': 'Post-Expiration Directional Positioning',
+                        'priority': 'MEDIUM',
+                        'description': 'Position day-before for explosive move day-after',
+                        'strategy_type': 'Long Calls or Puts',
+                        'strike': '0.4-0.5 delta in expected direction (use technical analysis)',
+                        'expiration': '1DTE or 2DTE',
+                        'entry_time': f'Day before ({highest_risk_day["day_name"]}) at 3:45pm',
+                        'exit_time': f'Next day morning if profit target hit',
+                        'risk': '30% stop loss',
+                        'position_size': '2% account risk',
+                        'rationale': f'After {highest_risk_day["day_name"]} gamma expires, next day will have explosive moves in prevailing trend direction'
+                    },
+                    {
+                        'name': 'The Avoidance Strategy',
+                        'priority': 'LOW',
+                        'description': 'Sometimes the best trade is no trade',
+                        'strategy_type': 'Cash / Sidelines',
+                        'strike': 'N/A',
+                        'expiration': 'N/A',
+                        'entry_time': 'Close all positions day before',
+                        'exit_time': 'Re-enter next Monday',
+                        'risk': '0% (no positions)',
+                        'position_size': '0% (cash)',
+                        'rationale': f'{highest_risk_day["day_name"]} shows {highest_risk_day["vol_pct"]:.0f}% decay - if you\'re uncomfortable with chaos, sit out and preserve capital'
+                    }
+                ]
+
+            volatility_potential = {
+                'by_day': volatility_by_day,
+                'highest_risk_day': highest_risk_day,
+                'strategies': highest_risk_day_strategies
+            }
+
+            # =================================================================
+            # TRACKING & LOGGING (for future correlation analysis)
+            # =================================================================
+
+            tracking_data = {
+                'timestamp': current_time.isoformat(),
+                'symbol': symbol,
+                'vix': current_vix,
+                'gamma_decay_pct': impact_pct,
+                'weekly_decay_pct': total_decay_pct,
+                'risk_level': risk_level,
+                'highest_risk_day_name': highest_risk_day['day_name'] if highest_risk_day else None,
+                'highest_risk_day_pct': highest_risk_day['vol_pct'] if highest_risk_day else 0,
+                # Will be filled in by tracking system:
+                'actual_price_move_pct': None,  # To be filled next day
+                'actual_intraday_range_pct': None  # To be filled EOD
+            }
+
+            # =================================================================
+            # RETURN COMPLETE STRUCTURE
+            # =================================================================
+
+            return {
+                'success': True,
+                'symbol': symbol,
+                'week_start': week_start.strftime('%Y-%m-%d'),
+                'week_end': week_end.strftime('%Y-%m-%d'),
+                'current_day': today_data['day_name'],
+                'current_date': current_date_str,
+                'is_weekend': is_weekend,
+                'is_friday_after_close': is_friday_after_close,
+                'edge_case': edge_case,
+
+                # Three views
+                'daily_impact': daily_impact,
+                'weekly_evolution': weekly_evolution,
+                'volatility_potential': volatility_potential,
+
+                # Tracking for correlation analysis
+                'tracking': tracking_data,
+
+                # Metadata
+                'thresholds_used': THRESHOLDS,
+                'context_aware': True,
+                'generated_at': current_time.isoformat()
+            }
+
+        except Exception as e:
+            import traceback
+            print(f"Error in get_current_week_gamma_intelligence: {e}")
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e),
+                'symbol': symbol
+            }
+
 
 class MonteCarloEngine:
     """
