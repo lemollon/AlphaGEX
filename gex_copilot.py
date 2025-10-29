@@ -655,139 +655,6 @@ def main():
     Professional Options Intelligence Platform
     </div>
     """, unsafe_allow_html=True)
-
-    # Live Market Pulse Widget (Floating) - Controlled by toggle
-    if st.session_state.current_data and st.session_state.get('show_market_pulse', True):
-        data = st.session_state.current_data
-        gex_data = data.get('gex', {})
-        net_gex = gex_data.get('net_gex', 0)
-        spot = gex_data.get('spot_price', 0)
-        flip = gex_data.get('flip_point', 0)
-
-        # Calculate data age
-        from datetime import datetime
-        data_timestamp = data.get('timestamp')
-        if data_timestamp:
-            try:
-                # Ensure both datetimes are timezone-aware for comparison
-                current_time = datetime.now(pytz.UTC)
-
-                # Handle different timestamp formats
-                if isinstance(data_timestamp, str):
-                    # Parse string timestamp
-                    data_timestamp = datetime.fromisoformat(data_timestamp.replace('Z', '+00:00'))
-                elif not hasattr(data_timestamp, 'tzinfo') or data_timestamp.tzinfo is None:
-                    # Make timezone-naive datetime aware (assume UTC)
-                    data_timestamp = pytz.UTC.localize(data_timestamp)
-
-                data_age_minutes = (current_time - data_timestamp).total_seconds() / 60
-            except Exception as e:
-                # If timestamp calculation fails, show unknown age
-                data_age_minutes = None
-
-            if data_age_minutes is not None and data_age_minutes < 1:
-                age_display = "Just now"
-                age_color = "#00FF88"
-            elif data_age_minutes is not None and data_age_minutes < 5:
-                age_display = f"{int(data_age_minutes)}m ago"
-                age_color = "#00FF88"
-            elif data_age_minutes is not None and data_age_minutes < 15:
-                age_display = f"{int(data_age_minutes)}m ago"
-                age_color = "#FFB800"
-            elif data_age_minutes is not None:
-                age_display = f"{int(data_age_minutes)}m ago"
-                age_color = "#FF4444"
-            else:
-                age_display = "Unknown"
-                age_color = "#888"
-        else:
-            age_display = "Unknown"
-            age_color = "#888"
-
-        # Determine market pulse
-        net_gex_billions = net_gex / 1e9
-        if net_gex < -2e9:
-            pulse_status = "🔴 SQUEEZE ACTIVE"
-            pulse_color = "#FF4444"
-            pulse_bg = "rgba(255, 68, 68, 0.2)"
-            pulse_action = "BUY CALLS AGGRESSIVE"
-        elif net_gex < -1e9:
-            pulse_status = "🟠 HIGH VOLATILITY"
-            pulse_color = "#FFB800"
-            pulse_bg = "rgba(255, 184, 0, 0.2)"
-            pulse_action = "DIRECTIONAL PLAYS"
-        elif net_gex > 2e9:
-            pulse_status = "🟢 RANGE BOUND"
-            pulse_color = "#00FF88"
-            pulse_bg = "rgba(0, 255, 136, 0.2)"
-            pulse_action = "IRON CONDORS"
-        else:
-            pulse_status = "🟡 NEUTRAL"
-            pulse_color = "#888"
-            pulse_bg = "rgba(136, 136, 136, 0.2)"
-            pulse_action = "WAIT & WATCH"
-
-        # Calculate confidence
-        distance_to_flip = abs((flip - spot) / spot * 100) if spot and flip else 0
-        if abs(net_gex_billions) > 2:
-            confidence = min(95, 75 + abs(net_gex_billions) * 5)
-        else:
-            confidence = 60
-
-        st.markdown(f"""
-        <div style='position: fixed; top: 90px; right: 25px; z-index: 9999;
-                    background: linear-gradient(135deg, {pulse_bg} 0%, rgba(5, 8, 12, 0.98) 100%);
-                    border: 3px solid {pulse_color};
-                    border-radius: 18px;
-                    padding: 20px;
-                    min-width: 260px;
-                    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.7), 0 0 30px {pulse_color}40;
-                    backdrop-filter: blur(20px);
-                    animation: pulse 3s ease-in-out infinite;'>
-            <div style='text-align: center; margin-bottom: 14px;'>
-                <div style='color: {pulse_color}; font-size: 11px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase;'>
-                    ⚡ LIVE MARKET PULSE
-                </div>
-                <div style='color: {pulse_color}; font-size: 18px; font-weight: 900; margin-top: 8px; text-shadow: 0 0 15px {pulse_color}80;'>
-                    {pulse_status}
-                </div>
-            </div>
-            <div style='background: linear-gradient(135deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.8) 100%);
-                        padding: 14px; border-radius: 12px; margin-bottom: 12px;
-                        border: 1px solid rgba(255, 255, 255, 0.05);'>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #8b92a7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>Net GEX</span>
-                    <span style='color: white; font-weight: 900; font-size: 14px; text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);'>{net_gex_billions:.2f}B</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #8b92a7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>Spot Price</span>
-                    <span style='color: white; font-weight: 900; font-size: 14px; text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);'>${spot:.2f}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <span style='color: #8b92a7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>Confidence</span>
-                    <span style='color: {pulse_color}; font-weight: 900; font-size: 14px; text-shadow: 0 0 10px {pulse_color}80;'>{confidence:.0f}%</span>
-                </div>
-            </div>
-            <div style='text-align: center; margin-bottom: 12px; padding: 8px; background: rgba(0, 0, 0, 0.3); border-radius: 8px;'>
-                <div style='color: #8b92a7; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px;'>Last Updated</div>
-                <div style='color: {age_color}; font-size: 12px; font-weight: 800;'>{age_display}</div>
-            </div>
-            <div style='background: linear-gradient(135deg, {pulse_color}30 0%, {pulse_color}20 100%);
-                        padding: 12px; border-radius: 10px; text-align: center;
-                        border: 2px solid {pulse_color}50;
-                        box-shadow: 0 4px 15px {pulse_color}30;'>
-                <div style='color: #00D4FF; font-size: 10px; font-weight: 800; margin-bottom: 5px; letter-spacing: 1px; text-transform: uppercase;'>→ RECOMMENDED ACTION</div>
-                <div style='color: white; font-size: 14px; font-weight: 900; text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);'>{pulse_action}</div>
-            </div>
-        </div>
-
-        <style>
-        @keyframes pulse {{
-            0%, 100% {{ transform: scale(1) translateY(0); box-shadow: 0 12px 48px rgba(0, 0, 0, 0.7), 0 0 30px {pulse_color}40; }}
-            50% {{ transform: scale(1.03) translateY(-2px); box-shadow: 0 16px 56px rgba(0, 0, 0, 0.8), 0 0 40px {pulse_color}60; }}
-        }}
-        </style>
-        """, unsafe_allow_html=True)
     
     # Premium Top Metrics Row - Executive Dashboard Style
     col1, col2, col3, col4, col5 = st.columns(5, gap="medium")
@@ -1105,26 +972,6 @@ def main():
     </div>
 </div>
 """, unsafe_allow_html=True)
-
-        # Market Pulse Toggle Control
-        st.divider()
-        st.markdown("""
-<div style='color: #00D4FF; font-weight: 700; font-size: 12px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;'>
-    ⚡ Display Controls
-</div>
-""", unsafe_allow_html=True)
-
-        # Initialize session state for Market Pulse visibility
-        if 'show_market_pulse' not in st.session_state:
-            st.session_state.show_market_pulse = True
-
-        # Toggle checkbox
-        show_pulse = st.checkbox(
-            "Show Live Market Pulse Widget",
-            value=st.session_state.show_market_pulse,
-            help="Toggle the floating Market Pulse widget in the top-right corner"
-        )
-        st.session_state.show_market_pulse = show_pulse
 
     # Performance Stats
     with st.sidebar:
@@ -2047,10 +1894,11 @@ Provide ONE specific, actionable trade with exact strikes, expiration, entry/exi
                                     if gex_levels:
                                         st.markdown("**GEX Levels:**")
                                         st.json(gex_levels)
-                                    if expiration_data:
-                                        st.markdown("**Gamma Expiration Schedule:**")
-                                        exp_df = pd.DataFrame(expiration_data)
-                                        st.dataframe(exp_df[['day_name', 'date', 'has_expiration', 'gamma_decay_pct', 'total_gamma']])
+                                    if gamma_intel and gamma_intel.get('success'):
+                                        st.markdown("**Gamma Intelligence Used:**")
+                                        st.markdown(f"- Daily Impact: {gamma_intel['daily_impact']['impact_pct']:.1f}% decay")
+                                        st.markdown(f"- Risk Level: {gamma_intel['daily_impact']['risk_level']}")
+                                        st.markdown(f"- Weekly Decay: {gamma_intel['weekly_evolution']['total_decay_pct']:.1f}%")
 
                             except Exception as e:
                                 st.error(f"Could not generate AI recommendation: {str(e)}")
@@ -2072,24 +1920,7 @@ Provide ONE specific, actionable trade with exact strikes, expiration, entry/exi
                 """)
 
             # ==================================================================
-            # SECTION 2: DAY-OVER-DAY COMPARISON
-            # ==================================================================
-            st.divider()
-            st.header(f"📏 Day-Over-Day Analysis")
-
-            # Use yesterday_data already fetched above
-            # Check if yesterday_data actually has GEX data, not just an empty dict
-            has_yesterday_data = yesterday_data and isinstance(yesterday_data, dict) and yesterday_data.get('spot_price', 0) > 0
-
-            if has_yesterday_data:
-                display_std_level_changes(data.get('gex', {}), yesterday_data)
-            else:
-                st.info("📊 Yesterday's data not available yet. Day-over-day comparison will appear tomorrow once we have 2+ days of data in the system.")
-                if yesterday_data:
-                    st.caption(f"Debug: yesterday_data = {yesterday_data}")
-
-            # ==================================================================
-            # SECTION 3: MONTE CARLO SIMULATION (PREDICTIVE)
+            # SECTION 2: MONTE CARLO SIMULATION (PREDICTIVE)
             # ==================================================================
             st.divider()
             st.header(f"🎲 Monte Carlo Price Prediction")
