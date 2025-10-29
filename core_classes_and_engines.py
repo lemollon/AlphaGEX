@@ -16,6 +16,35 @@ from dataclasses import dataclass
 import warnings
 warnings.filterwarnings('ignore')
 
+# Optional streamlit import - only available when running in Streamlit context
+try:
+    import streamlit as st
+    STREAMLIT_AVAILABLE = True
+except ImportError:
+    STREAMLIT_AVAILABLE = False
+    # Create a mock streamlit object for non-Streamlit contexts
+    class MockStreamlit:
+        class session_state:
+            @staticmethod
+            def get(key, default=None):
+                return default
+
+        class secrets:
+            @staticmethod
+            def get(key, default=""):
+                return default
+
+        @staticmethod
+        def error(msg): pass
+
+        @staticmethod
+        def warning(msg): pass
+
+        @staticmethod
+        def info(msg): pass
+
+    st = MockStreamlit()
+
 # Explicit exports for import clarity
 __all__ = [
     'GEXLevel',
@@ -1027,7 +1056,6 @@ class TradingVolatilityAPI:
     _shared_cache_duration = 300  # Cache for 5 MINUTES (300 seconds)
 
     def __init__(self):
-        import streamlit as st
         import time
         import os
 
@@ -1225,7 +1253,6 @@ class TradingVolatilityAPI:
 
     def get_net_gamma(self, symbol: str) -> Dict:
         """Fetch net gamma exposure data from Trading Volatility API with rate limiting"""
-        import streamlit as st
         import requests
 
         try:
@@ -1332,7 +1359,6 @@ class TradingVolatilityAPI:
 
     def get_gex_profile(self, symbol: str) -> Dict:
         """Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint with rate limiting"""
-        import streamlit as st
         import requests
 
         try:
@@ -1513,7 +1539,6 @@ class TradingVolatilityAPI:
 
     def get_historical_gamma(self, symbol: str, days_back: int = 5) -> List[Dict]:
         """Fetch historical gamma data from Trading Volatility API with rate limiting"""
-        import streamlit as st
         import requests
         from datetime import datetime, timedelta
 
@@ -1604,7 +1629,6 @@ class TradingVolatilityAPI:
         so we cache it for the entire day (until midnight when the date changes).
         This minimizes API calls to once per symbol per day.
         """
-        import streamlit as st
         import time
         from datetime import datetime
 
@@ -1683,7 +1707,6 @@ class TradingVolatilityAPI:
 
     def get_skew_data(self, symbol: str) -> Dict:
         """Fetch latest skew data from Trading Volatility API with aggressive rate limiting"""
-        import streamlit as st
         import requests
 
         try:
@@ -1754,7 +1777,6 @@ class TradingVolatilityAPI:
 
     def get_historical_skew(self, symbol: str, days_back: int = 30) -> List[Dict]:
         """Fetch historical skew data from Trading Volatility API"""
-        import streamlit as st
         import requests
         from datetime import datetime, timedelta
 
@@ -1822,7 +1844,6 @@ class TradingVolatilityAPI:
         Fetch GEX levels (GEX_0, GEX_1, GEX_2, GEX_3) and STD levels from Trading Volatility API
         These levels represent key gamma support/resistance zones where dealers hedge heavily
         """
-        import streamlit as st
         import requests
 
         try:
@@ -1932,7 +1953,6 @@ class TradingVolatilityAPI:
         Returns:
             Dict with gamma_array showing strike-level gamma for that expiration
         """
-        import streamlit as st
         import requests
 
         try:
@@ -2024,7 +2044,6 @@ class TradingVolatilityAPI:
         Returns:
             Dict with 3 views + money-making strategies + tracking data
         """
-        import streamlit as st
         from datetime import datetime, timedelta
         import pytz
 
