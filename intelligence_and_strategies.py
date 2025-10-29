@@ -4,7 +4,30 @@ NOTE: This file should be placed in the same directory as the other files
 When importing in main.py, use: from intelligence_and_strategies import *
 """
 
-import streamlit as st
+# Make streamlit optional for API backend deployment
+try:
+    import streamlit as st
+    STREAMLIT_AVAILABLE = True
+except ImportError:
+    # Create mock streamlit object for API backend
+    class MockStreamlit:
+        class secrets:
+            @staticmethod
+            def get(key, default=""):
+                return default
+        class session_state:
+            @staticmethod
+            def get(key, default=None):
+                return default
+        @staticmethod
+        def warning(msg): pass
+        @staticmethod
+        def error(msg): pass
+        @staticmethod
+        def info(msg): pass
+    st = MockStreamlit()
+    STREAMLIT_AVAILABLE = False
+
 import requests
 import json
 from datetime import datetime, timedelta

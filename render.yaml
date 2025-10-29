@@ -19,7 +19,7 @@ services:
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: "pip install -r requirements-render.txt"
+    buildCommand: "pip install -r requirements-minimal.txt"
     startCommand: "./start.sh"
     healthCheckPath: /health
     envVars:
