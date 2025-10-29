@@ -4,7 +4,6 @@ config_and_database.py - Configuration, Constants, and Database Functions
 
 import sqlite3
 from pathlib import Path
-import streamlit as st
 
 # ============================================================================
 # CONFIGURATION & CONSTANTS
