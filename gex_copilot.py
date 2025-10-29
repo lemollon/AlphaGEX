@@ -1355,6 +1355,44 @@ def main():
 
                 st.markdown("### 📊 Gamma Expiration Intelligence - Current Week Only")
 
+                # Mobile optimization CSS
+                st.markdown("""
+                <style>
+                /* Mobile responsive design for gamma intelligence */
+                @media (max-width: 768px) {
+                    /* Stack columns vertically on mobile */
+                    div[data-testid="column"] {
+                        width: 100% !important;
+                        flex: 100% !important;
+                    }
+
+                    /* Smaller fonts on mobile */
+                    .stMarkdown h4 {
+                        font-size: 18px !important;
+                    }
+
+                    /* Reduce padding on mobile */
+                    div[style*="padding: 16px"] {
+                        padding: 12px !important;
+                    }
+
+                    /* Collapsible sections on mobile */
+                    details {
+                        margin-bottom: 12px;
+                    }
+
+                    summary {
+                        cursor: pointer;
+                        font-weight: 700;
+                        padding: 10px;
+                        background: rgba(0, 212, 255, 0.1);
+                        border-radius: 8px;
+                        margin-bottom: 8px;
+                    }
+                }
+                </style>
+                """, unsafe_allow_html=True)
+
                 # Get current VIX for context-aware adjustments (if available)
                 current_vix = 0
                 try:
@@ -1927,69 +1965,58 @@ def main():
                     """)
 
                     if st.button("🤖 Generate AI Trade", type="primary", use_container_width=True):
-                        with st.spinner("Claude is analyzing gamma decay and market structure..."):
+                        with st.spinner("Claude is analyzing gamma intelligence and market structure..."):
                             # Call Claude AI for recommendation
                             # ClaudeIntelligence already imported at top of file
                             claude = ClaudeIntelligence()
 
-                            # Build enhanced context with expiration data
-                            gamma_context = ""
-                            if expiration_data:
-                                gamma_context = "\n\n**Gamma Expiration Data (Next 5 Days):**\n"
-                                for exp in expiration_data[:5]:
-                                    if exp['has_expiration']:
-                                        gamma_context += f"- {exp['day_name']} {exp['date']}: **{exp['gamma_decay_pct']:.1f}% decay** ({exp['total_gamma']:,.0f} gamma expiring)\n"
-                                    else:
-                                        gamma_context += f"- {exp['day_name']} {exp['date']}: No expiration (stable gamma)\n"
+                            # Fetch/reuse gamma intelligence (NEW - critical for strategy selection)
+                            # If we already fetched it above, use that; otherwise fetch now
+                            if 'gamma_intel' not in locals() or not gamma_intel.get('success'):
+                                # Get current VIX for context-aware adjustments
+                                current_vix = 0
+                                try:
+                                    import yfinance as yf
+                                    vix_data = yf.Ticker("^VIX").history(period="1d")
+                                    if not vix_data.empty:
+                                        current_vix = float(vix_data['Close'].iloc[-1])
+                                except:
+                                    current_vix = 0
 
-                            gex_levels_context = ""
-                            if gex_levels:
-                                gex_levels_context = f"""
+                                # Fetch comprehensive gamma intelligence
+                                gamma_intel = st.session_state.api_client.get_current_week_gamma_intelligence(
+                                    current_symbol,
+                                    current_vix=current_vix
+                                )
 
-**GEX Levels (Key Strikes):**
-- GEX_0: ${gex_levels.get('gex_0', 0):.2f} (Primary resistance/support)
-- GEX_1: ${gex_levels.get('gex_1', 0):.2f} (Secondary level)
-- 1-Day Expected Range: ${gex_levels.get('std_1day_neg', 0):.2f} - ${gex_levels.get('std_1day_pos', 0):.2f}
-- 7-Day Expected Range: ${gex_levels.get('std_7day_neg', 0):.2f} - ${gex_levels.get('std_7day_pos', 0):.2f}"""
+                            # Generate recommendation with NEW gamma intelligence integration
+                            prompt = f"""What's the best trade right now for {current_symbol} based on current gamma regime?
 
-                            # Generate recommendation with enhanced data
-                            prompt = f"""You are an expert options trader analyzing GEX data for {current_symbol}.
+Consider:
+- Current gamma structure (is it high or low?)
+- Which strategies are favored vs. avoided in this regime?
+- Specific strikes and expirations that make sense given gamma decay
 
-Current Market Conditions:
-- Net GEX: ${net_gex_billions:.2f}B ({'Positive - dealers long gamma, suppressing vol' if net_gex > 0 else 'Negative - dealers short gamma, amplifying moves'})
-- Spot Price: ${spot:.2f}
-- Flip Point: ${flip:.2f} (Price is {'above' if spot > flip else 'below'} flip)
-- Day: {day_of_week}
-- Time: {current_time.strftime('%I:%M %p %Z')}
-- Is Expiration Day: {'Yes' if is_expiration_day else 'No'}
-- Weekly Expiration Days: {', '.join(exp_days)}
-{gamma_context}{gex_levels_context}
-
-**Critical Context:**
-The gamma expiration data shows EXACTLY how much dealer hedging pressure is rolling off each day. When >15% of gamma expires, volatility expands significantly. Use GEX levels for precise strike selection.
-
-Based on this complete picture of gamma structure, decay patterns, and key levels, provide ONE specific, actionable trade recommendation that exploits the current gamma regime.
-
-Format your response as:
-**Strategy**: [strategy name]
-**Entry**: [specific time and price levels - use GEX levels if relevant]
-**Structure**: [exact strikes using GEX levels and expiration date]
-**Profit Target**: [specific exit price or %]
-**Stop Loss**: [specific price, ideally near a GEX level]
-**Size**: [% of account]
-**Rationale**: [2-3 sentences explaining how gamma decay and current levels create edge RIGHT NOW]
-
-Be specific with strikes (use the GEX levels provided), timing based on gamma decay schedule, and risk management. This should be a trade I can execute immediately."""
+Provide ONE specific, actionable trade with exact strikes, expiration, entry/exit.
+"""
 
                             try:
-                                # Use analyze_market method with proper market data structure
+                                # Use analyze_market method with proper market data structure + GAMMA INTELLIGENCE
                                 market_data = {
                                     'net_gex': net_gex,
                                     'spot_price': spot,
                                     'flip_point': flip,
-                                    'gex_levels': gex_levels
+                                    'gex_levels': gex_levels,
+                                    'symbol': current_symbol
                                 }
-                                ai_response = claude.analyze_market(market_data, prompt)
+
+                                # *** CRITICAL: Pass gamma_intel to eliminate iron condor bias ***
+                                ai_response = claude.analyze_market(
+                                    market_data=market_data,
+                                    user_query=prompt,
+                                    gamma_intel=gamma_intel  # NEW - enables context-aware strategy selection
+                                )
+
                                 st.markdown("#### 🎯 Claude's Gamma-Optimized Trade Recommendation")
                                 st.markdown(f"""
 <div style='background: linear-gradient(135deg, rgba(138, 43, 226, 0.15) 0%, rgba(75, 0, 130, 0.1) 100%);

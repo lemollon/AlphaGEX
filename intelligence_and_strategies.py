@@ -1365,8 +1365,18 @@ class ClaudeIntelligence:
             """)
             self._api_key_warning_shown = True
 
-    def analyze_market(self, market_data: Dict, user_query: str) -> str:
-        """Generate intelligent market analysis with RAG context - NOW WITH ULTIMATE FEATURES"""
+    def analyze_market(self, market_data: Dict, user_query: str, gamma_intel: Dict = None) -> str:
+        """
+        Generate intelligent market analysis with RAG context + GAMMA INTELLIGENCE
+
+        Args:
+            market_data: Basic GEX data (net_gex, spot, flip)
+            user_query: User's question
+            gamma_intel: Full 3-view gamma intelligence (NEW - eliminates iron condor bias)
+
+        Returns:
+            AI-powered recommendation with context-aware strategy selection
+        """
 
         # Update account settings from session state
         self.update_account_settings()
@@ -1499,6 +1509,123 @@ class ClaudeIntelligence:
         calculator = DynamicLevelCalculator()
         zones = calculator.get_profitable_zones(market_data)
 
+        # =====================================================================
+        # NEW: GAMMA INTELLIGENCE INTEGRATION (Fixes iron condor bias)
+        # =====================================================================
+        strategy_guidance = ""
+        gamma_context_str = ""
+
+        if gamma_intel and gamma_intel.get('success'):
+            daily = gamma_intel['daily_impact']
+            weekly = gamma_intel['weekly_evolution']
+            vol_potential = gamma_intel['volatility_potential']
+
+            current_day = gamma_intel.get('current_day', 'Unknown')
+
+            # Determine strategy type based on gamma regime
+            if daily['risk_level'] in ['EXTREME', 'ELEVATED']:
+                # HIGH decay today - AVOID iron condors
+                strategy_guidance = f"""
+🚨 **GAMMA REGIME: EXTREME DECAY ({daily['impact_pct']:.0f}%)**
+
+**AVOID:**
+- Iron condors (will get blown up in directional move)
+- Credit spreads (insufficient premium for risk)
+- Range-bound strategies (gamma is expiring, range will break)
+
+**FAVOR:**
+- Directional calls/puts (0.4-0.5 delta in trend direction)
+- ATM straddles if unsure of direction (capture volatility spike)
+- Fade-the-close plays (position at 3:45pm for next day move)
+
+**Why:** Tomorrow loses {daily['impact_pct']:.0f}% of gamma support. Dealers won't hedge as aggressively.
+Price moves will be sharper and more directional. This is NOT an iron condor environment.
+"""
+            elif weekly['total_decay_pct'] > 60:
+                # High decay week
+                if current_day in ['Monday', 'Tuesday', 'Wednesday']:
+                    # Early week - still some gamma
+                    strategy_guidance = f"""
+📊 **GAMMA REGIME: HIGH DECAY WEEK ({weekly['total_decay_pct']:.0f}%), EARLY PHASE**
+
+**FAVOR (Early Week Mon-Wed):**
+- Iron condors / credit spreads (gamma still provides support)
+- Theta-positive strategies (0.15-0.20 delta wings)
+- Range-bound plays (dealers still hedging)
+
+**AVOID:**
+- Highly directional bets (gamma will suppress moves until Thu/Fri)
+- 0DTE unless clear setup
+
+**PREPARE FOR LATE WEEK:**
+By Thursday, {weekly['daily_breakdown'][3]['pct_of_week']:.0f}% of gamma will be gone.
+Switch to directional strategies Thu/Fri.
+"""
+                else:
+                    # Late week - low gamma
+                    strategy_guidance = f"""
+🔶 **GAMMA REGIME: HIGH DECAY WEEK ({weekly['total_decay_pct']:.0f}%), LATE PHASE**
+
+**FAVOR (Late Week Thu-Fri):**
+- Directional calls/puts (0.5-0.6 delta, ATM or first OTM)
+- Momentum plays (gamma is gone, trends extend)
+- Next-week expirations (don't buy 0DTE when gamma is low)
+
+**AVOID:**
+- Iron condors (only {weekly['daily_breakdown'][-1]['pct_of_week']:.0f}% gamma remains by Friday)
+- Selling premium (insufficient support from dealers)
+- Range assumptions (market is free to trend)
+
+**Why:** Week started with {weekly['daily_breakdown'][0]['pct_of_week']:.0f}% gamma, now only
+{weekly['daily_breakdown'][-1]['pct_of_week']:.0f}% left. Dealers can't pin price. Go directional.
+"""
+            else:
+                # Normal week
+                strategy_guidance = f"""
+✅ **GAMMA REGIME: BALANCED ({weekly['total_decay_pct']:.0f}% weekly decay)**
+
+**ALL STRATEGIES VIABLE:**
+- Iron condors acceptable (moderate gamma support)
+- Credit spreads work
+- Directional plays on clear technical setups
+- Straddles for volatility expansion
+
+Use normal technical analysis. No extreme gamma bias.
+"""
+
+            # Add full gamma intelligence context
+            gamma_context_str = f"""
+
+**GAMMA EXPIRATION INTELLIGENCE (Current Week):**
+
+VIEW 1 - Daily Impact:
+- Today's gamma: ${daily['today_total_gamma']/1e9:.2f}B
+- After 4pm: ${daily['tomorrow_total_gamma']/1e9:.2f}B
+- Expiring today: ${daily['expiring_today']/1e9:.2f}B ({daily['impact_pct']:.0f}%)
+- Risk Level: {daily['risk_level']}
+- Context: {' | '.join(daily['context_notes']) if daily['context_notes'] else 'Standard thresholds'}
+
+VIEW 2 - Weekly Evolution:
+- Monday baseline: ${weekly['monday_baseline']/1e9:.2f}B (100%)
+- Current: {next((d['pct_of_week'] for d in weekly['daily_breakdown'] if d['is_today']), 'N/A')}%
+- Friday end: ${weekly['friday_end']/1e9:.2f}B ({weekly['daily_breakdown'][-1]['pct_of_week']:.0f}%)
+- Total weekly decay: {weekly['total_decay_pct']:.0f}%
+- Pattern: {weekly['decay_pattern']}
+
+VIEW 3 - Volatility Cliffs:
+{chr(10).join(f"- {day['day_name']}: {day['vol_pct']:.0f}% expires ({day['risk_level']})" for day in vol_potential['by_day'])}
+
+Highest Risk Day: {vol_potential['highest_risk_day']['day_name'] if vol_potential['highest_risk_day'] else 'None'} ({vol_potential['highest_risk_day']['vol_pct']:.0f}% decay)
+"""
+        else:
+            # No gamma intelligence available - use balanced approach
+            strategy_guidance = """
+⚠️ **GAMMA INTELLIGENCE UNAVAILABLE**
+
+Use balanced approach: Consider all strategy types based on technical analysis.
+Default to moderate positioning until gamma data is available.
+"""
+
         self.conversation_history.append({"role": "user", "content": user_query})
         messages = self.conversation_history[-10:]
 
@@ -1525,6 +1652,14 @@ class ClaudeIntelligence:
             PROFITABLE ZONES:
             {json.dumps(make_json_serializable(zones), indent=2)}
 
+            {gamma_context_str}
+
+            ==================================================================
+            🎯 STRATEGY GUIDANCE BASED ON GAMMA REGIME:
+            ==================================================================
+            {strategy_guidance}
+            ==================================================================
+
             User's Specific Question: {user_query}
 
             CRITICAL REQUIREMENTS - YOU MUST:
@@ -1538,10 +1673,15 @@ class ClaudeIntelligence:
             8. Reference the ACTUAL real options prices (bid/ask) from the data above
             9. Explain how Greeks will affect the trade (theta decay, delta move, etc.)
             10. Give precise entry/exit based on REAL market prices
+            11. **FOLLOW THE STRATEGY GUIDANCE** - respect the gamma regime constraints
 
             POSITION SIZING NOTE:
             The user's account is ${self.account_size} and they risk {self.risk_pct}% per trade.
             Recommend the appropriate number of contracts from the position sizing data.
+
+            **IMPORTANT:** The "STRATEGY GUIDANCE BASED ON GAMMA REGIME" section above tells you
+            which strategies to FAVOR and which to AVOID based on current market gamma structure.
+            This is evidence-based guidance from academic research. FOLLOW IT.
 
             There is ALWAYS a trade. Use the REAL options data to give specific recommendations.
             """
