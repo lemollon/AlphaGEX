@@ -794,28 +794,30 @@ def main():
 
     with col1:
         st.markdown("""
-        <div class='hover-lift' style='background: linear-gradient(135deg, rgba(0,212,255,0.18) 0%, rgba(0,153,204,0.12) 100%);
-                    padding: 24px; border-radius: 16px;
-                    border: 2px solid rgba(0,212,255,0.4);
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-                    backdrop-filter: blur(10px);
-                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+<div class='hover-lift' style='background: linear-gradient(135deg, rgba(0,212,255,0.18) 0%, rgba(0,153,204,0.12) 100%);
+            padding: 24px; border-radius: 16px;
+            border: 2px solid rgba(0,212,255,0.4);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>System Status</div>
+    <div style='color: white; font-size: 24px; font-weight: 600;'>🟢 ACTIVE</div>
+</div>
         """, unsafe_allow_html=True)
-        st.metric("System Status", "🟢 ACTIVE", help="AlphaGEX is online and processing market data")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col2:
         positions_count = len(st.session_state.active_positions)
-        st.markdown("""
-        <div class='hover-lift' style='background: linear-gradient(135deg, rgba(255,184,0,0.18) 0%, rgba(255,153,0,0.12) 100%);
-                    padding: 24px; border-radius: 16px;
-                    border: 2px solid rgba(255,184,0,0.4);
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-                    backdrop-filter: blur(10px);
-                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+        st.markdown(f"""
+<div class='hover-lift' style='background: linear-gradient(135deg, rgba(255,184,0,0.18) 0%, rgba(255,153,0,0.12) 100%);
+            padding: 24px; border-radius: 16px;
+            border: 2px solid rgba(255,184,0,0.4);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Active Positions</div>
+    <div style='color: white; font-size: 24px; font-weight: 600;'>{positions_count}</div>
+</div>
         """, unsafe_allow_html=True)
-        st.metric("Active Positions", positions_count, help="Number of currently open trades")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col3:
         # Calculate today's P&L (cached for 60 seconds)
@@ -823,64 +825,62 @@ def main():
         pnl_color = "rgba(0,255,136,0.18)" if today_pnl >= 0 else "rgba(255,68,68,0.18)"
         pnl_color2 = "rgba(0,255,136,0.12)" if today_pnl >= 0 else "rgba(255,68,68,0.12)"
         pnl_border = "rgba(0,255,136,0.5)" if today_pnl >= 0 else "rgba(255,68,68,0.5)"
+        pnl_delta_color = "#00FF88" if today_pnl >= 0 else "#FF4444"
+        pnl_arrow = "▲" if today_pnl >= 0 else "▼"
         st.markdown(f"""
-        <div class='hover-lift' style='background: linear-gradient(135deg, {pnl_color} 0%, {pnl_color2} 100%);
-                    padding: 24px; border-radius: 16px;
-                    border: 2px solid {pnl_border};
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-                    backdrop-filter: blur(10px);
-                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+<div class='hover-lift' style='background: linear-gradient(135deg, {pnl_color} 0%, {pnl_color2} 100%);
+            padding: 24px; border-radius: 16px;
+            border: 2px solid {pnl_border};
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Today's P&L</div>
+    <div style='color: white; font-size: 24px; font-weight: 600;'>${today_pnl:,.2f}</div>
+    <div style='color: {pnl_delta_color}; font-size: 14px; margin-top: 4px;'>{pnl_arrow} ${abs(today_pnl):,.2f}</div>
+</div>
         """, unsafe_allow_html=True)
-        st.metric("Today's P&L", f"${today_pnl:,.2f}", delta=f"{today_pnl:+,.2f}",
-                 help="Your profit/loss for today's trading session")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col4:
-        # Get user's timezone preference (default to Central)
-        user_tz = st.session_state.get('user_timezone', 'US/Central')
+        # Always use Central Time for Texas-based user
+        user_tz = 'US/Central'
         local_time = get_local_time(user_tz)
         et_time = get_et_time()
         market_status = "🟢 OPEN" if is_market_open() else "🔴 CLOSED"
 
-        # Determine timezone abbreviation
-        tz_abbrev = {
-            'US/Eastern': 'ET',
-            'US/Central': 'CT',
-            'US/Mountain': 'MT',
-            'US/Pacific': 'PT'
-        }.get(user_tz, 'Local')
-
-        current_time = f"{local_time.strftime('%I:%M %p')} {tz_abbrev}"
+        current_time = f"{local_time.strftime('%I:%M %p')} CT"
         market_open = is_market_open()
         time_color = "rgba(0,255,136,0.18)" if market_open else "rgba(255,68,68,0.18)"
         time_color2 = "rgba(0,255,136,0.12)" if market_open else "rgba(255,68,68,0.12)"
         time_border = "rgba(0,255,136,0.5)" if market_open else "rgba(255,68,68,0.5)"
         st.markdown(f"""
-        <div class='hover-lift' style='background: linear-gradient(135deg, {time_color} 0%, {time_color2} 100%);
-                    padding: 24px; border-radius: 16px;
-                    border: 2px solid {time_border};
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-                    backdrop-filter: blur(10px);
-                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+<div class='hover-lift' style='background: linear-gradient(135deg, {time_color} 0%, {time_color2} 100%);
+            padding: 24px; border-radius: 16px;
+            border: 2px solid {time_border};
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Market Time</div>
+    <div style='color: white; font-size: 24px; font-weight: 600;'>{current_time}</div>
+    <div style='color: {"#00FF88" if market_open else "#FF4444"}; font-size: 14px; margin-top: 4px;'>{market_status}</div>
+</div>
         """, unsafe_allow_html=True)
-        st.metric("Market Time", current_time, delta=market_status,
-                 help="Current market time and trading status (9:30 AM - 4:00 PM ET)")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col5:
-        day = et_time.strftime('%A')
+        # Use Central Time for day of week
+        day = local_time.strftime('%A')
         day_quality = "🟢" if day in ['Monday', 'Tuesday'] else "🟡" if day == 'Wednesday' else "🔴"
-        st.markdown("""
-        <div class='hover-lift' style='background: linear-gradient(135deg, rgba(138,43,226,0.18) 0%, rgba(75,0,130,0.12) 100%);
-                    padding: 24px; border-radius: 16px;
-                    border: 2px solid rgba(138,43,226,0.4);
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-                    backdrop-filter: blur(10px);
-                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+        st.markdown(f"""
+<div class='hover-lift' style='background: linear-gradient(135deg, rgba(138,43,226,0.18) 0%, rgba(75,0,130,0.12) 100%);
+            padding: 24px; border-radius: 16px;
+            border: 2px solid rgba(138,43,226,0.4);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Trading Day</div>
+    <div style='color: white; font-size: 24px; font-weight: 600;'>{day_quality} {day}</div>
+    <div style='color: rgba(255,255,255,0.5); font-size: 12px; margin-top: 4px;'>{'Best' if day in ['Monday', 'Tuesday'] else 'Good' if day == 'Wednesday' else 'Caution'}</div>
+</div>
         """, unsafe_allow_html=True)
-        st.metric("Trading Day", f"{day_quality} {day}",
-                 help="Day of week quality: Mon/Tue (Best), Wed (Good), Thu/Fri (Avoid new positions)")
-        st.markdown("</div>", unsafe_allow_html=True)
     
     # Sidebar Configuration
     with st.sidebar:
@@ -999,14 +999,24 @@ def main():
                         import traceback
                         st.code(traceback.format_exc())
 
-        # Quick symbols
+        # Quick symbols - responsive layout for mobile
         st.caption("Quick Select:")
-        cols = st.columns(4)
-        for i, sym in enumerate(['SPY', 'QQQ', 'IWM', 'DIA']):
-            with cols[i]:
-                if st.button(sym, use_container_width=True):
-                    st.session_state.selected_symbol = sym
-                    st.rerun()
+        # Use 2x2 grid for better mobile display
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button('SPY', use_container_width=True, key='btn_spy'):
+                st.session_state.selected_symbol = 'SPY'
+                st.rerun()
+            if st.button('IWM', use_container_width=True, key='btn_iwm'):
+                st.session_state.selected_symbol = 'IWM'
+                st.rerun()
+        with col2:
+            if st.button('QQQ', use_container_width=True, key='btn_qqq'):
+                st.session_state.selected_symbol = 'QQQ'
+                st.rerun()
+            if st.button('DIA', use_container_width=True, key='btn_dia'):
+                st.session_state.selected_symbol = 'DIA'
+                st.rerun()
 
         st.divider()
 
@@ -1019,25 +1029,10 @@ def main():
 
         st.divider()
 
-        # 2. Timezone Settings (SECOND)
-        st.subheader("🕐 Timezone Preference")
+        # Timezone is fixed to Central Time (Texas)
         if 'user_timezone' not in st.session_state:
             st.session_state.user_timezone = 'US/Central'
-
-        timezone_options = {
-            'Eastern Time (ET)': 'US/Eastern',
-            'Central Time (CT)': 'US/Central',
-            'Mountain Time (MT)': 'US/Mountain',
-            'Pacific Time (PT)': 'US/Pacific'
-        }
-
-        selected_tz_display = st.selectbox(
-            "Your Local Timezone",
-            options=list(timezone_options.keys()),
-            index=1,  # Default to Central
-            help="Select your local timezone for time displays"
-        )
-        st.session_state.user_timezone = timezone_options[selected_tz_display]
+        st.session_state.user_timezone = 'US/Central'  # Always use Central Time
 
         st.divider()
 
@@ -1312,8 +1307,8 @@ def main():
             from datetime import datetime
             import pytz
 
-            # Use user's timezone or default to Eastern
-            user_tz = st.session_state.get('user_timezone', 'US/Eastern')
+            # Always use Central Time
+            user_tz = 'US/Central'
             current_time = datetime.now(pytz.timezone(user_tz))
             day_of_week = current_time.strftime('%A')
             hour = current_time.hour
@@ -1367,13 +1362,13 @@ def main():
                     # If today is Friday, include it and go to next Friday
                     days_until_friday = 7
 
-                # Calculate up to 2 weeks of trading days
-                for i in range(1, 15):  # Up to 2 weeks ahead
+                # Calculate current week and next week trading days (including today)
+                for i in range(0, 15):  # Start from today (i=0), up to 2 weeks ahead
                     future_date = current_time + timedelta(days=i)
                     # Skip weekends
                     if future_date.weekday() < 5:  # Monday=0, Friday=4
                         trading_days.append(future_date)
-                        # Stop after we've captured at least one full week cycle
+                        # Stop after we've captured current calendar week + next week
                         if len(trading_days) >= 10:
                             break
 
@@ -1541,7 +1536,8 @@ Gamma represents dealer hedging pressure. When options expire, dealers no longer
 """, unsafe_allow_html=True)
 
                 # Display GEX Levels if available
-                if gex_levels:
+                # TEMPORARILY DISABLED - API not returning reliable data for most symbols
+                if False and gex_levels:
                     st.markdown("### 🎯 Precise Strike Selection - GEX Levels")
                     st.markdown("""
                     These are the exact price levels where gamma is concentrated. Use these for:
@@ -1854,7 +1850,12 @@ Gamma represents dealer hedging pressure. When options expire, dealers no longer
                             st.markdown(f"**⏰ Entry Timing:** {trade['entry_timing']}")
 
                             st.markdown("**📋 Trade Structure:**")
-                            st.code(trade['structure'], language=None)
+                            st.markdown(f"""
+<div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.12) 0%, rgba(0, 153, 204, 0.08) 100%);
+            padding: 16px; border-radius: 10px; border-left: 4px solid #00D4FF; margin: 10px 0;'>
+    <div style='color: white; font-size: 14px; line-height: 1.8; white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;'>{trade['structure']}</div>
+</div>
+                            """, unsafe_allow_html=True)
 
                         with col2:
                             st.markdown("**🎯 Exit Rules:**")
@@ -1962,7 +1963,15 @@ Be specific with strikes (use the GEX levels provided), timing based on gamma de
                                 }
                                 ai_response = claude.analyze_market(market_data, prompt)
                                 st.markdown("#### 🎯 Claude's Gamma-Optimized Trade Recommendation")
-                                st.markdown(ai_response)
+                                st.markdown(f"""
+<div style='background: linear-gradient(135deg, rgba(138, 43, 226, 0.15) 0%, rgba(75, 0, 130, 0.1) 100%);
+            padding: 24px; border-radius: 14px; border: 2px solid rgba(138, 43, 226, 0.4);
+            margin: 15px 0;'>
+    <div style='color: white; font-size: 15px; line-height: 1.9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;'>
+{ai_response}
+    </div>
+</div>
+                                """, unsafe_allow_html=True)
 
                                 # Show the data Claude used
                                 with st.expander("📊 Data Used by Claude AI"):

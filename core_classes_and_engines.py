@@ -1014,7 +1014,7 @@ class TradingVolatilityAPI:
 
     # CLASS-LEVEL (SHARED) rate limiting state - applies to ALL instances
     _shared_last_request_time = 0
-    _shared_min_request_interval = 15.0  # 15 SECONDS between requests
+    _shared_min_request_interval = 20.0  # 20 SECONDS between requests (increased for better stability)
     _shared_circuit_breaker_active = False
     _shared_circuit_breaker_until = 0
     _shared_consecutive_rate_limit_errors = 0
