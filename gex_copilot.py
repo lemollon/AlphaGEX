@@ -799,9 +799,12 @@ def main():
             border: 2px solid rgba(0,212,255,0.4);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            min-height: 120px; height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;'>
     <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>System Status</div>
     <div style='color: white; font-size: 24px; font-weight: 600;'>🟢 ACTIVE</div>
+    <div style='height: 18px;'></div>
 </div>
         """, unsafe_allow_html=True)
 
@@ -813,9 +816,12 @@ def main():
             border: 2px solid rgba(255,184,0,0.4);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            min-height: 120px; height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;'>
     <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Active Positions</div>
     <div style='color: white; font-size: 24px; font-weight: 600;'>{positions_count}</div>
+    <div style='height: 18px;'></div>
 </div>
         """, unsafe_allow_html=True)
 
@@ -833,7 +839,9 @@ def main():
             border: 2px solid {pnl_border};
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            min-height: 120px; height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;'>
     <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Today's P&L</div>
     <div style='color: white; font-size: 24px; font-weight: 600;'>${today_pnl:,.2f}</div>
     <div style='color: {pnl_delta_color}; font-size: 14px; margin-top: 4px;'>{pnl_arrow} ${abs(today_pnl):,.2f}</div>
@@ -858,7 +866,9 @@ def main():
             border: 2px solid {time_border};
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            min-height: 120px; height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;'>
     <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Market Time</div>
     <div style='color: white; font-size: 24px; font-weight: 600;'>{current_time}</div>
     <div style='color: {"#00FF88" if market_open else "#FF4444"}; font-size: 14px; margin-top: 4px;'>{market_status}</div>
@@ -875,7 +885,9 @@ def main():
             border: 2px solid rgba(138,43,226,0.4);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);'>
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            min-height: 120px; height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;'>
     <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Trading Day</div>
     <div style='color: white; font-size: 24px; font-weight: 600;'>{day_quality} {day}</div>
     <div style='color: rgba(255,255,255,0.5); font-size: 12px; margin-top: 4px;'>{'Best' if day in ['Monday', 'Tuesday'] else 'Good' if day == 'Wednesday' else 'Caution'}</div>
