@@ -4,7 +4,35 @@ NOTE: This file should be placed in the same directory as the other files
 When importing in main.py, use: from intelligence_and_strategies import *
 """
 
-import streamlit as st
+# Optional streamlit import - only available when running in Streamlit context
+try:
+    import streamlit as st
+    STREAMLIT_AVAILABLE = True
+except ImportError:
+    STREAMLIT_AVAILABLE = False
+    # Create a mock streamlit object for non-Streamlit contexts
+    class MockStreamlit:
+        class session_state:
+            @staticmethod
+            def get(key, default=None):
+                return default
+
+        class secrets:
+            @staticmethod
+            def get(key, default=""):
+                return default
+
+        @staticmethod
+        def error(msg): pass
+
+        @staticmethod
+        def warning(msg): pass
+
+        @staticmethod
+        def info(msg): pass
+
+    st = MockStreamlit()
+
 import requests
 import json
 from datetime import datetime, timedelta
