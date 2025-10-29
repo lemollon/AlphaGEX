@@ -667,11 +667,12 @@ def main():
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            min-height: 120px; height: 120px;
-            display: flex; flex-direction: column; justify-content: space-between;'>
-    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>System Status</div>
-    <div style='color: white; font-size: 24px; font-weight: 600;'>🟢 ACTIVE</div>
-    <div style='height: 18px;'></div>
+            min-height: 120px; height: 120px; max-height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;
+            box-sizing: border-box; overflow: hidden;'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px;'>System Status</div>
+    <div style='color: white; font-size: 24px; font-weight: 600; line-height: 1.2;'>🟢 ACTIVE</div>
+    <div style='color: rgba(255,255,255,0.5); font-size: 14px; visibility: hidden;'>placeholder</div>
 </div>
         """, unsafe_allow_html=True)
 
@@ -684,11 +685,12 @@ def main():
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            min-height: 120px; height: 120px;
-            display: flex; flex-direction: column; justify-content: space-between;'>
-    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Active Positions</div>
-    <div style='color: white; font-size: 24px; font-weight: 600;'>{positions_count}</div>
-    <div style='height: 18px;'></div>
+            min-height: 120px; height: 120px; max-height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;
+            box-sizing: border-box; overflow: hidden;'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px;'>Active Positions</div>
+    <div style='color: white; font-size: 24px; font-weight: 600; line-height: 1.2;'>{positions_count}</div>
+    <div style='color: rgba(255,255,255,0.5); font-size: 14px; visibility: hidden;'>placeholder</div>
 </div>
         """, unsafe_allow_html=True)
 
@@ -707,11 +709,12 @@ def main():
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            min-height: 120px; height: 120px;
-            display: flex; flex-direction: column; justify-content: space-between;'>
-    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Today's P&L</div>
-    <div style='color: white; font-size: 24px; font-weight: 600;'>${today_pnl:,.2f}</div>
-    <div style='color: {pnl_delta_color}; font-size: 14px; margin-top: 4px;'>{pnl_arrow} ${abs(today_pnl):,.2f}</div>
+            min-height: 120px; height: 120px; max-height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;
+            box-sizing: border-box; overflow: hidden;'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px;'>Today's P&L</div>
+    <div style='color: white; font-size: 24px; font-weight: 600; line-height: 1.2;'>${today_pnl:,.2f}</div>
+    <div style='color: {pnl_delta_color}; font-size: 14px;'>{pnl_arrow} ${abs(today_pnl):,.2f}</div>
 </div>
         """, unsafe_allow_html=True)
 
@@ -734,11 +737,12 @@ def main():
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            min-height: 120px; height: 120px;
-            display: flex; flex-direction: column; justify-content: space-between;'>
-    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Market Time</div>
-    <div style='color: white; font-size: 24px; font-weight: 600;'>{current_time}</div>
-    <div style='color: {"#00FF88" if market_open else "#FF4444"}; font-size: 14px; margin-top: 4px;'>{market_status}</div>
+            min-height: 120px; height: 120px; max-height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;
+            box-sizing: border-box; overflow: hidden;'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px;'>Market Time</div>
+    <div style='color: white; font-size: 24px; font-weight: 600; line-height: 1.2;'>{current_time}</div>
+    <div style='color: {"#00FF88" if market_open else "#FF4444"}; font-size: 14px;'>{market_status}</div>
 </div>
         """, unsafe_allow_html=True)
 
@@ -753,11 +757,12 @@ def main():
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            min-height: 120px; height: 120px;
-            display: flex; flex-direction: column; justify-content: space-between;'>
-    <div style='color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 8px;'>Trading Day</div>
-    <div style='color: white; font-size: 24px; font-weight: 600;'>{day_quality} {day}</div>
-    <div style='color: rgba(255,255,255,0.5); font-size: 12px; margin-top: 4px;'>{'Best' if day in ['Monday', 'Tuesday'] else 'Good' if day == 'Wednesday' else 'Caution'}</div>
+            min-height: 120px; height: 120px; max-height: 120px;
+            display: flex; flex-direction: column; justify-content: space-between;
+            box-sizing: border-box; overflow: hidden;'>
+    <div style='color: rgba(255,255,255,0.6); font-size: 14px;'>Trading Day</div>
+    <div style='color: white; font-size: 24px; font-weight: 600; line-height: 1.2;'>{day_quality} {day}</div>
+    <div style='color: rgba(255,255,255,0.5); font-size: 14px;'>{'Best' if day in ['Monday', 'Tuesday'] else 'Good' if day == 'Wednesday' else 'Caution'}</div>
 </div>
         """, unsafe_allow_html=True)
     
