@@ -979,16 +979,28 @@ def display_control_panel(trader: AutonomousPaperTrader):
     open_positions = c.fetchone()[0]
     conn.close()
 
+    # Check if scheduler is running
+    try:
+        from trader_scheduler import get_scheduler
+        scheduler = get_scheduler()
+        scheduler_running = scheduler.is_running
+    except:
+        scheduler_running = False
+
     # Display status
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if traded_today:
             st.success("✅ **Trade Finding**")
-            st.caption(f"Executed today ({last_trade_date})")
+            st.caption(f"✓ Executed today at {last_trade_date}")
         else:
-            st.info("🔍 **Trade Finding**")
-            st.caption("Ready for next market day")
+            if scheduler_running:
+                st.warning("⏳ **Trade Finding**")
+                st.caption("🔍 Looking for today's trade (checks hourly 10AM-3PM ET)")
+            else:
+                st.error("⚠️ **Trade Finding**")
+                st.caption("⛔ Scheduler stopped - not searching")
 
     with col2:
         if open_positions > 0:
@@ -999,8 +1011,25 @@ def display_control_panel(trader: AutonomousPaperTrader):
             st.caption("No open positions")
 
     with col3:
-        st.success("🟢 **System Status**")
-        st.caption("Fully autonomous - running")
+        if scheduler_running:
+            st.success("🟢 **Scheduler Status**")
+            st.caption("✓ Running - auto-checking hourly")
+        else:
+            st.error("🔴 **Scheduler Status**")
+            st.caption("⛔ Stopped - trades paused")
+
+    # Show next scheduled check time
+    if scheduler_running:
+        try:
+            from trader_scheduler import get_scheduler
+            import pytz
+            scheduler = get_scheduler()
+            status = scheduler.get_status()
+
+            if 'next_run' in status and status['next_run'] != 'Scheduler not running':
+                st.info(f"⏰ **Next Check:** {status['next_run']}")
+        except:
+            pass
 
     st.divider()
 
@@ -1016,7 +1045,7 @@ def display_control_panel(trader: AutonomousPaperTrader):
     ✅ **Smart Strategy Selection**:
        - Strong GEX signal → Directional trade (calls/puts)
        - Unclear GEX → Iron Condor (collect premium)
-    ✅ **Timing**: Checks hourly 9:30 AM - 4:00 PM ET
+    ✅ **Timing**: Checks hourly 10:00 AM - 3:00 PM ET (6 checks per day)
     ✅ **AI-Powered Exits**: Claude analyzes each position intelligently
 
     **TRADE SELECTION LOGIC:**
