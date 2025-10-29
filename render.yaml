@@ -19,7 +19,9 @@ services:
     runtime: python
     plan: starter
     region: oregon
-    buildCommand: "pip install -r requirements-render.txt"
+    branch: main  # Explicitly deploy from main branch
+    autoDeploy: true  # Auto-deploy on every push to main
+    buildCommand: "pip install --no-cache-dir -r requirements-render.txt"
     startCommand: "./start.sh"
     healthCheckPath: /health
     envVars:
