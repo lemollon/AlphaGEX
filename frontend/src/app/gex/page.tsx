@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { TrendingUp, TrendingDown, Activity, BarChart3, AlertTriangle } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import GEXProfileChart from '@/components/GEXProfileChart'
 
 interface GEXLevel {
   strike: number
@@ -201,13 +202,20 @@ export default function GEXAnalysis() {
               <h2 className="text-xl font-semibold text-text-primary">GEX Profile</h2>
               <BarChart3 className="text-primary w-6 h-6" />
             </div>
-            <div className="h-96 bg-background-deep rounded-lg flex items-center justify-center border border-border">
-              <div className="text-center">
-                <BarChart3 className="w-16 h-16 text-text-muted mx-auto mb-2" />
-                <p className="text-text-secondary">TradingView Chart Integration</p>
-                <p className="text-text-muted text-sm mt-1">Coming soon...</p>
+            {gexLevels.length > 0 ? (
+              <GEXProfileChart
+                data={gexLevels}
+                spotPrice={gexData.spot_price}
+                height={384}
+              />
+            ) : (
+              <div className="h-96 bg-background-deep rounded-lg flex items-center justify-center border border-border">
+                <div className="text-center">
+                  <BarChart3 className="w-16 h-16 text-text-muted mx-auto mb-2" />
+                  <p className="text-text-secondary">Loading GEX profile...</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Key Levels */}

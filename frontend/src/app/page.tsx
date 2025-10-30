@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react'
 import Navigation from '@/components/Navigation'
 import StatusCard from '@/components/StatusCard'
+import TradingViewChart from '@/components/TradingViewChart'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { LineData } from 'lightweight-charts'
 import {
   TrendingDown,
   Zap,
@@ -19,6 +21,8 @@ import {
 export default function Dashboard() {
   const [gexData, setGexData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [chartData, setChartData] = useState<LineData[]>([])
+  const [performanceData, setPerformanceData] = useState<LineData[]>([])
   const { data: wsData, isConnected } = useWebSocket('SPY')
 
   useEffect(() => {
@@ -35,6 +39,39 @@ export default function Dashboard() {
     }
 
     fetchData()
+
+    // Generate sample chart data (price movement)
+    const generateChartData = () => {
+      const data: LineData[] = []
+      const now = Math.floor(Date.now() / 1000)
+      let price = 580
+
+      for (let i = 90; i >= 0; i--) {
+        const time = (now - i * 86400) as any
+        price = price + (Math.random() - 0.5) * 10
+        data.push({ time, value: price })
+      }
+
+      setChartData(data)
+    }
+
+    // Generate sample performance data (equity curve)
+    const generatePerformanceData = () => {
+      const data: LineData[] = []
+      const now = Math.floor(Date.now() / 1000)
+      let equity = 5000
+
+      for (let i = 30; i >= 0; i--) {
+        const time = (now - i * 86400) as any
+        equity = equity + (Math.random() - 0.4) * 50 // Slight upward bias
+        data.push({ time, value: equity })
+      }
+
+      setPerformanceData(data)
+    }
+
+    generateChartData()
+    generatePerformanceData()
   }, [])
 
   // Update data from WebSocket
@@ -149,12 +186,26 @@ export default function Dashboard() {
                 )}
               </h2>
 
-              <div className="bg-background-deep rounded-lg p-6 h-80 flex items-center justify-center">
-                <div className="text-center text-text-muted">
-                  <TrendingUp className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                  <p>Chart Component</p>
-                  <p className="text-sm">TradingView chart will be integrated here</p>
-                </div>
+              <div className="bg-background-deep rounded-lg">
+                {chartData.length > 0 ? (
+                  <TradingViewChart
+                    data={chartData}
+                    type="area"
+                    height={320}
+                    colors={{
+                      lineColor: '#3b82f6',
+                      areaTopColor: 'rgba(59, 130, 246, 0.4)',
+                      areaBottomColor: 'rgba(59, 130, 246, 0.0)',
+                    }}
+                  />
+                ) : (
+                  <div className="h-80 flex items-center justify-center">
+                    <div className="text-center text-text-muted">
+                      <TrendingUp className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                      <p>Loading chart data...</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 p-4 bg-background-hover rounded-lg">
@@ -331,12 +382,26 @@ export default function Dashboard() {
           {/* Performance */}
           <div className="card">
             <h3 className="text-lg font-semibold mb-4">📊 Performance (Last 30 Days)</h3>
-            <div className="bg-background-deep rounded-lg p-6 h-48 flex items-center justify-center">
-              <div className="text-center text-text-muted">
-                <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">Equity Curve Chart</p>
-                <p className="text-xs">$5,000 → $5,420 (+8.4%)</p>
-              </div>
+            <div className="bg-background-deep rounded-lg">
+              {performanceData.length > 0 ? (
+                <TradingViewChart
+                  data={performanceData}
+                  type="area"
+                  height={192}
+                  colors={{
+                    lineColor: '#10b981',
+                    areaTopColor: 'rgba(16, 185, 129, 0.4)',
+                    areaBottomColor: 'rgba(16, 185, 129, 0.0)',
+                  }}
+                />
+              ) : (
+                <div className="h-48 flex items-center justify-center">
+                  <div className="text-center text-text-muted">
+                    <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">Loading performance data...</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
