@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-gray-700;
+  }
+
+  body {
+    @apply antialiased;
+  }
+
+  h1 {
+    @apply text-3xl font-semibold text-text-primary;
+  }
+
+  h2 {
+    @apply text-2xl font-semibold text-text-primary;
+  }
+
+  h3 {
+    @apply text-xl font-semibold text-text-primary;
+  }
+}
+
+@layer components {
+  /* Card styles */
+  .card {
+    @apply bg-background-card rounded-lg p-6 shadow-card;
+  }
+
+  .card-hover {
+    @apply transition-all duration-200 hover:-translate-y-0.5 hover:shadow-elevated;
+  }
+
+  /* Button styles */
+  .btn {
+    @apply px-6 py-3 rounded-lg font-semibold transition-all duration-150;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary text-white hover:bg-primary-hover hover:scale-105;
+  }
+
+  .btn-secondary {
+    @apply btn bg-transparent border-2 border-primary text-primary hover:bg-primary hover:text-white;
+  }
+
+  .btn-danger {
+    @apply btn bg-danger text-white hover:bg-danger-hover hover:scale-105;
+  }
+
+  /* Input styles */
+  .input {
+    @apply bg-background-hover border border-gray-700 rounded-lg px-4 py-3 text-text-primary;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary;
+    @apply placeholder:text-text-muted;
+  }
+
+  /* Loading skeleton */
+  .skeleton {
+    @apply bg-background-hover rounded;
+    @apply animate-shimmer bg-gradient-to-r from-background-hover via-background-card to-background-hover;
+    @apply bg-[length:1000px_100%];
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0e1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
+}
+
+/* Smooth transitions */
+* {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
