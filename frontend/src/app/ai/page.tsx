@@ -62,12 +62,10 @@ export default function AICopilot() {
     try {
       // Call AI analysis endpoint
       const response = await apiClient.analyzeMarket({
-        prompt: input,
-        context: {
-          symbol: 'SPY',
-          include_gex: true,
-          include_gamma: true
-        }
+        symbol: 'SPY',
+        query: input,
+        market_data: {},
+        gamma_intel: {}
       })
 
       const aiMessage: Message = {
