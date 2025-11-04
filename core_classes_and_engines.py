@@ -43,6 +43,12 @@ except ImportError:
         @staticmethod
         def info(msg): pass
 
+        @staticmethod
+        def write(msg): pass
+
+        @staticmethod
+        def success(msg): pass
+
     st = MockStreamlit()
 
 # Explicit exports for import clarity
