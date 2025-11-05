@@ -599,6 +599,56 @@ async def get_price_history(symbol: str, days: int = 90):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/trader/strategies")
+async def get_strategy_stats():
+    """Get real strategy statistics from trade database"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": []
+        }
+
+    try:
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect(trader.db_path)
+
+        # Get all positions grouped by strategy
+        query = """
+            SELECT
+                strategy,
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN status = 'CLOSED' THEN realized_pnl ELSE unrealized_pnl END) as total_pnl,
+                MAX(entry_date) as last_trade_date
+            FROM autonomous_positions
+            GROUP BY strategy
+        """
+
+        strategies = pd.read_sql_query(query, conn)
+        conn.close()
+
+        strategy_list = []
+        for _, row in strategies.iterrows():
+            win_rate = (row['wins'] / row['total_trades'] * 100) if row['total_trades'] > 0 else 0
+            strategy_list.append({
+                "name": row['strategy'],
+                "total_trades": int(row['total_trades']),
+                "win_rate": float(win_rate),
+                "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0,
+                "last_trade_date": row['last_trade_date'],
+                "status": "active"  # TODO: Determine from config or recent activity
+            })
+
+        return {
+            "success": True,
+            "data": strategy_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ============================================================================
 # Startup & Shutdown Events
 # ============================================================================
