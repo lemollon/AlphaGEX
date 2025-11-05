@@ -711,50 +711,86 @@ async def get_trade_log():
 
 @app.get("/api/market/price-history/{symbol}")
 async def get_price_history(symbol: str, days: int = 90):
-    """Get real price history for charting - SIMPLIFIED"""
+    """
+    Get price history for charting using yfinance
+
+    YAHOO FINANCE RATE LIMITS (as of 2025):
+    - ~2000 requests per hour per IP
+    - ~48000 requests per day per IP
+    - Rate limit resets every hour
+    - 429 error when limit exceeded
+    - No official documentation - limits discovered through testing
+
+    RECOMMENDATION: Use TradingView widget instead to avoid rate limits
+    """
     try:
         symbol = symbol.upper()
 
         import yfinance as yf
         from datetime import datetime, timedelta
+        import time
 
         print(f"📊 Fetching {days}-day price history for {symbol}")
+        print(f"⚠️  Yahoo Finance rate limits: ~2000 req/hour, resets hourly")
 
         # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days + 10)  # Add buffer for weekends/holidays
 
-        # Fetch data using yfinance with explicit date range
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(start=start_date, end=end_date)
+        try:
+            # Add small delay to avoid rate limiting
+            time.sleep(0.5)
 
-        if hist.empty:
-            print(f"❌ yfinance returned no data for {symbol}")
-            raise HTTPException(
-                status_code=404,
-                detail=f"No price data available for {symbol}"
-            )
+            # Fetch data using yfinance with explicit date range
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(start=start_date, end=end_date)
 
-        # Convert to chart format
-        chart_data = []
-        for date, row in hist.iterrows():
-            chart_data.append({
-                "time": int(date.timestamp()),
-                "value": float(row['Close'])
-            })
+            if hist.empty:
+                print(f"❌ yfinance returned no data for {symbol}")
+                print(f"   Possible reasons:")
+                print(f"   1. Yahoo Finance rate limit (2000 req/hour)")
+                print(f"   2. Invalid symbol")
+                print(f"   3. Yahoo API downtime")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Yahoo Finance returned no data. Possible rate limit (2000 req/hour). Use TradingView widget for reliable charts."
+                )
 
-        print(f"✅ Successfully fetched {len(chart_data)} data points for {symbol}")
-        print(f"   Date range: {hist.index[0].date()} to {hist.index[-1].date()}")
-        print(f"   Price range: ${hist['Close'].min():.2f} - ${hist['Close'].max():.2f}")
+            # Convert to chart format
+            chart_data = []
+            for date, row in hist.iterrows():
+                chart_data.append({
+                    "time": int(date.timestamp()),
+                    "value": float(row['Close'])
+                })
 
-        return {
-            "success": True,
-            "symbol": symbol,
-            "data": chart_data,
-            "points": len(chart_data),
-            "start_date": hist.index[0].isoformat(),
-            "end_date": hist.index[-1].isoformat()
-        }
+            print(f"✅ Successfully fetched {len(chart_data)} data points for {symbol}")
+            print(f"   Date range: {hist.index[0].date()} to {hist.index[-1].date()}")
+            print(f"   Price range: ${hist['Close'].min():.2f} - ${hist['Close'].max():.2f}")
+
+            return {
+                "success": True,
+                "symbol": symbol,
+                "data": chart_data,
+                "points": len(chart_data),
+                "start_date": hist.index[0].isoformat(),
+                "end_date": hist.index[-1].isoformat(),
+                "source": "yfinance",
+                "rate_limit_warning": "Yahoo has ~2000 req/hour limit. Use TradingView widget for production."
+            }
+
+        except Exception as yf_error:
+            error_str = str(yf_error).lower()
+            if '429' in error_str or 'too many' in error_str or 'rate limit' in error_str:
+                print(f"🚨 YAHOO FINANCE RATE LIMIT HIT")
+                print(f"   Limit: ~2000 requests/hour, ~48000/day")
+                print(f"   Resets: Every hour on the hour")
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Yahoo Finance rate limit exceeded (~2000 req/hour, resets hourly). Use TradingView widget to avoid this."
+                )
+            else:
+                raise
 
     except HTTPException:
         raise
@@ -764,7 +800,7 @@ async def get_price_history(symbol: str, days: int = 90):
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to fetch price history: {str(e)}"
+            detail=f"Failed to fetch price history: {str(e)}. Use TradingView widget for reliable charts."
         )
 
 @app.get("/api/trader/strategies")
