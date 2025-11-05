@@ -129,6 +129,48 @@ async def get_time():
         "timestamp": datetime.now().isoformat()
     }
 
+@app.get("/api/diagnostic")
+async def diagnostic():
+    """Diagnostic endpoint to check API configuration and connectivity"""
+    import os
+
+    # Check environment variables (without exposing actual values)
+    api_key_configured = bool(
+        os.getenv("TRADING_VOLATILITY_API_KEY") or
+        os.getenv("TV_USERNAME") or
+        os.getenv("tv_username")
+    )
+
+    api_key_source = "none"
+    if os.getenv("TRADING_VOLATILITY_API_KEY"):
+        api_key_source = "TRADING_VOLATILITY_API_KEY"
+    elif os.getenv("TV_USERNAME"):
+        api_key_source = "TV_USERNAME"
+    elif os.getenv("tv_username"):
+        api_key_source = "tv_username"
+
+    # Test API connectivity with SPY
+    test_result = api_client.get_net_gamma("SPY")
+    api_working = not test_result.get('error') if test_result else False
+
+    return {
+        "status": "diagnostic",
+        "timestamp": datetime.now().isoformat(),
+        "configuration": {
+            "api_key_configured": api_key_configured,
+            "api_key_source": api_key_source,
+            "api_endpoint": api_client.endpoint if hasattr(api_client, 'endpoint') else "unknown"
+        },
+        "connectivity": {
+            "api_working": api_working,
+            "test_symbol": "SPY",
+            "test_result": "success" if api_working else "failed",
+            "error": test_result.get('error') if test_result and test_result.get('error') else None,
+            "spot_price": test_result.get('spot_price') if api_working else None
+        },
+        "cache_stats": api_client.get_api_usage_stats() if hasattr(api_client, 'get_api_usage_stats') else {}
+    }
+
 # ============================================================================
 # GEX Data Endpoints
 # ============================================================================
@@ -150,11 +192,42 @@ async def get_gex_data(symbol: str):
         # Use existing TradingVolatilityAPI (UNCHANGED)
         gex_data = api_client.get_net_gamma(symbol)
 
-        if not gex_data or gex_data.get('error'):
+        # Enhanced error logging
+        if not gex_data:
+            print(f"❌ GEX API returned None for {symbol}")
             raise HTTPException(
-                status_code=404,
-                detail=f"GEX data not available for {symbol}"
+                status_code=503,
+                detail=f"Trading Volatility API returned no data for {symbol}. Check API key configuration."
             )
+
+        if gex_data.get('error'):
+            error_msg = gex_data['error']
+            print(f"❌ GEX API error for {symbol}: {error_msg}")
+
+            # Provide specific error messages
+            if 'API key not configured' in error_msg or 'username not found' in error_msg:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Trading Volatility API key not configured. Please set TRADING_VOLATILITY_API_KEY or TV_USERNAME environment variable."
+                )
+            elif 'rate limit' in error_msg.lower():
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Trading Volatility API rate limit exceeded. Please wait and try again."
+                )
+            elif 'No ticker data' in error_msg or 'No data found' in error_msg:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No GEX data available for {symbol}. The symbol may not be available in the Trading Volatility database today."
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"GEX data not available for {symbol}: {error_msg}"
+                )
+
+        # Log successful fetch
+        print(f"✅ Successfully fetched GEX data for {symbol} - spot: ${gex_data.get('spot_price', 0):.2f}, net_gex: {gex_data.get('net_gex', 0)/1e9:.2f}B")
 
         # Get GEX levels for support/resistance
         levels_data = api_client.get_gex_levels(symbol)
@@ -177,7 +250,12 @@ async def get_gex_data(symbol: str):
             "timestamp": datetime.now().isoformat()
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"❌ Unexpected error fetching GEX for {symbol}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/gex/{symbol}/levels")
