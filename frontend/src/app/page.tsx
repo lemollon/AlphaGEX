@@ -150,7 +150,7 @@ export default function Dashboard() {
             label="Flip Point"
             value={`$${flipPoint.toFixed(2)}`}
             change={spotPrice < flipPoint ? `$${(flipPoint - spotPrice).toFixed(2)} away` : 'Above flip'}
-            changeType={spotPrice < flipPoint ? 'warning' : 'neutral'}
+            changeType="neutral"
           />
 
           <StatusCard
