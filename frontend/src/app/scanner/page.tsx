@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Search, TrendingUp, Target, DollarSign, Clock, CheckCircle, XCircle, AlertCircle, History, BarChart3 } from 'lucide-react'
+import { Search, TrendingUp, TrendingDown, Target, DollarSign, Clock, CheckCircle, XCircle, AlertCircle, History, BarChart3 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 
