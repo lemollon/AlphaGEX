@@ -8,13 +8,18 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import pytz
-import yfinance as yf
 from typing import Dict, List, Tuple, Optional
 import requests
 from scipy import stats
 from dataclasses import dataclass
 import warnings
 warnings.filterwarnings('ignore')
+
+# Optional imports
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
 
 # Optional streamlit import - only available when running in Streamlit context
 try:
