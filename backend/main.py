@@ -576,36 +576,41 @@ async def get_trade_log():
 async def get_price_history(symbol: str, days: int = 90):
     """Get real price history for charting"""
     try:
+        symbol = symbol.upper()
+
         # Try to use yfinance if available
         try:
             import yfinance as yf
             import pandas as pd
 
-            symbol = symbol.upper()
             ticker = yf.Ticker(symbol)
 
             # Get historical data
             hist = ticker.history(period=f"{days}d")
 
-            if hist.empty:
-                raise HTTPException(status_code=404, detail=f"No price data for {symbol}")
+            if not hist.empty:
+                # Convert to chart format
+                chart_data = []
+                for date, row in hist.iterrows():
+                    chart_data.append({
+                        "time": int(date.timestamp()),
+                        "value": float(row['Close'])
+                    })
 
-            # Convert to chart format
-            chart_data = []
-            for date, row in hist.iterrows():
-                chart_data.append({
-                    "time": int(date.timestamp()),
-                    "value": float(row['Close'])
-                })
+                return {
+                    "success": True,
+                    "symbol": symbol,
+                    "data": chart_data
+                }
+            else:
+                # hist is empty, fall through to Trading Volatility fallback
+                raise ValueError("yfinance returned empty data")
 
-            return {
-                "success": True,
-                "symbol": symbol,
-                "data": chart_data
-            }
-        except ImportError:
-            # yfinance not available - use Trading Volatility API to get current price
+        except Exception as yf_error:
+            # yfinance not available or failed - use Trading Volatility API to get current price
             # and generate minimal chart data
+            print(f"yfinance failed for {symbol}: {yf_error}. Using Trading Volatility fallback.")
+
             gex_data = api_client.get_net_gamma(symbol)
             spot_price = gex_data.get('spot_price', 0)
 
@@ -630,9 +635,11 @@ async def get_price_history(symbol: str, days: int = 90):
                 "success": True,
                 "symbol": symbol,
                 "data": chart_data,
-                "note": "Using current spot price - install yfinance for historical data"
+                "note": "Using current spot price - yfinance not available"
             }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
