@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AlphaGEX CORS Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        #results {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .success {
+            color: #4CAF50;
+        }
+        .error {
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 AlphaGEX CORS Test</h1>
+        <p>Click the buttons below to test API CORS headers:</p>
+
+        <button onclick="testGEX()">Test /api/gex/SPY</button>
+        <button onclick="testPerformance()">Test /api/trader/performance</button>
+        <button onclick="testPriceHistory()">Test /api/market/price-history/SPY</button>
+        <button onclick="clearResults()">Clear Results</button>
+
+        <div id="results"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://alphagex-api.onrender.com';
+        const resultsDiv = document.getElementById('results');
+
+        function log(message, isError = false) {
+            const timestamp = new Date().toLocaleTimeString();
+            const className = isError ? 'error' : 'success';
+            resultsDiv.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+        }
+
+        function clearResults() {
+            resultsDiv.innerHTML = '';
+        }
+
+        async function testEndpoint(endpoint, name) {
+            log(`\n========== Testing ${name} ==========`);
+            log(`URL: ${API_BASE}${endpoint}`);
+
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`);
+
+                // Check CORS headers
+                const corsHeader = response.headers.get('Access-Control-Allow-Origin');
+
+                log(`Status: ${response.status} ${response.statusText}`);
+                log(`CORS Header (Access-Control-Allow-Origin): ${corsHeader || 'MISSING!'}`);
+
+                if (corsHeader === '*' || corsHeader) {
+                    log('✅ CORS PASSED - Header present!', false);
+                } else {
+                    log('❌ CORS FAILED - No Access-Control-Allow-Origin header!', true);
+                }
+
+                // Try to read the data
+                const data = await response.json();
+                log(`Response Success: ${data.success}`);
+
+                if (data.success) {
+                    log(`✅ API SUCCESS - Data received`, false);
+                } else {
+                    log(`⚠️ API returned success=false: ${data.message || 'Unknown error'}`, true);
+                }
+
+            } catch (error) {
+                log(`❌ FETCH ERROR: ${error.message}`, true);
+                log(`This likely means CORS is blocking the request!`, true);
+            }
+        }
+
+        async function testGEX() {
+            await testEndpoint('/api/gex/SPY', 'GEX Data');
+        }
+
+        async function testPerformance() {
+            await testEndpoint('/api/trader/performance', 'Trader Performance');
+        }
+
+        async function testPriceHistory() {
+            await testEndpoint('/api/market/price-history/SPY?days=90', 'Price History');
+        }
+
+        // Auto-run tests on load
+        window.onload = () => {
+            log('🚀 CORS Test Page Loaded');
+            log('Click buttons above to test API endpoints\n');
+        };
+    </script>
+</body>
+</html>
