@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react'
+import Navigation from '@/components/Navigation'
 
 interface TraderStatus {
   is_active: boolean
@@ -180,8 +181,11 @@ export default function AutonomousTrader() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="min-h-screen">
+      <Navigation />
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-6">
+          {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-text-primary">Autonomous Trader</h1>
@@ -529,6 +533,8 @@ export default function AutonomousTrader() {
           </div>
         </div>
       </div>
+        </div>
+      </main>
     </div>
   )
 }

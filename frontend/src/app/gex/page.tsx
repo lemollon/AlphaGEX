@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { TrendingUp, TrendingDown, Activity, BarChart3, AlertTriangle } from 'lucide-react'
+import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import GEXProfileChart from '@/components/GEXProfileChart'
@@ -81,8 +82,11 @@ export default function GEXAnalysis() {
   const popularSymbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'TSLA', 'NVDA', 'AMD', 'AMZN']
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="min-h-screen">
+      <Navigation />
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-6">
+          {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-text-primary">GEX Analysis</h1>
@@ -343,6 +347,8 @@ export default function GEXAnalysis() {
           <p className="text-text-secondary">No data available for {symbol}</p>
         </div>
       )}
+        </div>
+      </main>
     </div>
   )
 }
