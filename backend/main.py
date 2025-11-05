@@ -378,6 +378,128 @@ async def internal_error_handler(request, exc):
     )
 
 # ============================================================================
+# Autonomous Trader Endpoints
+# ============================================================================
+
+# Initialize trader (if exists)
+try:
+    from autonomous_paper_trader import AutonomousPaperTrader
+    trader = AutonomousPaperTrader()
+    trader_available = True
+except:
+    trader = None
+    trader_available = False
+
+@app.get("/api/trader/status")
+async def get_trader_status():
+    """Get autonomous trader status"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": {
+                "is_active": False,
+                "mode": "paper",
+                "uptime": 0,
+                "last_check": datetime.now().isoformat(),
+                "strategies_active": 0,
+                "total_trades_today": 0
+            }
+        }
+
+    try:
+        # Get real status from trader
+        is_active = trader.get_config('is_active') == 'True' if trader else False
+        mode = trader.get_config('mode') if trader else 'paper'
+
+        return {
+            "success": True,
+            "data": {
+                "is_active": is_active,
+                "mode": mode,
+                "uptime": 0,  # TODO: Calculate actual uptime
+                "last_check": datetime.now().isoformat(),
+                "strategies_active": 2,  # TODO: Get from trader config
+                "total_trades_today": 0  # TODO: Calculate from database
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trader/performance")
+async def get_trader_performance():
+    """Get autonomous trader performance metrics"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": {
+                "total_pnl": 0,
+                "today_pnl": 0,
+                "win_rate": 0,
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "sharpe_ratio": 0,
+                "max_drawdown": 0
+            }
+        }
+
+    try:
+        perf = trader.get_performance()
+
+        # Calculate additional metrics
+        winning_trades = int(perf['total_trades'] * perf['win_rate'] / 100) if perf['total_trades'] > 0 else 0
+        losing_trades = perf['total_trades'] - winning_trades
+
+        return {
+            "success": True,
+            "data": {
+                "total_pnl": perf['total_pnl'],
+                "today_pnl": perf['unrealized_pnl'],  # Approximate
+                "win_rate": perf['win_rate'],
+                "total_trades": perf['total_trades'],
+                "winning_trades": winning_trades,
+                "losing_trades": losing_trades,
+                "sharpe_ratio": 0,  # TODO: Calculate sharpe ratio
+                "max_drawdown": 0  # TODO: Calculate max drawdown
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trader/trades")
+async def get_trader_trades(limit: int = 10):
+    """Get recent trades from autonomous trader"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": []
+        }
+
+    try:
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect(trader.db_path)
+        trades = pd.read_sql_query(f"""
+            SELECT * FROM autonomous_positions
+            ORDER BY timestamp DESC
+            LIMIT {limit}
+        """, conn)
+        conn.close()
+
+        trades_list = trades.to_dict('records') if not trades.empty else []
+
+        return {
+            "success": True,
+            "data": trades_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
 # Startup & Shutdown Events
 # ============================================================================
 

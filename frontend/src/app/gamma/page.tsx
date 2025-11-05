@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Zap, TrendingUp, TrendingDown, Activity, BarChart3, Target, Clock, AlertCircle } from 'lucide-react'
+import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 
@@ -80,8 +81,11 @@ export default function GammaIntelligence() {
   const popularSymbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'TSLA', 'NVDA']
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="min-h-screen">
+      <Navigation />
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-6">
+          {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-text-primary">Gamma Intelligence</h1>
@@ -489,6 +493,8 @@ export default function GammaIntelligence() {
           <p className="text-text-secondary">No data available for {symbol}</p>
         </div>
       )}
+        </div>
+      </main>
     </div>
   )
 }

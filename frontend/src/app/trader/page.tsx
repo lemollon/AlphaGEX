@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react'
+import Navigation from '@/components/Navigation'
+import { apiClient } from '@/lib/api'
 
 interface TraderStatus {
   is_active: boolean
@@ -47,24 +49,25 @@ interface Trade {
 }
 
 export default function AutonomousTrader() {
+  const [loading, setLoading] = useState(true)
   const [traderStatus, setTraderStatus] = useState<TraderStatus>({
     is_active: false,
     mode: 'paper',
-    uptime: 3600,
+    uptime: 0,
     last_check: new Date().toISOString(),
-    strategies_active: 2,
-    total_trades_today: 8
+    strategies_active: 0,
+    total_trades_today: 0
   })
 
   const [performance, setPerformance] = useState<Performance>({
-    total_pnl: 12450.75,
-    today_pnl: 850.25,
-    win_rate: 68.5,
-    total_trades: 124,
-    winning_trades: 85,
-    losing_trades: 39,
-    sharpe_ratio: 1.85,
-    max_drawdown: -2.3
+    total_pnl: 0,
+    today_pnl: 0,
+    win_rate: 0,
+    total_trades: 0,
+    winning_trades: 0,
+    losing_trades: 0,
+    sharpe_ratio: 0,
+    max_drawdown: 0
   })
 
   const [strategies, setStrategies] = useState<Strategy[]>([
@@ -97,44 +100,59 @@ export default function AutonomousTrader() {
     }
   ])
 
-  const [recentTrades, setRecentTrades] = useState<Trade[]>([
-    {
-      id: '1',
-      timestamp: new Date(Date.now() - 300000).toISOString(),
-      symbol: 'SPY',
-      action: 'BUY',
-      type: 'CALL',
-      strike: 450,
-      quantity: 5,
-      price: 2.45,
-      status: 'filled',
-      pnl: 125.50
-    },
-    {
-      id: '2',
-      timestamp: new Date(Date.now() - 900000).toISOString(),
-      symbol: 'QQQ',
-      action: 'SELL',
-      type: 'PUT',
-      strike: 380,
-      quantity: 3,
-      price: 1.85,
-      status: 'filled',
-      pnl: -45.25
-    },
-    {
-      id: '3',
-      timestamp: new Date(Date.now() - 1800000).toISOString(),
-      symbol: 'SPY',
-      action: 'BUY',
-      type: 'PUT',
-      strike: 445,
-      quantity: 10,
-      price: 1.20,
-      status: 'filled',
-      pnl: 340.00
+  const [recentTrades, setRecentTrades] = useState<Trade[]>([])
+
+  // Fetch data from API
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true)
+
+        // Fetch trader status, performance, and trades in parallel
+        const [statusRes, perfRes, tradesRes] = await Promise.all([
+          apiClient.getTraderStatus(),
+          apiClient.getTraderPerformance(),
+          apiClient.getTraderTrades(10)
+        ])
+
+        if (statusRes.data.success) {
+          setTraderStatus(statusRes.data.data)
+        }
+
+        if (perfRes.data.success) {
+          setPerformance(perfRes.data.data)
+        }
+
+        if (tradesRes.data.success && tradesRes.data.data.length > 0) {
+          // Map database trades to UI format
+          const mappedTrades = tradesRes.data.data.map((trade: any) => ({
+            id: trade.id?.toString() || trade.timestamp,
+            timestamp: trade.timestamp || new Date().toISOString(),
+            symbol: trade.symbol || 'SPY',
+            action: trade.action || 'BUY',
+            type: trade.option_type || 'CALL',
+            strike: trade.strike || 0,
+            quantity: trade.quantity || 0,
+            price: trade.entry_price || 0,
+            status: trade.status === 'OPEN' ? 'filled' : 'filled',
+            pnl: trade.realized_pnl || trade.unrealized_pnl || 0
+          }))
+          setRecentTrades(mappedTrades)
+        }
+      } catch (error) {
+        console.error('Error fetching trader data:', error)
+        // Keep default/empty state on error
+      } finally {
+        setLoading(false)
+      }
     }
-  ])
+
+    fetchData()
+
+    // Refresh data every 30 seconds
+    const interval = setInterval(fetchData, 30000)
+    return () => clearInterval(interval)
+  }, [])
 
   const handleToggleTrader = () => {
     setTraderStatus(prev => ({ ...prev, is_active: !prev.is_active }))
@@ -169,7 +187,8 @@ export default function AutonomousTrader() {
     return new Intl.DateTimeFormat('en-US', {
       hour: 'numeric',
       minute: '2-digit',
-      hour12: true
+      hour12: true,
+      timeZone: 'America/New_York'
     }).format(new Date(isoString))
   }
 
@@ -180,8 +199,11 @@ export default function AutonomousTrader() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="min-h-screen">
+      <Navigation />
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-6">
+          {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-text-primary">Autonomous Trader</h1>
@@ -529,6 +551,8 @@ export default function AutonomousTrader() {
           </div>
         </div>
       </div>
+        </div>
+      </main>
     </div>
   )
 }
