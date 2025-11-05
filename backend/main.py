@@ -35,22 +35,15 @@ app = FastAPI(
     redoc_url="/redoc"  # ReDoc
 )
 
-# CORS Configuration - Allow frontend to connect
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Local development
-    "http://localhost:5173",  # Vite dev server
-    "https://alphagex.vercel.app",  # Production frontend
-    "https://alphagex-q049klolk-autobots-hq.vercel.app",  # Vercel preview deployment
-]
-
-# Use regex to allow all Vercel preview deployments
+# CORS Configuration - Allow all origins for development
+# IMPORTANT: In production, restrict this to specific domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",  # All Vercel deployments
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=False,  # Cannot use credentials with wildcard origins
+    allow_methods=["*"],  # Allow all methods including OPTIONS
+    allow_headers=["*"],  # Allow all headers
+    expose_headers=["*"],
 )
 
 # Initialize existing AlphaGEX components (singleton pattern)
