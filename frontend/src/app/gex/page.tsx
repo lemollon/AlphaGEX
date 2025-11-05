@@ -46,8 +46,22 @@ export default function GEXAnalysis() {
           apiClient.getGEX(symbol),
           apiClient.getGEXLevels(symbol)
         ])
-        setGexData(gexResponse.data.data)
-        setGexLevels(levelsResponse.data.data)
+        // Fix: Transform API response to match frontend interface
+        const rawData = gexResponse.data.data
+        const transformedData = {
+          symbol: rawData.symbol || symbol,
+          spot_price: rawData.spot_price || 0,
+          total_call_gex: rawData.total_call_gex || 0,
+          total_put_gex: rawData.total_put_gex || 0,
+          net_gex: rawData.net_gex || 0,
+          gex_flip_point: rawData.flip_point || rawData.gex_flip_point || 0,
+          key_levels: {
+            resistance: rawData.key_levels?.resistance || [],
+            support: rawData.key_levels?.support || []
+          }
+        }
+        setGexData(transformedData)
+        setGexLevels(levelsResponse.data.levels || levelsResponse.data.data || [])
       } catch (error) {
         console.error('Error fetching GEX data:', error)
       } finally {
