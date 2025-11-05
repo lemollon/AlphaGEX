@@ -8,13 +8,20 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import pytz
-import yfinance as yf
 from typing import Dict, List, Tuple, Optional
 import requests
 from scipy import stats
 from dataclasses import dataclass
 import warnings
 warnings.filterwarnings('ignore')
+
+# Optional yfinance import
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+    yf = None
 
 # Optional streamlit import - only available when running in Streamlit context
 try:
@@ -99,7 +106,7 @@ class OptionsDataFetcher:
     
     def __init__(self, symbol: str = 'SPY'):
         self.symbol = symbol.upper()
-        self.ticker = yf.Ticker(self.symbol)
+        self.ticker = yf.Ticker(self.symbol) if YFINANCE_AVAILABLE else None
         self.spot_price = None
         self.risk_free_rate = 0.045  # Current approximate risk-free rate
         self.options_chain = None
