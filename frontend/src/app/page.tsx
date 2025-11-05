@@ -334,11 +334,11 @@ export default function Dashboard() {
           <h3 className="text-lg font-semibold mb-4">⚡ Quick Actions</h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <button
-              onClick={() => router.push('/ai')}
+              onClick={() => router.push('/scanner')}
               className="btn-primary flex flex-col items-center space-y-2 py-4"
             >
-              <span className="text-2xl">🤖</span>
-              <span>Ask AI</span>
+              <span className="text-2xl">🔍</span>
+              <span>Scan Market</span>
             </button>
             <button
               onClick={() => router.push('/gex')}
@@ -355,18 +355,18 @@ export default function Dashboard() {
               <span>Gamma Intel</span>
             </button>
             <button
+              onClick={() => router.push('/ai')}
+              className="btn-secondary flex flex-col items-center space-y-2 py-4"
+            >
+              <span className="text-2xl">🤖</span>
+              <span>Ask AI</span>
+            </button>
+            <button
               onClick={() => router.push('/trader')}
               className="btn-secondary flex flex-col items-center space-y-2 py-4"
             >
               <span className="text-2xl">🤖</span>
               <span>Trader</span>
-            </button>
-            <button
-              onClick={() => router.push('/ai')}
-              className="btn-secondary flex flex-col items-center space-y-2 py-4"
-            >
-              <span className="text-2xl">💬</span>
-              <span>Ask Question</span>
             </button>
           </div>
         </div>
