@@ -156,10 +156,24 @@ async def get_gex_data(symbol: str):
                 detail=f"GEX data not available for {symbol}"
             )
 
+        # Get GEX levels for support/resistance
+        levels_data = api_client.get_gex_levels(symbol)
+
+        # Enhance data with missing fields for frontend compatibility
+        enhanced_data = {
+            **gex_data,
+            "total_call_gex": gex_data.get('total_call_gex', 0),
+            "total_put_gex": gex_data.get('total_put_gex', 0),
+            "key_levels": {
+                "resistance": levels_data.get('resistance', []) if levels_data else [],
+                "support": levels_data.get('support', []) if levels_data else []
+            }
+        }
+
         return {
             "success": True,
             "symbol": symbol,
-            "data": gex_data,
+            "data": enhanced_data,
             "timestamp": datetime.now().isoformat()
         }
 
@@ -175,7 +189,7 @@ async def get_gex_levels(symbol: str):
         symbol: Stock symbol
 
     Returns:
-        GEX levels (support, resistance, flip point, etc.)
+        Array of GEX levels with strike-by-strike breakdown
     """
     try:
         symbol = symbol.upper()
@@ -189,10 +203,23 @@ async def get_gex_levels(symbol: str):
                 detail=f"GEX levels not available for {symbol}"
             )
 
+        # If levels is a dict with strike data, convert to array format
+        levels_array = []
+        if isinstance(levels, dict):
+            # If there's strike-level data, format it for the frontend
+            if 'strikes' in levels and isinstance(levels['strikes'], list):
+                levels_array = levels['strikes']
+            elif 'levels' in levels and isinstance(levels['levels'], list):
+                levels_array = levels['levels']
+            else:
+                # Create empty array if no strike data available
+                levels_array = []
+
         return {
             "success": True,
             "symbol": symbol,
-            "levels": levels,
+            "levels": levels_array,
+            "data": levels_array,  # Also provide as .data for compatibility
             "timestamp": datetime.now().isoformat()
         }
 
