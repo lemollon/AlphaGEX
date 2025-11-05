@@ -16,9 +16,10 @@ load_dotenv()
 parent_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(parent_dir))
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
@@ -34,6 +35,32 @@ app = FastAPI(
     docs_url="/docs",  # Swagger UI
     redoc_url="/redoc"  # ReDoc
 )
+
+# Custom CORS Middleware - Ensures headers are added to ALL responses
+class CORSHeaderMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Handle preflight OPTIONS requests
+        if request.method == "OPTIONS":
+            response = JSONResponse(content={"status": "ok"}, status_code=200)
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Max-Age"] = "3600"
+            return response
+
+        # Process the request
+        response = await call_next(request)
+
+        # Add CORS headers to all responses
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+
+        return response
+
+# Add custom CORS middleware FIRST
+app.add_middleware(CORSHeaderMiddleware)
 
 # CORS Configuration - Allow all origins for development
 # IMPORTANT: In production, restrict this to specific domains
@@ -357,7 +384,7 @@ async def websocket_market_data(websocket: WebSocket, symbol: str = "SPY"):
 
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    return JSONResponse(
+    response = JSONResponse(
         status_code=404,
         content={
             "success": False,
@@ -365,10 +392,15 @@ async def not_found_handler(request, exc):
             "detail": str(exc.detail) if hasattr(exc, 'detail') else "Resource not found"
         }
     )
+    # Add CORS headers to error responses
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):
-    return JSONResponse(
+    response = JSONResponse(
         status_code=500,
         content={
             "success": False,
@@ -376,6 +408,11 @@ async def internal_error_handler(request, exc):
             "detail": str(exc)
         }
     )
+    # Add CORS headers to error responses
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # ============================================================================
 # Autonomous Trader Endpoints
