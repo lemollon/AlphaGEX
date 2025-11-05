@@ -10,7 +10,10 @@ import {
   MessageSquare,
   MoreHorizontal,
   Activity,
-  Search
+  Search,
+  Target,
+  Bell,
+  Calculator
 } from 'lucide-react'
 
 const navItems = [
@@ -18,6 +21,9 @@ const navItems = [
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp },
   { href: '/gamma', label: 'Gamma Intelligence', icon: Zap },
   { href: '/scanner', label: 'Scanner', icon: Search },
+  { href: '/setups', label: 'Trade Setups', icon: Target },
+  { href: '/alerts', label: 'Alerts', icon: Bell },
+  { href: '/position-sizing', label: 'Position Sizing', icon: Calculator },
   { href: '/ai', label: 'AI Copilot', icon: MessageSquare },
   { href: '/trader', label: 'Autonomous Trader', icon: Bot },
 ]

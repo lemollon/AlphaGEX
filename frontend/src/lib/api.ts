@@ -58,6 +58,32 @@ export const apiClient = {
   scanSymbols: (symbols: string[]) => api.post('/api/scanner/scan', { symbols }),
   getScannerHistory: (limit: number = 10) => api.get('/api/scanner/history', { params: { limit } }),
   getScanResults: (scanId: string) => api.get(`/api/scanner/results/${scanId}`),
+
+  // Trade Setups
+  generateSetups: (data: { symbols?: string[], account_size?: number, risk_pct?: number }) =>
+    api.post('/api/setups/generate', data),
+  saveSetup: (setup: any) => api.post('/api/setups/save', setup),
+  getSetups: (limit: number = 20, status: string = 'active') =>
+    api.get('/api/setups/list', { params: { limit, status } }),
+  updateSetup: (setupId: number, data: any) => api.put(`/api/setups/${setupId}`, data),
+
+  // Alerts
+  createAlert: (data: { symbol: string, alert_type: string, condition: string, threshold: number, message?: string }) =>
+    api.post('/api/alerts/create', data),
+  getAlerts: (status: string = 'active') => api.get('/api/alerts/list', { params: { status } }),
+  deleteAlert: (alertId: number) => api.delete(`/api/alerts/${alertId}`),
+  checkAlerts: () => api.get('/api/alerts/check'),
+  getAlertHistory: (limit: number = 50) => api.get('/api/alerts/history', { params: { limit } }),
+
+  // Position Sizing
+  calculatePositionSize: (data: {
+    account_size: number,
+    win_rate: number,
+    avg_win: number,
+    avg_loss: number,
+    current_price: number,
+    risk_per_trade_pct: number
+  }) => api.post('/api/position-sizing/calculate', data),
 }
 
 // WebSocket connection
