@@ -20,6 +20,7 @@ import uvicorn
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
 from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open
+from config_and_database import STRATEGIES
 
 # Create FastAPI app
 app = FastAPI(
@@ -645,6 +646,443 @@ async def get_strategy_stats():
         return {
             "success": True,
             "data": strategy_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# Multi-Symbol Scanner Endpoints (WITH DATABASE PERSISTENCE)
+# ============================================================================
+
+def init_scanner_database():
+    """Initialize scanner database schema with tracking"""
+    import sqlite3
+
+    conn = sqlite3.connect('scanner_results.db')
+    c = conn.cursor()
+
+    # Scanner runs table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS scanner_runs (
+            id TEXT PRIMARY KEY,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            symbols_scanned TEXT,
+            total_symbols INTEGER,
+            opportunities_found INTEGER,
+            scan_duration_seconds REAL,
+            user_notes TEXT
+        )
+    ''')
+
+    # Scanner results table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS scanner_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_id TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            symbol TEXT NOT NULL,
+            strategy TEXT NOT NULL,
+            confidence REAL,
+            net_gex REAL,
+            spot_price REAL,
+            flip_point REAL,
+            call_wall REAL,
+            put_wall REAL,
+            entry_price REAL,
+            target_price REAL,
+            stop_price REAL,
+            risk_reward REAL,
+            expected_move TEXT,
+            reasoning TEXT,
+            FOREIGN KEY (scan_id) REFERENCES scanner_runs(id)
+        )
+    ''')
+
+    conn.commit()
+    conn.close()
+
+# Initialize scanner database on startup
+try:
+    init_scanner_database()
+except Exception as e:
+    print(f"Scanner DB init warning: {e}")
+
+@app.post("/api/scanner/scan")
+async def scan_symbols(request: dict):
+    """
+    Scan multiple symbols for trading opportunities using ALL strategies
+
+    Returns setups with SPECIFIC money-making instructions
+    """
+    import sqlite3
+    import uuid
+    import time
+
+    try:
+        symbols = request.get('symbols', ['SPY', 'QQQ', 'IWM', 'AAPL', 'TSLA', 'NVDA'])
+
+        # Generate unique scan ID
+        scan_id = str(uuid.uuid4())
+        scan_start = time.time()
+
+        results = []
+
+        for symbol in symbols:
+            try:
+                # Get real GEX data
+                gex_data = api_client.get_net_gamma(symbol)
+
+                if not gex_data or gex_data.get('error'):
+                    continue
+
+                net_gex = gex_data.get('net_gex', 0)
+                spot_price = gex_data.get('spot_price', 0)
+                flip_point = gex_data.get('flip_point', 0)
+                call_wall = gex_data.get('call_wall', 0)
+                put_wall = gex_data.get('put_wall', 0)
+
+                # Check ALL strategies (not just Iron Condor!)
+                for strategy_name, strategy_config in STRATEGIES.items():
+                    confidence = 0
+                    setup = None
+
+                    # NEGATIVE GEX SQUEEZE - Directional Long Play
+                    if strategy_name == 'NEGATIVE_GEX_SQUEEZE':
+                        if net_gex < strategy_config['conditions']['net_gex_threshold']:
+                            distance_to_flip = abs(spot_price - flip_point) / spot_price * 100
+                            if distance_to_flip < strategy_config['conditions']['distance_to_flip']:
+                                confidence = 0.75 if spot_price < flip_point else 0.85
+
+                                setup = {
+                                    'symbol': symbol,
+                                    'strategy': strategy_name,
+                                    'confidence': confidence,
+                                    'net_gex': net_gex,
+                                    'spot_price': spot_price,
+                                    'flip_point': flip_point,
+                                    'call_wall': call_wall,
+                                    'put_wall': put_wall,
+                                    'entry_price': spot_price,
+                                    'target_price': call_wall,
+                                    'stop_price': put_wall,
+                                    'risk_reward': strategy_config['risk_reward'],
+                                    'expected_move': strategy_config['typical_move'],
+                                    'win_rate': strategy_config['win_rate'],
+                                    'money_making_plan': f"""
+🎯 HOW TO MAKE MONEY WITH THIS SETUP:
+
+1. **THE SETUP** (Current State):
+   - {symbol} is in NEGATIVE GEX regime (${net_gex/1e9:.1f}B)
+   - Price: ${spot_price:.2f} | Flip: ${flip_point:.2f}
+   - This means: Market makers are SHORT gamma and must hedge aggressively
+
+2. **THE TRADE** (Specific Actions):
+   - BUY {symbol} ${(flip_point + 0.5):.2f} CALL (ATM or slightly OTM)
+   - Entry: When price breaks ${flip_point:.2f} (flip point)
+   - Quantity: Risk 1-2% of account (use Position Sizing tool)
+   - Time: 0-3 DTE for max gamma, OR 7-14 DTE for less risk
+
+3. **THE PROFIT** (Exit Strategy):
+   - Target 1: ${(spot_price + (spot_price * 0.02)):.2f} (2% move) - Take 50% off
+   - Target 2: ${call_wall:.2f} (Call Wall) - Take remaining 50% off
+   - STOP LOSS: ${put_wall:.2f} (Put Wall breach) - Exit immediately
+   - Expected Win Rate: {strategy_config['win_rate']*100:.0f}%
+
+4. **WHY IT WORKS**:
+   - Negative GEX = MMs chase price UP when it rises
+   - Breaking flip point = Feedback loop begins
+   - Call wall = Where MM hedging pressure stops
+   - This setup wins {strategy_config['win_rate']*100:.0f}% historically
+
+5. **TIMING**:
+   - Best days: {', '.join(strategy_config['best_days'])}
+   - Best time: First 30 min after flip break
+   - Avoid: Last 15 min of day (low liquidity)
+                                    """,
+                                    'reasoning': f"Negative GEX ({net_gex/1e9:.1f}B) creates upside squeeze. Price ${distance_to_flip:.1f}% from flip point. Win rate: {strategy_config['win_rate']*100:.0f}%"
+                                }
+
+                    # POSITIVE GEX BREAKDOWN - Directional Short Play
+                    elif strategy_name == 'POSITIVE_GEX_BREAKDOWN':
+                        if net_gex > strategy_config['conditions']['net_gex_threshold']:
+                            proximity = abs(spot_price - flip_point) / flip_point * 100
+                            if proximity < strategy_config['conditions']['proximity_to_flip']:
+                                confidence = 0.70
+
+                                setup = {
+                                    'symbol': symbol,
+                                    'strategy': strategy_name,
+                                    'confidence': confidence,
+                                    'net_gex': net_gex,
+                                    'spot_price': spot_price,
+                                    'flip_point': flip_point,
+                                    'call_wall': call_wall,
+                                    'put_wall': put_wall,
+                                    'entry_price': spot_price,
+                                    'target_price': put_wall,
+                                    'stop_price': call_wall,
+                                    'risk_reward': strategy_config['risk_reward'],
+                                    'expected_move': strategy_config['typical_move'],
+                                    'win_rate': strategy_config['win_rate'],
+                                    'money_making_plan': f"""
+🎯 HOW TO MAKE MONEY WITH THIS SETUP:
+
+1. **THE SETUP** (Current State):
+   - {symbol} is in POSITIVE GEX regime (${net_gex/1e9:.1f}B)
+   - Price: ${spot_price:.2f} | Flip: ${flip_point:.2f}
+   - This means: Market makers are LONG gamma and will fade moves
+
+2. **THE TRADE** (Specific Actions):
+   - BUY {symbol} ${(flip_point - 0.5):.2f} PUT (ATM or slightly OTM)
+   - Entry: When price breaks BELOW ${flip_point:.2f} (flip point)
+   - Quantity: Risk 1-2% of account
+   - Time: 0-3 DTE for max profit potential
+
+3. **THE PROFIT** (Exit Strategy):
+   - Target: ${put_wall:.2f} (Put Wall) - Exit 100% here
+   - Stop: ${call_wall:.2f} (Call Wall breach) - Cut losses
+   - Expected Win Rate: {strategy_config['win_rate']*100:.0f}%
+   - Typical Move: {strategy_config['typical_move']}
+
+4. **WHY IT WORKS**:
+   - Positive GEX breakdown = MMs fade the move DOWN
+   - Flip break triggers cascade
+   - Put wall = Support level where MMs defend
+   - Wins {strategy_config['win_rate']*100:.0f}% when setup is clean
+
+5. **TIMING**:
+   - Best days: {', '.join(strategy_config['best_days'])}
+   - Best time: After rejection at call wall
+   - Avoid: Before major news/earnings
+                                    """,
+                                    'reasoning': f"Positive GEX ({net_gex/1e9:.1f}B) near flip creates breakdown risk. Historical win rate: {strategy_config['win_rate']*100:.0f}%"
+                                }
+
+                    # IRON CONDOR - Range-Bound Income
+                    elif strategy_name == 'IRON_CONDOR':
+                        if net_gex > strategy_config['conditions']['net_gex_threshold']:
+                            wall_distance_call = abs(call_wall - spot_price) / spot_price * 100
+                            wall_distance_put = abs(put_wall - spot_price) / spot_price * 100
+
+                            if wall_distance_call >= 2.0 and wall_distance_put >= 2.0:
+                                confidence = 0.75
+
+                                setup = {
+                                    'symbol': symbol,
+                                    'strategy': strategy_name,
+                                    'confidence': confidence,
+                                    'net_gex': net_gex,
+                                    'spot_price': spot_price,
+                                    'flip_point': flip_point,
+                                    'call_wall': call_wall,
+                                    'put_wall': put_wall,
+                                    'entry_price': spot_price,
+                                    'target_price': spot_price,  # Range bound
+                                    'stop_price': None,  # Defined by strikes
+                                    'risk_reward': strategy_config['risk_reward'],
+                                    'expected_move': strategy_config['typical_move'],
+                                    'win_rate': strategy_config['win_rate'],
+                                    'money_making_plan': f"""
+🎯 HOW TO MAKE MONEY WITH THIS SETUP:
+
+1. **THE SETUP** (Current State):
+   - {symbol} is in POSITIVE GEX (${net_gex/1e9:.1f}B) = RANGE BOUND
+   - Price: ${spot_price:.2f}
+   - Call Wall: ${call_wall:.2f} ({wall_distance_call:.1f}% away)
+   - Put Wall: ${put_wall:.2f} ({wall_distance_put:.1f}% away)
+   - This means: Price likely stays in range
+
+2. **THE TRADE** (Specific Actions):
+   - SELL Iron Condor with 5-10 DTE:
+     * Sell ${call_wall:.2f} Call
+     * Buy ${(call_wall + 5):.2f} Call (protection)
+     * Sell ${put_wall:.2f} Put
+     * Buy ${(put_wall - 5):.2f} Put (protection)
+   - Collect: ~$0.30-0.50 per contract
+   - Max Risk: $5.00 per contract
+   - Position Size: Risk max 5% of account total
+
+3. **THE PROFIT** (Exit Strategy):
+   - Target: 50% of credit collected (close early!)
+   - If collect $40 → close at $20 remaining value
+   - Time-based: Close at 2 DTE if not at 50%
+   - STOP: If price breaches wall → close immediately
+   - Win Rate: {strategy_config['win_rate']*100:.0f}%!
+
+4. **WHY IT WORKS**:
+   - Positive GEX pins price in range
+   - Walls are natural support/resistance
+   - High win rate, steady income
+   - Compound small wins = big gains
+
+5. **RISK MANAGEMENT**:
+   - Never risk > 5% per trade
+   - Close at 50% profit (greed kills)
+   - Don't fight wall breaches
+   - Best on: {', '.join(strategy_config['best_days'])}
+                                    """,
+                                    'reasoning': f"Strong positive GEX ({net_gex/1e9:.1f}B) with wide walls. Perfect IC setup. Win rate: {strategy_config['win_rate']*100:.0f}%"
+                                }
+
+                    # PREMIUM SELLING - Wall Rejection Play
+                    elif strategy_name == 'PREMIUM_SELLING':
+                        wall_strength_call = abs(call_wall - spot_price) / spot_price * 100
+                        wall_strength_put = abs(put_wall - spot_price) / spot_price * 100
+
+                        if net_gex > 0 and (wall_strength_call < 1.5 or wall_strength_put < 1.5):
+                            confidence = 0.68
+
+                            at_call_wall = wall_strength_call < 1.5
+
+                            setup = {
+                                'symbol': symbol,
+                                'strategy': strategy_name,
+                                'confidence': confidence,
+                                'net_gex': net_gex,
+                                'spot_price': spot_price,
+                                'flip_point': flip_point,
+                                'call_wall': call_wall,
+                                'put_wall': put_wall,
+                                'entry_price': spot_price,
+                                'target_price': call_wall if at_call_wall else put_wall,
+                                'stop_price': None,
+                                'risk_reward': strategy_config['risk_reward'],
+                                'expected_move': strategy_config['typical_move'],
+                                'win_rate': strategy_config['win_rate'],
+                                'money_making_plan': f"""
+🎯 HOW TO MAKE MONEY WITH THIS SETUP:
+
+1. **THE SETUP** (Current State):
+   - {symbol} at {'CALL' if at_call_wall else 'PUT'} WALL: ${call_wall if at_call_wall else put_wall:.2f}
+   - Current Price: ${spot_price:.2f}
+   - Wall Distance: {wall_strength_call if at_call_wall else wall_strength_put:.1f}%
+   - This means: High probability of rejection at wall
+
+2. **THE TRADE** (Specific Actions):
+   - SELL {'CALL' if at_call_wall else 'PUT'} at ${(call_wall if at_call_wall else put_wall):.2f} strike
+   - Time: 0-2 DTE (max theta decay)
+   - Collect: $0.20-0.40 per contract
+   - Quantity: Sell 1-2 contracts per $10K account
+   - Delta: -0.30 to -0.40 (OTM but close)
+
+3. **THE PROFIT** (Exit Strategy):
+   - Target: 50-70% profit in 1 day
+   - If collect $30 → close at $10 remaining
+   - Time: Close before 4pm on expiration day
+   - STOP: If wall breaks by >0.5% → exit immediately
+   - Win Rate: {strategy_config['win_rate']*100:.0f}%
+
+4. **WHY IT WORKS**:
+   - Walls reject price {strategy_config['win_rate']*100:.0f}% of the time
+   - Theta decay works for you (time = money)
+   - Near expiration = max decay
+   - Positive GEX = walls hold strong
+
+5. **RISK MANAGEMENT**:
+   - Only sell premium at walls
+   - Max 2-3 contracts at once
+   - Close winners early (don't be greedy!)
+   - Best timing: {', '.join(strategy_config['best_days'])}
+                                    """,
+                                    'reasoning': f"Price near {'call' if at_call_wall else 'put'} wall. Premium selling setup with {strategy_config['win_rate']*100:.0f}% win rate."
+                                }
+
+                    # If setup was created, add it to results
+                    if setup:
+                        results.append(setup)
+
+            except Exception as e:
+                print(f"Error scanning {symbol}: {e}")
+                continue
+
+        # Save scan to database
+        scan_duration = time.time() - scan_start
+
+        conn = sqlite3.connect('scanner_results.db')
+        c = conn.cursor()
+
+        c.execute("""
+            INSERT INTO scanner_runs (id, symbols_scanned, total_symbols, opportunities_found, scan_duration_seconds)
+            VALUES (?, ?, ?, ?, ?)
+        """, (scan_id, ','.join(symbols), len(symbols), len(results), scan_duration))
+
+        # Save each result
+        for result in results:
+            c.execute("""
+                INSERT INTO scanner_results (
+                    scan_id, symbol, strategy, confidence, net_gex, spot_price,
+                    flip_point, call_wall, put_wall, entry_price, target_price,
+                    stop_price, risk_reward, expected_move, reasoning
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                scan_id, result['symbol'], result['strategy'], result['confidence'],
+                result['net_gex'], result['spot_price'], result['flip_point'],
+                result['call_wall'], result['put_wall'], result['entry_price'],
+                result['target_price'], result.get('stop_price'), result['risk_reward'],
+                result['expected_move'], result['reasoning']
+            ))
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "scan_id": scan_id,
+            "timestamp": datetime.now().isoformat(),
+            "total_symbols": len(symbols),
+            "opportunities_found": len(results),
+            "scan_duration_seconds": scan_duration,
+            "results": results
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/scanner/history")
+async def get_scanner_history(limit: int = 10):
+    """Get scanner run history"""
+    try:
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect('scanner_results.db')
+
+        runs = pd.read_sql_query(f"""
+            SELECT * FROM scanner_runs
+            ORDER BY timestamp DESC
+            LIMIT {limit}
+        """, conn)
+
+        conn.close()
+
+        return {
+            "success": True,
+            "data": runs.to_dict('records') if not runs.empty else []
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/scanner/results/{scan_id}")
+async def get_scan_results(scan_id: str):
+    """Get results for a specific scan"""
+    try:
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect('scanner_results.db')
+
+        results = pd.read_sql_query(f"""
+            SELECT * FROM scanner_results
+            WHERE scan_id = '{scan_id}'
+            ORDER BY confidence DESC
+        """, conn)
+
+        conn.close()
+
+        return {
+            "success": True,
+            "scan_id": scan_id,
+            "data": results.to_dict('records') if not results.empty else []
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

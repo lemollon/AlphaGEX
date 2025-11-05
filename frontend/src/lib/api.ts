@@ -53,6 +53,11 @@ export const apiClient = {
   // Market Data
   getPriceHistory: (symbol: string, days: number = 90) =>
     api.get(`/api/market/price-history/${symbol}`, { params: { days } }),
+
+  // Multi-Symbol Scanner
+  scanSymbols: (symbols: string[]) => api.post('/api/scanner/scan', { symbols }),
+  getScannerHistory: (limit: number = 10) => api.get('/api/scanner/history', { params: { limit } }),
+  getScanResults: (scanId: string) => api.get(`/api/scanner/results/${scanId}`),
 }
 
 // WebSocket connection
