@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Search, TrendingUp, TrendingDown, Target, DollarSign, Clock, CheckCircle, XCircle, AlertCircle, History, BarChart3 } from 'lucide-react'
+import { Search, TrendingUp, TrendingDown, Target, DollarSign, Clock, CheckCircle, XCircle, AlertCircle, History, BarChart3, RefreshCw } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { useDataCache } from '@/hooks/useDataCache'
 
 interface ScanSetup {
   symbol: string
@@ -49,8 +50,18 @@ export default function MultiSymbolScanner() {
     'XLE', 'XLF', 'XLK', 'GLD', 'SLV', 'TLT'
   ]
 
+  // Cache for scan results (10 minutes TTL for scanner)
+  const scanCache = useDataCache<ScanSetup[]>({
+    key: `scanner-results-${selectedSymbols.sort().join('-')}`,
+    ttl: 10 * 60 * 1000 // 10 minutes - scans are expensive
+  })
+
   useEffect(() => {
     fetchScanHistory()
+    // Load cached scan results on mount
+    if (scanCache.cachedData) {
+      setScanResults(scanCache.cachedData)
+    }
   }, [])
 
   const fetchScanHistory = async () => {
@@ -75,8 +86,11 @@ export default function MultiSymbolScanner() {
       const response = await apiClient.scanSymbols(selectedSymbols)
 
       if (response.data.success) {
-        setScanResults(response.data.results)
+        const results = response.data.results
+        setScanResults(results)
         setCurrentScanId(response.data.scan_id)
+        // Cache the results
+        scanCache.setCache(results)
 
         // Refresh history
         await fetchScanHistory()
