@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -9,7 +9,6 @@ import {
   Zap,
   Bot,
   MessageSquare,
-  MoreHorizontal,
   Activity,
   Search,
   Target,
@@ -18,6 +17,7 @@ import {
   Menu,
   X
 } from 'lucide-react'
+import { apiClient } from '@/lib/api'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -34,6 +34,35 @@ const navItems = [
 export default function Navigation() {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [spyPrice, setSpyPrice] = useState<number | null>(null)
+  const [marketOpen, setMarketOpen] = useState(false)
+
+  // Fetch SPY price and market status
+  useEffect(() => {
+    const fetchMarketData = async () => {
+      try {
+        const [gexRes, timeRes] = await Promise.all([
+          apiClient.getGEX('SPY').catch(() => null),
+          apiClient.time().catch(() => null)
+        ])
+
+        if (gexRes?.data?.data?.spot_price) {
+          setSpyPrice(gexRes.data.data.spot_price)
+        }
+
+        if (timeRes?.data?.market_open !== undefined) {
+          setMarketOpen(timeRes.data.market_open)
+        }
+      } catch (error) {
+        console.error('Error fetching market data:', error)
+      }
+    }
+
+    fetchMarketData()
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchMarketData, 30000)
+    return () => clearInterval(interval)
+  }, [])
 
   return (
     <nav className="bg-background-card border-b border-gray-800">
@@ -41,8 +70,10 @@ export default function Navigation() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <div className="flex items-center space-x-2">
-            <Activity className="w-8 h-8 text-primary" />
-            <span className="text-xl font-bold text-text-primary">AlphaGEX</span>
+            <Link href="/" className="flex items-center space-x-2">
+              <Activity className="w-8 h-8 text-primary" />
+              <span className="text-xl font-bold text-text-primary">AlphaGEX</span>
+            </Link>
           </div>
 
           {/* Navigation Tabs */}
@@ -68,12 +99,6 @@ export default function Navigation() {
                 </Link>
               )
             })}
-
-            {/* More Menu */}
-            <button className="flex items-center space-x-2 px-4 py-2 rounded-lg font-medium text-text-secondary hover:text-text-primary hover:bg-background-hover transition-all">
-              <MoreHorizontal className="w-4 h-4" />
-              <span>More</span>
-            </button>
           </div>
 
           {/* Mobile menu button */}
@@ -88,12 +113,16 @@ export default function Navigation() {
           <div className="hidden md:flex items-center space-x-4">
             <div className="hidden lg:flex items-center space-x-2 text-sm">
               <span className="text-text-secondary">SPY:</span>
-              <span className="text-text-primary font-mono font-semibold">$580.25</span>
-              <span className="text-success">▲</span>
+              <span className="text-text-primary font-mono font-semibold">
+                {spyPrice ? `$${spyPrice.toFixed(2)}` : '---'}
+              </span>
+              {spyPrice && <span className="text-success">▲</span>}
             </div>
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
-              <span className="text-sm text-text-secondary hidden sm:inline">Market Open</span>
+              <div className={`w-2 h-2 rounded-full ${marketOpen ? 'bg-success' : 'bg-danger'} animate-pulse`}></div>
+              <span className="text-sm text-text-secondary hidden sm:inline">
+                {marketOpen ? 'Market Open' : 'Market Closed'}
+              </span>
             </div>
           </div>
         </div>

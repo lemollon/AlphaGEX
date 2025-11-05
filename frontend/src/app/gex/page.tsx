@@ -37,6 +37,7 @@ export default function GEXAnalysis() {
   const [gexLevels, setGexLevels] = useState<GEXLevel[]>([])
   const [loading, setLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
   // Cache for GEX data (5 minutes TTL)
@@ -61,6 +62,7 @@ export default function GEXAnalysis() {
 
     try {
       forceRefresh ? setIsRefreshing(true) : setLoading(true)
+      setError(null)
 
       const [gexResponse, levelsResponse] = await Promise.all([
         apiClient.getGEX(symbol),
@@ -89,8 +91,10 @@ export default function GEXAnalysis() {
       setGexLevels(levelsData)
       gexCache.setCache(transformedData)
       levelsCache.setCache(levelsData)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching GEX data:', error)
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to fetch GEX data'
+      setError(errorMessage)
     } finally {
       setLoading(false)
       setIsRefreshing(false)
@@ -429,6 +433,30 @@ export default function GEXAnalysis() {
             </div>
           </div>
         </>
+      ) : error ? (
+        <div className="card text-center py-12">
+          <div className="max-w-2xl mx-auto">
+            <AlertTriangle className="w-16 h-16 text-danger mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-text-primary mb-2">Failed to Load GEX Data</h3>
+            <p className="text-text-secondary mb-4">{error}</p>
+            <div className="flex items-center justify-center gap-4">
+              <button
+                onClick={handleRefresh}
+                className="px-6 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg font-medium transition-all"
+              >
+                Try Again
+              </button>
+              <a
+                href="https://alphagex-api.onrender.com/api/diagnostic"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-6 py-2 bg-background-hover hover:bg-background-hover/70 text-text-primary rounded-lg font-medium transition-all"
+              >
+                View Diagnostics
+              </a>
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="card text-center py-12">
           <p className="text-text-secondary">No data available for {symbol}</p>
