@@ -188,7 +188,7 @@ export default function AutonomousTrader() {
       hour: 'numeric',
       minute: '2-digit',
       hour12: true,
-      timeZone: 'America/New_York'
+      timeZone: 'America/Chicago'
     }).format(new Date(isoString))
   }
 
