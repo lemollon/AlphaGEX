@@ -39,13 +39,15 @@ app = FastAPI(
 ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Local development
     "http://localhost:5173",  # Vite dev server
-    "https://alphagex.vercel.app",  # Production frontend (update with actual URL)
-    "https://*.vercel.app",  # All Vercel preview deployments
+    "https://alphagex.vercel.app",  # Production frontend
+    "https://alphagex-q049klolk-autobots-hq.vercel.app",  # Vercel preview deployment
 ]
 
+# Use regex to allow all Vercel preview deployments
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",  # All Vercel deployments
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
