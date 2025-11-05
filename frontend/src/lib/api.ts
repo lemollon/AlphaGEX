@@ -41,6 +41,11 @@ export const apiClient = {
     market_data?: any
     gamma_intel?: any
   }) => api.post('/api/ai/analyze', data),
+
+  // Autonomous Trader
+  getTraderStatus: () => api.get('/api/trader/status'),
+  getTraderPerformance: () => api.get('/api/trader/performance'),
+  getTraderTrades: (limit: number = 10) => api.get('/api/trader/trades', { params: { limit } }),
 }
 
 // WebSocket connection
