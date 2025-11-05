@@ -1067,7 +1067,11 @@ class TradingVolatilityAPI:
 
         # Read username/API key from environment variables (for Render) or secrets (for local)
         # Priority: ENV VAR > st.secrets > empty string
-        self.api_key = os.getenv("TV_USERNAME") or os.getenv("tv_username", "")
+        self.api_key = (
+            os.getenv("TRADING_VOLATILITY_API_KEY") or
+            os.getenv("TV_USERNAME") or
+            os.getenv("tv_username", "")
+        )
         if not self.api_key:
             try:
                 self.api_key = st.secrets.get("tv_username", "")
