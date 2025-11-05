@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import StatusCard from '@/components/StatusCard'
+import TradingViewWidget from '@/components/TradingViewWidget'
 import TradingViewChart from '@/components/TradingViewChart'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
@@ -55,9 +56,9 @@ export default function Dashboard() {
         setLoading(true)
 
         // Fetch ALL data in parallel - REAL DATA ONLY
-        const [gexRes, priceHistRes, perfRes, positionsRes, tradeLogRes] = await Promise.all([
+        // Note: No longer fetching price history - using TradingView widget instead
+        const [gexRes, perfRes, positionsRes, tradeLogRes] = await Promise.all([
           apiClient.getGEX('SPY'),
-          apiClient.getPriceHistory('SPY', 90),
           apiClient.getTraderPerformance(),
           apiClient.getOpenPositions(),
           apiClient.getTradeLog()
@@ -66,11 +67,6 @@ export default function Dashboard() {
         // Set GEX data
         if (gexRes.data.success) {
           setGexData(gexRes.data.data)
-        }
-
-        // Set REAL price chart data
-        if (priceHistRes.data.success) {
-          setChartData(priceHistRes.data.data)
         }
 
         // Set REAL performance data
@@ -244,26 +240,14 @@ export default function Dashboard() {
                 )}
               </h2>
 
-              <div className="bg-background-deep rounded-lg">
-                {chartData.length > 0 ? (
-                  <TradingViewChart
-                    data={chartData}
-                    type="area"
-                    height={320}
-                    colors={{
-                      lineColor: '#3b82f6',
-                      areaTopColor: 'rgba(59, 130, 246, 0.4)',
-                      areaBottomColor: 'rgba(59, 130, 246, 0.0)',
-                    }}
-                  />
-                ) : (
-                  <div className="h-80 flex items-center justify-center">
-                    <div className="text-center text-text-muted">
-                      <TrendingUp className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                      <p>Loading real SPY price data...</p>
-                    </div>
-                  </div>
-                )}
+              <div className="bg-background-deep rounded-lg overflow-hidden">
+                <TradingViewWidget
+                  symbol="SPY"
+                  interval="D"
+                  theme="dark"
+                  height={320}
+                  autosize={false}
+                />
               </div>
             </div>
           </div>
