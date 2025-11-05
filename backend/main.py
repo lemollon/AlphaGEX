@@ -8,6 +8,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # Add parent directory to path to import existing AlphaGEX modules
 parent_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(parent_dir))
