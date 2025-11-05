@@ -70,35 +70,7 @@ export default function AutonomousTrader() {
     max_drawdown: 0
   })
 
-  const [strategies, setStrategies] = useState<Strategy[]>([
-    {
-      id: '1',
-      name: 'Gamma Squeeze Scanner',
-      status: 'active',
-      win_rate: 72.5,
-      trades_today: 5,
-      pnl: 450.50,
-      last_signal: '2 min ago'
-    },
-    {
-      id: '2',
-      name: 'GEX Reversal',
-      status: 'active',
-      win_rate: 65.0,
-      trades_today: 3,
-      pnl: 399.75,
-      last_signal: '15 min ago'
-    },
-    {
-      id: '3',
-      name: 'Vanna Flow',
-      status: 'paused',
-      win_rate: 58.3,
-      trades_today: 0,
-      pnl: 0,
-      last_signal: '2 hours ago'
-    }
-  ])
+  const [strategies, setStrategies] = useState<Strategy[]>([])
 
   const [recentTrades, setRecentTrades] = useState<Trade[]>([])
 
@@ -109,10 +81,11 @@ export default function AutonomousTrader() {
         setLoading(true)
 
         // Fetch trader status, performance, and trades in parallel
-        const [statusRes, perfRes, tradesRes] = await Promise.all([
+        const [statusRes, perfRes, tradesRes, strategiesRes] = await Promise.all([
           apiClient.getTraderStatus(),
           apiClient.getTraderPerformance(),
-          apiClient.getTraderTrades(10)
+          apiClient.getTraderTrades(10),
+          apiClient.getStrategies()
         ])
 
         if (statusRes.data.success) {
@@ -121,6 +94,20 @@ export default function AutonomousTrader() {
 
         if (perfRes.data.success) {
           setPerformance(perfRes.data.data)
+        }
+
+        // Set REAL strategies from database
+        if (strategiesRes.data.success && strategiesRes.data.data.length > 0) {
+          const mappedStrategies = strategiesRes.data.data.map((strat: any, idx: number) => ({
+            id: idx.toString(),
+            name: strat.name,
+            status: 'active',
+            win_rate: strat.win_rate,
+            trades_today: 0,  // TODO: Get from API
+            pnl: strat.total_pnl,
+            last_signal: strat.last_trade_date
+          }))
+          setStrategies(mappedStrategies)
         }
 
         if (tradesRes.data.success && tradesRes.data.data.length > 0) {
@@ -188,7 +175,7 @@ export default function AutonomousTrader() {
       hour: 'numeric',
       minute: '2-digit',
       hour12: true,
-      timeZone: 'America/New_York'
+      timeZone: 'America/Chicago'
     }).format(new Date(isoString))
   }
 

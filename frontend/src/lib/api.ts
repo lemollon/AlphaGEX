@@ -46,6 +46,13 @@ export const apiClient = {
   getTraderStatus: () => api.get('/api/trader/status'),
   getTraderPerformance: () => api.get('/api/trader/performance'),
   getTraderTrades: (limit: number = 10) => api.get('/api/trader/trades', { params: { limit } }),
+  getOpenPositions: () => api.get('/api/trader/positions'),
+  getTradeLog: () => api.get('/api/trader/trade-log'),
+  getStrategies: () => api.get('/api/trader/strategies'),
+
+  // Market Data
+  getPriceHistory: (symbol: string, days: number = 90) =>
+    api.get(`/api/market/price-history/${symbol}`, { params: { days } }),
 }
 
 // WebSocket connection

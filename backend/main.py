@@ -485,7 +485,7 @@ async def get_trader_trades(limit: int = 10):
         conn = sqlite3.connect(trader.db_path)
         trades = pd.read_sql_query(f"""
             SELECT * FROM autonomous_positions
-            ORDER BY timestamp DESC
+            ORDER BY entry_date DESC, entry_time DESC
             LIMIT {limit}
         """, conn)
         conn.close()
@@ -495,6 +495,156 @@ async def get_trader_trades(limit: int = 10):
         return {
             "success": True,
             "data": trades_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trader/positions")
+async def get_open_positions():
+    """Get currently open positions"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": []
+        }
+
+    try:
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect(trader.db_path)
+        positions = pd.read_sql_query("""
+            SELECT * FROM autonomous_positions
+            WHERE status = 'OPEN'
+            ORDER BY entry_date DESC, entry_time DESC
+        """, conn)
+        conn.close()
+
+        positions_list = positions.to_dict('records') if not positions.empty else []
+
+        return {
+            "success": True,
+            "data": positions_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trader/trade-log")
+async def get_trade_log():
+    """Get today's trade log"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": []
+        }
+
+    try:
+        import sqlite3
+        import pandas as pd
+        from datetime import datetime
+
+        conn = sqlite3.connect(trader.db_path)
+
+        # Get today's date in Central Time
+        from intelligence_and_strategies import get_local_time
+        today = get_local_time('US/Central').strftime('%Y-%m-%d')
+
+        log_entries = pd.read_sql_query(f"""
+            SELECT * FROM autonomous_trade_log
+            WHERE date = '{today}'
+            ORDER BY time DESC
+        """, conn)
+        conn.close()
+
+        log_list = log_entries.to_dict('records') if not log_entries.empty else []
+
+        return {
+            "success": True,
+            "data": log_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/market/price-history/{symbol}")
+async def get_price_history(symbol: str, days: int = 90):
+    """Get real price history for charting"""
+    try:
+        import yfinance as yf
+        import pandas as pd
+
+        symbol = symbol.upper()
+        ticker = yf.Ticker(symbol)
+
+        # Get historical data
+        hist = ticker.history(period=f"{days}d")
+
+        if hist.empty:
+            raise HTTPException(status_code=404, detail=f"No price data for {symbol}")
+
+        # Convert to chart format
+        chart_data = []
+        for date, row in hist.iterrows():
+            chart_data.append({
+                "time": int(date.timestamp()),
+                "value": float(row['Close'])
+            })
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "data": chart_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trader/strategies")
+async def get_strategy_stats():
+    """Get real strategy statistics from trade database"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": []
+        }
+
+    try:
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect(trader.db_path)
+
+        # Get all positions grouped by strategy
+        query = """
+            SELECT
+                strategy,
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN status = 'CLOSED' THEN realized_pnl ELSE unrealized_pnl END) as total_pnl,
+                MAX(entry_date) as last_trade_date
+            FROM autonomous_positions
+            GROUP BY strategy
+        """
+
+        strategies = pd.read_sql_query(query, conn)
+        conn.close()
+
+        strategy_list = []
+        for _, row in strategies.iterrows():
+            win_rate = (row['wins'] / row['total_trades'] * 100) if row['total_trades'] > 0 else 0
+            strategy_list.append({
+                "name": row['strategy'],
+                "total_trades": int(row['total_trades']),
+                "win_rate": float(win_rate),
+                "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0,
+                "last_trade_date": row['last_trade_date'],
+                "status": "active"  # TODO: Determine from config or recent activity
+            })
+
+        return {
+            "success": True,
+            "data": strategy_list
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
