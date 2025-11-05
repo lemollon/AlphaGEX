@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Zap, TrendingUp, TrendingDown, Activity, BarChart3, Target, Clock, AlertCircle } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Zap, TrendingUp, TrendingDown, Activity, BarChart3, Target, Clock, AlertCircle, RefreshCw } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { useDataCache } from '@/hooks/useDataCache'
 
 type TabType = 'overview' | 'impact' | 'historical'
 
@@ -33,7 +34,8 @@ export default function GammaIntelligence() {
   const [symbol, setSymbol] = useState('SPY')
   const [vix, setVix] = useState<number>(20)
   const [intelligence, setIntelligence] = useState<GammaIntelligence | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
   // Position simulator state
@@ -41,21 +43,39 @@ export default function GammaIntelligence() {
   const [simQuantity, setSimQuantity] = useState(10)
   const [simOptionType, setSimOptionType] = useState<'call' | 'put'>('call')
 
+  // Cache for gamma intelligence
+  const gammaCache = useDataCache<GammaIntelligence>({
+    key: `gamma-intelligence-${symbol}-${vix}`,
+    ttl: 5 * 60 * 1000 // 5 minutes
+  })
+
   // Fetch gamma intelligence
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        const response = await apiClient.getGammaIntelligence(symbol, vix)
-        setIntelligence(response.data.data)
-      } catch (error) {
-        console.error('Error fetching gamma intelligence:', error)
-      } finally {
-        setLoading(false)
-      }
+  const fetchData = useCallback(async (forceRefresh = false) => {
+    // Use cached data if fresh
+    if (!forceRefresh && gammaCache.isCacheFresh && gammaCache.cachedData) {
+      setIntelligence(gammaCache.cachedData)
+      return
     }
+
+    try {
+      forceRefresh ? setIsRefreshing(true) : setLoading(true)
+      const response = await apiClient.getGammaIntelligence(symbol, vix)
+      const data = response.data.data
+      setIntelligence(data)
+      gammaCache.setCache(data)
+    } catch (error) {
+      console.error('Error fetching gamma intelligence:', error)
+    } finally {
+      setLoading(false)
+      setIsRefreshing(false)
+    }
+  }, [symbol, vix, gammaCache])
+
+  useEffect(() => {
     fetchData()
   }, [symbol, vix])
+
+  const handleRefresh = () => fetchData(true)
 
   // Update from WebSocket
   useEffect(() => {
@@ -91,11 +111,34 @@ export default function GammaIntelligence() {
           <h1 className="text-3xl font-bold text-text-primary">Gamma Intelligence</h1>
           <p className="text-text-secondary mt-1">Advanced gamma exposure analysis and insights</p>
         </div>
-        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
-          isConnected ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
-        }`}>
-          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success' : 'bg-danger'} animate-pulse`} />
-          <span className="text-sm font-medium">{isConnected ? 'Live' : 'Disconnected'}</span>
+        <div className="flex items-center gap-2">
+          {/* Refresh Button */}
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-background-hover hover:bg-background-hover/70 text-text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span className="text-sm font-medium hidden sm:inline">
+              {isRefreshing ? 'Refreshing...' : 'Refresh'}
+            </span>
+          </button>
+
+          {/* Cache Status */}
+          {gammaCache.isCacheFresh && !isRefreshing && (
+            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-sm">
+              <Clock className="w-4 h-4" />
+              <span>Cached {Math.floor(gammaCache.timeUntilExpiry / 1000 / 60)}m</span>
+            </div>
+          )}
+
+          {/* Live Status */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
+            isConnected ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+          }`}>
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success' : 'bg-danger'} animate-pulse`} />
+            <span className="text-sm font-medium">{isConnected ? 'Live' : 'Disconnected'}</span>
+          </div>
         </div>
       </div>
 

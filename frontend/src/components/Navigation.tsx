@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -13,7 +14,9 @@ import {
   Search,
   Target,
   Bell,
-  Calculator
+  Calculator,
+  Menu,
+  X
 } from 'lucide-react'
 
 const navItems = [
@@ -30,6 +33,7 @@ const navItems = [
 
 export default function Navigation() {
   const pathname = usePathname()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   return (
     <nav className="bg-background-card border-b border-gray-800">
@@ -72,8 +76,16 @@ export default function Navigation() {
             </button>
           </div>
 
+          {/* Mobile menu button */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover"
+          >
+            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+
           {/* Market Status */}
-          <div className="flex items-center space-x-4">
+          <div className="hidden md:flex items-center space-x-4">
             <div className="hidden lg:flex items-center space-x-2 text-sm">
               <span className="text-text-secondary">SPY:</span>
               <span className="text-text-primary font-mono font-semibold">$580.25</span>
@@ -85,6 +97,36 @@ export default function Navigation() {
             </div>
           </div>
         </div>
+
+        {/* Mobile Menu */}
+        {mobileMenuOpen && (
+          <div className="md:hidden py-4 border-t border-gray-800">
+            <div className="flex flex-col space-y-2">
+              {navItems.map((item) => {
+                const Icon = item.icon
+                const isActive = pathname === item.href
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`
+                      flex items-center space-x-3 px-4 py-3 rounded-lg font-medium transition-all
+                      ${isActive
+                        ? 'bg-primary text-white'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-background-hover'
+                      }
+                    `}
+                  >
+                    <Icon className="w-5 h-5" />
+                    <span>{item.label}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </nav>
   )

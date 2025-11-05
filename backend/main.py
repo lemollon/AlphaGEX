@@ -637,17 +637,17 @@ async def get_price_history(symbol: str, days: int = 90):
     try:
         symbol = symbol.upper()
 
-        # Try to use yfinance if available
+        # Try yfinance first
         try:
             import yfinance as yf
             import pandas as pd
 
             ticker = yf.Ticker(symbol)
 
-            # Get historical data
-            hist = ticker.history(period=f"{days}d")
+            # Use a more specific period format for better results
+            hist = ticker.history(period=f"{days}d", interval="1d")
 
-            if not hist.empty:
+            if not hist.empty and len(hist) > 1:
                 # Convert to chart format
                 chart_data = []
                 for date, row in hist.iterrows():
@@ -656,50 +656,92 @@ async def get_price_history(symbol: str, days: int = 90):
                         "value": float(row['Close'])
                     })
 
+                print(f"✅ yfinance: Retrieved {len(chart_data)} data points for {symbol}")
+
                 return {
                     "success": True,
                     "symbol": symbol,
-                    "data": chart_data
+                    "data": chart_data,
+                    "source": "yfinance"
                 }
             else:
-                # hist is empty, fall through to Trading Volatility fallback
-                raise ValueError("yfinance returned empty data")
+                raise ValueError(f"yfinance returned insufficient data: {len(hist)} points")
 
         except Exception as yf_error:
-            # yfinance not available or failed - use Trading Volatility API to get current price
-            # and generate minimal chart data
-            print(f"yfinance failed for {symbol}: {yf_error}. Using Trading Volatility fallback.")
+            print(f"⚠️ yfinance failed for {symbol}: {str(yf_error)}")
 
-            gex_data = api_client.get_net_gamma(symbol)
-            spot_price = gex_data.get('spot_price', 0)
+            # Try pandas_datareader as fallback
+            try:
+                from pandas_datareader import data as pdr
+                import pandas as pd
+                from datetime import datetime, timedelta
 
-            if spot_price == 0:
-                raise HTTPException(status_code=404, detail=f"No price data for {symbol}")
+                # Override yfinance with pandas_datareader
+                yf.pdr_override()
 
-            # Generate simple chart data with current price
-            import time
-            now = int(time.time())
-            chart_data = []
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=days)
 
-            # Create points for last 90 days (simplified - same price)
-            # TODO: Store historical prices or use alternative data source
-            for i in range(days):
-                timestamp = now - (days - i) * 86400
-                chart_data.append({
-                    "time": timestamp,
-                    "value": spot_price
-                })
+                df = pdr.get_data_yahoo(symbol, start=start_date, end=end_date)
 
-            return {
-                "success": True,
-                "symbol": symbol,
-                "data": chart_data,
-                "note": "Using current spot price - yfinance not available"
-            }
+                if not df.empty and len(df) > 1:
+                    chart_data = []
+                    for date, row in df.iterrows():
+                        chart_data.append({
+                            "time": int(date.timestamp()),
+                            "value": float(row['Close'])
+                        })
+
+                    print(f"✅ pandas_datareader: Retrieved {len(chart_data)} data points for {symbol}")
+
+                    return {
+                        "success": True,
+                        "symbol": symbol,
+                        "data": chart_data,
+                        "source": "pandas_datareader"
+                    }
+                else:
+                    raise ValueError("pandas_datareader returned insufficient data")
+
+            except Exception as pdr_error:
+                print(f"⚠️ pandas_datareader also failed: {str(pdr_error)}")
+
+                # Last resort: use current price with warning
+                print(f"⚠️ FALLBACK: Using flat line for {symbol}")
+
+                gex_data = api_client.get_net_gamma(symbol)
+                spot_price = gex_data.get('spot_price', 0)
+
+                if spot_price == 0:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Unable to fetch price data for {symbol}. Both yfinance and pandas_datareader failed."
+                    )
+
+                # Generate flat line with current price
+                import time
+                now = int(time.time())
+                chart_data = []
+
+                for i in range(days):
+                    timestamp = now - (days - i) * 86400
+                    chart_data.append({
+                        "time": timestamp,
+                        "value": spot_price
+                    })
+
+                return {
+                    "success": True,
+                    "symbol": symbol,
+                    "data": chart_data,
+                    "source": "fallback",
+                    "warning": "Using current spot price only - historical data unavailable"
+                }
 
     except HTTPException:
         raise
     except Exception as e:
+        print(f"❌ Price history error for {symbol}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/trader/strategies")

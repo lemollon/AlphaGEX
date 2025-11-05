@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { TrendingUp, TrendingDown, Activity, BarChart3, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { TrendingUp, TrendingDown, Activity, BarChart3, AlertTriangle, RefreshCw } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { useDataCache } from '@/hooks/useDataCache'
 import GEXProfileChart from '@/components/GEXProfileChart'
 
 interface GEXLevel {
@@ -34,42 +35,77 @@ export default function GEXAnalysis() {
   const [symbol, setSymbol] = useState('SPY')
   const [gexData, setGexData] = useState<GEXData | null>(null)
   const [gexLevels, setGexLevels] = useState<GEXLevel[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
+  // Cache for GEX data (5 minutes TTL)
+  const gexCache = useDataCache<GEXData>({
+    key: `gex-data-${symbol}`,
+    ttl: 5 * 60 * 1000 // 5 minutes
+  })
+
+  const levelsCache = useDataCache<GEXLevel[]>({
+    key: `gex-levels-${symbol}`,
+    ttl: 5 * 60 * 1000
+  })
+
   // Fetch GEX data
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        const [gexResponse, levelsResponse] = await Promise.all([
-          apiClient.getGEX(symbol),
-          apiClient.getGEXLevels(symbol)
-        ])
-        // Fix: Transform API response to match frontend interface
-        const rawData = gexResponse.data.data
-        const transformedData = {
-          symbol: rawData.symbol || symbol,
-          spot_price: rawData.spot_price || 0,
-          total_call_gex: rawData.total_call_gex || 0,
-          total_put_gex: rawData.total_put_gex || 0,
-          net_gex: rawData.net_gex || 0,
-          gex_flip_point: rawData.flip_point || rawData.gex_flip_point || 0,
-          key_levels: {
-            resistance: rawData.key_levels?.resistance || [],
-            support: rawData.key_levels?.support || []
-          }
-        }
-        setGexData(transformedData)
-        setGexLevels(levelsResponse.data.levels || levelsResponse.data.data || [])
-      } catch (error) {
-        console.error('Error fetching GEX data:', error)
-      } finally {
-        setLoading(false)
-      }
+  const fetchData = useCallback(async (forceRefresh = false) => {
+    // Use cached data if fresh and not forcing refresh
+    if (!forceRefresh && gexCache.isCacheFresh && levelsCache.isCacheFresh) {
+      if (gexCache.cachedData) setGexData(gexCache.cachedData)
+      if (levelsCache.cachedData) setGexLevels(levelsCache.cachedData)
+      return
     }
+
+    try {
+      forceRefresh ? setIsRefreshing(true) : setLoading(true)
+
+      const [gexResponse, levelsResponse] = await Promise.all([
+        apiClient.getGEX(symbol),
+        apiClient.getGEXLevels(symbol)
+      ])
+
+      // Transform API response to match frontend interface
+      const rawData = gexResponse.data.data
+      const transformedData = {
+        symbol: rawData.symbol || symbol,
+        spot_price: rawData.spot_price || 0,
+        total_call_gex: rawData.total_call_gex || 0,
+        total_put_gex: rawData.total_put_gex || 0,
+        net_gex: rawData.net_gex || 0,
+        gex_flip_point: rawData.flip_point || rawData.gex_flip_point || 0,
+        key_levels: {
+          resistance: rawData.key_levels?.resistance || [],
+          support: rawData.key_levels?.support || []
+        }
+      }
+
+      const levelsData = levelsResponse.data.levels || levelsResponse.data.data || []
+
+      // Update state and cache
+      setGexData(transformedData)
+      setGexLevels(levelsData)
+      gexCache.setCache(transformedData)
+      levelsCache.setCache(levelsData)
+    } catch (error) {
+      console.error('Error fetching GEX data:', error)
+    } finally {
+      setLoading(false)
+      setIsRefreshing(false)
+    }
+  }, [symbol, gexCache, levelsCache])
+
+  // Initial load and symbol change
+  useEffect(() => {
     fetchData()
   }, [symbol])
+
+  // Manual refresh handler
+  const handleRefresh = () => {
+    fetchData(true)
+  }
 
   // Update from WebSocket
   useEffect(() => {
@@ -107,6 +143,27 @@ export default function GEXAnalysis() {
           <p className="text-text-secondary mt-1">Deep dive into Gamma Exposure levels</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Refresh Button */}
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-background-hover hover:bg-background-hover/70 text-text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span className="text-sm font-medium hidden sm:inline">
+              {isRefreshing ? 'Refreshing...' : 'Refresh'}
+            </span>
+          </button>
+
+          {/* Cache Status */}
+          {gexCache.isCacheFresh && !isRefreshing && (
+            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-sm">
+              <Activity className="w-4 h-4" />
+              <span>Cached {Math.floor(gexCache.timeUntilExpiry / 1000 / 60)}m</span>
+            </div>
+          )}
+
+          {/* Live Status */}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
             isConnected ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
           }`}>
@@ -218,7 +275,15 @@ export default function GEXAnalysis() {
           <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-text-primary">GEX Profile</h2>
-              <BarChart3 className="text-primary w-6 h-6" />
+              <div className="flex items-center gap-3">
+                {loading && (
+                  <div className="flex items-center gap-2 text-sm text-text-secondary">
+                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span>Loading data...</span>
+                  </div>
+                )}
+                <BarChart3 className="text-primary w-6 h-6" />
+              </div>
             </div>
             {gexLevels.length > 0 ? (
               <GEXProfileChart
@@ -226,11 +291,19 @@ export default function GEXAnalysis() {
                 spotPrice={gexData.spot_price}
                 height={384}
               />
+            ) : loading ? (
+              <div className="h-96 bg-background-deep rounded-lg flex items-center justify-center border border-border">
+                <div className="text-center">
+                  <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                  <p className="text-text-primary font-medium mb-1">Loading GEX Profile</p>
+                  <p className="text-text-secondary text-sm">Fetching strike-level data for {symbol}...</p>
+                </div>
+              </div>
             ) : (
               <div className="h-96 bg-background-deep rounded-lg flex items-center justify-center border border-border">
                 <div className="text-center">
                   <BarChart3 className="w-16 h-16 text-text-muted mx-auto mb-2" />
-                  <p className="text-text-secondary">Loading GEX profile...</p>
+                  <p className="text-text-secondary">No GEX profile data available for {symbol}</p>
                 </div>
               </div>
             )}

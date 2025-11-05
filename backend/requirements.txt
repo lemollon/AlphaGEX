@@ -35,6 +35,7 @@ pyyaml==6.0.1
 pandas==2.1.4
 numpy==1.26.2
 yfinance==0.2.33
+pandas-datareader==0.10.0  # Fallback for price history
 anthropic==0.8.1
 streamlit==1.29.0  # Keep for reference, won't use in FastAPI
 plotly==5.18.0
