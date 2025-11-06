@@ -34,18 +34,23 @@ export default function GEXProfileChart({
     )
   }
 
-  // Transform data for chart - convert to millions for readability
-  const chartData = data.map(level => ({
-    strike: level.strike,
-    strikeLabel: `$${level.strike.toFixed(0)}`,
-    callGamma: (level.call_gex / 1_000_000), // Convert to millions
-    putGamma: -(Math.abs(level.put_gex) / 1_000_000), // Negative for chart display
-    netGamma: (level.total_gex / 1_000_000),
-    isSpot: spotPrice && Math.abs(level.strike - spotPrice) < 1
-  }))
+  // Transform data EXACTLY like visualization_and_plans.py lines 56-62
+  const chartData = data.map(level => {
+    // Convert to millions like original Plotly code
+    const call_g = level.call_gex / 1e6
+    const put_g = -Math.abs(level.put_gex) / 1e6  // Make negative for chart
+
+    return {
+      strike: level.strike,
+      strikeLabel: `$${level.strike.toFixed(0)}`,
+      callGamma: call_g,
+      putGamma: put_g,
+      totalGamma: call_g + put_g  // Calculate total like line 62: call_g + put_g
+    }
+  })
 
   // Find min/max for Y-axis
-  const allValues = chartData.flatMap(d => [d.callGamma, d.putGamma, d.netGamma])
+  const allValues = chartData.flatMap(d => [d.callGamma, d.putGamma, d.totalGamma])
   const maxValue = Math.max(...allValues.map(Math.abs))
   const yAxisDomain = [-maxValue * 1.1, maxValue * 1.1]
 
@@ -68,10 +73,10 @@ export default function GEXProfileChart({
 
   return (
     <div className="w-full space-y-4">
-      {/* Call and Put Gamma (Stacked) */}
+      {/* Chart 1: Call and Put Gamma (matching Plotly row 1) */}
       <div className="bg-background-deep rounded-lg p-4 border border-border">
         <h3 className="text-sm font-semibold text-text-secondary mb-3">Gamma Exposure by Strike</h3>
-        <ResponsiveContainer width="100%" height={height * 0.6}>
+        <ResponsiveContainer width="100%" height={height * 0.7}>
           <BarChart
             data={chartData}
             margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
@@ -97,7 +102,7 @@ export default function GEXProfileChart({
               iconType="square"
             />
 
-            {/* Spot price reference line */}
+            {/* Spot price reference line (yellow like Plotly) */}
             {spotPrice && (
               <ReferenceLine
                 x={spotPrice}
@@ -108,28 +113,28 @@ export default function GEXProfileChart({
               />
             )}
 
+            {/* Call gamma (green like Plotly) */}
             <Bar
               dataKey="callGamma"
               name="Call Gamma"
               fill="#10b981"
-              opacity={0.8}
-              radius={[4, 4, 0, 0]}
+              opacity={0.7}
             />
+            {/* Put gamma (red like Plotly) */}
             <Bar
               dataKey="putGamma"
               name="Put Gamma"
               fill="#ef4444"
-              opacity={0.8}
-              radius={[0, 0, 4, 4]}
+              opacity={0.7}
             />
           </BarChart>
         </ResponsiveContainer>
       </div>
 
-      {/* Net Gamma Profile */}
+      {/* Chart 2: Net Gamma Profile (matching Plotly row 2) */}
       <div className="bg-background-deep rounded-lg p-4 border border-border">
         <h3 className="text-sm font-semibold text-text-secondary mb-3">Net Gamma Profile</h3>
-        <ResponsiveContainer width="100%" height={height * 0.35}>
+        <ResponsiveContainer width="100%" height={height * 0.3}>
           <BarChart
             data={chartData}
             margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
@@ -167,12 +172,12 @@ export default function GEXProfileChart({
               />
             )}
 
+            {/* Net gamma (blue like Plotly) */}
             <Bar
-              dataKey="netGamma"
+              dataKey="totalGamma"
               name="Net Gamma"
               fill="#3b82f6"
-              opacity={0.9}
-              radius={[4, 4, 4, 4]}
+              opacity={0.8}
             />
           </BarChart>
         </ResponsiveContainer>
