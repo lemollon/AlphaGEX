@@ -335,6 +335,9 @@ async def get_gex_levels(symbol: str):
             "data": levels_array,  # Also provide as .data for compatibility
             "count": len(levels_array),
             "spot_price": profile.get('spot_price', 0),
+            "flip_point": profile.get('flip_point', 0),
+            "call_wall": profile.get('call_wall', 0),
+            "put_wall": profile.get('put_wall', 0),
             "timestamp": datetime.now().isoformat()
         }
 

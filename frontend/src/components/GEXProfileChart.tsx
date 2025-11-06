@@ -15,13 +15,19 @@ interface GEXLevel {
 interface GEXProfileChartProps {
   data: GEXLevel[]
   spotPrice?: number
+  flipPoint?: number
+  callWall?: number
+  putWall?: number
   height?: number
 }
 
 export default function GEXProfileChart({
   data,
   spotPrice,
-  height = 400
+  flipPoint,
+  callWall,
+  putWall,
+  height = 600
 }: GEXProfileChartProps) {
   if (!data || data.length === 0) {
     return (
@@ -72,72 +78,14 @@ export default function GEXProfileChart({
   }
 
   return (
-    <div className="w-full space-y-4">
-      {/* Chart 1: Call and Put Gamma (matching Plotly row 1) */}
-      <div className="bg-background-deep rounded-lg p-4 border border-border">
-        <h3 className="text-sm font-semibold text-text-secondary mb-3">Gamma Exposure by Strike</h3>
-        <ResponsiveContainer width="100%" height={height * 0.7}>
-          <BarChart
-            data={chartData}
-            margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" stroke="#1a1f2e" />
-            <XAxis
-              dataKey="strike"
-              stroke="#9ca3af"
-              angle={-45}
-              textAnchor="end"
-              height={80}
-              tick={{ fontSize: 12 }}
-              tickFormatter={(value) => `$${value.toFixed(0)}`}
-            />
-            <YAxis
-              stroke="#9ca3af"
-              tick={{ fontSize: 12 }}
-              label={{ value: 'Gamma ($M)', angle: -90, position: 'insideLeft', fill: '#9ca3af' }}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend
-              wrapperStyle={{ paddingTop: '10px' }}
-              iconType="square"
-            />
-
-            {/* Spot price reference line (yellow like Plotly) */}
-            {spotPrice && (
-              <ReferenceLine
-                x={spotPrice}
-                stroke="#fbbf24"
-                strokeWidth={2}
-                strokeDasharray="5 5"
-                label={{ value: 'Spot', position: 'top', fill: '#fbbf24', fontSize: 12 }}
-              />
-            )}
-
-            {/* Call gamma (green like Plotly) */}
-            <Bar
-              dataKey="callGamma"
-              name="Call Gamma"
-              fill="#10b981"
-              opacity={0.7}
-            />
-            {/* Put gamma (red like Plotly) */}
-            <Bar
-              dataKey="putGamma"
-              name="Put Gamma"
-              fill="#ef4444"
-              opacity={0.7}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Chart 2: Net Gamma Profile (matching Plotly row 2) */}
+    <div className="w-full">
+      {/* Net Gamma Profile - ONLY chart matching Plotly visualization_and_plans.py */}
       <div className="bg-background-deep rounded-lg p-4 border border-border">
         <h3 className="text-sm font-semibold text-text-secondary mb-3">Net Gamma Profile</h3>
-        <ResponsiveContainer width="100%" height={height * 0.3}>
+        <ResponsiveContainer width="100%" height={height}>
           <BarChart
             data={chartData}
-            margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+            margin={{ top: 30, right: 50, left: 20, bottom: 80 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#1a1f2e" />
             <XAxis
@@ -161,18 +109,78 @@ export default function GEXProfileChart({
             {/* Zero line */}
             <ReferenceLine y={0} stroke="#6b7280" strokeWidth={1} />
 
-            {/* Spot price reference line */}
+            {/* Spot price reference line (yellow, dashed) - matching Plotly line 120-162 */}
             {spotPrice && (
               <ReferenceLine
                 x={spotPrice}
                 stroke="#fbbf24"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-                label={{ value: 'Spot', position: 'top', fill: '#fbbf24', fontSize: 12 }}
+                label={{
+                  value: `Spot: $${spotPrice.toFixed(2)}`,
+                  position: 'top',
+                  fill: '#fbbf24',
+                  fontSize: 11,
+                  fontWeight: 'bold'
+                }}
               />
             )}
 
-            {/* Net gamma (blue like Plotly) */}
+            {/* Flip point reference line (orange, dashed) - matching Plotly */}
+            {flipPoint && flipPoint > 0 && (
+              <ReferenceLine
+                x={flipPoint}
+                stroke="#fb923c"
+                strokeWidth={2}
+                strokeDasharray="5 5"
+                label={{
+                  value: `Flip: $${flipPoint.toFixed(2)}`,
+                  position: 'top',
+                  fill: '#fb923c',
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  offset: 10
+                }}
+              />
+            )}
+
+            {/* Call wall reference line (green, dotted) - matching Plotly */}
+            {callWall && callWall > 0 && (
+              <ReferenceLine
+                x={callWall}
+                stroke="#10b981"
+                strokeWidth={2}
+                strokeDasharray="3 3"
+                label={{
+                  value: `Call Wall: $${callWall.toFixed(0)}`,
+                  position: 'top',
+                  fill: '#10b981',
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  offset: 20
+                }}
+              />
+            )}
+
+            {/* Put wall reference line (red, dotted) - matching Plotly */}
+            {putWall && putWall > 0 && (
+              <ReferenceLine
+                x={putWall}
+                stroke="#ef4444"
+                strokeWidth={2}
+                strokeDasharray="3 3"
+                label={{
+                  value: `Put Wall: $${putWall.toFixed(0)}`,
+                  position: 'top',
+                  fill: '#ef4444',
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  offset: 30
+                }}
+              />
+            )}
+
+            {/* Net gamma bar (blue like Plotly) */}
             <Bar
               dataKey="totalGamma"
               name="Net Gamma"
