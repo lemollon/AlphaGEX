@@ -1195,7 +1195,7 @@ class TradingVolatilityAPI:
 
             # Format 1: List of strike objects with gamma values
             if isinstance(strike_data, list):
-                st.write(f"  Parsing list format with {len(strike_data)} strikes...")
+                print(f"  Parsing list format with {len(strike_data)} strikes...")
                 max_call_gamma = 0
                 max_put_gamma = 0
 
@@ -1217,12 +1217,12 @@ class TradingVolatilityAPI:
                             put_wall = float(strike)
 
                 if call_wall and put_wall:
-                    st.success(f"  ✅ Calculated from strike list: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+                    print(f"  ✅ Calculated from strike list: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
                     return call_wall, put_wall
 
             # Format 2: Dict with strike keys and gamma values
             elif isinstance(strike_data, dict):
-                st.write(f"  Parsing dict format with {len(strike_data)} entries...")
+                print(f"  Parsing dict format with {len(strike_data)} entries...")
 
                 # Check if keys are strike prices
                 try:
@@ -1253,17 +1253,17 @@ class TradingVolatilityAPI:
                             put_wall = strike
 
                     if call_wall and put_wall:
-                        st.success(f"  ✅ Calculated from strike dict: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+                        print(f"  ✅ Calculated from strike dict: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
                         return call_wall, put_wall
 
                 except (ValueError, IndexError):
                     # Keys are not strikes, might be field names
-                    st.write("  Dict keys are not strikes, checking for call/put arrays...")
+                    print("  Dict keys are not strikes, checking for call/put arrays...")
 
             return 0, 0
 
         except Exception as e:
-            st.warning(f"  ⚠️ Could not parse strike data: {e}")
+            print(f"  ⚠️ Could not parse strike data: {e}")
             return 0, 0
 
     def get_net_gamma(self, symbol: str) -> Dict:
@@ -1272,8 +1272,8 @@ class TradingVolatilityAPI:
 
         try:
             if not self.api_key:
-                st.error("❌ Trading Volatility username not found in secrets!")
-                st.warning("Add 'tv_username' to your Streamlit secrets")
+                print("❌ Trading Volatility username not found in secrets!")
+                print("Add 'tv_username' to your Streamlit secrets")
                 return {'error': 'API key not configured'}
 
             # Check cache first
@@ -1300,19 +1300,19 @@ class TradingVolatilityAPI:
                 )
 
                 if response.status_code != 200:
-                    st.error(f"❌ Trading Volatility API returned status {response.status_code}")
+                    print(f"❌ Trading Volatility API returned status {response.status_code}")
                     return {'error': f'API returned {response.status_code}'}
 
                 # Check for rate limit error in response text
                 if "API limit exceeded" in response.text:
-                    st.error(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
+                    print(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
                     self._handle_rate_limit_error()
                     return {'error': 'API rate limit exceeded'}
 
                 # Check if response has content before parsing JSON
                 if not response.text or len(response.text.strip()) == 0:
-                    st.error(f"❌ Trading Volatility API returned empty response")
-                    st.warning(f"URL: {response.url}")
+                    print(f"❌ Trading Volatility API returned empty response")
+                    print(f"URL: {response.url}")
                     return {'error': 'Empty response from API'}
 
                 # Try to parse JSON with better error handling
@@ -1321,12 +1321,12 @@ class TradingVolatilityAPI:
                 except ValueError as json_err:
                     # Check if error message contains rate limit info
                     if "API limit exceeded" in response.text:
-                        st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                        print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
                         self._handle_rate_limit_error()
                         return {'error': 'API rate limit exceeded'}
                     else:
-                        st.error(f"❌ Invalid JSON from Trading Volatility API")
-                        st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                        print(f"❌ Invalid JSON from Trading Volatility API")
+                        print(f"Response text (first 200 chars): {response.text[:200]}")
                         return {'error': f'Invalid JSON: {str(json_err)}'}
 
                 # Success! Reset error counter
@@ -1342,7 +1342,7 @@ class TradingVolatilityAPI:
             ticker_data = json_response.get(symbol, {})
 
             if not ticker_data:
-                st.error(f"❌ No data found for {symbol} in API response")
+                print(f"❌ No data found for {symbol} in API response")
                 return {'error': 'No ticker data in response'}
 
             # Extract aggregate metrics from Trading Volatility API
@@ -1367,8 +1367,7 @@ class TradingVolatilityAPI:
         except Exception as e:
             import traceback
             error_msg = f"Error fetching data from Trading Volatility API: {e}"
-            st.error(f"❌ {error_msg}")
-            print(error_msg)
+            print(f"❌ {error_msg}")
             traceback.print_exc()
             return {'error': str(e)}
 
@@ -1378,7 +1377,7 @@ class TradingVolatilityAPI:
 
         try:
             if not self.api_key:
-                st.error("❌ Trading Volatility username not found in secrets!")
+                print("❌ Trading Volatility username not found in secrets!")
                 return {}
 
             # Check cache first
@@ -1403,18 +1402,18 @@ class TradingVolatilityAPI:
                 )
 
                 if response.status_code != 200:
-                    st.error(f"❌ gammaOI endpoint returned status {response.status_code}")
+                    print(f"❌ gammaOI endpoint returned status {response.status_code}")
                     return {}
 
                 # Check for rate limit error in response text
                 if "API limit exceeded" in response.text:
-                    st.error(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
+                    print(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
                     self._handle_rate_limit_error()
                     return {}
 
                 # Check if response has content before parsing JSON
                 if not response.text or len(response.text.strip()) == 0:
-                    st.error(f"❌ gammaOI endpoint returned empty response")
+                    print(f"❌ gammaOI endpoint returned empty response")
                     return {}
 
                 # Try to parse JSON with better error handling
@@ -1423,12 +1422,12 @@ class TradingVolatilityAPI:
                 except ValueError as json_err:
                     # Check if error message contains rate limit info
                     if "API limit exceeded" in response.text:
-                        st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                        print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
                         self._handle_rate_limit_error()
                         return {}
                     else:
-                        st.error(f"❌ Invalid JSON from gammaOI endpoint")
-                        st.warning(f"Response text (first 200 chars): {response.text[:200]}")
+                        print(f"❌ Invalid JSON from gammaOI endpoint")
+                        print(f"Response text (first 200 chars): {response.text[:200]}")
                         return {}
 
                 # Success! Reset error counter
@@ -1440,7 +1439,7 @@ class TradingVolatilityAPI:
             ticker_data = json_response.get(symbol, {})
 
             if not ticker_data:
-                st.error(f"❌ No data found for {symbol} in gammaOI response")
+                print(f"❌ No data found for {symbol} in gammaOI response")
                 return {}
 
             # Check if gammaOI includes aggregate fields (to avoid separate /gex/latest call)
@@ -1450,7 +1449,7 @@ class TradingVolatilityAPI:
             gamma_array = ticker_data.get('gamma_array', [])
 
             if not gamma_array or len(gamma_array) == 0:
-                st.warning(f"⚠️ No gamma_array found in response")
+                print(f"⚠️ No gamma_array found in response")
                 return {}
 
             # Debug: Log sample strike to see available fields
@@ -1614,9 +1613,7 @@ class TradingVolatilityAPI:
         except Exception as e:
             import traceback
             error_msg = f"Error getting GEX profile from gammaOI: {str(e)}"
-            st.error(f"❌ {error_msg}")
-            st.code(traceback.format_exc())
-            print(error_msg)
+            print(f"❌ {error_msg}")
             traceback.print_exc()
             return {}
 
@@ -1627,7 +1624,7 @@ class TradingVolatilityAPI:
 
         try:
             if not self.api_key:
-                st.error("❌ Trading Volatility username not found in secrets!")
+                print("❌ Trading Volatility username not found in secrets!")
                 return []
 
             # Check cache first (cache key includes symbol + days_back) - USING SHARED CACHE
@@ -1821,14 +1818,14 @@ class TradingVolatilityAPI:
 
             # Check for rate limit error in response text
             if "API limit exceeded" in response.text:
-                st.error(f"⚠️ API Rate Limit Hit - Using cached data for next few minutes")
+                print(f"⚠️ API Rate Limit Hit - Using cached data for next few minutes")
                 self._handle_rate_limit_error()
                 # Return empty dict, let caller handle gracefully
                 return {}
 
             # Check if response has content before parsing JSON
             if not response.text or len(response.text.strip()) == 0:
-                st.warning(f"⚠️ Skew endpoint returned empty response - skipping for now")
+                print(f"⚠️ Skew endpoint returned empty response - skipping for now")
                 return {}
 
             # Try to parse JSON with better error handling
@@ -1837,10 +1834,10 @@ class TradingVolatilityAPI:
             except ValueError as json_err:
                 # Check if error message contains rate limit info
                 if "API limit exceeded" in response.text:
-                    st.error(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                    print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
                     self._handle_rate_limit_error()
                 else:
-                    st.warning(f"⚠️ Invalid JSON from skew endpoint - skipping")
+                    print(f"⚠️ Invalid JSON from skew endpoint - skipping")
                 return {}
 
             # Success! Reset error counter
@@ -1854,8 +1851,7 @@ class TradingVolatilityAPI:
             return skew_data
 
         except Exception as e:
-            st.error(f"❌ Error fetching skew data: {e}")
-            print(f"Error fetching skew data: {e}")
+            print(f"❌ Error fetching skew data: {e}")
             return {}
 
     def get_historical_skew(self, symbol: str, days_back: int = 30) -> List[Dict]:
@@ -1891,7 +1887,7 @@ class TradingVolatilityAPI:
 
             # Check for rate limit error in response text
             if "API limit exceeded" in response.text:
-                st.warning(f"⚠️ API Rate Limit Hit (skew history) - Circuit breaker activating")
+                print(f"⚠️ API Rate Limit Hit (skew history) - Circuit breaker activating")
                 self._handle_rate_limit_error()
                 return []
 
@@ -1905,7 +1901,7 @@ class TradingVolatilityAPI:
             except ValueError as json_err:
                 # Check if error is due to rate limiting
                 if "API limit exceeded" in response.text:
-                    st.warning(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
+                    print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
                     self._handle_rate_limit_error()
                 else:
                     print(f"Invalid JSON from historical skew endpoint: {str(json_err)}")
@@ -1954,12 +1950,12 @@ class TradingVolatilityAPI:
             )
 
             if response.status_code != 200:
-                st.warning(f"⚠️ GEX Levels endpoint returned status {response.status_code}")
+                print(f"⚠️ GEX Levels endpoint returned status {response.status_code}")
                 return {}
 
             # Check for rate limit error
             if "API limit exceeded" in response.text:
-                st.error(f"⚠️ API Rate Limit Hit")
+                print(f"⚠️ API Rate Limit Hit")
                 self._handle_rate_limit_error()
                 return {}
 
@@ -1987,7 +1983,7 @@ class TradingVolatilityAPI:
             ticker_data = json_response if isinstance(json_response, dict) and 'GEX_0' in json_response else json_response.get(symbol, {})
 
             if not ticker_data:
-                st.warning(f"⚠️ No GEX Levels data found for {symbol}. API Response: {json_response}")
+                print(f"⚠️ No GEX Levels data found for {symbol}. API Response: {json_response}")
                 return {}
 
             # Extract levels with better error handling
@@ -2016,8 +2012,7 @@ class TradingVolatilityAPI:
             return levels
 
         except Exception as e:
-            st.error(f"❌ Error fetching GEX levels: {e}")
-            print(f"Error fetching GEX levels: {e}")
+            print(f"❌ Error fetching GEX levels: {e}")
             import traceback
             traceback.print_exc()
             return {}

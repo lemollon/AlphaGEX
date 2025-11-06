@@ -15,7 +15,8 @@ import {
   Bell,
   Calculator,
   Menu,
-  X
+  X,
+  Clock
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
@@ -23,6 +24,7 @@ const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp },
   { href: '/gamma', label: 'Gamma Intelligence', icon: Zap },
+  { href: '/gamma/0dte', label: '0DTE Tracker', icon: Clock },
   { href: '/scanner', label: 'Scanner', icon: Search },
   { href: '/setups', label: 'Trade Setups', icon: Target },
   { href: '/alerts', label: 'Alerts', icon: Bell },
