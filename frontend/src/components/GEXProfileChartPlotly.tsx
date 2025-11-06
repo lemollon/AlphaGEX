@@ -257,13 +257,13 @@ export default function GEXProfileChart({
             plot_bgcolor: 'rgba(0,0,0,0)',
             font: { color: '#9ca3af', family: 'Arial, sans-serif' },
             xaxis: {
-              title: 'Strike Price',
+              title: { text: 'Strike Price' },
               gridcolor: '#1a1f2e',
               tickformat: '$,.0f',
               showgrid: true
             },
             yaxis: {
-              title: 'Net Gamma ($M)',
+              title: { text: 'Net Gamma ($M)' },
               gridcolor: '#1a1f2e',
               showgrid: true,
               zeroline: true,
