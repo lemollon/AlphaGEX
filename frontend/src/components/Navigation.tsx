@@ -36,6 +36,7 @@ export default function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [spyPrice, setSpyPrice] = useState<number | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
+  const [apiConnected, setApiConnected] = useState(true)
 
   // Fetch SPY price and market status
   useEffect(() => {
@@ -48,6 +49,9 @@ export default function Navigation() {
 
         if (gexRes?.data?.data?.spot_price) {
           setSpyPrice(gexRes.data.data.spot_price)
+          setApiConnected(true)
+        } else {
+          setApiConnected(false)
         }
 
         if (timeRes?.data?.market_open !== undefined) {
@@ -55,12 +59,13 @@ export default function Navigation() {
         }
       } catch (error) {
         console.error('Error fetching market data:', error)
+        setApiConnected(false)
       }
     }
 
     fetchMarketData()
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchMarketData, 30000)
+    // Refresh every 10 seconds for more frequent updates
+    const interval = setInterval(fetchMarketData, 10000)
     return () => clearInterval(interval)
   }, [])
 
@@ -114,14 +119,14 @@ export default function Navigation() {
             <div className="hidden lg:flex items-center space-x-2 text-sm">
               <span className="text-text-secondary">SPY:</span>
               <span className="text-text-primary font-mono font-semibold">
-                {spyPrice ? `$${spyPrice.toFixed(2)}` : '---'}
+                {spyPrice ? `$${spyPrice.toFixed(2)}` : (apiConnected ? '---' : 'Error')}
               </span>
               {spyPrice && <span className="text-success">▲</span>}
             </div>
             <div className="flex items-center space-x-2">
-              <div className={`w-2 h-2 rounded-full ${marketOpen ? 'bg-success' : 'bg-danger'} animate-pulse`}></div>
+              <div className={`w-2 h-2 rounded-full ${apiConnected ? (marketOpen ? 'bg-success' : 'bg-warning') : 'bg-danger'} ${apiConnected ? 'animate-pulse' : ''}`}></div>
               <span className="text-sm text-text-secondary hidden sm:inline">
-                {marketOpen ? 'Market Open' : 'Market Closed'}
+                {!apiConnected ? 'API Disconnected' : (marketOpen ? 'Market Open' : 'Market Closed')}
               </span>
             </div>
           </div>
