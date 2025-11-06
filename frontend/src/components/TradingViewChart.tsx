@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { createChart, IChartApi, ISeriesApi, LineData, CandlestickData } from 'lightweight-charts'
 
-interface TradingViewChartProps {
+export interface TradingViewChartProps {
   data: Array<LineData | CandlestickData>
   type?: 'line' | 'candlestick' | 'area'
   height?: number
@@ -124,3 +124,6 @@ export default function TradingViewChart({
     />
   )
 }
+
+// Named export for compatibility
+export { TradingViewChart }
