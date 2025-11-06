@@ -1456,8 +1456,14 @@ class TradingVolatilityAPI:
             # Debug: Log sample strike to see available fields
             if len(gamma_array) > 0:
                 sample_strike = gamma_array[0]
-                print(f"DEBUG: Sample strike fields available: {list(sample_strike.keys())}")
-                print(f"DEBUG: Sample strike data: {sample_strike}")
+                print(f"\n{'='*60}")
+                print(f"DEBUG: RAW API RESPONSE - First Strike from gammaOI")
+                print(f"{'='*60}")
+                print(f"Available fields: {list(sample_strike.keys())}")
+                print(f"\nFull first strike data:")
+                for key, value in sample_strike.items():
+                    print(f"  {key}: {value}")
+                print(f"{'='*60}\n")
 
             # Parse strike-level data
             strikes_data = []

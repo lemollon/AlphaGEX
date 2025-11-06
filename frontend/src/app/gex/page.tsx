@@ -25,6 +25,9 @@ interface GEXData {
   total_put_gex: number
   net_gex: number
   gex_flip_point: number
+  flip_point?: number
+  call_wall?: number
+  put_wall?: number
   key_levels: {
     resistance: number[]
     support: number[]
@@ -86,8 +89,18 @@ export default function GEXAnalysis() {
 
       const levelsData = levelsResponse.data.levels || levelsResponse.data.data || []
 
+      // Extract reference line values from levels response
+      const flipPoint = levelsResponse.data.flip_point || 0
+      const callWall = levelsResponse.data.call_wall || 0
+      const putWall = levelsResponse.data.put_wall || 0
+
       // Update state and cache
-      setGexData(transformedData)
+      setGexData({
+        ...transformedData,
+        flip_point: flipPoint,
+        call_wall: callWall,
+        put_wall: putWall
+      })
       setGexLevels(levelsData)
       gexCache.setCache(transformedData)
       levelsCache.setCache(levelsData)
@@ -293,7 +306,10 @@ export default function GEXAnalysis() {
               <GEXProfileChart
                 data={gexLevels}
                 spotPrice={gexData.spot_price}
-                height={384}
+                flipPoint={gexData.flip_point}
+                callWall={gexData.call_wall}
+                putWall={gexData.put_wall}
+                height={600}
               />
             ) : loading ? (
               <div className="h-96 bg-background-deep rounded-lg flex items-center justify-center border border-border">
