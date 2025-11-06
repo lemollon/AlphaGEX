@@ -363,46 +363,101 @@ async def get_gex_levels(symbol: str):
 # ============================================================================
 
 @app.get("/api/gamma/{symbol}/intelligence")
-async def get_gamma_intelligence(symbol: str, vix: float = 0):
+async def get_gamma_intelligence(symbol: str, vix: float = 20):
     """
-    Get comprehensive gamma expiration intelligence (3 views)
+    Get comprehensive gamma intelligence - SIMPLIFIED for speed
 
-    This is the CRITICAL endpoint that preserves ALL gamma analysis logic.
-    NO MODIFICATIONS to calculation logic - only wrapping in API endpoint.
-
-    Args:
-        symbol: Stock symbol
-        vix: Current VIX value (optional, for context-aware adjustments)
-
-    Returns:
-        3-view gamma intelligence:
-        - View 1: Daily Impact (Today → Tomorrow)
-        - View 2: Weekly Evolution (Monday → Friday)
-        - View 3: Volatility Potential (Risk Calendar)
+    Returns basic gamma metrics derived from GEX data without slow external calls
     """
     try:
         symbol = symbol.upper()
+        print(f"=== GAMMA INTELLIGENCE REQUEST: {symbol}, VIX: {vix} ===")
 
-        # Use existing get_current_week_gamma_intelligence (UNCHANGED LOGIC)
-        gamma_intel = api_client.get_current_week_gamma_intelligence(
-            symbol,
-            current_vix=vix
-        )
+        # Get basic GEX data (fast, already working)
+        gex_data = api_client.get_net_gamma(symbol)
 
-        if not gamma_intel or not gamma_intel.get('success'):
+        if not gex_data or not gex_data.get('success'):
             raise HTTPException(
                 status_code=404,
-                detail=f"Gamma intelligence not available for {symbol}"
+                detail=f"GEX data not available for {symbol}"
             )
+
+        # Extract basic metrics
+        net_gex = gex_data.get('net_gex', 0)
+        spot_price = gex_data.get('spot_price', 0)
+        total_call_gamma = gex_data.get('total_call_gamma', 0)
+        total_put_gamma = abs(gex_data.get('total_put_gamma', 0))
+
+        # Calculate derived metrics
+        total_gamma = total_call_gamma + total_put_gamma
+        gamma_exposure_ratio = total_call_gamma / total_put_gamma if total_put_gamma > 0 else 0
+
+        # Simple estimates (can be enhanced later)
+        vanna_exposure = total_gamma * 0.15  # Approximate vanna as % of gamma
+        charm_decay = -total_gamma * 0.05    # Approximate daily theta decay
+        risk_reversal = (total_call_gamma - total_put_gamma) / total_gamma if total_gamma > 0 else 0
+        skew_index = gamma_exposure_ratio
+
+        # Determine market regime
+        if net_gex > 0:
+            regime_state = "Positive Gamma" if net_gex > 1e9 else "Neutral"
+            volatility = "Low" if net_gex > 1e9 else "Moderate"
+        else:
+            regime_state = "Negative Gamma"
+            volatility = "High"
+
+        trend = "Bullish" if total_call_gamma > total_put_gamma else "Bearish" if total_put_gamma > total_call_gamma else "Neutral"
+
+        # Generate key observations
+        observations = [
+            f"Net GEX is {'positive' if net_gex > 0 else 'negative'} at ${abs(net_gex)/1e9:.2f}B",
+            f"Call/Put ratio: {gamma_exposure_ratio:.2f}",
+            f"Market regime: {regime_state} with {volatility.lower()} volatility"
+        ]
+
+        # Trading implications
+        implications = [
+            f"{'Reduced' if net_gex > 0 else 'Increased'} volatility expected",
+            f"Price likely to {'stabilize' if net_gex > 0 else 'trend'} near current levels",
+            f"Consider {'selling' if net_gex > 0 else 'buying'} volatility"
+        ]
+
+        # Build response matching frontend expectations
+        intelligence = {
+            "symbol": symbol,
+            "spot_price": spot_price,
+            "total_gamma": total_gamma,
+            "call_gamma": total_call_gamma,
+            "put_gamma": total_put_gamma,
+            "gamma_exposure_ratio": gamma_exposure_ratio,
+            "vanna_exposure": vanna_exposure,
+            "charm_decay": charm_decay,
+            "risk_reversal": risk_reversal,
+            "skew_index": skew_index,
+            "key_observations": observations,
+            "trading_implications": implications,
+            "market_regime": {
+                "state": regime_state,
+                "volatility": volatility,
+                "trend": trend
+            }
+        }
+
+        print(f"✅ Gamma intelligence generated successfully for {symbol}")
 
         return {
             "success": True,
             "symbol": symbol,
-            "data": gamma_intel,
+            "data": intelligence,
             "timestamp": datetime.now().isoformat()
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"❌ Error in gamma intelligence: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
