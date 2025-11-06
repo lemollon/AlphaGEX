@@ -6,7 +6,7 @@ import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useDataCache } from '@/hooks/useDataCache'
-import GEXProfileChart from '@/components/GEXProfileChart'
+import GEXProfileChart from '@/components/GEXProfileChartPlotly'
 
 interface GEXLevel {
   strike: number
@@ -94,6 +94,14 @@ export default function GEXAnalysis() {
       const flipPoint = levelsResponse.data.flip_point || 0
       const callWall = levelsResponse.data.call_wall || 0
       const putWall = levelsResponse.data.put_wall || 0
+
+      // Debug: Log wall values
+      console.log('=== GEX WALLS FROM API ===')
+      console.log('Flip Point:', flipPoint)
+      console.log('Call Wall:', callWall)
+      console.log('Put Wall:', putWall)
+      console.log('API Response:', levelsResponse.data)
+      console.log('=========================')
 
       // Check for OI data warning
       if (levelsResponse.data.oi_data_warning) {
