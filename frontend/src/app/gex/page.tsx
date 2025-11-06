@@ -41,6 +41,7 @@ export default function GEXAnalysis() {
   const [loading, setLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [oiDataWarning, setOiDataWarning] = useState<string | null>(null)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
   // Cache for GEX data (5 minutes TTL)
@@ -93,6 +94,13 @@ export default function GEXAnalysis() {
       const flipPoint = levelsResponse.data.flip_point || 0
       const callWall = levelsResponse.data.call_wall || 0
       const putWall = levelsResponse.data.put_wall || 0
+
+      // Check for OI data warning
+      if (levelsResponse.data.oi_data_warning) {
+        setOiDataWarning(levelsResponse.data.oi_data_warning)
+      } else {
+        setOiDataWarning(null)
+      }
 
       // Update state and cache
       setGexData({
@@ -431,6 +439,9 @@ export default function GEXAnalysis() {
                             Strike
                           </th>
                           <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                            Distance
+                          </th>
+                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
                             Call GEX
                           </th>
                           <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
@@ -440,20 +451,30 @@ export default function GEXAnalysis() {
                             Net GEX
                           </th>
                           <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
-                            Call OI
+                            Gamma Strength
                           </th>
-                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
-                            Put OI
-                          </th>
-                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
-                            P/C Ratio
-                          </th>
+                          {/* Only show OI columns if we have data */}
+                          {!oiDataWarning && (
+                            <>
+                              <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                                Call OI
+                              </th>
+                              <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                                Put OI
+                              </th>
+                              <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                                P/C Ratio
+                              </th>
+                            </>
+                          )}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border bg-background">
                         {gexLevels.map((level, idx) => {
                           const isAtMoney = Math.abs(level.strike - gexData.spot_price) < (gexData.spot_price * 0.005)
                           const distance = ((level.strike - gexData.spot_price) / gexData.spot_price * 100)
+                          const maxTotalGex = Math.max(...gexLevels.map(l => Math.abs(l.total_gex)))
+                          const strengthPct = maxTotalGex > 0 ? (Math.abs(level.total_gex) / maxTotalGex * 100) : 0
 
                           return (
                             <tr
@@ -463,14 +484,17 @@ export default function GEXAnalysis() {
                               }`}
                             >
                               <td className="sticky left-0 z-10 bg-background whitespace-nowrap px-4 py-3 text-sm">
-                                <div className="flex flex-col">
-                                  <span className={`font-semibold ${isAtMoney ? 'text-primary' : 'text-text-primary'}`}>
-                                    {formatCurrency(level.strike)}
-                                  </span>
-                                  <span className="text-xs text-text-muted">
-                                    {distance > 0 ? '+' : ''}{distance.toFixed(1)}%
-                                  </span>
-                                </div>
+                                <span className={`font-semibold ${isAtMoney ? 'text-primary' : 'text-text-primary'}`}>
+                                  {formatCurrency(level.strike)}
+                                  {isAtMoney && <span className="ml-2 text-xs text-primary">ATM</span>}
+                                </span>
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
+                                <span className={`font-medium ${
+                                  Math.abs(distance) < 1 ? 'text-warning' : 'text-text-muted'
+                                }`}>
+                                  {distance > 0 ? '+' : ''}{distance.toFixed(1)}%
+                                </span>
                               </td>
                               <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
                                 <div className="flex flex-col items-end">
@@ -499,25 +523,54 @@ export default function GEXAnalysis() {
                                 </div>
                               </td>
                               <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
-                                <span className={`font-bold ${
-                                  level.total_gex > 0 ? 'text-success' : 'text-danger'
-                                }`}>
-                                  {formatGEX(level.total_gex)}
-                                </span>
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right text-text-secondary">
-                                {level.call_oi.toLocaleString()}
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right text-text-secondary">
-                                {level.put_oi.toLocaleString()}
+                                <div className="flex flex-col items-end">
+                                  <span className={`font-bold ${
+                                    level.total_gex > 0 ? 'text-success' : 'text-danger'
+                                  }`}>
+                                    {formatGEX(level.total_gex)}
+                                  </span>
+                                  <span className="text-xs text-text-muted">
+                                    {level.total_gex > 0 ? 'Calls' : 'Puts'} win
+                                  </span>
+                                </div>
                               </td>
                               <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
-                                <span className={`font-medium ${
-                                  level.pcr > 1.5 ? 'text-danger' : level.pcr < 0.7 ? 'text-success' : 'text-text-primary'
-                                }`}>
-                                  {level.pcr.toFixed(2)}
-                                </span>
+                                <div className="flex flex-col items-end">
+                                  <span className={`font-semibold ${
+                                    strengthPct > 80 ? 'text-warning' :
+                                    strengthPct > 50 ? 'text-primary' : 'text-text-muted'
+                                  }`}>
+                                    {strengthPct.toFixed(0)}%
+                                  </span>
+                                  <div className="w-full max-w-[60px] h-2 bg-background-deep rounded-full mt-1">
+                                    <div
+                                      className={`h-full rounded-full ${
+                                        strengthPct > 80 ? 'bg-warning' :
+                                        strengthPct > 50 ? 'bg-primary' : 'bg-text-muted'
+                                      }`}
+                                      style={{ width: `${strengthPct}%` }}
+                                    />
+                                  </div>
+                                </div>
                               </td>
+                              {/* Only render OI columns if data exists */}
+                              {!oiDataWarning && (
+                                <>
+                                  <td className="whitespace-nowrap px-4 py-3 text-sm text-right text-text-secondary">
+                                    {level.call_oi.toLocaleString()}
+                                  </td>
+                                  <td className="whitespace-nowrap px-4 py-3 text-sm text-right text-text-secondary">
+                                    {level.put_oi.toLocaleString()}
+                                  </td>
+                                  <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
+                                    <span className={`font-medium ${
+                                      level.pcr > 1.5 ? 'text-danger' : level.pcr < 0.7 ? 'text-success' : 'text-text-primary'
+                                    }`}>
+                                      {level.pcr.toFixed(2)}
+                                    </span>
+                                  </td>
+                                </>
+                              )}
                             </tr>
                           )
                         })}

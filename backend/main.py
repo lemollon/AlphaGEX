@@ -320,13 +320,22 @@ async def get_gex_levels(symbol: str):
             }
             levels_array.append(level)
 
-        # Debug: Log summary of data
+        # Debug: Log summary of data AND check for missing OI
         print(f"✅ Returning {len(levels_array)} strike levels for {symbol} (filtered to +/- 7 day STD)")
         if len(levels_array) > 0:
             sample = levels_array[0]
             print(f"DEBUG: Sample transformed level: {sample}")
-            print(f"DEBUG: Has OI data: call_oi={sample['call_oi']}, put_oi={sample['put_oi']}")
+            print(f"DEBUG: Has OI data: call_oi={sample['call_oi']}, put_oi={sample['put_oi']}, pcr={sample['pcr']}")
             print(f"DEBUG: Has total_gex: {sample['total_gex']}")
+
+            # Check if Trading Volatility API is returning OI data
+            non_zero_oi_count = sum(1 for level in levels_array if level['call_oi'] > 0 or level['put_oi'] > 0)
+            print(f"DEBUG: {non_zero_oi_count}/{len(levels_array)} strikes have non-zero OI data")
+
+            if non_zero_oi_count == 0:
+                print(f"⚠️ WARNING: Trading Volatility API not returning OI data for {symbol}")
+                print(f"   This is normal for some symbols or during non-market hours")
+                print(f"   Raw strike keys from API: {list(strikes[0].keys()) if strikes else 'N/A'}")
 
         return {
             "success": True,
@@ -338,6 +347,8 @@ async def get_gex_levels(symbol: str):
             "flip_point": profile.get('flip_point', 0),
             "call_wall": profile.get('call_wall', 0),
             "put_wall": profile.get('put_wall', 0),
+            "has_oi_data": non_zero_oi_count > 0,  # Flag for frontend
+            "oi_data_warning": "Trading Volatility API not returning OI data - this is normal for some symbols or during non-market hours" if non_zero_oi_count == 0 else None,
             "timestamp": datetime.now().isoformat()
         }
 
