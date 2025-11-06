@@ -36,6 +36,7 @@ export default function GammaIntelligence() {
   const [intelligence, setIntelligence] = useState<GammaIntelligence | null>(null)
   const [loading, setLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
   // Position simulator state
@@ -59,12 +60,22 @@ export default function GammaIntelligence() {
 
     try {
       forceRefresh ? setIsRefreshing(true) : setLoading(true)
+      setError(null)
+
+      console.log('=== FETCHING GAMMA INTELLIGENCE ===')
+      console.log('Symbol:', symbol, 'VIX:', vix)
+
       const response = await apiClient.getGammaIntelligence(symbol, vix)
+
+      console.log('API Response:', response.data)
+
       const data = response.data.data
       setIntelligence(data)
       gammaCache.setCache(data)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching gamma intelligence:', error)
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to fetch gamma intelligence'
+      setError(errorMessage)
     } finally {
       setLoading(false)
       setIsRefreshing(false)
@@ -207,6 +218,19 @@ export default function GammaIntelligence() {
           {[...Array(6)].map((_, i) => (
             <div key={i} className="card h-32 skeleton" />
           ))}
+        </div>
+      ) : error ? (
+        <div className="card text-center py-12">
+          <AlertCircle className="w-16 h-16 text-danger mx-auto mb-4" />
+          <h3 className="text-xl font-semibold text-text-primary mb-2">Failed to Load Gamma Intelligence</h3>
+          <p className="text-text-secondary mb-4">{error}</p>
+          <p className="text-text-muted text-sm mb-4">Check browser console (F12) for details</p>
+          <button
+            onClick={() => fetchData(true)}
+            className="px-6 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg font-medium transition-all"
+          >
+            Try Again
+          </button>
         </div>
       ) : intelligence ? (
         <>
