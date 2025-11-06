@@ -445,6 +445,11 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
             f"Consider {'selling' if net_gex > 0 else 'buying'} volatility"
         ]
 
+        # Get strike-level data for heatmap visualization
+        strikes_data = []
+        if profile and profile.get('strikes'):
+            strikes_data = profile['strikes']
+
         # Build response matching frontend expectations
         intelligence = {
             "symbol": symbol,
@@ -463,7 +468,11 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
                 "state": regime_state,
                 "volatility": volatility,
                 "trend": trend
-            }
+            },
+            "strikes": strikes_data,  # Include strike-level data for visualizations
+            "flip_point": profile.get('flip_point', 0) if profile else 0,
+            "call_wall": profile.get('call_wall', 0) if profile else 0,
+            "put_wall": profile.get('put_wall', 0) if profile else 0
         }
 
         print(f"✅ Gamma intelligence generated successfully for {symbol}")
@@ -479,6 +488,61 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
         raise
     except Exception as e:
         print(f"❌ Error in gamma intelligence: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/gamma/{symbol}/history")
+async def get_gamma_history(symbol: str, days: int = 30):
+    """
+    Get historical gamma exposure data for trend analysis
+
+    Args:
+        symbol: Stock symbol
+        days: Number of days of history to fetch (default 30)
+
+    Returns:
+        Historical gamma data including net_gex, spot_price, etc.
+    """
+    try:
+        symbol = symbol.upper()
+        print(f"=== GAMMA HISTORY REQUEST: {symbol}, days: {days} ===")
+
+        # Use existing TradingVolatilityAPI to get historical data
+        history_data = api_client.get_historical_gamma(symbol, days_back=days)
+
+        if not history_data:
+            return {
+                "success": True,
+                "symbol": symbol,
+                "data": [],
+                "message": "No historical data available",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Transform data for frontend
+        formatted_history = []
+        for entry in history_data:
+            formatted_history.append({
+                "date": entry.get('collection_date', ''),
+                "price": float(entry.get('price', 0)),
+                "net_gex": float(entry.get('skew_adjusted_gex', 0)),
+                "flip_point": float(entry.get('gex_flip_price', 0)),
+                "implied_volatility": float(entry.get('implied_volatility', 0)),
+                "put_call_ratio": float(entry.get('put_call_ratio_open_interest', 0))
+            })
+
+        print(f"✅ Fetched {len(formatted_history)} historical data points for {symbol}")
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "data": formatted_history,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        print(f"❌ Error fetching gamma history: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
