@@ -403,50 +403,135 @@ export default function GEXAnalysis() {
 
           {/* GEX Levels Table */}
           <div className="card">
-            <h2 className="text-xl font-semibold text-text-primary mb-4">Strike-Level GEX Breakdown</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-3 px-4 text-text-secondary font-medium">Strike</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Call GEX</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Put GEX</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Total GEX</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Call OI</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Put OI</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">P/C Ratio</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gexLevels.slice(0, 20).map((level, idx) => (
-                    <tr
-                      key={idx}
-                      className={`border-b border-border/50 hover:bg-background-hover transition-colors ${
-                        level.strike === Math.round(gexData.spot_price) ? 'bg-primary/5' : ''
-                      }`}
-                    >
-                      <td className="py-3 px-4 font-medium text-text-primary">
-                        {formatCurrency(level.strike)}
-                      </td>
-                      <td className="py-3 px-4 text-right text-success">{formatGEX(level.call_gex)}</td>
-                      <td className="py-3 px-4 text-right text-danger">{formatGEX(level.put_gex)}</td>
-                      <td className={`py-3 px-4 text-right font-semibold ${
-                        level.total_gex > 0 ? 'text-success' : 'text-danger'
-                      }`}>
-                        {formatGEX(level.total_gex)}
-                      </td>
-                      <td className="py-3 px-4 text-right text-text-secondary">
-                        {level.call_oi.toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-right text-text-secondary">
-                        {level.put_oi.toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-right text-text-primary">{level.pcr.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-text-primary">Strike-Level GEX Breakdown</h2>
+                <p className="text-sm text-text-secondary mt-1">
+                  Detailed gamma exposure by strike price - {gexLevels.length} strikes loaded
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <div className="px-3 py-1 rounded bg-success/10 text-success">
+                  <span className="font-medium">●</span> Call GEX
+                </div>
+                <div className="px-3 py-1 rounded bg-danger/10 text-danger">
+                  <span className="font-medium">●</span> Put GEX
+                </div>
+              </div>
             </div>
+
+            {gexLevels.length > 0 ? (
+              <div className="overflow-x-auto -mx-4 sm:mx-0">
+                <div className="inline-block min-w-full align-middle">
+                  <div className="overflow-hidden border border-border rounded-lg">
+                    <table className="min-w-full divide-y divide-border">
+                      <thead className="bg-background-deep">
+                        <tr>
+                          <th scope="col" className="sticky left-0 z-10 bg-background-deep px-4 py-3.5 text-left text-sm font-semibold text-text-primary">
+                            Strike
+                          </th>
+                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                            Call GEX
+                          </th>
+                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                            Put GEX
+                          </th>
+                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                            Net GEX
+                          </th>
+                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                            Call OI
+                          </th>
+                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                            Put OI
+                          </th>
+                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
+                            P/C Ratio
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border bg-background">
+                        {gexLevels.map((level, idx) => {
+                          const isAtMoney = Math.abs(level.strike - gexData.spot_price) < (gexData.spot_price * 0.005)
+                          const distance = ((level.strike - gexData.spot_price) / gexData.spot_price * 100)
+
+                          return (
+                            <tr
+                              key={idx}
+                              className={`hover:bg-background-hover transition-colors ${
+                                isAtMoney ? 'bg-primary/10 border-l-4 border-l-primary' : ''
+                              }`}
+                            >
+                              <td className="sticky left-0 z-10 bg-background whitespace-nowrap px-4 py-3 text-sm">
+                                <div className="flex flex-col">
+                                  <span className={`font-semibold ${isAtMoney ? 'text-primary' : 'text-text-primary'}`}>
+                                    {formatCurrency(level.strike)}
+                                  </span>
+                                  <span className="text-xs text-text-muted">
+                                    {distance > 0 ? '+' : ''}{distance.toFixed(1)}%
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
+                                <div className="flex flex-col items-end">
+                                  <span className="font-medium text-success">{formatGEX(level.call_gex)}</span>
+                                  <div className="w-full max-w-[80px] h-1 bg-background-deep rounded-full mt-1">
+                                    <div
+                                      className="h-full bg-success rounded-full"
+                                      style={{
+                                        width: `${Math.min(100, (Math.abs(level.call_gex) / Math.max(...gexLevels.map(l => Math.abs(l.call_gex)))) * 100)}%`
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
+                                <div className="flex flex-col items-end">
+                                  <span className="font-medium text-danger">{formatGEX(Math.abs(level.put_gex))}</span>
+                                  <div className="w-full max-w-[80px] h-1 bg-background-deep rounded-full mt-1">
+                                    <div
+                                      className="h-full bg-danger rounded-full"
+                                      style={{
+                                        width: `${Math.min(100, (Math.abs(level.put_gex) / Math.max(...gexLevels.map(l => Math.abs(l.put_gex)))) * 100)}%`
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
+                                <span className={`font-bold ${
+                                  level.total_gex > 0 ? 'text-success' : 'text-danger'
+                                }`}>
+                                  {formatGEX(level.total_gex)}
+                                </span>
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right text-text-secondary">
+                                {level.call_oi.toLocaleString()}
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right text-text-secondary">
+                                {level.put_oi.toLocaleString()}
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
+                                <span className={`font-medium ${
+                                  level.pcr > 1.5 ? 'text-danger' : level.pcr < 0.7 ? 'text-success' : 'text-text-primary'
+                                }`}>
+                                  {level.pcr.toFixed(2)}
+                                </span>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 border border-border rounded-lg">
+                <BarChart3 className="w-12 h-12 text-text-muted mx-auto mb-3" />
+                <p className="text-text-secondary">No strike-level data available</p>
+              </div>
+            )}
           </div>
         </>
       ) : error ? (
