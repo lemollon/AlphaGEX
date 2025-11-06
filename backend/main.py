@@ -261,37 +261,56 @@ async def get_gex_data(symbol: str):
 @app.get("/api/gex/{symbol}/levels")
 async def get_gex_levels(symbol: str):
     """
-    Get GEX support/resistance levels for a symbol
+    Get GEX support/resistance levels for a symbol with strike-by-strike breakdown
 
     Args:
         symbol: Stock symbol
 
     Returns:
-        Array of GEX levels with strike-by-strike breakdown
+        Array of GEX levels with detailed strike data (call_gex, put_gex, OI, etc.)
     """
     try:
         symbol = symbol.upper()
 
-        # Use existing API client
-        levels = api_client.get_gex_levels(symbol)
+        # Use get_gex_profile() to get detailed strike-level gamma data
+        # This calls /gex/gammaOI endpoint which returns gamma_array
+        profile = api_client.get_gex_profile(symbol)
 
-        if not levels or levels.get('error'):
+        if not profile or profile.get('error'):
             raise HTTPException(
                 status_code=404,
-                detail=f"GEX levels not available for {symbol}"
+                detail=f"GEX profile not available for {symbol}"
             )
 
-        # If levels is a dict with strike data, convert to array format
+        # Extract strikes data from profile
+        strikes = profile.get('strikes', [])
+
+        if not strikes:
+            print(f"⚠️ No strikes data in profile for {symbol}")
+            return {
+                "success": True,
+                "symbol": symbol,
+                "levels": [],
+                "data": [],
+                "message": "No strike-level data available",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Transform strikes to match frontend interface
+        # Frontend expects: {strike, call_gex, put_gex, total_gex, call_oi, put_oi, pcr}
         levels_array = []
-        if isinstance(levels, dict):
-            # If there's strike-level data, format it for the frontend
-            if 'strikes' in levels and isinstance(levels['strikes'], list):
-                levels_array = levels['strikes']
-            elif 'levels' in levels and isinstance(levels['levels'], list):
-                levels_array = levels['levels']
-            else:
-                # Create empty array if no strike data available
-                levels_array = []
+        for strike_data in strikes:
+            levels_array.append({
+                "strike": strike_data.get('strike', 0),
+                "call_gex": strike_data.get('call_gamma', 0),  # call_gamma in profile = call_gex
+                "put_gex": strike_data.get('put_gamma', 0),    # put_gamma in profile = put_gex
+                "total_gex": strike_data.get('total_gamma', 0),
+                "call_oi": strike_data.get('call_oi', 0),
+                "put_oi": strike_data.get('put_oi', 0),
+                "pcr": strike_data.get('put_call_ratio', 0)
+            })
+
+        print(f"✅ Returning {len(levels_array)} strike levels for {symbol}")
 
         return {
             "success": True,
@@ -302,6 +321,9 @@ async def get_gex_levels(symbol: str):
         }
 
     except Exception as e:
+        print(f"❌ Error in get_gex_levels for {symbol}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
