@@ -35,6 +35,8 @@ export const apiClient = {
     api.get(`/api/gamma/${symbol}/intelligence`, { params: { vix } }),
   getGammaHistory: (symbol: string, days?: number) =>
     api.get(`/api/gamma/${symbol}/history`, { params: { days } }),
+  getGammaExpiration: (symbol: string) =>
+    api.get(`/api/gamma/${symbol}/expiration`),
 
   // AI Copilot
   analyzeMarket: (data: {

@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Zap, TrendingUp, TrendingDown, Activity, BarChart3, Target, Clock, AlertCircle, RefreshCw } from 'lucide-react'
+import { Zap, TrendingUp, TrendingDown, Activity, BarChart3, Target, Clock, AlertCircle, RefreshCw, Calendar } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useDataCache } from '@/hooks/useDataCache'
+import { useRouter } from 'next/navigation'
 
 type TabType = 'overview' | 'impact' | 'historical'
 
@@ -53,6 +54,7 @@ interface HistoricalData {
 }
 
 export default function GammaIntelligence() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [symbol, setSymbol] = useState('SPY')
   const [vix, setVix] = useState<number>(20)
@@ -174,6 +176,15 @@ export default function GammaIntelligence() {
           <p className="text-text-secondary mt-1">Advanced gamma exposure analysis and insights</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* 0DTE Tracker Button */}
+          <button
+            onClick={() => router.push('/gamma/0dte')}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-danger hover:bg-danger/80 text-white transition-all"
+          >
+            <Calendar className="w-4 h-4" />
+            <span className="text-sm font-medium hidden sm:inline">0DTE Tracker</span>
+          </button>
+
           {/* Refresh Button */}
           <button
             onClick={handleRefresh}
