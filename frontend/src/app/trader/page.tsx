@@ -141,8 +141,26 @@ export default function AutonomousTrader() {
     return () => clearInterval(interval)
   }, [])
 
-  const handleToggleTrader = () => {
-    setTraderStatus(prev => ({ ...prev, is_active: !prev.is_active }))
+  const handleToggleTrader = async () => {
+    try {
+      if (traderStatus.is_active) {
+        // STOP the trader
+        const response = await apiClient.stopTrader()
+        if (response.data.success) {
+          setTraderStatus(prev => ({ ...prev, is_active: false }))
+        }
+      } else {
+        // START the trader
+        const response = await apiClient.startTrader()
+        if (response.data.success) {
+          setTraderStatus(prev => ({ ...prev, is_active: true }))
+        }
+      }
+    } catch (error) {
+      console.error('Failed to toggle trader:', error)
+      // Show error to user (you could add a toast notification here)
+      alert('Failed to toggle trader. Please check console for details.')
+    }
   }
 
   const handleToggleMode = () => {
@@ -299,9 +317,20 @@ export default function AutonomousTrader() {
           <div className="mt-6 p-4 bg-warning/10 border border-warning/20 rounded-lg flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-warning font-semibold">Trader is currently stopped</p>
+              <p className="text-warning font-semibold">🔒 Trading Permission Required</p>
               <p className="text-text-secondary text-sm mt-1">
-                Click "Start" to begin automated trading. Make sure you've configured your strategies and risk parameters.
+                <strong>The autonomous trader will NOT execute any trades until you click "Start".</strong> This is a safety feature requiring your explicit permission before any trades can be made. Review your strategies and risk parameters before starting.
+              </p>
+            </div>
+          </div>
+        )}
+        {traderStatus.is_active && (
+          <div className="mt-6 p-4 bg-success/10 border border-success/20 rounded-lg flex items-start gap-3">
+            <CheckCircle className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-success font-semibold">✅ Trading Active - Permission Granted</p>
+              <p className="text-text-secondary text-sm mt-1">
+                The autonomous trader is now authorized to execute trades based on your configured strategies. Click "Stop" at any time to revoke trading permission.
               </p>
             </div>
           </div>

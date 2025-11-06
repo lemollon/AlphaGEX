@@ -79,6 +79,8 @@ class AutonomousPaperTrader:
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('initialized', 'true')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('auto_execute', 'true')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('last_trade_date', '')")
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('is_active', 'false')")  # REQUIRE EXPLICIT START
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('mode', 'paper')")
             conn.commit()
 
         conn.close()
@@ -164,6 +166,36 @@ class AutonomousPaperTrader:
         conn.commit()
         conn.close()
 
+    def start_trading(self) -> Dict:
+        """
+        START TRADING: User explicitly grants permission to trade
+        Returns status dict
+        """
+        self.set_config('is_active', 'true')
+        self.log_action('USER_START', 'User started autonomous trading - permission granted')
+        return {
+            'success': True,
+            'message': 'Autonomous trading started - system will now execute trades',
+            'is_active': True
+        }
+
+    def stop_trading(self) -> Dict:
+        """
+        STOP TRADING: User revokes permission to trade
+        Returns status dict
+        """
+        self.set_config('is_active', 'false')
+        self.log_action('USER_STOP', 'User stopped autonomous trading - permission revoked')
+        return {
+            'success': True,
+            'message': 'Autonomous trading stopped - no new trades will be executed',
+            'is_active': False
+        }
+
+    def is_trading_active(self) -> bool:
+        """Check if trading is active (user has granted permission)"""
+        return self.get_config('is_active') == 'true'
+
     def log_action(self, action: str, details: str, position_id: int = None, success: bool = True):
         """Log trading actions"""
         conn = sqlite3.connect(self.db_path)
@@ -223,6 +255,12 @@ class AutonomousPaperTrader:
         GUARANTEED TRADE: If no directional setup, fall back to Iron Condor for premium
         Returns position ID if successful
         """
+
+        # PERMISSION CHECK: User must explicitly START the trader
+        is_active = self.get_config('is_active')
+        if is_active != 'true':
+            self.log_action('BLOCKED', 'Trader not started by user - no permission to trade', success=False)
+            return None
 
         # Check if we should trade today
         if not self.should_trade_today():

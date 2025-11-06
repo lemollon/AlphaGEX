@@ -44,6 +44,8 @@ export const apiClient = {
 
   // Autonomous Trader
   getTraderStatus: () => api.get('/api/trader/status'),
+  startTrader: () => api.post('/api/trader/start'),
+  stopTrader: () => api.post('/api/trader/stop'),
   getTraderPerformance: () => api.get('/api/trader/performance'),
   getTraderTrades: (limit: number = 10) => api.get('/api/trader/trades', { params: { limit } }),
   getOpenPositions: () => api.get('/api/trader/positions'),

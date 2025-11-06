@@ -551,7 +551,7 @@ async def get_trader_status():
 
     try:
         # Get real status from trader
-        is_active = trader.get_config('is_active') == 'True' if trader else False
+        is_active = trader.get_config('is_active') == 'true' if trader else False
         mode = trader.get_config('mode') if trader else 'paper'
 
         return {
@@ -563,6 +563,50 @@ async def get_trader_status():
                 "last_check": datetime.now().isoformat(),
                 "strategies_active": 2,  # TODO: Get from trader config
                 "total_trades_today": 0  # TODO: Calculate from database
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/trader/start")
+async def start_trader():
+    """
+    START autonomous trader - User explicitly grants permission to trade
+    This endpoint is REQUIRED before any trades can be executed
+    """
+    if not trader_available:
+        raise HTTPException(status_code=503, detail="Trader not configured")
+
+    try:
+        result = trader.start_trading()
+        return {
+            "success": True,
+            "message": result['message'],
+            "data": {
+                "is_active": True,
+                "mode": trader.get_config('mode')
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/trader/stop")
+async def stop_trader():
+    """
+    STOP autonomous trader - User revokes permission to trade
+    No new trades will be executed after this call
+    """
+    if not trader_available:
+        raise HTTPException(status_code=503, detail="Trader not configured")
+
+    try:
+        result = trader.stop_trading()
+        return {
+            "success": True,
+            "message": result['message'],
+            "data": {
+                "is_active": False,
+                "mode": trader.get_config('mode')
             }
         }
     except Exception as e:
