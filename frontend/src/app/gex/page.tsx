@@ -44,29 +44,68 @@ export default function GEXAnalysis() {
   const [oiDataWarning, setOiDataWarning] = useState<string | null>(null)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
-  // Cache for GEX data (5 minutes TTL)
+  // Cache for GEX data - PERSISTENT (only refreshes manually)
   const gexCache = useDataCache<GEXData>({
     key: `gex-data-${symbol}`,
-    ttl: 5 * 60 * 1000 // 5 minutes
+    ttl: 24 * 60 * 60 * 1000 // 24 hours - essentially persistent
   })
 
   const levelsCache = useDataCache<GEXLevel[]>({
     key: `gex-levels-${symbol}`,
-    ttl: 5 * 60 * 1000
+    ttl: 24 * 60 * 60 * 1000 // 24 hours - essentially persistent
   })
+
+  // Rate limit tracking - minimum 1 minute between API calls
+  const [lastRefreshTime, setLastRefreshTime] = useState<number>(0)
+  const [canRefresh, setCanRefresh] = useState(true)
+  const RATE_LIMIT_MS = 60 * 1000 // 1 minute
+
+  // Load last refresh time from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem(`gex-last-refresh-${symbol}`)
+    if (stored) {
+      const lastTime = parseInt(stored)
+      setLastRefreshTime(lastTime)
+      const timeSinceRefresh = Date.now() - lastTime
+      setCanRefresh(timeSinceRefresh >= RATE_LIMIT_MS)
+    }
+  }, [symbol])
+
+  // Update canRefresh every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (lastRefreshTime > 0) {
+        const timeSinceRefresh = Date.now() - lastRefreshTime
+        setCanRefresh(timeSinceRefresh >= RATE_LIMIT_MS)
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [lastRefreshTime])
 
   // Fetch GEX data
   const fetchData = useCallback(async (forceRefresh = false) => {
-    // Use cached data if fresh and not forcing refresh
-    if (!forceRefresh && gexCache.isCacheFresh && levelsCache.isCacheFresh) {
-      if (gexCache.cachedData) setGexData(gexCache.cachedData)
-      if (levelsCache.cachedData) setGexLevels(levelsCache.cachedData)
+    // Always use cached data if available (unless forcing refresh)
+    if (!forceRefresh && gexCache.cachedData && levelsCache.cachedData) {
+      setGexData(gexCache.cachedData)
+      setGexLevels(levelsCache.cachedData)
+      return
+    }
+
+    // Check rate limit
+    if (forceRefresh && !canRefresh) {
+      const timeRemaining = Math.ceil((RATE_LIMIT_MS - (Date.now() - lastRefreshTime)) / 1000)
+      setError(`Please wait ${timeRemaining} seconds before refreshing again`)
       return
     }
 
     try {
       forceRefresh ? setIsRefreshing(true) : setLoading(true)
       setError(null)
+
+      // Store refresh timestamp
+      const now = Date.now()
+      setLastRefreshTime(now)
+      localStorage.setItem(`gex-last-refresh-${symbol}`, now.toString())
 
       const [gexResponse, levelsResponse] = await Promise.all([
         apiClient.getGEX(symbol),
@@ -128,7 +167,7 @@ export default function GEXAnalysis() {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [symbol, gexCache, levelsCache])
+  }, [symbol, gexCache, levelsCache, canRefresh, lastRefreshTime, RATE_LIMIT_MS])
 
   // Initial load and symbol change
   useEffect(() => {
@@ -176,23 +215,28 @@ export default function GEXAnalysis() {
           <p className="text-text-secondary mt-1">Deep dive into Gamma Exposure levels</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Refresh Button */}
+          {/* Refresh Button with Rate Limit */}
           <button
             onClick={handleRefresh}
-            disabled={isRefreshing}
+            disabled={isRefreshing || !canRefresh}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-background-hover hover:bg-background-hover/70 text-text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            title={!canRefresh ? `Wait ${Math.ceil((RATE_LIMIT_MS - (Date.now() - lastRefreshTime)) / 1000)}s before refreshing` : 'Refresh data'}
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             <span className="text-sm font-medium hidden sm:inline">
-              {isRefreshing ? 'Refreshing...' : 'Refresh'}
+              {isRefreshing
+                ? 'Refreshing...'
+                : !canRefresh
+                  ? `Wait ${Math.ceil((RATE_LIMIT_MS - (Date.now() - lastRefreshTime)) / 1000)}s`
+                  : 'Refresh'}
             </span>
           </button>
 
-          {/* Cache Status */}
-          {gexCache.isCacheFresh && !isRefreshing && (
+          {/* Data Age Indicator */}
+          {gexData && lastRefreshTime > 0 && (
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-sm">
               <Activity className="w-4 h-4" />
-              <span>Cached {Math.floor(gexCache.timeUntilExpiry / 1000 / 60)}m</span>
+              <span>Updated {Math.floor((Date.now() - lastRefreshTime) / 1000 / 60)}m ago</span>
             </div>
           )}
 
