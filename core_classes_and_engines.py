@@ -1569,17 +1569,19 @@ class TradingVolatilityAPI:
             # Calculate flip point from gamma_array (where net gamma crosses zero)
             # Only consider flip points within the filtered range
             flip_point = 0
-            for i in range(len(gamma_array) - 1):
-                if 'net_gamma_$_at_strike' in gamma_array[i] and 'net_gamma_$_at_strike' in gamma_array[i + 1]:
-                    strike_current = float(gamma_array[i]['strike'])
-                    strike_next = float(gamma_array[i + 1]['strike'])
 
-                    # Skip if both strikes are outside filtered range
-                    if strike_current < min_strike or strike_next > max_strike:
-                        continue
+            # Filter gamma_array to visible range first for performance
+            gamma_array_filtered = [
+                g for g in gamma_array
+                if 'strike' in g and min_strike <= float(g['strike']) <= max_strike
+            ]
 
-                    net_gamma_current = float(gamma_array[i].get('net_gamma_$_at_strike', 0))
-                    net_gamma_next = float(gamma_array[i + 1].get('net_gamma_$_at_strike', 0))
+            for i in range(len(gamma_array_filtered) - 1):
+                if 'net_gamma_$_at_strike' in gamma_array_filtered[i] and 'net_gamma_$_at_strike' in gamma_array_filtered[i + 1]:
+                    strike_current = float(gamma_array_filtered[i]['strike'])
+                    strike_next = float(gamma_array_filtered[i + 1]['strike'])
+                    net_gamma_current = float(gamma_array_filtered[i].get('net_gamma_$_at_strike', 0))
+                    net_gamma_next = float(gamma_array_filtered[i + 1].get('net_gamma_$_at_strike', 0))
 
                     # Check for sign change (zero crossing)
                     if net_gamma_current * net_gamma_next < 0:
