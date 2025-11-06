@@ -332,7 +332,7 @@ class AutonomousPaperTrader:
         )
 
         try:
-            # Step 1: Get SPY GEX data
+            # Step 1: Get SPY GEX data + Enhanced market data
             gex_data = api_client.get_net_gamma('SPY')
             skew_data = api_client.get_skew_data('SPY')
 
@@ -349,6 +349,12 @@ class AutonomousPaperTrader:
             net_gex = gex_data.get('net_gex', 0)
             flip_point = gex_data.get('flip_point', 0)
 
+            # Step 1b: Get VIX, momentum, and market context
+            vix = self._get_vix()
+            momentum = self._get_momentum()
+            time_context = self._get_time_context()
+            put_call_ratio = skew_data.get('put_call_ratio', 1.0) if skew_data else 1.0
+
             if spot_price == 0:
                 self.update_live_status(
                     status='ERROR',
@@ -359,15 +365,15 @@ class AutonomousPaperTrader:
                 return None
 
             # Update with market analysis
-            market_summary = f"SPY ${spot_price:.2f} | GEX: ${net_gex/1e9:.2f}B | Flip: ${flip_point:.2f}"
+            market_summary = f"SPY ${spot_price:.2f} | GEX: ${net_gex/1e9:.2f}B | Flip: ${flip_point:.2f} | VIX: {vix:.1f} | Momentum: {momentum.get('trend', 'neutral')} ({momentum.get('4h', 0):+.1f}%)"
             self.update_live_status(
                 status='ANALYZING',
                 action='Analyzing GEX regime and finding optimal trade setup...',
                 analysis=market_summary
             )
 
-            # Step 2: Try to find high-confidence directional trade
-            trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price)
+            # Step 2: Try to find high-confidence directional trade (with enhanced data)
+            trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
 
             # GUARANTEED TRADE: If no high-confidence setup, do Iron Condor
             if not trade or trade.get('confidence', 0) < 70:
@@ -470,8 +476,98 @@ class AutonomousPaperTrader:
             self.log_action('ERROR', f'Directional trade failed: {str(e)}', success=False)
             return None
 
-    def _analyze_and_find_trade(self, gex_data: Dict, skew_data: Dict, spot: float) -> Optional[Dict]:
-        """Analyze market and return best trade"""
+    def _get_vix(self) -> float:
+        """Get current VIX level for volatility regime"""
+        try:
+            import yfinance as yf
+            vix_ticker = yf.Ticker('^VIX')
+            vix_data = vix_ticker.history(period='1d', interval='1m')
+            if not vix_data.empty:
+                return float(vix_data['Close'].iloc[-1])
+            return 20.0  # Default neutral VIX
+        except Exception as e:
+            print(f"Failed to fetch VIX: {e}")
+            return 20.0
+
+    def _get_momentum(self) -> Dict:
+        """Calculate recent momentum (1h, 4h price change)"""
+        try:
+            import yfinance as yf
+            spy = yf.Ticker('SPY')
+            # Get intraday data
+            data = spy.history(period='5d', interval='1h')
+            if len(data) < 5:
+                return {'1h': 0, '4h': 0, 'trend': 'neutral'}
+
+            current_price = float(data['Close'].iloc[-1])
+            price_1h_ago = float(data['Close'].iloc[-2]) if len(data) >= 2 else current_price
+            price_4h_ago = float(data['Close'].iloc[-5]) if len(data) >= 5 else current_price
+
+            change_1h = ((current_price - price_1h_ago) / price_1h_ago * 100)
+            change_4h = ((current_price - price_4h_ago) / price_4h_ago * 100)
+
+            # Determine trend
+            if change_4h > 0.5:
+                trend = 'strong_bullish'
+            elif change_4h > 0.2:
+                trend = 'bullish'
+            elif change_4h < -0.5:
+                trend = 'strong_bearish'
+            elif change_4h < -0.2:
+                trend = 'bearish'
+            else:
+                trend = 'neutral'
+
+            return {
+                '1h': round(change_1h, 2),
+                '4h': round(change_4h, 2),
+                'trend': trend
+            }
+        except Exception as e:
+            print(f"Failed to calculate momentum: {e}")
+            return {'1h': 0, '4h': 0, 'trend': 'neutral'}
+
+    def _get_time_context(self) -> Dict:
+        """Get time of day context for trading"""
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+
+        # Market hours context (Eastern Time approximation)
+        if 9 <= hour < 10:
+            session = 'opening'  # High volatility, momentum plays
+            volatility_factor = 1.2
+        elif 10 <= hour < 11:
+            session = 'morning'  # Best for new positions
+            volatility_factor = 1.0
+        elif 11 <= hour < 14:
+            session = 'midday'  # Lower volume, chop
+            volatility_factor = 0.8
+        elif 14 <= hour < 15:
+            session = 'afternoon'  # Building to close
+            volatility_factor = 0.9
+        elif 15 <= hour < 16:
+            session = 'power_hour'  # High volume, reversals
+            volatility_factor = 1.3
+        else:
+            session = 'closed'
+            volatility_factor = 0.0
+
+        return {
+            'session': session,
+            'volatility_factor': volatility_factor,
+            'day_of_week': now.strftime('%A')
+        }
+
+    def _analyze_and_find_trade(self, gex_data: Dict, skew_data: Dict, spot: float,
+                                  vix: float = 20, momentum: Dict = None,
+                                  time_context: Dict = None, put_call_ratio: float = 1.0) -> Optional[Dict]:
+        """Analyze market and return best trade with enhanced multi-factor scoring"""
+
+        if momentum is None:
+            momentum = {'1h': 0, '4h': 0, 'trend': 'neutral'}
+        if time_context is None:
+            time_context = {'session': 'morning', 'volatility_factor': 1.0, 'day_of_week': 'Monday'}
 
         net_gex = gex_data.get('net_gex', 0)
         flip = gex_data.get('flip_point', spot)
@@ -480,10 +576,52 @@ class AutonomousPaperTrader:
 
         distance_to_flip = ((flip - spot) / spot * 100) if spot else 0
 
+        # Enhanced scoring factors
+        vix_regime = 'high' if vix > 25 else 'low' if vix < 15 else 'normal'
+        momentum_trend = momentum.get('trend', 'neutral')
+        momentum_4h = momentum.get('4h', 0)
+        session = time_context.get('session', 'morning')
+        vol_factor = time_context.get('volatility_factor', 1.0)
+
         # Determine strategy based on GEX regime
         # REGIME 1: Negative GEX below flip = SQUEEZE
         if net_gex < -1e9 and spot < flip:
             strike = round(flip / 5) * 5
+
+            # Enhanced confidence scoring
+            base_confidence = 70 + abs(distance_to_flip) * 3
+
+            # Boost confidence if momentum aligns (bullish momentum for call)
+            if momentum_trend in ['bullish', 'strong_bullish']:
+                base_confidence += 5
+            elif momentum_trend in ['bearish', 'strong_bearish']:
+                base_confidence -= 10  # Momentum against us
+
+            # VIX factor: High VIX = more explosive moves with negative GEX
+            if vix_regime == 'high':
+                base_confidence += 5
+
+            # Time factor: Morning = best for new positions
+            if session in ['morning', 'opening']:
+                base_confidence += 3
+
+            # Put/Call ratio: High P/C (>1.2) = bearish sentiment, squeeze more likely
+            if put_call_ratio > 1.2:
+                base_confidence += 5
+
+            confidence = min(95, int(base_confidence))
+
+            reasoning = f"""SQUEEZE SETUP (Confidence: {confidence}%):
+GEX: ${net_gex/1e9:.2f}B (NEGATIVE) - Dealers SHORT gamma
+Price: ${spot:.2f} is {abs(distance_to_flip):.2f}% below flip ${flip:.2f}
+→ Rally forces dealers to BUY → accelerates move
+
+ENHANCED FACTORS:
+• VIX: {vix:.1f} ({vix_regime}) - {'Higher vol = stronger moves' if vix_regime == 'high' else 'Normal regime'}
+• Momentum: {momentum_trend} ({momentum_4h:+.1f}% 4h) - {'Aligned!' if momentum_4h > 0 else 'Against us' if momentum_4h < -0.2 else 'Neutral'}
+• Session: {session} - {'Prime time' if session in ['morning', 'opening'] else 'Standard'}
+• P/C Ratio: {put_call_ratio:.2f} - {'Bearish sentiment, squeeze likely' if put_call_ratio > 1.2 else 'Neutral'}"""
+
             return {
                 'symbol': 'SPY',
                 'strategy': 'Negative GEX Squeeze',
@@ -491,15 +629,31 @@ class AutonomousPaperTrader:
                 'option_type': 'call',
                 'strike': strike,
                 'dte': 5,
-                'confidence': min(85, 70 + abs(distance_to_flip) * 3),
+                'confidence': confidence,
                 'target': flip,
                 'stop': spot * 0.985,
-                'reasoning': f"SQUEEZE: Net GEX ${net_gex/1e9:.2f}B (negative). Dealers SHORT gamma. Price ${spot:.2f} is {abs(distance_to_flip):.2f}% below flip ${flip:.2f}. When SPY rallies, dealers must BUY → accelerates move."
+                'reasoning': reasoning
             }
 
         # REGIME 2: Negative GEX above flip = BREAKDOWN
         elif net_gex < -1e9 and spot >= flip:
             strike = round(flip / 5) * 5
+
+            # Enhanced confidence
+            base_confidence = 65 + abs(distance_to_flip) * 3
+            if momentum_trend in ['bearish', 'strong_bearish']:
+                base_confidence += 5  # Momentum aligned
+            elif momentum_trend in ['bullish', 'strong_bullish']:
+                base_confidence -= 10
+            if vix_regime == 'high':
+                base_confidence += 5
+            if session in ['morning', 'opening']:
+                base_confidence += 3
+            if put_call_ratio < 0.8:  # Low P/C = complacency, breakdown more likely
+                base_confidence += 5
+
+            confidence = min(90, int(base_confidence))
+
             return {
                 'symbol': 'SPY',
                 'strategy': 'Negative GEX Breakdown',
@@ -507,15 +661,25 @@ class AutonomousPaperTrader:
                 'option_type': 'put',
                 'strike': strike,
                 'dte': 5,
-                'confidence': min(80, 65 + abs(distance_to_flip) * 3),
+                'confidence': confidence,
                 'target': flip,
                 'stop': spot * 1.015,
-                'reasoning': f"BREAKDOWN: Net GEX ${net_gex/1e9:.2f}B (negative). Dealers SHORT gamma. Price ${spot:.2f} is {abs(distance_to_flip):.2f}% above flip ${flip:.2f}. Any selling forces dealers to SELL → accelerates decline."
+                'reasoning': f"BREAKDOWN: GEX ${net_gex/1e9:.2f}B. Price ${spot:.2f} above flip ${flip:.2f}. VIX: {vix:.1f}. Momentum: {momentum_trend} ({momentum_4h:+.1f}%). Any selling forces dealers to SELL → accelerates decline."
             }
 
         # REGIME 3: High positive GEX = SHORT PREMIUM (but for $5K, just directional)
         elif net_gex > 1e9:
             # For small account, trade directional based on position vs flip
+            base_confidence = 65
+            if momentum_trend in ['bullish', 'strong_bullish'] and spot < flip:
+                base_confidence += 5
+            elif momentum_trend in ['bearish', 'strong_bearish'] and spot >= flip:
+                base_confidence += 5
+            if vix_regime == 'low':
+                base_confidence += 3  # Low VIX good for range trades
+            if session in ['morning']:
+                base_confidence += 2
+
             if spot < flip:
                 strike = round(spot / 5) * 5
                 return {
@@ -525,10 +689,10 @@ class AutonomousPaperTrader:
                     'option_type': 'call',
                     'strike': strike,
                     'dte': 7,
-                    'confidence': 70,
+                    'confidence': min(80, int(base_confidence)),
                     'target': flip,
                     'stop': spot * 0.98,
-                    'reasoning': f"RANGE: Net GEX ${net_gex/1e9:.2f}B (positive). Dealers LONG gamma, will fade moves. Price below flip → lean bullish toward ${flip:.2f}."
+                    'reasoning': f"RANGE: GEX ${net_gex/1e9:.2f}B (positive). Dealers fade moves. Below flip. VIX: {vix:.1f}. Momentum: {momentum_trend}."
                 }
             else:
                 strike = round(spot / 5) * 5
@@ -539,14 +703,22 @@ class AutonomousPaperTrader:
                     'option_type': 'put',
                     'strike': strike,
                     'dte': 7,
-                    'confidence': 70,
+                    'confidence': min(80, int(base_confidence)),
                     'target': flip,
                     'stop': spot * 1.02,
-                    'reasoning': f"RANGE: Net GEX ${net_gex/1e9:.2f}B (positive). Dealers LONG gamma, will fade moves. Price above flip → lean bearish toward ${flip:.2f}."
+                    'reasoning': f"RANGE: GEX ${net_gex/1e9:.2f}B (positive). Dealers fade moves. Above flip. VIX: {vix:.1f}. Momentum: {momentum_trend}."
                 }
 
         # REGIME 4: Neutral - trade toward flip
         else:
+            base_confidence = 60
+            if momentum_trend in ['bullish', 'strong_bullish'] and spot < flip:
+                base_confidence += 5
+            elif momentum_trend in ['bearish', 'strong_bearish'] and spot >= flip:
+                base_confidence += 5
+            if session in ['morning']:
+                base_confidence += 2
+
             if spot < flip:
                 strike = round(spot / 5) * 5
                 return {
@@ -556,10 +728,10 @@ class AutonomousPaperTrader:
                     'option_type': 'call',
                     'strike': strike,
                     'dte': 7,
-                    'confidence': 65,
+                    'confidence': min(75, int(base_confidence)),
                     'target': flip,
                     'stop': spot * 0.98,
-                    'reasoning': f"NEUTRAL: Net GEX ${net_gex/1e9:.2f}B. Price ${spot:.2f} below flip ${flip:.2f}. Lean bullish toward flip point."
+                    'reasoning': f"NEUTRAL: GEX ${net_gex/1e9:.2f}B. Below flip. VIX: {vix:.1f}. Momentum: {momentum_trend} ({momentum_4h:+.1f}%). Lean bullish."
                 }
             else:
                 strike = round(spot / 5) * 5
@@ -570,10 +742,10 @@ class AutonomousPaperTrader:
                     'option_type': 'put',
                     'strike': strike,
                     'dte': 7,
-                    'confidence': 65,
+                    'confidence': min(75, int(base_confidence)),
                     'target': flip,
                     'stop': spot * 1.02,
-                    'reasoning': f"NEUTRAL: Net GEX ${net_gex/1e9:.2f}B. Price ${spot:.2f} above flip ${flip:.2f}. Lean bearish toward flip point."
+                    'reasoning': f"NEUTRAL: GEX ${net_gex/1e9:.2f}B. Above flip. VIX: {vix:.1f}. Momentum: {momentum_trend} ({momentum_4h:+.1f}%). Lean bearish."
                 }
 
     def _execute_iron_condor(self, spot: float, gex_data: Dict, api_client) -> Optional[int]:
