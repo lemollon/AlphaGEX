@@ -550,20 +550,50 @@ async def get_trader_status():
         }
 
     try:
-        # Get real status from trader
-        is_active = trader.get_config('is_active') == 'True' if trader else False
+        # Get live status from trader
+        live_status = trader.get_live_status()
         mode = trader.get_config('mode') if trader else 'paper'
 
         return {
             "success": True,
             "data": {
-                "is_active": is_active,
+                "is_active": live_status.get('is_working', False),
                 "mode": mode,
-                "uptime": 0,  # TODO: Calculate actual uptime
-                "last_check": datetime.now().isoformat(),
+                "status": live_status.get('status', 'UNKNOWN'),
+                "current_action": live_status.get('current_action', 'System initializing...'),
+                "market_analysis": live_status.get('market_analysis'),
+                "last_decision": live_status.get('last_decision'),
+                "last_check": live_status.get('timestamp', datetime.now().isoformat()),
+                "next_check": live_status.get('next_check_time'),
                 "strategies_active": 2,  # TODO: Get from trader config
                 "total_trades_today": 0  # TODO: Calculate from database
             }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trader/live-status")
+async def get_trader_live_status():
+    """
+    Get real-time "thinking out loud" status from autonomous trader
+    Shows what the trader is currently doing and its analysis
+    """
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": {
+                "status": "OFFLINE",
+                "current_action": "Trader service not available",
+                "is_working": False
+            }
+        }
+
+    try:
+        live_status = trader.get_live_status()
+        return {
+            "success": True,
+            "data": live_status
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
