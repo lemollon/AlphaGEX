@@ -8,10 +8,10 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
-import streamlit as st
 from config_and_database import DB_PATH
 import yfinance as yf
 import time
+import os
 
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str) -> Dict:
@@ -1063,17 +1063,8 @@ RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
         AI-POWERED DECISION: Ask Claude whether to close position
         Returns: {'should_close': bool, 'reason': str}
         """
-        import streamlit as st
-        import os
-
-        # Check if Claude API is available
-        # Check environment variables first (for Render), then secrets (for local)
+        # Check if Claude API is available from environment variables
         claude_api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
-        if not claude_api_key:
-            try:
-                claude_api_key = st.secrets.get("claude_api_key", "")
-            except:
-                claude_api_key = ""
 
         if not claude_api_key:
             # No AI available, use fallback
