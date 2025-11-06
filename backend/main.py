@@ -262,6 +262,7 @@ async def get_gex_data(symbol: str):
 async def get_gex_levels(symbol: str):
     """
     Get GEX support/resistance levels for a symbol with strike-by-strike breakdown
+    Filtered to +/- 7 day standard deviation range
 
     Args:
         symbol: Stock symbol
@@ -274,6 +275,7 @@ async def get_gex_levels(symbol: str):
 
         # Use get_gex_profile() to get detailed strike-level gamma data
         # This calls /gex/gammaOI endpoint which returns gamma_array
+        # Already filtered to +/- 7 day STD in get_gex_profile()
         profile = api_client.get_gex_profile(symbol)
 
         if not profile or profile.get('error'):
@@ -282,11 +284,12 @@ async def get_gex_levels(symbol: str):
                 detail=f"GEX profile not available for {symbol}"
             )
 
-        # Extract strikes data from profile
+        # Extract strikes data from profile (already filtered to +/- 7 day STD)
         strikes = profile.get('strikes', [])
 
         if not strikes:
             print(f"⚠️ No strikes data in profile for {symbol}")
+            print(f"DEBUG: Profile keys: {list(profile.keys())}")
             return {
                 "success": True,
                 "symbol": symbol,
@@ -296,27 +299,42 @@ async def get_gex_levels(symbol: str):
                 "timestamp": datetime.now().isoformat()
             }
 
+        # Debug: Log first strike to see available fields
+        if len(strikes) > 0:
+            print(f"DEBUG: First strike fields: {list(strikes[0].keys())}")
+            print(f"DEBUG: First strike data: {strikes[0]}")
+            print(f"DEBUG: Total strikes (filtered to +/- 7 day STD): {len(strikes)}")
+
         # Transform strikes to match frontend interface
         # Frontend expects: {strike, call_gex, put_gex, total_gex, call_oi, put_oi, pcr}
         levels_array = []
         for strike_data in strikes:
-            levels_array.append({
+            level = {
                 "strike": strike_data.get('strike', 0),
-                "call_gex": strike_data.get('call_gamma', 0),  # call_gamma in profile = call_gex
-                "put_gex": strike_data.get('put_gamma', 0),    # put_gamma in profile = put_gex
+                "call_gex": strike_data.get('call_gamma', 0),
+                "put_gex": strike_data.get('put_gamma', 0),
                 "total_gex": strike_data.get('total_gamma', 0),
                 "call_oi": strike_data.get('call_oi', 0),
                 "put_oi": strike_data.get('put_oi', 0),
                 "pcr": strike_data.get('put_call_ratio', 0)
-            })
+            }
+            levels_array.append(level)
 
-        print(f"✅ Returning {len(levels_array)} strike levels for {symbol}")
+        # Debug: Log summary of data
+        print(f"✅ Returning {len(levels_array)} strike levels for {symbol} (filtered to +/- 7 day STD)")
+        if len(levels_array) > 0:
+            sample = levels_array[0]
+            print(f"DEBUG: Sample transformed level: {sample}")
+            print(f"DEBUG: Has OI data: call_oi={sample['call_oi']}, put_oi={sample['put_oi']}")
+            print(f"DEBUG: Has total_gex: {sample['total_gex']}")
 
         return {
             "success": True,
             "symbol": symbol,
             "levels": levels_array,
             "data": levels_array,  # Also provide as .data for compatibility
+            "count": len(levels_array),
+            "spot_price": profile.get('spot_price', 0),
             "timestamp": datetime.now().isoformat()
         }
 
