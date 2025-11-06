@@ -1453,6 +1453,12 @@ class TradingVolatilityAPI:
                 st.warning(f"⚠️ No gamma_array found in response")
                 return {}
 
+            # Debug: Log sample strike to see available fields
+            if len(gamma_array) > 0:
+                sample_strike = gamma_array[0]
+                print(f"DEBUG: Sample strike fields available: {list(sample_strike.keys())}")
+                print(f"DEBUG: Sample strike data: {sample_strike}")
+
             # Parse strike-level data
             strikes_data = []
             max_call_gamma = 0
