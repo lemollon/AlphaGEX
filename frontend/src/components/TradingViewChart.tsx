@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { createChart, IChartApi, ISeriesApi, LineData, CandlestickData } from 'lightweight-charts'
 
 export interface TradingViewChartProps {
@@ -16,12 +16,12 @@ export interface TradingViewChartProps {
   }
 }
 
-export default function TradingViewChart({
+const TradingViewChart: React.FC<TradingViewChartProps> = ({
   data,
   type = 'line',
   height = 400,
   colors = {}
-}: TradingViewChartProps) {
+}) => {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Line' | 'Candlestick' | 'Area'> | null>(null)
@@ -125,5 +125,7 @@ export default function TradingViewChart({
   )
 }
 
-// Named export for compatibility
+TradingViewChart.displayName = 'TradingViewChart'
+
+export default TradingViewChart
 export { TradingViewChart }
