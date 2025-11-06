@@ -550,17 +550,21 @@ async def get_trader_status():
         }
 
     try:
-        # Get real status from trader
-        is_active = trader.get_config('is_active') == 'true' if trader else False
+        # Get live status from trader
+        live_status = trader.get_live_status()
         mode = trader.get_config('mode') if trader else 'paper'
 
         return {
             "success": True,
             "data": {
-                "is_active": is_active,
+                "is_active": live_status.get('is_working', False),
                 "mode": mode,
-                "uptime": 0,  # TODO: Calculate actual uptime
-                "last_check": datetime.now().isoformat(),
+                "status": live_status.get('status', 'UNKNOWN'),
+                "current_action": live_status.get('current_action', 'System initializing...'),
+                "market_analysis": live_status.get('market_analysis'),
+                "last_decision": live_status.get('last_decision'),
+                "last_check": live_status.get('timestamp', datetime.now().isoformat()),
+                "next_check": live_status.get('next_check_time'),
                 "strategies_active": 2,  # TODO: Get from trader config
                 "total_trades_today": 0  # TODO: Calculate from database
             }
@@ -568,46 +572,28 @@ async def get_trader_status():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/trader/start")
-async def start_trader():
+@app.get("/api/trader/live-status")
+async def get_trader_live_status():
     """
-    START autonomous trader - User explicitly grants permission to trade
-    This endpoint is REQUIRED before any trades can be executed
+    Get real-time "thinking out loud" status from autonomous trader
+    Shows what the trader is currently doing and its analysis
     """
     if not trader_available:
-        raise HTTPException(status_code=503, detail="Trader not configured")
-
-    try:
-        result = trader.start_trading()
         return {
-            "success": True,
-            "message": result['message'],
+            "success": False,
+            "message": "Trader not configured",
             "data": {
-                "is_active": True,
-                "mode": trader.get_config('mode')
+                "status": "OFFLINE",
+                "current_action": "Trader service not available",
+                "is_working": False
             }
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/trader/stop")
-async def stop_trader():
-    """
-    STOP autonomous trader - User revokes permission to trade
-    No new trades will be executed after this call
-    """
-    if not trader_available:
-        raise HTTPException(status_code=503, detail="Trader not configured")
 
     try:
-        result = trader.stop_trading()
+        live_status = trader.get_live_status()
         return {
             "success": True,
-            "message": result['message'],
-            "data": {
-                "is_active": False,
-                "mode": trader.get_config('mode')
-            }
+            "data": live_status
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

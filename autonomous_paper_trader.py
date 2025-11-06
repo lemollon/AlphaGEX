@@ -79,7 +79,6 @@ class AutonomousPaperTrader:
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('initialized', 'true')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('auto_execute', 'true')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('last_trade_date', '')")
-            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('is_active', 'false')")  # REQUIRE EXPLICIT START
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('mode', 'paper')")
             conn.commit()
 
@@ -146,6 +145,28 @@ class AutonomousPaperTrader:
             )
         """)
 
+        # Live status table - what the trader is thinking RIGHT NOW
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS autonomous_live_status (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                timestamp TEXT NOT NULL,
+                status TEXT NOT NULL,
+                current_action TEXT,
+                market_analysis TEXT,
+                next_check_time TEXT,
+                last_decision TEXT,
+                is_working INTEGER DEFAULT 1
+            )
+        """)
+
+        # Initialize live status if not exists
+        c.execute("SELECT COUNT(*) FROM autonomous_live_status WHERE id = 1")
+        if c.fetchone()[0] == 0:
+            c.execute("""
+                INSERT INTO autonomous_live_status (id, timestamp, status, current_action, is_working)
+                VALUES (1, ?, 'INITIALIZING', 'System starting up...', 1)
+            """, (datetime.now().isoformat(),))
+
         conn.commit()
         conn.close()
 
@@ -166,35 +187,65 @@ class AutonomousPaperTrader:
         conn.commit()
         conn.close()
 
-    def start_trading(self) -> Dict:
+    def update_live_status(self, status: str, action: str, analysis: str = None, decision: str = None):
         """
-        START TRADING: User explicitly grants permission to trade
-        Returns status dict
+        Update live status - THINKING OUT LOUD
+        This is what lets you see what the trader is doing in real-time
         """
-        self.set_config('is_active', 'true')
-        self.log_action('USER_START', 'User started autonomous trading - permission granted')
-        return {
-            'success': True,
-            'message': 'Autonomous trading started - system will now execute trades',
-            'is_active': True
-        }
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
 
-    def stop_trading(self) -> Dict:
-        """
-        STOP TRADING: User revokes permission to trade
-        Returns status dict
-        """
-        self.set_config('is_active', 'false')
-        self.log_action('USER_STOP', 'User stopped autonomous trading - permission revoked')
-        return {
-            'success': True,
-            'message': 'Autonomous trading stopped - no new trades will be executed',
-            'is_active': False
-        }
+        next_check = (datetime.now() + timedelta(hours=1)).isoformat()
 
-    def is_trading_active(self) -> bool:
-        """Check if trading is active (user has granted permission)"""
-        return self.get_config('is_active') == 'true'
+        c.execute("""
+            UPDATE autonomous_live_status
+            SET timestamp = ?,
+                status = ?,
+                current_action = ?,
+                market_analysis = ?,
+                next_check_time = ?,
+                last_decision = ?,
+                is_working = 1
+            WHERE id = 1
+        """, (datetime.now().isoformat(), status, action, analysis, next_check, decision))
+
+        conn.commit()
+        conn.close()
+
+        # Also print to console for logs
+        print(f"\n{'='*80}")
+        print(f"🤖 TRADER STATUS: {status}")
+        print(f"📋 ACTION: {action}")
+        if analysis:
+            print(f"📊 ANALYSIS: {analysis}")
+        if decision:
+            print(f"🎯 DECISION: {decision}")
+        print(f"{'='*80}\n")
+
+    def get_live_status(self) -> Dict:
+        """Get current live status"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT * FROM autonomous_live_status WHERE id = 1")
+        row = c.fetchone()
+        conn.close()
+
+        if not row:
+            return {
+                'status': 'UNKNOWN',
+                'current_action': 'System not initialized',
+                'is_working': False
+            }
+
+        return {
+            'timestamp': row[1],
+            'status': row[2],
+            'current_action': row[3],
+            'market_analysis': row[4],
+            'next_check_time': row[5],
+            'last_decision': row[6],
+            'is_working': bool(row[7])
+        }
 
     def log_action(self, action: str, details: str, position_id: int = None, success: bool = True):
         """Log trading actions"""
@@ -256,18 +307,29 @@ class AutonomousPaperTrader:
         Returns position ID if successful
         """
 
-        # PERMISSION CHECK: User must explicitly START the trader
-        is_active = self.get_config('is_active')
-        if is_active != 'true':
-            self.log_action('BLOCKED', 'Trader not started by user - no permission to trade', success=False)
-            return None
+        # Update status: Starting trade search
+        self.update_live_status(
+            status='SEARCHING',
+            action='Starting daily trade search...',
+            analysis='Checking if we should trade today'
+        )
 
         # Check if we should trade today
         if not self.should_trade_today():
+            self.update_live_status(
+                status='IDLE',
+                action='Waiting for next trading opportunity',
+                decision='Already traded today or market closed'
+            )
             self.log_action('SKIP', 'Already traded today or market closed', success=True)
             return None
 
         self.log_action('START', 'Beginning daily trade search')
+        self.update_live_status(
+            status='ANALYZING',
+            action='Fetching market data and analyzing GEX regime...',
+            analysis='Connecting to Trading Volatility API for SPY data'
+        )
 
         try:
             # Step 1: Get SPY GEX data
@@ -275,26 +337,64 @@ class AutonomousPaperTrader:
             skew_data = api_client.get_skew_data('SPY')
 
             if not gex_data or gex_data.get('error'):
+                self.update_live_status(
+                    status='ERROR',
+                    action='Failed to fetch market data',
+                    decision='Will retry on next cycle'
+                )
                 self.log_action('ERROR', 'Failed to get GEX data', success=False)
                 return None
 
             spot_price = gex_data.get('spot_price', 0)
+            net_gex = gex_data.get('net_gex', 0)
+            flip_point = gex_data.get('flip_point', 0)
+
             if spot_price == 0:
+                self.update_live_status(
+                    status='ERROR',
+                    action='Invalid market data received',
+                    decision='Will retry on next cycle'
+                )
                 self.log_action('ERROR', 'Invalid spot price', success=False)
                 return None
+
+            # Update with market analysis
+            market_summary = f"SPY ${spot_price:.2f} | GEX: ${net_gex/1e9:.2f}B | Flip: ${flip_point:.2f}"
+            self.update_live_status(
+                status='ANALYZING',
+                action='Analyzing GEX regime and finding optimal trade setup...',
+                analysis=market_summary
+            )
 
             # Step 2: Try to find high-confidence directional trade
             trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price)
 
             # GUARANTEED TRADE: If no high-confidence setup, do Iron Condor
             if not trade or trade.get('confidence', 0) < 70:
+                self.update_live_status(
+                    status='EXECUTING',
+                    action='No high-confidence directional setup found',
+                    analysis=market_summary,
+                    decision='Falling back to Iron Condor for premium collection'
+                )
                 self.log_action('FALLBACK', 'No high-confidence directional setup - creating Iron Condor for premium collection')
                 return self._execute_iron_condor(spot_price, gex_data, api_client)
 
             # Step 3: Execute directional trade (calls/puts)
+            self.update_live_status(
+                status='EXECUTING',
+                action=f'Found {trade["strategy"]} setup (confidence: {trade["confidence"]}%)',
+                analysis=market_summary,
+                decision=f'Executing {trade["action"]} at ${trade["strike"]:.0f}'
+            )
             return self._execute_directional_trade(trade, gex_data, api_client)
 
         except Exception as e:
+            self.update_live_status(
+                status='ERROR',
+                action='System error during trade execution',
+                decision=f'Error: {str(e)[:100]}'
+            )
             self.log_action('ERROR', f'Exception in trade execution: {str(e)}', success=False)
             import traceback
             traceback.print_exc()
@@ -345,6 +445,14 @@ class AutonomousPaperTrader:
             if position_id:
                 # Update last trade date
                 self.set_config('last_trade_date', datetime.now().strftime('%Y-%m-%d'))
+
+                # Update live status with successful trade
+                self.update_live_status(
+                    status='TRADE_EXECUTED',
+                    action=f"✅ Successfully opened {trade['strategy']}",
+                    analysis=f"{contracts} contracts @ ${entry_price:.2f} (Total: ${total_cost:.2f})",
+                    decision=f"Position #{position_id} is now active. Next check in 1 hour."
+                )
 
                 self.log_action(
                     'EXECUTE',

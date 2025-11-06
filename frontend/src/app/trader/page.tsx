@@ -8,10 +8,15 @@ import { apiClient } from '@/lib/api'
 interface TraderStatus {
   is_active: boolean
   mode: 'paper' | 'live'
-  uptime: number
+  status?: string
+  current_action?: string
+  market_analysis?: string
+  last_decision?: string
   last_check: string
+  next_check_time?: string
   strategies_active: number
   total_trades_today: number
+  uptime?: number
 }
 
 interface Performance {
@@ -141,27 +146,8 @@ export default function AutonomousTrader() {
     return () => clearInterval(interval)
   }, [])
 
-  const handleToggleTrader = async () => {
-    try {
-      if (traderStatus.is_active) {
-        // STOP the trader
-        const response = await apiClient.stopTrader()
-        if (response.data.success) {
-          setTraderStatus(prev => ({ ...prev, is_active: false }))
-        }
-      } else {
-        // START the trader
-        const response = await apiClient.startTrader()
-        if (response.data.success) {
-          setTraderStatus(prev => ({ ...prev, is_active: true }))
-        }
-      }
-    } catch (error) {
-      console.error('Failed to toggle trader:', error)
-      // Show error to user (you could add a toast notification here)
-      alert('Failed to toggle trader. Please check console for details.')
-    }
-  }
+  // No manual start/stop - trader runs autonomously
+  // Just display what it's thinking
 
   const handleToggleMode = () => {
     setTraderStatus(prev => ({
@@ -235,106 +221,84 @@ export default function AutonomousTrader() {
         </div>
       </div>
 
-      {/* Control Panel */}
+      {/* Live Status - Trader Thinking Out Loud */}
       <div className="card">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-text-primary">Control Panel</h2>
-          <Settings className="text-primary w-6 h-6" />
+          <h2 className="text-xl font-semibold text-text-primary">🤖 Autonomous Trader - Live Status</h2>
+          <Bot className="text-primary w-6 h-6 animate-pulse" />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-4">
+          {/* Current Action */}
+          <div className="p-6 bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg border border-primary/20">
+            <div className="flex items-start gap-4">
+              <Activity className="w-8 h-8 text-primary flex-shrink-0 mt-1" />
+              <div className="flex-1">
+                <p className="text-text-secondary text-sm font-medium mb-1">Current Action</p>
+                <p className="text-xl font-bold text-text-primary mb-2">
+                  {traderStatus.current_action || 'Initializing...'}
+                </p>
+                {traderStatus.market_analysis && (
+                  <p className="text-text-secondary text-sm">
+                    📊 {traderStatus.market_analysis}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Last Decision */}
+          {traderStatus.last_decision && (
+            <div className="p-4 bg-background-hover rounded-lg">
+              <div className="flex items-start gap-3">
+                <Target className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-text-secondary text-sm font-medium">Last Decision</p>
+                  <p className="text-text-primary mt-1">{traderStatus.last_decision}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* System Info Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="p-3 bg-background-hover rounded-lg">
+              <p className="text-text-secondary text-xs">Status</p>
+              <p className="text-text-primary font-semibold mt-1">
+                {traderStatus.status || 'WORKING'}
+              </p>
+            </div>
+            <div className="p-3 bg-background-hover rounded-lg">
+              <p className="text-text-secondary text-xs">Mode</p>
+              <p className="text-text-primary font-semibold mt-1 capitalize">
+                {traderStatus.mode}
+              </p>
+            </div>
+            <div className="p-3 bg-background-hover rounded-lg">
+              <p className="text-text-secondary text-xs">Last Check</p>
+              <p className="text-text-primary font-semibold mt-1">
+                {formatTime(traderStatus.last_check)}
+              </p>
+            </div>
+            <div className="p-3 bg-background-hover rounded-lg">
+              <p className="text-text-secondary text-xs">Next Check</p>
+              <p className="text-text-primary font-semibold mt-1">
+                {traderStatus.next_check_time ? formatTime(traderStatus.next_check_time) : '~1hr'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Autonomous Operation Notice */}
+        <div className="mt-6 p-4 bg-success/10 border border-success/20 rounded-lg flex items-start gap-3">
+          <CheckCircle className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
           <div>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-background-hover rounded-lg">
-                <div>
-                  <p className="text-text-secondary text-sm">Bot Status</p>
-                  <p className="text-lg font-semibold text-text-primary mt-1">
-                    {traderStatus.is_active ? 'Running' : 'Stopped'}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  {!traderStatus.is_active ? (
-                    <button
-                      onClick={handleToggleTrader}
-                      className="btn bg-success text-white hover:bg-success/80 flex items-center gap-2"
-                    >
-                      <Play className="w-4 h-4" />
-                      Start
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        onClick={handleToggleTrader}
-                        className="btn bg-danger text-white hover:bg-danger/80 flex items-center gap-2"
-                      >
-                        <Square className="w-4 h-4" />
-                        Stop
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-background-hover rounded-lg">
-                <div>
-                  <p className="text-text-secondary text-sm">Trading Mode</p>
-                  <p className="text-lg font-semibold text-text-primary mt-1 capitalize">
-                    {traderStatus.mode}
-                  </p>
-                </div>
-                <button
-                  onClick={handleToggleMode}
-                  disabled={traderStatus.is_active}
-                  className="btn btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Switch to {traderStatus.mode === 'paper' ? 'Live' : 'Paper'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-              <span className="text-text-secondary">Uptime</span>
-              <span className="text-text-primary font-semibold">{formatUptime(traderStatus.uptime)}</span>
-            </div>
-            <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-              <span className="text-text-secondary">Active Strategies</span>
-              <span className="text-text-primary font-semibold">{traderStatus.strategies_active}</span>
-            </div>
-            <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-              <span className="text-text-secondary">Trades Today</span>
-              <span className="text-text-primary font-semibold">{traderStatus.total_trades_today}</span>
-            </div>
-            <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-              <span className="text-text-secondary">Last Check</span>
-              <span className="text-text-primary font-semibold">{formatTime(traderStatus.last_check)}</span>
-            </div>
+            <p className="text-success font-semibold">✅ Fully Autonomous Trading</p>
+            <p className="text-text-secondary text-sm mt-1">
+              This trader operates automatically 24/7. It analyzes market conditions every hour and executes at least one trade per day. Watch this panel to see what it's thinking and doing in real-time.
+            </p>
           </div>
         </div>
-
-        {!traderStatus.is_active && (
-          <div className="mt-6 p-4 bg-warning/10 border border-warning/20 rounded-lg flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-warning font-semibold">🔒 Trading Permission Required</p>
-              <p className="text-text-secondary text-sm mt-1">
-                <strong>The autonomous trader will NOT execute any trades until you click "Start".</strong> This is a safety feature requiring your explicit permission before any trades can be made. Review your strategies and risk parameters before starting.
-              </p>
-            </div>
-          </div>
-        )}
-        {traderStatus.is_active && (
-          <div className="mt-6 p-4 bg-success/10 border border-success/20 rounded-lg flex items-start gap-3">
-            <CheckCircle className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-success font-semibold">✅ Trading Active - Permission Granted</p>
-              <p className="text-text-secondary text-sm mt-1">
-                The autonomous trader is now authorized to execute trades based on your configured strategies. Click "Stop" at any time to revoke trading permission.
-              </p>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Performance Metrics */}
