@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell, Label } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell } from 'recharts'
 
 interface GEXLevel {
   strike: number
@@ -124,46 +124,15 @@ export default function GEXProfileChart({
     return null
   }
 
-  // Custom Label Component that's ALWAYS visible
-  const CustomLabel = ({ viewBox, value, fill }: any) => {
-    const { x, y } = viewBox
-    return (
-      <text
-        x={x}
-        y={y - 10}
-        fill={fill}
-        fontSize={13}
-        fontWeight="bold"
-        textAnchor="middle"
-        style={{
-          textShadow: '0 0 3px rgba(0,0,0,0.8)',
-          pointerEvents: 'none'
-        }}
-      >
-        {value}
-      </text>
-    )
-  }
-
-  // Smaller label for secondary chart
-  const SmallCustomLabel = ({ viewBox, value, fill }: any) => {
-    const { x, y } = viewBox
-    return (
-      <text
-        x={x}
-        y={y - 8}
-        fill={fill}
-        fontSize={11}
-        fontWeight="bold"
-        textAnchor="middle"
-        style={{
-          textShadow: '0 0 2px rgba(0,0,0,0.8)',
-          pointerEvents: 'none'
-        }}
-      >
-        {value}
-      </text>
-    )
+  // Calculate label positions for overlay (always visible)
+  const calculateLabelPosition = (strikeValue: number) => {
+    if (!chartData || chartData.length === 0) return 0
+    const minStrike = Math.min(...chartData.map(d => d.strike))
+    const maxStrike = Math.max(...chartData.map(d => d.strike))
+    const range = maxStrike - minStrike
+    if (range === 0) return 50 // Center if no range
+    const position = ((strikeValue - minStrike) / range) * 100
+    return Math.max(0, Math.min(100, position)) // Clamp between 0-100%
   }
 
   return (
@@ -173,18 +142,24 @@ export default function GEXProfileChart({
         <div className="bg-success/10 border border-success/20 rounded-lg p-3">
           <div className="flex items-center gap-2 mb-1">
             <div className="w-3 h-3 rounded-full bg-success"></div>
-            <span className="text-xs font-semibold text-success">CALL GAMMA (Resistance)</span>
+            <span className="text-xs font-semibold text-success">🔴 CALL WALL (Resistance)</span>
           </div>
           <p className="text-2xl font-bold text-success">${maxCallGamma.toFixed(0)}M</p>
+          {callWall && callWall > 0 && (
+            <p className="text-sm font-semibold text-success mt-1">Strike: ${callWall.toFixed(2)}</p>
+          )}
           <p className="text-xs text-text-muted mt-1">Price gets rejected here</p>
         </div>
 
         <div className="bg-danger/10 border border-danger/20 rounded-lg p-3">
           <div className="flex items-center gap-2 mb-1">
             <div className="w-3 h-3 rounded-full bg-danger"></div>
-            <span className="text-xs font-semibold text-danger">PUT GAMMA (Support)</span>
+            <span className="text-xs font-semibold text-danger">🟢 PUT WALL (Support)</span>
           </div>
           <p className="text-2xl font-bold text-danger">${maxPutGamma.toFixed(0)}M</p>
+          {putWall && putWall > 0 && (
+            <p className="text-sm font-semibold text-danger mt-1">Strike: ${putWall.toFixed(2)}</p>
+          )}
           <p className="text-xs text-text-muted mt-1">Price finds support here</p>
         </div>
 
@@ -210,7 +185,82 @@ export default function GEXProfileChart({
             Blue = positive net gamma (calls dominant) | Red = negative net gamma (puts dominant)
           </p>
         </div>
-        <ResponsiveContainer width="100%" height={height}>
+
+        {/* ALWAYS VISIBLE LABELS - Absolute positioned overlay */}
+        <div className="relative">
+          {/* Label Overlay Container */}
+          <div className="absolute top-2 left-0 right-0 h-8 z-10 pointer-events-none flex items-center" style={{ marginLeft: '20px', marginRight: '50px' }}>
+            {/* Spot Price Label */}
+            {spotPrice && (
+              <div
+                className="absolute transform -translate-x-1/2"
+                style={{ left: `${calculateLabelPosition(spotPrice)}%` }}
+              >
+                <span className="text-xs font-bold px-2 py-1 rounded" style={{
+                  color: '#fbbf24',
+                  backgroundColor: 'rgba(0,0,0,0.7)',
+                  textShadow: '0 0 3px rgba(0,0,0,1)',
+                  whiteSpace: 'nowrap'
+                }}>
+                  📍 ${spotPrice.toFixed(2)}
+                </span>
+              </div>
+            )}
+
+            {/* Flip Point Label */}
+            {flipPoint && flipPoint > 0 && (
+              <div
+                className="absolute transform -translate-x-1/2"
+                style={{ left: `${calculateLabelPosition(flipPoint)}%` }}
+              >
+                <span className="text-xs font-bold px-2 py-1 rounded" style={{
+                  color: '#fb923c',
+                  backgroundColor: 'rgba(0,0,0,0.7)',
+                  textShadow: '0 0 3px rgba(0,0,0,1)',
+                  whiteSpace: 'nowrap'
+                }}>
+                  ⚡ ${flipPoint.toFixed(2)}
+                </span>
+              </div>
+            )}
+
+            {/* Call Wall Label */}
+            {callWall && callWall > 0 && (
+              <div
+                className="absolute transform -translate-x-1/2"
+                style={{ left: `${calculateLabelPosition(callWall)}%` }}
+              >
+                <span className="text-xs font-bold px-2 py-1 rounded" style={{
+                  color: '#10b981',
+                  backgroundColor: 'rgba(0,0,0,0.7)',
+                  textShadow: '0 0 3px rgba(0,0,0,1)',
+                  whiteSpace: 'nowrap'
+                }}>
+                  🔴 ${callWall.toFixed(0)}
+                </span>
+              </div>
+            )}
+
+            {/* Put Wall Label */}
+            {putWall && putWall > 0 && (
+              <div
+                className="absolute transform -translate-x-1/2"
+                style={{ left: `${calculateLabelPosition(putWall)}%` }}
+              >
+                <span className="text-xs font-bold px-2 py-1 rounded" style={{
+                  color: '#ef4444',
+                  backgroundColor: 'rgba(0,0,0,0.7)',
+                  textShadow: '0 0 3px rgba(0,0,0,1)',
+                  whiteSpace: 'nowrap'
+                }}>
+                  🟢 ${putWall.toFixed(0)}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Chart */}
+          <ResponsiveContainer width="100%" height={height}>
           <BarChart
             data={chartData}
             margin={{ top: 80, right: 50, left: 20, bottom: 80 }}
@@ -248,14 +298,7 @@ export default function GEXProfileChart({
                 stroke="#fbbf24"
                 strokeWidth={3}
                 strokeDasharray="5 5"
-              >
-                <Label
-                  value={`📍 SPOT: $${spotPrice.toFixed(2)}`}
-                  position="top"
-                  fill="#fbbf24"
-                  content={<CustomLabel value={`📍 SPOT: $${spotPrice.toFixed(2)}`} fill="#fbbf24" />}
-                />
-              </ReferenceLine>
+              />
             )}
 
             {/* Flip point - REGIME CHANGE */}
@@ -265,14 +308,7 @@ export default function GEXProfileChart({
                 stroke="#fb923c"
                 strokeWidth={3}
                 strokeDasharray="5 5"
-              >
-                <Label
-                  value={`⚡ FLIP: $${flipPoint.toFixed(2)}`}
-                  position="top"
-                  fill="#fb923c"
-                  content={<CustomLabel value={`⚡ FLIP: $${flipPoint.toFixed(2)}`} fill="#fb923c" />}
-                />
-              </ReferenceLine>
+              />
             )}
 
             {/* Call wall - RESISTANCE */}
@@ -282,14 +318,7 @@ export default function GEXProfileChart({
                 stroke="#10b981"
                 strokeWidth={3}
                 strokeDasharray="3 3"
-              >
-                <Label
-                  value={`🔴 CALL: $${callWall.toFixed(0)}`}
-                  position="top"
-                  fill="#10b981"
-                  content={<CustomLabel value={`🔴 CALL: $${callWall.toFixed(0)}`} fill="#10b981" />}
-                />
-              </ReferenceLine>
+              />
             )}
 
             {/* Put wall - SUPPORT */}
@@ -299,14 +328,7 @@ export default function GEXProfileChart({
                 stroke="#ef4444"
                 strokeWidth={3}
                 strokeDasharray="3 3"
-              >
-                <Label
-                  value={`🟢 PUT: $${putWall.toFixed(0)}`}
-                  position="top"
-                  fill="#ef4444"
-                  content={<CustomLabel value={`🟢 PUT: $${putWall.toFixed(0)}`} fill="#ef4444" />}
-                />
-              </ReferenceLine>
+              />
             )}
 
             {/* NET GAMMA BAR - color based on positive/negative */}
@@ -321,6 +343,7 @@ export default function GEXProfileChart({
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+        </div> {/* Close relative wrapper for labels */}
       </div>
 
       {/* Separate Call/Put GEX Chart - SECONDARY */}
@@ -374,14 +397,7 @@ export default function GEXProfileChart({
                 stroke="#fbbf24"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-              >
-                <Label
-                  value={`📍 $${spotPrice.toFixed(2)}`}
-                  position="top"
-                  fill="#fbbf24"
-                  content={<SmallCustomLabel value={`📍 $${spotPrice.toFixed(2)}`} fill="#fbbf24" />}
-                />
-              </ReferenceLine>
+              />
             )}
             {flipPoint && flipPoint > 0 && (
               <ReferenceLine
@@ -389,14 +405,7 @@ export default function GEXProfileChart({
                 stroke="#fb923c"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-              >
-                <Label
-                  value={`⚡ $${flipPoint.toFixed(2)}`}
-                  position="top"
-                  fill="#fb923c"
-                  content={<SmallCustomLabel value={`⚡ $${flipPoint.toFixed(2)}`} fill="#fb923c" />}
-                />
-              </ReferenceLine>
+              />
             )}
             {callWall && callWall > 0 && (
               <ReferenceLine
@@ -404,14 +413,7 @@ export default function GEXProfileChart({
                 stroke="#10b981"
                 strokeWidth={2}
                 strokeDasharray="3 3"
-              >
-                <Label
-                  value={`🔴 $${callWall.toFixed(0)}`}
-                  position="top"
-                  fill="#10b981"
-                  content={<SmallCustomLabel value={`🔴 $${callWall.toFixed(0)}`} fill="#10b981" />}
-                />
-              </ReferenceLine>
+              />
             )}
             {putWall && putWall > 0 && (
               <ReferenceLine
@@ -419,14 +421,7 @@ export default function GEXProfileChart({
                 stroke="#ef4444"
                 strokeWidth={2}
                 strokeDasharray="3 3"
-              >
-                <Label
-                  value={`🟢 $${putWall.toFixed(0)}`}
-                  position="top"
-                  fill="#ef4444"
-                  content={<SmallCustomLabel value={`🟢 $${putWall.toFixed(0)}`} fill="#ef4444" />}
-                />
-              </ReferenceLine>
+              />
             )}
 
             {/* Show call and put gamma separately */}
