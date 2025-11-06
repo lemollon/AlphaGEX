@@ -1535,17 +1535,54 @@ class TradingVolatilityAPI:
             # Filter strikes to +/- 7 day std range
             strikes_data_filtered = [s for s in strikes_data if min_strike <= s['strike'] <= max_strike]
 
+            # Recalculate call_wall and put_wall using ONLY filtered strikes
+            # This ensures walls are within the visible chart range
+            max_call_gamma_filtered = 0
+            max_put_gamma_filtered = 0
+            call_wall_filtered = call_wall  # Keep original as fallback
+            put_wall_filtered = put_wall    # Keep original as fallback
+
+            for strike_data in strikes_data_filtered:
+                call_g = strike_data['call_gamma']
+                put_g = strike_data['put_gamma']
+
+                if call_g > max_call_gamma_filtered:
+                    max_call_gamma_filtered = call_g
+                    call_wall_filtered = strike_data['strike']
+
+                if put_g > max_put_gamma_filtered:
+                    max_put_gamma_filtered = put_g
+                    put_wall_filtered = strike_data['strike']
+
+            print(f"\n{'='*60}")
+            print(f"GEX WALLS DEBUG - {symbol}")
+            print(f"{'='*60}")
+            print(f"Spot Price: ${spot_price:.2f}")
+            print(f"Strike Range: ${min_strike:.2f} to ${max_strike:.2f} (+/- 7 day STD)")
+            print(f"Original Call Wall: ${call_wall:.2f} (from ALL strikes)")
+            print(f"Filtered Call Wall: ${call_wall_filtered:.2f} (from visible strikes)")
+            print(f"Original Put Wall: ${put_wall:.2f} (from ALL strikes)")
+            print(f"Filtered Put Wall: ${put_wall_filtered:.2f} (from visible strikes)")
+            print(f"Total strikes: {len(strikes_data)} -> Filtered: {len(strikes_data_filtered)}")
+            print(f"{'='*60}\n")
+
             # Calculate flip point from gamma_array (where net gamma crosses zero)
+            # Only consider flip points within the filtered range
             flip_point = 0
             for i in range(len(gamma_array) - 1):
                 if 'net_gamma_$_at_strike' in gamma_array[i] and 'net_gamma_$_at_strike' in gamma_array[i + 1]:
+                    strike_current = float(gamma_array[i]['strike'])
+                    strike_next = float(gamma_array[i + 1]['strike'])
+
+                    # Skip if both strikes are outside filtered range
+                    if strike_current < min_strike or strike_next > max_strike:
+                        continue
+
                     net_gamma_current = float(gamma_array[i].get('net_gamma_$_at_strike', 0))
                     net_gamma_next = float(gamma_array[i + 1].get('net_gamma_$_at_strike', 0))
 
                     # Check for sign change (zero crossing)
                     if net_gamma_current * net_gamma_next < 0:
-                        strike_current = float(gamma_array[i]['strike'])
-                        strike_next = float(gamma_array[i + 1]['strike'])
                         # Linear interpolation
                         flip_point = strike_current + (strike_next - strike_current) * (
                             -net_gamma_current / (net_gamma_next - net_gamma_current)
@@ -1556,8 +1593,8 @@ class TradingVolatilityAPI:
                 'strikes': strikes_data_filtered,  # Use filtered strikes
                 'spot_price': spot_price,
                 'flip_point': flip_point if flip_point else spot_price,
-                'call_wall': call_wall,
-                'put_wall': put_wall,
+                'call_wall': call_wall_filtered,  # Use filtered wall
+                'put_wall': put_wall_filtered,    # Use filtered wall
                 'symbol': symbol
             }
 

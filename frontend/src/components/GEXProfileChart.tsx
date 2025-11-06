@@ -171,7 +171,7 @@ export default function GEXProfileChart({
         <ResponsiveContainer width="100%" height={height}>
           <BarChart
             data={chartData}
-            margin={{ top: 30, right: 50, left: 20, bottom: 80 }}
+            margin={{ top: 80, right: 50, left: 20, bottom: 80 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#1a1f2e" />
             <XAxis
@@ -208,10 +208,15 @@ export default function GEXProfileChart({
                 strokeDasharray="5 5"
                 label={{
                   value: `📍 SPOT: $${spotPrice.toFixed(2)}`,
-                  position: 'top',
+                  position: 'insideTopLeft',
                   fill: '#fbbf24',
-                  fontSize: 12,
-                  fontWeight: 'bold'
+                  fontSize: 13,
+                  fontWeight: 'bold',
+                  offset: -5,
+                  style: {
+                    textShadow: '0 0 3px rgba(0,0,0,0.8), 0 0 8px rgba(251,191,36,0.4)',
+                    pointerEvents: 'none'
+                  }
                 }}
               />
             )}
@@ -225,11 +230,15 @@ export default function GEXProfileChart({
                 strokeDasharray="5 5"
                 label={{
                   value: `⚡ FLIP: $${flipPoint.toFixed(2)}`,
-                  position: 'top',
+                  position: 'insideTopRight',
                   fill: '#fb923c',
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 'bold',
-                  offset: 10
+                  offset: -5,
+                  style: {
+                    textShadow: '0 0 3px rgba(0,0,0,0.8), 0 0 8px rgba(251,146,60,0.4)',
+                    pointerEvents: 'none'
+                  }
                 }}
               />
             )}
@@ -243,11 +252,15 @@ export default function GEXProfileChart({
                 strokeDasharray="3 3"
                 label={{
                   value: `🔴 CALL WALL: $${callWall.toFixed(0)}`,
-                  position: 'top',
+                  position: 'insideTopLeft',
                   fill: '#10b981',
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 'bold',
-                  offset: 20
+                  offset: -5,
+                  style: {
+                    textShadow: '0 0 3px rgba(0,0,0,0.8), 0 0 8px rgba(16,185,129,0.4)',
+                    pointerEvents: 'none'
+                  }
                 }}
               />
             )}
@@ -261,11 +274,15 @@ export default function GEXProfileChart({
                 strokeDasharray="3 3"
                 label={{
                   value: `🟢 PUT WALL: $${putWall.toFixed(0)}`,
-                  position: 'top',
+                  position: 'insideTopRight',
                   fill: '#ef4444',
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 'bold',
-                  offset: 30
+                  offset: -5,
+                  style: {
+                    textShadow: '0 0 3px rgba(0,0,0,0.8), 0 0 8px rgba(239,68,68,0.4)',
+                    pointerEvents: 'none'
+                  }
                 }}
               />
             )}
@@ -295,7 +312,7 @@ export default function GEXProfileChart({
         <ResponsiveContainer width="100%" height={height * 0.6}>
           <BarChart
             data={chartData}
-            margin={{ top: 30, right: 50, left: 20, bottom: 80 }}
+            margin={{ top: 60, right: 50, left: 20, bottom: 80 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#1a1f2e" />
             <XAxis
@@ -328,18 +345,82 @@ export default function GEXProfileChart({
             {/* Zero line */}
             <ReferenceLine y={0} stroke="#6b7280" strokeWidth={2} />
 
-            {/* Reference lines */}
+            {/* Reference lines - lighter weight for secondary chart */}
             {spotPrice && (
-              <ReferenceLine x={spotPrice} stroke="#fbbf24" strokeWidth={2} strokeDasharray="5 5" />
+              <ReferenceLine
+                x={spotPrice}
+                stroke="#fbbf24"
+                strokeWidth={2}
+                strokeDasharray="5 5"
+                label={{
+                  value: `📍 $${spotPrice.toFixed(2)}`,
+                  position: 'insideTop',
+                  fill: '#fbbf24',
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  style: {
+                    textShadow: '0 0 2px rgba(0,0,0,0.8)',
+                    pointerEvents: 'none'
+                  }
+                }}
+              />
             )}
             {flipPoint && flipPoint > 0 && (
-              <ReferenceLine x={flipPoint} stroke="#fb923c" strokeWidth={2} strokeDasharray="5 5" />
+              <ReferenceLine
+                x={flipPoint}
+                stroke="#fb923c"
+                strokeWidth={2}
+                strokeDasharray="5 5"
+                label={{
+                  value: `⚡ $${flipPoint.toFixed(2)}`,
+                  position: 'insideTop',
+                  fill: '#fb923c',
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  style: {
+                    textShadow: '0 0 2px rgba(0,0,0,0.8)',
+                    pointerEvents: 'none'
+                  }
+                }}
+              />
             )}
             {callWall && callWall > 0 && (
-              <ReferenceLine x={callWall} stroke="#10b981" strokeWidth={2} strokeDasharray="3 3" />
+              <ReferenceLine
+                x={callWall}
+                stroke="#10b981"
+                strokeWidth={2}
+                strokeDasharray="3 3"
+                label={{
+                  value: `🔴 $${callWall.toFixed(0)}`,
+                  position: 'insideTop',
+                  fill: '#10b981',
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  style: {
+                    textShadow: '0 0 2px rgba(0,0,0,0.8)',
+                    pointerEvents: 'none'
+                  }
+                }}
+              />
             )}
             {putWall && putWall > 0 && (
-              <ReferenceLine x={putWall} stroke="#ef4444" strokeWidth={2} strokeDasharray="3 3" />
+              <ReferenceLine
+                x={putWall}
+                stroke="#ef4444"
+                strokeWidth={2}
+                strokeDasharray="3 3"
+                label={{
+                  value: `🟢 $${putWall.toFixed(0)}`,
+                  position: 'insideTop',
+                  fill: '#ef4444',
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  style: {
+                    textShadow: '0 0 2px rgba(0,0,0,0.8)',
+                    pointerEvents: 'none'
+                  }
+                }}
+              />
             )}
 
             {/* Show call and put gamma separately */}
