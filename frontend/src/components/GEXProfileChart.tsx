@@ -160,12 +160,12 @@ export default function GEXProfileChart({
         </div>
       </div>
 
-      {/* GEX Profile Chart */}
-      <div className="bg-background-deep rounded-lg p-4 border border-border">
+      {/* NET GEX Chart - MAIN CHART */}
+      <div className="bg-background-deep rounded-lg p-4 border-2 border-primary/50">
         <div className="mb-4">
-          <h3 className="text-lg font-bold text-text-primary">Gamma Exposure Profile</h3>
+          <h3 className="text-lg font-bold text-text-primary">📊 NET Gamma Profile</h3>
           <p className="text-sm text-text-secondary mt-1">
-            Green bars = Call walls (resistance) | Red bars = Put walls (support) | Bigger bars = stronger levels
+            Blue = positive net gamma (calls dominant) | Red = negative net gamma (puts dominant)
           </p>
         </div>
         <ResponsiveContainer width="100%" height={height}>
@@ -187,18 +187,13 @@ export default function GEXProfileChart({
               stroke="#9ca3af"
               tick={{ fontSize: 11 }}
               domain={yAxisDomain}
-              label={{ value: 'Gamma Exposure ($M)', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 12 }}
+              label={{ value: 'Net Gamma ($M)', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 12 }}
               tickFormatter={(value) => `${value.toFixed(0)}`}
             />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }} />
             <Legend
               wrapperStyle={{ paddingTop: '15px' }}
               iconType="square"
-              formatter={(value) => {
-                if (value === 'callGamma') return 'Call Gamma (Resistance)'
-                if (value === 'putGamma') return 'Put Gamma (Support)'
-                return value
-              }}
             />
 
             {/* Zero line - thicker for emphasis */}
@@ -275,7 +270,79 @@ export default function GEXProfileChart({
               />
             )}
 
-            {/* Show BOTH call and put gamma separately (NOT stacked - easier to read) */}
+            {/* NET GAMMA BAR - color based on positive/negative */}
+            <Bar dataKey="netGamma" name="Net Gamma">
+              {chartData.map((entry, index) => (
+                <Cell
+                  key={`cell-${index}`}
+                  fill={entry.netGamma > 0 ? '#3b82f6' : '#ef4444'}
+                  opacity={0.8}
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Separate Call/Put GEX Chart - SECONDARY */}
+      <div className="bg-background-deep rounded-lg p-4 border border-border">
+        <div className="mb-4">
+          <h3 className="text-lg font-bold text-text-primary">Call vs Put Gamma Breakdown</h3>
+          <p className="text-sm text-text-secondary mt-1">
+            Green bars = Call walls (resistance) | Red bars = Put walls (support)
+          </p>
+        </div>
+        <ResponsiveContainer width="100%" height={height * 0.6}>
+          <BarChart
+            data={chartData}
+            margin={{ top: 30, right: 50, left: 20, bottom: 80 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#1a1f2e" />
+            <XAxis
+              dataKey="strike"
+              stroke="#9ca3af"
+              angle={-45}
+              textAnchor="end"
+              height={80}
+              tick={{ fontSize: 11 }}
+              tickFormatter={(value) => `$${value.toFixed(0)}`}
+            />
+            <YAxis
+              stroke="#9ca3af"
+              tick={{ fontSize: 11 }}
+              domain={yAxisDomain}
+              label={{ value: 'Gamma Exposure ($M)', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 12 }}
+              tickFormatter={(value) => `${value.toFixed(0)}`}
+            />
+            <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }} />
+            <Legend
+              wrapperStyle={{ paddingTop: '15px' }}
+              iconType="square"
+              formatter={(value) => {
+                if (value === 'callGamma') return 'Call Gamma (Resistance)'
+                if (value === 'putGamma') return 'Put Gamma (Support)'
+                return value
+              }}
+            />
+
+            {/* Zero line */}
+            <ReferenceLine y={0} stroke="#6b7280" strokeWidth={2} />
+
+            {/* Reference lines */}
+            {spotPrice && (
+              <ReferenceLine x={spotPrice} stroke="#fbbf24" strokeWidth={2} strokeDasharray="5 5" />
+            )}
+            {flipPoint && flipPoint > 0 && (
+              <ReferenceLine x={flipPoint} stroke="#fb923c" strokeWidth={2} strokeDasharray="5 5" />
+            )}
+            {callWall && callWall > 0 && (
+              <ReferenceLine x={callWall} stroke="#10b981" strokeWidth={2} strokeDasharray="3 3" />
+            )}
+            {putWall && putWall > 0 && (
+              <ReferenceLine x={putWall} stroke="#ef4444" strokeWidth={2} strokeDasharray="3 3" />
+            )}
+
+            {/* Show call and put gamma separately */}
             <Bar dataKey="callGamma" name="callGamma" fill="#10b981" opacity={0.8} />
             <Bar dataKey="putGamma" name="putGamma" fill="#ef4444" opacity={0.8} />
           </BarChart>

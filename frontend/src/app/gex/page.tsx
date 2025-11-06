@@ -41,6 +41,7 @@ export default function GEXAnalysis() {
   const [loading, setLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [oiDataWarning, setOiDataWarning] = useState<string | null>(null)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
   // Cache for GEX data (5 minutes TTL)
@@ -93,6 +94,13 @@ export default function GEXAnalysis() {
       const flipPoint = levelsResponse.data.flip_point || 0
       const callWall = levelsResponse.data.call_wall || 0
       const putWall = levelsResponse.data.put_wall || 0
+
+      // Check for OI data warning
+      if (levelsResponse.data.oi_data_warning) {
+        setOiDataWarning(levelsResponse.data.oi_data_warning)
+      } else {
+        setOiDataWarning(null)
+      }
 
       // Update state and cache
       setGexData({
@@ -419,6 +427,24 @@ export default function GEXAnalysis() {
                 </div>
               </div>
             </div>
+
+            {/* OI Data Warning Banner */}
+            {oiDataWarning && (
+              <div className="mb-4 p-4 bg-warning/10 border border-warning/30 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-warning mb-1">Open Interest Data Not Available</p>
+                    <p className="text-sm text-text-secondary">
+                      {oiDataWarning}
+                    </p>
+                    <p className="text-xs text-text-muted mt-2">
+                      The Call OI, Put OI, and P/C Ratio columns will show zeros. Gamma data is still accurate.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {gexLevels.length > 0 ? (
               <div className="overflow-x-auto -mx-4 sm:mx-0">
