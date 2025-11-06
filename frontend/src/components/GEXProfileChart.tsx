@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell, Label } from 'recharts'
 
 interface GEXLevel {
   strike: number
@@ -124,6 +124,48 @@ export default function GEXProfileChart({
     return null
   }
 
+  // Custom Label Component that's ALWAYS visible
+  const CustomLabel = ({ viewBox, value, fill }: any) => {
+    const { x, y } = viewBox
+    return (
+      <text
+        x={x}
+        y={y - 10}
+        fill={fill}
+        fontSize={13}
+        fontWeight="bold"
+        textAnchor="middle"
+        style={{
+          textShadow: '0 0 3px rgba(0,0,0,0.8)',
+          pointerEvents: 'none'
+        }}
+      >
+        {value}
+      </text>
+    )
+  }
+
+  // Smaller label for secondary chart
+  const SmallCustomLabel = ({ viewBox, value, fill }: any) => {
+    const { x, y } = viewBox
+    return (
+      <text
+        x={x}
+        y={y - 8}
+        fill={fill}
+        fontSize={11}
+        fontWeight="bold"
+        textAnchor="middle"
+        style={{
+          textShadow: '0 0 2px rgba(0,0,0,0.8)',
+          pointerEvents: 'none'
+        }}
+      >
+        {value}
+      </text>
+    )
+  }
+
   return (
     <div className="w-full space-y-4">
       {/* Stats Bar - Show what the chart means for making money */}
@@ -206,19 +248,14 @@ export default function GEXProfileChart({
                 stroke="#fbbf24"
                 strokeWidth={3}
                 strokeDasharray="5 5"
-                label={{
-                  value: `📍 SPOT: $${spotPrice.toFixed(2)}`,
-                  position: 'insideTopLeft',
-                  fill: '#fbbf24',
-                  fontSize: 13,
-                  fontWeight: 'bold',
-                  offset: -5,
-                  style: {
-                    textShadow: '0 0 3px rgba(0,0,0,0.8), 0 0 8px rgba(251,191,36,0.4)',
-                    pointerEvents: 'none'
-                  }
-                }}
-              />
+              >
+                <Label
+                  value={`📍 SPOT: $${spotPrice.toFixed(2)}`}
+                  position="top"
+                  fill="#fbbf24"
+                  content={<CustomLabel value={`📍 SPOT: $${spotPrice.toFixed(2)}`} fill="#fbbf24" />}
+                />
+              </ReferenceLine>
             )}
 
             {/* Flip point - REGIME CHANGE */}
@@ -228,19 +265,14 @@ export default function GEXProfileChart({
                 stroke="#fb923c"
                 strokeWidth={3}
                 strokeDasharray="5 5"
-                label={{
-                  value: `⚡ FLIP: $${flipPoint.toFixed(2)}`,
-                  position: 'insideTopRight',
-                  fill: '#fb923c',
-                  fontSize: 13,
-                  fontWeight: 'bold',
-                  offset: -5,
-                  style: {
-                    textShadow: '0 0 3px rgba(0,0,0,0.8), 0 0 8px rgba(251,146,60,0.4)',
-                    pointerEvents: 'none'
-                  }
-                }}
-              />
+              >
+                <Label
+                  value={`⚡ FLIP: $${flipPoint.toFixed(2)}`}
+                  position="top"
+                  fill="#fb923c"
+                  content={<CustomLabel value={`⚡ FLIP: $${flipPoint.toFixed(2)}`} fill="#fb923c" />}
+                />
+              </ReferenceLine>
             )}
 
             {/* Call wall - RESISTANCE */}
@@ -250,19 +282,14 @@ export default function GEXProfileChart({
                 stroke="#10b981"
                 strokeWidth={3}
                 strokeDasharray="3 3"
-                label={{
-                  value: `🔴 CALL WALL: $${callWall.toFixed(0)}`,
-                  position: 'insideTopLeft',
-                  fill: '#10b981',
-                  fontSize: 13,
-                  fontWeight: 'bold',
-                  offset: -5,
-                  style: {
-                    textShadow: '0 0 3px rgba(0,0,0,0.8), 0 0 8px rgba(16,185,129,0.4)',
-                    pointerEvents: 'none'
-                  }
-                }}
-              />
+              >
+                <Label
+                  value={`🔴 CALL: $${callWall.toFixed(0)}`}
+                  position="top"
+                  fill="#10b981"
+                  content={<CustomLabel value={`🔴 CALL: $${callWall.toFixed(0)}`} fill="#10b981" />}
+                />
+              </ReferenceLine>
             )}
 
             {/* Put wall - SUPPORT */}
@@ -272,19 +299,14 @@ export default function GEXProfileChart({
                 stroke="#ef4444"
                 strokeWidth={3}
                 strokeDasharray="3 3"
-                label={{
-                  value: `🟢 PUT WALL: $${putWall.toFixed(0)}`,
-                  position: 'insideTopRight',
-                  fill: '#ef4444',
-                  fontSize: 13,
-                  fontWeight: 'bold',
-                  offset: -5,
-                  style: {
-                    textShadow: '0 0 3px rgba(0,0,0,0.8), 0 0 8px rgba(239,68,68,0.4)',
-                    pointerEvents: 'none'
-                  }
-                }}
-              />
+              >
+                <Label
+                  value={`🟢 PUT: $${putWall.toFixed(0)}`}
+                  position="top"
+                  fill="#ef4444"
+                  content={<CustomLabel value={`🟢 PUT: $${putWall.toFixed(0)}`} fill="#ef4444" />}
+                />
+              </ReferenceLine>
             )}
 
             {/* NET GAMMA BAR - color based on positive/negative */}
@@ -352,18 +374,14 @@ export default function GEXProfileChart({
                 stroke="#fbbf24"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-                label={{
-                  value: `📍 $${spotPrice.toFixed(2)}`,
-                  position: 'insideTop',
-                  fill: '#fbbf24',
-                  fontSize: 11,
-                  fontWeight: 'bold',
-                  style: {
-                    textShadow: '0 0 2px rgba(0,0,0,0.8)',
-                    pointerEvents: 'none'
-                  }
-                }}
-              />
+              >
+                <Label
+                  value={`📍 $${spotPrice.toFixed(2)}`}
+                  position="top"
+                  fill="#fbbf24"
+                  content={<SmallCustomLabel value={`📍 $${spotPrice.toFixed(2)}`} fill="#fbbf24" />}
+                />
+              </ReferenceLine>
             )}
             {flipPoint && flipPoint > 0 && (
               <ReferenceLine
@@ -371,18 +389,14 @@ export default function GEXProfileChart({
                 stroke="#fb923c"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-                label={{
-                  value: `⚡ $${flipPoint.toFixed(2)}`,
-                  position: 'insideTop',
-                  fill: '#fb923c',
-                  fontSize: 11,
-                  fontWeight: 'bold',
-                  style: {
-                    textShadow: '0 0 2px rgba(0,0,0,0.8)',
-                    pointerEvents: 'none'
-                  }
-                }}
-              />
+              >
+                <Label
+                  value={`⚡ $${flipPoint.toFixed(2)}`}
+                  position="top"
+                  fill="#fb923c"
+                  content={<SmallCustomLabel value={`⚡ $${flipPoint.toFixed(2)}`} fill="#fb923c" />}
+                />
+              </ReferenceLine>
             )}
             {callWall && callWall > 0 && (
               <ReferenceLine
@@ -390,18 +404,14 @@ export default function GEXProfileChart({
                 stroke="#10b981"
                 strokeWidth={2}
                 strokeDasharray="3 3"
-                label={{
-                  value: `🔴 $${callWall.toFixed(0)}`,
-                  position: 'insideTop',
-                  fill: '#10b981',
-                  fontSize: 11,
-                  fontWeight: 'bold',
-                  style: {
-                    textShadow: '0 0 2px rgba(0,0,0,0.8)',
-                    pointerEvents: 'none'
-                  }
-                }}
-              />
+              >
+                <Label
+                  value={`🔴 $${callWall.toFixed(0)}`}
+                  position="top"
+                  fill="#10b981"
+                  content={<SmallCustomLabel value={`🔴 $${callWall.toFixed(0)}`} fill="#10b981" />}
+                />
+              </ReferenceLine>
             )}
             {putWall && putWall > 0 && (
               <ReferenceLine
@@ -409,18 +419,14 @@ export default function GEXProfileChart({
                 stroke="#ef4444"
                 strokeWidth={2}
                 strokeDasharray="3 3"
-                label={{
-                  value: `🟢 $${putWall.toFixed(0)}`,
-                  position: 'insideTop',
-                  fill: '#ef4444',
-                  fontSize: 11,
-                  fontWeight: 'bold',
-                  style: {
-                    textShadow: '0 0 2px rgba(0,0,0,0.8)',
-                    pointerEvents: 'none'
-                  }
-                }}
-              />
+              >
+                <Label
+                  value={`🟢 $${putWall.toFixed(0)}`}
+                  position="top"
+                  fill="#ef4444"
+                  content={<SmallCustomLabel value={`🟢 $${putWall.toFixed(0)}`} fill="#ef4444" />}
+                />
+              </ReferenceLine>
             )}
 
             {/* Show call and put gamma separately */}
