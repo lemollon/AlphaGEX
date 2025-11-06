@@ -1469,10 +1469,27 @@ class TradingVolatilityAPI:
                 call_gamma = abs(float(strike_obj.get('call_gamma', 0)))
                 put_gamma = abs(float(strike_obj.get('put_gamma', 0)))
 
+                # Calculate total/net gamma (call gamma is positive, put gamma is negative in API)
+                # But we stored abs values above, so need to get raw values for net calculation
+                call_gamma_raw = float(strike_obj.get('call_gamma', 0))
+                put_gamma_raw = float(strike_obj.get('put_gamma', 0))
+                total_gamma = call_gamma_raw + put_gamma_raw
+
+                # Extract open interest data
+                call_oi = float(strike_obj.get('call_open_interest', 0))
+                put_oi = float(strike_obj.get('put_open_interest', 0))
+
+                # Calculate put/call ratio
+                put_call_ratio = put_oi / call_oi if call_oi > 0 else 0
+
                 strikes_data.append({
                     'strike': strike,
                     'call_gamma': call_gamma,
-                    'put_gamma': put_gamma
+                    'put_gamma': put_gamma,
+                    'total_gamma': total_gamma,
+                    'call_oi': call_oi,
+                    'put_oi': put_oi,
+                    'put_call_ratio': put_call_ratio
                 })
 
                 # Track max gamma for walls
