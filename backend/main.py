@@ -376,17 +376,40 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
         # Get basic GEX data (fast, already working)
         gex_data = api_client.get_net_gamma(symbol)
 
-        if not gex_data or not gex_data.get('success'):
+        # Check for errors (not 'success' field - that doesn't exist!)
+        if not gex_data or gex_data.get('error'):
+            error_msg = gex_data.get('error', 'Unknown error') if gex_data else 'No data returned'
             raise HTTPException(
                 status_code=404,
-                detail=f"GEX data not available for {symbol}"
+                detail=f"GEX data not available for {symbol}: {error_msg}"
             )
+
+        # Get detailed profile for strike-level gamma data
+        profile = api_client.get_gex_profile(symbol)
+
+        # Calculate total call and put gamma from strike-level data
+        total_call_gamma = 0
+        total_put_gamma = 0
+
+        if profile and profile.get('strikes'):
+            for strike in profile['strikes']:
+                total_call_gamma += strike.get('call_gamma', 0)
+                total_put_gamma += strike.get('put_gamma', 0)
+
+        # If we don't have strike data, estimate from net_gex
+        if total_call_gamma == 0 and total_put_gamma == 0:
+            net_gex = gex_data.get('net_gex', 0)
+            # Rough estimate: if net is positive, assume 60% calls, 40% puts
+            if net_gex > 0:
+                total_call_gamma = abs(net_gex) * 0.6
+                total_put_gamma = abs(net_gex) * 0.4
+            else:
+                total_call_gamma = abs(net_gex) * 0.4
+                total_put_gamma = abs(net_gex) * 0.6
 
         # Extract basic metrics
         net_gex = gex_data.get('net_gex', 0)
         spot_price = gex_data.get('spot_price', 0)
-        total_call_gamma = gex_data.get('total_call_gamma', 0)
-        total_put_gamma = abs(gex_data.get('total_put_gamma', 0))
 
         # Calculate derived metrics
         total_gamma = total_call_gamma + total_put_gamma
@@ -411,7 +434,7 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
         # Generate key observations
         observations = [
             f"Net GEX is {'positive' if net_gex > 0 else 'negative'} at ${abs(net_gex)/1e9:.2f}B",
-            f"Call/Put ratio: {gamma_exposure_ratio:.2f}",
+            f"Call/Put gamma ratio: {gamma_exposure_ratio:.2f}",
             f"Market regime: {regime_state} with {volatility.lower()} volatility"
         ]
 
