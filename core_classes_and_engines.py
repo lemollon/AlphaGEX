@@ -1932,14 +1932,15 @@ class TradingVolatilityAPI:
 
             levels = {
                 'gex_flip': safe_float(ticker_data.get('gex_flip') or ticker_data.get('Gex Flip')),
-                'gex_0': safe_float(ticker_data.get('GEX_0')),
-                'gex_1': safe_float(ticker_data.get('GEX_1')),
-                'gex_2': safe_float(ticker_data.get('GEX_2')),
-                'gex_3': safe_float(ticker_data.get('GEX_3')),
-                'std_1day_pos': safe_float(ticker_data.get('+1STD (1-day)')),
-                'std_1day_neg': safe_float(ticker_data.get('-1STD (1-day)')),
-                'std_7day_pos': safe_float(ticker_data.get('+1STD (7-day)')),
-                'std_7day_neg': safe_float(ticker_data.get('-1STD (7-day)')),
+                'gex_0': safe_float(ticker_data.get('GEX_0') or ticker_data.get('gex_0')),
+                'gex_1': safe_float(ticker_data.get('GEX_1') or ticker_data.get('gex_1')),
+                'gex_2': safe_float(ticker_data.get('GEX_2') or ticker_data.get('gex_2')),
+                'gex_3': safe_float(ticker_data.get('GEX_3') or ticker_data.get('gex_3')),
+                'gex_4': safe_float(ticker_data.get('GEX_4') or ticker_data.get('gex_4')),
+                'std_1day_pos': safe_float(ticker_data.get('+1STD (1-day)') or ticker_data.get('price_plus_1_day_std')),
+                'std_1day_neg': safe_float(ticker_data.get('-1STD (1-day)') or ticker_data.get('price_minus_1_day_std')),
+                'std_7day_pos': safe_float(ticker_data.get('+1STD (7-day)') or ticker_data.get('price_plus_7_day_std')),
+                'std_7day_neg': safe_float(ticker_data.get('-1STD (7-day)') or ticker_data.get('price_minus_7_day_std')),
                 'symbol': symbol
             }
 

@@ -19,14 +19,33 @@ find . -type f -name "*.pyo" -delete 2>/dev/null || true
 echo "📋 Deployment Verification:"
 echo "Git commit: $(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 echo "Git branch: $(git branch --show-current 2>/dev/null || echo 'unknown')"
+echo "Python version: $(python --version)"
+echo "Working directory: $(pwd)"
 echo ""
-echo "Checking streamlit imports in key files:"
-echo "config_and_database.py imports:"
-head -10 config_and_database.py | grep -E "^import|^from" || echo "  ✓ No imports in first 10 lines (expected)"
-echo "intelligence_and_strategies.py imports:"
-head -15 intelligence_and_strategies.py | grep -E "streamlit|try:" | head -3
+
+# Check if backend directory exists
+if [ -d "backend" ]; then
+    echo "✅ Backend directory found"
+    ls -la backend/*.py | head -5
+else
+    echo "❌ Backend directory not found!"
+    exit 1
+fi
+
+# Check for required environment variables
+echo "🔍 Checking environment variables..."
+if [ -z "$TRADING_VOLATILITY_API_KEY" ]; then
+    echo "⚠️  WARNING: TRADING_VOLATILITY_API_KEY not set"
+fi
+if [ -z "$TV_USERNAME" ]; then
+    echo "⚠️  WARNING: TV_USERNAME not set"
+fi
 echo ""
 
 # Start the FastAPI server
-echo "🚀 Starting FastAPI server..."
-python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}
+echo "🚀 Starting FastAPI server on port ${PORT:-8000}..."
+python -m uvicorn backend.main:app \
+    --host 0.0.0.0 \
+    --port ${PORT:-8000} \
+    --log-level info \
+    --access-log
