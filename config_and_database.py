@@ -13,8 +13,10 @@ from pathlib import Path
 TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
 CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
 
-# Database Path
-DB_PATH = Path("gex_copilot.db")
+# Database Path - ABSOLUTE PATH to ensure consistency across services
+# Backend API, Autonomous Trader Worker, and all scripts use the SAME database
+import os
+DB_PATH = Path(os.environ.get('DATABASE_PATH', os.path.join(os.getcwd(), 'gex_copilot.db')))
 
 # Market Maker Behavioral States
 MM_STATES = {

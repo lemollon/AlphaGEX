@@ -51,11 +51,36 @@ def run_autonomous_trader_cycle():
     print(f"AUTONOMOUS TRADER CYCLE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")
 
-    # Initialize
-    trader = AutonomousPaperTrader()
+    # Initialize with comprehensive error handling
+    try:
+        trader = AutonomousPaperTrader()
+        print(f"✅ Trader initialized successfully")
+        print(f"   Database: {trader.db_path}")
+
+        # CRITICAL: Update heartbeat immediately so UI knows worker is alive
+        trader.update_live_status(
+            status='RUNNING',
+            action='Worker is alive and checking market conditions',
+            analysis='System healthy, checking for trading opportunities'
+        )
+    except Exception as e:
+        print(f"❌ FATAL: Failed to initialize trader: {e}")
+        import traceback
+        traceback.print_exc()
+        return
 
     # Use shared API client - class-level rate limiting automatically applies
-    api_client = TradingVolatilityAPI()
+    try:
+        api_client = TradingVolatilityAPI()
+        print(f"✅ API client initialized")
+    except Exception as e:
+        print(f"❌ ERROR: Failed to initialize API client: {e}")
+        trader.update_live_status(
+            status='ERROR',
+            action='Failed to initialize API client',
+            analysis=str(e)
+        )
+        return
 
     # Step 1: Check if we should find a new trade
     if is_morning_session():

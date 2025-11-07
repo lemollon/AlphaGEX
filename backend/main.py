@@ -1082,11 +1082,22 @@ async def get_trader_live_status():
 
     try:
         live_status = trader.get_live_status()
+
+        # Add diagnostic info
+        print(f"📊 Trader Live Status Query:")
+        print(f"   Database: {trader.db_path}")
+        print(f"   Status: {live_status.get('status')}")
+        print(f"   Action: {live_status.get('current_action')}")
+        print(f"   Timestamp: {live_status.get('timestamp')}")
+
         return {
             "success": True,
             "data": live_status
         }
     except Exception as e:
+        print(f"❌ ERROR reading trader status: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/trader/performance")
