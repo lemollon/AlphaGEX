@@ -75,10 +75,10 @@ export default function Navigation() {
 
   return (
     <nav className="bg-background-card border-b border-gray-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+      <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16 gap-4">
           {/* Logo */}
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 flex-shrink-0">
             <Link href="/" className="flex items-center space-x-2">
               <Activity className="w-8 h-8 text-primary" />
               <span className="text-xl font-bold text-text-primary">AlphaGEX</span>
@@ -86,7 +86,7 @@ export default function Navigation() {
           </div>
 
           {/* Navigation Tabs */}
-          <div className="hidden md:flex items-center space-x-1">
+          <div className="hidden md:flex items-center justify-evenly flex-1 gap-1">
             {navItems.map((item) => {
               const Icon = item.icon
               const isActive = pathname === item.href
@@ -96,15 +96,15 @@ export default function Navigation() {
                   key={item.href}
                   href={item.href}
                   className={`
-                    flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all
+                    flex items-center justify-center space-x-1.5 px-3 py-2 rounded-lg font-medium transition-all text-sm flex-1 min-w-0
                     ${isActive
                       ? 'bg-primary text-white'
                       : 'text-text-secondary hover:text-text-primary hover:bg-background-hover'
                     }
                   `}
                 >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
+                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  <span className="whitespace-nowrap hidden lg:inline">{item.label}</span>
                 </Link>
               )
             })}
@@ -113,14 +113,14 @@ export default function Navigation() {
           {/* Mobile menu button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover"
+            className="md:hidden p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover flex-shrink-0"
           >
             {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
 
           {/* Market Status */}
-          <div className="hidden md:flex items-center space-x-4">
-            <div className="hidden lg:flex items-center space-x-2 text-sm">
+          <div className="hidden md:flex items-center space-x-4 flex-shrink-0">
+            <div className="hidden xl:flex items-center space-x-2 text-sm">
               <span className="text-text-secondary">SPY:</span>
               <span className="text-text-primary font-mono font-semibold">
                 {spyPrice ? `$${spyPrice.toFixed(2)}` : (apiConnected ? '---' : 'Error')}
@@ -129,7 +129,7 @@ export default function Navigation() {
             </div>
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${apiConnected ? (marketOpen ? 'bg-success' : 'bg-warning') : 'bg-danger'} ${apiConnected ? 'animate-pulse' : ''}`}></div>
-              <span className="text-sm text-text-secondary hidden sm:inline">
+              <span className="text-sm text-text-secondary hidden lg:inline">
                 {!apiConnected ? 'API Disconnected' : (marketOpen ? 'Market Open' : 'Market Closed')}
               </span>
             </div>
