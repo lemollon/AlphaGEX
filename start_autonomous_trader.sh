@@ -22,10 +22,10 @@ echo "   (Press Ctrl+C to stop)"
 echo ""
 
 # Run the autonomous scheduler in continuous mode
-python3 autonomous_scheduler.py --mode continuous --interval 60
+python3 autonomous_scheduler.py --mode continuous --interval 5
 
 # Note: This will:
-# 1. Check for trade opportunities every hour
+# 1. Check for trade opportunities every 5 minutes
 # 2. Execute ONE trade per day (9:30-11:00 AM)
-# 3. Manage positions every hour during market hours
+# 3. Manage positions every 5 minutes during market hours
 # 4. Log everything to database
