@@ -3051,6 +3051,7 @@ from psychology_trap_detector import (
     save_regime_signal_to_db,
     calculate_mtf_rsi_score
 )
+from psychology_trading_guide import get_trading_guide
 
 @app.get("/api/psychology/current-regime")
 async def get_current_regime(symbol: str = "SPY"):
@@ -3261,10 +3262,18 @@ async def get_current_regime(symbol: str = "SPY"):
         except Exception as e:
             print(f"Warning: Could not save regime signal: {e}")
 
+        # Generate trading guide
+        trading_guide = get_trading_guide(
+            regime_type=analysis['regime']['primary_type'],
+            current_price=current_price,
+            regime_data=analysis['regime']
+        )
+
         return {
             "success": True,
             "symbol": symbol,
-            "analysis": analysis
+            "analysis": analysis,
+            "trading_guide": trading_guide
         }
 
     except HTTPException:
@@ -3514,6 +3523,75 @@ async def get_rsi_analysis(symbol: str = "SPY"):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/quick-check/{symbol}")
+async def get_quick_psychology_check(symbol: str = "SPY"):
+    """
+    Quick psychology trap check for scanners (lightweight version)
+    Returns only regime type, confidence, and trade direction
+    """
+    try:
+        import yfinance as yf
+
+        # Get basic price data (less history for speed)
+        ticker = yf.Ticker(symbol)
+        current_price = ticker.history(period="1d")['Close'].iloc[-1]
+
+        # Get minimal price data for RSI
+        df_1d = ticker.history(period="30d", interval="1d")
+        df_1h = ticker.history(period="3d", interval="1h")
+
+        price_data = {
+            '5m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
+            '15m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
+            '1h': [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
+                   for _, row in df_1h.iterrows()],
+            '4h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
+            '1d': [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
+                   for _, row in df_1d.iterrows()]
+        }
+
+        # Calculate RSI only
+        rsi_analysis = calculate_mtf_rsi_score(price_data)
+
+        # Simple regime determination
+        regime_type = 'NEUTRAL'
+        confidence = 50
+        trade_direction = 'wait'
+
+        # Check for obvious extremes
+        if rsi_analysis['aligned_count']['overbought'] >= 3:
+            regime_type = 'OVERBOUGHT_EXTREME'
+            confidence = 60 + rsi_analysis['aligned_count']['overbought'] * 5
+            trade_direction = 'fade' if rsi_analysis['score'] > 70 else 'momentum'
+        elif rsi_analysis['aligned_count']['oversold'] >= 3:
+            regime_type = 'OVERSOLD_EXTREME'
+            confidence = 60 + rsi_analysis['aligned_count']['oversold'] * 5
+            trade_direction = 'bounce' if rsi_analysis['score'] < -70 else 'breakdown'
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "regime_type": regime_type,
+            "confidence": confidence,
+            "trade_direction": trade_direction,
+            "rsi_score": rsi_analysis['score'],
+            "overbought_tfs": rsi_analysis['aligned_count']['overbought'],
+            "oversold_tfs": rsi_analysis['aligned_count']['oversold'],
+            "current_price": float(current_price)
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "symbol": symbol,
+            "regime_type": "ERROR",
+            "confidence": 0,
+            "trade_direction": "wait",
+            "error": str(e)
+        }
+
 
 # ============================================================================
 # Startup & Shutdown Events
