@@ -5,7 +5,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 // Create axios instance with defaults
 export const api = axios.create({
   baseURL: API_URL,
-  timeout: 60000, // Increased to 60s for complex GEX calculations
+  timeout: 600000, // 10 minutes for scanner (with rate limiting, 18 symbols can take 6+ minutes)
   headers: {
     'Content-Type': 'application/json',
   },
