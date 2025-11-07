@@ -24,7 +24,7 @@ import uvicorn
 
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
-from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open
+from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
 from config_and_database import STRATEGIES
 
 # Create FastAPI app
@@ -78,6 +78,7 @@ api_client = TradingVolatilityAPI()
 claude_ai = ClaudeIntelligence()
 monte_carlo = MonteCarloEngine()
 pricer = BlackScholesPricer()
+strategy_optimizer = MultiStrategyOptimizer()
 
 # ============================================================================
 # Health Check & Status Endpoints
@@ -1358,6 +1359,53 @@ async def get_strategy_stats():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/strategies/compare")
+async def compare_all_strategies(symbol: str = "SPY"):
+    """
+    Multi-Strategy Optimizer - Compare ALL strategies side-by-side
+    Shows which strategy has the best win rate for current conditions
+    Includes entry timing optimization
+    """
+    try:
+        # Fetch current market data
+        gex_data = api_client.get_gex_data(symbol)
+        if not gex_data:
+            raise HTTPException(status_code=404, detail=f"No GEX data available for {symbol}")
+
+        # Get VIX data for additional context
+        try:
+            import yfinance as yf
+            vix_ticker = yf.Ticker("^VIX")
+            vix_data = vix_ticker.history(period="1d")
+            vix = float(vix_data['Close'].iloc[-1]) if not vix_data.empty else 15.0
+        except:
+            vix = 15.0  # Default fallback
+
+        # Prepare market data for optimizer
+        market_data = {
+            'spot_price': gex_data.get('spot_price', 0),
+            'net_gex': gex_data.get('net_gex', 0),
+            'flip_point': gex_data.get('zero_gamma', 0),
+            'call_wall': gex_data.get('largest_call_strike', 0),
+            'put_wall': gex_data.get('largest_put_strike', 0),
+            'call_wall_gamma': gex_data.get('largest_call_oi', 0),
+            'put_wall_gamma': gex_data.get('largest_put_oi', 0),
+            'vix': vix
+        }
+
+        # Get comprehensive strategy comparison
+        comparison = strategy_optimizer.compare_all_strategies(market_data)
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "data": comparison
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to compare strategies: {str(e)}")
 
 # ============================================================================
 # Multi-Symbol Scanner Endpoints (WITH DATABASE PERSISTENCE)
