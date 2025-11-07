@@ -37,3 +37,7 @@ Thumbs.db
 *.xlsx
 *.db
 *.sqlite
+
+# Logs
+*.log
+backend*.log
