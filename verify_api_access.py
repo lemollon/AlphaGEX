@@ -52,7 +52,7 @@ def verify_api_access():
     # Test API connection with SPY
     print("\n3. Testing API connection with SPY...")
     try:
-        data = api.fetch_gex_data("SPY")
+        data = api.get_net_gamma("SPY")
 
         if data and 'error' not in data:
             print("   ✓ API connection successful!")

@@ -1369,7 +1369,7 @@ async def compare_all_strategies(symbol: str = "SPY"):
     """
     try:
         # Fetch current market data
-        gex_data = api_client.get_gex_data(symbol)
+        gex_data = api_client.get_net_gamma(symbol)
         if not gex_data:
             raise HTTPException(status_code=404, detail=f"No GEX data available for {symbol}")
 

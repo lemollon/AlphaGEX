@@ -1470,7 +1470,7 @@ class ClaudeIntelligence:
                     api = TradingVolatilityAPI()
                     st.session_state.api_client = api
 
-                fresh_data = api.get_gex_data(symbol)
+                fresh_data = api.get_net_gamma(symbol)
                 if fresh_data:
                     market_data = fresh_data
                     st.info(f"📊 Fetched fresh GEX data for {symbol}")

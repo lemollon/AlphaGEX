@@ -49,16 +49,19 @@ The API client implements several robust features:
 
 ### API Functions Available
 
-The `TradingVolatilityAPI` class provides three main endpoints:
+The `TradingVolatilityAPI` class provides the following main methods:
 
-1. **`fetch_gex_data(symbol)`** - Get GEX (Gamma Exposure) data
-   - Returns: net_gex, flip_point, current_price, walls, levels
+1. **`get_net_gamma(symbol)`** - Get GEX (Gamma Exposure) data
+   - Returns: symbol, spot_price, net_gex, flip_point, call_wall, put_wall, put_call_ratio, implied_volatility
 
-2. **`fetch_iv_data(symbol)`** - Get IV (Implied Volatility) data
-   - Returns: IV rank, IV percentile, historical IV data
+2. **`get_gex_profile(symbol)`** - Get detailed GEX profile with strike-level data
+   - Returns: Comprehensive gamma exposure data at each strike level
 
-3. **`fetch_both(symbol)`** - Get both GEX and IV data in one call
-   - More efficient for getting complete data
+3. **`get_historical_gamma(symbol, days_back)`** - Get historical gamma data
+   - Returns: List of historical gamma data points
+
+4. **`get_skew_data(symbol)`** - Get IV skew data
+   - Returns: IV skew metrics and analysis
 
 ### Verification Method
 
