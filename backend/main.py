@@ -2167,7 +2167,7 @@ async def generate_trade_setups(request: dict):
 
                 # Get price data for regime analysis
                 ticker = yf.Ticker(symbol)
-                gex_full_data = api_client.get_gex(symbol)
+                gex_full_data = api_client.get_net_gamma(symbol)
 
                 # Get historical price data for RSI
                 price_data = {}
@@ -3072,12 +3072,12 @@ async def get_current_regime(symbol: str = "SPY"):
     - Regime detection with psychology traps
     """
     try:
-        # Get current price and gamma data
-        gex_data = api_client.get_gex(symbol)
-        if not gex_data:
+        # Get current price and gamma data using get_net_gamma
+        gex_data = api_client.get_net_gamma(symbol)
+        if not gex_data or 'error' in gex_data:
             raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}")
 
-        current_price = gex_data.get('current_price', gex_data.get('spot_price', 0))
+        current_price = gex_data.get('spot_price', 0)
 
         # Get price data for RSI calculation
         # For now, we'll use yfinance to get historical data
