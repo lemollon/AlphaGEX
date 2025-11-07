@@ -527,13 +527,25 @@ export default function MultiSymbolScanner() {
                           </div>
                         </div>
 
-                        <p className="text-sm text-text-secondary">{setup.reasoning}</p>
+                        {/* Show trade details prominently */}
+                        <div className="mt-2 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                          <div className="text-sm font-mono text-primary font-bold whitespace-pre-line">
+                            {setup.money_making_plan.split('\n')[0]}
+                          </div>
+                          {setup.money_making_plan.split('\n').slice(1, 3).map((line: string, i: number) => (
+                            <div key={i} className="text-xs text-text-secondary mt-1">
+                              {line}
+                            </div>
+                          ))}
+                        </div>
+
+                        <p className="text-sm text-text-secondary mt-2">{setup.reasoning}</p>
 
                         {selectedSetup?.symbol === setup.symbol && selectedSetup?.strategy === setup.strategy && (
                           <div className="mt-4 pt-4 border-t border-border">
                             <h5 className="font-bold text-text-primary mb-2 flex items-center gap-2">
                               <DollarSign className="w-5 h-5 text-success" />
-                              HOW TO MAKE MONEY WITH THIS SETUP
+                              FULL TRADE DETAILS
                             </h5>
                             <div className="bg-background-deep p-4 rounded-lg">
                               <pre className="whitespace-pre-wrap text-sm text-text-primary font-sans leading-relaxed">
@@ -553,63 +565,116 @@ export default function MultiSymbolScanner() {
 
         {/* Strategy Guide */}
         <div className="card">
-          <h3 className="text-lg font-semibold mb-4">📚 Strategy Guide - How Each Setup Makes Money</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 bg-success/10 border border-success/30 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="w-5 h-5 text-success" />
-                <h4 className="font-bold text-success">Negative GEX Squeeze</h4>
-              </div>
-              <p className="text-sm text-text-primary mb-2"><strong>Win Rate: 68%</strong> | R:R 3:1</p>
-              <p className="text-sm text-text-secondary">
-                <strong>When:</strong> Negative GEX + price near flip point<br />
-                <strong>Trade:</strong> Buy CALL when price breaks flip<br />
-                <strong>Why it works:</strong> MMs chase price UP creating squeeze<br />
-                <strong>Exit:</strong> Call wall or 100% profit
+          <h3 className="text-lg font-semibold mb-4">📚 Strategy Guide - All 12 AlphaGEX Strategies</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Directional Debit Spreads */}
+            <div className="p-3 bg-success/10 border border-success/30 rounded-lg">
+              <h4 className="font-bold text-success text-sm mb-1">Bullish Call Spread</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 65%</strong> | R:R 2:1 | 3-14 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Buy ATM call, sell OTM call. Limited risk debit spread for upside moves.
               </p>
             </div>
 
-            <div className="p-4 bg-danger/10 border border-danger/30 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingDown className="w-5 h-5 text-danger" />
-                <h4 className="font-bold text-danger">Positive GEX Breakdown</h4>
-              </div>
-              <p className="text-sm text-text-primary mb-2"><strong>Win Rate: 62%</strong> | R:R 2.5:1</p>
-              <p className="text-sm text-text-secondary">
-                <strong>When:</strong> Positive GEX + breakdown below flip<br />
-                <strong>Trade:</strong> Buy PUT when price breaks flip down<br />
-                <strong>Why it works:</strong> MMs fade the move creating cascade<br />
-                <strong>Exit:</strong> Put wall or 75% profit
+            <div className="p-3 bg-danger/10 border border-danger/30 rounded-lg">
+              <h4 className="font-bold text-danger text-sm mb-1">Bearish Put Spread</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 62%</strong> | R:R 2:1 | 3-14 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Buy ATM put, sell OTM put. Limited risk debit spread for downside moves.
               </p>
             </div>
 
-            <div className="p-4 bg-primary/10 border border-primary/30 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <Target className="w-5 h-5 text-primary" />
-                <h4 className="font-bold text-primary">Iron Condor</h4>
-              </div>
-              <p className="text-sm text-text-primary mb-2"><strong>Win Rate: 72%</strong> | R:R 0.3:1</p>
-              <p className="text-sm text-text-secondary">
-                <strong>When:</strong> Positive GEX with wide walls<br />
-                <strong>Trade:</strong> Sell Iron Condor at walls (5-10 DTE)<br />
-                <strong>Why it works:</strong> Positive GEX pins price in range<br />
-                <strong>Exit:</strong> 50% profit (close early!) or breach
+            {/* Credit Spreads */}
+            <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg">
+              <h4 className="font-bold text-primary text-sm mb-1">Bull Put Spread</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 70%</strong> | R:R 0.4:1 | 5-21 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Sell put at support, buy lower put. Collect premium on bullish/neutral outlook.
               </p>
             </div>
 
-            <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <DollarSign className="w-5 h-5 text-warning" />
-                <h4 className="font-bold text-warning">Premium Selling</h4>
-              </div>
-              <p className="text-sm text-text-primary mb-2"><strong>Win Rate: 65%</strong> | R:R 0.5:1</p>
-              <p className="text-sm text-text-secondary">
-                <strong>When:</strong> Price approaching wall<br />
-                <strong>Trade:</strong> Sell CALL/PUT at wall (0-2 DTE)<br />
-                <strong>Why it works:</strong> Walls reject price, theta works for you<br />
-                <strong>Exit:</strong> 50-70% profit in 1 day or wall break
+            <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg">
+              <h4 className="font-bold text-primary text-sm mb-1">Bear Call Spread</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 68%</strong> | R:R 0.4:1 | 5-21 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Sell call at resistance, buy higher call. Collect premium on bearish/neutral outlook.
               </p>
             </div>
+
+            {/* Range Strategies */}
+            <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg">
+              <h4 className="font-bold text-warning text-sm mb-1">Iron Condor</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 72%</strong> | R:R 0.3:1 | 5-10 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Sell call + put spread. Works in positive GEX range-bound markets.
+              </p>
+            </div>
+
+            <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg">
+              <h4 className="font-bold text-warning text-sm mb-1">Iron Butterfly</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 68%</strong> | R:R 0.5:1 | 3-7 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Sell ATM straddle, buy wings. Profits when price stays pinned near flip.
+              </p>
+            </div>
+
+            {/* GEX-Specific */}
+            <div className="p-3 bg-success/10 border border-success/30 rounded-lg">
+              <h4 className="font-bold text-success text-sm mb-1">Negative GEX Squeeze</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 68%</strong> | R:R 3:1 | 0-5 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Buy calls on flip break. MMs chase price UP in negative GEX.
+              </p>
+            </div>
+
+            <div className="p-3 bg-danger/10 border border-danger/30 rounded-lg">
+              <h4 className="font-bold text-danger text-sm mb-1">Positive GEX Breakdown</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 62%</strong> | R:R 2.5:1 | 0-5 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Buy puts on flip break down. MMs fade moves in positive GEX.
+              </p>
+            </div>
+
+            {/* Volatility */}
+            <div className="p-3 bg-text-secondary/10 border border-text-secondary/30 rounded-lg">
+              <h4 className="font-bold text-text-primary text-sm mb-1">Long Straddle</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 55%</strong> | R:R 3:1 | 0-7 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Buy ATM call + put. Big move expected in extreme negative GEX.
+              </p>
+            </div>
+
+            <div className="p-3 bg-text-secondary/10 border border-text-secondary/30 rounded-lg">
+              <h4 className="font-bold text-text-primary text-sm mb-1">Long Strangle</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 58%</strong> | R:R 2.5:1 | 0-14 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Buy OTM call + put. Cheaper volatility play than straddle.
+              </p>
+            </div>
+
+            {/* Other */}
+            <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg">
+              <h4 className="font-bold text-primary text-sm mb-1">Premium Selling</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 65%</strong> | R:R 0.5:1 | 0-3 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Sell calls/puts at walls. Theta + wall rejection = profit.
+              </p>
+            </div>
+
+            <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg">
+              <h4 className="font-bold text-primary text-sm mb-1">Calendar Spread</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 60%</strong> | R:R 1:1 | 7-30 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Sell near DTE, buy far DTE. Profits from time decay differential.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 p-4 bg-background-hover rounded-lg border border-border">
+            <p className="text-sm text-text-primary">
+              <strong>💡 How to Use:</strong> The scanner analyzes GEX data and automatically selects the BEST strategy
+              for each symbol based on current market conditions. Each result shows specific strikes and trade instructions.
+            </p>
           </div>
         </div>
       </main>
