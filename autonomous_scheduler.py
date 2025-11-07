@@ -46,9 +46,14 @@ def run_autonomous_trader_cycle():
 
     What it does:
     - Checks for new trade opportunities ALL DAY during market hours (9:30 AM - 4:00 PM ET)
-    - Executes ONE trade per day (daily limiting built into find_and_execute_daily_trade)
+    - Executes MINIMUM ONE trade per day GUARANTEED (multi-level fallback system)
     - Manages existing positions continuously
     - Updates live status for UI monitoring
+
+    GUARANTEE: Multi-level fallback ensures at least one trade executes daily:
+    1. Directional GEX trade (preferred)
+    2. Iron Condor fallback (if no directional setup)
+    3. ATM Straddle final fallback (if Iron Condor fails)
 
     This should be called:
     - Every 5 minutes during market hours (recommended)
@@ -168,7 +173,8 @@ def run_continuous_scheduler(check_interval_minutes: int = 5):
     print("🤖 AUTONOMOUS TRADER SCHEDULER STARTED")
     print(f"⏰ Check interval: {check_interval_minutes} minutes")
     print(f"📅 Checks ALL DAY during market hours (9:30 AM - 4:00 PM ET / 8:30 AM - 3:00 PM CT)")
-    print(f"📅 Executes ONE trade per day, manages positions continuously\n")
+    print(f"✅ GUARANTEE: MINIMUM ONE trade per day (multi-level fallback system)")
+    print(f"📊 Manages positions continuously every {check_interval_minutes} minutes\n")
 
     while True:
         try:
