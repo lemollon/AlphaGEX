@@ -6,6 +6,7 @@ import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useDataCache } from '@/hooks/useDataCache'
 import { dataStore } from '@/lib/dataStore'
+import RegimeBadge, { RegimeBadgeMini } from '@/components/RegimeBadge'
 
 interface ScanSetup {
   symbol: string
@@ -24,6 +25,23 @@ interface ScanSetup {
   win_rate: number
   money_making_plan: string
   reasoning: string
+  regime?: {
+    primary_type: string
+    secondary_type?: string | null
+    confidence: number
+    description: string
+    trade_direction?: string
+    risk_level?: string
+    timeline?: string | null
+  }
+  option_details?: {
+    option_symbol: string
+    strike_price: number
+    option_cost: number
+  }
+  actual_cost?: number
+  potential_profit?: number
+  hold_period?: string
 }
 
 interface ScanRun {
@@ -488,12 +506,17 @@ export default function MultiSymbolScanner() {
                         }`}
                       >
                         <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3 flex-wrap">
                             <div className={`p-2 rounded-lg border ${getStrategyColor(setup.strategy)}`}>
                               {getStrategyIcon(setup.strategy)}
                             </div>
                             <div>
-                              <h4 className="font-bold text-lg text-text-primary">{setup.symbol}</h4>
+                              <div className="flex items-center gap-2 mb-1">
+                                <h4 className="font-bold text-lg text-text-primary">{setup.symbol}</h4>
+                                {setup.regime && (
+                                  <RegimeBadgeMini regime={setup.regime} />
+                                )}
+                              </div>
                               <p className="text-sm text-text-secondary">{setup.strategy.replace(/_/g, ' ')}</p>
                             </div>
                           </div>

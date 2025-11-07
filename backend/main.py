@@ -2139,6 +2139,10 @@ async def generate_trade_setups(request: dict):
 
         setups = []
 
+        # Import necessary components
+        from intelligence_and_strategies import RealOptionsChainFetcher
+        options_fetcher = RealOptionsChainFetcher()
+
         for symbol in symbols:
             # Fetch current GEX data
             gex_data = api_client.get_net_gamma(symbol)
@@ -2147,6 +2151,42 @@ async def generate_trade_setups(request: dict):
             flip_point = gex_data.get('flip_point', 0)
             call_wall = gex_data.get('call_wall', 0)
             put_wall = gex_data.get('put_wall', 0)
+
+            # Get current regime analysis
+            regime_info = None
+            try:
+                from psychology_trap_detector import analyze_current_market_complete
+                import yfinance as yf
+
+                # Get price data for regime analysis
+                ticker = yf.Ticker(symbol)
+                gex_full_data = api_client.get_gex(symbol)
+
+                # Get historical price data for RSI
+                price_data = {}
+                df_1d = ticker.history(period="90d", interval="1d")
+                price_data['1d'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_1d.iterrows()]
+
+                df_4h = ticker.history(period="30d", interval="1h")
+                df_4h_resampled = df_4h.resample('4H').agg({'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'}).dropna()
+                price_data['4h'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_4h_resampled.iterrows()]
+
+                df_1h = ticker.history(period="7d", interval="1h")
+                price_data['1h'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_1h.iterrows()]
+
+                df_15m = ticker.history(period="5d", interval="15m")
+                price_data['15m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_15m.iterrows()]
+
+                df_5m = ticker.history(period="2d", interval="5m")
+                price_data['5m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_5m.iterrows()]
+
+                # Analyze regime
+                analysis = analyze_current_market_complete(symbol, gex_full_data, price_data)
+                if analysis and 'regime' in analysis:
+                    regime_info = analysis['regime']
+            except Exception as e:
+                print(f"Regime analysis failed: {e}")
+                regime_info = None
 
             # Determine market regime and setup type using STRATEGIES config
             from config_and_database import STRATEGIES
@@ -2209,35 +2249,127 @@ async def generate_trade_setups(request: dict):
             else:
                 risk_reward = expected_risk_reward
 
-            # Calculate position size (conservative options estimate)
-            # Assume each option contract costs ~2% of stock price
-            option_price_estimate = spot_price * 0.02
-            contracts_per_risk = int(max_risk / (option_price_estimate * 100)) if option_price_estimate > 0 else 1
-            position_size = max(1, min(contracts_per_risk, 10))  # Cap at 10 contracts
+            # Get real option chain and select optimal strike
+            option_details = None
+            strike_price = None
+            option_cost = None
+            option_greeks = {}
+
+            try:
+                # Determine option type based on strategy
+                option_type = 'call' if matched_strategy in ['NEGATIVE_GEX_SQUEEZE'] else 'put' if matched_strategy in ['POSITIVE_GEX_BREAKDOWN'] else 'call'
+
+                # Get options chain
+                chain = options_fetcher.get_options_chain(symbol)
+
+                if chain and 'calls' in chain and 'puts' in chain:
+                    options = chain['calls'] if option_type == 'call' else chain['puts']
+
+                    # Find ATM or slightly OTM strike
+                    best_option = None
+                    min_diff = float('inf')
+
+                    for opt in options:
+                        strike = opt.get('strike', 0)
+                        bid = opt.get('bid', 0)
+                        ask = opt.get('ask', 0)
+
+                        # Skip if no liquidity
+                        if bid == 0 or ask == 0:
+                            continue
+
+                        # Find closest to ATM (or slightly OTM for better delta)
+                        if option_type == 'call':
+                            ideal_strike = spot_price + (spot_price * 0.005)  # 0.5% OTM
+                        else:
+                            ideal_strike = spot_price - (spot_price * 0.005)
+
+                        diff = abs(strike - ideal_strike)
+
+                        if diff < min_diff:
+                            min_diff = diff
+                            best_option = opt
+                            strike_price = strike
+                            option_cost = (bid + ask) / 2  # Use mid price
+
+                    if best_option:
+                        option_details = best_option
+
+                        # Extract Greeks if available
+                        option_greeks = {
+                            'delta': best_option.get('delta', 0),
+                            'gamma': best_option.get('gamma', 0),
+                            'theta': best_option.get('theta', 0),
+                            'vega': best_option.get('vega', 0),
+                            'iv': best_option.get('impliedVolatility', 0)
+                        }
+
+            except Exception as e:
+                print(f"Failed to fetch option chain: {e}")
+                # Fall back to estimate
+                option_cost = spot_price * 0.02
+                strike_price = entry_price
+
+            # Calculate position size based on actual option cost
+            if option_cost and option_cost > 0:
+                contracts_per_risk = int(max_risk / (option_cost * 100))
+                position_size = max(1, min(contracts_per_risk, 10))  # Cap at 10 contracts
+                actual_cost = option_cost * 100 * position_size
+                potential_profit = max_risk * risk_reward
+            else:
+                # Fall back to estimate
+                option_cost = spot_price * 0.02
+                contracts_per_risk = int(max_risk / (option_cost * 100)) if option_cost > 0 else 1
+                position_size = max(1, min(contracts_per_risk, 10))
+                actual_cost = option_cost * 100 * position_size
+                potential_profit = max_risk * risk_reward
+
+            # Determine hold period based on regime and strategy
+            hold_period = "1-3 days"
+            if regime_info:
+                timeline = regime_info.get('timeline', '')
+                if timeline and 'hour' in timeline.lower():
+                    hold_period = "0-1 days"
+                elif timeline and 'day' in timeline.lower():
+                    hold_period = "1-3 days"
+
+            # Get regime description for the plan
+            regime_description = ""
+            if regime_info:
+                regime_type = regime_info.get('primary_type', '')
+                regime_confidence = int(regime_info.get('confidence', 0))
+                regime_description = f"\n🎯 {regime_type.upper().replace('_', ' ')} ({regime_confidence}% confidence)\n"
 
             # Generate specific money-making instructions using market context
+            strike_display = f"${strike_price:.0f}" if strike_price else f"${entry_price:.2f}"
+            option_symbol = f"{symbol} {strike_display} {'C' if option_type == 'call' else 'P'}"
+
             money_making_plan = f"""
+{regime_description}
 🎯 AI-GENERATED TRADE SETUP - {setup_type}
 
-1. **MARKET CONTEXT** (Right Now):
-   - {symbol} trading at ${spot_price:.2f}
+1. **THE EXACT TRADE** (Copy This):
+   - BUY {option_symbol} (expires in 0-3 DTE)
+   - Cost: ${actual_cost:.0f} ({position_size} contracts @ ${option_cost:.2f} each)
+   - Target: ${potential_profit:.0f} (+{(potential_profit/actual_cost*100):.0f}%)
+   - Win Rate: {confidence*100:.0f}%
+   - Hold: {hold_period}
+
+2. **MARKET CONTEXT** (Why Now):
+   - {symbol} at ${spot_price:.2f}
    - Net GEX: ${net_gex/1e9:.1f}B ({  'NEGATIVE - MMs forced to hedge' if net_gex < 0 else 'POSITIVE - MMs stabilizing'})
    - Flip Point: ${flip_point:.2f} ({'ABOVE' if spot_price > flip_point else 'BELOW'} current price)
    - Call Wall: ${call_wall:.2f} | Put Wall: ${put_wall:.2f}
 
-2. **THE TRADE** (Exact Setup):
-   - Setup: {setup_type.replace('_', ' ').title()}
-   - Entry: ${entry_price:.2f}
-   - Target: ${target_price:.2f} ({abs(target_price-entry_price)/entry_price*100:.1f}% move)
-   - Stop: ${stop_price:.2f} ({abs(stop_price-entry_price)/entry_price*100:.1f}% stop)
-   - Position Size: {position_size} contracts
-   - Max Risk: ${max_risk:.2f} ({risk_pct}% of account)
+3. **WHY THIS WORKS**:
+   - {catalyst}
+   - {regime_info.get('description', 'Market regime favorable for this setup') if regime_info else 'Market conditions favor this setup'}
 
-3. **ENTRY CRITERIA** (When to Enter):
+4. **ENTRY CRITERIA** (When to Buy):
    - IMMEDIATE: Market is in optimal regime NOW
-   - Confirmation: Price action respecting {flip_point:.2f} flip point
-   - Time: Best execution in first 30 min after confirmation
-   - Strike: {'ATM CALL' if 'CALL' in setup_type else 'ATM PUT' if 'PUT' in setup_type else 'Strangle/Condor'} at ${entry_price:.2f}
+   - Confirmation: Price action respecting ${flip_point:.2f} flip point
+   - Best execution: First 30 min after market open
+   - Strike: {option_symbol}
 
 4. **EXIT STRATEGY** (How to Take Profits):
    - Target 1: ${(entry_price + (target_price-entry_price)*0.5):.2f} - Take 50% off here
@@ -2281,6 +2413,31 @@ async def generate_trade_setups(request: dict):
                     'call_wall': call_wall,
                     'put_wall': put_wall
                 },
+                # ✅ NEW: Regime information
+                'regime': regime_info if regime_info else {
+                    'primary_type': 'NEUTRAL',
+                    'confidence': 50,
+                    'description': 'Standard market conditions',
+                    'trade_direction': 'DIRECTIONAL',
+                    'risk_level': 'MEDIUM'
+                },
+                # ✅ NEW: Specific option details
+                'option_details': {
+                    'option_type': option_type,
+                    'strike_price': strike_price if strike_price else entry_price,
+                    'option_symbol': option_symbol,
+                    'option_cost': option_cost,
+                    'bid': option_details.get('bid', 0) if option_details else 0,
+                    'ask': option_details.get('ask', 0) if option_details else 0,
+                    'volume': option_details.get('volume', 0) if option_details else 0,
+                    'open_interest': option_details.get('openInterest', 0) if option_details else 0
+                },
+                # ✅ NEW: Greeks
+                'greeks': option_greeks,
+                # ✅ NEW: Cost and profit calculations
+                'actual_cost': actual_cost,
+                'potential_profit': potential_profit,
+                'hold_period': hold_period,
                 'generated_at': datetime.now().isoformat()
             }
 
