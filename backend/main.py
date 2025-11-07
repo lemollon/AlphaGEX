@@ -864,7 +864,139 @@ async def internal_error_handler(request, exc):
     return response
 
 # ============================================================================
+# ============================================================================
+# Position Sizing Endpoints
+# ============================================================================
+
+@app.post("/api/position-sizing/calculate")
+async def calculate_position_sizing(
+    account_size: float,
+    risk_percent: float,
+    win_rate: float,
+    risk_reward: float,
+    option_premium: float,
+    max_loss_per_contract: float = None
+):
+    """
+    Calculate optimal position size using Kelly Criterion and Risk of Ruin
+
+    Returns:
+    - Kelly Criterion sizing
+    - Optimal F sizing
+    - Risk of Ruin probability
+    - Recommended contracts
+    """
+    try:
+        # Kelly Criterion: f* = (p*b - q) / b
+        # where p = win probability, q = loss probability, b = win/loss ratio
+        p = win_rate / 100  # Convert percentage to decimal
+        q = 1 - p
+        b = risk_reward  # win/loss ratio
+
+        kelly_pct = ((p * b) - q) / b if b > 0 else 0
+        kelly_pct = max(0, min(kelly_pct, 1))  # Clamp between 0 and 1
+
+        # Half Kelly (more conservative, recommended)
+        half_kelly_pct = kelly_pct / 2
+
+        # Quarter Kelly (very conservative)
+        quarter_kelly_pct = kelly_pct / 4
+
+        # Calculate actual dollar amounts
+        kelly_dollars = account_size * kelly_pct
+        half_kelly_dollars = account_size * half_kelly_pct
+        quarter_kelly_dollars = account_size * quarter_kelly_pct
+
+        # User's current risk amount
+        user_risk_dollars = account_size * (risk_percent / 100)
+
+        # Calculate contracts based on different methods
+        max_loss = max_loss_per_contract if max_loss_per_contract else (option_premium * 100)
+
+        kelly_contracts = max(1, int(kelly_dollars / max_loss))
+        half_kelly_contracts = max(1, int(half_kelly_dollars / max_loss))
+        quarter_kelly_contracts = max(1, int(quarter_kelly_dollars / max_loss))
+        user_contracts = max(1, int(user_risk_dollars / max_loss))
+
+        # Risk of Ruin calculation (simplified)
+        # Probability of losing entire account with given win rate and risk per trade
+        risk_of_ruin_kelly = calculate_risk_of_ruin(p, kelly_pct)
+        risk_of_ruin_half_kelly = calculate_risk_of_ruin(p, half_kelly_pct)
+        risk_of_ruin_user = calculate_risk_of_ruin(p, risk_percent / 100)
+
+        # Optimal F (Ralph Vince method)
+        # Simplified: f = 1 / biggest_loss_percentage
+        # For options, assume biggest loss = 100% of premium
+        optimal_f_pct = 1 / (max_loss / account_size) if max_loss > 0 else 0
+        optimal_f_pct = min(optimal_f_pct, kelly_pct)  # Never exceed Kelly
+        optimal_f_contracts = max(1, int((account_size * optimal_f_pct) / max_loss))
+
+        return {
+            "success": True,
+            "kelly_criterion": {
+                "full_kelly_pct": round(kelly_pct * 100, 2),
+                "half_kelly_pct": round(half_kelly_pct * 100, 2),
+                "quarter_kelly_pct": round(quarter_kelly_pct * 100, 2),
+                "full_kelly_dollars": round(kelly_dollars, 2),
+                "half_kelly_dollars": round(half_kelly_dollars, 2),
+                "quarter_kelly_dollars": round(quarter_kelly_dollars, 2),
+                "full_kelly_contracts": kelly_contracts,
+                "half_kelly_contracts": half_kelly_contracts,
+                "quarter_kelly_contracts": quarter_kelly_contracts,
+                "risk_of_ruin": round(risk_of_ruin_kelly * 100, 2)
+            },
+            "optimal_f": {
+                "optimal_f_pct": round(optimal_f_pct * 100, 2),
+                "optimal_f_contracts": optimal_f_contracts,
+                "optimal_f_dollars": round(account_size * optimal_f_pct, 2)
+            },
+            "user_sizing": {
+                "user_risk_pct": risk_percent,
+                "user_risk_dollars": round(user_risk_dollars, 2),
+                "user_contracts": user_contracts,
+                "risk_of_ruin": round(risk_of_ruin_user * 100, 2)
+            },
+            "recommendation": {
+                "recommended_method": "Half Kelly" if half_kelly_pct < risk_percent / 100 else "Quarter Kelly",
+                "recommended_contracts": half_kelly_contracts if half_kelly_pct < risk_percent / 100 else quarter_kelly_contracts,
+                "recommended_dollars": round(half_kelly_dollars if half_kelly_pct < risk_percent / 100 else quarter_kelly_dollars, 2),
+                "recommended_pct": round((half_kelly_pct if half_kelly_pct < risk_percent / 100 else quarter_kelly_pct) * 100, 2),
+                "reasoning": "Half Kelly balances growth with safety" if half_kelly_pct < risk_percent / 100 else "Quarter Kelly recommended for higher risk setups"
+            },
+            "parameters": {
+                "account_size": account_size,
+                "risk_percent": risk_percent,
+                "win_rate": win_rate,
+                "risk_reward": risk_reward,
+                "option_premium": option_premium,
+                "max_loss_per_contract": max_loss
+            }
+        }
+
+    except Exception as e:
+        print(f"❌ Error in position sizing calculation: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def calculate_risk_of_ruin(win_rate: float, risk_per_trade: float) -> float:
+    """
+    Calculate probability of ruin (losing entire account)
+
+    Simplified formula based on gambler's ruin problem
+    """
+    if win_rate >= 1.0 or risk_per_trade <= 0:
+        return 0.0
+
+    if win_rate <= 0.0:
+        return 1.0
+
+    # Simplified: higher risk per trade and lower win rate = higher ruin probability
+    # This is an approximation
+    ruin_prob = (1 - win_rate) / win_rate * risk_per_trade * 10
+    return min(1.0, max(0.0, ruin_prob))
+
+# ============================================================================
 # Autonomous Trader Endpoints
+# ============================================================================
 # ============================================================================
 
 # Initialize trader (if exists)
