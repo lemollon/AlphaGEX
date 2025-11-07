@@ -44,6 +44,7 @@ export default function MultiSymbolScanner() {
   const [selectedSetup, setSelectedSetup] = useState<ScanSetup | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [scanningStatus, setScanningStatus] = useState<{ symbol: string, progress: string } | null>(null)
 
   const popularSymbols = [
     'SPY', 'QQQ', 'IWM', 'DIA',
@@ -84,14 +85,27 @@ export default function MultiSymbolScanner() {
 
     setLoading(true)
     setError(null)
+    setScanningStatus({ symbol: 'Starting scan...', progress: '0%' })
 
     try {
       console.log('🔍 Starting scan for symbols:', selectedSymbols)
       console.log('📡 API URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
 
+      // Show scanning status for each symbol
+      for (let i = 0; i < selectedSymbols.length; i++) {
+        const symbol = selectedSymbols[i]
+        const progress = Math.round(((i + 1) / selectedSymbols.length) * 100)
+        setScanningStatus({
+          symbol: `Scanning ${symbol}...`,
+          progress: `${i + 1}/${selectedSymbols.length} (${progress}%)`
+        })
+        await new Promise(resolve => setTimeout(resolve, 100)) // Brief delay to show status
+      }
+
       const response = await apiClient.scanSymbols(selectedSymbols)
 
       console.log('✅ Scanner response:', response.data)
+      setScanningStatus(null)
 
       if (response.data.success) {
         const results = response.data.results
@@ -127,6 +141,7 @@ export default function MultiSymbolScanner() {
 
       setError(errorMessage)
       setScanResults([])
+      setScanningStatus(null)
     } finally {
       setLoading(false)
     }
@@ -297,6 +312,26 @@ export default function MultiSymbolScanner() {
                     >
                       ×
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Scanning Status Bar */}
+              {scanningStatus && (
+                <div className="mb-4 p-3 bg-primary/10 border border-primary/30 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-primary text-sm font-semibold">{scanningStatus.symbol}</p>
+                      <p className="text-primary/70 text-xs mt-0.5">Progress: {scanningStatus.progress}</p>
+                    </div>
+                  </div>
+                  {/* Progress bar */}
+                  <div className="mt-2 h-1.5 bg-background-deep rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all duration-300"
+                      style={{ width: scanningStatus.progress.match(/\d+/)?.[0] + '%' || '0%' }}
+                    />
                   </div>
                 </div>
               )}
