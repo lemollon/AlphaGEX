@@ -2488,6 +2488,32 @@ async def startup_event():
     print("  - WS   /ws/market-data                Real-time updates")
     print("=" * 80)
 
+    # Start Autonomous Trader in background thread
+    try:
+        import threading
+        from autonomous_scheduler import run_continuous_scheduler
+
+        print("\n🤖 Starting Autonomous Trader...")
+        print("⏰ Check interval: 5 minutes (optimized for max responsiveness)")
+        print("📈 Will trade daily during market hours (9:30am-4pm ET, Mon-Fri)")
+        print("🎯 GUARANTEED: Makes at least 1 trade per day (directional or Iron Condor)")
+
+        # Start autonomous trader in daemon thread
+        trader_thread = threading.Thread(
+            target=run_continuous_scheduler,
+            kwargs={'check_interval_minutes': 5},
+            daemon=True,
+            name="AutonomousTrader"
+        )
+        trader_thread.start()
+
+        print("✅ Autonomous Trader started successfully!")
+        print("=" * 80 + "\n")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not start Autonomous Trader: {e}")
+        print("   (Trader can still be run manually via autonomous_scheduler.py)")
+        print("=" * 80 + "\n")
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown"""
