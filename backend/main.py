@@ -1230,6 +1230,116 @@ async def get_trade_log():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/trader/execute")
+async def execute_trader_cycle():
+    """
+    Execute one autonomous trader cycle NOW
+
+    This endpoint:
+    1. Finds and executes a daily trade (if not already traded today)
+    2. Manages existing open positions
+    3. Returns the results
+    """
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "error": "Autonomous trader module not available"
+        }
+
+    try:
+        print("\n" + "="*60)
+        print(f"🤖 MANUAL TRADER EXECUTION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*60 + "\n")
+
+        # Update status
+        trader.update_live_status(
+            status='MANUAL_EXECUTION',
+            action='Manual execution triggered via API',
+            analysis='User initiated trader cycle'
+        )
+
+        results = {
+            "new_trade": None,
+            "closed_positions": [],
+            "message": ""
+        }
+
+        # Step 1: Try to find and execute new trade
+        print("🔍 Checking for new trade opportunity...")
+        try:
+            position_id = trader.find_and_execute_daily_trade(api_client)
+
+            if position_id:
+                print(f"✅ SUCCESS: Opened position #{position_id}")
+                results["new_trade"] = {
+                    "position_id": position_id,
+                    "message": f"Successfully opened position #{position_id}"
+                }
+                results["message"] = f"New position #{position_id} opened"
+            else:
+                print("ℹ️  INFO: No new trade (already traded today or no setup found)")
+                results["message"] = "No new trade (already traded today or no qualifying setup)"
+
+        except Exception as e:
+            print(f"❌ ERROR during trade execution: {e}")
+            import traceback
+            traceback.print_exc()
+            results["message"] = f"Trade execution error: {str(e)}"
+
+        # Step 2: Manage existing positions
+        print("\n🔄 Checking open positions for exit conditions...")
+        try:
+            actions = trader.auto_manage_positions(api_client)
+
+            if actions:
+                print(f"✅ SUCCESS: Closed {len(actions)} position(s)")
+                for action in actions:
+                    print(f"   - {action['strategy']}: P&L ${action['pnl']:+,.2f} ({action['pnl_pct']:+.1f}%) - {action['reason']}")
+
+                results["closed_positions"] = actions
+                if not results["message"]:
+                    results["message"] = f"Closed {len(actions)} position(s)"
+                else:
+                    results["message"] += f", closed {len(actions)} position(s)"
+            else:
+                print("ℹ️  INFO: All positions look good - no exits needed")
+                if not results["message"]:
+                    results["message"] = "No exits needed"
+
+        except Exception as e:
+            print(f"❌ ERROR during position management: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Step 3: Get performance summary
+        perf = trader.get_performance()
+        print("\n📊 PERFORMANCE SUMMARY:")
+        print(f"   Starting Capital: ${perf['starting_capital']:,.0f}")
+        print(f"   Current Value: ${perf['current_value']:,.2f}")
+        print(f"   Total P&L: ${perf['total_pnl']:+,.2f} ({perf['return_pct']:+.2f}%)")
+        print(f"   Total Trades: {perf['total_trades']}")
+        print(f"   Open Positions: {perf['open_positions']}")
+        print(f"   Win Rate: {perf['win_rate']:.1f}%")
+
+        print(f"\n{'='*60}")
+        print("CYCLE COMPLETE")
+        print("="*60 + "\n")
+
+        return {
+            "success": True,
+            "data": {
+                **results,
+                "performance": perf
+            }
+        }
+
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/market/price-history/{symbol}")
 async def get_price_history(symbol: str, days: int = 90):
     """

@@ -146,8 +146,34 @@ export default function AutonomousTrader() {
     return () => clearInterval(interval)
   }, [])
 
-  // No manual start/stop - trader runs autonomously
-  // Just display what it's thinking
+  // Execute trader manually
+  const [executing, setExecuting] = useState(false)
+  const [executeMessage, setExecuteMessage] = useState<string | null>(null)
+
+  const handleExecute = async () => {
+    try {
+      setExecuting(true)
+      setExecuteMessage(null)
+
+      console.log('🚀 Executing autonomous trader...')
+      const response = await apiClient.post('/api/trader/execute')
+
+      if (response.data.success) {
+        setExecuteMessage(response.data.data.message || 'Trader executed successfully')
+        // Refresh data
+        await fetchData()
+      } else {
+        setExecuteMessage('Error: ' + (response.data.message || 'Unknown error'))
+      }
+    } catch (error: any) {
+      console.error('Execute error:', error)
+      setExecuteMessage('Error: ' + (error.message || 'Failed to execute'))
+    } finally {
+      setExecuting(false)
+      // Clear message after 10 seconds
+      setTimeout(() => setExecuteMessage(null), 10000)
+    }
+  }
 
   const handleToggleMode = () => {
     setTraderStatus(prev => ({
@@ -201,6 +227,25 @@ export default function AutonomousTrader() {
           <p className="text-text-secondary mt-1">Automated trading based on gamma exposure signals</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Execute Button */}
+          <button
+            onClick={handleExecute}
+            disabled={executing}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50"
+          >
+            {executing ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Executing...
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                Execute Now
+              </>
+            )}
+          </button>
+
           <div className={`px-4 py-2 rounded-lg font-semibold ${
             traderStatus.mode === 'paper'
               ? 'bg-warning/20 text-warning'
@@ -220,6 +265,24 @@ export default function AutonomousTrader() {
           </div>
         </div>
       </div>
+
+      {/* Execute Message */}
+      {executeMessage && (
+        <div className={`p-4 rounded-lg border ${
+          executeMessage.includes('Error')
+            ? 'bg-danger/10 border-danger/30 text-danger'
+            : 'bg-success/10 border-success/30 text-success'
+        }`}>
+          <div className="flex items-center gap-2">
+            {executeMessage.includes('Error') ? (
+              <XCircle className="w-5 h-5" />
+            ) : (
+              <CheckCircle className="w-5 h-5" />
+            )}
+            <span className="font-semibold">{executeMessage}</span>
+          </div>
+        </div>
+      )}
 
       {/* Live Status - Trader Thinking Out Loud */}
       <div className="card">
