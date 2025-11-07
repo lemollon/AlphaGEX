@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import RegimeBadge from '@/components/RegimeBadge'
 import {
   Target,
   TrendingUp,
@@ -43,6 +44,35 @@ interface TradeSetup {
     call_wall: number
     put_wall: number
   }
+  regime?: {
+    primary_type: string
+    secondary_type?: string | null
+    confidence: number
+    description: string
+    trade_direction?: string
+    risk_level?: string
+    timeline?: string | null
+  }
+  option_details?: {
+    option_type: string
+    strike_price: number
+    option_symbol: string
+    option_cost: number
+    bid: number
+    ask: number
+    volume: number
+    open_interest: number
+  }
+  greeks?: {
+    delta: number
+    gamma: number
+    theta: number
+    vega: number
+    iv: number
+  }
+  actual_cost?: number
+  potential_profit?: number
+  hold_period?: string
   generated_at?: string
   timestamp?: string
   status?: string
@@ -164,8 +194,14 @@ export default function TradeSetupsPage() {
         <div className="p-4 cursor-pointer hover:bg-background-deep transition-colors"
              onClick={() => setExpandedSetup(isExpanded ? null : index)}>
           <div className="flex items-start justify-between mb-3">
-            <div className="flex items-center space-x-3 flex-wrap">
+            <div className="flex items-center space-x-3 flex-wrap gap-2">
               <div className="text-2xl font-bold text-primary">{setup.symbol}</div>
+
+              {/* Regime Badge */}
+              {setup.regime && (
+                <RegimeBadge regime={setup.regime} size="sm" showConfidence={true} showIcon={true} />
+              )}
+
               <div className={`px-3 py-1 rounded-full text-xs font-semibold ${getSetupTypeBadge(setup.setup_type)}`}>
                 {setup.setup_type.replace(/_/g, ' ')}
               </div>
@@ -215,6 +251,63 @@ export default function TradeSetupsPage() {
               <div className="font-semibold text-danger">{formatCurrency(setup.max_risk_dollars)}</div>
             </div>
           </div>
+
+          {/* Strike and Cost Information */}
+          {setup.option_details && (
+            <div className="bg-background-card border border-primary/30 rounded-lg p-3 mb-3">
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <div className="text-xs text-text-muted mb-1">The Trade</div>
+                  <div className="font-bold text-primary text-sm">{setup.option_details.option_symbol}</div>
+                  <div className="text-xs text-text-muted mt-1">{setup.hold_period || '1-3 days'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-text-muted mb-1">Cost → Target</div>
+                  <div className="font-semibold text-sm">
+                    {formatCurrency(setup.actual_cost || 0)} → {formatCurrency(setup.potential_profit || 0)}
+                  </div>
+                  <div className="text-xs text-success">
+                    +{setup.actual_cost && setup.potential_profit ? ((setup.potential_profit / setup.actual_cost - 1) * 100).toFixed(0) : 0}%
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-text-muted mb-1">Option Price</div>
+                  <div className="font-semibold text-sm">
+                    ${setup.option_details.option_cost?.toFixed(2) || '0.00'}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {setup.position_size} contracts
+                  </div>
+                </div>
+              </div>
+
+              {/* Greeks Display */}
+              {setup.greeks && (setup.greeks.delta !== 0 || setup.greeks.gamma !== 0) && (
+                <div className="grid grid-cols-5 gap-2 mt-2 pt-2 border-t border-gray-700">
+                  <div className="text-center">
+                    <div className="text-xs text-text-muted">Delta</div>
+                    <div className="text-xs font-semibold">{setup.greeks.delta?.toFixed(2) || '0.00'}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-text-muted">Gamma</div>
+                    <div className="text-xs font-semibold">{setup.greeks.gamma?.toFixed(3) || '0.000'}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-text-muted">Theta</div>
+                    <div className="text-xs font-semibold text-danger">{setup.greeks.theta?.toFixed(2) || '0.00'}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-text-muted">Vega</div>
+                    <div className="text-xs font-semibold">{setup.greeks.vega?.toFixed(2) || '0.00'}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-text-muted">IV</div>
+                    <div className="text-xs font-semibold">{setup.greeks.iv ? (setup.greeks.iv * 100).toFixed(0) + '%' : '0%'}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Catalyst Preview */}
           <div className="text-sm text-text-secondary line-clamp-2">
