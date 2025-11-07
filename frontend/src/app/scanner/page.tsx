@@ -43,6 +43,7 @@ export default function MultiSymbolScanner() {
   const [scanHistory, setScanHistory] = useState<ScanRun[]>([])
   const [selectedSetup, setSelectedSetup] = useState<ScanSetup | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const popularSymbols = [
     'SPY', 'QQQ', 'IWM', 'DIA',
@@ -77,27 +78,55 @@ export default function MultiSymbolScanner() {
 
   const handleScan = async () => {
     if (selectedSymbols.length === 0) {
-      alert('Please select at least one symbol to scan')
+      setError('Please select at least one symbol to scan')
       return
     }
 
     setLoading(true)
+    setError(null)
+
     try {
+      console.log('🔍 Starting scan for symbols:', selectedSymbols)
+      console.log('📡 API URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
+
       const response = await apiClient.scanSymbols(selectedSymbols)
+
+      console.log('✅ Scanner response:', response.data)
 
       if (response.data.success) {
         const results = response.data.results
-        setScanResults(results)
-        setCurrentScanId(response.data.scan_id)
-        // Cache the results
-        scanCache.setCache(results)
+
+        if (results.length === 0) {
+          setError(`No trading opportunities found for ${selectedSymbols.join(', ')}. Try different symbols or check if market is open.`)
+          setScanResults([])
+        } else {
+          setScanResults(results)
+          setCurrentScanId(response.data.scan_id)
+          // Cache the results
+          scanCache.setCache(results)
+          console.log(`📊 Found ${results.length} opportunities`)
+        }
 
         // Refresh history
         await fetchScanHistory()
+      } else {
+        setError(response.data.error || 'Scanner returned unsuccessful response')
       }
-    } catch (error) {
-      console.error('Error scanning symbols:', error)
-      alert('Scan failed. Make sure the backend is running.')
+    } catch (error: any) {
+      console.error('❌ Error scanning symbols:', error)
+
+      let errorMessage = 'Scan failed. '
+
+      if (error.code === 'ECONNREFUSED' || error.message?.includes('Network Error')) {
+        errorMessage += 'Backend is not running. Start it with: python -m uvicorn backend.main:app --port 8000'
+      } else if (error.response) {
+        errorMessage += `Backend error: ${error.response.data?.detail || error.response.statusText}`
+      } else {
+        errorMessage += error.message || 'Unknown error'
+      }
+
+      setError(errorMessage)
+      setScanResults([])
     } finally {
       setLoading(false)
     }
@@ -252,6 +281,25 @@ export default function MultiSymbolScanner() {
                   ))}
                 </div>
               </div>
+
+              {/* Error Message */}
+              {error && (
+                <div className="mb-4 p-3 bg-danger/10 border border-danger/30 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-danger text-sm font-semibold">Scanner Error</p>
+                      <p className="text-danger/80 text-xs mt-1">{error}</p>
+                    </div>
+                    <button
+                      onClick={() => setError(null)}
+                      className="text-danger hover:text-danger/70"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Scan Button */}
               <button
