@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import TradingGuide from '@/components/TradingGuide'
 import { apiClient } from '@/lib/api'
 
 interface RSIAnalysis {
@@ -53,6 +54,7 @@ interface RegimeAnalysis {
 export default function PsychologyTrapDetection() {
   const [symbol, setSymbol] = useState('SPY')
   const [analysis, setAnalysis] = useState<RegimeAnalysis | null>(null)
+  const [tradingGuide, setTradingGuide] = useState<any | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -71,6 +73,7 @@ export default function PsychologyTrapDetection() {
 
       const data = await response.json()
       setAnalysis(data.analysis)
+      setTradingGuide(data.trading_guide || null)
 
       // Also fetch supporting data
       fetchLiberationSetups()
@@ -341,6 +344,16 @@ export default function PsychologyTrapDetection() {
             </div>
 
             {/* Grid of Analysis Components */}
+            {/* HOW TO MAKE MONEY - Trading Guide */}
+            {tradingGuide && (
+              <div className="my-8">
+                <TradingGuide 
+                  guide={tradingGuide} 
+                  currentPrice={analysis.spy_price}
+                />
+              </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* RSI Heatmap */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">

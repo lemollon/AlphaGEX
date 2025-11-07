@@ -2894,6 +2894,7 @@ from psychology_trap_detector import (
     save_regime_signal_to_db,
     calculate_mtf_rsi_score
 )
+from psychology_trading_guide import get_trading_guide
 
 @app.get("/api/psychology/current-regime")
 async def get_current_regime(symbol: str = "SPY"):
@@ -3104,10 +3105,18 @@ async def get_current_regime(symbol: str = "SPY"):
         except Exception as e:
             print(f"Warning: Could not save regime signal: {e}")
 
+        # Generate trading guide
+        trading_guide = get_trading_guide(
+            regime_type=analysis['regime']['primary_type'],
+            current_price=current_price,
+            regime_data=analysis['regime']
+        )
+
         return {
             "success": True,
             "symbol": symbol,
-            "analysis": analysis
+            "analysis": analysis,
+            "trading_guide": trading_guide
         }
 
     except HTTPException:
