@@ -45,6 +45,7 @@ export default function MultiSymbolScanner() {
   const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [scanningStatus, setScanningStatus] = useState<{ symbol: string, progress: string } | null>(null)
+  const [scanWarning, setScanWarning] = useState<string | null>(null)
 
   const popularSymbols = [
     'SPY', 'QQQ', 'IWM', 'DIA',
@@ -83,6 +84,13 @@ export default function MultiSymbolScanner() {
       return
     }
 
+    // Warn if too many symbols
+    if (selectedSymbols.length > 10) {
+      setScanWarning(`⚠️ Scanning ${selectedSymbols.length} symbols will take ~${Math.ceil(selectedSymbols.length * 0.5)} minutes due to API rate limiting. Consider scanning fewer symbols.`)
+    } else {
+      setScanWarning(null)
+    }
+
     setLoading(true)
     setError(null)
     setScanningStatus({ symbol: 'Starting scan...', progress: '0%' })
@@ -90,22 +98,19 @@ export default function MultiSymbolScanner() {
     try {
       console.log('🔍 Starting scan for symbols:', selectedSymbols)
       console.log('📡 API URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
+      console.log(`⏱️ Estimated time: ~${selectedSymbols.length * 20}s with rate limiting`)
 
-      // Show scanning status for each symbol
-      for (let i = 0; i < selectedSymbols.length; i++) {
-        const symbol = selectedSymbols[i]
-        const progress = Math.round(((i + 1) / selectedSymbols.length) * 100)
-        setScanningStatus({
-          symbol: `Scanning ${symbol}...`,
-          progress: `${i + 1}/${selectedSymbols.length} (${progress}%)`
-        })
-        await new Promise(resolve => setTimeout(resolve, 100)) // Brief delay to show status
-      }
+      // Update status showing it's sending request
+      setScanningStatus({
+        symbol: `Scanning ${selectedSymbols.length} symbols...`,
+        progress: `This may take ${Math.ceil(selectedSymbols.length * 0.5)} minutes`
+      })
 
       const response = await apiClient.scanSymbols(selectedSymbols)
 
       console.log('✅ Scanner response:', response.data)
       setScanningStatus(null)
+      setScanWarning(null)
 
       if (response.data.success) {
         const results = response.data.results
@@ -296,6 +301,24 @@ export default function MultiSymbolScanner() {
                   ))}
                 </div>
               </div>
+
+              {/* Warning Message */}
+              {scanWarning && (
+                <div className="mb-4 p-3 bg-warning/10 border border-warning/30 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-warning text-xs">{scanWarning}</p>
+                    </div>
+                    <button
+                      onClick={() => setScanWarning(null)}
+                      className="text-warning hover:text-warning/70"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Error Message */}
               {error && (
