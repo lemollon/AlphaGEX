@@ -431,6 +431,28 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
 
         trend = "Bullish" if total_call_gamma > total_put_gamma else "Bearish" if total_put_gamma > total_call_gamma else "Neutral"
 
+        # Determine Market Maker State and Trading Edge
+        mm_state_name = "NEUTRAL"
+        mm_state_data = STRATEGIES  # Will be replaced with actual MM_STATES
+
+        # Import MM_STATES from config
+        from config_and_database import MM_STATES
+
+        # Determine which MM state we're in based on net_gex
+        if net_gex < -3e9:
+            mm_state_name = "PANICKING"
+        elif net_gex < -2e9:
+            mm_state_name = "TRAPPED"
+        elif net_gex < -1e9:
+            mm_state_name = "HUNTING"
+        elif net_gex > 1e9:
+            mm_state_name = "DEFENDING"
+        else:
+            mm_state_name = "NEUTRAL"
+
+        # Get the MM state configuration
+        mm_state = MM_STATES.get(mm_state_name, MM_STATES['NEUTRAL'])
+
         # Generate key observations
         observations = [
             f"Net GEX is {'positive' if net_gex > 0 else 'negative'} at ${abs(net_gex)/1e9:.2f}B",
@@ -469,6 +491,14 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
                 "volatility": volatility,
                 "trend": trend
             },
+            "mm_state": {
+                "name": mm_state_name,
+                "behavior": mm_state['behavior'],
+                "confidence": mm_state['confidence'],
+                "action": mm_state['action'],
+                "threshold": mm_state['threshold']
+            },
+            "net_gex": net_gex,  # Add net_gex for MM state context
             "strikes": strikes_data,  # Include strike-level data for visualizations
             "flip_point": profile.get('flip_point', 0) if profile else 0,
             "call_wall": profile.get('call_wall', 0) if profile else 0,
