@@ -303,8 +303,16 @@ class AutonomousPaperTrader:
     def find_and_execute_daily_trade(self, api_client) -> Optional[int]:
         """
         AUTONOMOUS: Find and execute today's best trade automatically
-        GUARANTEED TRADE: If no directional setup, fall back to Iron Condor for premium
-        Returns position ID if successful
+
+        MINIMUM ONE TRADE PER DAY GUARANTEE:
+        This method implements a multi-level fallback system to ensure AT LEAST one trade
+        executes every single day during market hours:
+
+        1. PRIMARY: High-confidence directional trade (calls/puts) if GEX setup exists
+        2. FALLBACK L1: Iron Condor for premium collection if no directional setup
+        3. FALLBACK L2: ATM Straddle as final guarantee (simple, minimal failure points)
+
+        Returns position ID if successful (should ALWAYS return a position ID)
         """
 
         # Update status: Starting trade search
@@ -375,7 +383,7 @@ class AutonomousPaperTrader:
             # Step 2: Try to find high-confidence directional trade (with enhanced data)
             trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
 
-            # GUARANTEED TRADE: If no high-confidence setup, do Iron Condor
+            # GUARANTEED TRADE - MINIMUM ONE PER DAY: Multi-level fallback system
             if not trade or trade.get('confidence', 0) < 70:
                 self.update_live_status(
                     status='EXECUTING',
@@ -383,8 +391,22 @@ class AutonomousPaperTrader:
                     analysis=market_summary,
                     decision='Falling back to Iron Condor for premium collection'
                 )
-                self.log_action('FALLBACK', 'No high-confidence directional setup - creating Iron Condor for premium collection')
-                return self._execute_iron_condor(spot_price, gex_data, api_client)
+                self.log_action('FALLBACK_L1', 'No high-confidence directional setup - trying Iron Condor')
+
+                # Level 1 Fallback: Iron Condor
+                position_id = self._execute_iron_condor(spot_price, gex_data, api_client)
+
+                if position_id:
+                    return position_id
+
+                # Level 2 Fallback: If Iron Condor fails, execute simple ATM straddle
+                self.log_action('FALLBACK_L2', 'Iron Condor failed - executing ATM Straddle as final guarantee')
+                self.update_live_status(
+                    status='EXECUTING',
+                    action='Executing guaranteed daily trade',
+                    decision='ATM Straddle fallback (MINIMUM one trade per day guarantee)'
+                )
+                return self._execute_atm_straddle_fallback(spot_price, api_client)
 
             # Step 3: Execute directional trade (calls/puts)
             self.update_live_status(
@@ -393,7 +415,18 @@ class AutonomousPaperTrader:
                 analysis=market_summary,
                 decision=f'Executing {trade["action"]} at ${trade["strike"]:.0f}'
             )
-            return self._execute_directional_trade(trade, gex_data, api_client)
+            position_id = self._execute_directional_trade(trade, gex_data, api_client)
+
+            # GUARANTEE CHECK: If directional trade failed, ensure we still get a trade
+            if not position_id:
+                self.log_action('FALLBACK_L1', 'Directional trade execution failed - trying Iron Condor')
+                position_id = self._execute_iron_condor(spot_price, gex_data, api_client)
+
+                if not position_id:
+                    self.log_action('FALLBACK_L2', 'Iron Condor failed - executing ATM Straddle as final guarantee')
+                    position_id = self._execute_atm_straddle_fallback(spot_price, api_client)
+
+            return position_id
 
         except Exception as e:
             self.update_live_status(
@@ -844,6 +877,97 @@ RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
 
         except Exception as e:
             self.log_action('ERROR', f'Iron Condor execution failed: {str(e)}', success=False)
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _execute_atm_straddle_fallback(self, spot: float, api_client) -> Optional[int]:
+        """
+        FINAL FALLBACK - GUARANTEED TRADE
+        Execute simple ATM straddle to ensure MINIMUM one trade per day
+        This is intentionally simple with minimal failure points
+        """
+        try:
+            self.log_action('GUARANTEE', 'Executing GUARANTEED daily trade - ATM Straddle')
+
+            # Simple parameters - minimize failure points
+            strike = round(spot)  # Round to nearest dollar (ATM)
+            dte = 7  # One week
+            exp_date = self._get_expiration_string(dte)
+
+            # Get ATM call and put prices
+            call_price = get_real_option_price('SPY', strike, 'call', exp_date)
+            put_price = get_real_option_price('SPY', strike, 'put', exp_date)
+
+            # If we can't get prices, use estimated prices based on typical ATM options
+            if call_price.get('error') or put_price.get('error'):
+                self.log_action('WARNING', 'Could not fetch real prices - using estimated prices for guaranteed trade')
+                # Typical ATM weekly option is ~1-2% of spot price
+                estimated_premium = spot * 0.015  # 1.5% estimate
+                call_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'SPY{datetime.now().strftime("%y%m%d")}C{strike}'}
+                put_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'SPY{datetime.now().strftime("%y%m%d")}P{strike}'}
+
+            total_cost = (call_price['mid'] + put_price['mid']) * 100  # Cost per straddle
+            available = self.get_available_capital()
+
+            # Use 15% of capital for guaranteed trade
+            max_position = available * 0.15
+            contracts = max(1, int(max_position / total_cost))  # At least 1 contract
+            contracts = min(contracts, 3)  # Max 3 for safety
+
+            total_debit = (call_price['mid'] + put_price['mid']) * contracts * 100
+
+            trade = {
+                'symbol': 'SPY',
+                'strategy': f'ATM Straddle (GUARANTEED Daily Trade)',
+                'action': 'LONG_STRADDLE',
+                'option_type': 'straddle',
+                'strike': strike,
+                'dte': dte,
+                'confidence': 100,  # This is our guarantee - always execute
+                'reasoning': f"""ATM STRADDLE - GUARANTEED MINIMUM ONE TRADE PER DAY
+
+STRATEGY: Buy ATM Call + Put to ensure daily trade execution
+- Buy {strike} Call @ ${call_price['mid']:.2f}
+- Buy {strike} Put @ ${put_price['mid']:.2f}
+
+TOTAL COST: ${total_debit:.0f} for {contracts} straddle(s)
+EXPIRATION: {dte} DTE
+RATIONALE: Failsafe execution to guarantee MINIMUM one trade per day
+This trade ensures we're always active in the market"""
+            }
+
+            # Execute the straddle
+            position_id = self._execute_trade(
+                trade,
+                {'mid': call_price['mid'] + put_price['mid'], 'bid': total_debit / (contracts * 100), 'ask': total_debit / (contracts * 100), 'contract_symbol': 'STRADDLE_FALLBACK'},
+                contracts,
+                -(call_price['mid'] + put_price['mid']),  # Negative because we're buying (debit)
+                exp_date,
+                {'net_gex': 0, 'flip_point': strike}  # Minimal GEX data
+            )
+
+            if position_id:
+                self.set_config('last_trade_date', datetime.now().strftime('%Y-%m-%d'))
+                self.log_action(
+                    'EXECUTE',
+                    f"GUARANTEED TRADE: ATM Straddle @ ${strike} ({contracts} contracts) - MINIMUM one trade per day fulfilled",
+                    position_id=position_id,
+                    success=True
+                )
+                self.update_live_status(
+                    status='ACTIVE',
+                    action=f'Executed guaranteed daily trade',
+                    decision=f'ATM Straddle @ ${strike} - MINIMUM one trade requirement met'
+                )
+                return position_id
+
+            # If even this fails, log critical error but still return position (we tried our best)
+            self.log_action('CRITICAL', 'Guaranteed trade execution failed - this should never happen', success=False)
+            return None
+
+        except Exception as e:
+            self.log_action('CRITICAL', f'GUARANTEED TRADE FAILED: {str(e)} - This violates minimum one trade per day', success=False)
             import traceback
             traceback.print_exc()
             return None

@@ -6,43 +6,57 @@ Perfect for Render deployment or background tasks
 
 import time
 from datetime import datetime, time as dt_time
+from zoneinfo import ZoneInfo
 from autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
 
 
 def is_market_hours() -> bool:
-    """Check if it's market hours (9:30 AM - 4:00 PM ET, Mon-Fri)"""
-    now = datetime.now()
+    """
+    Check if it's market hours (9:30 AM - 4:00 PM ET, Mon-Fri)
+    Market times in different US zones:
+    - Eastern (ET): 9:30 AM - 4:00 PM
+    - Central (CT): 8:30 AM - 3:00 PM  (Texas time)
+    - Mountain (MT): 7:30 AM - 2:00 PM
+    - Pacific (PT): 6:30 AM - 1:00 PM
+    """
+    # Get current time in Eastern Time (where market operates)
+    try:
+        et_now = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        # Fallback to UTC-5 if zoneinfo fails
+        from datetime import timezone, timedelta
+        et_now = datetime.now(timezone(timedelta(hours=-5)))
 
     # Weekend check
-    if now.weekday() >= 5:  # Saturday or Sunday
+    if et_now.weekday() >= 5:  # Saturday or Sunday
         return False
 
-    # Time check (simplified - doesn't account for holidays)
-    hour = now.hour
-    minute = now.minute
-
+    # Time check (9:30 AM - 4:00 PM ET)
     market_open_time = dt_time(9, 30)
     market_close_time = dt_time(16, 0)
-    current_time = dt_time(hour, minute)
+    current_time = et_now.time()
 
     return market_open_time <= current_time <= market_close_time
-
-
-def is_morning_session() -> bool:
-    """Check if it's morning session (9:30-11:00 AM ET)"""
-    now = datetime.now()
-    hour = now.hour
-
-    return 9 <= hour < 11 and now.weekday() < 5
 
 
 def run_autonomous_trader_cycle():
     """
     Run one full cycle of the autonomous trader
 
+    What it does:
+    - Checks for new trade opportunities ALL DAY during market hours (9:30 AM - 4:00 PM ET)
+    - Executes MINIMUM ONE trade per day GUARANTEED (multi-level fallback system)
+    - Manages existing positions continuously
+    - Updates live status for UI monitoring
+
+    GUARANTEE: Multi-level fallback ensures at least one trade executes daily:
+    1. Directional GEX trade (preferred)
+    2. Iron Condor fallback (if no directional setup)
+    3. ATM Straddle final fallback (if Iron Condor fails)
+
     This should be called:
-    - Once per hour during market hours
+    - Every 5 minutes during market hours (recommended)
     - OR triggered by Render's cron schedule
     - OR as a background task in Streamlit
     """
@@ -51,15 +65,41 @@ def run_autonomous_trader_cycle():
     print(f"AUTONOMOUS TRADER CYCLE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")
 
-    # Initialize
-    trader = AutonomousPaperTrader()
+    # Initialize with comprehensive error handling
+    try:
+        trader = AutonomousPaperTrader()
+        print(f"✅ Trader initialized successfully")
+        print(f"   Database: {trader.db_path}")
+
+        # CRITICAL: Update heartbeat immediately so UI knows worker is alive
+        trader.update_live_status(
+            status='RUNNING',
+            action='Worker is alive and checking market conditions',
+            analysis='System healthy, checking for trading opportunities'
+        )
+    except Exception as e:
+        print(f"❌ FATAL: Failed to initialize trader: {e}")
+        import traceback
+        traceback.print_exc()
+        return
 
     # Use shared API client - class-level rate limiting automatically applies
-    api_client = TradingVolatilityAPI()
+    try:
+        api_client = TradingVolatilityAPI()
+        print(f"✅ API client initialized")
+    except Exception as e:
+        print(f"❌ ERROR: Failed to initialize API client: {e}")
+        trader.update_live_status(
+            status='ERROR',
+            action='Failed to initialize API client',
+            analysis=str(e)
+        )
+        return
 
-    # Step 1: Check if we should find a new trade
-    if is_morning_session():
-        print("🔍 MORNING SESSION - Checking for new trade opportunity...")
+    # Step 1: Check for new trade opportunity (ALL DAY during market hours)
+    # Note: find_and_execute_daily_trade() has built-in protection to only execute ONE trade per day
+    if is_market_hours():
+        print("🔍 MARKET HOURS - Checking for new trade opportunity...")
 
         try:
             position_id = trader.find_and_execute_daily_trade(api_client)
@@ -67,14 +107,14 @@ def run_autonomous_trader_cycle():
             if position_id:
                 print(f"✅ SUCCESS: Opened position #{position_id}")
             else:
-                print("ℹ️ INFO: No new trade (already traded today or market closed)")
+                print("ℹ️ INFO: No new trade (already traded today or no high-confidence setup)")
         except Exception as e:
             print(f"❌ ERROR: Failed to find/execute trade: {e}")
             import traceback
             traceback.print_exc()
 
     else:
-        print(f"ℹ️ Outside morning session - skipping new trade search")
+        print(f"ℹ️ Market closed - skipping new trade search")
 
     # Step 2: Always manage existing positions (during market hours)
     if is_market_hours():
@@ -132,7 +172,9 @@ def run_continuous_scheduler(check_interval_minutes: int = 5):
 
     print("🤖 AUTONOMOUS TRADER SCHEDULER STARTED")
     print(f"⏰ Check interval: {check_interval_minutes} minutes")
-    print(f"📅 Will trade Monday-Friday during market hours\n")
+    print(f"📅 Checks ALL DAY during market hours (9:30 AM - 4:00 PM ET / 8:30 AM - 3:00 PM CT)")
+    print(f"✅ GUARANTEE: MINIMUM ONE trade per day (multi-level fallback system)")
+    print(f"📊 Manages positions continuously every {check_interval_minutes} minutes\n")
 
     while True:
         try:

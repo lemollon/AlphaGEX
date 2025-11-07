@@ -22,10 +22,10 @@ echo "   (Press Ctrl+C to stop)"
 echo ""
 
 # Run the autonomous scheduler in continuous mode
-python3 autonomous_scheduler.py --mode continuous --interval 60
+python3 autonomous_scheduler.py --mode continuous --interval 5
 
 # Note: This will:
-# 1. Check for trade opportunities every hour
-# 2. Execute ONE trade per day (9:30-11:00 AM)
-# 3. Manage positions every hour during market hours
-# 4. Log everything to database
+# 1. Check for trade opportunities ALL DAY every 5 minutes (9:30 AM - 4:00 PM ET / 8:30 AM - 3:00 PM CT)
+# 2. Execute MINIMUM ONE trade per day GUARANTEED (multi-level fallback: GEX → Iron Condor → Straddle)
+# 3. Manage positions continuously every 5 minutes during market hours
+# 4. Log everything to database with full state persistence
