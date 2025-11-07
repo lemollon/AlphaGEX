@@ -54,6 +54,7 @@ export const apiClient = {
   getOpenPositions: () => api.get('/api/trader/positions'),
   getTradeLog: () => api.get('/api/trader/trade-log'),
   getStrategies: () => api.get('/api/trader/strategies'),
+  compareStrategies: (symbol: string = 'SPY') => api.get('/api/strategies/compare', { params: { symbol } }),
 
   // Market Data
   getPriceHistory: (symbol: string, days: number = 90) =>

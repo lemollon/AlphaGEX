@@ -2620,47 +2620,492 @@ class SmartStrikeSelector:
 # MULTI-STRATEGY OPTIMIZER
 # ============================================================================
 class MultiStrategyOptimizer:
-    """Optimize between multiple strategies for maximum profit"""
-    
+    """Optimize between multiple strategies for maximum profit - Complete Side-by-Side Comparison"""
+
     def __init__(self):
         self.rag = TradingRAG()
         self.strike_selector = SmartStrikeSelector()
-        
+        self.dte_calculator = SmartDTECalculator()
+
     def get_best_strategy(self, market_data: Dict) -> Dict:
-        """Compare all strategies and return the best one"""
-        
+        """Compare all strategies and return the best one (legacy compatibility)"""
+        comparison = self.compare_all_strategies(market_data)
+
+        return {
+            'best': comparison['strategies'][0] if comparison['strategies'] else None,
+            'all_options': comparison['strategies'],
+            'recommendation': comparison['recommendation']
+        }
+
+    def compare_all_strategies(self, market_data: Dict) -> Dict:
+        """
+        Complete side-by-side comparison of ALL strategies
+        Returns detailed analysis of which strategy is best for current conditions
+        """
         spot = market_data.get('spot_price', 0)
         net_gex = market_data.get('net_gex', 0)
         flip = market_data.get('flip_point', 0)
         call_wall = market_data.get('call_wall', 0)
         put_wall = market_data.get('put_wall', 0)
-        
+        vix = market_data.get('vix', 15)
+
+        current_time = get_et_time()
+        hour = current_time.hour
+        day_of_week = current_time.strftime('%A')
+
+        # Calculate distances
+        dist_to_flip = abs(spot - flip) / spot * 100 if flip else 0
+        dist_to_call_wall = abs(spot - call_wall) / spot * 100 if call_wall else 0
+        dist_to_put_wall = abs(spot - put_wall) / spot * 100 if put_wall else 0
+        wall_spread = dist_to_call_wall + dist_to_put_wall
+
         strategies = []
-        
-        if net_gex < -1e9 and spot < flip:
+
+        # ============================================================================
+        # 1. NEGATIVE GEX SQUEEZE (Bullish)
+        # ============================================================================
+        squeeze_conditions = self._check_squeeze_conditions(market_data)
+        if squeeze_conditions['viable']:
+            optimal_dte = self.dte_calculator.calculate_optimal_dte(
+                'DIRECTIONAL', market_data, squeeze_conditions['confidence']
+            )
+
             call_strike = self.strike_selector.get_optimal_strike(spot, 'CALL', market_data)
-            if call_strike:
-                personal_stats = self.rag.get_personal_stats('LONG_CALL')
-                
-                strategies.append({
-                    'name': 'LONG CALLS',
-                    'strike': call_strike['strike'],
-                    'premium': call_strike['premium'],
-                    'probability': call_strike['success_rate'],
-                    'expected_value': call_strike['expected_value'],
-                    'your_historical': f"{personal_stats['win_rate']:.0f}% win rate",
-                    'action': f"BUY {call_strike['strike']} calls @ ${call_strike['premium']:.2f}",
-                    'dte': call_strike.get('dte', 7),  # Days to expiration
-                    'best_time': f"{call_strike.get('dte', 7)} DTE"
-                })
-        
+            personal_stats = self.rag.get_personal_stats('LONG_CALL')
+
+            # Expected Value calculation
+            base_win_rate = STRATEGIES['NEGATIVE_GEX_SQUEEZE']['win_rate']
+            adjusted_win_rate = base_win_rate * squeeze_conditions['confidence'] / 100
+            avg_win = spot * 0.02 * STRATEGIES['NEGATIVE_GEX_SQUEEZE']['risk_reward']  # 2% move * R:R
+            avg_loss = spot * 0.01  # Stop loss at 1%
+            expected_value = (adjusted_win_rate * avg_win) - ((1 - adjusted_win_rate) * avg_loss)
+
+            # Entry timing
+            entry_timing = self._optimize_entry_timing('SQUEEZE', hour, vix, squeeze_conditions['confidence'])
+
+            strategies.append({
+                'name': 'NEGATIVE_GEX_SQUEEZE',
+                'type': 'Bullish Directional',
+                'action': f"BUY {call_strike['strike'] if call_strike else int(flip/5)*5+5} CALLS",
+                'confidence': squeeze_conditions['confidence'],
+                'win_rate': f"{adjusted_win_rate*100:.1f}%",
+                'base_win_rate': f"{base_win_rate*100:.1f}%",
+                'your_win_rate': f"{personal_stats['win_rate']:.1f}%",
+                'expected_value': expected_value,
+                'expected_move': STRATEGIES['NEGATIVE_GEX_SQUEEZE']['typical_move'],
+                'risk_reward': STRATEGIES['NEGATIVE_GEX_SQUEEZE']['risk_reward'],
+                'conditions_met': squeeze_conditions['conditions_met'],
+                'optimal_dte': optimal_dte,
+                'entry_timing': entry_timing,
+                'strike': call_strike['strike'] if call_strike else int(flip/5)*5+5,
+                'premium': call_strike.get('premium', 0) if call_strike else 0,
+                'best_days': STRATEGIES['NEGATIVE_GEX_SQUEEZE']['best_days'],
+                'day_match': day_of_week in STRATEGIES['NEGATIVE_GEX_SQUEEZE']['best_days'],
+                'reasoning': squeeze_conditions['reasoning']
+            })
+
+        # ============================================================================
+        # 2. POSITIVE GEX BREAKDOWN (Bearish)
+        # ============================================================================
+        breakdown_conditions = self._check_breakdown_conditions(market_data)
+        if breakdown_conditions['viable']:
+            optimal_dte = self.dte_calculator.calculate_optimal_dte(
+                'DIRECTIONAL', market_data, breakdown_conditions['confidence']
+            )
+
+            put_strike = self.strike_selector.get_optimal_strike(spot, 'PUT', market_data)
+            personal_stats = self.rag.get_personal_stats('LONG_PUT')
+
+            base_win_rate = STRATEGIES['POSITIVE_GEX_BREAKDOWN']['win_rate']
+            adjusted_win_rate = base_win_rate * breakdown_conditions['confidence'] / 100
+            avg_win = spot * 0.015 * STRATEGIES['POSITIVE_GEX_BREAKDOWN']['risk_reward']
+            avg_loss = spot * 0.01
+            expected_value = (adjusted_win_rate * avg_win) - ((1 - adjusted_win_rate) * avg_loss)
+
+            entry_timing = self._optimize_entry_timing('BREAKDOWN', hour, vix, breakdown_conditions['confidence'])
+
+            strategies.append({
+                'name': 'POSITIVE_GEX_BREAKDOWN',
+                'type': 'Bearish Directional',
+                'action': f"BUY {put_strike['strike'] if put_strike else int(flip/5)*5-5} PUTS",
+                'confidence': breakdown_conditions['confidence'],
+                'win_rate': f"{adjusted_win_rate*100:.1f}%",
+                'base_win_rate': f"{base_win_rate*100:.1f}%",
+                'your_win_rate': f"{personal_stats['win_rate']:.1f}%",
+                'expected_value': expected_value,
+                'expected_move': STRATEGIES['POSITIVE_GEX_BREAKDOWN']['typical_move'],
+                'risk_reward': STRATEGIES['POSITIVE_GEX_BREAKDOWN']['risk_reward'],
+                'conditions_met': breakdown_conditions['conditions_met'],
+                'optimal_dte': optimal_dte,
+                'entry_timing': entry_timing,
+                'strike': put_strike['strike'] if put_strike else int(flip/5)*5-5,
+                'premium': put_strike.get('premium', 0) if put_strike else 0,
+                'best_days': STRATEGIES['POSITIVE_GEX_BREAKDOWN']['best_days'],
+                'day_match': day_of_week in STRATEGIES['POSITIVE_GEX_BREAKDOWN']['best_days'],
+                'reasoning': breakdown_conditions['reasoning']
+            })
+
+        # ============================================================================
+        # 3. IRON CONDOR (Range-Bound)
+        # ============================================================================
+        condor_conditions = self._check_condor_conditions(market_data)
+        if condor_conditions['viable']:
+            optimal_dte = self.dte_calculator.calculate_optimal_dte(
+                'IRON_CONDOR', market_data, condor_conditions['confidence']
+            )
+
+            personal_stats = self.rag.get_personal_stats('IRON_CONDOR')
+
+            base_win_rate = STRATEGIES['IRON_CONDOR']['win_rate']
+            adjusted_win_rate = base_win_rate * condor_conditions['confidence'] / 100
+            avg_win = spot * 0.005  # Collect premium
+            avg_loss = spot * 0.015  # Breached wall
+            expected_value = (adjusted_win_rate * avg_win) - ((1 - adjusted_win_rate) * avg_loss)
+
+            entry_timing = self._optimize_entry_timing('IRON_CONDOR', hour, vix, condor_conditions['confidence'])
+
+            strategies.append({
+                'name': 'IRON_CONDOR',
+                'type': 'Range-Bound Premium',
+                'action': f"SELL IC: {int(put_wall/5)*5}P / {int(call_wall/5)*5}C",
+                'confidence': condor_conditions['confidence'],
+                'win_rate': f"{adjusted_win_rate*100:.1f}%",
+                'base_win_rate': f"{base_win_rate*100:.1f}%",
+                'your_win_rate': f"{personal_stats['win_rate']:.1f}%",
+                'expected_value': expected_value,
+                'expected_move': STRATEGIES['IRON_CONDOR']['typical_move'],
+                'risk_reward': STRATEGIES['IRON_CONDOR']['risk_reward'],
+                'conditions_met': condor_conditions['conditions_met'],
+                'optimal_dte': optimal_dte,
+                'entry_timing': entry_timing,
+                'strike': f"{int(put_wall/5)*5}P / {int(call_wall/5)*5}C",
+                'premium': 0,  # Would need options chain data
+                'best_days': STRATEGIES['IRON_CONDOR']['best_days'],
+                'day_match': True,  # Any day works
+                'reasoning': condor_conditions['reasoning']
+            })
+
+        # ============================================================================
+        # 4. PREMIUM SELLING (Wall Rejection)
+        # ============================================================================
+        premium_conditions = self._check_premium_conditions(market_data)
+        if premium_conditions['viable']:
+            optimal_dte = self.dte_calculator.calculate_optimal_dte(
+                'PREMIUM_SELLING', market_data, premium_conditions['confidence']
+            )
+
+            personal_stats = self.rag.get_personal_stats('PREMIUM_SELLING')
+
+            base_win_rate = STRATEGIES['PREMIUM_SELLING']['win_rate']
+            adjusted_win_rate = base_win_rate * premium_conditions['confidence'] / 100
+            avg_win = spot * 0.003
+            avg_loss = spot * 0.006
+            expected_value = (adjusted_win_rate * avg_win) - ((1 - adjusted_win_rate) * avg_loss)
+
+            entry_timing = self._optimize_entry_timing('PREMIUM', hour, vix, premium_conditions['confidence'])
+
+            wall_type = 'CALL' if spot < flip else 'PUT'
+            wall_strike = call_wall if spot < flip else put_wall
+
+            strategies.append({
+                'name': 'PREMIUM_SELLING',
+                'type': 'Wall Rejection',
+                'action': f"SELL {int(wall_strike/5)*5} {wall_type}S at wall",
+                'confidence': premium_conditions['confidence'],
+                'win_rate': f"{adjusted_win_rate*100:.1f}%",
+                'base_win_rate': f"{base_win_rate*100:.1f}%",
+                'your_win_rate': f"{personal_stats['win_rate']:.1f}%",
+                'expected_value': expected_value,
+                'expected_move': STRATEGIES['PREMIUM_SELLING']['typical_move'],
+                'risk_reward': STRATEGIES['PREMIUM_SELLING']['risk_reward'],
+                'conditions_met': premium_conditions['conditions_met'],
+                'optimal_dte': optimal_dte,
+                'entry_timing': entry_timing,
+                'strike': int(wall_strike/5)*5,
+                'premium': 0,
+                'best_days': STRATEGIES['PREMIUM_SELLING']['best_days'],
+                'day_match': True,
+                'reasoning': premium_conditions['reasoning']
+            })
+
+        # Sort by expected value
         strategies.sort(key=lambda x: x['expected_value'], reverse=True)
-        
+
+        # Generate summary
+        if strategies:
+            best = strategies[0]
+            recommendation = f"🎯 BEST STRATEGY: {best['name']} ({best['confidence']}% confidence, EV: ${best['expected_value']:.2f})"
+        else:
+            recommendation = "⚠️ NO HIGH-CONFIDENCE SETUPS - Wait for better conditions"
+
         return {
-            'best': strategies[0] if strategies else None,
-            'all_options': strategies,
-            'recommendation': f"Best EV: {strategies[0]['name']}" if strategies else "No good setups"
+            'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S ET'),
+            'market_conditions': {
+                'spot': spot,
+                'net_gex': net_gex,
+                'flip_point': flip,
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'vix': vix,
+                'dist_to_flip': f"{dist_to_flip:.2f}%",
+                'wall_spread': f"{wall_spread:.2f}%",
+                'day': day_of_week,
+                'time': current_time.strftime('%H:%M')
+            },
+            'strategies': strategies,
+            'recommendation': recommendation,
+            'best_strategy': strategies[0] if strategies else None,
+            'total_strategies_available': len(strategies)
         }
+
+    def _check_squeeze_conditions(self, market_data: Dict) -> Dict:
+        """Check if Negative GEX Squeeze conditions are met"""
+        spot = market_data.get('spot_price', 0)
+        net_gex = market_data.get('net_gex', 0)
+        flip = market_data.get('flip_point', 0)
+        put_wall = market_data.get('put_wall', 0)
+
+        conditions_met = []
+        confidence = 50
+
+        # Check GEX threshold
+        if net_gex < STRATEGIES['NEGATIVE_GEX_SQUEEZE']['conditions']['net_gex_threshold']:
+            conditions_met.append("✓ Negative GEX regime")
+            confidence += 15
+
+        # Check position vs flip
+        if spot < flip:
+            dist_pct = (flip - spot) / spot * 100
+            if dist_pct <= STRATEGIES['NEGATIVE_GEX_SQUEEZE']['conditions']['distance_to_flip']:
+                conditions_met.append(f"✓ Near flip point ({dist_pct:.2f}% below)")
+                confidence += 20
+            else:
+                conditions_met.append(f"⚠ Far from flip ({dist_pct:.2f}% below)")
+
+        # Check put wall distance
+        if put_wall:
+            put_dist = (spot - put_wall) / spot * 100
+            if put_dist >= STRATEGIES['NEGATIVE_GEX_SQUEEZE']['conditions']['min_put_wall_distance']:
+                conditions_met.append(f"✓ Put wall support at {put_dist:.2f}%")
+                confidence += 10
+
+        viable = confidence >= 65
+
+        reasoning = f"Negative GEX squeeze setup. " + " ".join(conditions_met)
+
+        return {
+            'viable': viable,
+            'confidence': min(confidence, 95),
+            'conditions_met': conditions_met,
+            'reasoning': reasoning
+        }
+
+    def _check_breakdown_conditions(self, market_data: Dict) -> Dict:
+        """Check if Positive GEX Breakdown conditions are met"""
+        spot = market_data.get('spot_price', 0)
+        net_gex = market_data.get('net_gex', 0)
+        flip = market_data.get('flip_point', 0)
+        call_wall = market_data.get('call_wall', 0)
+
+        conditions_met = []
+        confidence = 50
+
+        # Check GEX threshold
+        if net_gex > STRATEGIES['POSITIVE_GEX_BREAKDOWN']['conditions']['net_gex_threshold']:
+            conditions_met.append("✓ Positive GEX regime")
+            confidence += 15
+
+        # Check proximity to flip
+        if flip:
+            dist_pct = abs(spot - flip) / spot * 100
+            if dist_pct <= STRATEGIES['POSITIVE_GEX_BREAKDOWN']['conditions']['proximity_to_flip']:
+                conditions_met.append(f"✓ At flip point ({dist_pct:.2f}% away)")
+                confidence += 20
+
+            # Check if rejecting from call wall
+            if call_wall and spot >= flip:
+                call_dist = (call_wall - spot) / spot * 100
+                if call_dist < 1.0:
+                    conditions_met.append(f"✓ Rejecting from call wall")
+                    confidence += 15
+
+        viable = confidence >= 65
+
+        reasoning = f"Positive GEX breakdown setup. " + " ".join(conditions_met)
+
+        return {
+            'viable': viable,
+            'confidence': min(confidence, 95),
+            'conditions_met': conditions_met,
+            'reasoning': reasoning
+        }
+
+    def _check_condor_conditions(self, market_data: Dict) -> Dict:
+        """Check if Iron Condor conditions are met"""
+        spot = market_data.get('spot_price', 0)
+        net_gex = market_data.get('net_gex', 0)
+        call_wall = market_data.get('call_wall', 0)
+        put_wall = market_data.get('put_wall', 0)
+        vix = market_data.get('vix', 15)
+
+        conditions_met = []
+        confidence = 50
+
+        # Check GEX threshold
+        if net_gex > STRATEGIES['IRON_CONDOR']['conditions']['net_gex_threshold']:
+            conditions_met.append("✓ Positive GEX regime")
+            confidence += 15
+
+        # Check wall distance
+        if call_wall and put_wall:
+            wall_dist = (call_wall - put_wall) / spot * 100
+            if wall_dist >= STRATEGIES['IRON_CONDOR']['conditions']['min_wall_distance']:
+                conditions_met.append(f"✓ Wide walls ({wall_dist:.2f}% spread)")
+                confidence += 20
+
+                # Check if price is centered
+                midpoint = (call_wall + put_wall) / 2
+                center_dist = abs(spot - midpoint) / spot * 100
+                if center_dist < 0.5:
+                    conditions_met.append("✓ Price centered in range")
+                    confidence += 10
+
+        # Check VIX
+        if vix < 20:
+            conditions_met.append(f"✓ Low VIX ({vix:.1f})")
+            confidence += 5
+
+        viable = confidence >= 65
+
+        reasoning = f"Iron Condor setup. " + " ".join(conditions_met)
+
+        return {
+            'viable': viable,
+            'confidence': min(confidence, 95),
+            'conditions_met': conditions_met,
+            'reasoning': reasoning
+        }
+
+    def _check_premium_conditions(self, market_data: Dict) -> Dict:
+        """Check if Premium Selling conditions are met"""
+        spot = market_data.get('spot_price', 0)
+        net_gex = market_data.get('net_gex', 0)
+        flip = market_data.get('flip_point', 0)
+        call_wall = market_data.get('call_wall', 0)
+        put_wall = market_data.get('put_wall', 0)
+        call_gamma = market_data.get('call_wall_gamma', 0)
+        put_gamma = market_data.get('put_wall_gamma', 0)
+
+        conditions_met = []
+        confidence = 50
+
+        # Check positive GEX
+        if net_gex > 0:
+            conditions_met.append("✓ Positive GEX")
+            confidence += 10
+
+        # Check wall strength
+        max_gamma = max(abs(call_gamma), abs(put_gamma))
+        if max_gamma > STRATEGIES['PREMIUM_SELLING']['conditions']['wall_strength']:
+            conditions_met.append(f"✓ Strong wall ({max_gamma/1e9:.2f}B gamma)")
+            confidence += 15
+
+        # Check distance to wall
+        if spot < flip and call_wall:
+            dist = (call_wall - spot) / spot * 100
+            if dist <= STRATEGIES['PREMIUM_SELLING']['conditions']['distance_from_wall']:
+                conditions_met.append(f"✓ Approaching call wall ({dist:.2f}%)")
+                confidence += 20
+        elif spot >= flip and put_wall:
+            dist = (spot - put_wall) / spot * 100
+            if dist <= STRATEGIES['PREMIUM_SELLING']['conditions']['distance_from_wall']:
+                conditions_met.append(f"✓ Approaching put wall ({dist:.2f}%)")
+                confidence += 20
+
+        viable = confidence >= 65
+
+        reasoning = f"Premium selling setup. " + " ".join(conditions_met)
+
+        return {
+            'viable': viable,
+            'confidence': min(confidence, 95),
+            'conditions_met': conditions_met,
+            'reasoning': reasoning
+        }
+
+    def _optimize_entry_timing(self, strategy_type: str, hour: int, vix: float, confidence: int) -> Dict:
+        """
+        Optimize entry timing based on strategy type, time of day, and market conditions
+        """
+        # Time windows (in ET)
+        market_open = 9.5  # 9:30 AM
+        morning_end = 11
+        lunch_start = 11.5
+        lunch_end = 14
+        power_hour = 15
+        market_close = 16
+
+        timing = {
+            'immediate': False,
+            'wait_for': None,
+            'best_window': None,
+            'avoid_window': None,
+            'reasoning': ''
+        }
+
+        # SQUEEZE strategies - best in morning
+        if strategy_type == 'SQUEEZE':
+            if market_open <= hour < morning_end:
+                timing['immediate'] = True
+                timing['best_window'] = '9:30-11:00 AM'
+                timing['reasoning'] = 'Optimal morning momentum window for squeezes'
+            elif hour < market_open:
+                timing['wait_for'] = '9:30 AM market open'
+                timing['reasoning'] = 'Wait for market open to confirm momentum'
+            elif lunch_start <= hour < lunch_end:
+                timing['avoid_window'] = 'Lunch session (low volume)'
+                timing['reasoning'] = 'Avoid lunch - wait for power hour if confidence is high'
+                if confidence >= 80:
+                    timing['wait_for'] = '3:00 PM power hour'
+            else:
+                timing['immediate'] = confidence >= 75
+                timing['reasoning'] = 'Late day - only enter if very confident'
+
+        # BREAKDOWN strategies - best in afternoon
+        elif strategy_type == 'BREAKDOWN':
+            if lunch_end <= hour < market_close:
+                timing['immediate'] = True
+                timing['best_window'] = '2:00-4:00 PM'
+                timing['reasoning'] = 'Optimal afternoon window for breakdowns'
+            elif hour < lunch_start:
+                timing['wait_for'] = 'After 11:30 AM'
+                timing['reasoning'] = 'Morning too choppy for bearish plays'
+            else:
+                timing['immediate'] = confidence >= 70
+
+        # IRON CONDOR - best at market open
+        elif strategy_type == 'IRON_CONDOR':
+            if market_open <= hour <= market_open + 0.5:
+                timing['immediate'] = True
+                timing['best_window'] = '9:30-10:00 AM'
+                timing['reasoning'] = 'Enter at open for best premium'
+            elif hour < market_open:
+                timing['wait_for'] = '9:30 AM market open'
+                timing['reasoning'] = 'Wait for open to place Iron Condor'
+            else:
+                timing['immediate'] = True
+                timing['reasoning'] = 'Can enter anytime in range-bound market'
+
+        # PREMIUM SELLING - enter near wall approach
+        elif strategy_type == 'PREMIUM':
+            timing['immediate'] = True
+            timing['best_window'] = 'On wall approach'
+            timing['reasoning'] = 'Enter when price approaches wall for maximum premium'
+
+            if vix > 20:
+                timing['reasoning'] += ' - High VIX = better premium'
+
+        return timing
 
 # ============================================================================
 # DYNAMIC LEVEL CALCULATOR
