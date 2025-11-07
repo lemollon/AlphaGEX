@@ -146,8 +146,9 @@ export default function AutonomousTrader() {
     return () => clearInterval(interval)
   }, [])
 
-  // No manual start/stop - trader runs autonomously
-  // Just display what it's thinking
+  // Trader runs automatically as a background worker - no manual control needed
+  // It checks every hour and executes trades based on GEX conditions
+  // State is persisted in database, so it remembers everything across restarts
 
   const handleToggleMode = () => {
     setTraderStatus(prev => ({
@@ -217,6 +218,19 @@ export default function AutonomousTrader() {
               traderStatus.is_active ? 'bg-success animate-pulse' : 'bg-text-muted'
             }`} />
             {traderStatus.is_active ? 'ACTIVE' : 'STOPPED'}
+          </div>
+        </div>
+      </div>
+
+      {/* Auto-Running Info Banner */}
+      <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">
+        <div className="flex items-start gap-3">
+          <Bot className="w-5 h-5 text-primary flex-shrink-0 mt-0.5 animate-pulse" />
+          <div>
+            <p className="font-semibold text-primary mb-1">⚡ Fully Autonomous - Runs 24/7</p>
+            <p className="text-sm text-text-secondary">
+              This trader operates continuously as a background worker. It analyzes GEX conditions every hour, executes trades automatically, and manages positions. All state is persisted in the database - it remembers everything across restarts and continues from where it left off.
+            </p>
           </div>
         </div>
       </div>
