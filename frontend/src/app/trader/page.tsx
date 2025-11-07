@@ -147,7 +147,8 @@ export default function AutonomousTrader() {
   }, [])
 
   // Trader runs automatically as a background worker - no manual control needed
-  // It checks every hour and executes trades based on GEX conditions
+  // It checks every 5 minutes ALL DAY during market hours (8:30 AM - 3:00 PM CT)
+  // GUARANTEED: MINIMUM one trade per day (multi-level fallback system)
   // State is persisted in database, so it remembers everything across restarts
 
   const handleToggleMode = () => {
@@ -227,9 +228,9 @@ export default function AutonomousTrader() {
         <div className="flex items-start gap-3">
           <Bot className="w-5 h-5 text-primary flex-shrink-0 mt-0.5 animate-pulse" />
           <div>
-            <p className="font-semibold text-primary mb-1">⚡ Fully Autonomous - Runs 24/7</p>
+            <p className="font-semibold text-primary mb-1">⚡ Fully Autonomous - Checks Every 5 Minutes ALL DAY</p>
             <p className="text-sm text-text-secondary">
-              This trader operates continuously as a background worker. It analyzes GEX conditions every hour, executes trades automatically, and manages positions. All state is persisted in the database - it remembers everything across restarts and continues from where it left off.
+              This trader operates continuously during market hours (8:30 AM - 3:00 PM CT). It checks for opportunities every 5 minutes and is <strong>GUARANTEED to execute MINIMUM one trade per day</strong> using a multi-level fallback system (GEX → Iron Condor → Straddle). All state is persisted - it remembers everything across restarts.
             </p>
           </div>
         </div>
@@ -297,7 +298,7 @@ export default function AutonomousTrader() {
             <div className="p-3 bg-background-hover rounded-lg">
               <p className="text-text-secondary text-xs">Next Check</p>
               <p className="text-text-primary font-semibold mt-1">
-                {traderStatus.next_check_time ? formatTime(traderStatus.next_check_time) : '~1hr'}
+                {traderStatus.next_check_time ? formatTime(traderStatus.next_check_time) : '~5min'}
               </p>
             </div>
           </div>
@@ -307,9 +308,9 @@ export default function AutonomousTrader() {
         <div className="mt-6 p-4 bg-success/10 border border-success/20 rounded-lg flex items-start gap-3">
           <CheckCircle className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-success font-semibold">✅ Fully Autonomous Trading</p>
+            <p className="text-success font-semibold">✅ Fully Autonomous Trading - MINIMUM One Trade Daily GUARANTEED</p>
             <p className="text-text-secondary text-sm mt-1">
-              This trader operates automatically 24/7. It analyzes market conditions every hour and executes at least one trade per day. Watch this panel to see what it's thinking and doing in real-time.
+              This trader checks market conditions every 5 minutes ALL DAY during market hours (8:30 AM - 3:00 PM CT). It's <strong>GUARANTEED to execute MINIMUM one trade per day</strong> using a 3-level fallback system: GEX directional trade → Iron Condor → ATM Straddle. Watch this panel to see what it's thinking and doing in real-time.
             </p>
           </div>
         </div>
