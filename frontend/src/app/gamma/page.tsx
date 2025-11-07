@@ -38,6 +38,14 @@ interface GammaIntelligence {
     volatility: string
     trend: string
   }
+  mm_state?: {
+    name: string
+    behavior: string
+    confidence: number
+    action: string
+    threshold: number
+  }
+  net_gex?: number
   strikes?: Strike[]
   flip_point?: number
   call_wall?: number
@@ -478,6 +486,117 @@ export default function GammaIntelligence() {
                   </div>
                 )}
               </div>
+
+              {/* Market Maker State - HOW TO MAKE MONEY */}
+              {intelligence.mm_state && (
+                <div className={`card border-l-4 ${
+                  intelligence.mm_state.name === 'PANICKING' ? 'border-danger bg-danger/5' :
+                  intelligence.mm_state.name === 'TRAPPED' ? 'border-warning bg-warning/5' :
+                  intelligence.mm_state.name === 'HUNTING' ? 'border-primary bg-primary/5' :
+                  intelligence.mm_state.name === 'DEFENDING' ? 'border-success bg-success/5' :
+                  'border-gray-500 bg-background-hover'
+                }`}>
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h2 className="text-2xl font-bold text-text-primary mb-2 flex items-center gap-2">
+                        🎯 Market Maker State: <span className={
+                          intelligence.mm_state.name === 'PANICKING' ? 'text-danger' :
+                          intelligence.mm_state.name === 'TRAPPED' ? 'text-warning' :
+                          intelligence.mm_state.name === 'HUNTING' ? 'text-primary' :
+                          intelligence.mm_state.name === 'DEFENDING' ? 'text-success' :
+                          'text-text-secondary'
+                        }>{intelligence.mm_state.name}</span>
+                      </h2>
+                      <p className="text-text-secondary text-sm">Net GEX: ${(intelligence.net_gex / 1e9).toFixed(2)}B</p>
+                    </div>
+                    <div className="px-4 py-2 rounded-lg bg-background-card">
+                      <p className="text-xs text-text-muted mb-1">Confidence</p>
+                      <p className="text-2xl font-bold text-success">{intelligence.mm_state.confidence}%</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* What MMs Are Doing */}
+                    <div className="p-4 bg-background-card rounded-lg">
+                      <h3 className="font-bold text-text-primary mb-2 flex items-center gap-2">
+                        <span>📊</span> What Market Makers Are Doing:
+                      </h3>
+                      <p className="text-text-secondary">{intelligence.mm_state.behavior}</p>
+                    </div>
+
+                    {/* HOW TO MAKE MONEY */}
+                    <div className="p-4 bg-gradient-to-r from-success/10 to-primary/10 rounded-lg border-2 border-success">
+                      <h3 className="font-bold text-success mb-3 text-lg flex items-center gap-2">
+                        <span>💰</span> HOW TO MAKE MONEY - Your Trading Edge:
+                      </h3>
+                      <p className="text-text-primary font-semibold text-lg mb-3">{intelligence.mm_state.action}</p>
+
+                      {/* Specific instructions based on MM state */}
+                      {intelligence.mm_state.name === 'PANICKING' && (
+                        <div className="space-y-2 text-sm text-text-secondary">
+                          <p><strong className="text-danger">🚨 MAXIMUM AGGRESSION:</strong> MMs are covering shorts at ANY price</p>
+                          <p><strong>Strategy:</strong> Buy ATM calls with 3-5 DTE, ride the squeeze until call wall</p>
+                          <p><strong>Entry:</strong> IMMEDIATELY when GEX crosses -$3B</p>
+                          <p><strong>Exit:</strong> At call wall or when GEX rises above -$2B</p>
+                          <p><strong>Size:</strong> 3-5% of account - this is your biggest edge (90% confidence)</p>
+                          <p><strong>Stop:</strong> 30% loss or if price breaks below flip point</p>
+                        </div>
+                      )}
+
+                      {intelligence.mm_state.name === 'TRAPPED' && (
+                        <div className="space-y-2 text-sm text-text-secondary">
+                          <p><strong className="text-warning">⚡ HIGH PROBABILITY:</strong> MMs MUST buy rallies to hedge shorts</p>
+                          <p><strong>Strategy:</strong> Buy 0.4 delta calls (slightly OTM) on dips toward flip point</p>
+                          <p><strong>Entry:</strong> When price is 0.5-1% below flip point</p>
+                          <p><strong>Exit:</strong> At flip point or call wall (typically 2-3% move)</p>
+                          <p><strong>Size:</strong> 2-3% of account (85% confidence)</p>
+                          <p><strong>Stop:</strong> If price breaks 1.5% below flip point</p>
+                        </div>
+                      )}
+
+                      {intelligence.mm_state.name === 'HUNTING' && (
+                        <div className="space-y-2 text-sm text-text-secondary">
+                          <p><strong className="text-primary">🎣 PATIENT APPROACH:</strong> MMs are positioning for direction</p>
+                          <p><strong>Strategy:</strong> Wait for price to show clear direction THEN follow</p>
+                          <p><strong>Entry:</strong> AFTER price moves 0.5% from flip (direction confirmed)</p>
+                          <p><strong>Exit:</strong> At nearest wall (call or put)</p>
+                          <p><strong>Size:</strong> 1-2% of account (60% confidence - lower until direction clear)</p>
+                          <p><strong>Stop:</strong> Back through flip point = wrong direction</p>
+                        </div>
+                      )}
+
+                      {intelligence.mm_state.name === 'DEFENDING' && (
+                        <div className="space-y-2 text-sm text-text-secondary">
+                          <p><strong className="text-success">🛡️ RANGE-BOUND PROFITS:</strong> MMs will fade any big moves</p>
+                          <p><strong>Strategy:</strong> Sell premium (credit spreads) OR buy straddles for range</p>
+                          <p><strong>Entry:</strong> When price approaches call/put walls</p>
+                          <p><strong>Exit:</strong> 50% profit or opposite wall touched</p>
+                          <p><strong>Size:</strong> 2-3% of account (70% confidence)</p>
+                          <p><strong>Best Play:</strong> Iron Condor between walls (72% win rate)</p>
+                        </div>
+                      )}
+
+                      {intelligence.mm_state.name === 'NEUTRAL' && (
+                        <div className="space-y-2 text-sm text-text-secondary">
+                          <p><strong className="text-text-primary">⚖️ BALANCED:</strong> No strong MM positioning</p>
+                          <p><strong>Strategy:</strong> Iron Condor for steady premium collection</p>
+                          <p><strong>Entry:</strong> Sell calls at resistance, puts at support</p>
+                          <p><strong>Exit:</strong> 50% profit or breach of short strikes</p>
+                          <p><strong>Size:</strong> 1-2% of account (50% confidence)</p>
+                          <p><strong>Alternative:</strong> Wait for clearer MM state for better edge</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Risk Warning */}
+                    <div className="p-3 bg-background-hover rounded-lg border border-border">
+                      <p className="text-xs text-text-muted">
+                        <strong>⚠️ Risk Management:</strong> MM states can change quickly. Always use stops. GEX updates every 5 minutes during market hours.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Key Observations */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

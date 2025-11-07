@@ -8,7 +8,6 @@ import time
 from datetime import datetime, time as dt_time
 from autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
-import streamlit as st
 
 
 def is_market_hours() -> bool:
@@ -55,17 +54,8 @@ def run_autonomous_trader_cycle():
     # Initialize
     trader = AutonomousPaperTrader()
 
-    # Use shared API client from session state if running in Streamlit context
-    try:
-        if 'api_client' in st.session_state:
-            api_client = st.session_state.api_client
-        else:
-            api_client = TradingVolatilityAPI()
-            st.session_state.api_client = api_client
-    except:
-        # Running outside Streamlit context (e.g., standalone script)
-        # Shared rate limiting still applies via class-level variables
-        api_client = TradingVolatilityAPI()
+    # Use shared API client - class-level rate limiting automatically applies
+    api_client = TradingVolatilityAPI()
 
     # Step 1: Check if we should find a new trade
     if is_morning_session():
@@ -122,16 +112,22 @@ def run_autonomous_trader_cycle():
     print(f"{'='*60}\n")
 
 
-def run_continuous_scheduler(check_interval_minutes: int = 60):
+def run_continuous_scheduler(check_interval_minutes: int = 5):
     """
     Run the autonomous trader continuously
 
     Args:
-        check_interval_minutes: How often to check (default: 60 minutes)
+        check_interval_minutes: How often to check (default: 5 minutes for maximum data freshness)
 
     Usage:
         # In a separate Python process or background task:
-        run_continuous_scheduler(check_interval_minutes=60)
+        run_continuous_scheduler(check_interval_minutes=5)
+
+    Note:
+        - Trading Volatility API limit: 20 calls/min
+        - Per cycle: ~3-5 calls (GEX data + skew + positions)
+        - Checking every 5 min = 12 cycles/hour = 36-60 calls/hour = ~0.6-1 call/min average
+        - This is WELL within API limits and provides maximum responsiveness
     """
 
     print("🤖 AUTONOMOUS TRADER SCHEDULER STARTED")
@@ -197,11 +193,11 @@ def streamlit_background_task():
             # Only run during market hours to save resources
             if is_market_hours():
                 run_autonomous_trader_cycle()
-                time.sleep(3600)  # 1 hour
+                time.sleep(300)  # 5 minutes for maximum responsiveness
             else:
                 # Outside market hours, check less frequently
-                print("ℹ️ Market closed - sleeping for 1 hour")
-                time.sleep(3600)
+                print("ℹ️ Market closed - sleeping for 30 minutes")
+                time.sleep(1800)  # 30 minutes when market closed
 
         except Exception as e:
             print(f"❌ Error in background task: {e}")
@@ -227,8 +223,8 @@ if __name__ == "__main__":
     parser.add_argument(
         '--interval',
         type=int,
-        default=60,
-        help='Check interval in minutes (for continuous mode)'
+        default=5,
+        help='Check interval in minutes (default: 5 for max data freshness within API limits)'
     )
 
     args = parser.parse_args()
