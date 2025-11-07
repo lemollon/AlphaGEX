@@ -1505,8 +1505,14 @@ async def compare_all_strategies(symbol: str = "SPY"):
     try:
         # Fetch current market data
         gex_data = api_client.get_net_gamma(symbol)
-        if not gex_data:
+
+        # Check if we got valid data
+        if not gex_data or not isinstance(gex_data, dict):
             raise HTTPException(status_code=404, detail=f"No GEX data available for {symbol}")
+
+        # Check for API error
+        if 'error' in gex_data:
+            raise HTTPException(status_code=503, detail=f"API Error: {gex_data['error']}")
 
         # Get VIX data for additional context
         try:
@@ -1518,14 +1524,15 @@ async def compare_all_strategies(symbol: str = "SPY"):
             vix = 15.0  # Default fallback
 
         # Prepare market data for optimizer
+        # Use the correct keys from get_net_gamma response
         market_data = {
             'spot_price': gex_data.get('spot_price', 0),
             'net_gex': gex_data.get('net_gex', 0),
-            'flip_point': gex_data.get('zero_gamma', 0),
-            'call_wall': gex_data.get('largest_call_strike', 0),
-            'put_wall': gex_data.get('largest_put_strike', 0),
-            'call_wall_gamma': gex_data.get('largest_call_oi', 0),
-            'put_wall_gamma': gex_data.get('largest_put_oi', 0),
+            'flip_point': gex_data.get('flip_point', 0),  # Changed from 'zero_gamma'
+            'call_wall': gex_data.get('call_wall', 0),     # Changed from 'largest_call_strike'
+            'put_wall': gex_data.get('put_wall', 0),       # Changed from 'largest_put_strike'
+            'call_wall_gamma': gex_data.get('call_wall', 0),  # Use same as call_wall
+            'put_wall_gamma': gex_data.get('put_wall', 0),    # Use same as put_wall
             'vix': vix
         }
 
