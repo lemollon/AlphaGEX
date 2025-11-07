@@ -232,9 +232,9 @@ class ClaudeIntelligence:
 ### TradingVolatilityAPI (GEX Data)
 - **File**: `core_classes_and_engines.py`
 - **Methods**:
-  - `get_gex_data(symbol)` - Fetches GEX + flip + walls
-  - `get_net_gamma(symbol)` - Just net GEX
-  - `get_gamma_exposure()` - Full breakdown
+  - `get_net_gamma(symbol)` - Fetches GEX + flip + walls + spot price
+  - `get_gex_profile(symbol)` - Detailed GEX profile with strike-level data
+  - `get_historical_gamma(symbol, days_back)` - Historical gamma data
 - **Returns**: Real dealer gamma positioning
 
 ### GEXAnalyzer (Gamma Calculations)
@@ -364,7 +364,7 @@ from intelligence_and_strategies import ClaudeIntelligence
 from core_classes_and_engines import TradingVolatilityAPI
 
 api = TradingVolatilityAPI()
-gex_data = api.get_gex_data('SPY')
+gex_data = api.get_net_gamma('SPY')
 net_gex = gex_data['net_gex']
 
 # net_gex < -$3B → PANICKING
