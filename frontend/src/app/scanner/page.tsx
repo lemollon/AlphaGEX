@@ -5,6 +5,7 @@ import { Search, TrendingUp, TrendingDown, Target, DollarSign, Clock, CheckCircl
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useDataCache } from '@/hooks/useDataCache'
+import { dataStore } from '@/lib/dataStore'
 
 interface ScanSetup {
   symbol: string
