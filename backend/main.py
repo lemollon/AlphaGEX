@@ -1840,10 +1840,20 @@ Fallback range play. Positive GEX suggests range-bound action.""",
                             'reasoning': f"Positive GEX (${net_gex/1e9:.1f}B) suggests range trading."
                         })
 
-                # Add the BEST strategy for this symbol (highest confidence)
+                # Add ALL strategies above confidence threshold (65%)
+                MIN_CONFIDENCE = 0.65
+
                 if symbol_setups:
-                    best_setup = max(symbol_setups, key=lambda x: x['confidence'])
-                    results.append(best_setup)
+                    # Filter for strategies meeting minimum confidence
+                    viable_setups = [s for s in symbol_setups if s['confidence'] >= MIN_CONFIDENCE]
+
+                    if viable_setups:
+                        # Return ALL viable strategies (not just the best one)
+                        results.extend(viable_setups)
+                    else:
+                        # If nothing meets threshold, return the best strategy anyway
+                        best_setup = max(symbol_setups, key=lambda x: x['confidence'])
+                        results.append(best_setup)
 
             except Exception as e:
                 print(f"❌ Error scanning {symbol}: {e}")
