@@ -9,3 +9,10 @@ py_vollib>=1.0.1
 twilio>=8.10.0
 pytz>=2023.3
 apscheduler>=3.10.0
+
+# LangChain dependencies
+langchain>=0.1.0
+langchain-anthropic>=0.1.0
+langchain-community>=0.0.20
+pydantic>=2.5.0
+langsmith>=0.0.70
