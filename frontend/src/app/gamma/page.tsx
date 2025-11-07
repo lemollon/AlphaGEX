@@ -507,7 +507,7 @@ export default function GammaIntelligence() {
                           'text-text-secondary'
                         }>{intelligence.mm_state.name}</span>
                       </h2>
-                      <p className="text-text-secondary text-sm">Net GEX: ${(intelligence.net_gex / 1e9).toFixed(2)}B</p>
+                      <p className="text-text-secondary text-sm">Net GEX: ${intelligence.net_gex ? (intelligence.net_gex / 1e9).toFixed(2) : '0.00'}B</p>
                     </div>
                     <div className="px-4 py-2 rounded-lg bg-background-card">
                       <p className="text-xs text-text-muted mb-1">Confidence</p>
