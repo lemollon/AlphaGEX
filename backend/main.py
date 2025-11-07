@@ -221,6 +221,11 @@ async def get_gex_data(symbol: str):
                     status_code=404,
                     detail=f"No GEX data available for {symbol}. The symbol may not be available in the Trading Volatility database today."
                 )
+            elif '403' in error_msg:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Trading Volatility API access denied (403 Forbidden). Your API key (I-RWFNBLR2S1DP) may need to be renewed or the service may have changed authentication methods. Please contact support@tradingvolatility.net to verify your account status and API access."
+                )
             else:
                 raise HTTPException(
                     status_code=503,
@@ -280,10 +285,19 @@ async def get_gex_levels(symbol: str):
         profile = api_client.get_gex_profile(symbol)
 
         if not profile or profile.get('error'):
-            raise HTTPException(
-                status_code=404,
-                detail=f"GEX profile not available for {symbol}"
-            )
+            error_msg = profile.get('error', 'Unknown error') if profile else 'No data returned'
+            print(f"❌ GEX profile API error for {symbol}: {error_msg}")
+
+            if '403' in str(error_msg):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Trading Volatility API access denied (403 Forbidden). Your API key (I-RWFNBLR2S1DP) may need to be renewed or the service may have changed authentication methods. Please contact support@tradingvolatility.net to verify your account status and API access."
+                )
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"GEX profile not available for {symbol}: {error_msg}"
+                )
 
         # Extract strikes data from profile (already filtered to +/- 7 day STD)
         strikes = profile.get('strikes', [])
