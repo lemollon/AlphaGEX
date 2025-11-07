@@ -794,24 +794,7 @@ export default function GammaIntelligence() {
                 )}
               </div>
 
-              {/* Risk Analysis */}
-              <div className="card">
-                <h2 className="text-xl font-semibold text-text-primary mb-4">Risk Analysis</h2>
-                <div className="space-y-4">
-                  <div className="p-4 bg-success/5 border border-success/20 rounded-lg">
-                    <p className="text-success font-semibold mb-2">Max Profit Potential</p>
-                    <p className="text-text-secondary">+$4,500 at {simStrike + 10} ({simOptionType})</p>
-                  </div>
-                  <div className="p-4 bg-danger/5 border border-danger/20 rounded-lg">
-                    <p className="text-danger font-semibold mb-2">Max Loss Potential</p>
-                    <p className="text-text-secondary">-$1,200 (premium paid)</p>
-                  </div>
-                  <div className="p-4 bg-warning/5 border border-warning/20 rounded-lg">
-                    <p className="text-warning font-semibold mb-2">Break-Even Point</p>
-                    <p className="text-text-secondary">${simStrike + 12} by expiration</p>
-                  </div>
-                </div>
-              </div>
+              {/* Risk Analysis section removed - was showing placeholder demo values */}
             </div>
           )}
 
