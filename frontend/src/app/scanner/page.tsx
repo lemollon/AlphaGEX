@@ -61,9 +61,12 @@ export default function MultiSymbolScanner() {
 
   useEffect(() => {
     fetchScanHistory()
-    // Load cached scan results on mount
-    if (scanCache.cachedData) {
-      setScanResults(scanCache.cachedData)
+
+    // Load cached scan results from persistent storage
+    const cachedResults = dataStore.get<ScanSetup[]>('scanner_results')
+    if (cachedResults) {
+      setScanResults(cachedResults)
+      console.log(`📦 Loaded ${cachedResults.length} cached scan results`)
     }
   }, [])
 
@@ -93,6 +96,7 @@ export default function MultiSymbolScanner() {
 
     setLoading(true)
     setError(null)
+    setScanResults([]) // Clear old results
     setScanningStatus({ symbol: 'Starting scan...', progress: '0%' })
 
     try {
@@ -100,37 +104,50 @@ export default function MultiSymbolScanner() {
       console.log('📡 API URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
       console.log(`⏱️ Estimated time: ~${selectedSymbols.length * 20}s with rate limiting`)
 
-      // Update status showing it's sending request
-      setScanningStatus({
-        symbol: `Scanning ${selectedSymbols.length} symbols...`,
-        progress: `This may take ${Math.ceil(selectedSymbols.length * 0.5)} minutes`
-      })
+      // Scan symbols ONE AT A TIME and show results as they come in
+      const allResults: ScanSetup[] = []
 
-      const response = await apiClient.scanSymbols(selectedSymbols)
+      for (let i = 0; i < selectedSymbols.length; i++) {
+        const symbol = selectedSymbols[i]
+        const progress = Math.round(((i + 1) / selectedSymbols.length) * 100)
 
-      console.log('✅ Scanner response:', response.data)
+        setScanningStatus({
+          symbol: `Scanning ${symbol}...`,
+          progress: `${i + 1}/${selectedSymbols.length} (${progress}%)`
+        })
+
+        try {
+          // Scan one symbol at a time
+          const response = await apiClient.scanSymbols([symbol])
+
+          if (response.data.success && response.data.results.length > 0) {
+            // Add new results immediately
+            allResults.push(...response.data.results)
+            setScanResults([...allResults]) // Update UI with new results
+            console.log(`✅ ${symbol}: Found ${response.data.results.length} opportunities`)
+          } else {
+            console.log(`⚠️ ${symbol}: No opportunities found`)
+          }
+        } catch (err) {
+          console.error(`❌ ${symbol}: Scan failed`, err)
+          // Continue scanning other symbols even if one fails
+        }
+      }
+
+      console.log(`✅ Scan complete: ${allResults.length} total opportunities`)
       setScanningStatus(null)
       setScanWarning(null)
 
-      if (response.data.success) {
-        const results = response.data.results
-
-        if (results.length === 0) {
-          setError(`No trading opportunities found for ${selectedSymbols.join(', ')}. Try different symbols or check if market is open.`)
-          setScanResults([])
-        } else {
-          setScanResults(results)
-          setCurrentScanId(response.data.scan_id)
-          // Cache the results
-          scanCache.setCache(results)
-          console.log(`📊 Found ${results.length} opportunities`)
-        }
-
-        // Refresh history
-        await fetchScanHistory()
+      // Cache the final results (persists across navigation)
+      if (allResults.length > 0) {
+        dataStore.set('scanner_results', allResults, 10 * 60 * 1000) // 10 min cache
       } else {
-        setError(response.data.error || 'Scanner returned unsuccessful response')
+        setError(`No trading opportunities found for ${selectedSymbols.join(', ')}. Try different symbols or check if market is open.`)
       }
+
+      // Refresh history
+      await fetchScanHistory()
+
     } catch (error: any) {
       console.error('❌ Error scanning symbols:', error)
 
