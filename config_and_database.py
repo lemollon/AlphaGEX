@@ -362,6 +362,179 @@ def init_database():
         VALUES (1, 0, 1)
     ''')
 
+    # ===== PSYCHOLOGY TRAP DETECTION TABLES =====
+
+    # Main regime signals table (enhanced with expiration data)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS regime_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            spy_price REAL,
+
+            -- Regime identification
+            primary_regime_type TEXT,
+            secondary_regime_type TEXT,
+            confidence_score REAL,
+            trade_direction TEXT,
+            risk_level TEXT,
+            description TEXT,
+            detailed_explanation TEXT,
+            psychology_trap TEXT,
+
+            -- RSI data
+            rsi_5m REAL,
+            rsi_15m REAL,
+            rsi_1h REAL,
+            rsi_4h REAL,
+            rsi_1d REAL,
+            rsi_score REAL,
+            rsi_aligned_overbought INTEGER,
+            rsi_aligned_oversold INTEGER,
+            rsi_coiling INTEGER,
+
+            -- Current gamma walls
+            nearest_call_wall REAL,
+            call_wall_distance_pct REAL,
+            call_wall_strength REAL,
+            call_wall_dealer_position TEXT,
+
+            nearest_put_wall REAL,
+            put_wall_distance_pct REAL,
+            put_wall_strength REAL,
+            put_wall_dealer_position TEXT,
+
+            net_gamma REAL,
+            net_gamma_regime TEXT,
+
+            -- Expiration layer
+            zero_dte_gamma REAL,
+            gamma_expiring_this_week REAL,
+            gamma_expiring_next_week REAL,
+            gamma_persistence_ratio REAL,
+            liberation_setup_detected INTEGER,
+            liberation_target_strike REAL,
+            liberation_expiry_date DATE,
+            false_floor_detected INTEGER,
+            false_floor_strike REAL,
+            false_floor_expiry_date DATE,
+
+            -- Forward GEX
+            monthly_magnet_above REAL,
+            monthly_magnet_above_strength REAL,
+            monthly_magnet_below REAL,
+            monthly_magnet_below_strength REAL,
+            path_of_least_resistance TEXT,
+            polr_confidence REAL,
+
+            -- Volume
+            volume_ratio REAL,
+
+            -- Price targets
+            target_price_near REAL,
+            target_price_far REAL,
+            target_timeline_days INTEGER,
+
+            -- Outcome tracking
+            price_change_1d REAL,
+            price_change_5d REAL,
+            price_change_10d REAL,
+            signal_correct INTEGER,
+
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Gamma expiration timeline table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gamma_expiration_timeline (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_date DATE NOT NULL,
+            expiration_date DATE NOT NULL,
+            dte INTEGER NOT NULL,
+            expiration_type TEXT,
+            strike REAL NOT NULL,
+
+            call_gamma REAL,
+            put_gamma REAL,
+            total_gamma REAL,
+            net_gamma REAL,
+
+            call_oi INTEGER,
+            put_oi INTEGER,
+
+            distance_from_spot_pct REAL,
+
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Historical OI tracking (for accumulation analysis)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS historical_open_interest (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date DATE NOT NULL,
+            strike REAL NOT NULL,
+            expiration_date DATE NOT NULL,
+
+            call_oi INTEGER,
+            put_oi INTEGER,
+            call_gamma REAL,
+            put_gamma REAL
+        )
+    ''')
+
+    # Forward magnet tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS forward_magnets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_date DATE NOT NULL,
+            strike REAL NOT NULL,
+            expiration_date DATE NOT NULL,
+            dte INTEGER,
+
+            magnet_strength_score REAL,
+            total_gamma REAL,
+            total_oi INTEGER,
+            distance_from_spot_pct REAL,
+            direction TEXT
+        )
+    ''')
+
+    # Sucker statistics (enhanced with expiration scenarios)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS sucker_statistics (
+            scenario_type TEXT PRIMARY KEY,
+            total_occurrences INTEGER,
+            newbie_fade_failed INTEGER,
+            newbie_fade_succeeded INTEGER,
+            failure_rate REAL,
+            avg_price_change_when_failed REAL,
+            avg_days_to_resolution REAL,
+            last_updated DATETIME
+        )
+    ''')
+
+    # Liberation trade outcomes
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS liberation_outcomes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_date DATE,
+            liberation_date DATE,
+            strike REAL,
+            expiry_ratio REAL,
+
+            price_at_signal REAL,
+            price_at_liberation REAL,
+            price_1d_after REAL,
+            price_5d_after REAL,
+
+            breakout_occurred INTEGER,
+            max_move_pct REAL,
+
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     # Performance optimization: Add indexes for frequently queried columns
     # These indexes significantly speed up queries by symbol, date, and status
     c.execute("CREATE INDEX IF NOT EXISTS idx_gex_history_symbol ON gex_history(symbol)")
@@ -373,6 +546,16 @@ def init_database():
     c.execute("CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_performance_date ON performance(date)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_conversations_timestamp ON conversations(timestamp)")
+
+    # Psychology trap detection indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_regime_signals_timestamp ON regime_signals(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_regime_signals_type ON regime_signals(primary_regime_type)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_regime_signals_liberation ON regime_signals(liberation_setup_detected, liberation_expiry_date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_regime_signals_false_floor ON regime_signals(false_floor_detected, false_floor_expiry_date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_expiration_timeline_expiration ON gamma_expiration_timeline(expiration_date, strike)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_expiration_timeline_snapshot ON gamma_expiration_timeline(snapshot_date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_historical_oi_date_strike ON historical_open_interest(date, strike, expiration_date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_forward_magnets_snapshot_strike ON forward_magnets(snapshot_date, strike)")
 
     conn.commit()
     conn.close()

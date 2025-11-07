@@ -2886,6 +2886,479 @@ async def calculate_position_size(request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
+# PSYCHOLOGY TRAP DETECTION ENDPOINTS
+# ============================================================================
+
+from psychology_trap_detector import (
+    analyze_current_market_complete,
+    save_regime_signal_to_db,
+    calculate_mtf_rsi_score
+)
+
+@app.get("/api/psychology/current-regime")
+async def get_current_regime(symbol: str = "SPY"):
+    """
+    Get current psychology trap regime analysis
+
+    Returns complete analysis with:
+    - Multi-timeframe RSI
+    - Current gamma walls
+    - Gamma expiration timeline
+    - Forward GEX magnets
+    - Regime detection with psychology traps
+    """
+    try:
+        # Get current price and gamma data
+        gex_data = api_client.get_gex(symbol)
+        if not gex_data:
+            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}")
+
+        current_price = gex_data.get('current_price', gex_data.get('spot_price', 0))
+
+        # Get price data for RSI calculation
+        # For now, we'll use yfinance to get historical data
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker(symbol)
+
+            # Get data for different timeframes
+            price_data = {}
+
+            # Daily data (90 days for RSI calculation)
+            df_1d = ticker.history(period="90d", interval="1d")
+            price_data['1d'] = [
+                {
+                    'close': row['Close'],
+                    'high': row['High'],
+                    'low': row['Low'],
+                    'volume': row['Volume']
+                }
+                for _, row in df_1d.iterrows()
+            ]
+
+            # 4-hour data (30 days)
+            df_4h = ticker.history(period="30d", interval="1h")
+            # Resample to 4h
+            df_4h_resampled = df_4h.resample('4H').agg({
+                'Close': 'last',
+                'High': 'max',
+                'Low': 'min',
+                'Volume': 'sum'
+            }).dropna()
+            price_data['4h'] = [
+                {
+                    'close': row['Close'],
+                    'high': row['High'],
+                    'low': row['Low'],
+                    'volume': row['Volume']
+                }
+                for _, row in df_4h_resampled.iterrows()
+            ]
+
+            # 1-hour data (7 days)
+            df_1h = ticker.history(period="7d", interval="1h")
+            price_data['1h'] = [
+                {
+                    'close': row['Close'],
+                    'high': row['High'],
+                    'low': row['Low'],
+                    'volume': row['Volume']
+                }
+                for _, row in df_1h.iterrows()
+            ]
+
+            # 15-minute data (5 days)
+            df_15m = ticker.history(period="5d", interval="15m")
+            price_data['15m'] = [
+                {
+                    'close': row['Close'],
+                    'high': row['High'],
+                    'low': row['Low'],
+                    'volume': row['Volume']
+                }
+                for _, row in df_15m.iterrows()
+            ]
+
+            # 5-minute data (2 days)
+            df_5m = ticker.history(period="2d", interval="5m")
+            price_data['5m'] = [
+                {
+                    'close': row['Close'],
+                    'high': row['High'],
+                    'low': row['Low'],
+                    'volume': row['Volume']
+                }
+                for _, row in df_5m.iterrows()
+            ]
+
+        except Exception as e:
+            # Fallback if yfinance fails - use mock data
+            print(f"Warning: Could not fetch price data: {e}")
+            price_data = {
+                '5m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
+                '15m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
+                '1h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
+                '4h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
+                '1d': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)]
+            }
+
+        # Calculate volume ratio (using daily data)
+        if len(price_data['1d']) >= 20:
+            recent_volume = price_data['1d'][-1]['volume']
+            avg_volume = sum(d['volume'] for d in price_data['1d'][-20:]) / 20
+            volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 1.0
+        else:
+            volume_ratio = 1.0
+
+        # Format gamma data for psychology trap detector
+        # Need to structure with expirations
+        gamma_data_formatted = {
+            'net_gamma': gex_data.get('net_gex', 0),
+            'expirations': []
+        }
+
+        # Parse expiration data from gex_data
+        # The TradingVolatility API returns strikes by expiration
+        if 'expirations' in gex_data:
+            for exp_date_str, exp_data in gex_data['expirations'].items():
+                try:
+                    # Parse expiration date
+                    exp_date = datetime.strptime(exp_date_str, '%Y-%m-%d')
+                    dte = (exp_date - datetime.now()).days
+
+                    # Determine expiration type
+                    if dte == 0:
+                        exp_type = '0dte'
+                    elif dte <= 7:
+                        exp_type = 'weekly'
+                    else:
+                        # Check if it's monthly (3rd Friday)
+                        # For simplicity, treat all > 7 DTE as monthly
+                        exp_type = 'monthly'
+
+                    call_strikes = []
+                    put_strikes = []
+
+                    if 'strikes' in exp_data:
+                        for strike_data in exp_data['strikes']:
+                            strike = strike_data.get('strike', 0)
+
+                            if 'call_gamma' in strike_data:
+                                call_strikes.append({
+                                    'strike': strike,
+                                    'gamma_exposure': strike_data['call_gamma'],
+                                    'open_interest': strike_data.get('call_oi', 0)
+                                })
+
+                            if 'put_gamma' in strike_data:
+                                put_strikes.append({
+                                    'strike': strike,
+                                    'gamma_exposure': strike_data['put_gamma'],
+                                    'open_interest': strike_data.get('put_oi', 0)
+                                })
+
+                    gamma_data_formatted['expirations'].append({
+                        'expiration_date': exp_date,
+                        'dte': dte,
+                        'expiration_type': exp_type,
+                        'call_strikes': call_strikes,
+                        'put_strikes': put_strikes
+                    })
+
+                except Exception as e:
+                    print(f"Error parsing expiration {exp_date_str}: {e}")
+                    continue
+        else:
+            # Fallback: create single expiration from call/put walls
+            call_wall = gex_data.get('call_wall', current_price * 1.02)
+            put_wall = gex_data.get('put_wall', current_price * 0.98)
+
+            gamma_data_formatted['expirations'] = [{
+                'expiration_date': datetime.now() + timedelta(days=7),
+                'dte': 7,
+                'expiration_type': 'weekly',
+                'call_strikes': [{
+                    'strike': call_wall,
+                    'gamma_exposure': gex_data.get('net_gex', 0) / 2,
+                    'open_interest': 1000
+                }],
+                'put_strikes': [{
+                    'strike': put_wall,
+                    'gamma_exposure': gex_data.get('net_gex', 0) / 2,
+                    'open_interest': 1000
+                }]
+            }]
+
+        # Run complete psychology trap analysis
+        analysis = analyze_current_market_complete(
+            current_price=current_price,
+            price_data=price_data,
+            gamma_data=gamma_data_formatted,
+            volume_ratio=volume_ratio
+        )
+
+        # Save to database
+        try:
+            signal_id = save_regime_signal_to_db(analysis)
+            analysis['signal_id'] = signal_id
+        except Exception as e:
+            print(f"Warning: Could not save regime signal: {e}")
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "analysis": analysis
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+@app.get("/api/psychology/history")
+async def get_regime_history(limit: int = 50, regime_type: str = None):
+    """
+    Get historical regime signals
+
+    Args:
+        limit: Number of recent signals to return
+        regime_type: Filter by specific regime type (optional)
+    """
+    try:
+        import sqlite3
+        from config_and_database import DB_PATH
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        if regime_type:
+            c.execute('''
+                SELECT * FROM regime_signals
+                WHERE primary_regime_type = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (regime_type, limit))
+        else:
+            c.execute('''
+                SELECT * FROM regime_signals
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (limit,))
+
+        columns = [desc[0] for desc in c.description]
+        rows = c.fetchall()
+
+        signals = []
+        for row in rows:
+            signal = dict(zip(columns, row))
+            signals.append(signal)
+
+        conn.close()
+
+        return {
+            "success": True,
+            "count": len(signals),
+            "signals": signals
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/liberation-setups")
+async def get_liberation_setups():
+    """
+    Get active liberation trade setups
+    Returns walls that are about to expire and release price
+    """
+    try:
+        import sqlite3
+        from config_and_database import DB_PATH
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        # Get recent signals with liberation setups
+        c.execute('''
+            SELECT * FROM regime_signals
+            WHERE liberation_setup_detected = 1
+            AND liberation_expiry_date >= date('now')
+            ORDER BY liberation_expiry_date ASC
+            LIMIT 10
+        ''')
+
+        columns = [desc[0] for desc in c.description]
+        rows = c.fetchall()
+
+        setups = []
+        for row in rows:
+            setup = dict(zip(columns, row))
+            setups.append(setup)
+
+        conn.close()
+
+        return {
+            "success": True,
+            "count": len(setups),
+            "liberation_setups": setups
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/false-floors")
+async def get_false_floors():
+    """
+    Get active false floor warnings
+    Returns support levels that are temporary and will disappear
+    """
+    try:
+        import sqlite3
+        from config_and_database import DB_PATH
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        # Get recent signals with false floor warnings
+        c.execute('''
+            SELECT * FROM regime_signals
+            WHERE false_floor_detected = 1
+            AND false_floor_expiry_date >= date('now')
+            ORDER BY false_floor_expiry_date ASC
+            LIMIT 10
+        ''')
+
+        columns = [desc[0] for desc in c.description]
+        rows = c.fetchall()
+
+        floors = []
+        for row in rows:
+            floor = dict(zip(columns, row))
+            floors.append(floor)
+
+        conn.close()
+
+        return {
+            "success": True,
+            "count": len(floors),
+            "false_floors": floors
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/statistics")
+async def get_sucker_statistics():
+    """
+    Get statistics on how often newbie logic fails
+    Shows historical success/failure rates for different scenarios
+    """
+    try:
+        import sqlite3
+        from config_and_database import DB_PATH
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        # Get sucker statistics
+        c.execute('SELECT * FROM sucker_statistics ORDER BY failure_rate DESC')
+
+        columns = [desc[0] for desc in c.description]
+        rows = c.fetchall()
+
+        stats = []
+        for row in rows:
+            stat = dict(zip(columns, row))
+            stats.append(stat)
+
+        # If no data, return default stats
+        if not stats:
+            stats = [
+                {
+                    'scenario_type': 'LIBERATION_TRADE',
+                    'total_occurrences': 0,
+                    'newbie_fade_failed': 0,
+                    'newbie_fade_succeeded': 0,
+                    'failure_rate': 0,
+                    'avg_price_change_when_failed': 0,
+                    'avg_days_to_resolution': 0,
+                    'last_updated': None
+                }
+            ]
+
+        conn.close()
+
+        return {
+            "success": True,
+            "count": len(stats),
+            "statistics": stats
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/rsi-analysis/{symbol}")
+async def get_rsi_analysis(symbol: str = "SPY"):
+    """
+    Get multi-timeframe RSI analysis only
+    Useful for quick RSI checks without full regime analysis
+    """
+    try:
+        import yfinance as yf
+
+        ticker = yf.Ticker(symbol)
+
+        # Get price data for different timeframes
+        price_data = {}
+
+        # Daily
+        df_1d = ticker.history(period="90d", interval="1d")
+        price_data['1d'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
+                           for _, row in df_1d.iterrows()]
+
+        # 4-hour
+        df_4h = ticker.history(period="30d", interval="1h")
+        df_4h_resampled = df_4h.resample('4H').agg({
+            'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'
+        }).dropna()
+        price_data['4h'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
+                           for _, row in df_4h_resampled.iterrows()]
+
+        # 1-hour
+        df_1h = ticker.history(period="7d", interval="1h")
+        price_data['1h'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
+                           for _, row in df_1h.iterrows()]
+
+        # 15-minute
+        df_15m = ticker.history(period="5d", interval="15m")
+        price_data['15m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
+                            for _, row in df_15m.iterrows()]
+
+        # 5-minute
+        df_5m = ticker.history(period="2d", interval="5m")
+        price_data['5m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
+                           for _, row in df_5m.iterrows()]
+
+        # Calculate RSI
+        rsi_analysis = calculate_mtf_rsi_score(price_data)
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "timestamp": datetime.now().isoformat(),
+            "rsi_analysis": rsi_analysis
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
 # Startup & Shutdown Events
 # ============================================================================
 
@@ -2900,12 +3373,19 @@ async def startup_event():
     print(f"Current Time (ET): {get_et_time().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("=" * 80)
     print("📊 Available Endpoints:")
-    print("  - GET  /               Health check")
-    print("  - GET  /docs           API documentation")
-    print("  - GET  /api/gex/{symbol}              GEX data")
+    print("  - GET  /                                  Health check")
+    print("  - GET  /docs                              API documentation")
+    print("  - GET  /api/gex/{symbol}                  GEX data")
     print("  - GET  /api/gamma/{symbol}/intelligence   Gamma 3 views")
-    print("  - POST /api/ai/analyze                AI Copilot")
-    print("  - WS   /ws/market-data                Real-time updates")
+    print("  - POST /api/ai/analyze                    AI Copilot")
+    print("  - WS   /ws/market-data                    Real-time updates")
+    print("\n🧠 Psychology Trap Detection:")
+    print("  - GET  /api/psychology/current-regime     Current regime analysis")
+    print("  - GET  /api/psychology/rsi-analysis/{symbol}  Multi-TF RSI")
+    print("  - GET  /api/psychology/liberation-setups  Liberation trades")
+    print("  - GET  /api/psychology/false-floors       False floor warnings")
+    print("  - GET  /api/psychology/history            Historical signals")
+    print("  - GET  /api/psychology/statistics         Sucker statistics")
     print("=" * 80)
 
     # Start Autonomous Trader in background thread
