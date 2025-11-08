@@ -1517,24 +1517,41 @@ async def compare_all_strategies(symbol: str = "SPY"):
         # Fetch current market data
         gex_data = api_client.get_net_gamma(symbol)
 
-        # Debug logging
+        # Debug logging - DETAILED
         print(f"\n{'='*60}")
-        print(f"DEBUG: Multi-Strategy Optimizer - GEX Data Check")
+        print(f"DEBUG: Strategy Optimizer - GEX Data Check")
         print(f"{'='*60}")
         print(f"Type of gex_data: {type(gex_data)}")
-        print(f"gex_data value: {gex_data}")
+        print(f"gex_data keys: {gex_data.keys() if isinstance(gex_data, dict) else 'NOT A DICT'}")
+        print(f"gex_data value (first 500 chars): {str(gex_data)[:500]}")
         print(f"{'='*60}\n")
 
         # Check if we got valid data
         if not gex_data:
-            raise HTTPException(status_code=404, detail=f"No GEX data available for {symbol}")
+            raise HTTPException(
+                status_code=503,
+                detail="No GEX data available. API might be rate-limited or unavailable."
+            )
 
         if not isinstance(gex_data, dict):
-            raise HTTPException(status_code=500, detail=f"Invalid GEX data type: {type(gex_data)}. Expected dict, got: {str(gex_data)[:200]}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid GEX data type: {type(gex_data)}. Expected dict, got: {str(gex_data)[:200]}"
+            )
 
         # Check for API error
         if 'error' in gex_data:
-            raise HTTPException(status_code=503, detail=f"API Error: {gex_data['error']}")
+            error_msg = gex_data['error']
+            if error_msg == 'rate_limit':
+                raise HTTPException(
+                    status_code=429,
+                    detail="Trading Volatility API rate limit hit. Please wait a few minutes and try again."
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Trading Volatility API Error: {error_msg}"
+                )
 
         # Validate required fields
         required_fields = ['spot_price', 'net_gex', 'flip_point', 'call_wall', 'put_wall']
@@ -1569,7 +1586,19 @@ async def compare_all_strategies(symbol: str = "SPY"):
         print(f"Market data prepared: {market_data}")
 
         # Get comprehensive strategy comparison
-        comparison = strategy_optimizer.compare_all_strategies(market_data)
+        try:
+            comparison = strategy_optimizer.compare_all_strategies(market_data)
+            print(f"✅ Strategy comparison completed successfully")
+        except Exception as optimizer_error:
+            print(f"❌ Error in strategy_optimizer.compare_all_strategies:")
+            print(f"Error type: {type(optimizer_error)}")
+            print(f"Error message: {str(optimizer_error)}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Strategy optimizer failed: {str(optimizer_error)}"
+            )
 
         return {
             "success": True,
@@ -1580,7 +1609,9 @@ async def compare_all_strategies(symbol: str = "SPY"):
         raise
     except Exception as e:
         import traceback
-        print(f"❌ Error in compare_all_strategies:")
+        print(f"❌ Error in compare_all_strategies endpoint:")
+        print(f"Error type: {type(e)}")
+        print(f"Error message: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to compare strategies: {str(e)}")
 
