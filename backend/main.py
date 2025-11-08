@@ -3106,8 +3106,18 @@ async def get_current_regime(symbol: str = "SPY"):
 
         print(f"1. GEX Data fetched: {type(gex_data)}")
 
+        # NEVER use mock data - require real API data
         if not gex_data or 'error' in gex_data:
-            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}")
+            error_msg = "Trading Volatility API key not configured. Psychology Trap Detection requires real GEX data."
+            print(f"❌ {error_msg}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Service Unavailable",
+                    "message": error_msg,
+                    "solution": "Configure 'tv_username' environment variable with your Trading Volatility API key"
+                }
+            )
 
         current_price = gex_data.get('spot_price', 0)
         print(f"2. Current price: ${current_price}")
@@ -3326,6 +3336,29 @@ async def get_current_regime(symbol: str = "SPY"):
             current_price=current_price,
             regime_data=analysis['regime']
         )
+
+        # Convert numpy types to Python native types for JSON serialization
+        def convert_numpy_types(obj):
+            """Recursively convert numpy types to Python native types"""
+            import numpy as np
+            if isinstance(obj, dict):
+                return {k: convert_numpy_types(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(item) for item in obj]
+            elif isinstance(obj, np.bool_):
+                return bool(obj)
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            else:
+                return obj
+
+        # Convert all data before returning
+        analysis = convert_numpy_types(analysis)
+        trading_guide = convert_numpy_types(trading_guide)
 
         return {
             "success": True,
