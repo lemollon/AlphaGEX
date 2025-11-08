@@ -2642,6 +2642,10 @@ class MultiStrategyOptimizer:
         Complete side-by-side comparison of ALL strategies
         Returns detailed analysis of which strategy is best for current conditions
         """
+        # SAFETY CHECK: Ensure market_data is actually a dict
+        if not isinstance(market_data, dict):
+            raise TypeError(f"market_data must be a dict, got {type(market_data)}: {str(market_data)[:200]}")
+
         spot = market_data.get('spot_price', 0)
         net_gex = market_data.get('net_gex', 0)
         flip = market_data.get('flip_point', 0)
