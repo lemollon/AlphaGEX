@@ -5,7 +5,7 @@ Main application entry point - Professional Options Intelligence Platform
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Load environment variables from .env file
@@ -2211,12 +2211,48 @@ async def generate_trade_setups(request: dict):
                 df_5m = ticker.history(period="2d", interval="5m")
                 price_data['5m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_5m.iterrows()]
 
-                # Analyze regime
-                analysis = analyze_current_market_complete(symbol, gex_full_data, price_data)
+                # Calculate volume ratio
+                current_price = gex_full_data.get('spot_price', spot_price)
+                if len(price_data.get('1d', [])) >= 20:
+                    recent_volume = price_data['1d'][-1]['volume']
+                    avg_volume = sum(d['volume'] for d in price_data['1d'][-20:]) / 20
+                    volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 1.0
+                else:
+                    volume_ratio = 1.0
+
+                # Format gamma data for analyzer
+                gamma_data_formatted = {
+                    'net_gamma': gex_full_data.get('net_gex', 0),
+                    'expirations': [{
+                        'expiration_date': datetime.now() + timedelta(days=7),
+                        'dte': 7,
+                        'expiration_type': 'weekly',
+                        'call_strikes': [{
+                            'strike': gex_full_data.get('call_wall', current_price * 1.02),
+                            'gamma_exposure': gex_full_data.get('net_gex', 0) / 2,
+                            'open_interest': 1000
+                        }],
+                        'put_strikes': [{
+                            'strike': gex_full_data.get('put_wall', current_price * 0.98),
+                            'gamma_exposure': gex_full_data.get('net_gex', 0) / 2,
+                            'open_interest': 1000
+                        }]
+                    }]
+                }
+
+                # Analyze regime with CORRECT signature
+                analysis = analyze_current_market_complete(
+                    current_price=current_price,
+                    price_data=price_data,
+                    gamma_data=gamma_data_formatted,
+                    volume_ratio=volume_ratio
+                )
                 if analysis and 'regime' in analysis:
                     regime_info = analysis['regime']
             except Exception as e:
                 print(f"Regime analysis failed: {e}")
+                import traceback
+                traceback.print_exc()
                 regime_info = None
 
             # Determine market regime and setup type using STRATEGIES config
