@@ -15,6 +15,14 @@ from dataclasses import dataclass
 import warnings
 warnings.filterwarnings('ignore')
 
+# Import intelligent rate limiter
+try:
+    from rate_limiter import trading_volatility_limiter
+    RATE_LIMITER_AVAILABLE = True
+except ImportError:
+    RATE_LIMITER_AVAILABLE = False
+    print("⚠️ rate_limiter.py not found - using fallback rate limiting")
+
 # Optional imports
 try:
     import yfinance as yf
@@ -1267,7 +1275,7 @@ class TradingVolatilityAPI:
             return 0, 0
 
     def get_net_gamma(self, symbol: str) -> Dict:
-        """Fetch net gamma exposure data from Trading Volatility API with rate limiting"""
+        """Fetch net gamma exposure data from Trading Volatility API with intelligent rate limiting"""
         import requests
 
         try:
@@ -1284,8 +1292,14 @@ class TradingVolatilityAPI:
                 self.last_response = cached_data
                 json_response = cached_data
             else:
-                # Wait for rate limit before making request
-                self._wait_for_rate_limit()
+                # Use intelligent rate limiter if available
+                if RATE_LIMITER_AVAILABLE:
+                    if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                        print("❌ Rate limit timeout - circuit breaker active")
+                        return {'error': 'rate_limit'}
+                else:
+                    # Fallback to old rate limiting
+                    self._wait_for_rate_limit()
 
                 # Call Trading Volatility API
                 response = requests.get(
@@ -1380,7 +1394,7 @@ class TradingVolatilityAPI:
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint with rate limiting"""
+        """Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint with intelligent rate limiting"""
         import requests
 
         try:
@@ -1394,8 +1408,14 @@ class TradingVolatilityAPI:
             if cached_data:
                 json_response = cached_data
             else:
-                # Wait for rate limit before making request
-                self._wait_for_rate_limit()
+                # Use intelligent rate limiter if available
+                if RATE_LIMITER_AVAILABLE:
+                    if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                        print("❌ Rate limit timeout - circuit breaker active")
+                        return {}
+                else:
+                    # Fallback to old rate limiting
+                    self._wait_for_rate_limit()
 
                 # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
                 response = requests.get(
@@ -1643,8 +1663,13 @@ class TradingVolatilityAPI:
                     print(f"✓ Using cached historical data for {symbol} (age: {time.time() - cached_time:.0f}s)")
                     return cached_data
 
-            # RATE LIMITING: Wait before making API call
-            self._wait_for_rate_limit()
+            # RATE LIMITING: Use intelligent rate limiter
+            if RATE_LIMITER_AVAILABLE:
+                if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                    print("❌ Rate limit timeout - circuit breaker active")
+                    return []
+            else:
+                self._wait_for_rate_limit()
 
             # Calculate date range
             end_date = datetime.now()
@@ -1807,8 +1832,13 @@ class TradingVolatilityAPI:
             if cached_data:
                 return cached_data.get(symbol, {})
 
-            # Wait for rate limit before making request (includes circuit breaker check)
-            self._wait_for_rate_limit()
+            # Use intelligent rate limiter if available
+            if RATE_LIMITER_AVAILABLE:
+                if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                    print("❌ Rate limit timeout - circuit breaker active")
+                    return {}
+            else:
+                self._wait_for_rate_limit()
 
             response = requests.get(
                 self.endpoint + '/skew/latest',
@@ -1871,8 +1901,13 @@ class TradingVolatilityAPI:
             if not self.api_key:
                 return []
 
-            # Wait for rate limit before making request
-            self._wait_for_rate_limit()
+            # Use intelligent rate limiter if available
+            if RATE_LIMITER_AVAILABLE:
+                if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                    print("❌ Rate limit timeout - circuit breaker active")
+                    return []
+            else:
+                self._wait_for_rate_limit()
 
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days_back)
@@ -1943,8 +1978,13 @@ class TradingVolatilityAPI:
             if cached_data:
                 return cached_data
 
-            # Wait for rate limit before making request
-            self._wait_for_rate_limit()
+            # Use intelligent rate limiter if available
+            if RATE_LIMITER_AVAILABLE:
+                if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                    print("❌ Rate limit timeout - circuit breaker active")
+                    return {}
+            else:
+                self._wait_for_rate_limit()
 
             response = requests.get(
                 self.endpoint + '/gex/levels',
@@ -2052,8 +2092,13 @@ class TradingVolatilityAPI:
             if cached_data:
                 return cached_data
 
-            # Wait for rate limit before making request
-            self._wait_for_rate_limit()
+            # Use intelligent rate limiter if available
+            if RATE_LIMITER_AVAILABLE:
+                if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                    print("❌ Rate limit timeout - circuit breaker active")
+                    return {}
+            else:
+                self._wait_for_rate_limit()
 
             response = requests.get(
                 self.endpoint + '/gex/gamma',
