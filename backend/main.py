@@ -165,9 +165,9 @@ async def diagnostic():
     elif os.getenv("tv_username"):
         api_key_source = "tv_username"
 
-    # Test API connectivity with SPY
-    test_result = api_client.get_net_gamma("SPY")
-    api_working = not test_result.get('error') if test_result else False
+    # DON'T test API connectivity in health check - causes rate limits on deployment
+    # Health checks should be fast and not make external API calls
+    # API connectivity will be tested when endpoints are actually called
 
     return {
         "status": "diagnostic",
@@ -178,11 +178,7 @@ async def diagnostic():
             "api_endpoint": api_client.endpoint if hasattr(api_client, 'endpoint') else "unknown"
         },
         "connectivity": {
-            "api_working": api_working,
-            "test_symbol": "SPY",
-            "test_result": "success" if api_working else "failed",
-            "error": test_result.get('error') if test_result and test_result.get('error') else None,
-            "spot_price": test_result.get('spot_price') if api_working else None
+            "note": "API connectivity tested on first actual endpoint call (not in health check)"
         },
         "cache_stats": api_client.get_api_usage_stats() if hasattr(api_client, 'get_api_usage_stats') else {}
     }
