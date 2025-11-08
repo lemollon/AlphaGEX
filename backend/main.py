@@ -3106,29 +3106,18 @@ async def get_current_regime(symbol: str = "SPY"):
 
         print(f"1. GEX Data fetched: {type(gex_data)}")
 
-        # If GEX data has error (no API key), use mock data for testing
+        # NEVER use mock data - require real API data
         if not gex_data or 'error' in gex_data:
-            print(f"⚠️  No GEX data available (API key not configured). Using mock data for testing...")
-
-            # Fetch current price from yfinance
-            try:
-                import yfinance as yf
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="1d", interval="1m")
-                current_price = hist['Close'].iloc[-1] if len(hist) > 0 else 580.0
-            except:
-                current_price = 580.0  # Fallback price for SPY
-
-            # Create mock GEX data
-            gex_data = {
-                'spot_price': current_price,
-                'net_gex': 15000000000,  # $15B net GEX (typical for SPY)
-                'call_wall': current_price * 1.02,  # 2% above
-                'put_wall': current_price * 0.98,   # 2% below
-                'gamma_flip': current_price,
-                'expirations': {}
-            }
-            print(f"   Using mock GEX data with price ${current_price:.2f}")
+            error_msg = "Trading Volatility API key not configured. Psychology Trap Detection requires real GEX data."
+            print(f"❌ {error_msg}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Service Unavailable",
+                    "message": error_msg,
+                    "solution": "Configure 'tv_username' environment variable with your Trading Volatility API key"
+                }
+            )
 
         current_price = gex_data.get('spot_price', 0)
         print(f"2. Current price: ${current_price}")
