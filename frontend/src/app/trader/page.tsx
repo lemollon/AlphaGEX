@@ -141,9 +141,8 @@ export default function AutonomousTrader() {
 
     fetchData()
 
-    // Refresh data every 30 seconds
-    const interval = setInterval(fetchData, 30000)
-    return () => clearInterval(interval)
+    // No auto-refresh - protects API rate limit (20 calls/min shared across all users)
+    // Trader background worker updates independently - UI will refresh when user navigates
   }, [])
 
   // Trader runs automatically as a background worker - no manual control needed
