@@ -69,7 +69,18 @@ export default function PsychologyTrapDetection() {
       setError(null)
 
       const response = await fetch(`http://localhost:8000/api/psychology/current-regime?symbol=${symbol}`)
-      if (!response.ok) throw new Error('Failed to fetch regime analysis')
+
+      if (!response.ok) {
+        // Get detailed error from API
+        let errorDetail = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorData = await response.json()
+          errorDetail = errorData.detail?.message || errorData.detail || errorData.message || errorDetail
+        } catch {
+          // Response not JSON, use status text
+        }
+        throw new Error(errorDetail)
+      }
 
       const data = await response.json()
       setAnalysis(data.analysis)
@@ -81,7 +92,9 @@ export default function PsychologyTrapDetection() {
       // fetchFalseFloors()
 
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch analysis')
+      const errorMsg = err instanceof Error ? err.message : 'Failed to fetch analysis'
+      console.error('Psychology API Error:', errorMsg, err)
+      setError(errorMsg)
     } finally {
       setLoading(false)
       setIsRefreshing(false)
