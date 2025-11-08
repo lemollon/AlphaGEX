@@ -44,7 +44,7 @@ export default function Navigation() {
   const [marketOpen, setMarketOpen] = useState(false)
   const [apiConnected, setApiConnected] = useState(true)
 
-  // Fetch SPY price and market status
+  // Fetch SPY price and market status - ONCE on mount only (no auto-refresh)
   useEffect(() => {
     const fetchMarketData = async () => {
       try {
@@ -70,9 +70,7 @@ export default function Navigation() {
     }
 
     fetchMarketData()
-    // Refresh every 10 seconds for more frequent updates
-    const interval = setInterval(fetchMarketData, 10000)
-    return () => clearInterval(interval)
+    // No auto-refresh - protects API rate limit (20 calls/min shared across all users)
   }, [])
 
   return (

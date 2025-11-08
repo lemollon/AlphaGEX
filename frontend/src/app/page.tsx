@@ -109,9 +109,8 @@ export default function Dashboard() {
 
     fetchData()
 
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchData, 30000)
-    return () => clearInterval(interval)
+    // No auto-refresh - protects API rate limit (20 calls/min shared across all users)
+    // Users can manually refresh or navigate away and back to get fresh data
   }, [])
 
   // Update data from WebSocket

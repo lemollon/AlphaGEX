@@ -60,12 +60,8 @@ export default function AlertsPage() {
     fetchActiveAlerts()
     fetchAlertHistory()
 
-    // Auto-check alerts every 2 minutes
-    const interval = setInterval(() => {
-      checkAlerts()
-    }, 120000)
-
-    return () => clearInterval(interval)
+    // No auto-check - protects API rate limit (20 calls/min shared across all users)
+    // Users can manually check alerts with the "Check Now" button
   }, [])
 
   const fetchActiveAlerts = async () => {
