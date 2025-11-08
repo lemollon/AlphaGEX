@@ -75,9 +75,10 @@ export default function PsychologyTrapDetection() {
       setAnalysis(data.analysis)
       setTradingGuide(data.trading_guide || null)
 
-      // Also fetch supporting data
-      fetchLiberationSetups()
-      fetchFalseFloors()
+      // REMOVED: Auto-fetch supporting data to reduce API calls on page load
+      // Only fetch these when user explicitly refreshes
+      // fetchLiberationSetups()
+      // fetchFalseFloors()
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch analysis')

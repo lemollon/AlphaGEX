@@ -3135,6 +3135,134 @@ from psychology_trap_detector import (
 )
 from psychology_trading_guide import get_trading_guide
 
+# ==============================================================================
+# YFINANCE CACHING - Reduce API calls to prevent rate limiting
+# ==============================================================================
+_yfinance_cache = {}
+_yfinance_cache_ttl = 300  # 5 minutes cache
+
+def get_cached_price_data(symbol: str, current_price: float):
+    """
+    Get price data for symbol with caching to prevent excessive API calls
+    Cache TTL: 5 minutes (300 seconds)
+
+    This function makes 5 yfinance API calls:
+    - 90d daily data
+    - 30d hourly→4h data
+    - 7d hourly data
+    - 5d 15-minute data
+    - 2d 5-minute data
+
+    Without caching, every page load = 5 API calls = rate limit death
+    """
+    cache_key = f"price_data_{symbol}"
+    now = datetime.now()
+
+    # Check if we have cached data that's still fresh
+    if cache_key in _yfinance_cache:
+        cached_data, cache_time = _yfinance_cache[cache_key]
+        age_seconds = (now - cache_time).total_seconds()
+
+        if age_seconds < _yfinance_cache_ttl:
+            print(f"✅ Using cached price data (age: {age_seconds:.0f}s)")
+            return cached_data
+        else:
+            print(f"⏰ Cache expired (age: {age_seconds:.0f}s > {_yfinance_cache_ttl}s)")
+
+    # Cache miss or expired - fetch fresh data
+    print(f"🔄 Fetching fresh price data from yfinance (5 API calls)")
+
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(symbol)
+
+        price_data = {}
+
+        # Daily data (90 days for RSI calculation)
+        df_1d = ticker.history(period="90d", interval="1d")
+        price_data['1d'] = [
+            {
+                'close': row['Close'],
+                'high': row['High'],
+                'low': row['Low'],
+                'volume': row['Volume']
+            }
+            for _, row in df_1d.iterrows()
+        ]
+
+        # 4-hour data (30 days)
+        df_4h = ticker.history(period="30d", interval="1h")
+        # Resample to 4h
+        df_4h_resampled = df_4h.resample('4H').agg({
+            'Close': 'last',
+            'High': 'max',
+            'Low': 'min',
+            'Volume': 'sum'
+        }).dropna()
+        price_data['4h'] = [
+            {
+                'close': row['Close'],
+                'high': row['High'],
+                'low': row['Low'],
+                'volume': row['Volume']
+            }
+            for _, row in df_4h_resampled.iterrows()
+        ]
+
+        # 1-hour data (7 days)
+        df_1h = ticker.history(period="7d", interval="1h")
+        price_data['1h'] = [
+            {
+                'close': row['Close'],
+                'high': row['High'],
+                'low': row['Low'],
+                'volume': row['Volume']
+            }
+            for _, row in df_1h.iterrows()
+        ]
+
+        # 15-minute data (5 days)
+        df_15m = ticker.history(period="5d", interval="15m")
+        price_data['15m'] = [
+            {
+                'close': row['Close'],
+                'high': row['High'],
+                'low': row['Low'],
+                'volume': row['Volume']
+            }
+            for _, row in df_15m.iterrows()
+        ]
+
+        # 5-minute data (2 days)
+        df_5m = ticker.history(period="2d", interval="5m")
+        price_data['5m'] = [
+            {
+                'close': row['Close'],
+                'high': row['High'],
+                'low': row['Low'],
+                'volume': row['Volume']
+            }
+            for _, row in df_5m.iterrows()
+        ]
+
+        # Cache the result
+        _yfinance_cache[cache_key] = (price_data, now)
+        print(f"✅ Cached fresh price data for {_yfinance_cache_ttl}s")
+
+        return price_data
+
+    except Exception as e:
+        # Fallback if yfinance fails
+        print(f"⚠️  Warning: Could not fetch price data: {e}")
+        print(f"Using fallback mock data")
+        return {
+            '5m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
+            '15m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
+            '1h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
+            '4h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
+            '1d': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)]
+        }
+
 @app.get("/api/psychology/current-regime")
 async def get_current_regime(symbol: str = "SPY"):
     """
@@ -3195,94 +3323,8 @@ async def get_current_regime(symbol: str = "SPY"):
         current_price = gex_data.get('spot_price', 0)
         print(f"2. Current price: ${current_price}")
 
-        # Get price data for RSI calculation
-        # For now, we'll use yfinance to get historical data
-        try:
-            import yfinance as yf
-            ticker = yf.Ticker(symbol)
-
-            # Get data for different timeframes
-            price_data = {}
-
-            # Daily data (90 days for RSI calculation)
-            df_1d = ticker.history(period="90d", interval="1d")
-            price_data['1d'] = [
-                {
-                    'close': row['Close'],
-                    'high': row['High'],
-                    'low': row['Low'],
-                    'volume': row['Volume']
-                }
-                for _, row in df_1d.iterrows()
-            ]
-
-            # 4-hour data (30 days)
-            df_4h = ticker.history(period="30d", interval="1h")
-            # Resample to 4h
-            df_4h_resampled = df_4h.resample('4H').agg({
-                'Close': 'last',
-                'High': 'max',
-                'Low': 'min',
-                'Volume': 'sum'
-            }).dropna()
-            price_data['4h'] = [
-                {
-                    'close': row['Close'],
-                    'high': row['High'],
-                    'low': row['Low'],
-                    'volume': row['Volume']
-                }
-                for _, row in df_4h_resampled.iterrows()
-            ]
-
-            # 1-hour data (7 days)
-            df_1h = ticker.history(period="7d", interval="1h")
-            price_data['1h'] = [
-                {
-                    'close': row['Close'],
-                    'high': row['High'],
-                    'low': row['Low'],
-                    'volume': row['Volume']
-                }
-                for _, row in df_1h.iterrows()
-            ]
-
-            # 15-minute data (5 days)
-            df_15m = ticker.history(period="5d", interval="15m")
-            price_data['15m'] = [
-                {
-                    'close': row['Close'],
-                    'high': row['High'],
-                    'low': row['Low'],
-                    'volume': row['Volume']
-                }
-                for _, row in df_15m.iterrows()
-            ]
-
-            # 5-minute data (2 days)
-            df_5m = ticker.history(period="2d", interval="5m")
-            price_data['5m'] = [
-                {
-                    'close': row['Close'],
-                    'high': row['High'],
-                    'low': row['Low'],
-                    'volume': row['Volume']
-                }
-                for _, row in df_5m.iterrows()
-            ]
-
-        except Exception as e:
-            # Fallback if yfinance fails - use mock data
-            print(f"⚠️  Warning: Could not fetch price data: {e}")
-            print(f"Using fallback mock data")
-            price_data = {
-                '5m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
-                '15m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
-                '1h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
-                '4h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
-                '1d': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)]
-            }
-
+        # Get price data with caching (prevents excessive API calls)
+        price_data = get_cached_price_data(symbol, current_price)
         print(f"3. Price data prepared with {len(price_data)} timeframes")
 
         # Calculate volume ratio (using daily data)
