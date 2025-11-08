@@ -116,6 +116,21 @@ async def health_check():
         }
     }
 
+@app.get("/api/rate-limit-status")
+async def get_rate_limit_status():
+    """Get current Trading Volatility API rate limit status and health"""
+    return {
+        "calls_this_minute": TradingVolatilityAPI._shared_api_call_count_minute,
+        "limit_per_minute": 20,
+        "remaining": max(0, 20 - TradingVolatilityAPI._shared_api_call_count_minute),
+        "circuit_breaker_active": TradingVolatilityAPI._shared_circuit_breaker_active,
+        "cache_size": len(TradingVolatilityAPI._shared_response_cache),
+        "cache_duration_minutes": TradingVolatilityAPI._shared_cache_duration / 60,
+        "total_calls_lifetime": TradingVolatilityAPI._shared_api_call_count,
+        "status": "healthy" if not TradingVolatilityAPI._shared_circuit_breaker_active else "rate_limited",
+        "recommendation": "Rate limit OK" if TradingVolatilityAPI._shared_api_call_count_minute < 15 else "Approaching limit - requests may queue"
+    }
+
 @app.get("/api/time")
 async def get_time():
     """Get current market time and status"""

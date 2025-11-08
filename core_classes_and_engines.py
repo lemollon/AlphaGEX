@@ -1064,7 +1064,7 @@ class TradingVolatilityAPI:
 
     # CLASS-LEVEL (SHARED) response cache - shared across ALL instances
     _shared_response_cache = {}
-    _shared_cache_duration = 300  # Cache for 5 MINUTES (300 seconds)
+    _shared_cache_duration = 1800  # Cache for 30 MINUTES (1800 seconds) - increased to reduce API load
 
     def __init__(self):
         import time
@@ -1301,6 +1301,14 @@ class TradingVolatilityAPI:
 
                 if response.status_code != 200:
                     print(f"❌ Trading Volatility API returned status {response.status_code}")
+
+                    # Treat 403 as potential rate limit if we've had successful calls before
+                    # (If it's first call and 403, it's likely auth issue)
+                    if response.status_code == 403 and TradingVolatilityAPI._shared_api_call_count > 0:
+                        print(f"⚠️ 403 after {TradingVolatilityAPI._shared_api_call_count} successful calls - treating as rate limit")
+                        self._handle_rate_limit_error()
+                        return {'error': 'rate_limit'}
+
                     return {'error': f'API returned {response.status_code}'}
 
                 # Check for rate limit error in response text
