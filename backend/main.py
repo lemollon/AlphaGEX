@@ -3136,15 +3136,17 @@ from psychology_trap_detector import (
 from psychology_trading_guide import get_trading_guide
 
 # ==============================================================================
-# YFINANCE CACHING - Reduce API calls to prevent rate limiting
+# YFINANCE CACHING - Psychology page fetches once per day, manual refresh only
 # ==============================================================================
 _yfinance_cache = {}
-_yfinance_cache_ttl = 300  # 5 minutes cache
+_yfinance_cache_ttl = 86400  # 24 hours cache (psychology updates once per day)
 
 def get_cached_price_data(symbol: str, current_price: float):
     """
     Get price data for symbol with caching to prevent excessive API calls
-    Cache TTL: 5 minutes (300 seconds)
+    Cache TTL: 24 hours (86400 seconds)
+
+    Psychology page design: Fetch once per day, manual refresh only
 
     This function makes 5 yfinance API calls:
     - 90d daily data
@@ -3153,7 +3155,7 @@ def get_cached_price_data(symbol: str, current_price: float):
     - 5d 15-minute data
     - 2d 5-minute data
 
-    Without caching, every page load = 5 API calls = rate limit death
+    With 24h caching: 5 API calls per day (only on first load or manual refresh)
     """
     cache_key = f"price_data_{symbol}"
     now = datetime.now()
@@ -3247,7 +3249,7 @@ def get_cached_price_data(symbol: str, current_price: float):
 
         # Cache the result
         _yfinance_cache[cache_key] = (price_data, now)
-        print(f"✅ Cached fresh price data for {_yfinance_cache_ttl}s")
+        print(f"✅ Cached fresh price data for {_yfinance_cache_ttl}s (24 hours)")
 
         return price_data
 

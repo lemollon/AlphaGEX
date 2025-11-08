@@ -1064,7 +1064,7 @@ class TradingVolatilityAPI:
 
     # CLASS-LEVEL (SHARED) response cache - shared across ALL instances
     _shared_response_cache = {}
-    _shared_cache_duration = 1800  # Cache for 30 MINUTES (1800 seconds) - increased to reduce API load
+    _shared_cache_duration = 86400  # Cache for 24 HOURS (86400 seconds) - psychology fetches once per day
 
     def __init__(self):
         import time
