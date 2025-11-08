@@ -6,6 +6,9 @@ import Navigation from '@/components/Navigation'
 import TradingGuide from '@/components/TradingGuide'
 import { apiClient } from '@/lib/api'
 
+// Get API URL from environment variable (same as rest of the app)
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
 interface RSIAnalysis {
   score: number
   individual_rsi: {
@@ -68,7 +71,7 @@ export default function PsychologyTrapDetection() {
       forceRefresh ? setIsRefreshing(true) : setLoading(true)
       setError(null)
 
-      const response = await fetch(`http://localhost:8000/api/psychology/current-regime?symbol=${symbol}`)
+      const response = await fetch(`${API_URL}/api/psychology/current-regime?symbol=${symbol}`)
 
       if (!response.ok) {
         // Get detailed error from API
@@ -104,7 +107,7 @@ export default function PsychologyTrapDetection() {
   // Fetch liberation setups
   const fetchLiberationSetups = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/psychology/liberation-setups')
+      const response = await fetch(`${API_URL}/api/psychology/liberation-setups`)
       if (response.ok) {
         const data = await response.json()
         setLiberationSetups(data.liberation_setups || [])
@@ -117,7 +120,7 @@ export default function PsychologyTrapDetection() {
   // Fetch false floors
   const fetchFalseFloors = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/psychology/false-floors')
+      const response = await fetch(`${API_URL}/api/psychology/false-floors`)
       if (response.ok) {
         const data = await response.json()
         setFalseFloors(data.false_floors || [])
