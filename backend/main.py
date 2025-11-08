@@ -1506,13 +1506,31 @@ async def compare_all_strategies(symbol: str = "SPY"):
         # Fetch current market data
         gex_data = api_client.get_net_gamma(symbol)
 
+        # Debug logging
+        print(f"\n{'='*60}")
+        print(f"DEBUG: Multi-Strategy Optimizer - GEX Data Check")
+        print(f"{'='*60}")
+        print(f"Type of gex_data: {type(gex_data)}")
+        print(f"gex_data value: {gex_data}")
+        print(f"{'='*60}\n")
+
         # Check if we got valid data
-        if not gex_data or not isinstance(gex_data, dict):
+        if not gex_data:
             raise HTTPException(status_code=404, detail=f"No GEX data available for {symbol}")
+
+        if not isinstance(gex_data, dict):
+            raise HTTPException(status_code=500, detail=f"Invalid GEX data type: {type(gex_data)}. Expected dict, got: {str(gex_data)[:200]}")
 
         # Check for API error
         if 'error' in gex_data:
             raise HTTPException(status_code=503, detail=f"API Error: {gex_data['error']}")
+
+        # Validate required fields
+        required_fields = ['spot_price', 'net_gex', 'flip_point', 'call_wall', 'put_wall']
+        missing_fields = [field for field in required_fields if field not in gex_data]
+        if missing_fields:
+            print(f"⚠️  Missing fields in gex_data: {missing_fields}")
+            print(f"Available keys: {list(gex_data.keys())}")
 
         # Get VIX data for additional context
         try:
@@ -1520,21 +1538,24 @@ async def compare_all_strategies(symbol: str = "SPY"):
             vix_ticker = yf.Ticker("^VIX")
             vix_data = vix_ticker.history(period="1d")
             vix = float(vix_data['Close'].iloc[-1]) if not vix_data.empty else 15.0
-        except:
+        except Exception as vix_error:
+            print(f"Warning: Could not fetch VIX: {vix_error}")
             vix = 15.0  # Default fallback
 
         # Prepare market data for optimizer
         # Use the correct keys from get_net_gamma response
         market_data = {
-            'spot_price': gex_data.get('spot_price', 0),
-            'net_gex': gex_data.get('net_gex', 0),
-            'flip_point': gex_data.get('flip_point', 0),  # Changed from 'zero_gamma'
-            'call_wall': gex_data.get('call_wall', 0),     # Changed from 'largest_call_strike'
-            'put_wall': gex_data.get('put_wall', 0),       # Changed from 'largest_put_strike'
-            'call_wall_gamma': gex_data.get('call_wall', 0),  # Use same as call_wall
-            'put_wall_gamma': gex_data.get('put_wall', 0),    # Use same as put_wall
-            'vix': vix
+            'spot_price': float(gex_data.get('spot_price', 0)),
+            'net_gex': float(gex_data.get('net_gex', 0)),
+            'flip_point': float(gex_data.get('flip_point', 0)),
+            'call_wall': float(gex_data.get('call_wall', 0)),
+            'put_wall': float(gex_data.get('put_wall', 0)),
+            'call_wall_gamma': float(gex_data.get('call_wall', 0)),
+            'put_wall_gamma': float(gex_data.get('put_wall', 0)),
+            'vix': float(vix)
         }
+
+        print(f"Market data prepared: {market_data}")
 
         # Get comprehensive strategy comparison
         comparison = strategy_optimizer.compare_all_strategies(market_data)
@@ -1547,6 +1568,9 @@ async def compare_all_strategies(symbol: str = "SPY"):
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        print(f"❌ Error in compare_all_strategies:")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to compare strategies: {str(e)}")
 
 # ============================================================================
