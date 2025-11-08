@@ -2668,14 +2668,24 @@ class MultiStrategyOptimizer:
         # ============================================================================
         # 1. NEGATIVE GEX SQUEEZE (Bullish)
         # ============================================================================
+        print(f"DEBUG: Checking squeeze conditions...")
         squeeze_conditions = self._check_squeeze_conditions(market_data)
-        if squeeze_conditions['viable']:
+        print(f"DEBUG: squeeze_conditions type: {type(squeeze_conditions)}, viable: {squeeze_conditions.get('viable') if isinstance(squeeze_conditions, dict) else 'NOT A DICT'}")
+
+        if squeeze_conditions.get('viable'):
+            print(f"DEBUG: Getting optimal DTE...")
             optimal_dte = self.dte_calculator.calculate_optimal_dte(
                 'DIRECTIONAL', market_data, squeeze_conditions['confidence']
             )
+            print(f"DEBUG: optimal_dte type: {type(optimal_dte)}, value: {optimal_dte}")
 
+            print(f"DEBUG: Getting optimal strike...")
             call_strike = self.strike_selector.get_optimal_strike(spot, 'CALL', market_data)
+            print(f"DEBUG: call_strike type: {type(call_strike)}")
+
+            print(f"DEBUG: Getting personal stats...")
             personal_stats = self.rag.get_personal_stats('LONG_CALL')
+            print(f"DEBUG: personal_stats type: {type(personal_stats)}")
 
             # Expected Value calculation
             base_win_rate = STRATEGIES['NEGATIVE_GEX_SQUEEZE']['win_rate']
