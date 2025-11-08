@@ -3121,19 +3121,50 @@ async def get_current_regime(symbol: str = "SPY"):
 
         print(f"1. GEX Data fetched: {type(gex_data)}")
 
-        # NEVER use mock data - require real API data
+        # Check for errors - optionally fallback to mock data in development
         if not gex_data or 'error' in gex_data:
             error_type = gex_data.get('error', 'unknown') if gex_data else 'no_data'
             print(f"❌ GEX data error: {error_type}")
 
-            # Provide specific error messages based on error type
+            # Check if mock data fallback is enabled (for development)
+            import os
+            use_mock_fallback = os.getenv('MOCK_DATA_FALLBACK', 'false').lower() == 'true'
+
+            if use_mock_fallback and error_type == 'rate_limit':
+                print("⚠️  Rate limit hit - Using MOCK DATA FALLBACK for development")
+                print("   (Set MOCK_DATA_FALLBACK=false in .env to disable)")
+
+                # Import mock data generator
+                import sys
+                from pathlib import Path
+                parent_dir = Path(__file__).parent.parent
+                sys.path.insert(0, str(parent_dir))
+
+                from mock_data_generator import MockDataGenerator
+                mock_data = MockDataGenerator.generate_psychology_regime(symbol)
+                mock_guide = MockDataGenerator.generate_trading_guide(mock_data['regime']['primary_type'])
+
+                # Add warning header
+                mock_data['_warning'] = "⚠️ MOCK DATA - API quota exhausted, using simulated data for development"
+                mock_guide['_warning'] = "⚠️ MOCK DATA - For development only"
+
+                return {
+                    "success": True,
+                    "analysis": mock_data,
+                    "trading_guide": mock_guide,
+                    "_mock": True,
+                    "_warning": "Using mock data due to API rate limit - FOR DEVELOPMENT ONLY"
+                }
+
+            # Production mode - return proper errors
             if error_type == 'rate_limit':
                 raise HTTPException(
                     status_code=429,
                     detail={
                         "error": "Rate Limit Exceeded",
                         "message": "Trading Volatility API rate limit hit. Circuit breaker is active.",
-                        "solution": "Wait 30-60 seconds and try again. The system automatically manages rate limits."
+                        "solution": "Wait 30-60 seconds and try again. The system automatically manages rate limits.",
+                        "dev_tip": "Set MOCK_DATA_FALLBACK=true in .env to use mock data during development"
                     }
                 )
             elif error_type == 'api_key':
