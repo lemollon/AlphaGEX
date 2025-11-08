@@ -3105,8 +3105,12 @@ async def get_current_regime(symbol: str = "SPY"):
         gex_data = api_client.get_net_gamma(symbol)
 
         print(f"1. GEX Data fetched: {type(gex_data)}")
+        print(f"   GEX Data contents: {gex_data}")
+        print(f"   Has 'error' key: {'error' in gex_data if gex_data else 'N/A (gex_data is None/empty)'}")
+        print(f"   GEX Data is truthy: {bool(gex_data)}")
 
         if not gex_data or 'error' in gex_data:
+            print(f"❌ FAILED CHECK: not gex_data={not gex_data}, 'error' in gex_data={'error' in gex_data if gex_data else 'N/A'}")
             raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}")
 
         current_price = gex_data.get('spot_price', 0)
