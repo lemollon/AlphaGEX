@@ -3157,18 +3157,40 @@ async def get_current_regime(symbol: str = "SPY"):
 
         print(f"1. GEX Data fetched: {type(gex_data)}")
 
-        # NEVER use mock data - require real API data
+        # NEVER USE MOCK DATA - Always require real API data
         if not gex_data or 'error' in gex_data:
-            error_msg = "Trading Volatility API key not configured. Psychology Trap Detection requires real GEX data."
-            print(f"❌ {error_msg}")
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": "Service Unavailable",
-                    "message": error_msg,
-                    "solution": "Configure 'tv_username' environment variable with your Trading Volatility API key"
-                }
-            )
+            error_type = gex_data.get('error', 'unknown') if gex_data else 'no_data'
+            print(f"❌ GEX data error: {error_type}")
+
+            # Return proper errors - NO MOCK DATA FALLBACK
+            if error_type == 'rate_limit':
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "Rate Limit Exceeded",
+                        "message": "Trading Volatility API rate limit hit. Circuit breaker is active.",
+                        "solution": "Wait 30-60 seconds and try again. System manages rate limits automatically."
+                    }
+                )
+            elif error_type == 'api_key':
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": "Service Unavailable",
+                        "message": "Trading Volatility API key not configured.",
+                        "solution": "Configure 'tv_username' environment variable with your Trading Volatility API key"
+                    }
+                )
+            else:
+                # Generic error
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": "Service Unavailable",
+                        "message": f"Failed to fetch GEX data: {error_type}",
+                        "solution": "Check API configuration and network connectivity"
+                    }
+                )
 
         current_price = gex_data.get('spot_price', 0)
         print(f"2. Current price: ${current_price}")
