@@ -2675,7 +2675,7 @@ class MultiStrategyOptimizer:
         if squeeze_conditions.get('viable'):
             print(f"DEBUG: Getting optimal DTE...")
             optimal_dte = self.dte_calculator.calculate_optimal_dte(
-                'DIRECTIONAL', market_data, squeeze_conditions['confidence']
+                market_data, 'DIRECTIONAL', squeeze_conditions['confidence']
             )
             print(f"DEBUG: optimal_dte type: {type(optimal_dte)}, value: {optimal_dte}")
 
@@ -2724,7 +2724,7 @@ class MultiStrategyOptimizer:
         breakdown_conditions = self._check_breakdown_conditions(market_data)
         if breakdown_conditions['viable']:
             optimal_dte = self.dte_calculator.calculate_optimal_dte(
-                'DIRECTIONAL', market_data, breakdown_conditions['confidence']
+                market_data, 'DIRECTIONAL', breakdown_conditions['confidence']
             )
 
             put_strike = self.strike_selector.get_optimal_strike(spot, 'PUT', market_data)
@@ -2765,7 +2765,7 @@ class MultiStrategyOptimizer:
         condor_conditions = self._check_condor_conditions(market_data)
         if condor_conditions['viable']:
             optimal_dte = self.dte_calculator.calculate_optimal_dte(
-                'IRON_CONDOR', market_data, condor_conditions['confidence']
+                market_data, 'IRON_CONDOR', condor_conditions['confidence']
             )
 
             personal_stats = self.rag.get_personal_stats('IRON_CONDOR')
@@ -2805,7 +2805,7 @@ class MultiStrategyOptimizer:
         premium_conditions = self._check_premium_conditions(market_data)
         if premium_conditions['viable']:
             optimal_dte = self.dte_calculator.calculate_optimal_dte(
-                'PREMIUM_SELLING', market_data, premium_conditions['confidence']
+                market_data, 'PREMIUM_SELLING', premium_conditions['confidence']
             )
 
             personal_stats = self.rag.get_personal_stats('PREMIUM_SELLING')
