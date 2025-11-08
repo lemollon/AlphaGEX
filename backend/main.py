@@ -3096,12 +3096,20 @@ async def get_current_regime(symbol: str = "SPY"):
     - Regime detection with psychology traps
     """
     try:
+        print(f"\n{'='*60}")
+        print(f"Psychology Trap Detection - Starting analysis for {symbol}")
+        print(f"{'='*60}\n")
+
         # Get current price and gamma data using get_net_gamma
         gex_data = api_client.get_net_gamma(symbol)
+
+        print(f"1. GEX Data fetched: {type(gex_data)}")
+
         if not gex_data or 'error' in gex_data:
             raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}")
 
         current_price = gex_data.get('spot_price', 0)
+        print(f"2. Current price: ${current_price}")
 
         # Get price data for RSI calculation
         # For now, we'll use yfinance to get historical data
@@ -3181,7 +3189,8 @@ async def get_current_regime(symbol: str = "SPY"):
 
         except Exception as e:
             # Fallback if yfinance fails - use mock data
-            print(f"Warning: Could not fetch price data: {e}")
+            print(f"⚠️  Warning: Could not fetch price data: {e}")
+            print(f"Using fallback mock data")
             price_data = {
                 '5m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
                 '15m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
@@ -3189,6 +3198,8 @@ async def get_current_regime(symbol: str = "SPY"):
                 '4h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
                 '1d': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)]
             }
+
+        print(f"3. Price data prepared with {len(price_data)} timeframes")
 
         # Calculate volume ratio (using daily data)
         if len(price_data['1d']) >= 20:
@@ -3277,20 +3288,36 @@ async def get_current_regime(symbol: str = "SPY"):
                 }]
             }]
 
+        print(f"4. Gamma data formatted with {len(gamma_data_formatted.get('expirations', []))} expirations")
+        print(f"5. Volume ratio: {volume_ratio:.2f}")
+        print(f"\nCalling analyze_current_market_complete...")
+
         # Run complete psychology trap analysis
-        analysis = analyze_current_market_complete(
-            current_price=current_price,
-            price_data=price_data,
-            gamma_data=gamma_data_formatted,
-            volume_ratio=volume_ratio
-        )
+        try:
+            analysis = analyze_current_market_complete(
+                current_price=current_price,
+                price_data=price_data,
+                gamma_data=gamma_data_formatted,
+                volume_ratio=volume_ratio
+            )
+            print(f"✅ Analysis complete!")
+        except Exception as analysis_error:
+            print(f"❌ Error in analyze_current_market_complete:")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Psychology analysis failed: {str(analysis_error)}")
 
         # Save to database
         try:
             signal_id = save_regime_signal_to_db(analysis)
             analysis['signal_id'] = signal_id
+            print(f"6. Saved to database with ID: {signal_id}")
         except Exception as e:
-            print(f"Warning: Could not save regime signal: {e}")
+            print(f"⚠️  Warning: Could not save regime signal: {e}")
+
+        print(f"\n{'='*60}")
+        print(f"Psychology Trap Detection - Analysis Complete")
+        print(f"{'='*60}\n")
 
         return {
             "success": True,
