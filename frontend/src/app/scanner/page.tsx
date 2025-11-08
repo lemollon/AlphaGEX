@@ -7,6 +7,7 @@ import { apiClient } from '@/lib/api'
 import { useDataCache } from '@/hooks/useDataCache'
 import { dataStore } from '@/lib/dataStore'
 import RegimeBadge, { RegimeBadgeMini } from '@/components/RegimeBadge'
+import { getCacheTTL } from '@/lib/cacheConfig'
 
 interface ScanSetup {
   symbol: string
@@ -72,10 +73,10 @@ export default function MultiSymbolScanner() {
     'XLE', 'XLF', 'XLK', 'GLD', 'SLV', 'TLT'
   ]
 
-  // Cache for scan results (10 minutes TTL for scanner)
+  // Cache for scan results - 1 hour (only refreshes on manual scan)
   const scanCache = useDataCache<ScanSetup[]>({
     key: `scanner-results-${selectedSymbols.sort().join('-')}`,
-    ttl: 10 * 60 * 1000 // 10 minutes - scans are expensive
+    ttl: getCacheTTL('SCANNER_RESULTS', false) // 1 hour - scans are expensive, on-demand only
   })
 
   useEffect(() => {

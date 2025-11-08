@@ -7,6 +7,7 @@ import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useDataCache } from '@/hooks/useDataCache'
 import GEXProfileChart from '@/components/GEXProfileChartPlotly'
+import { getCacheTTL, RATE_LIMIT_COOLDOWNS } from '@/lib/cacheConfig'
 
 interface GEXLevel {
   strike: number
@@ -44,21 +45,21 @@ export default function GEXAnalysis() {
   const [oiDataWarning, setOiDataWarning] = useState<string | null>(null)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
-  // Cache for GEX data - PERSISTENT (only refreshes manually)
+  // Cache for GEX data - 30 minutes (adaptive based on market hours)
   const gexCache = useDataCache<GEXData>({
     key: `gex-data-${symbol}`,
-    ttl: 24 * 60 * 60 * 1000 // 24 hours - essentially persistent
+    ttl: getCacheTTL('GEX_DATA', true) // 30 min during market, 2h after hours
   })
 
   const levelsCache = useDataCache<GEXLevel[]>({
     key: `gex-levels-${symbol}`,
-    ttl: 24 * 60 * 60 * 1000 // 24 hours - essentially persistent
+    ttl: getCacheTTL('GEX_DATA', true) // Same as GEX data
   })
 
-  // Rate limit tracking - minimum 1 minute between API calls
+  // Rate limit tracking - minimum 1 minute between manual refreshes
   const [lastRefreshTime, setLastRefreshTime] = useState<number>(0)
   const [canRefresh, setCanRefresh] = useState(true)
-  const RATE_LIMIT_MS = 60 * 1000 // 1 minute
+  const RATE_LIMIT_MS = RATE_LIMIT_COOLDOWNS.GEX_ANALYSIS // 1 minute
 
   // Load last refresh time from localStorage
   useEffect(() => {

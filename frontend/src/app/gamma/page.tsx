@@ -7,6 +7,7 @@ import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useDataCache } from '@/hooks/useDataCache'
 import { useRouter } from 'next/navigation'
+import { getCacheTTL } from '@/lib/cacheConfig'
 
 type TabType = 'overview' | 'impact' | 'historical'
 
@@ -79,10 +80,10 @@ export default function GammaIntelligence() {
   const [simQuantity, setSimQuantity] = useState(10)
   const [simOptionType, setSimOptionType] = useState<'call' | 'put'>('call')
 
-  // Cache for gamma intelligence
+  // Cache for gamma intelligence - 1 hour (adaptive based on market hours)
   const gammaCache = useDataCache<GammaIntelligence>({
     key: `gamma-intelligence-${symbol}-${vix}`,
-    ttl: 5 * 60 * 1000 // 5 minutes
+    ttl: getCacheTTL('GAMMA_INTELLIGENCE', true) // 1 hour during market, 4h after hours
   })
 
   // Fetch gamma intelligence
