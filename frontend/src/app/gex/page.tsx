@@ -477,7 +477,7 @@ export default function GEXAnalysisPage() {
                               return (
                                 <div key={tf} className="text-center bg-background-card rounded-lg p-3">
                                   <div className="text-xs text-text-muted mb-1">{tf.toUpperCase()}</div>
-                                  <div className={`text-lg font-bold ${getRSIColor(rsiValue)}`}>
+                                  <div className={`text-lg font-bold ${getRSIColor(rsiValue ?? null)}`}>
                                     {rsiValue !== null && rsiValue !== undefined ? rsiValue.toFixed(1) : '---'}
                                   </div>
                                 </div>
