@@ -21,6 +21,212 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import sqlite3
 from config_and_database import DB_PATH
+import yfinance as yf
+
+# ============================================================================
+# NEW LAYER 0: VIX AND VOLATILITY REGIME DETECTION
+# ============================================================================
+
+def fetch_vix_data() -> Dict:
+    """
+    Fetch VIX (Volatility Index) data from Yahoo Finance
+
+    Returns:
+        {
+            'current': float,  # Current VIX level
+            'previous_close': float,  # Yesterday's close
+            'change_pct': float,  # % change from previous close
+            'intraday_high': float,  # Today's high
+            'intraday_low': float,  # Today's low
+            'ma_20': float,  # 20-day moving average
+            'spike_detected': bool  # True if VIX spiked >20%
+        }
+    """
+    try:
+        vix = yf.Ticker("^VIX")
+
+        # Get current data
+        vix_hist = vix.history(period="2mo", interval="1d")
+
+        if vix_hist.empty:
+            return get_default_vix_data()
+
+        current = float(vix_hist['Close'].iloc[-1])
+        previous_close = float(vix_hist['Close'].iloc[-2]) if len(vix_hist) > 1 else current
+        intraday_high = float(vix_hist['High'].iloc[-1])
+        intraday_low = float(vix_hist['Low'].iloc[-1])
+
+        # Calculate 20-day MA
+        ma_20 = float(vix_hist['Close'].rolling(window=20).mean().iloc[-1])
+
+        # Calculate change
+        change_pct = ((current - previous_close) / previous_close * 100) if previous_close > 0 else 0
+
+        # Detect spike (>20% increase OR crossed above MA by >15%)
+        spike_detected = (change_pct > 20) or (current > ma_20 * 1.15 and previous_close < ma_20)
+
+        return {
+            'current': current,
+            'previous_close': previous_close,
+            'change_pct': change_pct,
+            'intraday_high': intraday_high,
+            'intraday_low': intraday_low,
+            'ma_20': ma_20,
+            'spike_detected': spike_detected
+        }
+    except Exception as e:
+        print(f"Error fetching VIX data: {e}")
+        return get_default_vix_data()
+
+
+def get_default_vix_data() -> Dict:
+    """Return default VIX data when fetch fails"""
+    return {
+        'current': 15.0,
+        'previous_close': 15.0,
+        'change_pct': 0.0,
+        'intraday_high': 15.5,
+        'intraday_low': 14.5,
+        'ma_20': 15.0,
+        'spike_detected': False
+    }
+
+
+def detect_volatility_regime(vix_data: Dict, net_gamma: float, zero_gamma_level: float, current_price: float) -> Dict:
+    """
+    Determine volatility regime based on VIX and gamma positioning
+
+    Args:
+        vix_data: VIX data from fetch_vix_data()
+        net_gamma: Net gamma exposure (positive = long, negative = short)
+        zero_gamma_level: Strike where net gamma crosses zero (flip point)
+        current_price: Current spot price
+
+    Returns:
+        {
+            'regime': str,  # 'EXPLOSIVE_VOLATILITY', 'NEGATIVE_GAMMA_RISK', 'COMPRESSION_PIN', 'POSITIVE_GAMMA_STABLE'
+            'risk_level': str,  # 'extreme', 'high', 'medium', 'low'
+            'description': str,
+            'at_flip_point': bool,  # True if price near zero gamma level
+            'flip_point_distance_pct': float
+        }
+    """
+    vix_current = vix_data['current']
+    vix_spike = vix_data['spike_detected']
+    vix_change_pct = vix_data['change_pct']
+
+    # Calculate distance from flip point
+    flip_distance_pct = abs(current_price - zero_gamma_level) / current_price * 100 if zero_gamma_level > 0 else 100
+    at_flip_point = flip_distance_pct < 0.5  # Within 0.5%
+
+    # NEGATIVE GAMMA ENVIRONMENT (dealers amplify moves)
+    if net_gamma < 0:
+        if vix_spike or vix_change_pct > 20:
+            return {
+                'regime': 'EXPLOSIVE_VOLATILITY',
+                'risk_level': 'extreme',
+                'description': f'VIX spiked {vix_change_pct:.1f}% + short gamma = dealer amplification active. Small moves become explosive.',
+                'at_flip_point': at_flip_point,
+                'flip_point_distance_pct': flip_distance_pct
+            }
+        elif at_flip_point:
+            return {
+                'regime': 'FLIP_POINT_CRITICAL',
+                'risk_level': 'extreme',
+                'description': f'Price at zero gamma level (${zero_gamma_level:.2f}). Crossing triggers dealer hedge flip = explosive move.',
+                'at_flip_point': at_flip_point,
+                'flip_point_distance_pct': flip_distance_pct
+            }
+        else:
+            return {
+                'regime': 'NEGATIVE_GAMMA_RISK',
+                'risk_level': 'high',
+                'description': 'Short gamma regime: Dealers amplify moves. Momentum dominates over mean reversion.',
+                'at_flip_point': at_flip_point,
+                'flip_point_distance_pct': flip_distance_pct
+            }
+
+    # POSITIVE GAMMA ENVIRONMENT (dealers dampen moves)
+    else:
+        if vix_current < 15 and vix_change_pct < -5:
+            return {
+                'regime': 'COMPRESSION_PIN',
+                'risk_level': 'low',
+                'description': 'VIX compressing + long gamma = dealers pin price. Expect tight range.',
+                'at_flip_point': at_flip_point,
+                'flip_point_distance_pct': flip_distance_pct
+            }
+        else:
+            return {
+                'regime': 'POSITIVE_GAMMA_STABLE',
+                'risk_level': 'medium',
+                'description': 'Long gamma regime: Dealers dampen moves. Mean reversion works.',
+                'at_flip_point': at_flip_point,
+                'flip_point_distance_pct': flip_distance_pct
+            }
+
+
+def calculate_volume_confirmation(price_data: Dict, volume_ratio: float) -> Dict:
+    """
+    Analyze volume patterns to confirm or reject RSI extremes
+
+    Args:
+        price_data: Multi-timeframe price data
+        volume_ratio: Current volume / 20-day average
+
+    Returns:
+        {
+            'volume_expanding': bool,  # True if volume increasing
+            'volume_surge': bool,  # True if volume >150% average
+            'volume_declining': bool,  # True if volume <70% average
+            'confirmation_strength': str,  # 'strong', 'moderate', 'weak'
+            'interpretation': str
+        }
+    """
+    # Get daily volume data
+    daily_data = price_data.get('1d', [])
+    if len(daily_data) < 10:
+        return {
+            'volume_expanding': False,
+            'volume_surge': False,
+            'volume_declining': False,
+            'confirmation_strength': 'weak',
+            'interpretation': 'Insufficient volume data'
+        }
+
+    # Calculate volume trend (last 5 days vs previous 5 days)
+    recent_vol = np.mean([bar['volume'] for bar in daily_data[-5:]])
+    prior_vol = np.mean([bar['volume'] for bar in daily_data[-10:-5]])
+
+    vol_trend_pct = ((recent_vol - prior_vol) / prior_vol * 100) if prior_vol > 0 else 0
+
+    volume_expanding = vol_trend_pct > 15  # Volume increasing >15%
+    volume_surge = volume_ratio > 1.5  # Current vol >150% average
+    volume_declining = volume_ratio < 0.7  # Current vol <70% average
+
+    # Determine confirmation strength
+    if volume_surge and volume_expanding:
+        confirmation = 'strong'
+        interpretation = 'Volume surge + expansion = genuine momentum confirmed'
+    elif volume_expanding or volume_ratio > 1.2:
+        confirmation = 'moderate'
+        interpretation = 'Above-average volume = likely continuation'
+    elif volume_declining:
+        confirmation = 'weak'
+        interpretation = 'Volume declining = exhaustion/reversal likely'
+    else:
+        confirmation = 'neutral'
+        interpretation = 'Average volume = no clear confirmation'
+
+    return {
+        'volume_expanding': volume_expanding,
+        'volume_surge': volume_surge,
+        'volume_declining': volume_declining,
+        'confirmation_strength': confirmation,
+        'interpretation': interpretation,
+        'volume_trend_pct': vol_trend_pct
+    }
+
 
 # ============================================================================
 # LAYER 1: MULTI-TIMEFRAME RSI ANALYSIS
@@ -849,18 +1055,24 @@ def detect_market_regime_complete(
     expiration_analysis: Dict,
     forward_gex: Optional[Dict],
     volume_ratio: float,
-    net_gamma: float
+    net_gamma: float,
+    vix_data: Optional[Dict] = None,
+    zero_gamma_level: float = 0,
+    price_data: Optional[Dict] = None,
+    current_price: float = 0
 ) -> Dict:
     """
     MASTER FUNCTION: Combines all layers to detect regime
 
     Detects:
-    1. Liberation setups (walls expiring)
-    2. False floor setups (support disappearing)
-    3. 0DTE pin compression plays
-    4. Forward destination trades
-    5. Original scenarios (pin, rocket, trampoline, trapdoor)
-    6. Mean reversion zones
+    1. Gamma Squeeze Cascade (VIX spike + short gamma)
+    2. Post-OPEX Regime Flip (gamma structure changing)
+    3. Liberation setups (walls expiring)
+    4. False floor setups (support disappearing)
+    5. 0DTE pin compression plays
+    6. Forward destination trades
+    7. Original scenarios (pin, rocket, trampoline, trapdoor)
+    8. Mean reversion zones
 
     Returns comprehensive regime analysis
     """
@@ -891,6 +1103,143 @@ def detect_market_regime_complete(
 
     # Check for 0DTE pin
     has_0dte_pin = check_0dte_pin(expiration_analysis)
+
+    # Get volatility regime if VIX data provided
+    vol_regime = None
+    if vix_data:
+        vol_regime = detect_volatility_regime(vix_data, net_gamma, zero_gamma_level, current_price)
+
+    # Get volume confirmation if price data provided
+    vol_confirm = None
+    if price_data:
+        vol_confirm = calculate_volume_confirmation(price_data, volume_ratio)
+
+    # ========================================
+    # SCENARIO 0A: GAMMA SQUEEZE CASCADE (HIGHEST PRIORITY)
+    # ========================================
+    if vol_regime and vol_regime['regime'] == 'EXPLOSIVE_VOLATILITY':
+        # VIX spiked + short gamma + volume surge
+        if vol_confirm and vol_confirm['volume_surge'] and abs(rsi_score) < 50:
+            # Not already at extreme - room to run
+            direction = 'bullish' if rsi_score > 0 else 'bearish' if rsi_score < 0 else 'unknown'
+
+            regime['primary_type'] = 'GAMMA_SQUEEZE_CASCADE'
+            regime['confidence'] = 95
+            regime['description'] = f'VIX spike + short gamma + volume surge = Dealer amplification active'
+            regime['detailed_explanation'] = f"""
+GAMMA SQUEEZE CASCADE DETECTED
+
+Current Situation:
+- VIX: {vix_data['current']:.1f} (Change: {vix_data['change_pct']:+.1f}%)
+- Net Gamma: ${net_gamma/1e9:.1f}B (SHORT - dealers amplify moves)
+- Volume: {volume_ratio:.1f}x average (SURGING)
+- RSI: {rsi_score:.0f} (Not yet extreme - room to run)
+
+What's Happening:
+1. Dealers are SHORT gamma → they must CHASE price moves
+2. VIX spike triggers re-hedging → feedback loop begins
+3. Small moves become EXPLOSIVE (2-4 hour phenomenon)
+4. Direction: {direction.upper()}
+
+This is the most dangerous/profitable regime. Moves accelerate rapidly.
+"""
+            regime['trade_direction'] = direction
+            regime['risk_level'] = 'extreme'
+            regime['timeline'] = '2-4 hours typically'
+            regime['psychology_trap'] = 'Traders try to fade the move thinking "too fast", but dealer hedging amplifies it further'
+            regime['supporting_factors'] = [
+                f'VIX spiked {vix_data["change_pct"]:+.1f}%',
+                f'Short gamma ${abs(net_gamma)/1e9:.1f}B',
+                f'Volume surge {volume_ratio:.1f}x'
+            ]
+            return regime
+
+    # ========================================
+    # SCENARIO 0B: FLIP POINT CRITICAL
+    # ========================================
+    if vol_regime and vol_regime['at_flip_point']:
+        regime['primary_type'] = 'FLIP_POINT_CRITICAL'
+        regime['confidence'] = 90
+        regime['description'] = f'Price at zero gamma level ${zero_gamma_level:.2f} - hedge flip imminent'
+        regime['detailed_explanation'] = f"""
+ZERO GAMMA LEVEL CROSSOVER CRITICAL
+
+Current Situation:
+- Price: ${current_price:.2f}
+- Zero Gamma Level: ${zero_gamma_level:.2f}
+- Distance: {vol_regime['flip_point_distance_pct']:.2f}% (CRITICAL!)
+- Net Gamma: ${net_gamma/1e9:.1f}B
+
+What's Happening:
+When price crosses the zero gamma level, dealers FLIP from one hedging regime to another:
+- Below flip point: One type of hedging
+- Above flip point: OPPOSITE hedging
+- At the flip point: MAXIMUM VOLATILITY
+
+This is where explosive moves originate. Direction unclear but MAGNITUDE will be large.
+"""
+        regime['trade_direction'] = 'volatile'
+        regime['risk_level'] = 'extreme'
+        regime['timeline'] = 'Imminent - hours not days'
+        regime['psychology_trap'] = 'Traders don\'t see this level, get caught in explosive move when crossing occurs'
+        regime['supporting_factors'] = [
+            f'Within {vol_regime["flip_point_distance_pct"]:.2f}% of flip point',
+            'Maximum dealer hedging sensitivity',
+            'Explosive breakout zone'
+        ]
+        return regime
+
+    # ========================================
+    # SCENARIO 0C: POST-OPEX REGIME FLIP
+    # ========================================
+    # Check if major expiration coming up with significant gamma expiring
+    gamma_by_dte = expiration_analysis.get('gamma_by_dte', {})
+    this_week_gamma = gamma_by_dte.get('this_week', {}).get('total_gamma', 0)
+    next_week_gamma = gamma_by_dte.get('next_week', {}).get('total_gamma', 0)
+
+    # If >50% of gamma expires this week, check for regime flip
+    total_gamma = abs(net_gamma)
+    if total_gamma > 0:
+        expiring_ratio = this_week_gamma / total_gamma
+
+        # Check if net gamma will flip sign after expiration
+        if expiring_ratio > 0.5:
+            # Simple heuristic: if currently strong directional gamma that's expiring
+            currently_strong = abs(net_gamma) > 1e9  # >$1B
+
+            if currently_strong:
+                regime['primary_type'] = 'POST_OPEX_REGIME_FLIP'
+                regime['confidence'] = 75
+                regime['description'] = f'{expiring_ratio:.0%} of gamma expires this week - market character will change'
+                regime['detailed_explanation'] = f"""
+POST-OPEX REGIME FLIP APPROACHING
+
+Current Situation:
+- Net Gamma: ${net_gamma/1e9:.1f}B ({'Long' if net_gamma > 0 else 'Short'})
+- Gamma expiring this week: ${this_week_gamma/1e9:.1f}B ({expiring_ratio:.0%})
+- Gamma remaining next week: ${next_week_gamma/1e9:.1f}B
+
+What's Happening:
+When major OPEX occurs, the gamma structure that defines market behavior CHANGES.
+
+Current regime: {'Pin/chop (long gamma dampens moves)' if net_gamma > 0 else 'Momentum (short gamma amplifies moves)'}
+
+After expiration: Market character will shift significantly
+
+The Trap:
+Traders expect same behavior after OPEX, but the structural forces driving the market have changed.
+RSI levels that meant one thing THIS week will mean something different NEXT week.
+"""
+                regime['trade_direction'] = 'regime_dependent'
+                regime['risk_level'] = 'high'
+                regime['timeline'] = f'Regime flip within {min([exp["dte"] for exp in expiration_analysis.get("expiration_timeline", [])])} days'
+                regime['psychology_trap'] = 'Trading the old regime after gamma structure has shifted'
+                regime['supporting_factors'] = [
+                    f'{expiring_ratio:.0%} of gamma expires soon',
+                    'Major structural shift approaching',
+                    'Market personality change imminent'
+                ]
+                return regime
 
     # ========================================
     # SCENARIO 1: Liberation Trade
@@ -1136,6 +1485,10 @@ def analyze_current_market_complete(
     """
     timestamp = datetime.now()
 
+    # Layer 0: VIX and Volatility Analysis (NEW)
+    vix_data = fetch_vix_data()
+    zero_gamma_level = gamma_data.get('flip_point', 0)
+
     # Layer 1: RSI Analysis
     rsi_analysis = calculate_mtf_rsi_score(price_data)
 
@@ -1148,18 +1501,25 @@ def analyze_current_market_complete(
     # Layer 4: Forward GEX / Monthly Magnets
     forward_gex = analyze_forward_gex(gamma_data, current_price)
 
-    # Layer 5: Complete Regime Detection
+    # Layer 5: Complete Regime Detection (with NEW parameters)
     regime = detect_market_regime_complete(
         rsi_analysis,
         current_walls,
         expiration_analysis,
         forward_gex,
         volume_ratio,
-        gamma_data.get('net_gamma', 0)
+        gamma_data.get('net_gamma', 0),
+        vix_data=vix_data,
+        zero_gamma_level=zero_gamma_level,
+        price_data=price_data,
+        current_price=current_price
     )
 
     # Determine alert level
     alert_level = determine_alert_level(regime, expiration_analysis)
+
+    # Calculate volatility regime for display
+    volatility_regime = detect_volatility_regime(vix_data, gamma_data.get('net_gamma', 0), zero_gamma_level, current_price)
 
     return {
         'timestamp': timestamp.isoformat(),
@@ -1172,6 +1532,11 @@ def analyze_current_market_complete(
         'expiration_analysis': expiration_analysis,
         'forward_gex': forward_gex,
         'volume_ratio': volume_ratio,
+
+        # NEW: VIX and volatility data
+        'vix_data': vix_data,
+        'zero_gamma_level': zero_gamma_level,
+        'volatility_regime': volatility_regime,
 
         # Alert
         'alert_level': alert_level
@@ -1237,59 +1602,127 @@ def save_regime_signal_to_db(analysis: Dict) -> int:
     lib_setup = exp.get('liberation_candidates', [{}])[0] if exp.get('liberation_candidates') else {}
     false_floor = exp.get('false_floor_candidates', [{}])[0] if exp.get('false_floor_candidates') else {}
 
-    c.execute('''
-        INSERT INTO regime_signals (
-            timestamp, spy_price, primary_regime_type, secondary_regime_type,
-            confidence_score, trade_direction, risk_level, description,
-            detailed_explanation, psychology_trap,
-            rsi_5m, rsi_15m, rsi_1h, rsi_4h, rsi_1d, rsi_score,
-            rsi_aligned_overbought, rsi_aligned_oversold, rsi_coiling,
-            nearest_call_wall, call_wall_distance_pct, call_wall_strength,
-            nearest_put_wall, put_wall_distance_pct, put_wall_strength,
-            net_gamma, net_gamma_regime,
-            zero_dte_gamma, gamma_expiring_this_week, gamma_expiring_next_week,
-            liberation_setup_detected, liberation_target_strike, liberation_expiry_date,
-            false_floor_detected, false_floor_strike, false_floor_expiry_date,
-            monthly_magnet_above, monthly_magnet_above_strength,
-            monthly_magnet_below, monthly_magnet_below_strength,
-            path_of_least_resistance, polr_confidence,
-            volume_ratio, target_price_near, target_price_far, target_timeline_days
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        analysis['timestamp'], analysis['spy_price'],
-        regime['primary_type'], regime.get('secondary_type'),
-        regime['confidence'], regime['trade_direction'], regime['risk_level'],
-        regime['description'], regime['detailed_explanation'], regime['psychology_trap'],
-        rsi['individual_rsi'].get('5m'), rsi['individual_rsi'].get('15m'),
-        rsi['individual_rsi'].get('1h'), rsi['individual_rsi'].get('4h'),
-        rsi['individual_rsi'].get('1d'), rsi['score'],
-        rsi['aligned_count']['overbought'], rsi['aligned_count']['oversold'],
-        1 if rsi['coiling_detected'] else 0,
-        walls.get('call_wall', {}).get('strike') if walls.get('call_wall') else None,
-        walls.get('call_wall', {}).get('distance_pct') if walls.get('call_wall') else None,
-        walls.get('call_wall', {}).get('strength') if walls.get('call_wall') else None,
-        walls.get('put_wall', {}).get('strike') if walls.get('put_wall') else None,
-        walls.get('put_wall', {}).get('distance_pct') if walls.get('put_wall') else None,
-        walls.get('put_wall', {}).get('strength') if walls.get('put_wall') else None,
-        walls.get('net_gamma'), walls.get('net_gamma_regime'),
-        exp['gamma_by_dte'].get('0dte', {}).get('total_gamma'),
-        exp['gamma_by_dte'].get('this_week', {}).get('total_gamma'),
-        exp['gamma_by_dte'].get('next_week', {}).get('total_gamma'),
-        1 if lib_setup else 0,
-        lib_setup.get('strike'), lib_setup.get('liberation_date'),
-        1 if false_floor else 0,
-        false_floor.get('strike'), false_floor.get('expiration_date'),
-        fwd.get('strongest_above', {}).get('strike') if fwd else None,
-        fwd.get('strongest_above', {}).get('strength_score') if fwd else None,
-        fwd.get('strongest_below', {}).get('strike') if fwd else None,
-        fwd.get('strongest_below', {}).get('strength_score') if fwd else None,
-        fwd.get('path_of_least_resistance', {}).get('direction') if fwd else None,
-        fwd.get('path_of_least_resistance', {}).get('confidence') if fwd else None,
-        analysis['volume_ratio'],
-        regime.get('price_targets', {}).get('current'),
-        regime.get('price_targets', {}).get('destination'),
-        regime.get('price_targets', {}).get('timeline_days')
-    ))
+    # Extract VIX data
+    vix = analysis.get('vix_data', {})
+    vol_regime = analysis.get('volatility_regime', {})
+
+    try:
+        c.execute('''
+            INSERT INTO regime_signals (
+                timestamp, spy_price, primary_regime_type, secondary_regime_type,
+                confidence_score, trade_direction, risk_level, description,
+                detailed_explanation, psychology_trap,
+                rsi_5m, rsi_15m, rsi_1h, rsi_4h, rsi_1d, rsi_score,
+                rsi_aligned_overbought, rsi_aligned_oversold, rsi_coiling,
+                nearest_call_wall, call_wall_distance_pct, call_wall_strength,
+                nearest_put_wall, put_wall_distance_pct, put_wall_strength,
+                net_gamma, net_gamma_regime,
+                zero_dte_gamma, gamma_expiring_this_week, gamma_expiring_next_week,
+                liberation_setup_detected, liberation_target_strike, liberation_expiry_date,
+                false_floor_detected, false_floor_strike, false_floor_expiry_date,
+                monthly_magnet_above, monthly_magnet_above_strength,
+                monthly_magnet_below, monthly_magnet_below_strength,
+                path_of_least_resistance, polr_confidence,
+                volume_ratio, target_price_near, target_price_far, target_timeline_days,
+                vix_current, vix_change_pct, vix_spike_detected,
+                zero_gamma_level, volatility_regime, at_flip_point
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            analysis['timestamp'], analysis['spy_price'],
+            regime['primary_type'], regime.get('secondary_type'),
+            regime['confidence'], regime['trade_direction'], regime['risk_level'],
+            regime['description'], regime['detailed_explanation'], regime['psychology_trap'],
+            rsi['individual_rsi'].get('5m'), rsi['individual_rsi'].get('15m'),
+            rsi['individual_rsi'].get('1h'), rsi['individual_rsi'].get('4h'),
+            rsi['individual_rsi'].get('1d'), rsi['score'],
+            rsi['aligned_count']['overbought'], rsi['aligned_count']['oversold'],
+            1 if rsi['coiling_detected'] else 0,
+            walls.get('call_wall', {}).get('strike') if walls.get('call_wall') else None,
+            walls.get('call_wall', {}).get('distance_pct') if walls.get('call_wall') else None,
+            walls.get('call_wall', {}).get('strength') if walls.get('call_wall') else None,
+            walls.get('put_wall', {}).get('strike') if walls.get('put_wall') else None,
+            walls.get('put_wall', {}).get('distance_pct') if walls.get('put_wall') else None,
+            walls.get('put_wall', {}).get('strength') if walls.get('put_wall') else None,
+            walls.get('net_gamma'), walls.get('net_gamma_regime'),
+            exp['gamma_by_dte'].get('0dte', {}).get('total_gamma'),
+            exp['gamma_by_dte'].get('this_week', {}).get('total_gamma'),
+            exp['gamma_by_dte'].get('next_week', {}).get('total_gamma'),
+            1 if lib_setup else 0,
+            lib_setup.get('strike'), lib_setup.get('liberation_date'),
+            1 if false_floor else 0,
+            false_floor.get('strike'), false_floor.get('expiration_date'),
+            fwd.get('strongest_above', {}).get('strike') if fwd else None,
+            fwd.get('strongest_above', {}).get('strength_score') if fwd else None,
+            fwd.get('strongest_below', {}).get('strike') if fwd else None,
+            fwd.get('strongest_below', {}).get('strength_score') if fwd else None,
+            fwd.get('path_of_least_resistance', {}).get('direction') if fwd else None,
+            fwd.get('path_of_least_resistance', {}).get('confidence') if fwd else None,
+            analysis['volume_ratio'],
+            regime.get('price_targets', {}).get('current'),
+            regime.get('price_targets', {}).get('destination'),
+            regime.get('price_targets', {}).get('timeline_days'),
+            vix.get('current'), vix.get('change_pct'),
+            1 if vix.get('spike_detected') else 0,
+            analysis.get('zero_gamma_level'),
+            vol_regime.get('regime'),
+            1 if vol_regime.get('at_flip_point') else 0
+        ))
+    except sqlite3.OperationalError as e:
+        # If columns don't exist yet, try without VIX fields (backward compatibility)
+        print(f"Warning: Database schema may need updating for VIX fields: {e}")
+        c.execute('''
+            INSERT INTO regime_signals (
+                timestamp, spy_price, primary_regime_type, secondary_regime_type,
+                confidence_score, trade_direction, risk_level, description,
+                detailed_explanation, psychology_trap,
+                rsi_5m, rsi_15m, rsi_1h, rsi_4h, rsi_1d, rsi_score,
+                rsi_aligned_overbought, rsi_aligned_oversold, rsi_coiling,
+                nearest_call_wall, call_wall_distance_pct, call_wall_strength,
+                nearest_put_wall, put_wall_distance_pct, put_wall_strength,
+                net_gamma, net_gamma_regime,
+                zero_dte_gamma, gamma_expiring_this_week, gamma_expiring_next_week,
+                liberation_setup_detected, liberation_target_strike, liberation_expiry_date,
+                false_floor_detected, false_floor_strike, false_floor_expiry_date,
+                monthly_magnet_above, monthly_magnet_above_strength,
+                monthly_magnet_below, monthly_magnet_below_strength,
+                path_of_least_resistance, polr_confidence,
+                volume_ratio, target_price_near, target_price_far, target_timeline_days
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            analysis['timestamp'], analysis['spy_price'],
+            regime['primary_type'], regime.get('secondary_type'),
+            regime['confidence'], regime['trade_direction'], regime['risk_level'],
+            regime['description'], regime['detailed_explanation'], regime['psychology_trap'],
+            rsi['individual_rsi'].get('5m'), rsi['individual_rsi'].get('15m'),
+            rsi['individual_rsi'].get('1h'), rsi['individual_rsi'].get('4h'),
+            rsi['individual_rsi'].get('1d'), rsi['score'],
+            rsi['aligned_count']['overbought'], rsi['aligned_count']['oversold'],
+            1 if rsi['coiling_detected'] else 0,
+            walls.get('call_wall', {}).get('strike') if walls.get('call_wall') else None,
+            walls.get('call_wall', {}).get('distance_pct') if walls.get('call_wall') else None,
+            walls.get('call_wall', {}).get('strength') if walls.get('call_wall') else None,
+            walls.get('put_wall', {}).get('strike') if walls.get('put_wall') else None,
+            walls.get('put_wall', {}).get('distance_pct') if walls.get('put_wall') else None,
+            walls.get('put_wall', {}).get('strength') if walls.get('put_wall') else None,
+            walls.get('net_gamma'), walls.get('net_gamma_regime'),
+            exp['gamma_by_dte'].get('0dte', {}).get('total_gamma'),
+            exp['gamma_by_dte'].get('this_week', {}).get('total_gamma'),
+            exp['gamma_by_dte'].get('next_week', {}).get('total_gamma'),
+            1 if lib_setup else 0,
+            lib_setup.get('strike'), lib_setup.get('liberation_date'),
+            1 if false_floor else 0,
+            false_floor.get('strike'), false_floor.get('expiration_date'),
+            fwd.get('strongest_above', {}).get('strike') if fwd else None,
+            fwd.get('strongest_above', {}).get('strength_score') if fwd else None,
+            fwd.get('strongest_below', {}).get('strike') if fwd else None,
+            fwd.get('strongest_below', {}).get('strength_score') if fwd else None,
+            fwd.get('path_of_least_resistance', {}).get('direction') if fwd else None,
+            fwd.get('path_of_least_resistance', {}).get('confidence') if fwd else None,
+            analysis['volume_ratio'],
+            regime.get('price_targets', {}).get('current'),
+            regime.get('price_targets', {}).get('destination'),
+            regime.get('price_targets', {}).get('timeline_days')
+        ))
 
     signal_id = c.lastrowid
     conn.commit()
