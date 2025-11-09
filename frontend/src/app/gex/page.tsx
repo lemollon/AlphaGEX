@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import LoadingWithTips from '@/components/LoadingWithTips'
+import GEXProfileChart from '@/components/GEXProfileChartPlotly'
 import { apiClient } from '@/lib/api'
 import { IntelligentCache, StaggeredLoader, RateLimiter } from '@/lib/intelligentCache'
 import {
@@ -26,6 +27,13 @@ import {
 // Default tickers to load - START WITH JUST SPY to avoid rate limits
 // Users can manually add more tickers one at a time
 const DEFAULT_TICKERS = ['SPY']
+
+interface GEXLevel {
+  strike: number
+  call_gex: number
+  put_gex: number
+  total_gex: number
+}
 
 interface TickerData {
   symbol: string
@@ -75,6 +83,7 @@ interface ProbabilityData {
 export default function GEXAnalysisPage() {
   const [tickers, setTickers] = useState<string[]>(DEFAULT_TICKERS)
   const [tickerData, setTickerData] = useState<Record<string, TickerData>>({})
+  const [gexLevels, setGexLevels] = useState<Record<string, GEXLevel[]>>({})
   const [loading, setLoading] = useState(true)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingTickers, setLoadingTickers] = useState<Set<string>>(new Set())
@@ -233,12 +242,27 @@ export default function GEXAnalysisPage() {
     setTickerData(newData)
   }
 
-  const toggleExpanded = (ticker: string) => {
+  const toggleExpanded = async (ticker: string) => {
     const newExpanded = new Set(expandedTickers)
     if (newExpanded.has(ticker)) {
       newExpanded.delete(ticker)
     } else {
       newExpanded.add(ticker)
+
+      // Fetch GEX levels if not already loaded
+      if (!gexLevels[ticker]) {
+        try {
+          const response = await apiClient.getGEXLevels(ticker)
+          if (response.data.success && response.data.data) {
+            setGexLevels(prev => ({
+              ...prev,
+              [ticker]: response.data.data.levels || []
+            }))
+          }
+        } catch (err) {
+          console.error(`Failed to load GEX levels for ${ticker}:`, err)
+        }
+      }
     }
     setExpandedTickers(newExpanded)
   }
@@ -735,6 +759,27 @@ export default function GEXAnalysisPage() {
                           </div>
                         </div>
                       )}
+
+                      {/* GEX Profile Chart */}
+                      <div className="mt-6">
+                        {gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
+                          <GEXProfileChart
+                            data={gexLevels[ticker]}
+                            spotPrice={data.spot_price}
+                            flipPoint={data.flip_point}
+                            callWall={data.call_wall}
+                            putWall={data.put_wall}
+                            height={600}
+                          />
+                        ) : (
+                          <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
+                            <div className="flex items-center justify-center space-x-3">
+                              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                              <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </>
                   )}
                 </div>
