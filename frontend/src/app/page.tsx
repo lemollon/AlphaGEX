@@ -180,7 +180,8 @@ export default function Dashboard() {
     <div className="min-h-screen">
       <Navigation />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="pt-16 transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Status Cards - REAL DATA */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
           <StatusCard
@@ -408,6 +409,7 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+        </div>
         </div>
       </main>
     </div>
