@@ -27,6 +27,9 @@ from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, Bla
 from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
 from config_and_database import STRATEGIES
 
+# Import probability calculator (NEW - Phase 2 Self-Learning)
+from probability_calculator import ProbabilityCalculator
+
 # Create FastAPI app
 app = FastAPI(
     title="AlphaGEX API",
@@ -79,6 +82,9 @@ claude_ai = ClaudeIntelligence()
 monte_carlo = MonteCarloEngine()
 pricer = BlackScholesPricer()
 strategy_optimizer = MultiStrategyOptimizer()
+
+# Initialize probability calculator (NEW - Phase 2 Self-Learning)
+probability_calc = ProbabilityCalculator()
 
 # ============================================================================
 # Health Check & Status Endpoints
@@ -249,6 +255,110 @@ async def get_gex_data(symbol: str):
         # Get GEX levels for support/resistance
         levels_data = api_client.get_gex_levels(symbol)
 
+        # Get psychology data for probability calculation
+        psychology_data = {}
+        try:
+            # Try to get RSI and psychology state (non-blocking)
+            import yfinance as yf
+            ticker = yf.Ticker(symbol)
+            df_1d = ticker.history(period="30d", interval="1d")
+
+            if not df_1d.empty:
+                # Calculate simple RSI
+                delta = df_1d['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                rsi = 100 - (100 / (1 + rs))
+                current_rsi = rsi.iloc[-1] if not rsi.empty else 50
+
+                # Determine psychology state based on RSI
+                if current_rsi > 70:
+                    psychology_data = {
+                        'fomo_level': min(100, (current_rsi - 50) * 2),
+                        'fear_level': max(0, (50 - current_rsi) * 2),
+                        'state': 'FOMO' if current_rsi > 80 else 'MODERATE_FOMO'
+                    }
+                elif current_rsi < 30:
+                    psychology_data = {
+                        'fomo_level': max(0, (current_rsi - 50) * 2),
+                        'fear_level': min(100, (50 - current_rsi) * 2),
+                        'state': 'FEAR' if current_rsi < 20 else 'MODERATE_FEAR'
+                    }
+                else:
+                    psychology_data = {
+                        'fomo_level': 50,
+                        'fear_level': 50,
+                        'state': 'BALANCED'
+                    }
+            else:
+                # Default values if no data
+                psychology_data = {'fomo_level': 50, 'fear_level': 50, 'state': 'BALANCED'}
+        except Exception as e:
+            print(f"⚠️  Could not fetch psychology data for {symbol}: {e}")
+            psychology_data = {'fomo_level': 50, 'fear_level': 50, 'state': 'BALANCED'}
+
+        # Calculate probability (EOD and Next Day)
+        spot_price = gex_data.get('spot_price', 0)
+        net_gex = gex_data.get('net_gex', 0)
+        flip_point = gex_data.get('flip_point', spot_price)
+
+        # Determine MM state
+        if net_gex < -2e9:
+            mm_state = 'PANICKING'
+        elif net_gex < -1e9:
+            mm_state = 'SQUEEZING' if spot_price < flip_point else 'BREAKDOWN'
+        elif net_gex > 1e9:
+            mm_state = 'DEFENDING'
+        else:
+            mm_state = 'NEUTRAL'
+
+        # Get VIX for volatility context
+        vix_level = 18.0  # Default
+        try:
+            if symbol == 'VIX':
+                vix_level = spot_price
+            else:
+                vix_ticker = yf.Ticker('VIX')
+                vix_data = vix_ticker.history(period="1d")
+                if not vix_data.empty:
+                    vix_level = vix_data['Close'].iloc[-1]
+        except:
+            pass
+
+        # Prepare GEX data for probability calculator
+        prob_gex_data = {
+            'net_gex': net_gex,
+            'flip_point': flip_point,
+            'call_wall': gex_data.get('call_wall', spot_price * 1.02),
+            'put_wall': gex_data.get('put_wall', spot_price * 0.98),
+            'vix': vix_level,
+            'implied_vol': gex_data.get('implied_volatility', 0.25),
+            'mm_state': mm_state
+        }
+
+        # Calculate EOD and Next Day probabilities
+        eod_probability = None
+        next_day_probability = None
+        try:
+            eod_probability = probability_calc.calculate_probability(
+                symbol=symbol,
+                current_price=spot_price,
+                gex_data=prob_gex_data,
+                psychology_data=psychology_data,
+                prediction_type='EOD'
+            )
+
+            next_day_probability = probability_calc.calculate_probability(
+                symbol=symbol,
+                current_price=spot_price,
+                gex_data=prob_gex_data,
+                psychology_data=psychology_data,
+                prediction_type='NEXT_DAY'
+            )
+        except Exception as e:
+            print(f"⚠️  Could not calculate probability for {symbol}: {e}")
+
         # Enhance data with missing fields for frontend compatibility
         enhanced_data = {
             **gex_data,
@@ -257,7 +367,16 @@ async def get_gex_data(symbol: str):
             "key_levels": {
                 "resistance": levels_data.get('resistance', []) if levels_data else [],
                 "support": levels_data.get('support', []) if levels_data else []
-            }
+            },
+            # NEW: Add probability data
+            "probability": {
+                "eod": eod_probability,
+                "next_day": next_day_probability
+            } if eod_probability and next_day_probability else None,
+            # Add psychology and MM state
+            "psychology": psychology_data,
+            "mm_state": mm_state,
+            "vix": vix_level
         }
 
         return {
@@ -4278,6 +4397,93 @@ async def get_ai_track_record(days: int = 30):
         return {
             "success": True,
             "track_record": track_record
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==============================================================================
+# PROBABILITY PREDICTION ENDPOINTS (Phase 2 Self-Learning)
+# ==============================================================================
+
+@app.post("/api/probability/record-outcome")
+async def record_probability_outcome(request: dict):
+    """
+    Record actual outcome for a prediction (for calibration/learning)
+
+    Request body:
+        {
+            "prediction_id": 123,
+            "actual_close_price": 570.50
+        }
+
+    Returns:
+        Success status
+    """
+    try:
+        prediction_id = request.get('prediction_id')
+        actual_close_price = request.get('actual_close_price')
+
+        if not prediction_id or actual_close_price is None:
+            raise HTTPException(
+                status_code=400,
+                detail="prediction_id and actual_close_price required"
+            )
+
+        probability_calc.record_outcome(prediction_id, actual_close_price)
+
+        return {
+            "success": True,
+            "message": f"Outcome recorded for prediction {prediction_id}"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/probability/accuracy")
+async def get_probability_accuracy(days: int = 30):
+    """
+    Get accuracy metrics for probability predictions
+
+    Query params:
+        days: Number of days to analyze (default 30)
+
+    Returns:
+        Accuracy statistics by prediction type and confidence level
+    """
+    try:
+        metrics = probability_calc.get_accuracy_metrics(days=days)
+
+        return {
+            "success": True,
+            "metrics": metrics
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/probability/calibrate")
+async def calibrate_probability_model(min_predictions: int = 50):
+    """
+    Calibrate probability model based on actual outcomes (Phase 2 Self-Learning)
+
+    This adjusts weights to improve accuracy based on historical performance.
+
+    Query params:
+        min_predictions: Minimum predictions required for calibration (default 50)
+
+    Returns:
+        Calibration results and new weights
+    """
+    try:
+        result = probability_calc.calibrate(min_predictions=min_predictions)
+
+        return {
+            "success": True,
+            "calibration": result
         }
 
     except Exception as e:
