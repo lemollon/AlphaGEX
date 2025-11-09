@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import TradingGuide from '@/components/TradingGuide'
+import PsychologyNotifications from '@/components/PsychologyNotifications'
 import { apiClient } from '@/lib/api'
 
 // Get API URL from environment variable (same as rest of the app)
@@ -27,6 +28,24 @@ interface RSIAnalysis {
   coiling_detected: boolean
 }
 
+interface VIXData {
+  current: number
+  previous_close: number
+  change_pct: number
+  intraday_high: number
+  intraday_low: number
+  ma_20: number
+  spike_detected: boolean
+}
+
+interface VolatilityRegime {
+  regime: string
+  risk_level: string
+  description: string
+  at_flip_point: boolean
+  flip_point_distance_pct: number
+}
+
 interface RegimeAnalysis {
   timestamp: string
   spy_price: number
@@ -48,6 +67,9 @@ interface RegimeAnalysis {
   expiration_analysis: any
   forward_gex: any
   volume_ratio: number
+  vix_data?: VIXData
+  zero_gamma_level?: number
+  volatility_regime?: VolatilityRegime
   alert_level: {
     level: string
     reason: string
@@ -232,6 +254,9 @@ export default function PsychologyTrapDetection() {
             Refresh
           </button>
         </div>
+
+        {/* Push Notifications */}
+        <PsychologyNotifications />
 
         {/* Error State */}
         {error && (
@@ -484,6 +509,162 @@ export default function PsychologyTrapDetection() {
                 </div>
               </div>
             </div>
+
+            {/* VIX and Volatility Regime Cards (NEW) */}
+            {(analysis.vix_data || analysis.volatility_regime) && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* VIX Card */}
+                {analysis.vix_data && (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Zap className="w-5 h-5 text-yellow-400" />
+                      <h2 className="text-xl font-bold">VIX Volatility Index</h2>
+                      {analysis.vix_data.spike_detected && (
+                        <div className="px-2 py-1 bg-red-500/20 rounded text-xs font-semibold text-red-400 animate-pulse">
+                          SPIKE!
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* Current VIX */}
+                      <div className="bg-gray-950/50 rounded-lg p-4">
+                        <div className="text-sm text-gray-400 mb-1">Current VIX</div>
+                        <div className="flex items-baseline gap-2">
+                          <div className={`text-4xl font-bold ${
+                            analysis.vix_data.current > 20 ? 'text-red-400' :
+                            analysis.vix_data.current > 15 ? 'text-yellow-400' :
+                            'text-green-400'
+                          }`}>
+                            {analysis.vix_data.current.toFixed(2)}
+                          </div>
+                          <div className={`text-lg font-semibold ${
+                            analysis.vix_data.change_pct > 0 ? 'text-red-400' : 'text-green-400'
+                          }`}>
+                            {analysis.vix_data.change_pct > 0 ? '+' : ''}
+                            {analysis.vix_data.change_pct.toFixed(2)}%
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* VIX Details */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <div className="text-xs text-gray-500 mb-1">Previous Close</div>
+                          <div className="text-lg font-semibold">{analysis.vix_data.previous_close.toFixed(2)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500 mb-1">20-Day MA</div>
+                          <div className="text-lg font-semibold">{analysis.vix_data.ma_20.toFixed(2)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500 mb-1">Intraday High</div>
+                          <div className="text-lg font-semibold">{analysis.vix_data.intraday_high.toFixed(2)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500 mb-1">Intraday Low</div>
+                          <div className="text-lg font-semibold">{analysis.vix_data.intraday_low.toFixed(2)}</div>
+                        </div>
+                      </div>
+
+                      {/* Spike Warning */}
+                      {analysis.vix_data.spike_detected && (
+                        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-red-400" />
+                            <div className="text-sm text-red-400 font-semibold">
+                              VIX SPIKE DETECTED - Dealer amplification likely active
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Volatility Regime Card */}
+                {analysis.volatility_regime && (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Activity className="w-5 h-5 text-cyan-400" />
+                      <h2 className="text-xl font-bold">Volatility Regime</h2>
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* Regime Type */}
+                      <div className={`rounded-lg p-4 border-2 ${
+                        analysis.volatility_regime.regime === 'EXPLOSIVE_VOLATILITY' ? 'bg-red-500/10 border-red-500/50' :
+                        analysis.volatility_regime.regime === 'FLIP_POINT_CRITICAL' ? 'bg-purple-500/10 border-purple-500/50' :
+                        analysis.volatility_regime.regime === 'NEGATIVE_GAMMA_RISK' ? 'bg-orange-500/10 border-orange-500/50' :
+                        analysis.volatility_regime.regime === 'COMPRESSION_PIN' ? 'bg-blue-500/10 border-blue-500/50' :
+                        'bg-green-500/10 border-green-500/50'
+                      }`}>
+                        <div className="text-sm text-gray-400 mb-2">Current Regime</div>
+                        <div className={`text-xl font-bold mb-2 ${
+                          analysis.volatility_regime.regime === 'EXPLOSIVE_VOLATILITY' ? 'text-red-400' :
+                          analysis.volatility_regime.regime === 'FLIP_POINT_CRITICAL' ? 'text-purple-400' :
+                          analysis.volatility_regime.regime === 'NEGATIVE_GAMMA_RISK' ? 'text-orange-400' :
+                          analysis.volatility_regime.regime === 'COMPRESSION_PIN' ? 'text-blue-400' :
+                          'text-green-400'
+                        }`}>
+                          {analysis.volatility_regime.regime.replace(/_/g, ' ')}
+                        </div>
+                        <div className="text-sm text-gray-300">
+                          {analysis.volatility_regime.description}
+                        </div>
+                      </div>
+
+                      {/* Risk Level */}
+                      <div className="bg-gray-950/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm text-gray-400">Risk Level</div>
+                          <div className={`text-lg font-bold ${
+                            analysis.volatility_regime.risk_level === 'extreme' ? 'text-red-400' :
+                            analysis.volatility_regime.risk_level === 'high' ? 'text-orange-400' :
+                            analysis.volatility_regime.risk_level === 'medium' ? 'text-yellow-400' :
+                            'text-green-400'
+                          }`}>
+                            {analysis.volatility_regime.risk_level.toUpperCase()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Flip Point Alert */}
+                      {analysis.volatility_regime.at_flip_point && analysis.zero_gamma_level && (
+                        <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Target className="w-5 h-5 text-purple-400" />
+                            <div className="text-sm font-semibold text-purple-400">AT FLIP POINT!</div>
+                          </div>
+                          <div className="text-sm text-gray-300">
+                            Price at zero gamma level <span className="font-bold text-purple-400">${analysis.zero_gamma_level.toFixed(2)}</span>
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            Distance: {analysis.volatility_regime.flip_point_distance_pct.toFixed(3)}%
+                          </div>
+                          <div className="text-xs text-yellow-400 mt-2">
+                            ⚠️ Explosive breakout imminent - direction unclear but magnitude will be large
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Zero Gamma Level (if not at flip point but has data) */}
+                      {!analysis.volatility_regime.at_flip_point && analysis.zero_gamma_level && (
+                        <div className="bg-gray-950/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-500 mb-1">Zero Gamma Level</div>
+                          <div className="flex items-center justify-between">
+                            <div className="text-lg font-semibold">${analysis.zero_gamma_level.toFixed(2)}</div>
+                            <div className="text-sm text-gray-400">
+                              {analysis.volatility_regime.flip_point_distance_pct.toFixed(2)}% away
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Liberation Setups & False Floors */}
             {(liberationSetups.length > 0 || falseFloors.length > 0) && (
