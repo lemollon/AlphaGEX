@@ -23,8 +23,9 @@ import {
   Clock
 } from 'lucide-react'
 
-// Default tickers to load
-const DEFAULT_TICKERS = ['SPY', 'QQQ', 'IWM', 'VIX', 'NVDA', 'AAPL', 'TSLA', 'AMZN']
+// Default tickers to load - START WITH JUST SPY to avoid rate limits
+// Users can manually add more tickers one at a time
+const DEFAULT_TICKERS = ['SPY']
 
 interface TickerData {
   symbol: string
@@ -136,10 +137,11 @@ export default function GEXAnalysisPage() {
       }
 
       // Use StaggeredLoader for intelligent rate limiting
+      // CONSERVATIVE: 5 second delay = max 12 calls/min (well under 20/min API limit)
       const freshResults = await StaggeredLoader.loadWithDelay(
         tickersToLoad,
         loadFn,
-        700 // 700ms between calls = ~85 calls/min (well under 20/min limit)
+        5000 // 5 seconds between calls to avoid backend circuit breaker
       )
 
       // Update state with fresh data
@@ -299,6 +301,45 @@ export default function GEXAnalysisPage() {
             </p>
           </div>
 
+          {/* Rate Limit Warning */}
+          <div className="bg-warning/10 border border-warning rounded-lg p-4 mb-6">
+            <div className="flex items-start space-x-3">
+              <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-warning font-semibold mb-2">⚠️ API Rate Limit Protection</h3>
+                <p className="text-text-secondary text-sm mb-3">
+                  To avoid hitting API limits, we load data with <strong>5-second delays</strong> between tickers.
+                  This means each new ticker takes ~5 seconds to load.
+                </p>
+                <div className="bg-background-deep rounded-lg p-3 border border-gray-700">
+                  <p className="text-text-primary text-sm font-semibold mb-2">💡 Recommended Workflow:</p>
+                  <ul className="text-text-secondary text-sm space-y-1">
+                    <li>• Start with SPY (already loaded)</li>
+                    <li>• Add 1-2 tickers at a time</li>
+                    <li>• Wait for data to load before adding more</li>
+                    <li>• Cached data persists - refreshing the page is instant!</li>
+                  </ul>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="text-text-muted text-xs">Popular tickers:</span>
+                  {['QQQ', 'IWM', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMZN', 'META'].map(ticker => (
+                    <button
+                      key={ticker}
+                      onClick={() => {
+                        if (!tickers.includes(ticker)) {
+                          setNewTicker(ticker)
+                        }
+                      }}
+                      className="px-2 py-1 bg-background-hover border border-gray-700 rounded text-xs text-text-primary hover:border-primary transition-colors"
+                    >
+                      {ticker}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Add Ticker Input */}
           <div className="card mb-8">
             <div className="flex items-center space-x-4">
@@ -307,17 +348,23 @@ export default function GEXAnalysisPage() {
                 value={newTicker}
                 onChange={(e) => setNewTicker(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && addTicker()}
-                placeholder="Add ticker (e.g., GOOGL)"
+                placeholder="Add ticker (e.g., QQQ, NVDA, AAPL)"
                 className="flex-1 px-4 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-primary focus:outline-none focus:border-primary"
               />
               <button
                 onClick={addTicker}
-                className="btn-primary flex items-center space-x-2"
+                disabled={loading && loadingTickers.size > 0}
+                className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus className="w-5 h-5" />
                 <span>Add Ticker</span>
               </button>
             </div>
+            {loading && loadingTickers.size > 0 && (
+              <div className="mt-3 text-sm text-warning">
+                ⏱️ Please wait - loading current ticker(s) with 5-second delays to avoid rate limits...
+              </div>
+            )}
           </div>
 
           {/* Error Message */}
@@ -332,12 +379,14 @@ export default function GEXAnalysisPage() {
 
           {/* Loading State with Tips */}
           {loading && loadingTickers.size > 0 && (
-            <LoadingWithTips
-              message={`Loading fresh GEX data for ${loadingTickers.size} ticker${loadingTickers.size > 1 ? 's' : ''}...`}
-              showProgress={true}
-              progress={tickers.length - loadingTickers.size}
-              total={tickers.length}
-            />
+            <div className="mb-6">
+              <LoadingWithTips
+                message={`Loading fresh GEX data for ${loadingTickers.size} ticker${loadingTickers.size > 1 ? 's' : ''}... (Est. ${loadingTickers.size * 5}s)`}
+                showProgress={true}
+                progress={tickers.length - loadingTickers.size}
+                total={tickers.length}
+              />
+            </div>
           )}
 
           {/* Ticker Cards */}
