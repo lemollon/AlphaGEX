@@ -4100,6 +4100,190 @@ async def get_best_strategies(min_expectancy: float = 0.5, min_win_rate: float =
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==============================================================================
+# AI-POWERED FEATURES (Claude + LangChain)
+# ==============================================================================
+
+@app.post("/api/ai/optimize-strategy")
+async def optimize_strategy(request: dict):
+    """
+    AI-powered strategy optimization using Claude
+
+    Request body:
+        {
+            "strategy_name": "GAMMA_SQUEEZE_CASCADE",
+            "api_key": "optional_anthropic_key"
+        }
+
+    Returns:
+        Detailed analysis and optimization recommendations
+    """
+    try:
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+
+        strategy_name = request.get('strategy_name')
+        api_key = request.get('api_key')
+
+        if not strategy_name:
+            raise HTTPException(status_code=400, detail="strategy_name required")
+
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+        result = optimizer.optimize_strategy(strategy_name)
+
+        return {
+            "success": True,
+            "optimization": result
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ai/analyze-all-strategies")
+async def analyze_all_strategies(api_key: str = None):
+    """
+    AI analysis of all strategies with rankings and recommendations
+
+    Query params:
+        api_key: Optional Anthropic API key
+
+    Returns:
+        Comprehensive analysis report with strategy rankings
+    """
+    try:
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+        result = optimizer.analyze_all_strategies()
+
+        return {
+            "success": True,
+            "analysis": result
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ai/trade-advice")
+async def get_trade_advice(signal_data: dict):
+    """
+    Get AI-powered trade recommendation with reasoning
+
+    Request body:
+        {
+            "pattern": "GAMMA_SQUEEZE_CASCADE",
+            "price": 570.25,
+            "direction": "Bullish",
+            "confidence": 85,
+            "vix": 18.5,
+            "volatility_regime": "EXPLOSIVE_VOLATILITY",
+            "description": "VIX spike detected",
+            "api_key": "optional_anthropic_key"
+        }
+
+    Returns:
+        Recommendation (TAKE_TRADE/SKIP/WAIT) with detailed reasoning
+    """
+    try:
+        from ai_trade_advisor import SmartTradeAdvisor
+
+        api_key = signal_data.pop('api_key', None)
+        advisor = SmartTradeAdvisor(anthropic_api_key=api_key)
+        result = advisor.analyze_trade(signal_data)
+
+        return {
+            "success": True,
+            "advice": result
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ai/feedback")
+async def provide_ai_feedback(feedback: dict):
+    """
+    Provide feedback on AI prediction to enable learning
+
+    Request body:
+        {
+            "prediction_id": 123,
+            "actual_outcome": "WIN" or "LOSS",
+            "outcome_pnl": 2.5
+        }
+
+    Returns:
+        Updated learning stats
+    """
+    try:
+        from ai_trade_advisor import SmartTradeAdvisor
+
+        advisor = SmartTradeAdvisor()
+        result = advisor.provide_feedback(
+            prediction_id=feedback.get('prediction_id'),
+            actual_outcome=feedback.get('actual_outcome'),
+            outcome_pnl=feedback.get('outcome_pnl', 0.0)
+        )
+
+        return {
+            "success": True,
+            "feedback": result
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ai/learning-insights")
+async def get_learning_insights():
+    """
+    Get AI learning insights (accuracy by pattern, confidence calibration, etc)
+
+    Returns:
+        Learning statistics and insights
+    """
+    try:
+        from ai_trade_advisor import SmartTradeAdvisor
+
+        advisor = SmartTradeAdvisor()
+        insights = advisor.get_learning_insights()
+
+        return {
+            "success": True,
+            "insights": insights
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ai/track-record")
+async def get_ai_track_record(days: int = 30):
+    """
+    Get AI's prediction track record over time
+
+    Query params:
+        days: Number of days to analyze (default 30)
+
+    Returns:
+        Accuracy stats and calibration metrics
+    """
+    try:
+        from ai_trade_advisor import SmartTradeAdvisor
+
+        advisor = SmartTradeAdvisor()
+        track_record = advisor.get_ai_track_record(days=days)
+
+        return {
+            "success": True,
+            "track_record": track_record
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/psychology/rsi-analysis/{symbol}")
 async def get_rsi_analysis(symbol: str = "SPY"):
     """
