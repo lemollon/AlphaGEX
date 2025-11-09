@@ -4418,6 +4418,16 @@ async def optimize_strategy(request: dict):
             "optimization": result
         }
 
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail="AI Strategy Optimizer requires langchain. Install with: pip install langchain langchain-anthropic"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -4444,6 +4454,16 @@ async def analyze_all_strategies(api_key: str = None):
             "analysis": result
         }
 
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail="AI Strategy Optimizer requires langchain. Install with: pip install langchain langchain-anthropic"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

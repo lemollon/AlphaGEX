@@ -17,11 +17,18 @@ from datetime import datetime
 import sqlite3
 import json
 
-from langchain.agents import Tool, AgentExecutor, create_openai_functions_agent
-from langchain_anthropic import ChatAnthropic
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.memory import ConversationBufferMemory
-from langchain.schema import HumanMessage, AIMessage
+# Optional langchain imports - only needed if using the AI optimizer feature
+try:
+    from langchain.agents import Tool, AgentExecutor, create_openai_functions_agent
+    from langchain_anthropic import ChatAnthropic
+    from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain.memory import ConversationBufferMemory
+    from langchain.schema import HumanMessage, AIMessage
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+    print("⚠️ langchain not installed - AI Strategy Optimizer will not be available")
+    print("   Install with: pip install langchain langchain-anthropic")
 
 from config_and_database import DB_PATH
 
@@ -40,6 +47,12 @@ class StrategyOptimizerAgent:
 
     def __init__(self, anthropic_api_key: str = None):
         """Initialize the AI Strategy Optimizer"""
+
+        if not LANGCHAIN_AVAILABLE:
+            raise ImportError(
+                "langchain is required for AI Strategy Optimizer. "
+                "Install with: pip install langchain langchain-anthropic"
+            )
 
         self.api_key = anthropic_api_key or os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
 
