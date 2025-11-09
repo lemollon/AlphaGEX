@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { Sparkles, TrendingUp, AlertCircle, CheckCircle, Loader2, BarChart3 } from 'lucide-react'
 
@@ -23,13 +23,36 @@ interface OptimizationResult {
 
 export default function AIOptimizerPage() {
   const [selectedStrategy, setSelectedStrategy] = useState<string>('')
+  const [availableStrategies, setAvailableStrategies] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingStrategies, setLoadingStrategies] = useState(true)
   const [result, setResult] = useState<OptimizationResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Load available strategies on mount
+  useEffect(() => {
+    const fetchStrategies = async () => {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/backtests/results`)
+        const data = await response.json()
+
+        if (data.success) {
+          const strategies = [...new Set((data.results || data.data || []).map((r: any) => r.strategy_name))]
+          setAvailableStrategies(strategies as string[])
+        }
+      } catch (err) {
+        console.error('Failed to fetch strategies:', err)
+      } finally {
+        setLoadingStrategies(false)
+      }
+    }
+
+    fetchStrategies()
+  }, [])
+
   const optimizeStrategy = async () => {
     if (!selectedStrategy) {
-      setError('Please enter a strategy name')
+      setError('Please select a strategy')
       return
     }
 
@@ -51,12 +74,12 @@ export default function AIOptimizerPage() {
       const data = await response.json()
 
       if (data.success) {
-        setResult(data.data)
+        setResult(data.optimization || data.data)
       } else {
-        setError(data.error || 'Failed to optimize strategy')
+        setError(data.error || data.detail || 'Failed to optimize strategy')
       }
-    } catch (err) {
-      setError('Failed to connect to API')
+    } catch (err: any) {
+      setError(err.message || 'Failed to connect to API')
     } finally {
       setLoading(false)
     }
@@ -75,12 +98,12 @@ export default function AIOptimizerPage() {
       const data = await response.json()
 
       if (data.success) {
-        setResult(data.data)
+        setResult(data.analysis || data.data)
       } else {
-        setError(data.error || 'Failed to analyze strategies')
+        setError(data.error || data.detail || 'Failed to analyze strategies')
       }
-    } catch (err) {
-      setError('Failed to connect to API')
+    } catch (err: any) {
+      setError(err.message || 'Failed to connect to API')
     } finally {
       setLoading(false)
     }
@@ -125,15 +148,31 @@ export default function AIOptimizerPage() {
                 <label className="block text-sm font-medium text-text-secondary mb-2">
                   Strategy Name (optional)
                 </label>
-                <input
-                  type="text"
-                  value={selectedStrategy}
-                  onChange={(e) => setSelectedStrategy(e.target.value)}
-                  placeholder="GAMMA_SQUEEZE_CASCADE"
-                  className="w-full px-4 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-primary focus:outline-none focus:border-primary"
-                />
+                {loadingStrategies ? (
+                  <div className="flex items-center space-x-2 px-4 py-2 bg-background-deep border border-gray-700 rounded-lg">
+                    <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                    <span className="text-text-muted">Loading strategies...</span>
+                  </div>
+                ) : availableStrategies.length > 0 ? (
+                  <select
+                    value={selectedStrategy}
+                    onChange={(e) => setSelectedStrategy(e.target.value)}
+                    className="w-full px-4 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-primary focus:outline-none focus:border-primary"
+                  >
+                    <option value="">-- Select a strategy --</option>
+                    {availableStrategies.map((strategy) => (
+                      <option key={strategy} value={strategy}>
+                        {strategy.replace(/_/g, ' ')}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="px-4 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-muted">
+                    No strategies found. Run backtests first.
+                  </div>
+                )}
                 <p className="text-xs text-text-muted mt-1">
-                  Leave blank to analyze all strategies
+                  Select a strategy to optimize, or use "Analyze All" button
                 </p>
               </div>
 
