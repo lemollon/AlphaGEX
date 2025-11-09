@@ -255,48 +255,102 @@ async def get_gex_data(symbol: str):
         # Get GEX levels for support/resistance
         levels_data = api_client.get_gex_levels(symbol)
 
-        # Get psychology data for probability calculation
+        # Get psychology data and multi-timeframe RSI for probability calculation
         psychology_data = {}
+        rsi_data = {}
         try:
             # Try to get RSI and psychology state (non-blocking)
             import yfinance as yf
             ticker = yf.Ticker(symbol)
-            df_1d = ticker.history(period="30d", interval="1d")
 
-            if not df_1d.empty:
-                # Calculate simple RSI
-                delta = df_1d['Close'].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            # Calculate RSI for multiple timeframes
+            def calculate_rsi(df, period=14):
+                """Calculate RSI from dataframe"""
+                if df.empty or len(df) < period:
+                    return None
+                delta = df['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
                 rs = gain / loss
                 rsi = 100 - (100 / (1 + rs))
-                current_rsi = rsi.iloc[-1] if not rsi.empty else 50
+                return rsi.iloc[-1] if not rsi.empty else None
 
-                # Determine psychology state based on RSI
-                if current_rsi > 70:
-                    psychology_data = {
-                        'fomo_level': min(100, (current_rsi - 50) * 2),
-                        'fear_level': max(0, (50 - current_rsi) * 2),
-                        'state': 'FOMO' if current_rsi > 80 else 'MODERATE_FOMO'
-                    }
-                elif current_rsi < 30:
-                    psychology_data = {
-                        'fomo_level': max(0, (current_rsi - 50) * 2),
-                        'fear_level': min(100, (50 - current_rsi) * 2),
-                        'state': 'FEAR' if current_rsi < 20 else 'MODERATE_FEAR'
-                    }
-                else:
-                    psychology_data = {
-                        'fomo_level': 50,
-                        'fear_level': 50,
-                        'state': 'BALANCED'
-                    }
+            # Fetch data for different timeframes
+            try:
+                df_1d = ticker.history(period="90d", interval="1d")
+                rsi_1d = calculate_rsi(df_1d)
+                if rsi_1d is not None:
+                    rsi_data['1d'] = round(float(rsi_1d), 1)
+            except:
+                rsi_data['1d'] = None
+
+            try:
+                df_4h = ticker.history(period="30d", interval="1h")
+                if not df_4h.empty and len(df_4h) >= 56:  # Need enough data for 4h RSI
+                    df_4h_resampled = df_4h.resample('4H').agg({
+                        'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'
+                    }).dropna()
+                    rsi_4h = calculate_rsi(df_4h_resampled)
+                    if rsi_4h is not None:
+                        rsi_data['4h'] = round(float(rsi_4h), 1)
+            except:
+                rsi_data['4h'] = None
+
+            try:
+                df_1h = ticker.history(period="7d", interval="1h")
+                rsi_1h = calculate_rsi(df_1h)
+                if rsi_1h is not None:
+                    rsi_data['1h'] = round(float(rsi_1h), 1)
+            except:
+                rsi_data['1h'] = None
+
+            try:
+                df_15m = ticker.history(period="5d", interval="15m")
+                rsi_15m = calculate_rsi(df_15m)
+                if rsi_15m is not None:
+                    rsi_data['15m'] = round(float(rsi_15m), 1)
+            except:
+                rsi_data['15m'] = None
+
+            try:
+                df_5m = ticker.history(period="2d", interval="5m")
+                rsi_5m = calculate_rsi(df_5m)
+                if rsi_5m is not None:
+                    rsi_data['5m'] = round(float(rsi_5m), 1)
+            except:
+                rsi_data['5m'] = None
+
+            # Use 1d RSI for psychology state (most reliable)
+            current_rsi = rsi_data.get('1d', 50)
+            if current_rsi is None:
+                current_rsi = 50
+
+            # Determine psychology state based on RSI
+            if current_rsi > 70:
+                psychology_data = {
+                    'fomo_level': min(100, (current_rsi - 50) * 2),
+                    'fear_level': max(0, (50 - current_rsi) * 2),
+                    'state': 'FOMO' if current_rsi > 80 else 'MODERATE_FOMO',
+                    'rsi': current_rsi
+                }
+            elif current_rsi < 30:
+                psychology_data = {
+                    'fomo_level': max(0, (current_rsi - 50) * 2),
+                    'fear_level': min(100, (50 - current_rsi) * 2),
+                    'state': 'FEAR' if current_rsi < 20 else 'MODERATE_FEAR',
+                    'rsi': current_rsi
+                }
             else:
-                # Default values if no data
-                psychology_data = {'fomo_level': 50, 'fear_level': 50, 'state': 'BALANCED'}
+                psychology_data = {
+                    'fomo_level': 50,
+                    'fear_level': 50,
+                    'state': 'BALANCED',
+                    'rsi': current_rsi
+                }
         except Exception as e:
             print(f"⚠️  Could not fetch psychology data for {symbol}: {e}")
-            psychology_data = {'fomo_level': 50, 'fear_level': 50, 'state': 'BALANCED'}
+            psychology_data = {'fomo_level': 50, 'fear_level': 50, 'state': 'BALANCED', 'rsi': 50}
+            rsi_data = {}
 
         # Calculate probability (EOD and Next Day)
         spot_price = gex_data.get('spot_price', 0)
@@ -376,7 +430,9 @@ async def get_gex_data(symbol: str):
             # Add psychology and MM state
             "psychology": psychology_data,
             "mm_state": mm_state,
-            "vix": vix_level
+            "vix": vix_level,
+            # NEW: Add multi-timeframe RSI
+            "rsi": rsi_data
         }
 
         return {

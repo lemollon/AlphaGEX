@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { IntelligentCache, StaggeredLoader, RateLimiter } from '@/lib/intelligentCache'
 import {
   TrendingUp,
   TrendingDown,
@@ -16,7 +17,9 @@ import {
   Target,
   Brain,
   BarChart3,
-  DollarSign
+  DollarSign,
+  RefreshCw,
+  Clock
 } from 'lucide-react'
 
 // Default tickers to load
@@ -35,12 +38,19 @@ interface TickerData {
     fomo_level: number
     fear_level: number
     state: string
+    rsi: number
   }
   probability?: {
     eod: ProbabilityData
     next_day: ProbabilityData
   }
-  rsi?: number
+  rsi?: {
+    '5m': number | null
+    '15m': number | null
+    '1h': number | null
+    '4h': number | null
+    '1d': number | null
+  }
 }
 
 interface ProbabilityData {
@@ -64,9 +74,12 @@ export default function GEXAnalysisPage() {
   const [tickers, setTickers] = useState<string[]>(DEFAULT_TICKERS)
   const [tickerData, setTickerData] = useState<Record<string, TickerData>>({})
   const [loading, setLoading] = useState(true)
+  const [loadingProgress, setLoadingProgress] = useState(0)
   const [newTicker, setNewTicker] = useState('')
   const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set(DEFAULT_TICKERS))
   const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [cacheInfo, setCacheInfo] = useState<Record<string, string>>({})
 
   useEffect(() => {
     loadAllTickers()
@@ -75,30 +88,76 @@ export default function GEXAnalysisPage() {
   const loadAllTickers = async () => {
     setLoading(true)
     setError(null)
+    setLoadingProgress(0)
 
-    const dataPromises = tickers.map(async (ticker) => {
-      try {
-        const response = await apiClient.getGEX(ticker)
-        if (response.data.success) {
-          return { ticker, data: response.data.data }
-        }
-      } catch (err) {
-        console.error(`Failed to load ${ticker}:`, err)
+    try {
+      // Load tickers with staggered delay to avoid rate limits
+      const results = await StaggeredLoader.loadWithDelay(
+        tickers,
+        async (ticker) => {
+          const response = await apiClient.getGEX(ticker)
+          if (response.data.success) {
+            setLoadingProgress((prev) => prev + 1)
+            return response.data.data
+          }
+          throw new Error('Failed to load')
+        },
+        600 // 600ms delay between calls = safe rate
+      )
+
+      setTickerData(results)
+
+      // Update cache info
+      const newCacheInfo: Record<string, string> = {}
+      tickers.forEach((ticker) => {
+        newCacheInfo[ticker] = IntelligentCache.getAgeString(ticker)
+      })
+      setCacheInfo(newCacheInfo)
+    } catch (err) {
+      console.error('Failed to load tickers:', err)
+      setError('Failed to load some tickers. Check console for details.')
+    } finally {
+      setLoading(false)
+      setLoadingProgress(0)
+    }
+  }
+
+  const refreshTicker = async (ticker: string) => {
+    setRefreshing(true)
+    try {
+      // Clear cache for this ticker
+      IntelligentCache.remove(ticker)
+
+      // Check rate limit
+      if (!RateLimiter.canMakeCall()) {
+        const waitTime = Math.ceil(RateLimiter.getTimeUntilNextCall() / 1000)
+        setError(`Rate limit: please wait ${waitTime}s`)
+        setRefreshing(false)
+        return
       }
-      return null
-    })
 
-    const results = await Promise.all(dataPromises)
-    const newData: Record<string, TickerData> = {}
+      RateLimiter.recordCall()
+      const response = await apiClient.getGEX(ticker)
 
-    results.forEach((result) => {
-      if (result) {
-        newData[result.ticker] = result.data
+      if (response.data.success) {
+        setTickerData((prev) => ({
+          ...prev,
+          [ticker]: response.data.data,
+        }))
+
+        IntelligentCache.set(ticker, response.data.data, ticker)
+
+        setCacheInfo((prev) => ({
+          ...prev,
+          [ticker]: 'Just now',
+        }))
       }
-    })
-
-    setTickerData(newData)
-    setLoading(false)
+    } catch (err) {
+      console.error(`Failed to refresh ${ticker}:`, err)
+      setError(`Failed to refresh ${ticker}`)
+    } finally {
+      setRefreshing(false)
+    }
   }
 
   const addTicker = () => {
@@ -262,8 +321,22 @@ export default function GEXAnalysisPage() {
                       }`}>
                         {data.net_gex > 0 ? 'Positive GEX' : 'Negative GEX'}
                       </span>
+                      {cacheInfo[ticker] && (
+                        <div className="flex items-center space-x-2 text-xs text-text-muted">
+                          <Clock className="w-3 h-3" />
+                          <span>{cacheInfo[ticker]}</span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => refreshTicker(ticker)}
+                        disabled={refreshing}
+                        className="p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover disabled:opacity-50"
+                        title="Refresh data"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                      </button>
                       <button
                         onClick={() => toggleExpanded(ticker)}
                         className="p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover"
@@ -384,6 +457,35 @@ export default function GEXAnalysisPage() {
                           </p>
                         </div>
                       </div>
+
+                      {/* Multi-Timeframe RSI */}
+                      {data.rsi && (
+                        <div className="bg-background-deep rounded-lg p-4 mb-6">
+                          <div className="flex items-center space-x-2 mb-3">
+                            <BarChart3 className="w-4 h-4 text-primary" />
+                            <span className="text-text-secondary text-sm font-semibold">Multi-Timeframe RSI</span>
+                          </div>
+                          <div className="grid grid-cols-5 gap-3">
+                            {['5m', '15m', '1h', '4h', '1d'].map((tf) => {
+                              const rsiValue = data.rsi?.[tf as keyof typeof data.rsi]
+                              const getRSIColor = (value: number | null) => {
+                                if (value === null) return 'text-text-secondary'
+                                if (value > 70) return 'text-danger'
+                                if (value < 30) return 'text-success'
+                                return 'text-text-primary'
+                              }
+                              return (
+                                <div key={tf} className="text-center bg-background-card rounded-lg p-3">
+                                  <div className="text-xs text-text-muted mb-1">{tf.toUpperCase()}</div>
+                                  <div className={`text-lg font-bold ${getRSIColor(rsiValue)}`}>
+                                    {rsiValue !== null && rsiValue !== undefined ? rsiValue.toFixed(1) : '---'}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Probability Predictions */}
                       {data.probability && (

@@ -26,11 +26,10 @@ export default function AIOptimizerPage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<OptimizationResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [apiKey, setApiKey] = useState<string>('')
 
   const optimizeStrategy = async () => {
-    if (!selectedStrategy || !apiKey) {
-      setError('Please enter both strategy name and API key')
+    if (!selectedStrategy) {
+      setError('Please enter a strategy name')
       return
     }
 
@@ -46,7 +45,6 @@ export default function AIOptimizerPage() {
         },
         body: JSON.stringify({
           strategy_name: selectedStrategy,
-          api_key: apiKey,
         }),
       })
 
@@ -65,18 +63,13 @@ export default function AIOptimizerPage() {
   }
 
   const analyzeAllStrategies = async () => {
-    if (!apiKey) {
-      setError('Please enter your Anthropic API key')
-      return
-    }
-
     setLoading(true)
     setError(null)
     setResult(null)
 
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/ai/analyze-all-strategies?api_key=${apiKey}`
+        `${process.env.NEXT_PUBLIC_API_URL}/api/ai/analyze-all-strategies`
       )
 
       const data = await response.json()
@@ -130,30 +123,6 @@ export default function AIOptimizerPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-text-secondary mb-2">
-                  Anthropic API Key
-                </label>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="sk-ant-..."
-                  className="w-full px-4 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-primary focus:outline-none focus:border-primary"
-                />
-                <p className="text-xs text-text-muted mt-1">
-                  Get your API key from{' '}
-                  <a
-                    href="https://console.anthropic.com/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    console.anthropic.com
-                  </a>
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-text-secondary mb-2">
                   Strategy Name (optional)
                 </label>
                 <input
@@ -171,7 +140,7 @@ export default function AIOptimizerPage() {
               <div className="flex space-x-4">
                 <button
                   onClick={optimizeStrategy}
-                  disabled={loading || !apiKey || !selectedStrategy}
+                  disabled={loading || !selectedStrategy}
                   className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? (
@@ -184,7 +153,7 @@ export default function AIOptimizerPage() {
 
                 <button
                   onClick={analyzeAllStrategies}
-                  disabled={loading || !apiKey}
+                  disabled={loading}
                   className="btn-secondary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? (
@@ -195,6 +164,10 @@ export default function AIOptimizerPage() {
                   <span>Analyze All</span>
                 </button>
               </div>
+
+              <p className="text-xs text-text-muted">
+                Using Anthropic Claude API from backend environment configuration
+              </p>
             </div>
           </div>
 
@@ -337,7 +310,7 @@ export default function AIOptimizerPage() {
                     <li className="flex items-start space-x-2">
                       <span className="text-primary">•</span>
                       <span>
-                        Cost: ~$0.01-0.05 per analysis. Monthly: $5-20 for typical usage.
+                        Powered by Anthropic Claude - configured in backend environment
                       </span>
                     </li>
                   </ul>
