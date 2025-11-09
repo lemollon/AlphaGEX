@@ -178,7 +178,10 @@ class ProbabilityCalculator:
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
-            print(f"Error fetching {endpoint} for {symbol}: {e}")
+            # Silently handle errors - this is optional data that enhances probability calculations
+            # If API fails or returns invalid JSON, we just won't use historical patterns
+            # No need to spam logs with these errors
+            pass
 
         return None
 

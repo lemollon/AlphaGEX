@@ -503,6 +503,26 @@ export default function GEXAnalysisPage() {
 
                   {isExpanded && (
                     <>
+                      {/* GEX Profile Chart */}
+                      <div className="mt-6">
+                        {gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
+                          <GEXProfileChart
+                            data={gexLevels[ticker]}
+                            spotPrice={data.spot_price}
+                            flipPoint={data.flip_point}
+                            callWall={data.call_wall}
+                            putWall={data.put_wall}
+                            height={600}
+                          />
+                        ) : (
+                          <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
+                            <div className="flex items-center justify-center space-x-3">
+                              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                              <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       {/* GEX Metrics Grid */}
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         <div className="bg-background-deep rounded-lg p-4">
@@ -760,26 +780,6 @@ export default function GEXAnalysisPage() {
                         </div>
                       )}
 
-                      {/* GEX Profile Chart */}
-                      <div className="mt-6">
-                        {gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
-                          <GEXProfileChart
-                            data={gexLevels[ticker]}
-                            spotPrice={data.spot_price}
-                            flipPoint={data.flip_point}
-                            callWall={data.call_wall}
-                            putWall={data.put_wall}
-                            height={600}
-                          />
-                        ) : (
-                          <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
-                            <div className="flex items-center justify-center space-x-3">
-                              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                              <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
                     </>
                   )}
                 </div>
