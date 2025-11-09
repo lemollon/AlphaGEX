@@ -3902,6 +3902,204 @@ async def get_notification_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==============================================================================
+# BACKTEST RESULTS ENDPOINTS
+# ==============================================================================
+
+@app.get("/api/backtests/results")
+async def get_backtest_results(strategy_name: str = None, limit: int = 50):
+    """
+    Get backtest results for all strategies or specific strategy
+
+    Args:
+        strategy_name: Filter by specific strategy (optional)
+        limit: Maximum number of results (default 50)
+
+    Returns:
+        List of backtest results with full metrics
+    """
+    try:
+        import sqlite3
+        from config_and_database import DB_PATH
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        if strategy_name:
+            c.execute('''
+                SELECT *
+                FROM backtest_results
+                WHERE strategy_name = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (strategy_name, limit))
+        else:
+            c.execute('''
+                SELECT *
+                FROM backtest_results
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (limit,))
+
+        results = []
+        for row in c.fetchall():
+            results.append({
+                'id': row['id'],
+                'timestamp': row['timestamp'],
+                'strategy_name': row['strategy_name'],
+                'symbol': row['symbol'],
+                'start_date': row['start_date'],
+                'end_date': row['end_date'],
+                'total_trades': row['total_trades'],
+                'winning_trades': row['winning_trades'],
+                'losing_trades': row['losing_trades'],
+                'win_rate': round(row['win_rate'], 1),
+                'avg_win_pct': round(row['avg_win_pct'], 2),
+                'avg_loss_pct': round(row['avg_loss_pct'], 2),
+                'largest_win_pct': round(row['largest_win_pct'], 2),
+                'largest_loss_pct': round(row['largest_loss_pct'], 2),
+                'expectancy_pct': round(row['expectancy_pct'], 2),
+                'total_return_pct': round(row['total_return_pct'], 2),
+                'max_drawdown_pct': round(row['max_drawdown_pct'], 2),
+                'sharpe_ratio': round(row['sharpe_ratio'], 2),
+                'avg_trade_duration_days': round(row['avg_trade_duration_days'], 1)
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "count": len(results),
+            "results": results
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/backtests/summary")
+async def get_backtest_summary():
+    """
+    Get latest backtest summary comparing all strategy categories
+
+    Returns:
+        Summary with psychology, GEX, and options strategy performance
+    """
+    try:
+        import sqlite3
+        from config_and_database import DB_PATH
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT *
+            FROM backtest_summary
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ''')
+
+        row = c.fetchone()
+        conn.close()
+
+        if not row:
+            return {
+                "success": True,
+                "summary": None,
+                "message": "No backtest summary found. Run backtests first."
+            }
+
+        summary = {
+            'timestamp': row['timestamp'],
+            'symbol': row['symbol'],
+            'start_date': row['start_date'],
+            'end_date': row['end_date'],
+            'psychology': {
+                'total_trades': row['psychology_trades'],
+                'win_rate': round(row['psychology_win_rate'], 1),
+                'expectancy_pct': round(row['psychology_expectancy'], 2)
+            },
+            'gex': {
+                'total_trades': row['gex_trades'],
+                'win_rate': round(row['gex_win_rate'], 1),
+                'expectancy_pct': round(row['gex_expectancy'], 2)
+            },
+            'options': {
+                'total_trades': row['options_trades'],
+                'win_rate': round(row['options_win_rate'], 1),
+                'expectancy_pct': round(row['options_expectancy'], 2)
+            }
+        }
+
+        return {
+            "success": True,
+            "summary": summary
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/backtests/best-strategies")
+async def get_best_strategies(min_expectancy: float = 0.5, min_win_rate: float = 55):
+    """
+    Get best performing strategies based on backtest results
+
+    Args:
+        min_expectancy: Minimum expectancy % (default 0.5)
+        min_win_rate: Minimum win rate % (default 55)
+
+    Returns:
+        List of strategies that meet criteria, sorted by expectancy
+    """
+    try:
+        import sqlite3
+        from config_and_database import DB_PATH
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT *
+            FROM backtest_results
+            WHERE expectancy_pct >= ?
+            AND win_rate >= ?
+            AND total_trades >= 10
+            ORDER BY expectancy_pct DESC
+            LIMIT 20
+        ''', (min_expectancy, min_win_rate))
+
+        strategies = []
+        for row in c.fetchall():
+            strategies.append({
+                'strategy_name': row['strategy_name'],
+                'total_trades': row['total_trades'],
+                'win_rate': round(row['win_rate'], 1),
+                'expectancy_pct': round(row['expectancy_pct'], 2),
+                'total_return_pct': round(row['total_return_pct'], 2),
+                'sharpe_ratio': round(row['sharpe_ratio'], 2),
+                'max_drawdown_pct': round(row['max_drawdown_pct'], 2)
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "count": len(strategies),
+            "strategies": strategies,
+            "criteria": {
+                "min_expectancy_pct": min_expectancy,
+                "min_win_rate": min_win_rate
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/psychology/rsi-analysis/{symbol}")
 async def get_rsi_analysis(symbol: str = "SPY"):
     """

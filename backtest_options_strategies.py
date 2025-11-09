@@ -1,0 +1,366 @@
+"""
+Options Strategy Backtester
+
+Backtests the 11 options strategies from STRATEGIES config:
+- BULLISH_CALL_SPREAD
+- BEARISH_PUT_SPREAD
+- BULL_PUT_SPREAD
+- BEAR_CALL_SPREAD
+- IRON_CONDOR
+- IRON_BUTTERFLY
+- LONG_STRADDLE
+- LONG_STRANGLE
+- NEGATIVE_GEX_SQUEEZE
+- POSITIVE_GEX_BREAKDOWN
+- PREMIUM_SELLING
+- CALENDAR_SPREAD
+
+Uses SIMPLIFIED option pricing (directional correctness + typical spreads)
+For precise results, integrate real option chain data
+"""
+
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from backtest_framework import BacktestBase, BacktestResults, Trade
+from typing import Dict, List
+from config_and_database import STRATEGIES
+
+
+class OptionsBacktester(BacktestBase):
+    """Backtest options strategies from STRATEGIES config"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.gex_data = None
+
+    def simulate_gex_metrics(self, price_data: pd.DataFrame) -> pd.DataFrame:
+        """Simulate GEX metrics needed for strategy conditions"""
+        df = price_data.copy()
+
+        # Net GEX based on volatility
+        df['returns'] = df['Close'].pct_change()
+        df['volatility'] = df['returns'].rolling(10).std() * 100
+
+        # Negative GEX when volatile, Positive when calm
+        vol_ma = df['volatility'].rolling(50).mean()
+        df['net_gex'] = np.where(
+            df['volatility'] > vol_ma,
+            -1.5e9,  # Negative GEX
+            +2.0e9   # Positive GEX
+        )
+
+        # Flip point (zero gamma level)
+        df['flip_point'] = df['Close'].rolling(20).mean()
+        df['distance_to_flip'] = abs(df['Close'] - df['flip_point']) / df['flip_point'] * 100
+
+        # Walls at round numbers
+        df['call_wall'] = (np.ceil(df['Close'] / 10) * 10).astype(float)
+        df['put_wall'] = (np.floor(df['Close'] / 10) * 10).astype(float)
+        df['distance_to_call_wall'] = abs(df['Close'] - df['call_wall']) / df['Close'] * 100
+        df['distance_to_put_wall'] = abs(df['Close'] - df['put_wall']) / df['Close'] * 100
+
+        # Min wall distance
+        df['min_wall_distance'] = df[['distance_to_call_wall', 'distance_to_put_wall']].min(axis=1)
+
+        # Trend determination (simple MA crossover)
+        df['SMA_20'] = df['Close'].rolling(20).mean()
+        df['SMA_50'] = df['Close'].rolling(50).mean()
+        df['trend'] = np.where(df['SMA_20'] > df['SMA_50'], 'bullish', 'bearish')
+
+        # IV Rank (simplified - based on recent volatility)
+        df['vol_rank'] = df['volatility'].rolling(252).apply(
+            lambda x: (x.iloc[-1] - x.min()) / (x.max() - x.min()) * 100 if x.max() > x.min() else 50
+        )
+
+        return df
+
+    def check_strategy_conditions(self, row: pd.Series, strategy_name: str) -> bool:
+        """Check if strategy entry conditions are met"""
+        if strategy_name not in STRATEGIES:
+            return False
+
+        strategy_config = STRATEGIES[strategy_name]
+        conditions = strategy_config['conditions']
+
+        # Check each condition
+        for condition_name, condition_value in conditions.items():
+            if condition_name == 'net_gex_threshold':
+                if isinstance(condition_value, (int, float)):
+                    if row['net_gex'] < condition_value:
+                        return False
+            elif condition_name == 'distance_to_flip':
+                if row['distance_to_flip'] > condition_value:
+                    return False
+            elif condition_name == 'trend':
+                if condition_value == 'bullish' and row['trend'] != 'bullish':
+                    return False
+                elif condition_value == 'bearish' and row['trend'] != 'bearish':
+                    return False
+                elif condition_value == 'neutral_to_bullish' and row['trend'] == 'bearish':
+                    return False
+                elif condition_value == 'neutral_to_bearish' and row['trend'] == 'bullish':
+                    return False
+            elif condition_name == 'distance_to_call_wall':
+                if row['distance_to_call_wall'] > condition_value:
+                    return False
+            elif condition_name == 'distance_to_put_wall':
+                if row['distance_to_put_wall'] > condition_value:
+                    return False
+            elif condition_name == 'min_wall_distance':
+                if row['min_wall_distance'] < condition_value:
+                    return False
+            elif condition_name == 'iv_rank_below':
+                if row['vol_rank'] > condition_value:
+                    return False
+            elif condition_name == 'low_volatility':
+                median_vol = row['volatility'].rolling(50).median()
+                if condition_value and row['volatility'] > median_vol:
+                    return False
+            elif condition_name == 'price_at_flip':
+                if abs(row['Close'] - row['flip_point']) / row['flip_point'] * 100 > condition_value:
+                    return False
+
+        return True
+
+    def simulate_option_pnl(self, strategy_name: str, entry_price: float,
+                           exit_price: float, days_held: int) -> float:
+        """
+        Simulate option PnL based on directional move and strategy type
+
+        Simplified model:
+        - Debit spreads: Max gain = width, Max loss = debit paid
+        - Credit spreads: Max gain = credit, Max loss = width - credit
+        - Straddles/Strangles: PnL scales with move size
+        - Iron Condor: Profit if stays in range
+        """
+        strategy_config = STRATEGIES.get(strategy_name, {})
+        price_change_pct = ((exit_price - entry_price) / entry_price) * 100
+
+        # Get expected parameters
+        risk_reward = strategy_config.get('risk_reward', 1.0)
+        win_rate = strategy_config.get('win_rate', 0.5)
+
+        # Directional debit spreads
+        if strategy_name in ['BULLISH_CALL_SPREAD', 'BEARISH_PUT_SPREAD', 'NEGATIVE_GEX_SQUEEZE']:
+            # Win if move in expected direction > 1%
+            if strategy_name == 'BULLISH_CALL_SPREAD' or strategy_name == 'NEGATIVE_GEX_SQUEEZE':
+                target_move = 2.0  # Need 2% up to win
+                if price_change_pct > target_move:
+                    return +risk_reward * 100  # Max gain
+                elif price_change_pct < -1.0:
+                    return -100  # Max loss
+                else:
+                    return price_change_pct * 30  # Partial
+            else:  # BEARISH_PUT_SPREAD
+                target_move = -2.0  # Need 2% down to win
+                if price_change_pct < target_move:
+                    return +risk_reward * 100
+                elif price_change_pct > 1.0:
+                    return -100
+                else:
+                    return -price_change_pct * 30
+
+        # Credit spreads
+        elif strategy_name in ['BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD', 'PREMIUM_SELLING']:
+            # Win if stays above/below strike
+            max_gain = 40  # Typical credit
+            max_loss = -100  # Width - credit
+
+            if strategy_name == 'BULL_PUT_SPREAD':
+                # Win if price stays above or rises
+                if price_change_pct >= -0.5:
+                    return max_gain
+                elif price_change_pct < -2.0:
+                    return max_loss
+                else:
+                    return max_gain * (1 + price_change_pct / 2)
+            elif strategy_name == 'BEAR_CALL_SPREAD':
+                # Win if price stays below or falls
+                if price_change_pct <= 0.5:
+                    return max_gain
+                elif price_change_pct > 2.0:
+                    return max_loss
+                else:
+                    return max_gain * (1 - price_change_pct / 2)
+            else:  # PREMIUM_SELLING
+                # Win if no significant move
+                if abs(price_change_pct) < 1.0:
+                    return max_gain
+                elif abs(price_change_pct) > 2.5:
+                    return max_loss
+                else:
+                    return max_gain * (1 - abs(price_change_pct) / 2.5)
+
+        # Range-bound strategies
+        elif strategy_name in ['IRON_CONDOR', 'IRON_BUTTERFLY']:
+            max_gain = 30  # Typical credit
+            max_loss = -100
+
+            # Iron Condor: Win if stays in range
+            if abs(price_change_pct) < 1.5:
+                return max_gain
+            elif abs(price_change_pct) > 3.0:
+                return max_loss
+            else:
+                return max_gain * (1 - abs(price_change_pct) / 3.0)
+
+        # Volatility strategies
+        elif strategy_name in ['LONG_STRADDLE', 'LONG_STRANGLE']:
+            # Win if large move in either direction
+            debit_paid = -100
+            max_gain_multiple = risk_reward
+
+            if abs(price_change_pct) > 3.0:
+                return abs(price_change_pct) * max_gain_multiple * 50  # Large gain
+            elif abs(price_change_pct) < 1.0:
+                return debit_paid  # Full loss if no move
+            else:
+                return debit_paid + (abs(price_change_pct) - 1.0) * 50  # Partial
+
+        # GEX-specific
+        elif strategy_name == 'POSITIVE_GEX_BREAKDOWN':
+            # Win if breaks below flip point
+            if price_change_pct < -1.0:
+                return abs(price_change_pct) * 80
+            elif price_change_pct > 1.0:
+                return -100
+            else:
+                return price_change_pct * 40
+
+        # Calendar spread
+        elif strategy_name == 'CALENDAR_SPREAD':
+            # Win if stays near entry price
+            if abs(price_change_pct) < 0.5:
+                return +50
+            elif abs(price_change_pct) > 2.0:
+                return -80
+            else:
+                return 50 * (1 - abs(price_change_pct) / 2.0)
+
+        # Default fallback
+        return price_change_pct * 50
+
+    def run_backtest(self) -> BacktestResults:
+        """Run options strategies backtest"""
+        print(f"\n📊 Running Options Strategies Backtest...")
+
+        # Fetch price data
+        self.fetch_historical_data()
+
+        # Simulate GEX metrics
+        print("Simulating GEX metrics...")
+        self.gex_data = self.simulate_gex_metrics(self.price_data)
+
+        all_trades = []
+
+        # Test each strategy
+        for strategy_name in STRATEGIES.keys():
+            print(f"\nTesting {strategy_name}...")
+            strategy_trades = self.test_strategy(strategy_name)
+            all_trades.extend(strategy_trades)
+
+            if strategy_trades:
+                results = self.calculate_metrics(strategy_trades, strategy_name)
+                print(f"  Trades: {results.total_trades}, Win Rate: {results.win_rate:.1f}%, Expectancy: {results.expectancy_pct:+.2f}%")
+
+                # Save individual strategy results
+                self.save_results_to_db(results)
+
+        # Calculate combined results
+        results = self.calculate_metrics(all_trades, "Options Strategies (Combined)")
+        self.print_summary(results)
+        self.save_results_to_db(results)
+
+        return results
+
+    def test_strategy(self, strategy_name: str) -> List[Trade]:
+        """Test a single options strategy"""
+        trades = []
+        strategy_config = STRATEGIES[strategy_name]
+        dte_range = strategy_config.get('dte_range', [3, 14])
+        min_dte = dte_range[0]
+        max_dte = dte_range[1]
+
+        for i in range(50, len(self.gex_data) - max_dte):
+            row = self.gex_data.iloc[i]
+
+            # Skip if not enough data
+            if pd.isna(row['net_gex']) or pd.isna(row['flip_point']):
+                continue
+
+            # Check entry conditions
+            if self.check_strategy_conditions(row, strategy_name):
+                entry_date = row.name.strftime('%Y-%m-%d')
+                entry_price = row['Close']
+
+                # Hold for average DTE
+                holding_days = (min_dte + max_dte) // 2
+
+                # Exit at holding_days or earlier if max profit hit
+                exit_idx = min(i + holding_days, len(self.gex_data) - 1)
+                exit_row = self.gex_data.iloc[exit_idx]
+                exit_date = exit_row.name.strftime('%Y-%m-%d')
+                exit_price = exit_row['Close']
+
+                # Calculate option PnL (simplified)
+                days_held = (pd.to_datetime(exit_date) - pd.to_datetime(entry_date)).days
+                option_pnl_pct = self.simulate_option_pnl(
+                    strategy_name, entry_price, exit_price, days_held
+                )
+
+                # Create trade with option PnL
+                # Override calculate_pnl to use simulated option PnL
+                position_size = self.initial_capital * (self.position_size_pct / 100)
+                commission = position_size * (self.commission_pct / 100) * 2
+                slippage = position_size * (self.slippage_pct / 100)
+                total_costs = commission + slippage
+                cost_pct = (total_costs / position_size) * 100
+
+                net_pnl_pct = option_pnl_pct - cost_pct
+                net_pnl_dollars = position_size * (net_pnl_pct / 100)
+
+                trade = Trade(
+                    entry_date=entry_date,
+                    exit_date=exit_date,
+                    symbol=self.symbol,
+                    strategy=strategy_name,
+                    direction='LONG',  # Options always long the spread
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    position_size=position_size,
+                    commission=commission,
+                    slippage=slippage,
+                    pnl_percent=net_pnl_pct,
+                    pnl_dollars=net_pnl_dollars,
+                    duration_days=days_held,
+                    win=(net_pnl_pct > 0),
+                    confidence=strategy_config.get('win_rate', 0.5) * 100,
+                    notes=f"DTE: {days_held}"
+                )
+                trades.append(trade)
+
+        return trades
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Backtest options strategies')
+    parser.add_argument('--symbol', default='SPY', help='Symbol to backtest')
+    parser.add_argument('--start', default='2022-01-01', help='Start date YYYY-MM-DD')
+    parser.add_argument('--end', default='2024-12-31', help='End date YYYY-MM-DD')
+    args = parser.parse_args()
+
+    backtester = OptionsBacktester(
+        symbol=args.symbol,
+        start_date=args.start,
+        end_date=args.end,
+        position_size_pct=10.0,
+        commission_pct=0.10,  # Higher for options
+        slippage_pct=0.15      # Higher for options
+    )
+
+    results = backtester.run_backtest()
+
+    print("\n📊 Options Backtest Complete!")
