@@ -535,6 +535,50 @@ def init_database():
         )
     ''')
 
+    # ===== BACKTEST RESULTS TABLES =====
+
+    # Backtest results for all strategies
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            strategy_name TEXT,
+            symbol TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            total_trades INTEGER,
+            winning_trades INTEGER,
+            losing_trades INTEGER,
+            win_rate REAL,
+            avg_win_pct REAL,
+            avg_loss_pct REAL,
+            largest_win_pct REAL,
+            largest_loss_pct REAL,
+            expectancy_pct REAL,
+            total_return_pct REAL,
+            max_drawdown_pct REAL,
+            sharpe_ratio REAL,
+            avg_trade_duration_days REAL
+        )
+    ''')
+
+    # Backtest summary table (aggregated results)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_summary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            total_strategies INTEGER,
+            profitable_strategies INTEGER,
+            avg_win_rate REAL,
+            avg_expectancy REAL,
+            best_strategy TEXT,
+            best_expectancy REAL,
+            psychology_avg_expectancy REAL,
+            gex_avg_expectancy REAL,
+            options_avg_expectancy REAL
+        )
+    ''')
+
     # Performance optimization: Add indexes for frequently queried columns
     # These indexes significantly speed up queries by symbol, date, and status
     c.execute("CREATE INDEX IF NOT EXISTS idx_gex_history_symbol ON gex_history(symbol)")
@@ -556,6 +600,11 @@ def init_database():
     c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_expiration_timeline_snapshot ON gamma_expiration_timeline(snapshot_date)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_historical_oi_date_strike ON historical_open_interest(date, strike, expiration_date)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_forward_magnets_snapshot_strike ON forward_magnets(snapshot_date, strike)")
+
+    # Backtest indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy ON backtest_results(strategy_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_timestamp ON backtest_results(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)")
 
     conn.commit()
     conn.close()

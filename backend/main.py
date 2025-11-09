@@ -25,10 +25,15 @@ import uvicorn
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
 from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
-from config_and_database import STRATEGIES
+from config_and_database import STRATEGIES, init_database
 
 # Import probability calculator (NEW - Phase 2 Self-Learning)
 from probability_calculator import ProbabilityCalculator
+
+# Initialize database schema on startup
+print("Initializing database schema...")
+init_database()
+print("✓ Database initialized")
 
 # Create FastAPI app
 app = FastAPI(
