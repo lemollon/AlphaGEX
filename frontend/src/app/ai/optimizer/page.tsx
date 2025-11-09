@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
+import LoadingWithTips from '@/components/LoadingWithTips'
 import { Sparkles, TrendingUp, AlertCircle, CheckCircle, Loader2, BarChart3 } from 'lucide-react'
 
 interface OptimizationResult {
@@ -220,8 +221,16 @@ export default function AIOptimizerPage() {
             </div>
           )}
 
+          {/* Loading State */}
+          {loading && (
+            <LoadingWithTips
+              message={selectedStrategy ? `AI analyzing ${selectedStrategy.replace(/_/g, ' ')}...` : "AI analyzing all strategies..."}
+              showProgress={false}
+            />
+          )}
+
           {/* Results */}
-          {result && (
+          {result && !loading && (
             <div className="space-y-6">
               {/* Performance Overview */}
               <div className="card">

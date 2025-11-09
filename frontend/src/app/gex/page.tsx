@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
+import LoadingWithTips from '@/components/LoadingWithTips'
 import { apiClient } from '@/lib/api'
 import { IntelligentCache, StaggeredLoader, RateLimiter } from '@/lib/intelligentCache'
 import {
@@ -90,39 +91,60 @@ export default function GEXAnalysisPage() {
     setLoading(true)
     setError(null)
     setLoadingProgress(0)
-    setLoadingTickers(new Set(tickers))
+
+    // First, load cached data immediately for instant display
+    const cachedData: Record<string, TickerData> = {}
+    const tickersToLoad: string[] = []
+
+    tickers.forEach((ticker) => {
+      const cached = IntelligentCache.get<TickerData>(ticker)
+      if (cached) {
+        cachedData[ticker] = cached
+      } else {
+        tickersToLoad.push(ticker)
+      }
+    })
+
+    // Show cached data immediately
+    if (Object.keys(cachedData).length > 0) {
+      setTickerData(cachedData)
+      console.log(`📦 Loaded ${Object.keys(cachedData).length} tickers from cache`)
+    }
+
+    // Mark tickers that need loading
+    setLoadingTickers(new Set(tickersToLoad))
+
+    // If all data is cached, we're done
+    if (tickersToLoad.length === 0) {
+      setLoading(false)
+      const newCacheInfo: Record<string, string> = {}
+      tickers.forEach((ticker) => {
+        newCacheInfo[ticker] = IntelligentCache.getAgeString(ticker)
+      })
+      setCacheInfo(newCacheInfo)
+      return
+    }
 
     try {
-      // Load tickers with staggered delay to avoid rate limits
-      const results: Record<string, TickerData> = {}
-
-      for (const ticker of tickers) {
-        try {
-          const response = await apiClient.getGEX(ticker)
-          if (response.data.success) {
-            results[ticker] = response.data.data
-            setTickerData((prev) => ({ ...prev, [ticker]: response.data.data }))
-            setLoadingTickers((prev) => {
-              const next = new Set(prev)
-              next.delete(ticker)
-              return next
-            })
-            setLoadingProgress((prev) => prev + 1)
-          }
-        } catch (err) {
-          console.error(`Failed to load ${ticker}:`, err)
-          setLoadingTickers((prev) => {
-            const next = new Set(prev)
-            next.delete(ticker)
-            return next
-          })
+      // Load fresh data with rate limiting using StaggeredLoader
+      const loadFn = async (ticker: string) => {
+        const response = await apiClient.getGEX(ticker)
+        if (response.data.success) {
+          return response.data.data
         }
-
-        // Add delay between requests
-        if (ticker !== tickers[tickers.length - 1]) {
-          await new Promise(resolve => setTimeout(resolve, 600))
-        }
+        throw new Error(`Failed to load ${ticker}`)
       }
+
+      // Use StaggeredLoader for intelligent rate limiting
+      const freshResults = await StaggeredLoader.loadWithDelay(
+        tickersToLoad,
+        loadFn,
+        700 // 700ms between calls = ~85 calls/min (well under 20/min limit)
+      )
+
+      // Update state with fresh data
+      setTickerData((prev) => ({ ...prev, ...freshResults }))
+      setLoadingProgress(Object.keys(freshResults).length)
 
       // Update cache info
       const newCacheInfo: Record<string, string> = {}
@@ -130,9 +152,11 @@ export default function GEXAnalysisPage() {
         newCacheInfo[ticker] = IntelligentCache.getAgeString(ticker)
       })
       setCacheInfo(newCacheInfo)
+
+      console.log(`✅ Loaded ${Object.keys(freshResults).length} fresh tickers from API`)
     } catch (err) {
       console.error('Failed to load tickers:', err)
-      setError('Failed to load some tickers. Check console for details.')
+      setError('Some tickers failed to load. Using cached data where available.')
     } finally {
       setLoading(false)
       setLoadingProgress(0)
@@ -306,12 +330,14 @@ export default function GEXAnalysisPage() {
             </div>
           )}
 
-          {/* Loading State */}
-          {loading && (
-            <div className="text-center py-12">
-              <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-              <p className="text-text-secondary mt-4">Loading ticker data...</p>
-            </div>
+          {/* Loading State with Tips */}
+          {loading && loadingTickers.size > 0 && (
+            <LoadingWithTips
+              message={`Loading fresh GEX data for ${loadingTickers.size} ticker${loadingTickers.size > 1 ? 's' : ''}...`}
+              showProgress={true}
+              progress={tickers.length - loadingTickers.size}
+              total={tickers.length}
+            />
           )}
 
           {/* Ticker Cards */}

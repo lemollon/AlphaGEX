@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Navigation from '@/components/Navigation'
+import LoadingWithTips from '@/components/LoadingWithTips'
 import { TestTube, TrendingUp, TrendingDown, DollarSign, Activity, BarChart3 } from 'lucide-react'
 
 interface BacktestResult {
@@ -146,26 +147,18 @@ export default function BacktestingPage() {
             )}
 
             {running && (
-              <div className="bg-primary/10 border border-primary rounded-lg p-4">
-                <div className="flex items-center space-x-3">
-                  <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-                  <div>
-                    <p className="text-primary font-semibold">Running comprehensive strategy backtests...</p>
-                    <p className="text-text-secondary text-sm mt-1">
-                      This may take 2-5 minutes. Analyzing 29 strategies with full historical data.
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <LoadingWithTips
+                message="Running comprehensive strategy backtests..."
+                showProgress={false}
+              />
             )}
           </div>
 
           {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="skeleton h-64 rounded-lg"></div>
-              ))}
-            </div>
+            <LoadingWithTips
+              message="Loading backtest results..."
+              showProgress={false}
+            />
           ) : results.length === 0 ? (
             <div className="card text-center py-12">
               <TestTube className="w-16 h-16 mx-auto text-text-muted mb-4" />
