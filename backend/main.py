@@ -18,7 +18,7 @@ sys.path.insert(0, str(parent_dir))
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
@@ -3161,6 +3161,8 @@ from psychology_trap_detector import (
     calculate_mtf_rsi_score
 )
 from psychology_trading_guide import get_trading_guide
+from psychology_performance import performance_tracker
+from psychology_notifications import notification_manager
 
 # ==============================================================================
 # YFINANCE CACHING - Psychology page fetches once per day, manual refresh only
@@ -3704,6 +3706,202 @@ async def get_sucker_statistics():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/psychology/performance/overview")
+async def get_performance_overview(days: int = 30):
+    """
+    Get overall performance metrics for psychology trap detection
+
+    Args:
+        days: Number of days to analyze (default 30)
+
+    Returns:
+        Overall metrics including total signals, win rate, avg confidence, etc.
+    """
+    try:
+        metrics = performance_tracker.get_overview_metrics(days)
+        return {
+            "success": True,
+            "metrics": metrics
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/performance/by-pattern")
+async def get_pattern_performance(days: int = 90):
+    """
+    Get performance metrics for each pattern type
+
+    Args:
+        days: Number of days to analyze (default 90)
+
+    Returns:
+        List of pattern performance data with win rates, expectancy, etc.
+    """
+    try:
+        patterns = performance_tracker.get_pattern_performance(days)
+        return {
+            "success": True,
+            "count": len(patterns),
+            "patterns": patterns
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/performance/signals")
+async def get_historical_signals(limit: int = 100, pattern_type: str = None):
+    """
+    Get historical signals with full details and outcomes
+
+    Args:
+        limit: Maximum number of signals to return (default 100)
+        pattern_type: Filter by specific pattern type (optional)
+
+    Returns:
+        List of historical signals with timestamps, patterns, outcomes, etc.
+    """
+    try:
+        signals = performance_tracker.get_historical_signals(limit, pattern_type)
+        return {
+            "success": True,
+            "count": len(signals),
+            "signals": signals
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/performance/chart-data")
+async def get_chart_data(days: int = 90):
+    """
+    Get time series data for performance charts
+
+    Args:
+        days: Number of days of data (default 90)
+
+    Returns:
+        Dict with daily_signals, win_rate_timeline, and pattern_timeline
+    """
+    try:
+        chart_data = performance_tracker.get_chart_data(days)
+        return {
+            "success": True,
+            "chart_data": chart_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/performance/vix-correlation")
+async def get_vix_correlation(days: int = 90):
+    """
+    Analyze correlation between VIX levels and pattern performance
+
+    Args:
+        days: Number of days to analyze (default 90)
+
+    Returns:
+        Performance data by VIX level and spike status
+    """
+    try:
+        correlation = performance_tracker.get_vix_correlation(days)
+        return {
+            "success": True,
+            "correlation": correlation
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/notifications/stream")
+async def notification_stream():
+    """
+    Server-Sent Events (SSE) endpoint for real-time notifications
+
+    Streams critical psychology trap pattern alerts to connected clients.
+    Critical patterns: GAMMA_SQUEEZE_CASCADE, FLIP_POINT_CRITICAL, CAPITULATION_CASCADE
+    """
+    async def event_generator():
+        # Subscribe to notifications
+        queue = await notification_manager.subscribe()
+
+        try:
+            # Send initial connection message
+            yield f"data: {json.dumps({'type': 'connected', 'message': 'Notification stream connected'})}\n\n"
+
+            # Stream notifications
+            while True:
+                try:
+                    # Wait for notification with timeout
+                    notification = await asyncio.wait_for(queue.get(), timeout=30.0)
+
+                    # Send notification as SSE
+                    yield f"data: {json.dumps(notification)}\n\n"
+
+                except asyncio.TimeoutError:
+                    # Send keepalive ping every 30 seconds
+                    yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+
+        except asyncio.CancelledError:
+            # Client disconnected
+            await notification_manager.unsubscribe(queue)
+            raise
+        except Exception as e:
+            print(f"Error in notification stream: {e}")
+            await notification_manager.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable buffering for nginx
+        }
+    )
+
+
+@app.get("/api/psychology/notifications/history")
+async def get_notification_history(limit: int = 50):
+    """
+    Get recent notification history
+
+    Args:
+        limit: Maximum number of notifications to return (default 50)
+
+    Returns:
+        List of recent notifications
+    """
+    try:
+        history = notification_manager.get_notification_history(limit)
+        return {
+            "success": True,
+            "count": len(history),
+            "notifications": history
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/psychology/notifications/stats")
+async def get_notification_stats():
+    """
+    Get notification statistics
+
+    Returns:
+        Stats including total notifications, critical count, active subscribers, etc.
+    """
+    try:
+        stats = notification_manager.get_notification_stats()
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/psychology/rsi-analysis/{symbol}")
 async def get_rsi_analysis(symbol: str = "SPY"):
     """
@@ -3882,6 +4080,22 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Warning: Could not start Autonomous Trader: {e}")
         print("   (Trader can still be run manually via autonomous_scheduler.py)")
+        print("=" * 80 + "\n")
+
+    # Start Psychology Trap Notification Monitor
+    try:
+        print("🔔 Starting Psychology Trap Notification Monitor...")
+        print("⚡ Critical patterns: GAMMA_SQUEEZE_CASCADE, FLIP_POINT_CRITICAL")
+        print("⏰ Check interval: 60 seconds")
+
+        # Start notification monitor as background task
+        asyncio.create_task(notification_manager.monitor_and_notify(interval_seconds=60))
+
+        print("✅ Notification Monitor started successfully!")
+        print("=" * 80 + "\n")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not start Notification Monitor: {e}")
+        print("   (Notifications will not be sent)")
         print("=" * 80 + "\n")
 
 @app.on_event("shutdown")

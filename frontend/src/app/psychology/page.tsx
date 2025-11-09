@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import TradingGuide from '@/components/TradingGuide'
+import PsychologyNotifications from '@/components/PsychologyNotifications'
 import { apiClient } from '@/lib/api'
 
 // Get API URL from environment variable (same as rest of the app)
@@ -253,6 +254,9 @@ export default function PsychologyTrapDetection() {
             Refresh
           </button>
         </div>
+
+        {/* Push Notifications */}
+        <PsychologyNotifications />
 
         {/* Error State */}
         {error && (
