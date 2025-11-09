@@ -4275,6 +4275,109 @@ async def get_best_strategies(min_expectancy: float = 0.5, min_win_rate: float =
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/backtests/run")
+async def run_backtests(request: dict = None):
+    """
+    Run all backtests for specified symbol and date range
+
+    Request body (optional):
+        {
+            "symbol": "SPY",
+            "start_date": "2022-01-01",
+            "end_date": "2024-12-31"
+        }
+
+    Returns:
+        Backtest execution status and results
+    """
+    try:
+        import subprocess
+        from datetime import datetime, timedelta
+
+        # Parse request parameters with defaults
+        if request is None:
+            request = {}
+
+        symbol = request.get('symbol', 'SPY')
+
+        # Default to last 2 years if not specified
+        if 'end_date' not in request:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+        else:
+            end_date = request.get('end_date')
+
+        if 'start_date' not in request:
+            start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+        else:
+            start_date = request.get('start_date')
+
+        print(f"\n🚀 Running backtests for {symbol} from {start_date} to {end_date}")
+
+        # Run the backtest script
+        result = subprocess.run(
+            ['python', 'run_all_backtests.py',
+             '--symbol', symbol,
+             '--start', start_date,
+             '--end', end_date],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+
+        if result.returncode == 0:
+            print("✅ Backtests completed successfully")
+
+            # Fetch the results
+            import sqlite3
+            from config_and_database import DB_PATH
+
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+
+            # Get latest results
+            c.execute('''
+                SELECT COUNT(*) as count
+                FROM backtest_results
+                WHERE symbol = ?
+            ''', (symbol,))
+
+            count_row = c.fetchone()
+            result_count = count_row['count'] if count_row else 0
+
+            conn.close()
+
+            return {
+                "success": True,
+                "message": f"Backtests completed successfully for {symbol}",
+                "symbol": symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+                "results_count": result_count,
+                "output": result.stdout
+            }
+        else:
+            print(f"❌ Backtests failed: {result.stderr}")
+            return {
+                "success": False,
+                "error": "Backtest execution failed",
+                "stderr": result.stderr,
+                "stdout": result.stdout
+            }
+
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error": "Backtest execution timed out (>5 minutes)"
+        }
+    except Exception as e:
+        print(f"❌ Error running backtests: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 # ==============================================================================
 # AI-POWERED FEATURES (Claude + LangChain)
 # ==============================================================================

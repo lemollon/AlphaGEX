@@ -153,7 +153,8 @@ export default function GammaIntelligence() {
   }, [symbol])
 
   useEffect(() => {
-    fetchData()
+    // Always fetch fresh data when symbol or vix changes
+    fetchData(true)
   }, [symbol, vix])
 
   useEffect(() => {
@@ -201,8 +202,12 @@ export default function GammaIntelligence() {
           {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-text-primary">Gamma Intelligence</h1>
-          <p className="text-text-secondary mt-1">Advanced gamma exposure analysis and insights</p>
+          <h1 className="text-3xl font-bold text-text-primary flex items-center space-x-3">
+            <span>Gamma Intelligence</span>
+            <span className="text-primary">•</span>
+            <span className="text-primary">{symbol}</span>
+          </h1>
+          <p className="text-text-secondary mt-1">Advanced gamma exposure analysis and insights for {symbol}</p>
         </div>
         <div className="flex items-center gap-2">
           {/* 0DTE Tracker Button */}
@@ -406,7 +411,7 @@ export default function GammaIntelligence() {
               <div className="card">
                 <div className="flex items-start justify-between mb-4">
                   <div>
-                    <h2 className="text-xl font-semibold text-text-primary mb-2">Gamma Exposure by Strike</h2>
+                    <h2 className="text-xl font-semibold text-text-primary mb-2">{symbol} Gamma Exposure by Strike</h2>
                     <p className="text-sm text-text-secondary">💰 HOW TO MAKE MONEY: Use gamma walls (🔼 Call Wall / 🔽 Put Wall) as profit targets. Price tends to move toward highest gamma concentrations. Trade toward the flip point (⚡) for directional plays.</p>
                   </div>
                 </div>
@@ -500,7 +505,7 @@ export default function GammaIntelligence() {
                   <div className="flex items-start justify-between mb-4">
                     <div>
                       <h2 className="text-2xl font-bold text-text-primary mb-2 flex items-center gap-2">
-                        🎯 Market Maker State: <span className={
+                        🎯 {symbol} Market Maker State: <span className={
                           intelligence.mm_state.name === 'PANICKING' ? 'text-danger' :
                           intelligence.mm_state.name === 'TRAPPED' ? 'text-warning' :
                           intelligence.mm_state.name === 'HUNTING' ? 'text-primary' :
@@ -508,7 +513,7 @@ export default function GammaIntelligence() {
                           'text-text-secondary'
                         }>{intelligence.mm_state.name}</span>
                       </h2>
-                      <p className="text-text-secondary text-sm">Net GEX: ${intelligence.net_gex ? (intelligence.net_gex / 1e9).toFixed(2) : '0.00'}B</p>
+                      <p className="text-text-secondary text-sm">{symbol} Net GEX: ${intelligence.net_gex ? (intelligence.net_gex / 1e9).toFixed(2) : '0.00'}B</p>
                     </div>
                     <div className="px-4 py-2 rounded-lg bg-background-card">
                       <p className="text-xs text-text-muted mb-1">Confidence</p>
@@ -804,7 +809,7 @@ export default function GammaIntelligence() {
             <div className="space-y-6">
               <div className="card">
                 <div className="mb-4">
-                  <h2 className="text-xl font-semibold text-text-primary mb-2">Gamma Exposure Trends (30 Days)</h2>
+                  <h2 className="text-xl font-semibold text-text-primary mb-2">{symbol} Gamma Exposure Trends (30 Days)</h2>
                   <p className="text-sm text-text-secondary">💰 HOW TO MAKE MONEY: Identify trend changes in GEX. When GEX flips from positive to negative = buy calls on dips. When GEX flips from negative to positive = sell premium. Rising IV = buy straddles, falling IV = sell spreads.</p>
                 </div>
                 {loadingHistory ? (

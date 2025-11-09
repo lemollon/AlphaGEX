@@ -23,25 +23,59 @@ export default function BacktestingPage() {
   const [results, setResults] = useState<BacktestResult[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null)
+  const [running, setRunning] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
+  const [symbol, setSymbol] = useState('SPY')
 
   useEffect(() => {
-    const fetchResults = async () => {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/backtests/results`)
-        const data = await response.json()
-
-        if (data.success) {
-          setResults(data.data)
-        }
-      } catch (error) {
-        console.error('Failed to fetch backtest results:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
     fetchResults()
   }, [])
+
+  const fetchResults = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/backtests/results`)
+      const data = await response.json()
+
+      if (data.success) {
+        setResults(data.results || data.data || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch backtest results:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const runBacktests = async () => {
+    setRunning(true)
+    setRunError(null)
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/backtests/run`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          symbol: symbol,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        // Refresh results after successful run
+        await fetchResults()
+      } else {
+        setRunError(data.error || 'Failed to run backtests')
+      }
+    } catch (err) {
+      setRunError('Failed to connect to API')
+    } finally {
+      setRunning(false)
+    }
+  }
 
   const formatCurrency = (value: number) => {
     return value >= 0 ? `+$${value.toFixed(2)}` : `-$${Math.abs(value).toFixed(2)}`
@@ -65,13 +99,65 @@ export default function BacktestingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header */}
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-text-primary flex items-center space-x-3">
-              <TestTube className="w-8 h-8 text-primary" />
-              <span>Strategy Backtesting</span>
-            </h1>
-            <p className="text-text-secondary mt-2">
-              Performance analysis of all trading strategies with realistic transaction costs
-            </p>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h1 className="text-3xl font-bold text-text-primary flex items-center space-x-3">
+                  <TestTube className="w-8 h-8 text-primary" />
+                  <span>Strategy Backtesting</span>
+                </h1>
+                <p className="text-text-secondary mt-2">
+                  Performance analysis of all trading strategies with realistic transaction costs
+                </p>
+              </div>
+              <div className="flex items-center space-x-3">
+                <input
+                  type="text"
+                  value={symbol}
+                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                  placeholder="Symbol"
+                  className="px-4 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-primary focus:outline-none focus:border-primary w-24"
+                />
+                <button
+                  onClick={runBacktests}
+                  disabled={running}
+                  className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {running ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Running...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Activity className="w-5 h-5" />
+                      <span>Run Backtests</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {runError && (
+              <div className="bg-danger/10 border border-danger rounded-lg p-4 mb-4">
+                <div className="flex items-center space-x-2 text-danger">
+                  <span className="font-semibold">{runError}</span>
+                </div>
+              </div>
+            )}
+
+            {running && (
+              <div className="bg-primary/10 border border-primary rounded-lg p-4">
+                <div className="flex items-center space-x-3">
+                  <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                  <div>
+                    <p className="text-primary font-semibold">Running comprehensive strategy backtests...</p>
+                    <p className="text-text-secondary text-sm mt-1">
+                      This may take 2-5 minutes. Analyzing 29 strategies with full historical data.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {loading ? (
@@ -85,11 +171,11 @@ export default function BacktestingPage() {
               <TestTube className="w-16 h-16 mx-auto text-text-muted mb-4" />
               <h3 className="text-xl font-semibold text-text-primary mb-2">No Backtest Results</h3>
               <p className="text-text-secondary mb-4">
-                Run backtests to see performance metrics for all strategies
+                Click "Run Backtests" above to analyze all trading strategies with historical data
               </p>
-              <code className="bg-background-deep px-4 py-2 rounded text-sm">
-                python run_all_backtests.py
-              </code>
+              <p className="text-text-muted text-sm">
+                The system will automatically research and test 29+ strategies across Psychology, GEX, and Options
+              </p>
             </div>
           ) : (
             <>

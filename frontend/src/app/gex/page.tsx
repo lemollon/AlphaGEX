@@ -75,6 +75,7 @@ export default function GEXAnalysisPage() {
   const [tickerData, setTickerData] = useState<Record<string, TickerData>>({})
   const [loading, setLoading] = useState(true)
   const [loadingProgress, setLoadingProgress] = useState(0)
+  const [loadingTickers, setLoadingTickers] = useState<Set<string>>(new Set())
   const [newTicker, setNewTicker] = useState('')
   const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set(DEFAULT_TICKERS))
   const [error, setError] = useState<string | null>(null)
@@ -89,23 +90,39 @@ export default function GEXAnalysisPage() {
     setLoading(true)
     setError(null)
     setLoadingProgress(0)
+    setLoadingTickers(new Set(tickers))
 
     try {
       // Load tickers with staggered delay to avoid rate limits
-      const results = await StaggeredLoader.loadWithDelay(
-        tickers,
-        async (ticker) => {
+      const results: Record<string, TickerData> = {}
+
+      for (const ticker of tickers) {
+        try {
           const response = await apiClient.getGEX(ticker)
           if (response.data.success) {
+            results[ticker] = response.data.data
+            setTickerData((prev) => ({ ...prev, [ticker]: response.data.data }))
+            setLoadingTickers((prev) => {
+              const next = new Set(prev)
+              next.delete(ticker)
+              return next
+            })
             setLoadingProgress((prev) => prev + 1)
-            return response.data.data
           }
-          throw new Error('Failed to load')
-        },
-        600 // 600ms delay between calls = safe rate
-      )
+        } catch (err) {
+          console.error(`Failed to load ${ticker}:`, err)
+          setLoadingTickers((prev) => {
+            const next = new Set(prev)
+            next.delete(ticker)
+            return next
+          })
+        }
 
-      setTickerData(results)
+        // Add delay between requests
+        if (ticker !== tickers[tickers.length - 1]) {
+          await new Promise(resolve => setTimeout(resolve, 600))
+        }
+      }
 
       // Update cache info
       const newCacheInfo: Record<string, string> = {}
@@ -119,11 +136,14 @@ export default function GEXAnalysisPage() {
     } finally {
       setLoading(false)
       setLoadingProgress(0)
+      setLoadingTickers(new Set())
     }
   }
 
   const refreshTicker = async (ticker: string) => {
     setRefreshing(true)
+    setLoadingTickers((prev) => new Set(prev).add(ticker))
+
     try {
       // Clear cache for this ticker
       IntelligentCache.remove(ticker)
@@ -133,6 +153,11 @@ export default function GEXAnalysisPage() {
         const waitTime = Math.ceil(RateLimiter.getTimeUntilNextCall() / 1000)
         setError(`Rate limit: please wait ${waitTime}s`)
         setRefreshing(false)
+        setLoadingTickers((prev) => {
+          const next = new Set(prev)
+          next.delete(ticker)
+          return next
+        })
         return
       }
 
@@ -157,6 +182,11 @@ export default function GEXAnalysisPage() {
       setError(`Failed to refresh ${ticker}`)
     } finally {
       setRefreshing(false)
+      setLoadingTickers((prev) => {
+        const next = new Set(prev)
+        next.delete(ticker)
+        return next
+      })
     }
   }
 
@@ -289,12 +319,23 @@ export default function GEXAnalysisPage() {
             {tickers.map((ticker) => {
               const data = tickerData[ticker]
               const isExpanded = expandedTickers.has(ticker)
+              const isLoading = loadingTickers.has(ticker)
 
               if (!data) {
                 return (
                   <div key={ticker} className="card">
                     <div className="flex items-center justify-between">
-                      <div className="text-text-primary font-semibold">{ticker}</div>
+                      <div className="flex items-center space-x-3">
+                        <div className="text-text-primary font-semibold">{ticker}</div>
+                        {isLoading ? (
+                          <div className="flex items-center space-x-2">
+                            <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                            <span className="text-sm text-primary">Loading...</span>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-danger">Failed to load</span>
+                        )}
+                      </div>
                       <button
                         onClick={() => removeTicker(ticker)}
                         className="text-text-secondary hover:text-danger"
@@ -302,7 +343,6 @@ export default function GEXAnalysisPage() {
                         <X className="w-5 h-5" />
                       </button>
                     </div>
-                    <p className="text-text-muted mt-2">Loading data...</p>
                   </div>
                 )
               }
@@ -321,7 +361,17 @@ export default function GEXAnalysisPage() {
                       }`}>
                         {data.net_gex > 0 ? 'Positive GEX' : 'Negative GEX'}
                       </span>
-                      {cacheInfo[ticker] && (
+                      {isLoading ? (
+                        <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-primary/20">
+                          <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                          <span className="text-xs text-primary font-semibold">Refreshing...</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-success/10">
+                          <span className="text-xs text-success font-semibold">✓ Loaded</span>
+                        </div>
+                      )}
+                      {cacheInfo[ticker] && !isLoading && (
                         <div className="flex items-center space-x-2 text-xs text-text-muted">
                           <Clock className="w-3 h-3" />
                           <span>{cacheInfo[ticker]}</span>
