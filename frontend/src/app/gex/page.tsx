@@ -1,605 +1,528 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { TrendingUp, TrendingDown, Activity, BarChart3, AlertTriangle, RefreshCw } from 'lucide-react'
+import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
-import { useWebSocket } from '@/hooks/useWebSocket'
-import { useDataCache } from '@/hooks/useDataCache'
-import GEXProfileChart from '@/components/GEXProfileChartPlotly'
-import { getCacheTTL, RATE_LIMIT_COOLDOWNS } from '@/lib/cacheConfig'
+import {
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  AlertTriangle,
+  Plus,
+  X,
+  ChevronDown,
+  ChevronUp,
+  Zap,
+  Target,
+  Brain,
+  BarChart3,
+  DollarSign
+} from 'lucide-react'
 
-interface GEXLevel {
-  strike: number
-  call_gex: number
-  put_gex: number
-  total_gex: number
-  call_oi: number
-  put_oi: number
-  pcr: number
-}
+// Default tickers to load
+const DEFAULT_TICKERS = ['SPY', 'QQQ', 'IWM', 'VIX', 'NVDA', 'AAPL', 'TSLA', 'AMZN']
 
-interface GEXData {
+interface TickerData {
   symbol: string
   spot_price: number
-  total_call_gex: number
-  total_put_gex: number
   net_gex: number
-  gex_flip_point: number
-  flip_point?: number
-  call_wall?: number
-  put_wall?: number
-  key_levels: {
-    resistance: number[]
-    support: number[]
+  flip_point: number
+  call_wall: number
+  put_wall: number
+  vix: number
+  mm_state: string
+  psychology?: {
+    fomo_level: number
+    fear_level: number
+    state: string
   }
+  probability?: {
+    eod: ProbabilityData
+    next_day: ProbabilityData
+  }
+  rsi?: number
 }
 
-export default function GEXAnalysis() {
-  const [symbol, setSymbol] = useState('SPY')
-  const [gexData, setGexData] = useState<GEXData | null>(null)
-  const [gexLevels, setGexLevels] = useState<GEXLevel[]>([])
-  const [loading, setLoading] = useState(false)
-  const [isRefreshing, setIsRefreshing] = useState(false)
+interface ProbabilityData {
+  confidence: string
+  ranges: Array<{
+    range: string
+    probability: number
+  }>
+  supporting_factors: string[]
+  trading_insights: Array<{
+    setup: string
+    action: string
+    why: string
+    risk: string
+    expected: string
+    color: string
+  }>
+}
+
+export default function GEXAnalysisPage() {
+  const [tickers, setTickers] = useState<string[]>(DEFAULT_TICKERS)
+  const [tickerData, setTickerData] = useState<Record<string, TickerData>>({})
+  const [loading, setLoading] = useState(true)
+  const [newTicker, setNewTicker] = useState('')
+  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set(DEFAULT_TICKERS))
   const [error, setError] = useState<string | null>(null)
-  const [oiDataWarning, setOiDataWarning] = useState<string | null>(null)
-  const { data: wsData, isConnected } = useWebSocket(symbol)
 
-  // Cache for GEX data - 30 minutes (adaptive based on market hours)
-  const gexCache = useDataCache<GEXData>({
-    key: `gex-data-${symbol}`,
-    ttl: getCacheTTL('GEX_DATA', true) // 30 min during market, 2h after hours
-  })
-
-  const levelsCache = useDataCache<GEXLevel[]>({
-    key: `gex-levels-${symbol}`,
-    ttl: getCacheTTL('GEX_DATA', true) // Same as GEX data
-  })
-
-  // Rate limit tracking - minimum 1 minute between manual refreshes
-  const [lastRefreshTime, setLastRefreshTime] = useState<number>(0)
-  const [canRefresh, setCanRefresh] = useState(true)
-  const RATE_LIMIT_MS = RATE_LIMIT_COOLDOWNS.GEX_ANALYSIS // 1 minute
-
-  // Load last refresh time from localStorage
   useEffect(() => {
-    const stored = localStorage.getItem(`gex-last-refresh-${symbol}`)
-    if (stored) {
-      const lastTime = parseInt(stored)
-      setLastRefreshTime(lastTime)
-      const timeSinceRefresh = Date.now() - lastTime
-      setCanRefresh(timeSinceRefresh >= RATE_LIMIT_MS)
-    }
-  }, [symbol])
+    loadAllTickers()
+  }, [tickers])
 
-  // Update canRefresh every second
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (lastRefreshTime > 0) {
-        const timeSinceRefresh = Date.now() - lastRefreshTime
-        setCanRefresh(timeSinceRefresh >= RATE_LIMIT_MS)
-      }
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [lastRefreshTime])
+  const loadAllTickers = async () => {
+    setLoading(true)
+    setError(null)
 
-  // Fetch GEX data
-  const fetchData = useCallback(async (forceRefresh = false) => {
-    // Always use cached data if available (unless forcing refresh)
-    if (!forceRefresh && gexCache.cachedData && levelsCache.cachedData) {
-      setGexData(gexCache.cachedData)
-      setGexLevels(levelsCache.cachedData)
-      return
-    }
-
-    // Check rate limit
-    if (forceRefresh && !canRefresh) {
-      const timeRemaining = Math.ceil((RATE_LIMIT_MS - (Date.now() - lastRefreshTime)) / 1000)
-      setError(`Please wait ${timeRemaining} seconds before refreshing again`)
-      return
-    }
-
-    try {
-      forceRefresh ? setIsRefreshing(true) : setLoading(true)
-      setError(null)
-
-      // Store refresh timestamp
-      const now = Date.now()
-      setLastRefreshTime(now)
-      localStorage.setItem(`gex-last-refresh-${symbol}`, now.toString())
-
-      const [gexResponse, levelsResponse] = await Promise.all([
-        apiClient.getGEX(symbol),
-        apiClient.getGEXLevels(symbol)
-      ])
-
-      // Transform API response to match frontend interface
-      const rawData = gexResponse.data.data
-      const transformedData = {
-        symbol: rawData.symbol || symbol,
-        spot_price: rawData.spot_price || 0,
-        total_call_gex: rawData.total_call_gex || 0,
-        total_put_gex: rawData.total_put_gex || 0,
-        net_gex: rawData.net_gex || 0,
-        gex_flip_point: rawData.flip_point || rawData.gex_flip_point || 0,
-        key_levels: {
-          resistance: rawData.key_levels?.resistance || [],
-          support: rawData.key_levels?.support || []
+    const dataPromises = tickers.map(async (ticker) => {
+      try {
+        const response = await apiClient.getGEX(ticker)
+        if (response.data.success) {
+          return { ticker, data: response.data.data }
         }
+      } catch (err) {
+        console.error(`Failed to load ${ticker}:`, err)
       }
+      return null
+    })
 
-      const levelsData = levelsResponse.data.levels || levelsResponse.data.data || []
+    const results = await Promise.all(dataPromises)
+    const newData: Record<string, TickerData> = {}
 
-      // Extract reference line values from levels response
-      const flipPoint = levelsResponse.data.flip_point || 0
-      const callWall = levelsResponse.data.call_wall || 0
-      const putWall = levelsResponse.data.put_wall || 0
-
-      // Debug: Log wall values
-      console.log('=== GEX WALLS FROM API ===')
-      console.log('Flip Point:', flipPoint)
-      console.log('Call Wall:', callWall)
-      console.log('Put Wall:', putWall)
-      console.log('API Response:', levelsResponse.data)
-      console.log('=========================')
-
-      // Check for OI data warning
-      if (levelsResponse.data.oi_data_warning) {
-        setOiDataWarning(levelsResponse.data.oi_data_warning)
-      } else {
-        setOiDataWarning(null)
+    results.forEach((result) => {
+      if (result) {
+        newData[result.ticker] = result.data
       }
+    })
 
-      // Update state and cache
-      setGexData({
-        ...transformedData,
-        flip_point: flipPoint,
-        call_wall: callWall,
-        put_wall: putWall
-      })
-      setGexLevels(levelsData)
-      gexCache.setCache(transformedData)
-      levelsCache.setCache(levelsData)
-    } catch (error: any) {
-      console.error('Error fetching GEX data:', error)
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to fetch GEX data'
-      setError(errorMessage)
-    } finally {
-      setLoading(false)
-      setIsRefreshing(false)
-    }
-  }, [symbol, gexCache, levelsCache, canRefresh, lastRefreshTime, RATE_LIMIT_MS])
-
-  // Initial load and symbol change
-  useEffect(() => {
-    fetchData()
-  }, [symbol])
-
-  // Manual refresh handler
-  const handleRefresh = () => {
-    fetchData(true)
+    setTickerData(newData)
+    setLoading(false)
   }
 
-  // Update from WebSocket
-  useEffect(() => {
-    if (wsData?.type === 'gex_update' && wsData.data) {
-      setGexData(wsData.data)
+  const addTicker = () => {
+    const ticker = newTicker.trim().toUpperCase()
+    if (ticker && !tickers.includes(ticker)) {
+      setTickers([...tickers, ticker])
+      setExpandedTickers(new Set([...expandedTickers, ticker]))
+      setNewTicker('')
     }
-  }, [wsData])
+  }
 
-  const formatGEX = (value: number) => {
-    const absValue = Math.abs(value)
-    if (absValue >= 1e9) return `${(value / 1e9).toFixed(2)}B`
-    if (absValue >= 1e6) return `${(value / 1e6).toFixed(2)}M`
-    return value.toFixed(2)
+  const removeTicker = (ticker: string) => {
+    setTickers(tickers.filter((t) => t !== ticker))
+    setExpandedTickers(new Set([...expandedTickers].filter((t) => t !== ticker)))
+    const newData = { ...tickerData }
+    delete newData[ticker]
+    setTickerData(newData)
+  }
+
+  const toggleExpanded = (ticker: string) => {
+    const newExpanded = new Set(expandedTickers)
+    if (newExpanded.has(ticker)) {
+      newExpanded.delete(ticker)
+    } else {
+      newExpanded.add(ticker)
+    }
+    setExpandedTickers(newExpanded)
   }
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2
-    }).format(value)
+    const absValue = Math.abs(value)
+    if (absValue >= 1e9) {
+      return `${(value / 1e9).toFixed(1)}B`
+    }
+    if (absValue >= 1e6) {
+      return `${(value / 1e6).toFixed(0)}M`
+    }
+    return value.toFixed(2)
   }
 
-  const popularSymbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'TSLA', 'NVDA', 'AMD', 'AMZN']
+  const getMMStateColor = (state: string) => {
+    const colors: Record<string, string> = {
+      'DEFENDING': 'text-warning',
+      'SQUEEZING': 'text-primary',
+      'PANICKING': 'text-danger',
+      'BREAKDOWN': 'text-danger',
+      'NEUTRAL': 'text-text-secondary'
+    }
+    return colors[state] || 'text-text-secondary'
+  }
+
+  const getPsychologyColor = (level: number) => {
+    if (level > 70) return 'text-danger'
+    if (level > 55) return 'text-warning'
+    return 'text-success'
+  }
+
+  const getConfidenceColor = (confidence: string) => {
+    if (confidence === 'HIGH') return 'text-success'
+    if (confidence === 'MEDIUM') return 'text-warning'
+    return 'text-danger'
+  }
+
+  const getInsightColor = (color: string) => {
+    if (color === 'success') return 'bg-success/10 border-success text-success'
+    if (color === 'warning') return 'bg-warning/10 border-warning text-warning'
+    if (color === 'danger') return 'bg-danger/10 border-danger text-danger'
+    return 'bg-background-hover border-gray-700 text-text-primary'
+  }
 
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="space-y-6">
-          {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-text-primary">GEX Analysis</h1>
-          <p className="text-text-secondary mt-1">Deep dive into Gamma Exposure levels</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Refresh Button with Rate Limit */}
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing || !canRefresh}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-background-hover hover:bg-background-hover/70 text-text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            title={!canRefresh ? `Wait ${Math.ceil((RATE_LIMIT_MS - (Date.now() - lastRefreshTime)) / 1000)}s before refreshing` : 'Refresh data'}
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span className="text-sm font-medium hidden sm:inline">
-              {isRefreshing
-                ? 'Refreshing...'
-                : !canRefresh
-                  ? `Wait ${Math.ceil((RATE_LIMIT_MS - (Date.now() - lastRefreshTime)) / 1000)}s`
-                  : 'Refresh'}
-            </span>
-          </button>
 
-          {/* Data Age Indicator */}
-          {gexData && lastRefreshTime > 0 && (
-            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-sm">
-              <Activity className="w-4 h-4" />
-              <span>Updated {Math.floor((Date.now() - lastRefreshTime) / 1000 / 60)}m ago</span>
+      <main className="pt-16 transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-text-primary flex items-center space-x-3">
+              <TrendingUp className="w-8 h-8 text-primary" />
+              <span>GEX Analysis - Multi-Ticker View</span>
+            </h1>
+            <p className="text-text-secondary mt-2">
+              Comprehensive GEX analysis with EOD & next-day probability predictions for profitable trading insights
+            </p>
+          </div>
+
+          {/* Add Ticker Input */}
+          <div className="card mb-8">
+            <div className="flex items-center space-x-4">
+              <input
+                type="text"
+                value={newTicker}
+                onChange={(e) => setNewTicker(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && addTicker()}
+                placeholder="Add ticker (e.g., GOOGL)"
+                className="flex-1 px-4 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-primary focus:outline-none focus:border-primary"
+              />
+              <button
+                onClick={addTicker}
+                className="btn-primary flex items-center space-x-2"
+              >
+                <Plus className="w-5 h-5" />
+                <span>Add Ticker</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Error Message */}
+          {error && (
+            <div className="bg-danger/10 border border-danger rounded-lg p-4 mb-8">
+              <div className="flex items-center space-x-2 text-danger">
+                <AlertTriangle className="w-5 h-5" />
+                <span className="font-semibold">{error}</span>
+              </div>
             </div>
           )}
 
-          {/* Live Status */}
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
-            isConnected ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
-          }`}>
-            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success' : 'bg-danger'} animate-pulse`} />
-            <span className="text-sm font-medium">{isConnected ? 'Live' : 'Disconnected'}</span>
-          </div>
-        </div>
-      </div>
+          {/* Loading State */}
+          {loading && (
+            <div className="text-center py-12">
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+              <p className="text-text-secondary mt-4">Loading ticker data...</p>
+            </div>
+          )}
 
-      {/* Symbol Selector */}
-      <div className="card">
-        <div className="flex items-center gap-4 flex-wrap">
-          <label className="text-text-secondary font-medium">Symbol:</label>
-          <div className="flex gap-2 flex-wrap">
-            {popularSymbols.map((sym) => (
-              <button
-                key={sym}
-                onClick={() => setSymbol(sym)}
-                className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                  symbol === sym
-                    ? 'bg-primary text-white'
-                    : 'bg-background-hover text-text-secondary hover:bg-background-hover/70 hover:text-text-primary'
-                }`}
-              >
-                {sym}
-              </button>
-            ))}
-          </div>
-          <input
-            type="text"
-            placeholder="Custom symbol..."
-            className="input flex-1 min-w-[200px]"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                const value = (e.target as HTMLInputElement).value.trim().toUpperCase()
-                if (value) setSymbol(value)
+          {/* Ticker Cards */}
+          <div className="space-y-6">
+            {tickers.map((ticker) => {
+              const data = tickerData[ticker]
+              const isExpanded = expandedTickers.has(ticker)
+
+              if (!data) {
+                return (
+                  <div key={ticker} className="card">
+                    <div className="flex items-center justify-between">
+                      <div className="text-text-primary font-semibold">{ticker}</div>
+                      <button
+                        onClick={() => removeTicker(ticker)}
+                        className="text-text-secondary hover:text-danger"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <p className="text-text-muted mt-2">Loading data...</p>
+                  </div>
+                )
               }
-            }}
-          />
-        </div>
-      </div>
 
-      {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="card h-24 skeleton" />
-          ))}
-        </div>
-      ) : gexData ? (
-        <>
-          {/* Key Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="card">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">Spot Price</p>
-                  <p className="text-2xl font-bold text-text-primary mt-1">
-                    {formatCurrency(gexData.spot_price)}
-                  </p>
-                </div>
-                <Activity className="text-primary w-8 h-8" />
-              </div>
-            </div>
-
-            <div className="card">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">Net GEX</p>
-                  <p className={`text-2xl font-bold mt-1 ${
-                    gexData.net_gex > 0 ? 'text-success' : 'text-danger'
-                  }`}>
-                    {formatGEX(gexData.net_gex)}
-                  </p>
-                </div>
-                {gexData.net_gex > 0 ? (
-                  <TrendingUp className="text-success w-8 h-8" />
-                ) : (
-                  <TrendingDown className="text-danger w-8 h-8" />
-                )}
-              </div>
-            </div>
-
-            <div className="card">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">Call GEX</p>
-                  <p className="text-2xl font-bold text-success mt-1">
-                    {formatGEX(gexData.total_call_gex)}
-                  </p>
-                </div>
-                <TrendingUp className="text-success w-8 h-8" />
-              </div>
-            </div>
-
-            <div className="card">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">Put GEX</p>
-                  <p className="text-2xl font-bold text-danger mt-1">
-                    {formatGEX(Math.abs(gexData.total_put_gex))}
-                  </p>
-                </div>
-                <TrendingDown className="text-danger w-8 h-8" />
-              </div>
-            </div>
-          </div>
-
-          {/* GEX Profile Chart */}
-          <div className="card">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-text-primary">GEX Profile</h2>
-              <div className="flex items-center gap-3">
-                {loading && (
-                  <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                    <span>Loading data...</span>
+              return (
+                <div key={ticker} className="card border-2 border-gray-800 hover:border-primary/50 transition-colors">
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-4">
+                      <h2 className="text-2xl font-bold text-text-primary">{ticker}</h2>
+                      <span className="text-xl text-text-secondary font-mono">
+                        ${data.spot_price?.toFixed(2) || '---'}
+                      </span>
+                      <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                        data.net_gex > 0 ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
+                      }`}>
+                        {data.net_gex > 0 ? 'Positive GEX' : 'Negative GEX'}
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => toggleExpanded(ticker)}
+                        className="p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover"
+                      >
+                        {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                      </button>
+                      <button
+                        onClick={() => removeTicker(ticker)}
+                        className="p-2 rounded-lg text-text-secondary hover:text-danger hover:bg-background-hover"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
-                )}
-                <BarChart3 className="text-primary w-6 h-6" />
-              </div>
-            </div>
-            {gexLevels.length > 0 ? (
-              <GEXProfileChart
-                data={gexLevels}
-                spotPrice={gexData.spot_price}
-                flipPoint={gexData.flip_point}
-                callWall={gexData.call_wall}
-                putWall={gexData.put_wall}
-                height={600}
-              />
-            ) : loading ? (
-              <div className="h-96 bg-background-deep rounded-lg flex items-center justify-center border border-border">
-                <div className="text-center">
-                  <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                  <p className="text-text-primary font-medium mb-1">Loading GEX Profile</p>
-                  <p className="text-text-secondary text-sm">Fetching strike-level data for {symbol}...</p>
-                </div>
-              </div>
-            ) : (
-              <div className="h-96 bg-background-deep rounded-lg flex items-center justify-center border border-border">
-                <div className="text-center">
-                  <BarChart3 className="w-16 h-16 text-text-muted mx-auto mb-2" />
-                  <p className="text-text-secondary">No GEX profile data available for {symbol}</p>
-                </div>
-              </div>
-            )}
-          </div>
 
-          {/* Key Levels */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Resistance Levels */}
-            <div className="card">
-              <div className="flex items-center gap-2 mb-4">
-                <TrendingUp className="text-danger w-5 h-5" />
-                <h2 className="text-lg font-semibold text-text-primary">Resistance Levels</h2>
-              </div>
-              <div className="space-y-2">
-                {gexData.key_levels.resistance.map((level, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-3 bg-danger/5 border border-danger/20 rounded-lg"
-                  >
-                    <span className="text-text-secondary">R{idx + 1}</span>
-                    <span className="text-danger font-semibold">{formatCurrency(level)}</span>
-                    <span className="text-text-muted text-sm">
-                      {((level - gexData.spot_price) / gexData.spot_price * 100).toFixed(2)}% away
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+                  {isExpanded && (
+                    <>
+                      {/* GEX Metrics Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                        <div className="bg-background-deep rounded-lg p-4">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <Activity className="w-4 h-4 text-primary" />
+                            <span className="text-text-secondary text-sm">Net GEX</span>
+                          </div>
+                          <p className={`text-2xl font-bold ${data.net_gex > 0 ? 'text-success' : 'text-danger'}`}>
+                            ${formatCurrency(data.net_gex)}
+                          </p>
+                        </div>
 
-            {/* Support Levels */}
-            <div className="card">
-              <div className="flex items-center gap-2 mb-4">
-                <TrendingDown className="text-success w-5 h-5" />
-                <h2 className="text-lg font-semibold text-text-primary">Support Levels</h2>
-              </div>
-              <div className="space-y-2">
-                {gexData.key_levels.support.map((level, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-3 bg-success/5 border border-success/20 rounded-lg"
-                  >
-                    <span className="text-text-secondary">S{idx + 1}</span>
-                    <span className="text-success font-semibold">{formatCurrency(level)}</span>
-                    <span className="text-text-muted text-sm">
-                      {((gexData.spot_price - level) / gexData.spot_price * 100).toFixed(2)}% away
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+                        <div className="bg-background-deep rounded-lg p-4">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <Target className="w-4 h-4 text-primary" />
+                            <span className="text-text-secondary text-sm">Flip Point</span>
+                          </div>
+                          <p className="text-2xl font-bold text-text-primary">
+                            ${data.flip_point?.toFixed(2) || '---'}
+                          </p>
+                        </div>
 
-          {/* GEX Flip Point Alert */}
-          <div className="card bg-warning/5 border border-warning/20">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="text-warning w-6 h-6 flex-shrink-0 mt-1" />
-              <div>
-                <h3 className="text-lg font-semibold text-warning mb-2">GEX Flip Point</h3>
-                <p className="text-text-secondary mb-2">
-                  The point where Net GEX changes from positive to negative, indicating a shift in market dynamics.
-                </p>
-                <div className="flex items-center gap-4 mt-3">
-                  <div>
-                    <p className="text-text-muted text-sm">Flip Point</p>
-                    <p className="text-2xl font-bold text-warning">{formatCurrency(gexData.gex_flip_point)}</p>
-                  </div>
-                  <div>
-                    <p className="text-text-muted text-sm">Distance</p>
-                    <p className="text-xl font-semibold text-text-primary">
-                      {((gexData.gex_flip_point - gexData.spot_price) / gexData.spot_price * 100).toFixed(2)}%
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+                        <div className="bg-background-deep rounded-lg p-4">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <TrendingUp className="w-4 h-4 text-success" />
+                            <span className="text-text-secondary text-sm">Call Wall</span>
+                          </div>
+                          <p className="text-2xl font-bold text-success">
+                            ${data.call_wall?.toFixed(2) || '---'}
+                          </p>
+                        </div>
 
-          {/* GEX Levels Table */}
-          <div className="card">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-xl font-semibold text-text-primary">Strike-Level GEX Breakdown</h2>
-                <p className="text-sm text-text-secondary mt-1">
-                  Detailed gamma exposure by strike price - {gexLevels.length} strikes loaded
-                </p>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <div className="px-3 py-1 rounded bg-success/10 text-success">
-                  <span className="font-medium">●</span> Call GEX
-                </div>
-                <div className="px-3 py-1 rounded bg-danger/10 text-danger">
-                  <span className="font-medium">●</span> Put GEX
-                </div>
-              </div>
-            </div>
+                        <div className="bg-background-deep rounded-lg p-4">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <TrendingDown className="w-4 h-4 text-danger" />
+                            <span className="text-text-secondary text-sm">Put Wall</span>
+                          </div>
+                          <p className="text-2xl font-bold text-danger">
+                            ${data.put_wall?.toFixed(2) || '---'}
+                          </p>
+                        </div>
+                      </div>
 
-            {gexLevels.length > 0 ? (
-              <div className="overflow-x-auto -mx-4 sm:mx-0">
-                <div className="inline-block min-w-full align-middle">
-                  <div className="overflow-hidden border border-border rounded-lg">
-                    <table className="min-w-full divide-y divide-border">
-                      <thead className="bg-background-deep">
-                        <tr>
-                          <th scope="col" className="sticky left-0 z-10 bg-background-deep px-4 py-3.5 text-left text-sm font-semibold text-text-primary">
-                            Strike
-                          </th>
-                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
-                            Distance
-                          </th>
-                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
-                            Call GEX
-                          </th>
-                          <th scope="col" className="px-4 py-3.5 text-right text-sm font-semibold text-text-primary">
-                            Put GEX
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border bg-background">
-                        {gexLevels.map((level, idx) => {
-                          const isAtMoney = Math.abs(level.strike - gexData.spot_price) < (gexData.spot_price * 0.005)
-                          const distance = ((level.strike - gexData.spot_price) / gexData.spot_price * 100)
-                          const maxTotalGex = Math.max(...gexLevels.map(l => Math.abs(l.total_gex)))
-                          const strengthPct = maxTotalGex > 0 ? (Math.abs(level.total_gex) / maxTotalGex * 100) : 0
-
-                          return (
-                            <tr
-                              key={idx}
-                              className={`hover:bg-background-hover transition-colors ${
-                                isAtMoney ? 'bg-primary/10 border-l-4 border-l-primary' : ''
-                              }`}
-                            >
-                              <td className="sticky left-0 z-10 bg-background whitespace-nowrap px-4 py-3 text-sm">
-                                <span className={`font-semibold ${isAtMoney ? 'text-primary' : 'text-text-primary'}`}>
-                                  {formatCurrency(level.strike)}
-                                  {isAtMoney && <span className="ml-2 text-xs text-primary">ATM</span>}
+                      {/* Psychology & MM State */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div className="bg-background-deep rounded-lg p-4">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <Brain className="w-4 h-4 text-primary" />
+                            <span className="text-text-secondary text-sm">Psychology</span>
+                          </div>
+                          {data.psychology && (
+                            <div className="space-y-2">
+                              <div className="flex justify-between">
+                                <span className="text-sm text-text-muted">FOMO:</span>
+                                <span className={`font-semibold ${getPsychologyColor(data.psychology.fomo_level)}`}>
+                                  {data.psychology.fomo_level.toFixed(0)}%
                                 </span>
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
-                                <span className={`font-medium ${
-                                  Math.abs(distance) < 1 ? 'text-warning' : 'text-text-muted'
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-sm text-text-muted">Fear:</span>
+                                <span className={`font-semibold ${getPsychologyColor(data.psychology.fear_level)}`}>
+                                  {data.psychology.fear_level.toFixed(0)}%
+                                </span>
+                              </div>
+                              <div className="mt-2 text-sm font-semibold text-text-primary">
+                                {data.psychology.state}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="bg-background-deep rounded-lg p-4">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <Zap className="w-4 h-4 text-primary" />
+                            <span className="text-text-secondary text-sm">Market Maker State</span>
+                          </div>
+                          <p className={`text-xl font-bold ${getMMStateColor(data.mm_state)}`}>
+                            {data.mm_state}
+                          </p>
+                          <p className="text-xs text-text-muted mt-2">
+                            {data.mm_state === 'DEFENDING' && 'MM dampening volatility'}
+                            {data.mm_state === 'SQUEEZING' && 'Explosive moves possible'}
+                            {data.mm_state === 'PANICKING' && 'High volatility expected'}
+                            {data.mm_state === 'NEUTRAL' && 'Balanced positioning'}
+                          </p>
+                        </div>
+
+                        <div className="bg-background-deep rounded-lg p-4">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <BarChart3 className="w-4 h-4 text-primary" />
+                            <span className="text-text-secondary text-sm">VIX Level</span>
+                          </div>
+                          <p className="text-2xl font-bold text-text-primary">
+                            {data.vix?.toFixed(1) || '---'}
+                          </p>
+                          <p className="text-xs text-text-muted mt-2">
+                            {data.vix < 15 && 'Low volatility'}
+                            {data.vix >= 15 && data.vix < 20 && 'Normal volatility'}
+                            {data.vix >= 20 && data.vix < 30 && 'Elevated volatility'}
+                            {data.vix >= 30 && 'High volatility'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Probability Predictions */}
+                      {data.probability && (
+                        <div className="space-y-6">
+                          {/* EOD Probability */}
+                          {data.probability.eod && (
+                            <div className="bg-background-deep rounded-lg p-6">
+                              <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-semibold text-text-primary flex items-center space-x-2">
+                                  <Target className="w-5 h-5 text-primary" />
+                                  <span>📊 EOD Probability (Today's Close)</span>
+                                </h3>
+                                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                                  getConfidenceColor(data.probability.eod.confidence)
                                 }`}>
-                                  {distance > 0 ? '+' : ''}{distance.toFixed(1)}%
+                                  {data.probability.eod.confidence} CONFIDENCE
                                 </span>
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
-                                <div className="flex flex-col items-end">
-                                  <span className="font-medium text-success">{formatGEX(level.call_gex)}</span>
-                                  <div className="w-full max-w-[80px] h-1 bg-background-deep rounded-full mt-1">
-                                    <div
-                                      className="h-full bg-success rounded-full"
-                                      style={{
-                                        width: `${Math.min(100, (Math.abs(level.call_gex) / Math.max(...gexLevels.map(l => Math.abs(l.call_gex)))) * 100)}%`
-                                      }}
-                                    />
+                              </div>
+
+                              {/* Probability Ranges */}
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                {data.probability.eod.ranges.map((range, idx) => (
+                                  <div key={idx} className="bg-background-card rounded-lg p-4 border border-gray-700">
+                                    <p className="text-text-secondary text-sm mb-1">{range.range}</p>
+                                    <p className="text-2xl font-bold text-primary">{range.probability}%</p>
                                   </div>
+                                ))}
+                              </div>
+
+                              {/* Supporting Factors */}
+                              <div className="mb-4">
+                                <h4 className="text-sm font-semibold text-text-primary mb-2">Supporting Factors:</h4>
+                                <div className="space-y-1">
+                                  {data.probability.eod.supporting_factors.map((factor, idx) => (
+                                    <p key={idx} className="text-sm text-text-secondary">• {factor}</p>
+                                  ))}
                                 </div>
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-sm text-right">
-                                <div className="flex flex-col items-end">
-                                  <span className="font-medium text-danger">{formatGEX(Math.abs(level.put_gex))}</span>
-                                  <div className="w-full max-w-[80px] h-1 bg-background-deep rounded-full mt-1">
-                                    <div
-                                      className="h-full bg-danger rounded-full"
-                                      style={{
-                                        width: `${Math.min(100, (Math.abs(level.put_gex) / Math.max(...gexLevels.map(l => Math.abs(l.put_gex)))) * 100)}%`
-                                      }}
-                                    />
+                              </div>
+
+                              {/* Trading Insights */}
+                              <div>
+                                <h4 className="text-sm font-semibold text-text-primary mb-3">💰 Trading Insights:</h4>
+                                <div className="space-y-3">
+                                  {data.probability.eod.trading_insights.map((insight, idx) => (
+                                    <div key={idx} className={`rounded-lg p-4 border ${getInsightColor(insight.color)}`}>
+                                      <p className="font-semibold mb-2">{insight.setup}</p>
+                                      <div className="space-y-1 text-sm">
+                                        <p><span className="font-semibold">Action:</span> {insight.action}</p>
+                                        <p><span className="font-semibold">Why:</span> {insight.why}</p>
+                                        <p><span className="font-semibold">Risk:</span> {insight.risk}</p>
+                                        <p><span className="font-semibold">Expected:</span> {insight.expected}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Next Day Probability */}
+                          {data.probability.next_day && (
+                            <div className="bg-background-deep rounded-lg p-6">
+                              <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-semibold text-text-primary flex items-center space-x-2">
+                                  <DollarSign className="w-5 h-5 text-primary" />
+                                  <span>📅 Next Day Probability (Next Close)</span>
+                                </h3>
+                                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                                  getConfidenceColor(data.probability.next_day.confidence)
+                                }`}>
+                                  {data.probability.next_day.confidence} CONFIDENCE
+                                </span>
+                              </div>
+
+                              {/* Probability Ranges */}
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                {data.probability.next_day.ranges.map((range, idx) => (
+                                  <div key={idx} className="bg-background-card rounded-lg p-4 border border-gray-700">
+                                    <p className="text-text-secondary text-sm mb-1">{range.range}</p>
+                                    <p className="text-2xl font-bold text-primary">{range.probability}%</p>
                                   </div>
+                                ))}
+                              </div>
+
+                              {/* Supporting Factors */}
+                              <div className="mb-4">
+                                <h4 className="text-sm font-semibold text-text-primary mb-2">Supporting Factors:</h4>
+                                <div className="space-y-1">
+                                  {data.probability.next_day.supporting_factors.map((factor, idx) => (
+                                    <p key={idx} className="text-sm text-text-secondary">• {factor}</p>
+                                  ))}
                                 </div>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                              </div>
+
+                              {/* Trading Insights */}
+                              <div>
+                                <h4 className="text-sm font-semibold text-text-primary mb-3">💰 Trading Insights:</h4>
+                                <div className="space-y-3">
+                                  {data.probability.next_day.trading_insights.map((insight, idx) => (
+                                    <div key={idx} className={`rounded-lg p-4 border ${getInsightColor(insight.color)}`}>
+                                      <p className="font-semibold mb-2">{insight.setup}</p>
+                                      <div className="space-y-1 text-sm">
+                                        <p><span className="font-semibold">Action:</span> {insight.action}</p>
+                                        <p><span className="font-semibold">Why:</span> {insight.why}</p>
+                                        <p><span className="font-semibold">Risk:</span> {insight.risk}</p>
+                                        <p><span className="font-semibold">Expected:</span> {insight.expected}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {!data.probability && (
+                        <div className="bg-warning/10 border border-warning rounded-lg p-4 mt-6">
+                          <div className="flex items-center space-x-2 text-warning">
+                            <AlertTriangle className="w-5 h-5" />
+                            <span className="font-semibold">Probability data not available for this ticker</span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-              </div>
-            ) : (
-              <div className="text-center py-12 border border-border rounded-lg">
-                <BarChart3 className="w-12 h-12 text-text-muted mx-auto mb-3" />
-                <p className="text-text-secondary">No strike-level data available</p>
-              </div>
-            )}
+              )
+            })}
           </div>
-        </>
-      ) : error ? (
-        <div className="card text-center py-12">
-          <div className="max-w-2xl mx-auto">
-            <AlertTriangle className="w-16 h-16 text-danger mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-text-primary mb-2">Failed to Load GEX Data</h3>
-            <p className="text-text-secondary mb-4">{error}</p>
-            <div className="flex items-center justify-center gap-4">
-              <button
-                onClick={handleRefresh}
-                className="px-6 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg font-medium transition-all"
-              >
-                Try Again
-              </button>
-              <a
-                href="https://alphagex-api.onrender.com/api/diagnostic"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-6 py-2 bg-background-hover hover:bg-background-hover/70 text-text-primary rounded-lg font-medium transition-all"
-              >
-                View Diagnostics
-              </a>
+
+          {/* Empty State */}
+          {tickers.length === 0 && !loading && (
+            <div className="card text-center py-12">
+              <TrendingUp className="w-16 h-16 mx-auto text-text-muted mb-4" />
+              <h3 className="text-xl font-semibold text-text-primary mb-2">No Tickers Added</h3>
+              <p className="text-text-secondary">Add a ticker above to get started</p>
             </div>
-          </div>
-        </div>
-      ) : (
-        <div className="card text-center py-12">
-          <p className="text-text-secondary">No data available for {symbol}</p>
-        </div>
-      )}
+          )}
         </div>
       </main>
     </div>
