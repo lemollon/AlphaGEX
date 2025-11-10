@@ -1324,17 +1324,22 @@ class TradingVolatilityAPI:
 
                 if response.status_code != 200:
                     print(f"❌ Trading Volatility API returned status {response.status_code}")
+                    print(f"Response text (first 100 chars): {response.text[:100]}")
 
-                    # Treat 403 as potential rate limit if we've had successful calls before
-                    # (If it's first call and 403, it's likely auth issue)
-                    if response.status_code == 403 and TradingVolatilityAPI._shared_api_call_count > 0:
-                        print(f"⚠️ 403 after {TradingVolatilityAPI._shared_api_call_count} successful calls - treating as rate limit")
+                    # ONLY treat as rate limit if response explicitly says so
+                    # Don't blindly assume 403 = rate limit (could be auth/subscription issue)
+                    if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
+                        print(f"⚠️ Rate limit detected in response - activating circuit breaker")
                         self._handle_rate_limit_error()
                         return {'error': 'rate_limit'}
 
+                    # For 403 without rate limit message, it's likely auth/subscription
+                    if response.status_code == 403:
+                        return {'error': f'403 Forbidden - Check API key validity or subscription status'}
+
                     return {'error': f'API returned {response.status_code}'}
 
-                # Check for rate limit error in response text
+                # Check for rate limit error in response text (redundant check but safe)
                 if "API limit exceeded" in response.text:
                     print(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
                     self._handle_rate_limit_error()
