@@ -18,26 +18,13 @@ import sqlite3
 import json
 
 # Optional langchain imports - only needed if using the AI optimizer feature
+# Compatible with both langchain 0.1.x and 1.0.x
 try:
-    from langchain.agents import Tool, AgentExecutor, create_openai_functions_agent
     from langchain_anthropic import ChatAnthropic
-    from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-    from langchain.memory import ConversationBufferMemory
-    from langchain.schema import HumanMessage, AIMessage
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    # Create dummy classes to prevent NameError
-    # Backend will show user-friendly error message when feature is requested
-    Tool = None
-    AgentExecutor = None
-    create_openai_functions_agent = None
     ChatAnthropic = None
-    ChatPromptTemplate = None
-    MessagesPlaceholder = None
-    ConversationBufferMemory = None
-    HumanMessage = None
-    AIMessage = None
 
 from config_and_database import DB_PATH
 
@@ -59,8 +46,8 @@ class StrategyOptimizerAgent:
 
         if not LANGCHAIN_AVAILABLE:
             raise ImportError(
-                "langchain is required for AI Strategy Optimizer. "
-                "Install with: pip install langchain langchain-anthropic"
+                "langchain-anthropic is required for AI Strategy Optimizer. "
+                "Install with: pip install langchain-anthropic"
             )
 
         self.api_key = anthropic_api_key or os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
@@ -68,7 +55,7 @@ class StrategyOptimizerAgent:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY or CLAUDE_API_KEY must be set")
 
-        # Initialize Claude via LangChain
+        # Initialize Claude via LangChain (simplified - no deprecated agent framework)
         self.llm = ChatAnthropic(
             model="claude-3-5-sonnet-20241022",
             anthropic_api_key=self.api_key,
@@ -76,156 +63,12 @@ class StrategyOptimizerAgent:
             max_tokens=4096
         )
 
-        # Create tools for the agent
-        self.tools = self._create_tools()
-
-        # Create agent
-        self.agent = self._create_agent()
-
-        # Memory for learning
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
-
-    def _create_tools(self) -> List[Tool]:
-        """Create tools the agent can use"""
-
-        return [
-            Tool(
-                name="query_backtest_results",
-                func=self._query_backtest_results,
-                description="""
-                Query backtest results from database.
-                Input should be a strategy name or 'all' to get all strategies.
-                Returns: Strategy performance metrics including win rate, expectancy, drawdown.
-                Use this to analyze which strategies are profitable.
-                """
-            ),
-            Tool(
-                name="get_winning_trades",
-                func=self._get_winning_trades,
-                description="""
-                Get details of winning trades for a strategy.
-                Input: strategy name
-                Returns: List of profitable trades with entry/exit conditions
-                Use this to identify what makes trades successful.
-                """
-            ),
-            Tool(
-                name="get_losing_trades",
-                func=self._get_losing_trades,
-                description="""
-                Get details of losing trades for a strategy.
-                Input: strategy name
-                Returns: List of unprofitable trades with entry/exit conditions
-                Use this to identify what causes losses.
-                """
-            ),
-            Tool(
-                name="analyze_pattern_performance",
-                func=self._analyze_pattern_performance,
-                description="""
-                Analyze performance by pattern type (psychology traps, GEX signals, etc).
-                Input: 'all' or specific pattern name
-                Returns: Win rates and expectancy by pattern
-                Use this to see which patterns work best.
-                """
-            ),
-            Tool(
-                name="get_market_context",
-                func=self._get_market_context,
-                description="""
-                Get recent market conditions and regime data.
-                Input: number of days to look back (e.g., '30')
-                Returns: VIX levels, volatility regimes, market trends
-                Use this to understand current market environment.
-                """
-            ),
-            Tool(
-                name="save_recommendation",
-                func=self._save_recommendation,
-                description="""
-                Save an optimization recommendation to track over time.
-                Input: JSON string with {strategy, recommendation, reasoning, expected_improvement}
-                Returns: Confirmation that recommendation was saved
-                Use this to record your suggestions for future evaluation.
-                """
-            )
-        ]
-
-    def _create_agent(self) -> AgentExecutor:
-        """Create the LangChain agent"""
-
-        system_prompt = """You are an expert quantitative trading analyst specializing in options and derivatives strategies.
-
-Your role is to analyze trading strategy performance and provide ACTIONABLE recommendations to improve profitability.
-
-Core Principles:
-1. DATA-DRIVEN: Base all recommendations on actual backtest results, not theory
-2. HONEST: If a strategy is losing money, say so clearly
-3. SPECIFIC: Provide exact parameter changes (e.g., "Change RSI threshold from 70 to 75")
-4. PROFITABLE: Focus ONLY on changes that increase expectancy and win rate
-5. RISK-AWARE: Consider max drawdown and Sharpe ratio, not just returns
-
-Your Analysis Process:
-1. Query backtest results to see overall performance
-2. Compare winning vs losing trades to find patterns
-3. Identify what differentiates profitable trades
-4. Suggest specific parameter improvements
-5. Estimate expected improvement quantitatively
-
-Red Flags to Watch For:
-- Win rate < 55% → Strategy needs major improvement or should be killed
-- Expectancy < 0.5% → Barely profitable, costs will kill it
-- Max drawdown > 20% → Too risky
-- Sharpe ratio < 1.0 → Poor risk-adjusted returns
-- Sample size < 50 trades → Not enough data, could be luck
-
-When Analyzing:
-- Look for common patterns in winning trades (VIX levels, time of day, market regime)
-- Identify what causes losses (false signals, poor entries, late exits)
-- Suggest tighter filters to reduce false positives
-- Recommend better entry/exit rules based on what worked
-
-Always provide:
-1. Current performance summary
-2. Key issues identified
-3. Specific recommendations (with parameters)
-4. Expected improvement (quantitative estimate)
-5. Implementation priority (critical, high, medium, low)
-
-Be BRUTALLY honest. If a strategy sucks, say it should be killed. Focus on the 2-3 best strategies, not trying to fix everything.
-"""
-
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="chat_history", optional=True),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad")
-        ])
-
-        agent = create_openai_functions_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=prompt
-        )
-
-        return AgentExecutor(
-            agent=agent,
-            tools=self.tools,
-            memory=self.memory,
-            verbose=True,
-            max_iterations=10,
-            handle_parsing_errors=True
-        )
-
     # ========================================================================
-    # Tool Implementation Functions
+    # Helper Functions
     # ========================================================================
 
-    def _query_backtest_results(self, query: str) -> str:
-        """Query backtest results from database"""
+    def _query_backtest_results(self, query: str):
+        """Query backtest results from database - returns dict/list"""
         try:
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
@@ -283,9 +126,9 @@ Be BRUTALLY honest. If a strategy sucks, say it should be killed. Focus on the 2
             conn.close()
 
             if not results:
-                return f"No backtest results found for '{query}'. Database might be empty. Run backtests first."
+                return {"error": f"No backtest results found for '{query}'. Database might be empty. Run backtests first."}
 
-            return json.dumps(results, indent=2)
+            return results
 
         except Exception as e:
             return f"Error querying backtest results: {str(e)}"
@@ -539,32 +382,36 @@ Be BRUTALLY honest. If a strategy sucks, say it should be killed. Focus on the 2
             Dict with analysis and recommendations
         """
 
-        prompt = f"""Analyze the '{strategy_name}' trading strategy and provide specific optimization recommendations.
+        # Get backtest data from database
+        backtest_data = self._query_backtest_results(strategy_name)
 
-Follow this analysis process:
-1. Query the backtest results for this strategy
-2. Get winning trades to see what works
-3. Get losing trades to see what fails
-4. Identify patterns in wins vs losses
-5. Provide 3-5 specific, actionable recommendations with expected improvements
+        prompt = f"""You are an expert quantitative trading analyst. Analyze the '{strategy_name}' trading strategy and provide specific optimization recommendations.
 
-Focus on:
+BACKTEST RESULTS:
+{json.dumps(backtest_data, indent=2)}
+
+ANALYSIS PROCESS:
+1. Analyze the performance metrics (win rate, expectancy, drawdown, Sharpe ratio)
+2. Identify strengths and weaknesses
+3. Provide 3-5 specific, actionable recommendations with expected improvements
+
+FOCUS ON:
 - Parameter adjustments (entry/exit rules, stops, position sizing)
 - Filter improvements (reduce false signals)
 - Risk management enhancements
 
-Be specific with numbers. For example:
+BE SPECIFIC with numbers. For example:
 "Change RSI oversold threshold from 30 to 25" (not "tighten RSI filter")
 "Add VIX > 18 requirement for entries" (not "consider volatility")
 
-End with a clear verdict: IMPLEMENT, TEST CAREFULLY, or KILL STRATEGY.
+END with a clear verdict: IMPLEMENT, TEST CAREFULLY, or KILL STRATEGY.
 """
 
-        result = self.agent.invoke({"input": prompt})
+        result = self.llm.invoke(prompt)
 
         return {
             "strategy": strategy_name,
-            "analysis": result['output'],
+            "analysis": result.content if hasattr(result, 'content') else str(result),
             "timestamp": datetime.now().isoformat()
         }
 
@@ -576,15 +423,21 @@ End with a clear verdict: IMPLEMENT, TEST CAREFULLY, or KILL STRATEGY.
             Dict with rankings and recommendations
         """
 
-        prompt = """Analyze ALL trading strategies in the database and provide a comprehensive report.
+        # Get all backtest results
+        all_results = self._query_backtest_results("all")
 
-1. Query all backtest results
-2. Rank strategies by expectancy (most profitable first)
-3. Identify the top 3 strategies worth focusing on
-4. Identify strategies that should be killed (expectancy < 0 or win rate < 50%)
-5. Provide specific recommendations for the top 3 strategies
+        prompt = f"""You are an expert quantitative trading analyst. Analyze ALL trading strategies and provide a comprehensive report.
 
-Your report should include:
+ALL BACKTEST RESULTS:
+{json.dumps(all_results, indent=2)}
+
+YOUR ANALYSIS SHOULD INCLUDE:
+1. Rank strategies by expectancy (most profitable first)
+2. Identify the top 3 strategies worth focusing on
+3. Identify strategies that should be killed (expectancy < 0 or win rate < 50%)
+4. Provide specific recommendations for the top 3 strategies
+
+FORMAT YOUR REPORT WITH:
 - Summary table of all strategies (sorted by expectancy)
 - Top 3 strategies to focus on (with brief reasoning)
 - Strategies to kill immediately
@@ -594,10 +447,10 @@ Your report should include:
 Be brutally honest. Most strategies probably don't work. Focus resources on the 2-3 that actually make money.
 """
 
-        result = self.agent.invoke({"input": prompt})
+        result = self.llm.invoke(prompt)
 
         return {
-            "analysis": result['output'],
+            "analysis": result.content if hasattr(result, 'content') else str(result),
             "timestamp": datetime.now().isoformat()
         }
 
