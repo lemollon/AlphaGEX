@@ -1072,7 +1072,8 @@ class TradingVolatilityAPI:
 
     # CLASS-LEVEL (SHARED) response cache - shared across ALL instances
     _shared_response_cache = {}
-    _shared_cache_duration = 86400  # Cache for 24 HOURS (86400 seconds) - psychology fetches once per day
+    # NOTE: Cache duration is now DYNAMIC based on weekend vs weekday
+    # See _get_cache_duration() method for details
 
     def __init__(self):
         import time
@@ -1182,6 +1183,43 @@ class TradingVolatilityAPI:
             'time_until_minute_reset': max(0, int(TradingVolatilityAPI._shared_minute_reset_time - time.time()))
         }
 
+    def _get_cache_duration(self) -> int:
+        """
+        Get dynamic cache duration based on weekend vs weekday
+
+        Cache Strategy:
+        - Weekend: 24 hours (market closed, data doesn't change)
+        - Weekday trading hours (9:30am-4pm ET): 5 minutes (active market)
+        - Weekday non-trading hours: 4 hours (market closed, pre/post analysis)
+
+        Returns:
+            Cache duration in seconds
+        """
+        from datetime import datetime
+        import pytz
+
+        et_tz = pytz.timezone('America/New_York')
+        now_et = datetime.now(et_tz)
+        day_of_week = now_et.weekday()  # 0 = Monday, 6 = Sunday
+
+        # Weekend (Saturday=5, Sunday=6): Cache for 24 hours
+        if day_of_week >= 5:
+            return 86400  # 24 hours
+
+        # Weekday: Check if within trading hours
+        current_hour = now_et.hour
+        current_minute = now_et.minute
+        market_open_minutes = 9 * 60 + 30  # 9:30 AM
+        market_close_minutes = 16 * 60     # 4:00 PM
+        current_minutes = current_hour * 60 + current_minute
+
+        if market_open_minutes <= current_minutes < market_close_minutes:
+            # During trading hours: Cache for 5 minutes (active market)
+            return 300  # 5 minutes
+        else:
+            # Outside trading hours: Cache for 4 hours
+            return 14400  # 4 hours
+
     def _get_cache_key(self, endpoint: str, symbol: str) -> str:
         """Generate cache key for API responses"""
         return f"{endpoint}_{symbol}"
@@ -1191,7 +1229,8 @@ class TradingVolatilityAPI:
         import time
         if cache_key in TradingVolatilityAPI._shared_response_cache:
             cached_data, timestamp = TradingVolatilityAPI._shared_response_cache[cache_key]
-            if time.time() - timestamp < TradingVolatilityAPI._shared_cache_duration:
+            cache_duration = self._get_cache_duration()
+            if time.time() - timestamp < cache_duration:
                 return cached_data
         return None
 
@@ -1298,6 +1337,8 @@ class TradingVolatilityAPI:
             cached_data = self._get_cached_response(cache_key)
             if cached_data:
                 # Use cached response
+                cache_duration = self._get_cache_duration()
+                print(f"✅ Using cached GEX data for {symbol} (cache TTL: {cache_duration/60:.0f} min)")
                 self.last_response = cached_data
                 json_response = cached_data
             else:
@@ -1420,6 +1461,8 @@ class TradingVolatilityAPI:
             cache_key = self._get_cache_key('gex/gammaOI', symbol)
             cached_data = self._get_cached_response(cache_key)
             if cached_data:
+                cache_duration = self._get_cache_duration()
+                print(f"✅ Using cached gammaOI data for {symbol} (cache TTL: {cache_duration/60:.0f} min)")
                 json_response = cached_data
             else:
                 # Use intelligent rate limiter if available
@@ -1448,9 +1491,10 @@ class TradingVolatilityAPI:
                     return {}
 
                 # Check for rate limit error in response text
+                # DON'T activate circuit breaker - gammaOI has stricter limits (2/min)
+                # Blocking all endpoints because of gammaOI would break gex/latest (20/min)
                 if "API limit exceeded" in response.text:
-                    print(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
-                    self._handle_rate_limit_error()
+                    print(f"⚠️ gammaOI rate limited (2/min during trading hours) - returning empty data")
                     return {}
 
                 # Check if response has content before parsing JSON
@@ -1463,9 +1507,9 @@ class TradingVolatilityAPI:
                     json_response = response.json()
                 except ValueError as json_err:
                     # Check if error message contains rate limit info
+                    # DON'T activate circuit breaker - gammaOI has stricter limits
                     if "API limit exceeded" in response.text:
-                        print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
-                        self._handle_rate_limit_error()
+                        print(f"⚠️ gammaOI rate limited - returning empty data")
                         return {}
                     else:
                         print(f"❌ Invalid JSON from gammaOI endpoint")

@@ -1,31 +1,42 @@
 """
 Centralized Rate Limiter for AlphaGEX
 Prevents API overuse across all deployments
+
+AUTO-DETECTS WEEKEND VS WEEKDAY:
+- Weekend (Sat/Sun): 2 calls/minute (market closed, strict limits)
+- Weekday trading hours (9:30am-4pm ET): 2 calls/minute (realtime data)
+- Weekday non-trading hours: 18 calls/minute (safety margin from 20/min limit)
 """
 
 import time
 import threading
 from collections import deque
 from datetime import datetime, timedelta
+import pytz
 
 class RateLimiter:
     """
-    Thread-safe rate limiter with multiple strategies
+    Thread-safe rate limiter with automatic weekend/weekday detection
+    Dynamically adjusts limits based on current time and market hours
     """
 
-    def __init__(self, max_calls_per_minute=15, max_calls_per_hour=800):
+    def __init__(self, max_calls_per_minute=None, max_calls_per_hour=800, dynamic_limits=True):
         """
-        Initialize rate limiter
+        Initialize rate limiter with dynamic weekend/weekday detection
 
         Args:
-            max_calls_per_minute: Maximum API calls per minute (default: 15 for safety margin)
+            max_calls_per_minute: Maximum API calls per minute (if None, auto-detected)
             max_calls_per_hour: Maximum API calls per hour (default: 800)
+            dynamic_limits: If True, automatically adjust limits based on weekend/weekday
         """
-        self.max_calls_per_minute = max_calls_per_minute
+        self.dynamic_limits = dynamic_limits
         self.max_calls_per_hour = max_calls_per_hour
 
-        # Track call timestamps
-        self.call_history_minute = deque(maxlen=max_calls_per_minute * 2)
+        # Static limit if provided
+        self.static_max_calls_per_minute = max_calls_per_minute
+
+        # Track call timestamps (use larger maxlen for dynamic limits)
+        self.call_history_minute = deque(maxlen=100)
         self.call_history_hour = deque(maxlen=max_calls_per_hour * 2)
 
         # Thread lock for safety
@@ -35,6 +46,53 @@ class RateLimiter:
         self.total_calls = 0
         self.total_blocked = 0
         self.total_delayed = 0
+
+        # Trading hours timezone
+        self.et_tz = pytz.timezone('America/New_York')
+
+    def _get_current_limit(self) -> int:
+        """
+        Get current rate limit based on day of week and trading hours
+
+        Trading Volatility API Limits (Stocks+ Subscriber):
+        - Weekend (Sat/Sun): 2 calls/minute
+        - Weekday trading hours (9:30am-4pm ET): 2 calls/minute (realtime data)
+        - Weekday non-trading hours: 20 calls/minute (non-realtime data)
+
+        Returns:
+            Current maximum calls per minute
+        """
+        # If dynamic limits disabled, use static value
+        if not self.dynamic_limits:
+            return self.static_max_calls_per_minute or 15
+
+        # Get current time in Eastern Time
+        now_et = datetime.now(self.et_tz)
+        day_of_week = now_et.weekday()  # 0 = Monday, 6 = Sunday
+        current_hour = now_et.hour
+        current_minute = now_et.minute
+
+        # Weekend (Saturday=5, Sunday=6): Strict 2 calls/minute limit
+        if day_of_week >= 5:
+            return 2
+
+        # Weekday: Check if within trading hours (9:30 AM - 4:00 PM ET)
+        # Trading hours use realtime data endpoint (2 calls/minute limit)
+        market_open_minutes = 9 * 60 + 30  # 9:30 AM
+        market_close_minutes = 16 * 60     # 4:00 PM
+        current_minutes = current_hour * 60 + current_minute
+
+        if market_open_minutes <= current_minutes < market_close_minutes:
+            # During trading hours: 2 calls/minute (realtime data)
+            return 2
+        else:
+            # Outside trading hours: 18 calls/minute (safety margin from 20/min)
+            return 18
+
+    @property
+    def max_calls_per_minute(self) -> int:
+        """Current maximum calls per minute (dynamic based on time)"""
+        return self._get_current_limit()
 
     def can_make_request(self) -> tuple[bool, float]:
         """
@@ -108,7 +166,19 @@ class RateLimiter:
             if sleep_time > 0:
                 with self.lock:
                     self.total_delayed += 1
-                print(f"⏱️  Rate limit: waiting {sleep_time:.1f}s (quota: {len(self.call_history_minute)}/{self.max_calls_per_minute}/min)")
+
+                # Get current limit and show day context
+                current_limit = self.max_calls_per_minute
+                now_et = datetime.now(self.et_tz)
+                day_name = now_et.strftime("%A")
+                is_weekend = now_et.weekday() >= 5
+
+                if is_weekend:
+                    context = f"{day_name} (WEEKEND - 2/min limit)"
+                else:
+                    context = f"{day_name} ({current_limit}/min limit)"
+
+                print(f"⏱️  Rate limit: waiting {sleep_time:.1f}s | {len(self.call_history_minute)}/{current_limit} calls/min | {context}")
                 time.sleep(sleep_time)
 
     def get_stats(self) -> dict:
@@ -144,10 +214,13 @@ class RateLimiter:
             self.total_delayed = 0
 
 
-# Global rate limiter instance
-# Set to 15/min for safety (Trading Volatility is 20/min, but we want margin)
+# Global rate limiter instance with DYNAMIC limits
+# Automatically detects weekend vs weekday and trading hours:
+# - Weekend: 2 calls/minute
+# - Weekday trading hours (9:30am-4pm ET): 2 calls/minute
+# - Weekday non-trading hours: 18 calls/minute
 trading_volatility_limiter = RateLimiter(
-    max_calls_per_minute=15,  # 75% of 20/min quota
+    dynamic_limits=True,       # Enable auto-detection
     max_calls_per_hour=800     # Safety limit
 )
 

@@ -626,10 +626,21 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
                 detail=f"GEX data not available for {symbol}: {error_msg}"
             )
 
-        # Get detailed profile for strike-level gamma data
-        profile = api_client.get_gex_profile(symbol)
+        # Try to get detailed profile for strike-level gamma data
+        # This endpoint has strict rate limits (2/min during trading hours)
+        # Gracefully degrade if not available
+        profile = None
+        try:
+            profile = api_client.get_gex_profile(symbol)
+            # If rate limited, profile will be empty dict or have error key
+            if profile and profile.get('error'):
+                print(f"⚠️ gammaOI unavailable for gamma intelligence: {profile.get('error')}")
+                profile = None
+        except Exception as e:
+            print(f"⚠️ Could not fetch strike-level data for gamma intelligence: {e}")
+            profile = None
 
-        # Calculate total call and put gamma from strike-level data
+        # Calculate total call and put gamma from strike-level data (if available)
         total_call_gamma = 0
         total_put_gamma = 0
 
