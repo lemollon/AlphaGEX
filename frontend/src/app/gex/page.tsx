@@ -88,7 +88,7 @@ export default function GEXAnalysisPage() {
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingTickers, setLoadingTickers] = useState<Set<string>>(new Set())
   const [newTicker, setNewTicker] = useState('')
-  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set()) // Start collapsed to avoid auto-loading gammaOI
+  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set(['SPY'])) // Auto-expand SPY to show GEX chart
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cacheInfo, setCacheInfo] = useState<Record<string, string>>({})
