@@ -300,8 +300,12 @@ async def get_gex_data(symbol: str):
         psychology_data = {}
         rsi_data = {}
         try:
-            # Try to get RSI and psychology state (non-blocking)
+            # Try to get RSI and psychology state (non-blocking, best-effort)
+            # NOTE: Yahoo Finance frequently blocks automated requests (HTTP 403)
+            # RSI will gracefully show "---" in UI if Yahoo blocks the request
             import yfinance as yf
+
+            # Let yfinance handle session creation (it uses curl_cffi with browser impersonation)
             ticker = yf.Ticker(symbol)
 
             # Calculate RSI for multiple timeframes
@@ -433,9 +437,18 @@ async def get_gex_data(symbol: str):
                     'rsi': current_rsi
                 }
         except Exception as e:
-            print(f"⚠️  Could not fetch psychology data for {symbol}: {e}")
+            error_msg = str(e)
+            if '403' in error_msg or 'Access denied' in error_msg:
+                print(f"⚠️  Yahoo Finance blocked RSI request for {symbol} (HTTP 403)")
+                print(f"    This is normal - Yahoo frequently blocks automated requests")
+                print(f"    Multi-timeframe RSI will show '---' in UI (feature is best-effort)")
+            else:
+                print(f"⚠️  Could not fetch RSI/psychology data for {symbol}: {error_msg}")
+
+            # Return default values - UI will show "---" for RSI
             psychology_data = {'fomo_level': 50, 'fear_level': 50, 'state': 'BALANCED', 'rsi': 50}
             rsi_data = {}
+            print(f"📊 RSI Summary: 0/5 timeframes successful (Yahoo Finance blocking requests)")
 
         # Calculate probability (EOD and Next Day)
         spot_price = gex_data.get('spot_price', 0)
