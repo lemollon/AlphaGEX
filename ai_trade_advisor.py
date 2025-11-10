@@ -44,7 +44,7 @@ class SmartTradeAdvisor:
             raise ValueError("ANTHROPIC_API_KEY or CLAUDE_API_KEY must be set")
 
         self.llm = ChatAnthropic(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-haiku-4-5-20251001",  # Haiku 4.5 (Oct 2025) - Fast, cheap, smart
             anthropic_api_key=self.api_key,
             temperature=0.2,  # Slightly higher for nuanced trade analysis
             max_tokens=2048

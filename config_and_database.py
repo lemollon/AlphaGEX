@@ -11,7 +11,7 @@ from pathlib import Path
 
 # API Configuration
 TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
-CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # Haiku 4.5 (Oct 2025) - Fast, cheap, great for analysis
 
 # Database Path - ABSOLUTE PATH to ensure consistency across services
 # Backend API, Autonomous Trader Worker, and all scripts use the SAME database

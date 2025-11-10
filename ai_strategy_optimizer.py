@@ -56,8 +56,9 @@ class StrategyOptimizerAgent:
             raise ValueError("ANTHROPIC_API_KEY or CLAUDE_API_KEY must be set")
 
         # Initialize Claude via LangChain (simplified - no deprecated agent framework)
+        # Using Haiku 4.5: 67% cheaper, 2x faster, 73% as good as Sonnet for analysis
         self.llm = ChatAnthropic(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-haiku-4-5-20251001",  # Latest Haiku 4.5 (Oct 2025)
             anthropic_api_key=self.api_key,
             temperature=0.1,  # Low temperature for consistent analysis
             max_tokens=4096
