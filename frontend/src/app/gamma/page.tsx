@@ -197,8 +197,9 @@ export default function GammaIntelligence() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="space-y-6">
+      <main className="pt-16 transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="space-y-6">
           {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -1082,6 +1083,8 @@ export default function GammaIntelligence() {
             <strong> SpotGamma professional analysis</strong>, <strong>ECB Financial Stability Review 2023</strong>, and <strong>validated production trading data</strong>.
             Context-aware adjustments for Friday expirations and high-VIX environments ensure accuracy across all market conditions.
           </p>
+        </div>
+        </div>
         </div>
       </main>
     </div>
