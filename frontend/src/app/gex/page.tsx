@@ -100,6 +100,20 @@ export default function GEXAnalysisPage() {
     loadAllTickers()
   }, [tickers])
 
+  // Auto-load GEX levels for tickers that are expanded on page load (like SPY)
+  useEffect(() => {
+    if (loading) return // Don't load GEX levels while still loading ticker data
+
+    expandedTickers.forEach((ticker) => {
+      // Only load if we have ticker data but don't have GEX levels yet
+      if (tickerData[ticker] && !gexLevels[ticker] && !loadingGexLevels.has(ticker) && !gexLevelsErrors[ticker]) {
+        console.log(`🔄 Auto-loading GEX levels for expanded ticker: ${ticker}`)
+        loadGexLevels(ticker)
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickerData, expandedTickers, loading]) // Run when ticker data loads or expansion changes
+
   const loadAllTickers = async () => {
     setLoading(true)
     setError(null)
