@@ -573,7 +573,6 @@ export default function GammaExpirationTracker() {
           </div>
         </div>
         </div>
-        </div>
       </main>
     </div>
   )

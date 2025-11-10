@@ -1085,7 +1085,6 @@ export default function GammaIntelligence() {
           </p>
         </div>
         </div>
-        </div>
       </main>
     </div>
   )
