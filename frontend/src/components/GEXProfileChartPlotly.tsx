@@ -45,28 +45,34 @@ export default function GEXProfileChart({
   const maxCallGamma = Math.max(...data.map(d => Math.abs(d.call_gex))) / 1e6
   const maxPutGamma = Math.max(...data.map(d => Math.abs(d.put_gex))) / 1e6
 
-  // Prepare chart data
+  // Prepare chart data - separate Call and Put GEX
   const chartData = useMemo(() => {
     const strikes = data.map(d => d.strike)
-    const netGamma = data.map(d => (d.call_gex - Math.abs(d.put_gex)) / 1e6)
-    const colors = netGamma.map(g => g > 0 ? '#3b82f6' : '#ef4444')
+    // Call GEX: Always positive, displays ABOVE axis (green bars on top)
+    const callGamma = data.map(d => Math.abs(d.call_gex) / 1e6)
+    // Put GEX: Always negative, displays BELOW axis (red bars on bottom)
+    const putGamma = data.map(d => -Math.abs(d.put_gex) / 1e6)
 
     return {
       strikes,
-      netGamma,
-      colors
+      callGamma,
+      putGamma
     }
   }, [data])
 
   // Create annotations (labels)
   const annotations = useMemo(() => {
     const annots: any[] = []
+    const maxValue = Math.max(
+      ...chartData.callGamma.map(Math.abs),
+      ...chartData.putGamma.map(Math.abs)
+    )
 
     // Spot Price
     if (spotPrice && spotPrice > 0) {
       annots.push({
         x: spotPrice,
-        y: Math.max(...chartData.netGamma.map(Math.abs)) * 1.15,
+        y: maxValue * 1.15,
         text: `📍 SPOT: $${spotPrice.toFixed(2)}`,
         showarrow: false,
         font: { color: '#fbbf24', size: 12, family: 'Arial, sans-serif' },
@@ -83,7 +89,7 @@ export default function GEXProfileChart({
     if (flipPoint && flipPoint > 0) {
       annots.push({
         x: flipPoint,
-        y: Math.max(...chartData.netGamma.map(Math.abs)) * 1.05,
+        y: maxValue * 1.05,
         text: `⚡ FLIP: $${flipPoint.toFixed(2)}`,
         showarrow: false,
         font: { color: '#fb923c', size: 12, family: 'Arial, sans-serif' },
@@ -100,7 +106,7 @@ export default function GEXProfileChart({
     if (callWall && callWall > 0) {
       annots.push({
         x: callWall,
-        y: Math.max(...chartData.netGamma.map(Math.abs)) * 0.95,
+        y: maxValue * 0.95,
         text: `🔴 CALL: $${callWall.toFixed(2)}`,
         showarrow: false,
         font: { color: '#10b981', size: 12, family: 'Arial, sans-serif' },
@@ -117,7 +123,7 @@ export default function GEXProfileChart({
     if (putWall && putWall > 0) {
       annots.push({
         x: putWall,
-        y: Math.max(...chartData.netGamma.map(Math.abs)) * 0.85,
+        y: maxValue * 0.85,
         text: `🟢 PUT: $${putWall.toFixed(2)}`,
         showarrow: false,
         font: { color: '#ef4444', size: 12, family: 'Arial, sans-serif' },
@@ -131,13 +137,14 @@ export default function GEXProfileChart({
     }
 
     return annots
-  }, [spotPrice, flipPoint, callWall, putWall, chartData.netGamma])
+  }, [spotPrice, flipPoint, callWall, putWall, chartData.callGamma, chartData.putGamma])
 
   // Create shapes (vertical lines)
   const shapes = useMemo(() => {
     const shapesList: any[] = []
-    const yMin = Math.min(...chartData.netGamma) * 1.2
-    const yMax = Math.max(...chartData.netGamma) * 1.2
+    const allValues = [...chartData.callGamma, ...chartData.putGamma]
+    const yMin = Math.min(...allValues) * 1.2
+    const yMax = Math.max(...allValues) * 1.2
 
     if (spotPrice && spotPrice > 0) {
       shapesList.push({
@@ -184,7 +191,7 @@ export default function GEXProfileChart({
     }
 
     return shapesList
-  }, [spotPrice, flipPoint, callWall, putWall, chartData.netGamma])
+  }, [spotPrice, flipPoint, callWall, putWall, chartData.callGamma, chartData.putGamma])
 
   return (
     <div className="w-full space-y-4">
@@ -220,10 +227,10 @@ export default function GEXProfileChart({
             <span className="text-xs font-semibold text-primary">NET GAMMA</span>
           </div>
           <p className="text-2xl font-bold text-primary">
-            {chartData.netGamma.reduce((sum, v) => sum + v, 0).toFixed(0)}M
+            {(chartData.callGamma.reduce((sum, v) => sum + v, 0) + chartData.putGamma.reduce((sum, v) => sum + v, 0)).toFixed(0)}M
           </p>
           <p className="text-xs text-text-muted mt-1">
-            {chartData.netGamma.reduce((sum, v) => sum + v, 0) > 0 ? "Positive = Range bound" : "Negative = Volatile"}
+            {(chartData.callGamma.reduce((sum, v) => sum + v, 0) + chartData.putGamma.reduce((sum, v) => sum + v, 0)) > 0 ? "Positive = Range bound" : "Negative = Volatile"}
           </p>
         </div>
       </div>
@@ -231,9 +238,9 @@ export default function GEXProfileChart({
       {/* Chart */}
       <div className="bg-background-deep rounded-lg p-4 border-2 border-primary/50">
         <div className="mb-4">
-          <h3 className="text-lg font-bold text-text-primary">📊 NET Gamma Profile</h3>
+          <h3 className="text-lg font-bold text-text-primary">📊 Call & Put GEX Profile</h3>
           <p className="text-sm text-text-secondary mt-1">
-            Blue = positive net gamma (calls dominant) | Red = negative net gamma (puts dominant)
+            Green bars = Call GEX (resistance above) | Red bars = Put GEX (support below)
           </p>
         </div>
 
@@ -241,14 +248,25 @@ export default function GEXProfileChart({
           data={[
             {
               x: chartData.strikes,
-              y: chartData.netGamma,
+              y: chartData.callGamma,
               type: 'bar',
               marker: {
-                color: chartData.colors,
+                color: '#10b981',
                 line: { width: 0 }
               },
-              name: 'Net Gamma',
-              hovertemplate: '<b>Strike: $%{x:.2f}</b><br>Net Gamma: %{y:.1f}M<br><extra></extra>'
+              name: 'Call GEX',
+              hovertemplate: '<b>Strike: $%{x:.2f}</b><br>Call GEX: %{y:.1f}M<br><extra></extra>'
+            },
+            {
+              x: chartData.strikes,
+              y: chartData.putGamma,
+              type: 'bar',
+              marker: {
+                color: '#ef4444',
+                line: { width: 0 }
+              },
+              name: 'Put GEX',
+              hovertemplate: '<b>Strike: $%{x:.2f}</b><br>Put GEX: %{y:.1f}M<br><extra></extra>'
             }
           ]}
           layout={{
@@ -263,7 +281,7 @@ export default function GEXProfileChart({
               showgrid: true
             },
             yaxis: {
-              title: { text: 'Net Gamma ($M)' },
+              title: { text: 'Gamma Exposure ($M)' },
               gridcolor: '#1a1f2e',
               showgrid: true,
               zeroline: true,
@@ -274,7 +292,17 @@ export default function GEXProfileChart({
             annotations: annotations,
             margin: { t: 100, b: 60, l: 60, r: 40 },
             hovermode: 'closest',
-            showlegend: false
+            showlegend: true,
+            legend: {
+              x: 1,
+              y: 1,
+              xanchor: 'right',
+              bgcolor: 'rgba(0,0,0,0.8)',
+              bordercolor: '#6b7280',
+              borderwidth: 1,
+              font: { color: '#9ca3af' }
+            },
+            barmode: 'relative'
           }}
           config={{
             displayModeBar: false,

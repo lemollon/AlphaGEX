@@ -12,7 +12,7 @@ The Goal: Make you profitable by continuously improving strategies based on data
 """
 
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import sqlite3
 import json
@@ -27,8 +27,17 @@ try:
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    print("⚠️ langchain not installed - AI Strategy Optimizer will not be available")
-    print("   Install with: pip install langchain langchain-anthropic")
+    # Create dummy classes to prevent NameError
+    # Backend will show user-friendly error message when feature is requested
+    Tool = None
+    AgentExecutor = None
+    create_openai_functions_agent = None
+    ChatAnthropic = None
+    ChatPromptTemplate = None
+    MessagesPlaceholder = None
+    ConversationBufferMemory = None
+    HumanMessage = None
+    AIMessage = None
 
 from config_and_database import DB_PATH
 

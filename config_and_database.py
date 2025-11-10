@@ -370,6 +370,7 @@ def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             spy_price REAL,
+            vix_current REAL,
 
             -- Regime identification
             primary_regime_type TEXT,
@@ -605,6 +606,20 @@ def init_database():
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy ON backtest_results(strategy_name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_timestamp ON backtest_results(timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)")
+
+    # ===== DATABASE MIGRATIONS =====
+
+    # Add vix_current column to regime_signals if it doesn't exist
+    try:
+        c.execute("PRAGMA table_info(regime_signals)")
+        columns = [row[1] for row in c.fetchall()]
+        if 'vix_current' not in columns:
+            print("🔄 Migrating regime_signals table: adding vix_current column")
+            c.execute("ALTER TABLE regime_signals ADD COLUMN vix_current REAL")
+            print("✅ Migration complete: vix_current column added")
+    except Exception as e:
+        # Table might not exist yet on first run - that's fine
+        pass
 
     conn.commit()
     conn.close()

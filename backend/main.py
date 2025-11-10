@@ -3463,16 +3463,12 @@ def get_cached_price_data(symbol: str, current_price: float):
         return price_data
 
     except Exception as e:
-        # Fallback if yfinance fails
-        print(f"⚠️  Warning: Could not fetch price data: {e}")
-        print(f"Using fallback mock data")
-        return {
-            '5m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
-            '15m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
-            '1h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(100)],
-            '4h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
-            '1d': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)]
-        }
+        # NO FALLBACK - Never use mock data
+        print(f"❌ Could not fetch price data from Yahoo Finance: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to fetch price data for {symbol}. Yahoo Finance API error: {str(e)}"
+        )
 
 @app.get("/api/psychology/current-regime")
 async def get_current_regime(symbol: str = "SPY"):
@@ -4363,12 +4359,21 @@ async def run_backtests(request: dict = None):
             }
         else:
             print(f"❌ Backtests failed: {result.stderr}")
-            return {
-                "success": False,
-                "error": "Backtest execution failed",
-                "stderr": result.stderr,
-                "stdout": result.stdout
-            }
+
+            # Check for specific errors
+            error_message = result.stderr
+            if "ModuleNotFoundError: No module named 'pandas'" in error_message:
+                error_detail = "Missing required dependencies: pandas and numpy. Install with: pip install pandas numpy scipy"
+            elif "ModuleNotFoundError" in error_message:
+                module_name = error_message.split("'")[1] if "'" in error_message else "unknown"
+                error_detail = f"Missing required dependency: {module_name}. Install with: pip install {module_name}"
+            else:
+                error_detail = "Backtest execution failed. Check backend logs for details."
+
+            raise HTTPException(
+                status_code=500,
+                detail=error_detail + f"\n\nFull error:\n{result.stderr}"
+            )
 
     except subprocess.TimeoutExpired:
         return {

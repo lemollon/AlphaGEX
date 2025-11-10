@@ -119,6 +119,21 @@ export default function GEXAnalysisPage() {
     if (Object.keys(cachedData).length > 0) {
       setTickerData(cachedData)
       console.log(`📦 Loaded ${Object.keys(cachedData).length} tickers from cache`)
+
+      // Also fetch GEX levels for cached tickers (chart is always visible now)
+      Object.keys(cachedData).forEach(async (ticker) => {
+        try {
+          const response = await apiClient.getGEXLevels(ticker)
+          if (response.data.success && response.data.data) {
+            setGexLevels(prev => ({
+              ...prev,
+              [ticker]: response.data.data.levels || []
+            }))
+          }
+        } catch (err) {
+          console.error(`Failed to load GEX levels for ${ticker}:`, err)
+        }
+      })
     }
 
     // Mark tickers that need loading
@@ -165,6 +180,21 @@ export default function GEXAnalysisPage() {
       setCacheInfo(newCacheInfo)
 
       console.log(`✅ Loaded ${Object.keys(freshResults).length} fresh tickers from API`)
+
+      // Auto-fetch GEX levels for all tickers (chart is always visible now)
+      for (const ticker of Object.keys(freshResults)) {
+        try {
+          const response = await apiClient.getGEXLevels(ticker)
+          if (response.data.success && response.data.data) {
+            setGexLevels(prev => ({
+              ...prev,
+              [ticker]: response.data.data.levels || []
+            }))
+          }
+        } catch (err) {
+          console.error(`Failed to load GEX levels for ${ticker}:`, err)
+        }
+      }
     } catch (err) {
       console.error('Failed to load tickers:', err)
       setError('Some tickers failed to load. Using cached data where available.')
@@ -501,6 +531,27 @@ export default function GEXAnalysisPage() {
                     </div>
                   </div>
 
+                  {/* GEX Profile Chart - Always Visible */}
+                  <div className="mt-6">
+                    {gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
+                      <GEXProfileChart
+                        data={gexLevels[ticker]}
+                        spotPrice={data.spot_price}
+                        flipPoint={data.flip_point}
+                        callWall={data.call_wall}
+                        putWall={data.put_wall}
+                        height={600}
+                      />
+                    ) : (
+                      <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
+                        <div className="flex items-center justify-center space-x-3">
+                          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                          <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {isExpanded && (
                     <>
                       {/* GEX Metrics Grid */}
@@ -760,26 +811,6 @@ export default function GEXAnalysisPage() {
                         </div>
                       )}
 
-                      {/* GEX Profile Chart */}
-                      <div className="mt-6">
-                        {gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
-                          <GEXProfileChart
-                            data={gexLevels[ticker]}
-                            spotPrice={data.spot_price}
-                            flipPoint={data.flip_point}
-                            callWall={data.call_wall}
-                            putWall={data.put_wall}
-                            height={600}
-                          />
-                        ) : (
-                          <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
-                            <div className="flex items-center justify-center space-x-3">
-                              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                              <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
                     </>
                   )}
                 </div>
