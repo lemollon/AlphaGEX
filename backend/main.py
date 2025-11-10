@@ -321,13 +321,16 @@ async def get_gex_data(symbol: str):
 
             try:
                 df_1d = ticker.history(period="90d", interval="1d")
+                print(f"  📥 1d: Fetched {len(df_1d)} bars from yfinance")
+                if not df_1d.empty:
+                    print(f"      Date range: {df_1d.index[0]} to {df_1d.index[-1]}")
                 rsi_1d = calculate_rsi(df_1d)
                 if rsi_1d is not None:
                     rsi_data['1d'] = round(float(rsi_1d), 1)
                     print(f"  ✅ 1d RSI: {rsi_data['1d']}")
                 else:
                     rsi_data['1d'] = None
-                    print(f"  ⚠️ 1d RSI: insufficient data")
+                    print(f"  ⚠️ 1d RSI: insufficient data (need 14+ bars, got {len(df_1d)})")
             except Exception as e:
                 rsi_data['1d'] = None
                 print(f"  ❌ 1d RSI failed: {e}")
@@ -354,39 +357,48 @@ async def get_gex_data(symbol: str):
 
             try:
                 df_1h = ticker.history(period="7d", interval="1h")
+                print(f"  📥 1h: Fetched {len(df_1h)} bars from yfinance")
+                if not df_1h.empty:
+                    print(f"      Date range: {df_1h.index[0]} to {df_1h.index[-1]}")
                 rsi_1h = calculate_rsi(df_1h)
                 if rsi_1h is not None:
                     rsi_data['1h'] = round(float(rsi_1h), 1)
                     print(f"  ✅ 1h RSI: {rsi_data['1h']}")
                 else:
                     rsi_data['1h'] = None
-                    print(f"  ⚠️ 1h RSI: insufficient data")
+                    print(f"  ⚠️ 1h RSI: insufficient data (need 14+ bars, got {len(df_1h)})")
             except Exception as e:
                 rsi_data['1h'] = None
                 print(f"  ❌ 1h RSI failed: {e}")
 
             try:
                 df_15m = ticker.history(period="5d", interval="15m")
+                print(f"  📥 15m: Fetched {len(df_15m)} bars from yfinance")
+                if not df_15m.empty:
+                    print(f"      Date range: {df_15m.index[0]} to {df_15m.index[-1]}")
                 rsi_15m = calculate_rsi(df_15m)
                 if rsi_15m is not None:
                     rsi_data['15m'] = round(float(rsi_15m), 1)
                     print(f"  ✅ 15m RSI: {rsi_data['15m']}")
                 else:
                     rsi_data['15m'] = None
-                    print(f"  ⚠️ 15m RSI: insufficient data")
+                    print(f"  ⚠️ 15m RSI: insufficient data (need 14+ bars, got {len(df_15m)})")
             except Exception as e:
                 rsi_data['15m'] = None
                 print(f"  ❌ 15m RSI failed: {e}")
 
             try:
                 df_5m = ticker.history(period="2d", interval="5m")
+                print(f"  📥 5m: Fetched {len(df_5m)} bars from yfinance")
+                if not df_5m.empty:
+                    print(f"      Date range: {df_5m.index[0]} to {df_5m.index[-1]}")
                 rsi_5m = calculate_rsi(df_5m)
                 if rsi_5m is not None:
                     rsi_data['5m'] = round(float(rsi_5m), 1)
                     print(f"  ✅ 5m RSI: {rsi_data['5m']}")
                 else:
                     rsi_data['5m'] = None
-                    print(f"  ⚠️ 5m RSI: insufficient data")
+                    print(f"  ⚠️ 5m RSI: insufficient data (need 14+ bars, got {len(df_5m)})")
             except Exception as e:
                 rsi_data['5m'] = None
                 print(f"  ❌ 5m RSI failed: {e}")
