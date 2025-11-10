@@ -48,8 +48,10 @@ export default function GEXProfileChart({
   // Prepare chart data - separate Call and Put GEX
   const chartData = useMemo(() => {
     const strikes = data.map(d => d.strike)
-    const callGamma = data.map(d => d.call_gex / 1e6) // Positive values
-    const putGamma = data.map(d => -Math.abs(d.put_gex) / 1e6) // Negative values
+    // Call GEX: Always positive, displays ABOVE axis (green bars on top)
+    const callGamma = data.map(d => Math.abs(d.call_gex) / 1e6)
+    // Put GEX: Always negative, displays BELOW axis (red bars on bottom)
+    const putGamma = data.map(d => -Math.abs(d.put_gex) / 1e6)
 
     return {
       strikes,
