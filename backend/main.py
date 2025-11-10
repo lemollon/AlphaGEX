@@ -480,38 +480,53 @@ async def get_gex_data(symbol: str):
 async def get_gex_levels(symbol: str):
     """
     Get GEX support/resistance levels for a symbol with strike-by-strike breakdown
-    Filtered to +/- 7 day standard deviation range
+
+    Returns strike-level data if available, otherwise returns empty array
+    (Frontend can still display aggregate GEX data from /api/gex/{symbol})
 
     Args:
         symbol: Stock symbol
 
     Returns:
-        Array of GEX levels with detailed strike data (call_gex, put_gex, OI, etc.)
+        Array of GEX levels (may be empty if gammaOI endpoint is rate limited)
     """
     try:
         symbol = symbol.upper()
 
-        # Use get_gex_profile() to get detailed strike-level gamma data
-        # This calls /gex/gammaOI endpoint which returns gamma_array
-        # Already filtered to +/- 7 day STD in get_gex_profile()
+        # Try to get strike-level data from gammaOI endpoint
+        # This endpoint has stricter rate limits than /gex/latest
         profile = api_client.get_gex_profile(symbol)
 
-        if not profile or profile.get('error'):
-            error_msg = profile.get('error', 'Unknown error') if profile else 'No data returned'
-            print(f"❌ GEX profile API error for {symbol}: {error_msg}")
+        # If gammaOI is rate limited or unavailable, return empty array
+        # Frontend will still show aggregate data from /api/gex/{symbol}
+        if not profile:
+            print(f"⚠️ No profile data for {symbol} - likely rate limited or not available in subscription")
+            return {
+                "success": True,
+                "symbol": symbol,
+                "levels": [],
+                "data": [],
+                "message": "Strike-level data unavailable (gammaOI endpoint rate limited or not included in subscription)",
+                "timestamp": datetime.now().isoformat()
+            }
 
-            if '403' in str(error_msg):
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Trading Volatility API access denied (403 Forbidden). Your API key (I-RWFNBLR2S1DP) may need to be renewed or the service may have changed authentication methods. Please contact support@tradingvolatility.net to verify your account status and API access."
-                )
-            else:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"GEX profile not available for {symbol}: {error_msg}"
-                )
+        # Check for error from API
+        if profile.get('error'):
+            error_msg = profile.get('error')
+            print(f"⚠️ GEX profile error for {symbol}: {error_msg}")
 
-        # Extract strikes data from profile (already filtered to +/- 7 day STD)
+            # Return empty array instead of failing
+            # Frontend can still display aggregate GEX metrics
+            return {
+                "success": True,
+                "symbol": symbol,
+                "levels": [],
+                "data": [],
+                "message": f"Strike-level data unavailable: {error_msg}",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Extract strikes data from profile
         strikes = profile.get('strikes', [])
 
         if not strikes:
