@@ -262,30 +262,83 @@ export default function GEXAnalysisPage() {
     })
 
     try {
+      // Try the dedicated levels endpoint first
       const response = await apiClient.getGEXLevels(ticker)
       if (response.data.success && response.data.data) {
         const levels = response.data.data.levels || []
-        setGexLevels(prev => ({
-          ...prev,
-          [ticker]: levels
-        }))
 
-        // If no levels returned, set an error message
-        if (levels.length === 0) {
-          setGexLevelsErrors(prev => ({
+        // If levels endpoint returns data, use it
+        if (levels.length > 0) {
+          setGexLevels(prev => ({
             ...prev,
-            [ticker]: 'No GEX level data available for this ticker'
+            [ticker]: levels
           }))
+          return
         }
-      } else {
-        // API returned success: false
-        setGexLevelsErrors(prev => ({
-          ...prev,
-          [ticker]: response.data.error || 'Failed to load GEX levels'
-        }))
+
+        // If levels is empty (rate limited), fall back to gamma intelligence endpoint
+        console.log(`⚠️ GEX levels empty for ${ticker}, trying gamma intelligence endpoint as fallback...`)
       }
+
+      // FALLBACK: Try gamma intelligence endpoint which has the same strike data
+      try {
+        const gammaResponse = await apiClient.getGammaIntelligence(ticker)
+        if (gammaResponse.data.success && gammaResponse.data.data?.strikes) {
+          const strikes = gammaResponse.data.data.strikes
+
+          // Transform gamma strikes to GEX levels format
+          // Gamma uses: call_gamma, put_gamma, total_gamma
+          // GEX chart expects: call_gex, put_gex, total_gex
+          const transformedLevels = strikes.map((strike: any) => ({
+            strike: strike.strike,
+            call_gex: strike.call_gamma,  // Gamma and GEX are the same data
+            put_gex: strike.put_gamma,
+            total_gex: strike.total_gamma
+          }))
+
+          console.log(`✅ Loaded ${transformedLevels.length} strikes from gamma intelligence for ${ticker}`)
+          setGexLevels(prev => ({
+            ...prev,
+            [ticker]: transformedLevels
+          }))
+          return
+        }
+      } catch (gammaErr) {
+        console.error(`Gamma intelligence fallback also failed for ${ticker}:`, gammaErr)
+      }
+
+      // If both endpoints fail or return empty, show error
+      setGexLevelsErrors(prev => ({
+        ...prev,
+        [ticker]: 'No GEX level data available for this ticker. The gammaOI API may be rate limited.'
+      }))
+
     } catch (err: any) {
       console.error(`Failed to load GEX levels for ${ticker}:`, err)
+
+      // Still try the gamma intelligence fallback even if levels endpoint threw an error
+      try {
+        const gammaResponse = await apiClient.getGammaIntelligence(ticker)
+        if (gammaResponse.data.success && gammaResponse.data.data?.strikes) {
+          const strikes = gammaResponse.data.data.strikes
+          const transformedLevels = strikes.map((strike: any) => ({
+            strike: strike.strike,
+            call_gex: strike.call_gamma,
+            put_gex: strike.put_gamma,
+            total_gex: strike.total_gamma
+          }))
+
+          console.log(`✅ Loaded ${transformedLevels.length} strikes from gamma intelligence fallback for ${ticker}`)
+          setGexLevels(prev => ({
+            ...prev,
+            [ticker]: transformedLevels
+          }))
+          return
+        }
+      } catch (gammaErr) {
+        console.error(`Gamma intelligence fallback also failed for ${ticker}:`, gammaErr)
+      }
+
       const errorMessage = err.response?.data?.detail || err.message || 'Failed to load GEX profile chart'
       setGexLevelsErrors(prev => ({
         ...prev,
