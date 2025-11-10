@@ -316,14 +316,21 @@ async def get_gex_data(symbol: str):
                 rsi = 100 - (100 / (1 + rs))
                 return rsi.iloc[-1] if not rsi.empty else None
 
-            # Fetch data for different timeframes
+            # Fetch data for different timeframes with better error logging
+            print(f"📊 Fetching multi-timeframe RSI for {symbol}...")
+
             try:
                 df_1d = ticker.history(period="90d", interval="1d")
                 rsi_1d = calculate_rsi(df_1d)
                 if rsi_1d is not None:
                     rsi_data['1d'] = round(float(rsi_1d), 1)
-            except:
+                    print(f"  ✅ 1d RSI: {rsi_data['1d']}")
+                else:
+                    rsi_data['1d'] = None
+                    print(f"  ⚠️ 1d RSI: insufficient data")
+            except Exception as e:
                 rsi_data['1d'] = None
+                print(f"  ❌ 1d RSI failed: {e}")
 
             try:
                 df_4h = ticker.history(period="30d", interval="1h")
@@ -334,32 +341,57 @@ async def get_gex_data(symbol: str):
                     rsi_4h = calculate_rsi(df_4h_resampled)
                     if rsi_4h is not None:
                         rsi_data['4h'] = round(float(rsi_4h), 1)
-            except:
+                        print(f"  ✅ 4h RSI: {rsi_data['4h']}")
+                    else:
+                        rsi_data['4h'] = None
+                        print(f"  ⚠️ 4h RSI: insufficient data after resampling")
+                else:
+                    rsi_data['4h'] = None
+                    print(f"  ⚠️ 4h RSI: insufficient hourly data ({len(df_4h)} bars, need 56+)")
+            except Exception as e:
                 rsi_data['4h'] = None
+                print(f"  ❌ 4h RSI failed: {e}")
 
             try:
                 df_1h = ticker.history(period="7d", interval="1h")
                 rsi_1h = calculate_rsi(df_1h)
                 if rsi_1h is not None:
                     rsi_data['1h'] = round(float(rsi_1h), 1)
-            except:
+                    print(f"  ✅ 1h RSI: {rsi_data['1h']}")
+                else:
+                    rsi_data['1h'] = None
+                    print(f"  ⚠️ 1h RSI: insufficient data")
+            except Exception as e:
                 rsi_data['1h'] = None
+                print(f"  ❌ 1h RSI failed: {e}")
 
             try:
                 df_15m = ticker.history(period="5d", interval="15m")
                 rsi_15m = calculate_rsi(df_15m)
                 if rsi_15m is not None:
                     rsi_data['15m'] = round(float(rsi_15m), 1)
-            except:
+                    print(f"  ✅ 15m RSI: {rsi_data['15m']}")
+                else:
+                    rsi_data['15m'] = None
+                    print(f"  ⚠️ 15m RSI: insufficient data")
+            except Exception as e:
                 rsi_data['15m'] = None
+                print(f"  ❌ 15m RSI failed: {e}")
 
             try:
                 df_5m = ticker.history(period="2d", interval="5m")
                 rsi_5m = calculate_rsi(df_5m)
                 if rsi_5m is not None:
                     rsi_data['5m'] = round(float(rsi_5m), 1)
-            except:
+                    print(f"  ✅ 5m RSI: {rsi_data['5m']}")
+                else:
+                    rsi_data['5m'] = None
+                    print(f"  ⚠️ 5m RSI: insufficient data")
+            except Exception as e:
                 rsi_data['5m'] = None
+                print(f"  ❌ 5m RSI failed: {e}")
+
+            print(f"📊 RSI Summary: {sum(1 for v in rsi_data.values() if v is not None)}/5 timeframes successful")
 
             # Use 1d RSI for psychology state (most reliable)
             current_rsi = rsi_data.get('1d', 50)
