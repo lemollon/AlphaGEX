@@ -99,6 +99,28 @@ export default function GammaExpirationTracker() {
     return 'MODERATE'
   }
 
+  const getCurrentWeekRange = () => {
+    const today = new Date()
+    const dayOfWeek = today.getDay() // 0 = Sunday, 1 = Monday, etc.
+
+    // Calculate Monday of current week
+    const monday = new Date(today)
+    monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
+
+    // Calculate Friday of current week
+    const friday = new Date(monday)
+    friday.setDate(monday.getDate() + 4)
+
+    const formatDate = (date: Date) => {
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    }
+
+    return `${formatDate(monday)} to ${formatDate(friday)}`
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen">
@@ -164,7 +186,7 @@ export default function GammaExpirationTracker() {
               <h2 className="text-2xl font-bold text-text-primary">📊 Gamma Expiration Intelligence - Current Week Only</h2>
             </div>
             <div className="flex items-center gap-4 text-sm text-text-secondary">
-              <span>Week of 2025-11-03 to 2025-11-07</span>
+              <span>Week of {getCurrentWeekRange()}</span>
               <span className="text-primary">|</span>
               <span>Today: <strong className="text-primary">{data.current_day}</strong></span>
             </div>

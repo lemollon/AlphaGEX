@@ -232,17 +232,29 @@ export default function PsychologyTrapDetection() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <div className="container mx-auto px-4 py-8 space-y-6">
-        {/* Header */}
+      <main className="pt-16 transition-all duration-300">
+        <div className="container mx-auto px-4 py-8 space-y-6">
+          {/* Header */}
         <div className="flex items-center justify-between">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <Brain className="w-8 h-8 text-purple-400" />
               <h1 className="text-3xl font-bold">Psychology Trap Detection</h1>
             </div>
-            <p className="text-gray-400">
-              Identify when retail traders get trapped by ignoring market structure
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-gray-400">
+                Identify when retail traders get trapped by ignoring market structure
+              </p>
+              {analysis?.timestamp && (
+                <>
+                  <span className="text-gray-600">|</span>
+                  <div className="flex items-center gap-1 text-sm text-gray-500">
+                    <Clock className="w-4 h-4" />
+                    <span>Updated: {new Date(analysis.timestamp).toLocaleString()}</span>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <button
@@ -734,7 +746,8 @@ export default function PsychologyTrapDetection() {
             )}
           </>
         )}
-      </div>
+        </div>
+      </main>
     </div>
   )
 }
