@@ -1087,9 +1087,26 @@ class TradingVolatilityAPI:
         )
         if not self.api_key:
             try:
-                self.api_key = st.secrets.get("tv_username", "")
+                # Try multiple secret key names for compatibility (secrets.toml uses tradingvolatility_username)
+                self.api_key = (
+                    st.secrets.get("tv_username", "") or
+                    st.secrets.get("tradingvolatility_username", "") or  # ACTUAL key name in secrets.toml!
+                    st.secrets.get("TRADING_VOLATILITY_API_KEY", "")
+                )
             except:
-                self.api_key = ""
+                # Fallback: Try loading secrets.toml directly (for local development without streamlit)
+                try:
+                    import toml
+                    secrets_path = os.path.join(os.path.dirname(__file__), 'secrets.toml')
+                    if os.path.exists(secrets_path):
+                        secrets = toml.load(secrets_path)
+                        self.api_key = (
+                            secrets.get("tv_username", "") or
+                            secrets.get("tradingvolatility_username", "") or
+                            secrets.get("TRADING_VOLATILITY_API_KEY", "")
+                        )
+                except:
+                    self.api_key = ""
 
         # Read endpoint from environment variables or secrets (with fallback)
         self.endpoint = os.getenv("ENDPOINT") or os.getenv("endpoint", "")
