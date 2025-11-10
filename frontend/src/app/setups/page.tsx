@@ -383,7 +383,8 @@ export default function TradeSetupsPage() {
     <div className="min-h-screen">
       <Navigation />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="pt-16 transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-2">
@@ -570,6 +571,7 @@ export default function TradeSetupsPage() {
             Setups with <strong>≥70% win rate</strong> (Iron Condor in high positive GEX) are highlighted as HIGH PROBABILITY setups.
             Only setups with ≥50% win rate are shown to ensure profitable trading strategies.
           </p>
+        </div>
         </div>
       </main>
     </div>
