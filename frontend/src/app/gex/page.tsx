@@ -88,7 +88,7 @@ export default function GEXAnalysisPage() {
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingTickers, setLoadingTickers] = useState<Set<string>>(new Set())
   const [newTicker, setNewTicker] = useState('')
-  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set(DEFAULT_TICKERS))
+  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set()) // Start collapsed to avoid auto-loading gammaOI
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cacheInfo, setCacheInfo] = useState<Record<string, string>>({})
@@ -120,23 +120,8 @@ export default function GEXAnalysisPage() {
       setTickerData(cachedData)
       console.log(`📦 Loaded ${Object.keys(cachedData).length} tickers from cache`)
 
-      // Also fetch GEX levels for cached tickers (chart is always visible now)
-      // Use Promise.all to properly await all fetches
-      Promise.all(
-        Object.keys(cachedData).map(async (ticker) => {
-          try {
-            const response = await apiClient.getGEXLevels(ticker)
-            if (response.data.success && response.data.data) {
-              setGexLevels(prev => ({
-                ...prev,
-                [ticker]: response.data.data.levels || []
-              }))
-            }
-          } catch (err) {
-            console.error(`Failed to load GEX levels for ${ticker}:`, err)
-          }
-        })
-      ).catch(err => console.error('Error loading GEX levels:', err))
+      // DON'T auto-fetch GEX levels - only load when user expands chart
+      // This prevents hitting rate limits (gammaOI has 2 calls/min during trading hours)
     }
 
     // Mark tickers that need loading
@@ -184,20 +169,8 @@ export default function GEXAnalysisPage() {
 
       console.log(`✅ Loaded ${Object.keys(freshResults).length} fresh tickers from API`)
 
-      // Auto-fetch GEX levels for all tickers (chart is always visible now)
-      for (const ticker of Object.keys(freshResults)) {
-        try {
-          const response = await apiClient.getGEXLevels(ticker)
-          if (response.data.success && response.data.data) {
-            setGexLevels(prev => ({
-              ...prev,
-              [ticker]: response.data.data.levels || []
-            }))
-          }
-        } catch (err) {
-          console.error(`Failed to load GEX levels for ${ticker}:`, err)
-        }
-      }
+      // DON'T auto-fetch GEX levels - only load when user expands chart
+      // This prevents hitting rate limits (gammaOI has 2 calls/min during trading hours)
     } catch (err) {
       console.error('Failed to load tickers:', err)
       setError('Some tickers failed to load. Using cached data where available.')
@@ -534,29 +507,29 @@ export default function GEXAnalysisPage() {
                     </div>
                   </div>
 
-                  {/* GEX Profile Chart - Always Visible */}
-                  <div className="mt-6">
-                    {gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
-                      <GEXProfileChart
-                        data={gexLevels[ticker]}
-                        spotPrice={data.spot_price}
-                        flipPoint={data.flip_point}
-                        callWall={data.call_wall}
-                        putWall={data.put_wall}
-                        height={600}
-                      />
-                    ) : (
-                      <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
-                        <div className="flex items-center justify-center space-x-3">
-                          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                          <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
                   {isExpanded && (
                     <>
+                      {/* GEX Profile Chart - Loads on expand to respect rate limits */}
+                      <div className="mt-6">
+                        {gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
+                          <GEXProfileChart
+                            data={gexLevels[ticker]}
+                            spotPrice={data.spot_price}
+                            flipPoint={data.flip_point}
+                            callWall={data.call_wall}
+                            putWall={data.put_wall}
+                            height={600}
+                          />
+                        ) : (
+                          <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
+                            <div className="flex items-center justify-center space-x-3">
+                              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                              <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
                       {/* GEX Metrics Grid */}
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         <div className="bg-background-deep rounded-lg p-4">
