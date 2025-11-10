@@ -92,6 +92,9 @@ export default function GEXAnalysisPage() {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [cacheInfo, setCacheInfo] = useState<Record<string, string>>({})
+  // Track loading state and errors for GEX levels specifically
+  const [loadingGexLevels, setLoadingGexLevels] = useState<Set<string>>(new Set())
+  const [gexLevelsErrors, setGexLevelsErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     loadAllTickers()
@@ -248,6 +251,56 @@ export default function GEXAnalysisPage() {
     setTickerData(newData)
   }
 
+  const loadGexLevels = async (ticker: string) => {
+    // Mark as loading
+    setLoadingGexLevels(prev => new Set(prev).add(ticker))
+    // Clear any previous error for this ticker
+    setGexLevelsErrors(prev => {
+      const next = { ...prev }
+      delete next[ticker]
+      return next
+    })
+
+    try {
+      const response = await apiClient.getGEXLevels(ticker)
+      if (response.data.success && response.data.data) {
+        const levels = response.data.data.levels || []
+        setGexLevels(prev => ({
+          ...prev,
+          [ticker]: levels
+        }))
+
+        // If no levels returned, set an error message
+        if (levels.length === 0) {
+          setGexLevelsErrors(prev => ({
+            ...prev,
+            [ticker]: 'No GEX level data available for this ticker'
+          }))
+        }
+      } else {
+        // API returned success: false
+        setGexLevelsErrors(prev => ({
+          ...prev,
+          [ticker]: response.data.error || 'Failed to load GEX levels'
+        }))
+      }
+    } catch (err: any) {
+      console.error(`Failed to load GEX levels for ${ticker}:`, err)
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to load GEX profile chart'
+      setGexLevelsErrors(prev => ({
+        ...prev,
+        [ticker]: errorMessage
+      }))
+    } finally {
+      // Remove from loading set
+      setLoadingGexLevels(prev => {
+        const next = new Set(prev)
+        next.delete(ticker)
+        return next
+      })
+    }
+  }
+
   const toggleExpanded = async (ticker: string) => {
     const newExpanded = new Set(expandedTickers)
     if (newExpanded.has(ticker)) {
@@ -257,17 +310,7 @@ export default function GEXAnalysisPage() {
 
       // Fetch GEX levels if not already loaded
       if (!gexLevels[ticker]) {
-        try {
-          const response = await apiClient.getGEXLevels(ticker)
-          if (response.data.success && response.data.data) {
-            setGexLevels(prev => ({
-              ...prev,
-              [ticker]: response.data.data.levels || []
-            }))
-          }
-        } catch (err) {
-          console.error(`Failed to load GEX levels for ${ticker}:`, err)
-        }
+        await loadGexLevels(ticker)
       }
     }
     setExpandedTickers(newExpanded)
@@ -511,7 +554,37 @@ export default function GEXAnalysisPage() {
                     <>
                       {/* GEX Profile Chart - Loads on expand to respect rate limits */}
                       <div className="mt-6">
-                        {gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
+                        {loadingGexLevels.has(ticker) ? (
+                          // Loading state
+                          <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
+                            <div className="flex items-center justify-center space-x-3">
+                              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                              <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
+                            </div>
+                          </div>
+                        ) : gexLevelsErrors[ticker] ? (
+                          // Error state
+                          <div className="bg-danger/10 border-2 border-danger rounded-lg p-6">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-3">
+                                <AlertTriangle className="w-8 h-8 text-danger" />
+                                <div>
+                                  <p className="text-danger font-semibold mb-1">Failed to Load GEX Profile Chart</p>
+                                  <p className="text-text-secondary text-sm">{gexLevelsErrors[ticker]}</p>
+                                  <p className="text-text-muted text-xs mt-2">Check browser console (F12) for details</p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => loadGexLevels(ticker)}
+                                className="px-4 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg font-medium transition-all flex items-center space-x-2"
+                              >
+                                <RefreshCw className="w-4 h-4" />
+                                <span>Retry</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : gexLevels[ticker] && gexLevels[ticker].length > 0 ? (
+                          // Success state - show chart
                           <GEXProfileChart
                             data={gexLevels[ticker]}
                             spotPrice={data.spot_price}
@@ -521,10 +594,11 @@ export default function GEXAnalysisPage() {
                             height={600}
                           />
                         ) : (
-                          <div className="bg-background-deep rounded-lg p-6 border-2 border-primary/20">
+                          // Empty state - no data available
+                          <div className="bg-background-deep rounded-lg p-6 border-2 border-gray-700">
                             <div className="flex items-center justify-center space-x-3">
-                              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-                              <p className="text-text-secondary">Loading GEX profile chart for {ticker}...</p>
+                              <BarChart3 className="w-8 h-8 text-text-muted" />
+                              <p className="text-text-secondary">No GEX profile data available for {ticker}</p>
                             </div>
                           </div>
                         )}
