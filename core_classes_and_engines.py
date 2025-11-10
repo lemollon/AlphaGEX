@@ -1078,45 +1078,37 @@ class TradingVolatilityAPI:
         import time
         import os
 
-        # Read username/API key from environment variables (for Render) or secrets (for local)
-        # Priority: ENV VAR > st.secrets > empty string
+        # Read API key from environment variables (Render deployment)
+        # NO STREAMLIT - This is a FastAPI + React app, not Streamlit!
         self.api_key = (
             os.getenv("TRADING_VOLATILITY_API_KEY") or
             os.getenv("TV_USERNAME") or
-            os.getenv("tv_username", "")
+            os.getenv("tv_username") or
+            ""
         )
+
+        # Fallback: Load from secrets.toml for LOCAL DEVELOPMENT ONLY
         if not self.api_key:
             try:
-                # Try multiple secret key names for compatibility (secrets.toml uses tradingvolatility_username)
-                self.api_key = (
-                    st.secrets.get("tv_username", "") or
-                    st.secrets.get("tradingvolatility_username", "") or  # ACTUAL key name in secrets.toml!
-                    st.secrets.get("TRADING_VOLATILITY_API_KEY", "")
-                )
+                import toml
+                secrets_path = os.path.join(os.path.dirname(__file__), 'secrets.toml')
+                if os.path.exists(secrets_path):
+                    secrets = toml.load(secrets_path)
+                    self.api_key = (
+                        secrets.get("tradingvolatility_username") or
+                        secrets.get("tv_username") or
+                        secrets.get("TRADING_VOLATILITY_API_KEY") or
+                        ""
+                    )
             except:
-                # Fallback: Try loading secrets.toml directly (for local development without streamlit)
-                try:
-                    import toml
-                    secrets_path = os.path.join(os.path.dirname(__file__), 'secrets.toml')
-                    if os.path.exists(secrets_path):
-                        secrets = toml.load(secrets_path)
-                        self.api_key = (
-                            secrets.get("tv_username", "") or
-                            secrets.get("tradingvolatility_username", "") or
-                            secrets.get("TRADING_VOLATILITY_API_KEY", "")
-                        )
-                except:
-                    self.api_key = ""
+                pass
 
-        # Read endpoint from environment variables or secrets (with fallback)
-        self.endpoint = os.getenv("ENDPOINT") or os.getenv("endpoint", "")
-        if not self.endpoint:
-            try:
-                self.endpoint = st.secrets.get("endpoint",
-                               st.secrets.get("api_key",
-                               "https://stocks.tradingvolatility.net/api"))
-            except:
-                self.endpoint = "https://stocks.tradingvolatility.net/api"
+        # Read endpoint from environment variables with fallback
+        self.endpoint = (
+            os.getenv("TRADING_VOLATILITY_ENDPOINT") or
+            os.getenv("ENDPOINT") or
+            "https://stocks.tradingvolatility.net/api"
+        )
 
         self.last_response = None  # Store last API response for profile data
 
