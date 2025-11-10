@@ -142,6 +142,27 @@ async def get_rate_limit_status():
         "recommendation": "Rate limit OK" if TradingVolatilityAPI._shared_api_call_count_minute < 15 else "Approaching limit - requests may queue"
     }
 
+@app.post("/api/rate-limit-reset")
+async def reset_rate_limit():
+    """
+    Manually reset the circuit breaker and rate limit counters
+    Use this if you believe the rate limit has been lifted but circuit breaker is stuck
+    """
+    TradingVolatilityAPI._shared_circuit_breaker_active = False
+    TradingVolatilityAPI._shared_circuit_breaker_until = 0
+    TradingVolatilityAPI._shared_consecutive_rate_limit_errors = 0
+    TradingVolatilityAPI._shared_api_call_count_minute = 0
+
+    return {
+        "success": True,
+        "message": "Circuit breaker reset successfully",
+        "new_status": {
+            "circuit_breaker_active": TradingVolatilityAPI._shared_circuit_breaker_active,
+            "consecutive_errors": TradingVolatilityAPI._shared_consecutive_rate_limit_errors,
+            "calls_this_minute": TradingVolatilityAPI._shared_api_call_count_minute
+        }
+    }
+
 @app.get("/api/time")
 async def get_time():
     """Get current market time and status"""
