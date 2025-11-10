@@ -142,6 +142,27 @@ async def get_rate_limit_status():
         "recommendation": "Rate limit OK" if TradingVolatilityAPI._shared_api_call_count_minute < 15 else "Approaching limit - requests may queue"
     }
 
+@app.post("/api/rate-limit-reset")
+async def reset_rate_limit():
+    """
+    Manually reset the circuit breaker and rate limit counters
+    Use this if you believe the rate limit has been lifted but circuit breaker is stuck
+    """
+    TradingVolatilityAPI._shared_circuit_breaker_active = False
+    TradingVolatilityAPI._shared_circuit_breaker_until = 0
+    TradingVolatilityAPI._shared_consecutive_rate_limit_errors = 0
+    TradingVolatilityAPI._shared_api_call_count_minute = 0
+
+    return {
+        "success": True,
+        "message": "Circuit breaker reset successfully",
+        "new_status": {
+            "circuit_breaker_active": TradingVolatilityAPI._shared_circuit_breaker_active,
+            "consecutive_errors": TradingVolatilityAPI._shared_consecutive_rate_limit_errors,
+            "calls_this_minute": TradingVolatilityAPI._shared_api_call_count_minute
+        }
+    }
+
 @app.get("/api/time")
 async def get_time():
     """Get current market time and status"""
@@ -4836,6 +4857,46 @@ async def startup_event():
     print("  - GET  /api/psychology/history            Historical signals")
     print("  - GET  /api/psychology/statistics         Sucker statistics")
     print("=" * 80)
+
+    # Auto-run backtests on startup IF database is empty
+    print("\n🔄 Checking backtest results...")
+    try:
+        import sqlite3
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM backtest_results")
+        count = cursor.fetchone()[0]
+        conn.close()
+
+        if count == 0:
+            print("⚠️  No backtest results found. Auto-running backtests in background...")
+            import subprocess
+            import threading
+
+            def run_backtests_async():
+                try:
+                    result = subprocess.run(
+                        ['python3', 'run_all_backtests.py', '--symbol', 'SPY', '--days', '365'],
+                        cwd=str(parent_dir),
+                        capture_output=True,
+                        text=True,
+                        timeout=600  # 10 minute timeout
+                    )
+                    if result.returncode == 0:
+                        print("✅ Backtests completed successfully on startup")
+                    else:
+                        print(f"❌ Backtests failed: {result.stderr[:200]}")
+                except Exception as e:
+                    print(f"❌ Error running backtests: {e}")
+
+            # Run in background thread so startup doesn't block
+            thread = threading.Thread(target=run_backtests_async, daemon=True)
+            thread.start()
+            print("✅ Backtests started in background thread")
+        else:
+            print(f"✅ Found {count} existing backtest results")
+    except Exception as e:
+        print(f"⚠️  Could not check backtest results: {e}")
 
     # Start Autonomous Trader in background thread
     try:

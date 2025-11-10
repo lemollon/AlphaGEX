@@ -1078,28 +1078,37 @@ class TradingVolatilityAPI:
         import time
         import os
 
-        # Read username/API key from environment variables (for Render) or secrets (for local)
-        # Priority: ENV VAR > st.secrets > empty string
+        # Read API key from environment variables (Render deployment)
+        # NO STREAMLIT - This is a FastAPI + React app, not Streamlit!
         self.api_key = (
             os.getenv("TRADING_VOLATILITY_API_KEY") or
             os.getenv("TV_USERNAME") or
-            os.getenv("tv_username", "")
+            os.getenv("tv_username") or
+            ""
         )
+
+        # Fallback: Load from secrets.toml for LOCAL DEVELOPMENT ONLY
         if not self.api_key:
             try:
-                self.api_key = st.secrets.get("tv_username", "")
+                import toml
+                secrets_path = os.path.join(os.path.dirname(__file__), 'secrets.toml')
+                if os.path.exists(secrets_path):
+                    secrets = toml.load(secrets_path)
+                    self.api_key = (
+                        secrets.get("tradingvolatility_username") or
+                        secrets.get("tv_username") or
+                        secrets.get("TRADING_VOLATILITY_API_KEY") or
+                        ""
+                    )
             except:
-                self.api_key = ""
+                pass
 
-        # Read endpoint from environment variables or secrets (with fallback)
-        self.endpoint = os.getenv("ENDPOINT") or os.getenv("endpoint", "")
-        if not self.endpoint:
-            try:
-                self.endpoint = st.secrets.get("endpoint",
-                               st.secrets.get("api_key",
-                               "https://stocks.tradingvolatility.net/api"))
-            except:
-                self.endpoint = "https://stocks.tradingvolatility.net/api"
+        # Read endpoint from environment variables with fallback
+        self.endpoint = (
+            os.getenv("TRADING_VOLATILITY_ENDPOINT") or
+            os.getenv("ENDPOINT") or
+            "https://stocks.tradingvolatility.net/api"
+        )
 
         self.last_response = None  # Store last API response for profile data
 
@@ -1315,17 +1324,22 @@ class TradingVolatilityAPI:
 
                 if response.status_code != 200:
                     print(f"❌ Trading Volatility API returned status {response.status_code}")
+                    print(f"Response text (first 100 chars): {response.text[:100]}")
 
-                    # Treat 403 as potential rate limit if we've had successful calls before
-                    # (If it's first call and 403, it's likely auth issue)
-                    if response.status_code == 403 and TradingVolatilityAPI._shared_api_call_count > 0:
-                        print(f"⚠️ 403 after {TradingVolatilityAPI._shared_api_call_count} successful calls - treating as rate limit")
+                    # ONLY treat as rate limit if response explicitly says so
+                    # Don't blindly assume 403 = rate limit (could be auth/subscription issue)
+                    if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
+                        print(f"⚠️ Rate limit detected in response - activating circuit breaker")
                         self._handle_rate_limit_error()
                         return {'error': 'rate_limit'}
 
+                    # For 403 without rate limit message, it's likely auth/subscription
+                    if response.status_code == 403:
+                        return {'error': f'403 Forbidden - Check API key validity or subscription status'}
+
                     return {'error': f'API returned {response.status_code}'}
 
-                # Check for rate limit error in response text
+                # Check for rate limit error in response text (redundant check but safe)
                 if "API limit exceeded" in response.text:
                     print(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
                     self._handle_rate_limit_error()
