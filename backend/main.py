@@ -3385,6 +3385,7 @@ def get_cached_price_data(symbol: str, current_price: float):
 
     try:
         import yfinance as yf
+        import pandas as pd
         ticker = yf.Ticker(symbol)
 
         price_data = {}
@@ -3403,6 +3404,9 @@ def get_cached_price_data(symbol: str, current_price: float):
 
         # 4-hour data (30 days)
         df_4h = ticker.history(period="30d", interval="1h")
+        # Ensure index is DatetimeIndex before resampling
+        if not isinstance(df_4h.index, pd.DatetimeIndex):
+            df_4h.index = pd.to_datetime(df_4h.index)
         # Resample to 4h
         df_4h_resampled = df_4h.resample('4H').agg({
             'Close': 'last',

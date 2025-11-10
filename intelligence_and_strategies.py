@@ -1338,8 +1338,8 @@ class ClaudeIntelligence:
             except:
                 self.api_key = ""
 
-        # Use Claude 3 Haiku - fast and efficient model
-        self.model = "claude-3-haiku-20240307"
+        # Use Claude Haiku 4.5 - fast and efficient model (2x faster than old haiku, much smarter)
+        self.model = "claude-haiku-4-5-20251001"
         self.conversation_history = []
         self.fred = FREDIntegration()
 

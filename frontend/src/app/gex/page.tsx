@@ -121,19 +121,22 @@ export default function GEXAnalysisPage() {
       console.log(`📦 Loaded ${Object.keys(cachedData).length} tickers from cache`)
 
       // Also fetch GEX levels for cached tickers (chart is always visible now)
-      Object.keys(cachedData).forEach(async (ticker) => {
-        try {
-          const response = await apiClient.getGEXLevels(ticker)
-          if (response.data.success && response.data.data) {
-            setGexLevels(prev => ({
-              ...prev,
-              [ticker]: response.data.data.levels || []
-            }))
+      // Use Promise.all to properly await all fetches
+      Promise.all(
+        Object.keys(cachedData).map(async (ticker) => {
+          try {
+            const response = await apiClient.getGEXLevels(ticker)
+            if (response.data.success && response.data.data) {
+              setGexLevels(prev => ({
+                ...prev,
+                [ticker]: response.data.data.levels || []
+              }))
+            }
+          } catch (err) {
+            console.error(`Failed to load GEX levels for ${ticker}:`, err)
           }
-        } catch (err) {
-          console.error(`Failed to load GEX levels for ${ticker}:`, err)
-        }
-      })
+        })
+      ).catch(err => console.error('Error loading GEX levels:', err))
     }
 
     // Mark tickers that need loading

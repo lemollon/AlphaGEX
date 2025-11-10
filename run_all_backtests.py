@@ -180,6 +180,18 @@ class MasterBacktestRunner:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
+        # Check if table exists with old schema and drop it
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='backtest_summary'")
+        if c.fetchone():
+            # Check schema
+            c.execute("PRAGMA table_info(backtest_summary)")
+            columns = [row[1] for row in c.fetchall()]
+            # If old schema (missing 'symbol' column), drop and recreate
+            if 'symbol' not in columns:
+                print("🔄 Dropping old backtest_summary table (wrong schema)")
+                c.execute("DROP TABLE backtest_summary")
+                conn.commit()
+
         c.execute('''
             CREATE TABLE IF NOT EXISTS backtest_summary (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

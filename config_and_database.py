@@ -11,7 +11,7 @@ from pathlib import Path
 
 # API Configuration
 TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
-CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # Haiku 4.5 (Oct 2025) - Fast, cheap, great for analysis
 
 # Database Path - ABSOLUTE PATH to ensure consistency across services
 # Backend API, Autonomous Trader Worker, and all scripts use the SAME database
@@ -568,15 +568,18 @@ def init_database():
         CREATE TABLE IF NOT EXISTS backtest_summary (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            total_strategies INTEGER,
-            profitable_strategies INTEGER,
-            avg_win_rate REAL,
-            avg_expectancy REAL,
-            best_strategy TEXT,
-            best_expectancy REAL,
-            psychology_avg_expectancy REAL,
-            gex_avg_expectancy REAL,
-            options_avg_expectancy REAL
+            symbol TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            psychology_trades INTEGER,
+            psychology_win_rate REAL,
+            psychology_expectancy REAL,
+            gex_trades INTEGER,
+            gex_win_rate REAL,
+            gex_expectancy REAL,
+            options_trades INTEGER,
+            options_win_rate REAL,
+            options_expectancy REAL
         )
     ''')
 
@@ -617,6 +620,39 @@ def init_database():
             print("🔄 Migrating regime_signals table: adding vix_current column")
             c.execute("ALTER TABLE regime_signals ADD COLUMN vix_current REAL")
             print("✅ Migration complete: vix_current column added")
+    except Exception as e:
+        # Table might not exist yet on first run - that's fine
+        pass
+
+    # Migrate backtest_summary table to new schema
+    try:
+        c.execute("PRAGMA table_info(backtest_summary)")
+        columns = [row[1] for row in c.fetchall()]
+
+        # Check if old schema exists (missing symbol column)
+        if 'symbol' not in columns and columns:
+            print("🔄 Migrating backtest_summary table: rebuilding with new schema")
+            # Drop old table and recreate with new schema
+            c.execute("DROP TABLE IF EXISTS backtest_summary")
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS backtest_summary (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    symbol TEXT,
+                    start_date TEXT,
+                    end_date TEXT,
+                    psychology_trades INTEGER,
+                    psychology_win_rate REAL,
+                    psychology_expectancy REAL,
+                    gex_trades INTEGER,
+                    gex_win_rate REAL,
+                    gex_expectancy REAL,
+                    options_trades INTEGER,
+                    options_win_rate REAL,
+                    options_expectancy REAL
+                )
+            ''')
+            print("✅ Migration complete: backtest_summary table rebuilt")
     except Exception as e:
         # Table might not exist yet on first run - that's fine
         pass
