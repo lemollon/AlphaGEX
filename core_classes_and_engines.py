@@ -1448,9 +1448,10 @@ class TradingVolatilityAPI:
                     return {}
 
                 # Check for rate limit error in response text
+                # DON'T activate circuit breaker - gammaOI has stricter limits (2/min)
+                # Blocking all endpoints because of gammaOI would break gex/latest (20/min)
                 if "API limit exceeded" in response.text:
-                    print(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
-                    self._handle_rate_limit_error()
+                    print(f"⚠️ gammaOI rate limited (2/min during trading hours) - returning empty data")
                     return {}
 
                 # Check if response has content before parsing JSON
@@ -1463,9 +1464,9 @@ class TradingVolatilityAPI:
                     json_response = response.json()
                 except ValueError as json_err:
                     # Check if error message contains rate limit info
+                    # DON'T activate circuit breaker - gammaOI has stricter limits
                     if "API limit exceeded" in response.text:
-                        print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
-                        self._handle_rate_limit_error()
+                        print(f"⚠️ gammaOI rate limited - returning empty data")
                         return {}
                     else:
                         print(f"❌ Invalid JSON from gammaOI endpoint")
