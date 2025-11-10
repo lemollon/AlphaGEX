@@ -278,6 +278,21 @@ async def get_gex_data(symbol: str):
         # Log successful fetch
         print(f"✅ Successfully fetched GEX data for {symbol} - spot: ${gex_data.get('spot_price', 0):.2f}, net_gex: {gex_data.get('net_gex', 0)/1e9:.2f}B")
 
+        # CRITICAL FIX: Try to get wall data from profile (contains strike-level analysis)
+        # The /gex/latest endpoint doesn't include walls, but /gex/gammaOI does
+        try:
+            profile = api_client.get_gex_profile(symbol)
+            if profile and not profile.get('error'):
+                # Merge wall data from profile into gex_data
+                if profile.get('call_wall') and profile.get('call_wall') > 0:
+                    gex_data['call_wall'] = profile['call_wall']
+                if profile.get('put_wall') and profile.get('put_wall') > 0:
+                    gex_data['put_wall'] = profile['put_wall']
+                print(f"✅ Enhanced with wall data: call_wall=${profile.get('call_wall', 0):.2f}, put_wall=${profile.get('put_wall', 0):.2f}")
+        except Exception as profile_err:
+            # Don't fail if profile fetch fails - walls just won't be available
+            print(f"⚠️ Could not fetch profile for wall data: {profile_err}")
+
         # Get GEX levels for support/resistance
         levels_data = api_client.get_gex_levels(symbol)
 
