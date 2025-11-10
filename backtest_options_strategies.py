@@ -15,6 +15,7 @@ Backtests the 11 options strategies from STRATEGIES config:
 - PREMIUM_SELLING
 - CALENDAR_SPREAD
 
+Uses REAL GEX data from Trading Volatility API
 Uses SIMPLIFIED option pricing (directional correctness + typical spreads)
 For precise results, integrate real option chain data
 """
@@ -28,42 +29,104 @@ from config_and_database import STRATEGIES
 
 
 class OptionsBacktester(BacktestBase):
-    """Backtest options strategies from STRATEGIES config"""
+    """Backtest options strategies from STRATEGIES config using REAL GEX data"""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.gex_data = None
+        self.api_client = None
 
-    def simulate_gex_metrics(self, price_data: pd.DataFrame) -> pd.DataFrame:
-        """Simulate GEX metrics needed for strategy conditions"""
+    def fetch_real_gex_data(self, price_data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Fetch REAL historical GEX data from Trading Volatility API
+
+        Returns price data merged with actual GEX levels and calculated technical indicators
+        """
+        from core_classes_and_engines import TradingVolatilityAPI
+
         df = price_data.copy()
 
-        # Net GEX based on volatility
-        df['returns'] = df['Close'].pct_change()
-        df['volatility'] = df['returns'].rolling(10).std() * 100
+        # Initialize API client
+        if self.api_client is None:
+            self.api_client = TradingVolatilityAPI()
 
-        # Negative GEX when volatile, Positive when calm
-        vol_ma = df['volatility'].rolling(50).mean()
-        df['net_gex'] = np.where(
-            df['volatility'] > vol_ma,
-            -1.5e9,  # Negative GEX
-            +2.0e9   # Positive GEX
-        )
+        print(f"📡 Fetching REAL historical GEX data from Trading Volatility API...")
 
-        # Flip point (zero gamma level)
-        df['flip_point'] = df['Close'].rolling(20).mean()
+        # Calculate days back from date range
+        start_dt = pd.to_datetime(self.start_date)
+        end_dt = pd.to_datetime(self.end_date)
+        days_back = (end_dt - start_dt).days + 10  # Add buffer
+
+        # Fetch real historical GEX data
+        historical_gex = self.api_client.get_historical_gamma(self.symbol, days_back=days_back)
+
+        if not historical_gex or len(historical_gex) == 0:
+            print("❌ CRITICAL: No historical GEX data available from Trading Volatility API")
+            print("   Possible issues:")
+            print("   1. API returning 403 - check IP whitelisting / authentication")
+            print("   2. Symbol not available in historical data")
+            print("   3. Date range exceeds subscription limits")
+            print("\n   CANNOT RUN BACKTEST WITHOUT REAL GEX DATA")
+            print("   Fix: Contact support@tradingvolatility.net to resolve API access")
+            raise ValueError("Historical GEX data unavailable - cannot backtest without real data")
+
+        print(f"✅ Received {len(historical_gex)} days of REAL GEX data")
+
+        # Convert to DataFrame and parse dates
+        gex_df = pd.DataFrame(historical_gex)
+
+        # Parse date field (handle different possible formats)
+        date_field = None
+        for field in ['date', 'Date', 'timestamp', 'trading_date']:
+            if field in gex_df.columns:
+                date_field = field
+                break
+
+        if date_field is None:
+            print("⚠️  Warning: No date field found in GEX data")
+            print(f"   Available fields: {list(gex_df.columns)}")
+            raise ValueError("Cannot parse dates from GEX historical data")
+
+        gex_df['date'] = pd.to_datetime(gex_df[date_field])
+        gex_df.set_index('date', inplace=True)
+
+        # Rename columns to standard names if needed
+        column_mapping = {
+            'net_gex': 'net_gex',
+            'netGex': 'net_gex',
+            'net_gamma': 'net_gex',
+            'flip_point': 'flip_point',
+            'flipPoint': 'flip_point',
+            'zero_gamma': 'flip_point',
+            'call_wall': 'call_wall',
+            'callWall': 'call_wall',
+            'put_wall': 'put_wall',
+            'putWall': 'put_wall'
+        }
+
+        for old_name, new_name in column_mapping.items():
+            if old_name in gex_df.columns and new_name not in df.columns:
+                gex_df.rename(columns={old_name: new_name}, inplace=True)
+
+        # Merge on date index
+        print("Merging GEX data with price data...")
+        df = df.join(gex_df[['net_gex', 'flip_point', 'call_wall', 'put_wall']], how='left')
+
+        # Forward fill missing GEX values (weekends/holidays)
+        df['net_gex'].fillna(method='ffill', inplace=True)
+        df['flip_point'].fillna(method='ffill', inplace=True)
+        df['call_wall'].fillna(method='ffill', inplace=True)
+        df['put_wall'].fillna(method='ffill', inplace=True)
+
+        # Calculate derived metrics needed for strategy conditions
         df['distance_to_flip'] = abs(df['Close'] - df['flip_point']) / df['flip_point'] * 100
-
-        # Walls at round numbers
-        df['call_wall'] = (np.ceil(df['Close'] / 10) * 10).astype(float)
-        df['put_wall'] = (np.floor(df['Close'] / 10) * 10).astype(float)
         df['distance_to_call_wall'] = abs(df['Close'] - df['call_wall']) / df['Close'] * 100
         df['distance_to_put_wall'] = abs(df['Close'] - df['put_wall']) / df['Close'] * 100
-
-        # Min wall distance
         df['min_wall_distance'] = df[['distance_to_call_wall', 'distance_to_put_wall']].min(axis=1)
 
-        # Trend determination (simple MA crossover)
+        # Calculate technical indicators
+        df['returns'] = df['Close'].pct_change()
+        df['volatility'] = df['returns'].rolling(10).std() * 100
         df['SMA_20'] = df['Close'].rolling(20).mean()
         df['SMA_50'] = df['Close'].rolling(50).mean()
         df['trend'] = np.where(df['SMA_20'] > df['SMA_50'], 'bullish', 'bearish')
@@ -72,6 +135,10 @@ class OptionsBacktester(BacktestBase):
         df['vol_rank'] = df['volatility'].rolling(252).apply(
             lambda x: (x.iloc[-1] - x.min()) / (x.max() - x.min()) * 100 if x.max() > x.min() else 50
         )
+
+        print(f"✅ GEX data merged successfully - ready for strategy backtesting")
+        print(f"   Net GEX range: ${df['net_gex'].min()/1e9:.2f}B to ${df['net_gex'].max()/1e9:.2f}B")
+        print(f"   Flip point range: ${df['flip_point'].min():.2f} to ${df['flip_point'].max():.2f}")
 
         return df
 
@@ -242,15 +309,15 @@ class OptionsBacktester(BacktestBase):
         return price_change_pct * 50
 
     def run_backtest(self) -> BacktestResults:
-        """Run options strategies backtest"""
+        """Run options strategies backtest using REAL GEX data"""
         print(f"\n📊 Running Options Strategies Backtest...")
 
         # Fetch price data
         self.fetch_historical_data()
 
-        # Simulate GEX metrics
-        print("Simulating GEX metrics...")
-        self.gex_data = self.simulate_gex_metrics(self.price_data)
+        # Fetch REAL GEX data from Trading Volatility API
+        print("Fetching REAL historical GEX data from Trading Volatility API...")
+        self.gex_data = self.fetch_real_gex_data(self.price_data)
 
         all_trades = []
 
