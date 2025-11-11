@@ -1141,6 +1141,10 @@ def main():
                 profile_with_levels['flip_point'] = gex_data.get('flip_point', 0)
                 profile_with_levels['spot_price'] = gex_data.get('spot_price', 0)
 
+                # Add call wall and put wall for chart display
+                profile_with_levels['call_wall'] = gex_data.get('call_wall', 0)
+                profile_with_levels['put_wall'] = gex_data.get('put_wall', 0)
+
                 # Add ±1 STD levels if available
                 if 'std_1_pos' in gex_data:
                     profile_with_levels['std_1_pos'] = gex_data.get('std_1_pos', 0)
