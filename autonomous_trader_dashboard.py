@@ -152,6 +152,11 @@ def display_performance(trader: AutonomousPaperTrader):
 
     st.header("📊 Trading Performance")
 
+    # Show data timestamp
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.caption(f"📅 Data as of: {current_time}")
+
     perf = trader.get_performance()
 
     # Main metrics
@@ -546,6 +551,11 @@ def display_current_positions(trader: AutonomousPaperTrader):
 
     st.header("📈 Current Positions")
 
+    # Show data timestamp
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.caption(f"📅 Data as of: {current_time}")
+
     conn = sqlite3.connect(trader.db_path)
     positions = pd.read_sql_query("""
         SELECT * FROM autonomous_positions
@@ -585,6 +595,7 @@ def display_current_positions(trader: AutonomousPaperTrader):
             with col2:
                 st.metric("Strike", f"${pos['strike']:.0f}")
                 st.caption(f"{pos['option_type'].upper()}")
+                st.caption(f"Exp: {pos['expiration_date']}")
 
             with col3:
                 st.metric("Contracts", pos['contracts'])
@@ -617,6 +628,11 @@ def display_trade_history(trader: AutonomousPaperTrader):
     """Display closed trades"""
 
     st.header("📜 Trade History")
+
+    # Show data timestamp
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.caption(f"📅 Data as of: {current_time}")
 
     conn = sqlite3.connect(trader.db_path)
     positions = pd.read_sql_query("""
@@ -667,6 +683,7 @@ def display_trade_history(trader: AutonomousPaperTrader):
                 st.markdown("**Trade Details**")
                 st.text(f"Action: {pos['action']}")
                 st.text(f"Strike: ${pos['strike']:.0f} {pos['option_type'].upper()}")
+                st.text(f"Expiration: {pos['expiration_date']}")
                 st.text(f"Contracts: {pos['contracts']}")
                 st.text(f"Opened: {pos['entry_date']} {pos['entry_time'][:5]}")
                 st.text(f"Closed: {pos['closed_date']} {pos['closed_time'][:5]}")
@@ -687,6 +704,11 @@ def display_activity_log(trader: AutonomousPaperTrader):
     """Display system activity log"""
 
     st.header("📋 Activity Log")
+
+    # Show data timestamp
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    st.caption(f"📅 Data as of: {current_time}")
 
     conn = sqlite3.connect(trader.db_path)
     log = pd.read_sql_query("""
