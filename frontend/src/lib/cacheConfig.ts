@@ -1,36 +1,45 @@
 /**
  * Centralized Cache Configuration for AlphaGEX
  *
- * Optimized to minimize API calls while keeping data fresh where needed.
- * Trading Volatility API Limit: 20 calls/minute (shared across ALL deployments)
+ * UPDATED: Now using multi-source API system (yfinance, Alpha Vantage, IEX Cloud, etc.)
+ * Can refresh more frequently without hitting rate limits!
+ *
+ * Previous Limit: 20 calls/minute (single source)
+ * New Capability: 5 sources with auto-fallback = much higher effective limit
  */
 
 export const CACHE_DURATIONS = {
   // ========================================================================
-  // HIGH FREQUENCY - During Market Hours (5 minutes)
+  // HIGH FREQUENCY - During Market Hours (1-2 minutes)
   // ========================================================================
 
-  /** SPY spot price - shown in navigation, needs to be reasonably current */
-  SPY_PRICE: 5 * 60 * 1000, // 5 minutes
+  /** SPY spot price - shown in navigation, needs to be current */
+  SPY_PRICE: 1 * 60 * 1000, // 1 minute (was 5 min) ⚡
 
   /** Open positions P&L - traders want to see current unrealized P&L */
-  OPEN_POSITIONS: 5 * 60 * 1000, // 5 minutes
+  OPEN_POSITIONS: 2 * 60 * 1000, // 2 minutes (was 5 min) ⚡
 
   /** Trader status - autonomous trader's current action and state */
-  TRADER_STATUS: 5 * 60 * 1000, // 5 minutes
+  TRADER_STATUS: 2 * 60 * 1000, // 2 minutes (was 5 min) ⚡
+
+  /** VIX data - critical for volatility regime and directional prediction */
+  VIX_DATA: 1 * 60 * 1000, // 1 minute (was 1 hour!) ⚡⚡⚡
+
+  /** Directional prediction - based on GEX + VIX, update frequently */
+  DIRECTIONAL_PREDICTION: 2 * 60 * 1000, // 2 minutes (new) ⚡
 
   // ========================================================================
-  // MEDIUM FREQUENCY - Hourly Updates
+  // MEDIUM FREQUENCY - 15-30 minute Updates
   // ========================================================================
 
-  /** GEX data - gamma exposure changes gradually throughout the day */
-  GEX_DATA: 30 * 60 * 1000, // 30 minutes
+  /** GEX data - gamma exposure critical for 0DTE, update more often */
+  GEX_DATA: 2 * 60 * 1000, // 2 minutes (was 30 min!) ⚡⚡
 
-  /** Psychology/Regime analysis - market regime shifts take time */
-  PSYCHOLOGY_REGIME: 60 * 60 * 1000, // 1 hour
+  /** Psychology/Regime analysis - market regime shifts faster than we thought */
+  PSYCHOLOGY_REGIME: 15 * 60 * 1000, // 15 minutes (was 1 hour) ⚡
 
-  /** Gamma intelligence - Greeks and exposures update slowly */
-  GAMMA_INTELLIGENCE: 60 * 60 * 1000, // 1 hour
+  /** Gamma intelligence - Greeks and exposures for 0DTE week */
+  GAMMA_INTELLIGENCE: 15 * 60 * 1000, // 15 minutes (was 1 hour) ⚡
 
   // ========================================================================
   // LOW FREQUENCY - Daily or On-Demand
@@ -55,8 +64,8 @@ export const CACHE_DURATIONS = {
   // ON-DEMAND ONLY - User Initiates
   // ========================================================================
 
-  /** Scanner results - expensive operation, user triggers manually */
-  SCANNER_RESULTS: 60 * 60 * 1000, // 1 hour (but only runs on user click)
+  /** Scanner results - expensive operation, but with multi-source can refresh more */
+  SCANNER_RESULTS: 15 * 60 * 1000, // 15 minutes (was 1 hour!) ⚡
 
   /** Scan history - past scans don't change */
   SCAN_HISTORY: 24 * 60 * 60 * 1000, // 1 day
@@ -67,9 +76,6 @@ export const CACHE_DURATIONS = {
 
   /** Market status (open/closed) - changes twice per day */
   MARKET_STATUS: 30 * 60 * 1000, // 30 minutes
-
-  /** VIX data - updated every hour */
-  VIX_DATA: 60 * 60 * 1000, // 1 hour
 } as const
 
 /**

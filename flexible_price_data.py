@@ -153,6 +153,7 @@ class FlexiblePriceDataFetcher:
 
         # API keys from environment
         self.alpha_vantage_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+        self.iexcloud_key = os.getenv('IEXCLOUD_API_KEY')
         self.polygon_key = os.getenv('POLYGON_API_KEY')
         self.twelve_data_key = os.getenv('TWELVE_DATA_API_KEY')
 
@@ -184,7 +185,7 @@ class FlexiblePriceDataFetcher:
             return cached
 
         # Define sources in priority order
-        sources = ['yfinance', 'alpha_vantage', 'polygon', 'twelve_data']
+        sources = ['yfinance', 'alpha_vantage', 'iexcloud', 'polygon', 'twelve_data']
 
         # Try best healthy source first
         best_source = self.health.get_best_source(sources)
@@ -206,6 +207,8 @@ class FlexiblePriceDataFetcher:
                         data = self._fetch_yfinance(symbol, period, interval)
                     elif source == 'alpha_vantage':
                         data = self._fetch_alpha_vantage(symbol, period)
+                    elif source == 'iexcloud':
+                        data = self._fetch_iexcloud(symbol, period)
                     elif source == 'polygon':
                         data = self._fetch_polygon(symbol, period)
                     elif source == 'twelve_data':
@@ -302,6 +305,72 @@ class FlexiblePriceDataFetcher:
             df = df[df.index >= cutoff]
 
         return df
+
+    def _fetch_iexcloud(
+        self,
+        symbol: str,
+        period: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch from IEX Cloud (free tier: 50,000 calls/month - EXCELLENT!)
+        Docs: https://iexcloud.io/docs/api/
+        """
+        if not self.iexcloud_key:
+            raise ValueError("IEXCLOUD_API_KEY not set")
+
+        # Determine range for historical data
+        days = self._period_to_days(period)
+
+        # IEX Cloud endpoint - use chart endpoint for historical data
+        # Free tier: /stable/stock/{symbol}/chart/{range}
+        if days <= 5:
+            range_param = '5d'
+        elif days <= 30:
+            range_param = '1m'
+        elif days <= 90:
+            range_param = '3m'
+        elif days <= 180:
+            range_param = '6m'
+        elif days <= 365:
+            range_param = '1y'
+        elif days <= 730:
+            range_param = '2y'
+        else:
+            range_param = '5y'
+
+        url = f"https://cloud.iexapis.com/stable/stock/{symbol}/chart/{range_param}"
+        params = {"token": self.iexcloud_key}
+
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data or len(data) == 0:
+            raise ValueError("No data in IEX Cloud response")
+
+        # Convert to DataFrame
+        df = pd.DataFrame(data)
+
+        # IEX Cloud returns date field
+        df['datetime'] = pd.to_datetime(df['date'])
+        df.set_index('datetime', inplace=True)
+        df = df.sort_index()
+
+        # Rename columns to match yfinance format
+        # IEX Cloud columns: open, high, low, close, volume
+        df = df.rename(columns={
+            'open': 'Open',
+            'high': 'High',
+            'low': 'Low',
+            'close': 'Close',
+            'volume': 'Volume'
+        })
+
+        # Filter by period (IEX might return more data than requested)
+        cutoff = datetime.now() - timedelta(days=days)
+        df = df[df.index >= cutoff]
+
+        return df[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
 
     def _fetch_polygon(
         self,
@@ -446,6 +515,68 @@ def get_health_status() -> Dict:
     return price_data_fetcher.get_health_status()
 
 
+def get_current_price(symbol: str) -> Optional[float]:
+    """
+    Get current/latest price for a symbol
+
+    Tries multiple sources to get the most recent quote
+    Returns latest close price if market is closed, or current price if open
+
+    Example:
+        vix_price = get_current_price('^VIX')
+        spy_price = get_current_price('SPY')
+    """
+    # Try yfinance first (fastest for real-time quotes)
+    if YFINANCE_AVAILABLE:
+        try:
+            ticker = yf.Ticker(symbol)
+
+            # Try to get current market price first
+            info = ticker.info
+            if info and 'regularMarketPrice' in info:
+                price = float(info['regularMarketPrice'])
+                if price > 0:
+                    print(f"✅ Got current price for {symbol}: ${price:.2f}")
+                    return price
+
+            # Fallback to latest historical price
+            hist = ticker.history(period='1d', interval='1m')
+            if not hist.empty:
+                price = float(hist['Close'].iloc[-1])
+                print(f"✅ Got latest price for {symbol}: ${price:.2f}")
+                return price
+
+        except Exception as e:
+            print(f"⚠️ yfinance failed for {symbol}: {e}")
+
+    # Fallback: Try to get from historical data
+    try:
+        data = get_price_history(symbol, period='1d')
+        if data is not None and not data.empty:
+            price = float(data['Close'].iloc[-1])
+            print(f"✅ Got price from history for {symbol}: ${price:.2f}")
+            return price
+    except Exception as e:
+        print(f"⚠️ Historical fallback failed for {symbol}: {e}")
+
+    print(f"❌ Could not get price for {symbol}")
+    return None
+
+
+def get_multiple_prices(symbols: List[str]) -> Dict[str, Optional[float]]:
+    """
+    Get current prices for multiple symbols efficiently
+
+    Example:
+        prices = get_multiple_prices(['SPY', 'QQQ', '^VIX'])
+        # Returns: {'SPY': 567.89, 'QQQ': 456.78, '^VIX': 17.5}
+    """
+    results = {}
+    for symbol in symbols:
+        results[symbol] = get_current_price(symbol)
+    return results
+
+
 if __name__ == "__main__":
     # Test the flexible fetcher
     print("=" * 80)
@@ -472,6 +603,15 @@ if __name__ == "__main__":
     print("\n3. Checking data source health...")
     health = get_health_status()
     print(f"   Sources: {len(health['sources'])} configured")
+
+    # Test current price fetching
+    print("\n4. Testing current price quotes...")
+    vix = get_current_price('^VIX')
+    spy = get_current_price('SPY')
+    if vix:
+        print(f"   VIX: ${vix:.2f}")
+    if spy:
+        print(f"   SPY: ${spy:.2f}")
     for source, stats in health['sources'].items():
         success_rate = 0
         total = stats['success_count'] + stats['failure_count']
