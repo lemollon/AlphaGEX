@@ -93,8 +93,14 @@ class DataStore {
 
   /**
    * Load cache from localStorage
+   * Only runs in browser (not during SSR)
    */
   private loadFromStorage(): void {
+    // Skip if not in browser (e.g., during Next.js SSR)
+    if (typeof window === 'undefined') {
+      return
+    }
+
     try {
       const stored = localStorage.getItem(this.storageKey)
       if (stored) {
@@ -127,8 +133,14 @@ class DataStore {
 
   /**
    * Save cache to localStorage
+   * Only runs in browser (not during SSR)
    */
   private saveToStorage(): void {
+    // Skip if not in browser (e.g., during Next.js SSR)
+    if (typeof window === 'undefined') {
+      return
+    }
+
     try {
       const serialized = JSON.stringify(Array.from(this.cache.entries()))
       localStorage.setItem(this.storageKey, serialized)
