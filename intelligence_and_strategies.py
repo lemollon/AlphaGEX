@@ -2778,10 +2778,24 @@ class MultiStrategyOptimizer:
 
             entry_timing = self._optimize_entry_timing('IRON_CONDOR', hour, vix, condor_conditions['confidence'])
 
+            # Calculate IC strikes - use walls if available, otherwise estimate from spot
+            if put_wall > 0 and call_wall > 0:
+                # Use actual walls
+                put_short_strike = int(put_wall / 5) * 5
+                call_short_strike = int(call_wall / 5) * 5
+            else:
+                # Estimate based on spot price (typically ~2-3% OTM for short strikes)
+                put_short_strike = int((spot * 0.97) / 5) * 5
+                call_short_strike = int((spot * 1.03) / 5) * 5
+
+            # Long strikes are typically $2-5 wider
+            put_long_strike = put_short_strike - 5
+            call_long_strike = call_short_strike + 5
+
             strategies.append({
                 'name': 'IRON_CONDOR',
                 'type': 'Range-Bound Premium',
-                'action': f"SELL IC: {int(put_wall/5)*5}P / {int(call_wall/5)*5}C",
+                'action': f"SELL IC: ${put_short_strike}P/${put_long_strike}P | ${call_short_strike}C/${call_long_strike}C",
                 'confidence': condor_conditions['confidence'],
                 'win_rate': f"{adjusted_win_rate*100:.1f}%",
                 'base_win_rate': f"{base_win_rate*100:.1f}%",
@@ -2792,7 +2806,9 @@ class MultiStrategyOptimizer:
                 'conditions_met': condor_conditions['conditions_met'],
                 'optimal_dte': optimal_dte.get('dte', 0) if isinstance(optimal_dte, dict) else optimal_dte,
                 'entry_timing': entry_timing,
-                'strike': f"{int(put_wall/5)*5}P / {int(call_wall/5)*5}C",
+                'strike': f"Sell ${put_short_strike}P / ${call_short_strike}C | Buy ${put_long_strike}P / ${call_long_strike}C",
+                'short_strikes': f"${put_short_strike}P / ${call_short_strike}C",
+                'long_strikes': f"${put_long_strike}P / ${call_long_strike}C",
                 'premium': 0,  # Would need options chain data
                 'best_days': STRATEGIES['IRON_CONDOR']['best_days'],
                 'day_match': True,  # Any day works

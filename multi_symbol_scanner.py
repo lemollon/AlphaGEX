@@ -148,6 +148,14 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                     # Get best setup (highest confidence)
                     best_setup = max(setups, key=lambda x: x.get('confidence', 0)) if setups else None
 
+                    # Calculate expiration date from DTE
+                    dte_value = best_setup.get('dte', 0) if best_setup else 0
+                    if isinstance(dte_value, (int, float)) and dte_value > 0:
+                        exp_date = (datetime.now() + timedelta(days=int(dte_value))).strftime('%Y-%m-%d')
+                        dte_display = f"{int(dte_value)}d ({exp_date})"
+                    else:
+                        dte_display = 'N/A'
+
                     scan_result = {
                         'symbol': symbol,
                         'spot_price': gex_data.get('spot_price', 0),
@@ -157,7 +165,7 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
                                              gex_data.get('spot_price', 1) * 100) if gex_data.get('spot_price') else 0,
                         'setup_type': best_setup.get('strategy', 'N/A') if best_setup else 'N/A',
                         'confidence': best_setup.get('confidence', 0) if best_setup else 0,
-                        'dte': best_setup.get('dte', 'N/A') if best_setup else 'N/A',
+                        'dte': dte_display,
                         'action': best_setup.get('action', 'N/A') if best_setup else 'N/A',
                         'cache_status': 'Fresh',
                         'timestamp': datetime.now()
@@ -243,10 +251,10 @@ def display_scanner_dashboard(df: pd.DataFrame):
     # Keep raw confidence values for styling
     confidence_values = display_df['confidence'].copy()
 
-    # Rename columns with DTE included
+    # Rename columns with DTE and Expiration included
     display_df.columns = [
         'Symbol', 'Price', 'Net GEX ($B)', 'Dist to Flip (%)',
-        'Setup', 'Conf %', 'DTE', 'Action', 'Status'
+        'Setup', 'Conf %', 'DTE (Expiration)', 'Action', 'Status'
     ]
 
     # Format numeric columns (safely handle non-numeric values)
