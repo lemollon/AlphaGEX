@@ -1040,18 +1040,74 @@ def display_control_panel(trader: AutonomousPaperTrader):
             st.error("🔴 **Scheduler Status**")
             st.caption("⛔ Stopped - trades paused")
 
-    # Show next scheduled check time
-    if scheduler_running:
-        try:
-            from trader_scheduler import get_scheduler
-            import pytz
-            scheduler = get_scheduler()
-            status = scheduler.get_status()
+    # Show bot's live status - what it's thinking and when it last ran
+    conn = sqlite3.connect(trader.db_path)
+    c = conn.cursor()
+    c.execute("""
+        SELECT timestamp, status, current_action, market_analysis, last_decision
+        FROM autonomous_live_status
+        WHERE id = 1
+    """)
+    live_status = c.fetchone()
+    conn.close()
 
-            if 'next_run' in status and status['next_run'] != 'Scheduler not running':
-                st.info(f"⏰ **Next Check:** {status['next_run']}")
+    if live_status:
+        last_check_timestamp, bot_status, bot_action, bot_analysis, bot_decision = live_status
+
+        # Parse and format the timestamp
+        try:
+            from datetime import datetime
+            last_check_dt = datetime.fromisoformat(last_check_timestamp)
+            last_check_formatted = last_check_dt.strftime("%Y-%m-%d %I:%M:%S %p")
+
+            # Calculate time since last check
+            time_since = datetime.now() - last_check_dt
+            minutes_ago = int(time_since.total_seconds() / 60)
+            time_ago_str = f"{minutes_ago} min ago" if minutes_ago < 60 else f"{int(minutes_ago/60)} hr {minutes_ago%60} min ago"
         except:
-            pass
+            last_check_formatted = str(last_check_timestamp)
+            time_ago_str = ""
+
+        # Display bot's current thinking
+        st.markdown("### 🧠 Bot's Live Status")
+
+        # Last check info
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info(f"⏰ **Last Check:** {last_check_formatted}\n\n📊 *({time_ago_str})*")
+        with col2:
+            # Show next check time
+            if scheduler_running:
+                try:
+                    from trader_scheduler import get_scheduler
+                    import pytz
+                    scheduler = get_scheduler()
+                    sched_status = scheduler.get_status()
+
+                    if 'next_run' in sched_status and sched_status['next_run'] != 'Scheduler not running':
+                        st.info(f"⏰ **Next Check:** {sched_status['next_run']}")
+                    else:
+                        st.info("⏰ **Next Check:** Every 5 minutes")
+                except:
+                    st.info("⏰ **Next Check:** Every 5 minutes")
+
+        # Bot's current thinking - make it prominent
+        if bot_status or bot_action:
+            st.markdown(f"""
+<div style='background: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(0, 153, 204, 0.1) 100%);
+            padding: 20px; border-radius: 12px;
+            border: 2px solid rgba(0, 212, 255, 0.3);
+            margin: 15px 0;'>
+    <div style='color: #00D4FF; font-weight: 800; font-size: 14px; margin-bottom: 10px;'>
+        🤖 BOT STATUS: {bot_status}
+    </div>
+    <div style='color: white; font-size: 13px; margin-bottom: 8px;'>
+        📋 <strong>Current Action:</strong> {bot_action if bot_action else 'Idle'}
+    </div>
+    {f"<div style='color: #d4d8e1; font-size: 12px; margin-bottom: 8px;'>📊 <strong>Market Analysis:</strong> {bot_analysis}</div>" if bot_analysis else ""}
+    {f"<div style='color: #00FF88; font-size: 12px;'>✅ <strong>Last Decision:</strong> {bot_decision}</div>" if bot_decision else ""}
+</div>
+""", unsafe_allow_html=True)
 
     st.divider()
 

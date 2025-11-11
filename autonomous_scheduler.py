@@ -101,20 +101,64 @@ def run_autonomous_trader_cycle():
     if is_market_hours():
         print("🔍 MARKET HOURS - Checking for new trade opportunity...")
 
+        # Log the check cycle start
+        trader.log_action(
+            'CHECK_START',
+            f'Starting trade search cycle at {datetime.now().strftime("%I:%M:%S %p ET")}. '
+            f'Market is open. Analyzing SPY GEX structure and looking for high-probability setups.',
+            success=True
+        )
+
         try:
             position_id = trader.find_and_execute_daily_trade(api_client)
 
             if position_id:
                 print(f"✅ SUCCESS: Opened position #{position_id}")
+                trader.log_action(
+                    'TRADE_EXECUTED',
+                    f'Successfully opened new position #{position_id}. Trade met confidence threshold. '
+                    f'Position details logged separately.',
+                    position_id=position_id,
+                    success=True
+                )
             else:
                 print("ℹ️ INFO: No new trade (already traded today or no high-confidence setup)")
+                # Log why no trade was made
+                today = datetime.now().strftime('%Y-%m-%d')
+                last_trade_date = trader.get_config('last_trade_date')
+
+                if last_trade_date == today:
+                    trader.log_action(
+                        'CHECK_COMPLETE',
+                        f'Already executed today\'s trade (last trade: {last_trade_date}). '
+                        f'Daily trade limit reached. Bot will continue monitoring open positions.',
+                        success=True
+                    )
+                else:
+                    trader.log_action(
+                        'CHECK_COMPLETE',
+                        f'No trade executed this cycle. Either market conditions did not meet minimum '
+                        f'confidence threshold (70%+) or waiting for better setup. Will check again in 5 minutes.',
+                        success=True
+                    )
         except Exception as e:
             print(f"❌ ERROR: Failed to find/execute trade: {e}")
+            trader.log_action(
+                'ERROR',
+                f'Trade search encountered error: {str(e)[:200]}. Will retry on next cycle.',
+                success=False
+            )
             import traceback
             traceback.print_exc()
 
     else:
         print(f"ℹ️ Market closed - skipping new trade search")
+        trader.log_action(
+            'CHECK_SKIPPED',
+            f'Market is currently closed. Next check will occur during market hours (9:30 AM - 4:00 PM ET). '
+            f'Open positions are not actively managed outside market hours.',
+            success=True
+        )
 
     # Step 2: Always manage existing positions (during market hours)
     if is_market_hours():

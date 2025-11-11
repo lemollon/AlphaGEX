@@ -768,51 +768,10 @@ def main():
     
     # Sidebar Configuration
     with st.sidebar:
-        # Collapse hint at very top
-        st.caption("💡 Click the [×] at the top-left to collapse this sidebar")
-
         st.header("⚙️ Configuration")
 
-        # AI Status Indicator (no test button)
-        # Check environment variables first (for Render), then secrets (for local)
-        import os
-        claude_api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
-        if not claude_api_key:
-            try:
-                claude_api_key = st.secrets.get("claude_api_key", "")
-            except:
-                claude_api_key = ""
-
-        if claude_api_key:
-            st.success("🤖 **AI Copilot:** ✅ ACTIVE")
-        else:
-            st.warning("🤖 **AI Copilot:** ⚠️ BASIC MODE")
-
-        # API Usage Stats
-        if 'api_client' in st.session_state:
-            stats = st.session_state.api_client.get_api_usage_stats()
-
-            with st.expander("📊 API Usage (This Session)", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Total Calls", stats['total_calls'])
-                with col2:
-                    st.metric("This Minute", stats['calls_this_minute'])
-
-                st.caption(f"🗃️ Cache: {stats['cache_size']} entries (30s)")
-                st.caption(f"⏱️ Minute resets in: {stats['time_until_minute_reset']}s")
-
-                # Color indicator based on usage
-                if stats['calls_this_minute'] < 10:
-                    st.success("🟢 Normal usage")
-                elif stats['calls_this_minute'] < 20:
-                    st.warning("🟡 Moderate usage")
-                else:
-                    st.error("🔴 Heavy usage - slow down!")
-
-        st.divider()
-
-        # 1. Symbol Selection (TOP)
+        # 1. Symbol Selection (FIRST - Most Important)
+        st.caption("💡 Tip: Use [×] at top-left to collapse sidebar")
         st.subheader("📊 Symbol Analysis")
 
         col1, col2 = st.columns(2)
@@ -904,6 +863,44 @@ def main():
             if st.button('DIA', use_container_width=True, key='btn_dia'):
                 st.session_state.selected_symbol = 'DIA'
                 st.rerun()
+
+        st.divider()
+
+        # AI Status Indicator
+        import os
+        claude_api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if not claude_api_key:
+            try:
+                claude_api_key = st.secrets.get("claude_api_key", "")
+            except:
+                claude_api_key = ""
+
+        if claude_api_key:
+            st.success("🤖 **AI Copilot:** ✅ ACTIVE")
+        else:
+            st.warning("🤖 **AI Copilot:** ⚠️ BASIC MODE")
+
+        # API Usage Stats (Compact)
+        if 'api_client' in st.session_state:
+            stats = st.session_state.api_client.get_api_usage_stats()
+
+            with st.expander("📊 API Usage (This Session)", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Total Calls", stats['total_calls'])
+                with col2:
+                    st.metric("This Minute", stats['calls_this_minute'])
+
+                st.caption(f"🗃️ Cache: {stats['cache_size']} entries (30s)")
+                st.caption(f"⏱️ Minute resets in: {stats['time_until_minute_reset']}s")
+
+                # Color indicator based on usage
+                if stats['calls_this_minute'] < 10:
+                    st.success("🟢 Normal usage")
+                elif stats['calls_this_minute'] < 20:
+                    st.warning("🟡 Moderate usage")
+                else:
+                    st.error("🔴 Heavy usage - slow down!")
 
         st.divider()
 
@@ -2102,6 +2099,19 @@ Provide ONE specific, actionable trade with exact strikes, expiration, entry/exi
                             except:
                                 pass
 
+                        # Calculate expiration date from DTE
+                        from datetime import datetime, timedelta
+                        dte_display = "N/A"
+                        dte_value = trade.get('dte', None)
+                        if dte_value:
+                            try:
+                                dte_int = int(str(dte_value).replace('d', '').strip())
+                                exp_date = datetime.now() + timedelta(days=dte_int)
+                                # Format as "5d (Fri 11/18)"
+                                dte_display = f"{dte_int}d ({exp_date.strftime('%a %m/%d')})"
+                            except:
+                                dte_display = str(dte_value)
+
                         # Enhanced card header
                         st.markdown(f"""
 <div style='background: {bg_gradient};
@@ -2126,8 +2136,8 @@ Provide ONE specific, actionable trade with exact strikes, expiration, entry/exi
             <span style='color: {grade_color}; font-size: 16px; font-weight: 700;'>{conf}%</span>
         </div>
         <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
-            <span style='color: #888; font-size: 12px;'>DTE</span><br>
-            <span style='color: white; font-size: 16px; font-weight: 700;'>{trade.get('dte', 'N/A')}</span>
+            <span style='color: #888; font-size: 12px;'>EXPIRATION</span><br>
+            <span style='color: white; font-size: 16px; font-weight: 700;'>{dte_display}</span>
         </div>
         <div style='background: rgba(0, 0, 0, 0.3); padding: 5px 12px; border-radius: 6px;'>
             <span style='color: #888; font-size: 12px;'>WIN RATE</span><br>
