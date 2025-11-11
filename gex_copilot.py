@@ -1051,6 +1051,10 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
+            # Show data timestamp
+            current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+            st.caption(f"📅 Data as of: {current_time}")
+
             # Current Analysis Metrics
             gex_data = data.get('gex', {})
 
@@ -1973,6 +1977,10 @@ Provide ONE specific, actionable trade with exact strikes, expiration, entry/exi
     # Tab 2: Trade Setups - USES SAME LOGIC AS TRADING PLAN
     with tabs[1]:
         st.subheader("🎯 Trading Setups - Profit Opportunities")
+
+        # Show data timestamp
+        current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+        st.caption(f"📅 Data as of: {current_time}")
 
         # Center the content with max-width for better readability
         st.markdown("""
