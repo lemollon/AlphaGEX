@@ -1305,6 +1305,146 @@ def main():
                     st.divider()
 
                     # =================================================================
+                    # DIRECTIONAL PREDICTION - SPY Up/Down/Sideways for the Day
+                    # =================================================================
+
+                    # Calculate directional prediction
+                    spot = gex_data.get('spot_price', 0)
+                    net_gex = gex_data.get('net_gex', 0)
+                    flip = gex_data.get('flip_point', 0)
+                    call_wall = gex_data.get('call_wall', 0)
+                    put_wall = gex_data.get('put_wall', 0)
+
+                    # Calculate directional factors
+                    spot_vs_flip_pct = ((spot - flip) / flip * 100) if flip else 0
+                    distance_to_call_wall = ((call_wall - spot) / spot * 100) if call_wall and spot else 999
+                    distance_to_put_wall = ((spot - put_wall) / spot * 100) if put_wall and spot else 999
+
+                    # Directional scoring (0-100)
+                    bullish_score = 50  # Start neutral
+                    confidence_factors = []
+
+                    # Factor 1: GEX Regime (40% weight)
+                    if net_gex < -1e9:  # Short gamma (amplification)
+                        if spot > flip:
+                            bullish_score += 20
+                            confidence_factors.append("Short gamma + above flip = upside momentum")
+                        else:
+                            bullish_score -= 20
+                            confidence_factors.append("Short gamma + below flip = downside risk")
+                    elif net_gex > 1e9:  # Long gamma (dampening)
+                        # Range-bound expectation
+                        if spot_vs_flip_pct > 1:
+                            bullish_score += 5
+                            confidence_factors.append("Long gamma + above flip = mild upward pull")
+                        elif spot_vs_flip_pct < -1:
+                            bullish_score -= 5
+                            confidence_factors.append("Long gamma + below flip = mild downward pull")
+                        else:
+                            confidence_factors.append("Long gamma near flip = range-bound likely")
+
+                    # Factor 2: Proximity to Walls (30% weight)
+                    if distance_to_call_wall < 1.5:  # Within 1.5% of call wall
+                        bullish_score -= 15
+                        confidence_factors.append(f"Near call wall ${call_wall:.0f} = resistance")
+                    elif distance_to_put_wall < 1.5:  # Within 1.5% of put wall
+                        bullish_score += 15
+                        confidence_factors.append(f"Near put wall ${put_wall:.0f} = support")
+
+                    # Factor 3: VIX Regime (20% weight)
+                    if current_vix > 20:  # Elevated volatility
+                        # More volatility = less predictable, reduce confidence
+                        confidence_factors.append(f"VIX {current_vix:.1f} = elevated volatility")
+                        bullish_score = 50 + (bullish_score - 50) * 0.7  # Pull toward neutral
+                    elif current_vix < 15:  # Low volatility
+                        # Low vol = range-bound bias
+                        confidence_factors.append(f"VIX {current_vix:.1f} = low volatility favors range")
+                        bullish_score = 50 + (bullish_score - 50) * 0.8
+
+                    # Factor 4: Day of Week (10% weight)
+                    day_of_week = gamma_intel['current_day']
+                    if day_of_week in ['Monday', 'Tuesday']:
+                        confidence_factors.append(f"{day_of_week} = high gamma, range-bound bias")
+                        bullish_score = 50 + (bullish_score - 50) * 0.9  # Pull slightly to neutral
+                    elif day_of_week == 'Friday':
+                        confidence_factors.append(f"Friday = low gamma, more volatile")
+
+                    # Determine direction and confidence
+                    if bullish_score >= 65:
+                        direction = "UPWARD"
+                        direction_emoji = "📈"
+                        direction_color = "#00FF88"
+                        probability = int(bullish_score)
+                        expected_move = "Expect push toward call wall or breakout higher"
+                    elif bullish_score <= 35:
+                        direction = "DOWNWARD"
+                        direction_emoji = "📉"
+                        direction_color = "#FF4444"
+                        probability = int(100 - bullish_score)
+                        expected_move = "Expect push toward put wall or breakdown lower"
+                    else:
+                        direction = "SIDEWAYS (Range-Bound)"
+                        direction_emoji = "↔️"
+                        direction_color = "#FFB800"
+                        probability = int(100 - abs(bullish_score - 50) * 2)
+                        expected_move = f"Expect range between ${put_wall:.0f} - ${call_wall:.0f}"
+
+                    # Calculate expected range
+                    if put_wall and call_wall:
+                        range_width = ((call_wall - put_wall) / spot * 100)
+                        range_str = f"${put_wall:.0f} - ${call_wall:.0f} ({range_width:.1f}% range)"
+                    else:
+                        range_str = "Walls not defined"
+
+                    # Display prediction box
+                    prediction_html = f"""
+                    <div style='background: linear-gradient(135deg, {direction_color}20 0%, {direction_color}10 100%);
+                                padding: 24px; border-radius: 16px; border: 3px solid {direction_color};
+                                margin: 20px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3);'>
+                        <div style='text-align: center; margin-bottom: 16px;'>
+                            <div style='color: {direction_color}; font-size: 18px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px;'>
+                                {direction_emoji} SPY DIRECTIONAL FORECAST - TODAY
+                            </div>
+                            <div style='color: white; font-size: 36px; font-weight: 900; margin: 12px 0;'>
+                                {direction}
+                            </div>
+                            <div style='color: {direction_color}; font-size: 24px; font-weight: 800;'>
+                                {probability}% Probability
+                            </div>
+                        </div>
+
+                        <div style='background: rgba(0,0,0,0.3); padding: 16px; border-radius: 10px; margin-top: 16px;'>
+                            <div style='color: #d4d8e1; font-size: 13px; line-height: 1.8;'>
+                                <div style='margin-bottom: 10px;'>
+                                    <strong style='color: #00D4FF;'>Current Price:</strong> <span style='color: white; font-weight: 700;'>${spot:.2f}</span><br>
+                                    <strong style='color: #00D4FF;'>Expected Range:</strong> <span style='color: white;'>{range_str}</span><br>
+                                    <strong style='color: #00D4FF;'>Flip Point:</strong> <span style='color: white;'>${flip:.2f}</span> ({spot_vs_flip_pct:+.1f}% from spot)
+                                </div>
+                                <div style='border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; margin-top: 10px;'>
+                                    <strong style='color: #00D4FF;'>Key Factors:</strong>
+                                    <ul style='margin: 8px 0 0 0; padding-left: 20px;'>
+                                        {''.join([f"<li style='margin: 4px 0;'>{factor}</li>" for factor in confidence_factors[:4]])}
+                                    </ul>
+                                </div>
+                                <div style='margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);'>
+                                    <strong style='color: #FFB800;'>Expected Move:</strong> <span style='color: white;'>{expected_move}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style='margin-top: 16px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px;'>
+                            <div style='color: #8b92a7; font-size: 11px; text-align: center;'>
+                                ⚠️ This prediction is based on current GEX structure, VIX, and historical patterns.
+                                Markets can change rapidly. Use as one input among many for your trading decisions.
+                            </div>
+                        </div>
+                    </div>
+                    """
+                    st.markdown(prediction_html, unsafe_allow_html=True)
+
+                    st.divider()
+
+                    # =================================================================
                     # VIEW 1: DAILY IMPACT (Today → Tomorrow)
                     # =================================================================
 
