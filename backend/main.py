@@ -848,15 +848,16 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/gamma/{symbol}/expiration")
-async def get_gamma_expiration(symbol: str):
+async def get_gamma_expiration(symbol: str, vix: float = 0):
     """
     Get gamma expiration intelligence for 0DTE trading
 
-    Returns weekly gamma decay patterns, daily risk levels, and trading strategies
+    Returns weekly gamma decay patterns, daily risk levels, trading strategies,
+    and SPY directional prediction with probability
     """
     try:
         symbol = symbol.upper()
-        print(f"=== GAMMA EXPIRATION REQUEST: {symbol} ===")
+        print(f"=== GAMMA EXPIRATION REQUEST: {symbol}, VIX: {vix} ===")
 
         # Get current GEX data
         gex_data = api_client.get_net_gamma(symbol)
@@ -874,6 +875,23 @@ async def get_gamma_expiration(symbol: str):
         day_name = today.strftime('%A')
         day_num = today.weekday()  # 0=Monday, 4=Friday
 
+        # Get VIX if not provided
+        current_vix = vix
+        if current_vix == 0:
+            try:
+                import yfinance as yf
+                vix_ticker = yf.Ticker("^VIX")
+                vix_info = vix_ticker.info
+                if vix_info and 'regularMarketPrice' in vix_info:
+                    current_vix = float(vix_info['regularMarketPrice'])
+                else:
+                    vix_data = vix_ticker.history(period='1d', interval='1m')
+                    if not vix_data.empty:
+                        current_vix = float(vix_data['Close'].iloc[-1])
+            except Exception as e:
+                print(f"⚠️ Could not fetch VIX: {e}")
+                current_vix = 20.0
+
         # Estimate weekly gamma pattern (front-loaded decay typical for 0DTE)
         # Monday starts at 100%, decays heavily through week
         weekly_gamma_pattern = {
@@ -888,6 +906,8 @@ async def get_gamma_expiration(symbol: str):
         net_gex = gex_data.get('net_gex', 0)
         spot_price = gex_data.get('spot_price', 0)
         flip_point = gex_data.get('flip_point', 0)
+        call_wall = gex_data.get('call_wall', 0)
+        put_wall = gex_data.get('put_wall', 0)
 
         # Estimate total weekly gamma (reverse calculate from current day)
         current_day_pct = weekly_gamma_pattern.get(day_num, 0.5)
@@ -933,6 +953,110 @@ async def get_gamma_expiration(symbol: str):
         else:
             risk_level = 'LOW'
 
+        # =================================================================
+        # DIRECTIONAL PREDICTION - SPY Up/Down/Sideways for the Day
+        # =================================================================
+
+        directional_prediction = None
+
+        # Only calculate prediction if we have required data
+        if spot_price and flip_point:
+            # Calculate directional factors
+            spot_vs_flip_pct = ((spot_price - flip_point) / flip_point * 100) if flip_point else 0
+            distance_to_call_wall = ((call_wall - spot_price) / spot_price * 100) if call_wall and spot_price else 999
+            distance_to_put_wall = ((spot_price - put_wall) / spot_price * 100) if put_wall and spot_price else 999
+
+            # Directional scoring (0-100)
+            bullish_score = 50  # Start neutral
+            confidence_factors = []
+
+            # Factor 1: GEX Regime (40% weight)
+            if net_gex < -1e9:  # Short gamma (amplification)
+                if spot_price > flip_point:
+                    bullish_score += 20
+                    confidence_factors.append("Short gamma + above flip = upside momentum")
+                else:
+                    bullish_score -= 20
+                    confidence_factors.append("Short gamma + below flip = downside risk")
+            elif net_gex > 1e9:  # Long gamma (dampening)
+                # Range-bound expectation
+                if spot_vs_flip_pct > 1:
+                    bullish_score += 5
+                    confidence_factors.append("Long gamma + above flip = mild upward pull")
+                elif spot_vs_flip_pct < -1:
+                    bullish_score -= 5
+                    confidence_factors.append("Long gamma + below flip = mild downward pull")
+                else:
+                    confidence_factors.append("Long gamma near flip = range-bound likely")
+
+            # Factor 2: Proximity to Walls (30% weight)
+            if distance_to_call_wall < 1.5:  # Within 1.5% of call wall
+                bullish_score -= 15
+                confidence_factors.append(f"Near call wall ${call_wall:.0f} = resistance")
+            elif distance_to_put_wall < 1.5:  # Within 1.5% of put wall
+                bullish_score += 15
+                confidence_factors.append(f"Near put wall ${put_wall:.0f} = support")
+
+            # Factor 3: VIX Regime (20% weight)
+            if current_vix > 20:  # Elevated volatility
+                confidence_factors.append(f"VIX {current_vix:.1f} = elevated volatility")
+                bullish_score = 50 + (bullish_score - 50) * 0.7  # Pull toward neutral
+            elif current_vix < 15:  # Low volatility
+                confidence_factors.append(f"VIX {current_vix:.1f} = low volatility favors range")
+                bullish_score = 50 + (bullish_score - 50) * 0.8
+            else:
+                confidence_factors.append(f"VIX {current_vix:.1f} = moderate volatility")
+
+            # Factor 4: Day of Week (10% weight)
+            if day_name in ['Monday', 'Tuesday']:
+                confidence_factors.append(f"{day_name} = high gamma, range-bound bias")
+                bullish_score = 50 + (bullish_score - 50) * 0.9  # Pull slightly to neutral
+            elif day_name == 'Friday':
+                confidence_factors.append(f"Friday = low gamma, more volatile")
+
+            # Determine direction and confidence
+            if bullish_score >= 65:
+                direction = "UPWARD"
+                direction_emoji = "📈"
+                probability = int(bullish_score)
+                expected_move = "Expect push toward call wall or breakout higher"
+            elif bullish_score <= 35:
+                direction = "DOWNWARD"
+                direction_emoji = "📉"
+                probability = int(100 - bullish_score)
+                expected_move = "Expect push toward put wall or breakdown lower"
+            else:
+                direction = "SIDEWAYS"
+                direction_emoji = "↔️"
+                probability = int(100 - abs(bullish_score - 50) * 2)
+                expected_move = f"Expect range between ${put_wall:.0f} - ${call_wall:.0f}" if put_wall and call_wall else "Range-bound expected"
+
+            # Calculate expected range
+            if put_wall and call_wall:
+                range_width = ((call_wall - put_wall) / spot_price * 100)
+                range_str = f"${put_wall:.0f} - ${call_wall:.0f}"
+                range_pct = f"{range_width:.1f}%"
+            else:
+                range_str = "N/A"
+                range_pct = "N/A"
+
+            directional_prediction = {
+                'direction': direction,
+                'direction_emoji': direction_emoji,
+                'probability': probability,
+                'bullish_score': round(bullish_score, 1),
+                'expected_move': expected_move,
+                'expected_range': range_str,
+                'range_width_pct': range_pct,
+                'spot_vs_flip_pct': round(spot_vs_flip_pct, 2),
+                'distance_to_call_wall_pct': round(distance_to_call_wall, 2) if distance_to_call_wall < 999 else None,
+                'distance_to_put_wall_pct': round(distance_to_put_wall, 2) if distance_to_put_wall < 999 else None,
+                'key_factors': confidence_factors[:4],  # Top 4 factors
+                'vix': round(current_vix, 2)
+            }
+
+            print(f"✅ Directional prediction: {direction} {probability}%")
+
         expiration_data = {
             'symbol': symbol,
             'current_day': day_name,
@@ -945,7 +1069,10 @@ async def get_gamma_expiration(symbol: str):
             'daily_risks': daily_risks,
             'spot_price': spot_price,
             'flip_point': flip_point,
-            'net_gex': net_gex
+            'net_gex': net_gex,
+            'call_wall': call_wall,
+            'put_wall': put_wall,
+            'directional_prediction': directional_prediction
         }
 
         print(f"✅ Gamma expiration data generated for {symbol}")
