@@ -548,16 +548,32 @@ class AutonomousPaperTrader:
             return None
 
     def _get_vix(self) -> float:
-        """Get current VIX level for volatility regime"""
+        """Get current VIX level for volatility regime - REAL-TIME"""
         try:
             import yfinance as yf
+            # Force fresh data - don't use cache
             vix_ticker = yf.Ticker('^VIX')
+            # Try latest quote first (most current)
+            vix_info = vix_ticker.info
+            if vix_info and 'regularMarketPrice' in vix_info:
+                vix_price = float(vix_info['regularMarketPrice'])
+                if vix_price > 0:
+                    print(f"✅ VIX fetched: {vix_price:.2f}")
+                    return vix_price
+
+            # Fallback to history if info doesn't work
             vix_data = vix_ticker.history(period='1d', interval='1m')
             if not vix_data.empty:
-                return float(vix_data['Close'].iloc[-1])
+                vix_price = float(vix_data['Close'].iloc[-1])
+                print(f"✅ VIX fetched (history): {vix_price:.2f}")
+                return vix_price
+
+            print(f"⚠️ VIX data empty - using default 20.0")
             return 20.0  # Default neutral VIX
         except Exception as e:
-            print(f"Failed to fetch VIX: {e}")
+            print(f"❌ Failed to fetch VIX: {e}")
+            import traceback
+            traceback.print_exc()
             return 20.0
 
     def _get_momentum(self) -> Dict:

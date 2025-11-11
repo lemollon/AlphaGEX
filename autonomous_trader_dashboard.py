@@ -701,36 +701,87 @@ def display_trade_history(trader: AutonomousPaperTrader):
 
 
 def display_activity_log(trader: AutonomousPaperTrader):
-    """Display system activity log"""
+    """Display system activity log - Bot's thinking every 5 minutes"""
 
-    st.header("📋 Activity Log")
+    st.header("📋 Activity Log - Bot Scan History")
+    st.caption("Every check cycle (every 5 minutes during market hours) is logged here with full analysis")
 
     # Show data timestamp
     from datetime import datetime
-    current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    import pytz
+    central_tz = pytz.timezone('US/Central')
+    current_time = datetime.now(central_tz).strftime("%Y-%m-%d %I:%M:%S %p CT")
     st.caption(f"📅 Data as of: {current_time}")
 
     conn = sqlite3.connect(trader.db_path)
     log = pd.read_sql_query("""
         SELECT * FROM autonomous_trade_log
         ORDER BY date DESC, time DESC
-        LIMIT 100
+        LIMIT 200
     """, conn)
     conn.close()
 
     if log.empty:
-        st.info("No activity yet. The system will log all actions here.")
+        st.info("No activity yet. The system will log all actions here every 5 minutes during market hours.")
         return
 
-    # Display log entries
-    for _, entry in log.iterrows():
-        timestamp = f"{entry['date']} {entry['time'][:5]}"
-        icon = "✅" if entry['success'] else "❌"
+    # Show summary of recent activity
+    today = datetime.now().strftime('%Y-%m-%d')
+    today_entries = log[log['date'] == today]
+    check_starts = len(today_entries[today_entries['action'] == 'CHECK_START'])
+    analyses = len(today_entries[today_entries['action'] == 'ANALYSIS'])
 
-        with st.expander(f"{icon} {timestamp} - {entry['action']}"):
-            st.text(entry['details'])
-            if entry['position_id']:
-                st.caption(f"Position ID: {entry['position_id']}")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Today's Checks", check_starts)
+    with col2:
+        st.metric("Market Analyses", analyses)
+    with col3:
+        last_check = today_entries.iloc[0] if not today_entries.empty else None
+        if last_check is not None:
+            last_time = f"{last_check['time'][:5]}"
+            st.metric("Last Check", last_time)
+
+    st.divider()
+
+    # Display log entries with enhanced formatting
+    for _, entry in log.iterrows():
+        timestamp = f"{entry['date']} {entry['time'][:8]}"
+        icon = "✅" if entry['success'] else "❌"
+        action = entry['action']
+
+        # Special formatting for analysis entries
+        if action == 'ANALYSIS':
+            # Show ANALYSIS entries expanded by default with prominent styling
+            st.markdown(f"""
+<div style='background: linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(0, 212, 255, 0.1) 100%);
+            padding: 15px; border-radius: 10px; border-left: 4px solid #00FF88; margin-bottom: 10px;'>
+    <div style='color: #00FF88; font-weight: 700; font-size: 14px;'>
+        {icon} {timestamp} - 📊 MARKET ANALYSIS
+    </div>
+</div>
+""", unsafe_allow_html=True)
+            st.markdown(f"```\n{entry['details']}\n```")
+
+        elif action in ['CHECK_START', 'CHECK_COMPLETE', 'CHECK_SKIPPED']:
+            # Check cycle markers - show prominently
+            color = '#00D4FF' if action == 'CHECK_START' else '#FFB800'
+            st.markdown(f"""
+<div style='background: rgba(0, 212, 255, 0.05); padding: 10px; border-radius: 8px; margin-bottom: 8px;'>
+    <div style='color: {color}; font-weight: 600; font-size: 13px;'>
+        {icon} {timestamp} - {action.replace('_', ' ')}
+    </div>
+</div>
+""", unsafe_allow_html=True)
+            with st.expander("Details", expanded=False):
+                st.text(entry['details'])
+
+        else:
+            # All other entries
+            with st.expander(f"{icon} {timestamp} - {action.replace('_', ' ')}", expanded=False):
+                st.text(entry['details'])
+                if entry['position_id']:
+                    st.caption(f"Position ID: {entry['position_id']}")
 
 
 def display_settings(trader: AutonomousPaperTrader):
@@ -1054,19 +1105,29 @@ def display_control_panel(trader: AutonomousPaperTrader):
     if live_status:
         last_check_timestamp, bot_status, bot_action, bot_analysis, bot_decision = live_status
 
-        # Parse and format the timestamp
+        # Parse and format the timestamp in Central Time (Texas)
         try:
             from datetime import datetime
+            import pytz
+            # Parse the timestamp (stored in UTC/local)
             last_check_dt = datetime.fromisoformat(last_check_timestamp)
-            last_check_formatted = last_check_dt.strftime("%Y-%m-%d %I:%M:%S %p")
+
+            # Convert to Central Time (Texas)
+            central_tz = pytz.timezone('US/Central')
+            if last_check_dt.tzinfo is None:
+                # If naive datetime, assume it's already in local time
+                last_check_dt = last_check_dt.replace(tzinfo=pytz.UTC)
+            last_check_ct = last_check_dt.astimezone(central_tz)
+            last_check_formatted = last_check_ct.strftime("%Y-%m-%d %I:%M:%S %p CT")
 
             # Calculate time since last check
             time_since = datetime.now() - last_check_dt
             minutes_ago = int(time_since.total_seconds() / 60)
             time_ago_str = f"{minutes_ago} min ago" if minutes_ago < 60 else f"{int(minutes_ago/60)} hr {minutes_ago%60} min ago"
-        except:
+        except Exception as e:
             last_check_formatted = str(last_check_timestamp)
             time_ago_str = ""
+            print(f"Error parsing timestamp: {e}")
 
         # Display bot's current thinking
         st.markdown("### 🧠 Bot's Live Status")
