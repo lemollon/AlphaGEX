@@ -1208,36 +1208,294 @@ This is where explosive moves originate. Direction unclear but MAGNITUDE will be
             currently_strong = abs(net_gamma) > 1e9  # >$1B
 
             if currently_strong:
+                # Determine old and new regime characteristics
+                is_long_gamma_now = net_gamma > 0
+                gamma_reduction_pct = (this_week_gamma / total_gamma * 100) if total_gamma > 0 else 0
+                remaining_gamma = next_week_gamma / 1e9
+
+                # Calculate estimated new regime
+                new_gamma_sign = "Long" if remaining_gamma > 0.5 else "Short" if remaining_gamma < -0.5 else "Neutral"
+
                 regime['primary_type'] = 'POST_OPEX_REGIME_FLIP'
                 regime['confidence'] = 75
                 regime['description'] = f'{expiring_ratio:.0%} of gamma expires this week - market character will change'
                 regime['detailed_explanation'] = f"""
-POST-OPEX REGIME FLIP APPROACHING
+POST-OPEX REGIME FLIP APPROACHING - PREPARE FOR MARKET PERSONALITY CHANGE
 
-Current Situation:
-- Net Gamma: ${net_gamma/1e9:.1f}B ({'Long' if net_gamma > 0 else 'Short'})
-- Gamma expiring this week: ${this_week_gamma/1e9:.1f}B ({expiring_ratio:.0%})
-- Gamma remaining next week: ${next_week_gamma/1e9:.1f}B
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 CURRENT GAMMA STRUCTURE (BEFORE OPEX)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-What's Happening:
-When major OPEX occurs, the gamma structure that defines market behavior CHANGES.
+Net Gamma: ${net_gamma/1e9:.1f}B ({'LONG GAMMA' if is_long_gamma_now else 'SHORT GAMMA'})
+Expires This Week: ${this_week_gamma/1e9:.1f}B ({gamma_reduction_pct:.0f}% of total)
+Remains Next Week: ${next_week_gamma/1e9:.1f}B
 
-Current regime: {'Pin/chop (long gamma dampens moves)' if net_gamma > 0 else 'Momentum (short gamma amplifies moves)'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔴 OLD REGIME CHARACTERISTICS (THIS WEEK - BEFORE OPEX)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-After expiration: Market character will shift significantly
+Regime Type: {'LONG GAMMA - Dealer Dampening' if is_long_gamma_now else 'SHORT GAMMA - Dealer Amplification'}
 
-The Trap:
-Traders expect same behavior after OPEX, but the structural forces driving the market have changed.
-RSI levels that meant one thing THIS week will mean something different NEXT week.
+Market Behavior:
+{'''• Price ACTION: Choppy, range-bound, mean-reverting
+• Volatility: Compressed, low intraday ranges
+• Dealer Hedging: Dealers STABILIZE price movements
+• Breakouts: Tend to fail quickly, snap back to center
+• RSI: Oscillates frequently between 30-70
+• Volume: Lower volume moves get absorbed
+• Best Times: Sideways grinding, pin near strikes''' if is_long_gamma_now else '''• Price ACTION: Trending, momentum-driven, gap moves
+• Volatility: Expanded, large intraday swings
+• Dealer Hedging: Dealers AMPLIFY price movements
+• Breakouts: Tend to extend, follow-through strong
+• RSI: Can stay extreme (>70 or <30) for days
+• Volume: Accelerates moves, feedback loops
+• Best Times: Strong directional trends, squeeze conditions'''}
+
+What WORKED This Week:
+{'''✅ MEAN REVERSION STRATEGIES (70-80% win rate):
+   • Sell premium when RSI hits 65-70 (calls) or 30-35 (puts)
+   • Iron Condors: Wide wings (0.10-0.15 delta)
+   • Credit Spreads: 0.20 delta short strike, +$1 wide
+   • Entry: When price touches GEX walls
+   • Exit: 50% profit or 2-3 days (theta decay)
+   • Position Size: 3-5% per spread
+   • Win Rate: 70-80% (gamma protects you)
+
+✅ SCALPING OSCILLATIONS (60-70% win rate):
+   • Buy ATM straddles when price is dead center
+   • Sell when price moves 0.5% either direction
+   • Hold time: 30 minutes to 2 hours
+   • Works best: 10am-2pm ET
+
+✅ 0DTE CALENDAR SPREADS:
+   • Sell 0DTE options, buy 1-2 DTE
+   • Strike: ATM or near pin level
+   • Theta decay accelerates afternoon
+   • Exit: By 3:30pm to avoid gamma risk''' if is_long_gamma_now else '''✅ MOMENTUM/BREAKOUT STRATEGIES (65-75% win rate):
+   • Buy breakouts above resistance (0.40-0.50 delta calls)
+   • Buy dips near flip point (0.40-0.50 delta puts)
+   • Directional spreads: Debit spreads, not credit
+   • Entry: After confirmation (volume surge + follow-through)
+   • Exit: Trail stops, let winners run
+   • Position Size: 2-3% per trade (vol is high!)
+   • Win Rate: 65-75% IF you follow trend
+
+✅ VOLATILITY EXPANSION PLAYS (70-80% win rate):
+   • Long ATM straddles into known events
+   • Long gamma during gap openings
+   • Buy dips aggressively (dealers chase you)
+   • Hold time: Several hours to days
+
+✅ TREND CONTINUATION:
+   • Add to winners (pyramid)
+   • Use wide stops (volatility is high)
+   • Target: 2-3x risk/reward
+   • Works best: Morning gap continuation'''}
+
+What FAILED This Week:
+{'''❌ Buying breakouts (dealers sell into strength)
+❌ Holding overnight directional positions
+❌ Wide stop losses (get chopped out)
+❌ Fighting the range (trying to force trends)
+❌ Naked options (theta crushes you)''' if is_long_gamma_now else '''❌ Selling premium (gamma squeezes you)
+❌ Fading moves (dealer amplification runs you over)
+❌ Tight stops (volatility whipsaws you out)
+❌ Iron condors (wings get tested frequently)
+❌ Mean reversion (trends extend beyond logic)'''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🟢 NEW REGIME CHARACTERISTICS (NEXT WEEK - AFTER OPEX)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Estimated Regime: {new_gamma_sign} GAMMA ({remaining_gamma:+.1f}B estimated)
+Regime Type: {'''LONG GAMMA - Dealer Dampening''' if new_gamma_sign == 'Long' else '''SHORT GAMMA - Dealer Amplification''' if new_gamma_sign == 'Short' else '''NEUTRAL - Mixed Behavior'''}
+
+Expected Market Behavior:
+{'''• Price ACTION: Will become CHOPPY and range-bound
+• Volatility: Will COMPRESS significantly
+• Dealer Hedging: Dealers will STABILIZE moves
+• Breakouts: Will likely FAIL and snap back
+• RSI: Will oscillate more frequently
+• Volume: Lower volume will matter less
+• Environment: Range trading, mean reversion dominant''' if new_gamma_sign == 'Long' else '''• Price ACTION: Will become TRENDING and momentum-driven
+• Volatility: Will EXPAND significantly
+• Dealer Hedging: Dealers will AMPLIFY moves
+• Breakouts: Will have FOLLOW-THROUGH
+• RSI: Can stay extreme for extended periods
+• Volume: Will accelerate directional moves
+• Environment: Momentum trading, trend following dominant''' if new_gamma_sign == 'Short' else '''• Price ACTION: Mixed, depends on positioning
+• Volatility: Moderate, watch for regime shifts
+• Dealer Hedging: Minimal impact either way
+• Breakouts: Test carefully, wait for confirmation
+• RSI: Standard interpretation applies
+• Volume: More important for confirmation
+• Environment: Technical analysis more reliable'''}
+
+What Will WORK Next Week:
+{'''✅ PREMIUM SELLING STRATEGIES (Target 70-80% win rate):
+
+   1. IRON CONDORS (Recommended)
+      • Short Strikes: 0.20 delta (closer to money in low vol)
+      • Long Strikes: +$2 width ($1 in low IV)
+      • Expiration: Friday (5-7 DTE optimal)
+      • Entry: Monday or Tuesday morning
+      • Exit: 50% profit or Thursday 3pm
+      • Size: 3-5% account risk per spread
+      • Probability: ~75% profit
+      • Example: SPY at $575
+        - Sell $577 call / Buy $579 call
+        - Sell $573 put / Buy $571 put
+        - Credit: $0.50-0.70
+        - Max profit: $50-70 per spread
+        - Max loss: $130-150 per spread
+
+   2. CREDIT SPREADS (Safer)
+      • Direction: Counter to any small trend
+      • Short Strike: 0.25 delta
+      • Width: +$1 to +$1.50
+      • Expiration: 5-7 DTE
+      • Entry: When RSI touches 60 or 40
+      • Exit: 60% profit or 3-4 days
+      • Size: 2-4% per spread
+      • Probability: ~70% profit
+
+   3. STRADDLE SELLING (Advanced)
+      • Strike: ATM (current price)
+      • Expiration: 7-10 DTE
+      • Entry: VIX > 15, market dead center
+      • Exit: 50% profit OR price moves 2%
+      • Size: 1-2% (defined risk version)
+      • Probability: ~65% profit
+      • Hedge: Buy further OTM protection
+
+   4. CALENDAR SPREADS (Theta farmers)
+      • Sell: Weekly (3-5 DTE)
+      • Buy: Next week (10-12 DTE)
+      • Strike: ATM or pin level
+      • Entry: Monday-Wednesday
+      • Exit: Friday close (avoid gamma risk)
+      • Size: 2-3% per spread
+
+   Time Management:
+   • Best entry: Monday 10am-11am
+   • Avoid: Friday morning (gamma increases)
+   • Exit before: Thursday 3pm (de-risk)''' if new_gamma_sign == 'Long' else '''✅ DIRECTIONAL/MOMENTUM STRATEGIES (Target 65-75% win rate):
+
+   1. TREND FOLLOWING (Recommended)
+      • Direction: WITH the prevailing trend
+      • Strikes: 0.40-0.50 delta (first OTM)
+      • Expiration: 2-3 weeks (14-21 DTE)
+      • Entry: After confirmed breakout + volume
+      • Exit: Trail stop 25% below entry OR target hit
+      • Size: 2-3% per trade
+      • Probability: ~70% IF trend confirmed
+      • Example: SPY trending up
+        - Buy $580 calls (0.45 delta)
+        - Entry: After break above $577 on volume
+        - Target: $585 (+$5 move)
+        - Stop: $575 (-$2 move)
+        - Risk: $200 per contract
+        - Reward: $500 per contract (2.5:1)
+
+   2. DEBIT SPREADS (Defined risk momentum)
+      • Buy: 0.50 delta (ATM)
+      • Sell: 0.25 delta (OTM)
+      • Width: $3-5 depending on price
+      • Expiration: 14-21 DTE
+      • Entry: Pullback to support/resistance
+      • Exit: 100-150% profit OR stop hit
+      • Size: 3-4% per spread
+      • Probability: ~65% profit
+      • Example: Bullish setup
+        - Buy $575 call
+        - Sell $580 call
+        - Debit: $2.50
+        - Max profit: $2.50 (100% gain)
+        - Max loss: $2.50
+
+   3. ATM STRADDLES (Volatility expansion)
+      • Strike: ATM (current price)
+      • Expiration: 7-14 DTE
+      • Entry: Before known catalyst OR at flip point
+      • Exit: When one side reaches 50-75% profit
+      • Size: 1-2% (premium is expensive!)
+      • Probability: ~60% profit
+      • Works best: VIX rising environment
+
+   4. BREAKOUT BUYING (Pure directional)
+      • Strike: 0.30-0.40 delta
+      • Expiration: 2-4 weeks
+      • Entry: Break of key level + volume surge
+      • Exit: Trail stop OR 2-3x gain
+      • Size: 2-3% per trade
+      • Add: On continuation (pyramid)
+
+   Risk Management:
+   • Stop loss: 30-40% (vol is high)
+   • Position sizing: SMALLER than usual
+   • Scaling: Add to winners, cut losers fast
+   • Time: Hold winners for days/weeks''' if new_gamma_sign == 'Short' else '''✅ BALANCED/TECHNICAL STRATEGIES:
+
+   • Use standard technical analysis
+   • Wait for clear signals before entry
+   • Smaller position sizes (2-3%)
+   • Quick profit taking (25-50%)
+   • Both credit and debit spreads viable
+   • Focus on high-probability setups only
+   • Probability: ~60% (lower in neutral regime)'''}
+
+What Will FAIL Next Week:
+{'''❌ Trend following (ranges will chop you)
+❌ Breakout buying (fakeouts increase)
+❌ Holding overnight directional (gaps fade)
+❌ Wide stops (will get hit in chop)
+❌ Naked long options (theta decay accelerates)
+❌ Fighting the pin (dealers defend strikes)''' if new_gamma_sign == 'Long' else '''❌ Selling naked premium (gamma squeezes)
+❌ Iron condors (wings will be tested)
+❌ Tight stops (volatility whipsaws)
+❌ Fading strong moves (amplification continues)
+❌ Mean reversion (trends persist longer)
+❌ Short-dated options (gamma risk too high)''' if new_gamma_sign == 'Short' else '''❌ Overleveraging (regime unclear)
+❌ Stubborn holding (be nimble)
+❌ Pattern-based trading (less reliable)'''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ THE PSYCHOLOGY TRAP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+What Traders Do WRONG:
+1. Continue using old regime strategies after OPEX
+2. Expect same price behavior that worked last week
+3. Keep same position sizes despite regime change
+4. Ignore the gamma structure shift
+5. Get angry when "it's not working anymore"
+
+The REALITY:
+• RSI 70 meant "sell" last week → might mean "beginning of trend" next week
+• Breakouts that failed last week → might follow through next week
+• Strategies that won 75% → might win only 25% next week
+• Your edge CHANGED when gamma expired
+
+How to AVOID the Trap:
+1. WAIT 1-2 days after OPEX to assess new regime
+2. TEST small positions before going full size
+3. Adjust strategy based on observed behavior (not assumptions)
+4. Track what works THIS week, not last week
+5. Be willing to admit the regime changed and adapt
+
+CRITICAL: The market doesn't care about your last week's P&L.
+The gamma that created your edge is GONE. New structure = new strategies.
 """
                 regime['trade_direction'] = 'regime_dependent'
                 regime['risk_level'] = 'high'
-                regime['timeline'] = f'Regime flip within {min([exp["dte"] for exp in expiration_analysis.get("expiration_timeline", [])])} days'
-                regime['psychology_trap'] = 'Trading the old regime after gamma structure has shifted'
+                regime['timeline'] = f'Regime flip within {min([exp["dte"] for exp in expiration_analysis.get("expiration_timeline", [])] or [5])} days'
+                regime['psychology_trap'] = 'Trading the old regime after gamma structure has shifted - using strategies that no longer have edge'
                 regime['supporting_factors'] = [
                     f'{expiring_ratio:.0%} of gamma expires soon',
                     'Major structural shift approaching',
-                    'Market personality change imminent'
+                    'Market personality change imminent',
+                    f'Old regime: {"Long gamma dampening" if is_long_gamma_now else "Short gamma amplification"}',
+                    f'New regime: {new_gamma_sign} gamma behavior expected'
                 ]
                 return regime
 

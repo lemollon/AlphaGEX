@@ -768,6 +768,9 @@ def main():
     
     # Sidebar Configuration
     with st.sidebar:
+        # Collapse hint at very top
+        st.caption("💡 Click the [×] at the top-left to collapse this sidebar")
+
         st.header("⚙️ Configuration")
 
         # AI Status Indicator (no test button)
