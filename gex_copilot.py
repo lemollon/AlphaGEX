@@ -1221,7 +1221,16 @@ def main():
                 # NEW GAMMA EXPIRATION INTELLIGENCE - 3 VIEWS + STRATEGIES
                 # =================================================================
 
-                st.markdown("### 📊 Gamma Expiration Intelligence - Current Week Only")
+                # Header with refresh button
+                col_header1, col_header2 = st.columns([5, 1])
+                with col_header1:
+                    st.markdown("### 📊 Gamma Expiration Intelligence - Current Week Only")
+                with col_header2:
+                    if st.button("🔄 Refresh", key="refresh_gamma_intel", help="Clear cache and fetch fresh weekly data"):
+                        # Clear the API cache
+                        if hasattr(st.session_state.api_client, '_cache'):
+                            st.session_state.api_client._cache = {}
+                        st.rerun()
 
                 # Mobile optimization CSS
                 st.markdown("""
@@ -1277,6 +1286,11 @@ def main():
                         current_symbol,
                         current_vix=current_vix
                     )
+
+                # Show when this analysis was performed
+                import pytz
+                analysis_time = datetime.now(pytz.timezone('America/New_York'))
+                st.caption(f"📅 Analysis performed: {analysis_time.strftime('%A, %B %d, %Y at %I:%M:%S %p ET')}")
 
                 if gamma_intel.get('success'):
                     # Display week info
