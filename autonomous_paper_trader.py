@@ -383,8 +383,46 @@ class AutonomousPaperTrader:
             # Step 2: Try to find high-confidence directional trade (with enhanced data)
             trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
 
+            # Log detailed analysis of what was evaluated
+            if trade:
+                confidence = trade.get('confidence', 0)
+                analysis_details = (
+                    f"MARKET ANALYSIS:\n"
+                    f"• SPY Price: ${spot_price:.2f}\n"
+                    f"• Net GEX: ${net_gex/1e9:.2f}B {'(SHORT GAMMA - Amplification)' if net_gex < 0 else '(LONG GAMMA - Dampening)'}\n"
+                    f"• Flip Point: ${flip_point:.2f} ({((flip_point-spot_price)/spot_price*100):+.1f}% from spot)\n"
+                    f"• VIX: {vix:.1f} {'(Elevated)' if vix > 20 else '(Normal)' if vix > 15 else '(Low)'}\n"
+                    f"• Momentum: {momentum.get('trend', 'neutral')} ({momentum.get('4h', 0):+.1f}% 4h move)\n"
+                    f"• Put/Call Ratio: {put_call_ratio:.2f}\n\n"
+                    f"SETUP FOUND:\n"
+                    f"• Strategy: {trade.get('strategy', 'Unknown')}\n"
+                    f"• Action: {trade.get('action', 'Unknown')}\n"
+                    f"• Strike: ${trade.get('strike', 0):.0f}\n"
+                    f"• Confidence: {confidence}%\n\n"
+                    f"DECISION: {'✅ EXECUTING (meets 70%+ threshold)' if confidence >= 70 else '❌ SKIPPING (below 70% threshold)'}"
+                )
+                self.log_action(
+                    'ANALYSIS',
+                    analysis_details,
+                    success=True
+                )
+
             # GUARANTEED TRADE - MINIMUM ONE PER DAY: Multi-level fallback system
             if not trade or trade.get('confidence', 0) < 70:
+                # Log why directional trade was not suitable
+                if not trade:
+                    reason = "No directional setup detected. GEX structure unclear or conflicting signals."
+                else:
+                    reason = f"Confidence too low ({trade.get('confidence', 0)}% < 70% minimum threshold). Setup not strong enough for directional trade."
+
+                self.log_action(
+                    'FALLBACK_DECISION',
+                    f"{reason}\n\n"
+                    f"FALLBACK STRATEGY: Using Iron Condor for premium collection. "
+                    f"IC provides positive expectancy in neutral/uncertain market conditions.",
+                    success=True
+                )
+
                 self.update_live_status(
                     status='EXECUTING',
                     action='No high-confidence directional setup found',
