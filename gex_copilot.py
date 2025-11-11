@@ -1231,9 +1231,10 @@ def main():
                     st.markdown("### 📊 Gamma Expiration Intelligence - Current Week Only")
                 with col_header2:
                     if st.button("🔄 Refresh", key="refresh_gamma_intel", help="Clear cache and fetch fresh weekly data"):
-                        # Clear the API cache
-                        if hasattr(st.session_state.api_client, '_cache'):
-                            st.session_state.api_client._cache = {}
+                        # Clear the API cache - use the actual shared cache
+                        from core_classes_and_engines import TradingVolatilityAPI
+                        TradingVolatilityAPI._shared_response_cache.clear()
+                        print("✅ Cleared gamma intelligence cache - will fetch fresh data")
                         st.rerun()
 
                 # Mobile optimization CSS
