@@ -6,6 +6,21 @@ import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useRouter } from 'next/navigation'
 
+interface DirectionalPrediction {
+  direction: string
+  direction_emoji: string
+  probability: number
+  bullish_score: number
+  expected_move: string
+  expected_range: string
+  range_width_pct: string
+  spot_vs_flip_pct: number
+  distance_to_call_wall_pct: number | null
+  distance_to_put_wall_pct: number | null
+  key_factors: string[]
+  vix: number
+}
+
 interface GammaExpirationData {
   symbol: string
   current_day: string
@@ -33,6 +48,9 @@ interface GammaExpirationData {
   spot_price: number
   flip_point: number
   net_gex: number
+  call_wall: number
+  put_wall: number
+  directional_prediction: DirectionalPrediction | null
 }
 
 export default function GammaExpirationTracker() {
@@ -192,6 +210,75 @@ export default function GammaExpirationTracker() {
               <span>Today: <strong className="text-primary">{data.current_day}</strong></span>
             </div>
           </div>
+
+          {/* DIRECTIONAL PREDICTION - SPY Up/Down/Sideways */}
+          {data.directional_prediction && (
+            <div className={`card border-l-4 ${
+              data.directional_prediction.direction === 'UPWARD' ? 'border-success bg-success/5' :
+              data.directional_prediction.direction === 'DOWNWARD' ? 'border-danger bg-danger/5' :
+              'border-warning bg-warning/5'
+            }`}>
+              <div className="text-center mb-6">
+                <div className={`text-lg font-black uppercase tracking-wider mb-2 ${
+                  data.directional_prediction.direction === 'UPWARD' ? 'text-success' :
+                  data.directional_prediction.direction === 'DOWNWARD' ? 'text-danger' :
+                  'text-warning'
+                }`}>
+                  {data.directional_prediction.direction_emoji} SPY DIRECTIONAL FORECAST - TODAY
+                </div>
+                <div className="text-5xl font-black text-text-primary my-4">
+                  {data.directional_prediction.direction}
+                </div>
+                <div className={`text-3xl font-bold ${
+                  data.directional_prediction.direction === 'UPWARD' ? 'text-success' :
+                  data.directional_prediction.direction === 'DOWNWARD' ? 'text-danger' :
+                  'text-warning'
+                }`}>
+                  {data.directional_prediction.probability}% Probability
+                </div>
+              </div>
+
+              <div className="bg-background-card/50 rounded-lg p-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <span className="text-primary font-bold">Current Price:</span>
+                    <span className="ml-2 text-text-primary font-bold">${data.spot_price.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-primary font-bold">Expected Range:</span>
+                    <span className="ml-2 text-text-primary">{data.directional_prediction.expected_range}</span>
+                    <span className="ml-1 text-text-muted">({data.directional_prediction.range_width_pct})</span>
+                  </div>
+                  <div>
+                    <span className="text-primary font-bold">Flip Point:</span>
+                    <span className="ml-2 text-text-primary">${data.flip_point.toFixed(2)}</span>
+                    <span className="ml-1 text-text-muted">({data.directional_prediction.spot_vs_flip_pct > 0 ? '+' : ''}{data.directional_prediction.spot_vs_flip_pct.toFixed(1)}% from spot)</span>
+                  </div>
+                </div>
+
+                <div className="border-t border-border pt-4">
+                  <div className="font-bold text-primary mb-2">Key Factors:</div>
+                  <ul className="list-disc list-inside space-y-1 text-sm text-text-secondary">
+                    {data.directional_prediction.key_factors.map((factor, idx) => (
+                      <li key={idx}>{factor}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="border-t border-border pt-4">
+                  <div className="font-bold text-warning">Expected Move:</div>
+                  <div className="text-text-primary text-sm mt-1">{data.directional_prediction.expected_move}</div>
+                </div>
+              </div>
+
+              <div className="mt-4 p-3 bg-background-hover/30 rounded-lg text-center">
+                <div className="text-text-muted text-xs">
+                  ⚠️ This prediction is based on current GEX structure, VIX ({data.directional_prediction.vix}), and historical patterns.
+                  Markets can change rapidly. Use as one input among many for your trading decisions.
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* VIEW 1: TODAY'S IMPACT */}
           <div className="card">
