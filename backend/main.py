@@ -875,19 +875,26 @@ async def get_gamma_expiration(symbol: str, vix: float = 0):
         day_name = today.strftime('%A')
         day_num = today.weekday()  # 0=Monday, 4=Friday
 
-        # Get VIX if not provided
+        # Get VIX if not provided - use flexible price data fetcher
         current_vix = vix
         if current_vix == 0:
             try:
-                import yfinance as yf
-                vix_ticker = yf.Ticker("^VIX")
-                vix_info = vix_ticker.info
-                if vix_info and 'regularMarketPrice' in vix_info:
-                    current_vix = float(vix_info['regularMarketPrice'])
+                # Import flexible price data fetcher (multi-source: yfinance, alpha vantage, polygon, twelve data)
+                import sys
+                from pathlib import Path
+                parent_dir = Path(__file__).parent.parent
+                if str(parent_dir) not in sys.path:
+                    sys.path.insert(0, str(parent_dir))
+
+                from flexible_price_data import get_current_price
+
+                vix_price = get_current_price('^VIX')
+                if vix_price and vix_price > 0:
+                    current_vix = vix_price
+                    print(f"✅ VIX fetched from flexible source: {current_vix:.2f}")
                 else:
-                    vix_data = vix_ticker.history(period='1d', interval='1m')
-                    if not vix_data.empty:
-                        current_vix = float(vix_data['Close'].iloc[-1])
+                    print(f"⚠️ VIX fetch failed - using default 20.0")
+                    current_vix = 20.0
             except Exception as e:
                 print(f"⚠️ Could not fetch VIX: {e}")
                 current_vix = 20.0
