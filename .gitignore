@@ -37,3 +37,6 @@ Thumbs.db
 *.xlsx
 *.db
 *.sqlite
+
+# Strategy Stats (auto-generated, don't commit)
+.strategy_stats/
