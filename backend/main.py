@@ -305,22 +305,19 @@ async def get_gex_data(symbol: str):
             # RSI will gracefully show "---" in UI if Yahoo blocks the request
 
             # Try flexible price data system first (with multiple fallback sources)
-            try:
-                import sys
-                from pathlib import Path
-                parent_dir = Path(__file__).resolve().parent.parent
-                if str(parent_dir) not in sys.path:
-                    sys.path.insert(0, str(parent_dir))
+            # NOTE: Direct Alpha Vantage fallback since Yahoo Finance is blocked
+            import yfinance as yf
+            use_flexible = False
 
-                from flexible_price_data import get_price_history
-                use_flexible = True
-                print(f"✅ Using flexible multi-source price data system")
-            except ImportError:
-                # Fallback to direct yfinance
-                import yfinance as yf
-                use_flexible = False
-                print(f"⚠️ Flexible data system unavailable, using yfinance directly")
-                ticker = yf.Ticker(symbol)
+            # Check if Alpha Vantage key is available
+            alpha_vantage_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+
+            if alpha_vantage_key:
+                print(f"✅ Alpha Vantage API key configured - will use as fallback")
+            else:
+                print(f"⚠️ No Alpha Vantage API key - RSI will only work if yfinance succeeds")
+
+            ticker = yf.Ticker(symbol)
 
             # Calculate RSI for multiple timeframes
             def calculate_rsi(df, period=14):
@@ -338,12 +335,59 @@ async def get_gex_data(symbol: str):
             print(f"📊 Fetching multi-timeframe RSI for {symbol}...")
 
             try:
-                if use_flexible:
-                    df_1d = get_price_history(symbol, period_days=90)
-                    print(f"  📥 1d: Fetched {len(df_1d)} bars from flexible data system")
-                else:
-                    df_1d = ticker.history(period="90d", interval="1d")
-                    print(f"  📥 1d: Fetched {len(df_1d)} bars from yfinance")
+                # Try yfinance first
+                df_1d = ticker.history(period="90d", interval="1d")
+                print(f"  📥 1d: Fetched {len(df_1d)} bars from yfinance")
+
+                # Fallback to Alpha Vantage if yfinance returns no data
+                if df_1d.empty and alpha_vantage_key:
+                    print(f"  🔄 yfinance failed, trying Alpha Vantage fallback...")
+                    try:
+                        import requests
+                        import pandas as pd
+                        from datetime import datetime, timedelta
+
+                        # Alpha Vantage TIME_SERIES_DAILY endpoint
+                        url = f"https://www.alphavantage.co/query"
+                        params = {
+                            'function': 'TIME_SERIES_DAILY',
+                            'symbol': symbol,
+                            'outputsize': 'full',  # Get all available data
+                            'apikey': alpha_vantage_key
+                        }
+
+                        response = requests.get(url, params=params, timeout=10)
+                        if response.status_code == 200:
+                            data = response.json()
+                            if 'Time Series (Daily)' in data:
+                                time_series = data['Time Series (Daily)']
+
+                                # Convert to DataFrame
+                                df_list = []
+                                for date_str, values in time_series.items():
+                                    df_list.append({
+                                        'Date': datetime.strptime(date_str, '%Y-%m-%d'),
+                                        'Close': float(values['4. close']),
+                                        'High': float(values['2. high']),
+                                        'Low': float(values['3. low']),
+                                        'Volume': int(values['5. volume'])
+                                    })
+
+                                df_1d = pd.DataFrame(df_list)
+                                df_1d.set_index('Date', inplace=True)
+                                df_1d.sort_index(inplace=True)
+
+                                # Get last 90 days
+                                cutoff_date = datetime.now() - timedelta(days=90)
+                                df_1d = df_1d[df_1d.index >= cutoff_date]
+
+                                print(f"  📥 1d: Fetched {len(df_1d)} bars from Alpha Vantage")
+                            else:
+                                print(f"  ⚠️ Alpha Vantage returned no time series data")
+                        else:
+                            print(f"  ⚠️ Alpha Vantage HTTP {response.status_code}")
+                    except Exception as av_error:
+                        print(f"  ⚠️ Alpha Vantage fallback failed: {av_error}")
 
                 if not df_1d.empty:
                     print(f"      Date range: {df_1d.index[0]} to {df_1d.index[-1]}")
@@ -356,105 +400,88 @@ async def get_gex_data(symbol: str):
                         print(f"  ⚠️ 1d RSI: insufficient data (need 14+ bars, got {len(df_1d)})")
                 else:
                     rsi_data['1d'] = None
-                    print(f"  ⚠️ 1d RSI: no data returned")
+                    print(f"  ⚠️ 1d RSI: no data returned from any source")
             except Exception as e:
                 rsi_data['1d'] = None
                 print(f"  ❌ 1d RSI failed: {e}")
 
             try:
-                # Intraday data only available from yfinance (not in flexible system yet)
-                if not use_flexible:
-                    df_4h = ticker.history(period="30d", interval="1h")
-                    if not df_4h.empty and len(df_4h) >= 56:  # Need enough data for 4h RSI
-                        df_4h_resampled = df_4h.resample('4H').agg({
-                            'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'
-                        }).dropna()
-                        rsi_4h = calculate_rsi(df_4h_resampled)
-                        if rsi_4h is not None:
-                            rsi_data['4h'] = round(float(rsi_4h), 1)
-                            print(f"  ✅ 4h RSI: {rsi_data['4h']}")
-                        else:
-                            rsi_data['4h'] = None
-                            print(f"  ⚠️ 4h RSI: insufficient data after resampling")
+                # Intraday data only available from yfinance
+                df_4h = ticker.history(period="30d", interval="1h")
+                if not df_4h.empty and len(df_4h) >= 56:  # Need enough data for 4h RSI
+                    df_4h_resampled = df_4h.resample('4H').agg({
+                        'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'
+                    }).dropna()
+                    rsi_4h = calculate_rsi(df_4h_resampled)
+                    if rsi_4h is not None:
+                        rsi_data['4h'] = round(float(rsi_4h), 1)
+                        print(f"  ✅ 4h RSI: {rsi_data['4h']}")
                     else:
                         rsi_data['4h'] = None
-                        print(f"  ⚠️ 4h RSI: insufficient hourly data ({len(df_4h)} bars, need 56+)")
+                        print(f"  ⚠️ 4h RSI: insufficient data after resampling")
                 else:
-                    # Flexible system doesn't support intraday yet
                     rsi_data['4h'] = None
-                    print(f"  ⚠️ 4h RSI: intraday not available in flexible system")
+                    print(f"  ⚠️ 4h RSI: insufficient hourly data ({len(df_4h)} bars, need 56+)")
             except Exception as e:
                 rsi_data['4h'] = None
                 print(f"  ❌ 4h RSI failed: {e}")
 
             try:
                 # Intraday data only available from yfinance
-                if not use_flexible:
-                    df_1h = ticker.history(period="7d", interval="1h")
-                    print(f"  📥 1h: Fetched {len(df_1h)} bars from yfinance")
-                    if not df_1h.empty:
-                        print(f"      Date range: {df_1h.index[0]} to {df_1h.index[-1]}")
-                        rsi_1h = calculate_rsi(df_1h)
-                        if rsi_1h is not None:
-                            rsi_data['1h'] = round(float(rsi_1h), 1)
-                            print(f"  ✅ 1h RSI: {rsi_data['1h']}")
-                        else:
-                            rsi_data['1h'] = None
-                            print(f"  ⚠️ 1h RSI: insufficient data (need 14+ bars, got {len(df_1h)})")
+                df_1h = ticker.history(period="7d", interval="1h")
+                print(f"  📥 1h: Fetched {len(df_1h)} bars from yfinance")
+                if not df_1h.empty:
+                    print(f"      Date range: {df_1h.index[0]} to {df_1h.index[-1]}")
+                    rsi_1h = calculate_rsi(df_1h)
+                    if rsi_1h is not None:
+                        rsi_data['1h'] = round(float(rsi_1h), 1)
+                        print(f"  ✅ 1h RSI: {rsi_data['1h']}")
                     else:
                         rsi_data['1h'] = None
-                        print(f"  ⚠️ 1h RSI: no data returned")
+                        print(f"  ⚠️ 1h RSI: insufficient data (need 14+ bars, got {len(df_1h)})")
                 else:
                     rsi_data['1h'] = None
-                    print(f"  ⚠️ 1h RSI: intraday not available in flexible system")
+                    print(f"  ⚠️ 1h RSI: no data returned")
             except Exception as e:
                 rsi_data['1h'] = None
                 print(f"  ❌ 1h RSI failed: {e}")
 
             try:
                 # Intraday data only available from yfinance
-                if not use_flexible:
-                    df_15m = ticker.history(period="5d", interval="15m")
-                    print(f"  📥 15m: Fetched {len(df_15m)} bars from yfinance")
-                    if not df_15m.empty:
-                        print(f"      Date range: {df_15m.index[0]} to {df_15m.index[-1]}")
-                        rsi_15m = calculate_rsi(df_15m)
-                        if rsi_15m is not None:
-                            rsi_data['15m'] = round(float(rsi_15m), 1)
-                            print(f"  ✅ 15m RSI: {rsi_data['15m']}")
-                        else:
-                            rsi_data['15m'] = None
-                            print(f"  ⚠️ 15m RSI: insufficient data (need 14+ bars, got {len(df_15m)})")
+                df_15m = ticker.history(period="5d", interval="15m")
+                print(f"  📥 15m: Fetched {len(df_15m)} bars from yfinance")
+                if not df_15m.empty:
+                    print(f"      Date range: {df_15m.index[0]} to {df_15m.index[-1]}")
+                    rsi_15m = calculate_rsi(df_15m)
+                    if rsi_15m is not None:
+                        rsi_data['15m'] = round(float(rsi_15m), 1)
+                        print(f"  ✅ 15m RSI: {rsi_data['15m']}")
                     else:
                         rsi_data['15m'] = None
-                        print(f"  ⚠️ 15m RSI: no data returned")
+                        print(f"  ⚠️ 15m RSI: insufficient data (need 14+ bars, got {len(df_15m)})")
                 else:
                     rsi_data['15m'] = None
-                    print(f"  ⚠️ 15m RSI: intraday not available in flexible system")
+                    print(f"  ⚠️ 15m RSI: no data returned")
             except Exception as e:
                 rsi_data['15m'] = None
                 print(f"  ❌ 15m RSI failed: {e}")
 
             try:
                 # Intraday data only available from yfinance
-                if not use_flexible:
-                    df_5m = ticker.history(period="2d", interval="5m")
-                    print(f"  📥 5m: Fetched {len(df_5m)} bars from yfinance")
-                    if not df_5m.empty:
-                        print(f"      Date range: {df_5m.index[0]} to {df_5m.index[-1]}")
-                        rsi_5m = calculate_rsi(df_5m)
-                        if rsi_5m is not None:
-                            rsi_data['5m'] = round(float(rsi_5m), 1)
-                            print(f"  ✅ 5m RSI: {rsi_data['5m']}")
-                        else:
-                            rsi_data['5m'] = None
-                            print(f"  ⚠️ 5m RSI: insufficient data (need 14+ bars, got {len(df_5m)})")
+                df_5m = ticker.history(period="2d", interval="5m")
+                print(f"  📥 5m: Fetched {len(df_5m)} bars from yfinance")
+                if not df_5m.empty:
+                    print(f"      Date range: {df_5m.index[0]} to {df_5m.index[-1]}")
+                    rsi_5m = calculate_rsi(df_5m)
+                    if rsi_5m is not None:
+                        rsi_data['5m'] = round(float(rsi_5m), 1)
+                        print(f"  ✅ 5m RSI: {rsi_data['5m']}")
                     else:
                         rsi_data['5m'] = None
-                        print(f"  ⚠️ 5m RSI: no data returned")
+                        print(f"  ⚠️ 5m RSI: insufficient data (need 14+ bars, got {len(df_5m)})")
                 else:
                     rsi_data['5m'] = None
-                    print(f"  ⚠️ 5m RSI: intraday not available in flexible system")
+                    print(f"  ⚠️ 5m RSI: no data returned")
             except Exception as e:
                 rsi_data['5m'] = None
                 print(f"  ❌ 5m RSI failed: {e}")
