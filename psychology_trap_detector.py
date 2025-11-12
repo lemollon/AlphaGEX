@@ -111,9 +111,20 @@ def detect_volatility_regime(vix_data: Dict, net_gamma: float, zero_gamma_level:
             'flip_point_distance_pct': float
         }
     """
-    vix_current = vix_data['current']
-    vix_spike = vix_data['spike_detected']
-    vix_change_pct = vix_data['change_pct']
+    # Handle None values safely
+    vix_current = vix_data.get('current') if vix_data else None
+    vix_spike = vix_data.get('spike_detected', False) if vix_data else False
+    vix_change_pct = vix_data.get('change_pct', 0) if vix_data else 0
+
+    # Ensure vix_current is not None
+    if vix_current is None:
+        vix_current = 15.0  # Default VIX value
+
+    # Ensure zero_gamma_level and current_price are not None
+    if zero_gamma_level is None:
+        zero_gamma_level = 0
+    if current_price is None or current_price <= 0:
+        current_price = 500.0  # Reasonable default for SPY
 
     # Calculate distance from flip point
     flip_distance_pct = abs(current_price - zero_gamma_level) / current_price * 100 if zero_gamma_level > 0 else 100

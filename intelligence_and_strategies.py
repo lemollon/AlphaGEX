@@ -2646,21 +2646,36 @@ class MultiStrategyOptimizer:
         if not isinstance(market_data, dict):
             raise TypeError(f"market_data must be a dict, got {type(market_data)}: {str(market_data)[:200]}")
 
-        spot = market_data.get('spot_price', 0)
-        net_gex = market_data.get('net_gex', 0)
-        flip = market_data.get('flip_point', 0)
-        call_wall = market_data.get('call_wall', 0)
-        put_wall = market_data.get('put_wall', 0)
-        vix = market_data.get('vix', 15)
+        # Get values with None-safe defaults
+        spot = market_data.get('spot_price') or 0
+        net_gex = market_data.get('net_gex') or 0
+        flip = market_data.get('flip_point') or 0
+        call_wall = market_data.get('call_wall') or 0
+        put_wall = market_data.get('put_wall') or 0
+        vix = market_data.get('vix') or 15
+
+        # Convert None to 0 for numeric fields
+        if spot is None or not isinstance(spot, (int, float)):
+            spot = 0
+        if net_gex is None or not isinstance(net_gex, (int, float)):
+            net_gex = 0
+        if flip is None or not isinstance(flip, (int, float)):
+            flip = 0
+        if call_wall is None or not isinstance(call_wall, (int, float)):
+            call_wall = 0
+        if put_wall is None or not isinstance(put_wall, (int, float)):
+            put_wall = 0
+        if vix is None or not isinstance(vix, (int, float)):
+            vix = 15
 
         current_time = get_et_time()
         hour = current_time.hour
         day_of_week = current_time.strftime('%A')
 
-        # Calculate distances
-        dist_to_flip = abs(spot - flip) / spot * 100 if flip else 0
-        dist_to_call_wall = abs(spot - call_wall) / spot * 100 if call_wall else 0
-        dist_to_put_wall = abs(spot - put_wall) / spot * 100 if put_wall else 0
+        # Calculate distances with None-safety
+        dist_to_flip = abs(spot - flip) / spot * 100 if (flip and spot and spot > 0) else 0
+        dist_to_call_wall = abs(spot - call_wall) / spot * 100 if (call_wall and spot and spot > 0) else 0
+        dist_to_put_wall = abs(spot - put_wall) / spot * 100 if (put_wall and spot and spot > 0) else 0
         wall_spread = dist_to_call_wall + dist_to_put_wall
 
         strategies = []
