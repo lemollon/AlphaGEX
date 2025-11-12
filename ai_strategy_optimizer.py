@@ -488,13 +488,129 @@ Your recommendation should include:
 Be conservative. Only recommend trades with >70% historical win rate in similar conditions.
 """
 
-        result = self.agent.invoke({"input": prompt})
+        result = self.llm.invoke(prompt)
 
         return {
-            "recommendation": result['output'],
+            "recommendation": result.content if hasattr(result, 'content') else str(result),
             "market_data": current_market_data,
             "timestamp": datetime.now().isoformat()
         }
+
+    def optimize_with_dynamic_stats(self, strategy_name: str = None) -> Dict:
+        """
+        Optimize strategies using dynamic stats system integration
+
+        Integrates with strategy_stats.py to get live win rates and backtest data.
+        Provides recommendations that can auto-update the dynamic stats.
+
+        Args:
+            strategy_name: Specific strategy to optimize, or None for all
+
+        Returns:
+            Dict with optimization results and auto-update status
+        """
+        try:
+            from strategy_stats import get_strategy_stats, get_recent_changes
+
+            # Get live strategy stats
+            live_stats = get_strategy_stats()
+
+            if strategy_name:
+                # Optimize specific strategy
+                if strategy_name not in live_stats:
+                    return {
+                        "error": f"Strategy '{strategy_name}' not found in dynamic stats",
+                        "available_strategies": list(live_stats.keys())
+                    }
+
+                stat = live_stats[strategy_name]
+
+                prompt = f"""Analyze the '{strategy_name}' trading strategy with REAL backtest data.
+
+LIVE PERFORMANCE DATA (Auto-updated from backtests):
+- Win Rate: {stat['win_rate']*100:.1f}%
+- Average Win: {stat.get('avg_win', 0):.2f}%
+- Average Loss: {stat.get('avg_loss', 0):.2f}%
+- Expectancy: {stat.get('expectancy', 0):.2f}%
+- Total Trades: {stat.get('total_trades', 0)}
+- Last Updated: {stat.get('last_updated', 'Never')}
+- Data Source: {stat.get('source', 'unknown')}
+
+Provide 3-5 SPECIFIC optimizations that could improve this strategy:
+1. Parameter adjustments (with exact numbers)
+2. Filter improvements (reduce false signals)
+3. Risk management enhancements
+
+Rate each suggestion's expected impact (Low/Medium/High) and difficulty (Easy/Medium/Hard).
+
+Format as JSON:
+{{
+  "current_performance": "summary",
+  "recommendations": [
+    {{"suggestion": "...", "impact": "High", "difficulty": "Easy", "reasoning": "..."}}
+  ],
+  "verdict": "IMPLEMENT/TEST/KILL"
+}}
+"""
+
+                result = self.llm.invoke(prompt)
+                analysis = result.content if hasattr(result, 'content') else str(result)
+
+                return {
+                    "strategy": strategy_name,
+                    "live_stats": stat,
+                    "analysis": analysis,
+                    "recent_changes": get_recent_changes(limit=5),
+                    "timestamp": datetime.now().isoformat()
+                }
+
+            else:
+                # Analyze all strategies
+                strategies_summary = []
+                for name, stat in live_stats.items():
+                    strategies_summary.append({
+                        "name": name,
+                        "win_rate": f"{stat['win_rate']*100:.1f}%",
+                        "expectancy": f"{stat.get('expectancy', 0):.2f}%",
+                        "trades": stat.get('total_trades', 0),
+                        "source": stat.get('source', 'unknown')
+                    })
+
+                prompt = f"""Analyze ALL trading strategies with LIVE auto-updated data.
+
+LIVE STRATEGY PERFORMANCE:
+{json.dumps(strategies_summary, indent=2)}
+
+Provide:
+1. Rank strategies by expectancy (best first)
+2. Top 3 strategies to focus on
+3. Strategies to kill (negative expectancy or <50% win rate)
+4. Quick wins (easy improvements with high impact)
+5. Resource allocation recommendation
+
+Be brutally honest. Focus on what actually makes money.
+"""
+
+                result = self.llm.invoke(prompt)
+                analysis = result.content if hasattr(result, 'content') else str(result)
+
+                return {
+                    "all_strategies": strategies_summary,
+                    "analysis": analysis,
+                    "recent_auto_updates": get_recent_changes(limit=10),
+                    "timestamp": datetime.now().isoformat()
+                }
+
+        except ImportError:
+            return {
+                "error": "strategy_stats.py not available",
+                "fallback": "Using database backtest results instead",
+                "recommendation": "Use optimize_strategy() or analyze_all_strategies() methods"
+            }
+        except Exception as e:
+            return {
+                "error": f"Error in dynamic stats optimization: {str(e)}"
+            }
 
 
 # ============================================================================

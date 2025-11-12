@@ -1202,6 +1202,169 @@ async def get_gamma_history(symbol: str, days: int = 30):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================================
+# Strategy Optimizer Endpoints (AI-Powered)
+# ============================================================================
+
+@app.get("/api/optimizer/analyze/{strategy_name}")
+async def optimize_strategy(strategy_name: str):
+    """
+    AI-powered strategy optimization with dynamic stats integration
+    
+    Analyzes strategy performance and provides specific optimization recommendations
+    Uses live win rates from auto-updated backtest results
+    
+    Args:
+        strategy_name: Name of strategy to optimize (e.g., "BULLISH_CALL_SPREAD")
+        
+    Returns:
+        AI analysis with specific, actionable recommendations
+    """
+    try:
+        import os
+        
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set. Configure API key to use optimizer."
+            )
+        
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+        
+        # Use dynamic stats integration
+        result = optimizer.optimize_with_dynamic_stats(strategy_name=strategy_name)
+        
+        return {
+            "success": True,
+            "strategy": strategy_name,
+            "optimization": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
+        )
+    except Exception as e:
+        print(f"❌ Error in strategy optimizer: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/optimizer/analyze-all")
+async def optimize_all_strategies():
+    """
+    AI-powered analysis of ALL strategies with dynamic stats
+    
+    Ranks strategies by profitability, identifies top performers,
+    and provides resource allocation recommendations
+    
+    Returns:
+        Comprehensive AI analysis of all trading strategies
+    """
+    try:
+        import os
+        
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set. Configure API key to use optimizer."
+            )
+        
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+        
+        # Use dynamic stats integration (analyzes all)
+        result = optimizer.optimize_with_dynamic_stats(strategy_name=None)
+        
+        return {
+            "success": True,
+            "optimization": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
+        )
+    except Exception as e:
+        print(f"❌ Error in strategy optimizer: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/optimizer/recommend-trade")
+async def get_trade_recommendation(request: dict):
+    """
+    AI-powered real-time trade recommendation
+    
+    Analyzes current market conditions and provides specific trade recommendation
+    with entry, stop, target, and confidence level
+    
+    Request body:
+    {
+        "symbol": "SPY",
+        "price": 580.50,
+        "net_gex": -2500000000,
+        "vix": 18.5,
+        "flip_point": 578.0,
+        "call_wall": 585.0,
+        "put_wall": 575.0
+    }
+    
+    Returns:
+        Specific trade recommendation (BUY/SELL/WAIT) with reasoning
+    """
+    try:
+        import os
+        
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set. Configure API key to use optimizer."
+            )
+        
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+        
+        # Get trade recommendation based on current market data
+        result = optimizer.get_trade_recommendation(current_market_data=request)
+        
+        return {
+            "success": True,
+            "trade_recommendation": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
+        )
+    except Exception as e:
+        print(f"❌ Error getting trade recommendation: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ============================================================================
 # AI Copilot Endpoints
 # ============================================================================
