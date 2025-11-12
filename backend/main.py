@@ -550,11 +550,38 @@ async def get_gex_data(symbol: str):
             if symbol == 'VIX':
                 vix_level = spot_price
             else:
+                # Try yfinance first
                 vix_ticker = yf.Ticker('VIX')
                 vix_data = vix_ticker.history(period="1d")
-                if not vix_data.empty:
+
+                # Fallback to Alpha Vantage if yfinance fails or returns no data
+                if vix_data.empty and alpha_vantage_key:
+                    print(f"  🔄 VIX: yfinance failed, trying Alpha Vantage fallback...")
+                    try:
+                        import requests
+                        url = "https://www.alphavantage.co/query"
+                        params = {
+                            'function': 'GLOBAL_QUOTE',
+                            'symbol': 'VIX',
+                            'apikey': alpha_vantage_key
+                        }
+                        response = requests.get(url, params=params, timeout=10)
+                        if response.status_code == 200:
+                            data = response.json()
+                            if 'Global Quote' in data and '05. price' in data['Global Quote']:
+                                vix_level = float(data['Global Quote']['05. price'])
+                                print(f"  ✅ VIX from Alpha Vantage: {vix_level}")
+                            else:
+                                print(f"  ⚠️ Alpha Vantage returned no VIX data")
+                        else:
+                            print(f"  ⚠️ Alpha Vantage HTTP {response.status_code}")
+                    except Exception as av_error:
+                        print(f"  ⚠️ Alpha Vantage VIX fallback failed: {av_error}")
+                elif not vix_data.empty:
                     vix_level = vix_data['Close'].iloc[-1]
-        except:
+                    print(f"  ✅ VIX from yfinance: {vix_level}")
+        except Exception as vix_error:
+            print(f"  ⚠️ VIX fetch failed: {vix_error}")
             pass
 
         # Prepare GEX data for probability calculator
@@ -2284,14 +2311,44 @@ async def compare_all_strategies(symbol: str = "SPY"):
             print(f"Available keys: {list(gex_data.keys())}")
 
         # Get VIX data for additional context
+        alpha_vantage_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+        vix = 15.0  # Default fallback
+
         try:
             import yfinance as yf
+
+            # Try yfinance first
             vix_ticker = yf.Ticker("^VIX")
             vix_data = vix_ticker.history(period="1d")
-            vix = float(vix_data['Close'].iloc[-1]) if not vix_data.empty else 15.0
+
+            # Fallback to Alpha Vantage if yfinance fails or returns no data
+            if vix_data.empty and alpha_vantage_key:
+                print(f"  🔄 VIX: yfinance failed, trying Alpha Vantage fallback...")
+                try:
+                    import requests
+                    url = "https://www.alphavantage.co/query"
+                    params = {
+                        'function': 'GLOBAL_QUOTE',
+                        'symbol': 'VIX',
+                        'apikey': alpha_vantage_key
+                    }
+                    response = requests.get(url, params=params, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'Global Quote' in data and '05. price' in data['Global Quote']:
+                            vix = float(data['Global Quote']['05. price'])
+                            print(f"  ✅ VIX from Alpha Vantage: {vix}")
+                        else:
+                            print(f"  ⚠️ Alpha Vantage returned no VIX data")
+                    else:
+                        print(f"  ⚠️ Alpha Vantage HTTP {response.status_code}")
+                except Exception as av_error:
+                    print(f"  ⚠️ Alpha Vantage VIX fallback failed: {av_error}")
+            elif not vix_data.empty:
+                vix = float(vix_data['Close'].iloc[-1])
+                print(f"  ✅ VIX from yfinance: {vix}")
         except Exception as vix_error:
             print(f"Warning: Could not fetch VIX: {vix_error}")
-            vix = 15.0  # Default fallback
 
         # Prepare market data for optimizer
         # Use the correct keys from get_net_gamma response
