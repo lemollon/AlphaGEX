@@ -687,3 +687,65 @@ def _migrate_positions_table(cursor):
             except sqlite3.OperationalError:
                 # Column might already exist or table doesn't exist yet
                 pass
+
+
+# ============================================================================
+# DYNAMIC STATS INTEGRATION (Auto-updated from backtests)
+# ============================================================================
+
+def get_dynamic_mm_states():
+    """
+    Get MM states with DYNAMIC thresholds and confidence.
+    Confidence is calculated based on actual GEX data, not hardcoded.
+    """
+    try:
+        from strategy_stats import get_mm_states
+        return get_mm_states()
+    except Exception as e:
+        print(f"⚠️  Could not load dynamic MM states: {e}")
+        return MM_STATES  # Fallback to static
+
+def get_dynamic_strategies():
+    """
+    Get strategies with DYNAMIC win rates from backtest results.
+    Win rates auto-update when backtests run.
+    """
+    try:
+        from strategy_stats import get_strategy_stats
+        live_stats = get_strategy_stats()
+        
+        # Merge live stats into static configuration
+        merged = {}
+        for strategy_name, static_config in STRATEGIES.items():
+            merged[strategy_name] = static_config.copy()
+            
+            # Override with live backtest data if available
+            if strategy_name in live_stats:
+                live = live_stats[strategy_name]
+                merged[strategy_name]['win_rate'] = live['win_rate']
+                merged[strategy_name]['avg_win'] = live.get('avg_win', 0)
+                merged[strategy_name]['avg_loss'] = live.get('avg_loss', 0)
+                merged[strategy_name]['expectancy'] = live.get('expectancy', 0)
+                merged[strategy_name]['total_trades'] = live.get('total_trades', 0)
+                merged[strategy_name]['last_updated'] = live.get('last_updated')
+                merged[strategy_name]['source'] = live.get('source', 'backtest')
+        
+        return merged
+    except Exception as e:
+        print(f"⚠️  Could not load dynamic strategy stats: {e}")
+        return STRATEGIES  # Fallback to static
+
+# Print info on import
+try:
+    from strategy_stats import get_recent_changes
+    recent = get_recent_changes(limit=3)
+    if recent:
+        print("\n" + "="*70)
+        print("📊 DYNAMIC STATS ACTIVE - Recent Auto-Updates:")
+        print("="*70)
+        for change in recent:
+            print(f"  [{change['timestamp'][:16]}] {change['category']} > {change['item']}")
+            print(f"    {change['old_value']} → {change['new_value']}")
+        print("="*70 + "\n")
+except:
+    pass
