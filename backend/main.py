@@ -875,8 +875,10 @@ async def get_gamma_expiration(symbol: str, vix: float = 0):
         day_name = today.strftime('%A')
         day_num = today.weekday()  # 0=Monday, 4=Friday
 
-        # Get VIX if not provided - use flexible price data fetcher
+        # Get VIX if not provided - use flexible price data fetcher with intelligent fallback
         current_vix = vix
+        last_known_vix = None  # Could be retrieved from cache/database in future
+
         if current_vix == 0:
             try:
                 # Import flexible price data fetcher (multi-source: yfinance, alpha vantage, polygon, twelve data)
@@ -887,29 +889,23 @@ async def get_gamma_expiration(symbol: str, vix: float = 0):
                     sys.path.insert(0, str(parent_dir))
 
                 from flexible_price_data import get_current_price
+                from config import get_vix_fallback
 
                 vix_price = get_current_price('^VIX')
                 if vix_price and vix_price > 0:
                     current_vix = vix_price
                     print(f"✅ VIX fetched from flexible source: {current_vix:.2f}")
                 else:
-                    print(f"⚠️ VIX fetch failed - using default 20.0")
-                    current_vix = 20.0
+                    # Use intelligent fallback (historical average instead of arbitrary 20.0)
+                    current_vix = get_vix_fallback(last_known_vix)
+                    print(f"⚠️ VIX fetch failed - using fallback: {current_vix:.2f} (historical average)")
             except Exception as e:
+                from config import get_vix_fallback
+                current_vix = get_vix_fallback(last_known_vix)
                 print(f"⚠️ Could not fetch VIX: {e}")
-                current_vix = 20.0
+                print(f"   Using fallback: {current_vix:.2f} (historical average)")
 
-        # Estimate weekly gamma pattern (front-loaded decay typical for 0DTE)
-        # Monday starts at 100%, decays heavily through week
-        weekly_gamma_pattern = {
-            0: 1.00,  # Monday
-            1: 0.71,  # Tuesday
-            2: 0.42,  # Wednesday
-            3: 0.12,  # Thursday
-            4: 0.08   # Friday
-        }
-
-        # Current gamma from API
+        # Get current gamma from API first (needed for adaptive pattern selection)
         net_gex = gex_data.get('net_gex', 0)
         spot_price = gex_data.get('spot_price', 0)
         flip_point = gex_data.get('flip_point', 0)
@@ -936,19 +932,37 @@ async def get_gamma_expiration(symbol: str, vix: float = 0):
         call_wall = call_wall if call_wall is not None else 0
         put_wall = put_wall if put_wall is not None else 0
 
+        # Get adaptive weekly gamma pattern based on VIX and GEX conditions
+        from config import get_gamma_decay_pattern
+        weekly_gamma_pattern = get_gamma_decay_pattern(vix=current_vix, net_gex=net_gex)
+
+        # Log which pattern was selected
+        if net_gex < -2e9:
+            pattern_name = "FRONT_LOADED (high negative GEX)"
+        elif current_vix > 30:
+            pattern_name = "FRONT_LOADED (high VIX)"
+        elif current_vix < 15:
+            pattern_name = "BACK_LOADED (low VIX)"
+        else:
+            pattern_name = "BALANCED (normal conditions)"
+        print(f"📊 Selected gamma decay pattern: {pattern_name}")
+
         # Estimate total weekly gamma (reverse calculate from current day)
         current_day_pct = weekly_gamma_pattern.get(day_num, 0.5)
         estimated_monday_gamma = abs(net_gex) / current_day_pct if current_day_pct > 0 else abs(net_gex)
 
         # Calculate weekly gamma for each day
+        # Calculate total decay percentage dynamically
+        total_decay_pct = int((1.0 - weekly_gamma_pattern[4]) * 100)  # % decayed by Friday
+
         weekly_gamma = {
             'monday': estimated_monday_gamma * weekly_gamma_pattern[0],
             'tuesday': estimated_monday_gamma * weekly_gamma_pattern[1],
             'wednesday': estimated_monday_gamma * weekly_gamma_pattern[2],
             'thursday': estimated_monday_gamma * weekly_gamma_pattern[3],
             'friday': estimated_monday_gamma * weekly_gamma_pattern[4],
-            'total_decay_pct': 92,
-            'decay_pattern': 'FRONT_LOADED'
+            'total_decay_pct': total_decay_pct,
+            'decay_pattern': pattern_name.split('(')[0].strip()  # Extract pattern type
         }
 
         # Current vs after close
@@ -989,66 +1003,77 @@ async def get_gamma_expiration(symbol: str, vix: float = 0):
         # Only calculate prediction if we have required data
         # Use 'is not None' to allow for 0 values (flip_point could theoretically be 0)
         if spot_price is not None and spot_price > 0 and flip_point is not None:
+            # Import configuration
+            from config import (
+                DirectionalPredictionConfig as DPC,
+                VIXConfig,
+                get_gex_thresholds
+            )
+
+            # Get adaptive GEX thresholds (could use historical average if available)
+            # For now, use fixed thresholds as fallback
+            gex_thresholds = get_gex_thresholds(symbol, avg_gex=None)
+
             # Calculate directional factors
             spot_vs_flip_pct = ((spot_price - flip_point) / flip_point * 100) if flip_point else 0
             distance_to_call_wall = ((call_wall - spot_price) / spot_price * 100) if call_wall and spot_price else 999
             distance_to_put_wall = ((spot_price - put_wall) / spot_price * 100) if put_wall and spot_price else 999
 
             # Directional scoring (0-100)
-            bullish_score = 50  # Start neutral
+            bullish_score = DPC.NEUTRAL_SCORE  # Start neutral (from config)
             confidence_factors = []
 
-            # Factor 1: GEX Regime (40% weight)
-            if net_gex < -1e9:  # Short gamma (amplification)
+            # Factor 1: GEX Regime (configurable weight)
+            if net_gex < gex_thresholds['moderate_negative']:  # Short gamma (amplification)
                 if spot_price > flip_point:
-                    bullish_score += 20
+                    bullish_score += DPC.GEX_REGIME_STRONG_INFLUENCE
                     confidence_factors.append("Short gamma + above flip = upside momentum")
                 else:
-                    bullish_score -= 20
+                    bullish_score -= DPC.GEX_REGIME_STRONG_INFLUENCE
                     confidence_factors.append("Short gamma + below flip = downside risk")
-            elif net_gex > 1e9:  # Long gamma (dampening)
+            elif net_gex > gex_thresholds['moderate_positive']:  # Long gamma (dampening)
                 # Range-bound expectation
                 if spot_vs_flip_pct > 1:
-                    bullish_score += 5
+                    bullish_score += DPC.GEX_REGIME_MILD_INFLUENCE
                     confidence_factors.append("Long gamma + above flip = mild upward pull")
                 elif spot_vs_flip_pct < -1:
-                    bullish_score -= 5
+                    bullish_score -= DPC.GEX_REGIME_MILD_INFLUENCE
                     confidence_factors.append("Long gamma + below flip = mild downward pull")
                 else:
                     confidence_factors.append("Long gamma near flip = range-bound likely")
 
-            # Factor 2: Proximity to Walls (30% weight)
-            if distance_to_call_wall < 1.5:  # Within 1.5% of call wall
-                bullish_score -= 15
+            # Factor 2: Proximity to Walls (configurable weight)
+            if distance_to_call_wall < DPC.WALL_PROXIMITY_THRESHOLD:  # Configurable threshold
+                bullish_score -= DPC.WALL_INFLUENCE
                 confidence_factors.append(f"Near call wall ${call_wall:.0f} = resistance")
-            elif distance_to_put_wall < 1.5:  # Within 1.5% of put wall
-                bullish_score += 15
+            elif distance_to_put_wall < DPC.WALL_PROXIMITY_THRESHOLD:
+                bullish_score += DPC.WALL_INFLUENCE
                 confidence_factors.append(f"Near put wall ${put_wall:.0f} = support")
 
-            # Factor 3: VIX Regime (20% weight)
-            if current_vix > 20:  # Elevated volatility
+            # Factor 3: VIX Regime (configurable weight)
+            if current_vix > VIXConfig.ELEVATED_VIX_THRESHOLD:  # Elevated volatility
                 confidence_factors.append(f"VIX {current_vix:.1f} = elevated volatility")
-                bullish_score = 50 + (bullish_score - 50) * 0.7  # Pull toward neutral
-            elif current_vix < 15:  # Low volatility
+                bullish_score = DPC.NEUTRAL_SCORE + (bullish_score - DPC.NEUTRAL_SCORE) * DPC.VIX_HIGH_DAMPENING
+            elif current_vix < VIXConfig.LOW_VIX_THRESHOLD:  # Low volatility
                 confidence_factors.append(f"VIX {current_vix:.1f} = low volatility favors range")
-                bullish_score = 50 + (bullish_score - 50) * 0.8
+                bullish_score = DPC.NEUTRAL_SCORE + (bullish_score - DPC.NEUTRAL_SCORE) * DPC.VIX_LOW_DAMPENING
             else:
                 confidence_factors.append(f"VIX {current_vix:.1f} = moderate volatility")
 
-            # Factor 4: Day of Week (10% weight)
+            # Factor 4: Day of Week (configurable weight)
             if day_name in ['Monday', 'Tuesday']:
                 confidence_factors.append(f"{day_name} = high gamma, range-bound bias")
-                bullish_score = 50 + (bullish_score - 50) * 0.9  # Pull slightly to neutral
+                bullish_score = DPC.NEUTRAL_SCORE + (bullish_score - DPC.NEUTRAL_SCORE) * DPC.DAY_OF_WEEK_DAMPENING
             elif day_name == 'Friday':
                 confidence_factors.append(f"Friday = low gamma, more volatile")
 
-            # Determine direction and confidence
-            if bullish_score >= 65:
+            # Determine direction and confidence (using configurable thresholds)
+            if bullish_score >= DPC.UPWARD_THRESHOLD:
                 direction = "UPWARD"
                 direction_emoji = "📈"
                 probability = int(bullish_score)
                 expected_move = "Expect push toward call wall or breakout higher"
-            elif bullish_score <= 35:
+            elif bullish_score <= DPC.DOWNWARD_THRESHOLD:
                 direction = "DOWNWARD"
                 direction_emoji = "📉"
                 probability = int(100 - bullish_score)
