@@ -4,6 +4,7 @@ pandas>=2.0.0
 numpy>=1.24.0
 plotly>=5.17.0
 yfinance>=0.2.52
+multitasking>=0.0.7
 scipy>=1.11.0
 py_vollib>=1.0.1
 twilio>=8.10.0
