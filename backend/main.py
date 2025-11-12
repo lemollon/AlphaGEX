@@ -913,8 +913,28 @@ async def get_gamma_expiration(symbol: str, vix: float = 0):
         net_gex = gex_data.get('net_gex', 0)
         spot_price = gex_data.get('spot_price', 0)
         flip_point = gex_data.get('flip_point', 0)
-        call_wall = gex_data.get('call_wall', 0)
-        put_wall = gex_data.get('put_wall', 0)
+        call_wall = gex_data.get('call_wall')
+        put_wall = gex_data.get('put_wall')
+
+        # Fallback: If walls not available from get_net_gamma, try get_gex_profile
+        if (call_wall is None or put_wall is None or call_wall == 0 or put_wall == 0):
+            print(f"⚠️ Walls missing from get_net_gamma, fetching from get_gex_profile...")
+            try:
+                profile_data = api_client.get_gex_profile(symbol)
+                if profile_data and 'call_wall' in profile_data:
+                    if call_wall is None or call_wall == 0:
+                        call_wall = profile_data.get('call_wall', 0)
+                    if put_wall is None or put_wall == 0:
+                        put_wall = profile_data.get('put_wall', 0)
+                    print(f"✅ Fetched walls from profile: Call ${call_wall}, Put ${put_wall}")
+            except Exception as e:
+                print(f"⚠️ Could not fetch walls from profile: {e}")
+                call_wall = call_wall or 0
+                put_wall = put_wall or 0
+
+        # Ensure walls are numbers (not None)
+        call_wall = call_wall if call_wall is not None else 0
+        put_wall = put_wall if put_wall is not None else 0
 
         # Estimate total weekly gamma (reverse calculate from current day)
         current_day_pct = weekly_gamma_pattern.get(day_num, 0.5)
@@ -967,7 +987,8 @@ async def get_gamma_expiration(symbol: str, vix: float = 0):
         directional_prediction = None
 
         # Only calculate prediction if we have required data
-        if spot_price and flip_point:
+        # Use 'is not None' to allow for 0 values (flip_point could theoretically be 0)
+        if spot_price is not None and spot_price > 0 and flip_point is not None:
             # Calculate directional factors
             spot_vs_flip_pct = ((spot_price - flip_point) / flip_point * 100) if flip_point else 0
             distance_to_call_wall = ((call_wall - spot_price) / spot_price * 100) if call_wall and spot_price else 999

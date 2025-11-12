@@ -1426,13 +1426,39 @@ class TradingVolatilityAPI:
             call_wall = 0
             put_wall = 0
 
+            # Try to extract wall data from gamma_array if available
+            gamma_array = ticker_data.get('gamma_array', [])
+            if gamma_array and len(gamma_array) > 0:
+                max_call_gamma = 0
+                max_put_gamma = 0
+
+                for strike_obj in gamma_array:
+                    if not strike_obj or 'strike' not in strike_obj:
+                        continue
+
+                    strike = float(strike_obj['strike'])
+                    call_gamma = abs(float(strike_obj.get('call_gamma', 0)))
+                    put_gamma = abs(float(strike_obj.get('put_gamma', 0)))
+
+                    # Track max gamma for walls
+                    if call_gamma > max_call_gamma:
+                        max_call_gamma = call_gamma
+                        call_wall = strike
+
+                    if put_gamma > max_put_gamma:
+                        max_put_gamma = put_gamma
+                        put_wall = strike
+
+                if call_wall > 0 and put_wall > 0:
+                    print(f"✅ Extracted walls from gamma_array: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+
             result = {
                 'symbol': symbol,
                 'spot_price': float(ticker_data.get('price', 0)),
                 'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
                 'flip_point': float(ticker_data.get('gex_flip_price', 0)),
-                'call_wall': float(call_wall) if call_wall else 0,
-                'put_wall': float(put_wall) if put_wall else 0,
+                'call_wall': float(call_wall) if call_wall else None,
+                'put_wall': float(put_wall) if put_wall else None,
                 'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
                 'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
                 'collection_date': ticker_data.get('collection_date', ''),
