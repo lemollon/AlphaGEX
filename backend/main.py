@@ -300,18 +300,11 @@ async def get_gex_data(symbol: str):
         psychology_data = {}
         rsi_data = {}
         try:
-            # Try to get RSI and psychology state (non-blocking, best-effort)
-            # NOTE: Yahoo Finance frequently blocks automated requests (HTTP 403)
-            # RSI will gracefully show "---" in UI if Yahoo blocks the request
-
-            # Try flexible price data system first (with multiple fallback sources)
-            # NOTE: Direct Alpha Vantage fallback since Yahoo Finance is blocked
+            # Simple fallback: yfinance → Alpha Vantage → graceful degradation
             import yfinance as yf
-            use_flexible = False
 
-            # Check if Alpha Vantage key is available
+            # Get Alpha Vantage API key from environment
             alpha_vantage_key = os.getenv('ALPHA_VANTAGE_API_KEY')
-
             if alpha_vantage_key:
                 print(f"✅ Alpha Vantage API key configured - will use as fallback")
             else:
@@ -334,6 +327,7 @@ async def get_gex_data(symbol: str):
             # Fetch data for different timeframes with better error logging
             print(f"📊 Fetching multi-timeframe RSI for {symbol}...")
 
+            # 1D RSI with Alpha Vantage fallback
             try:
                 # Try yfinance first
                 df_1d = ticker.history(period="90d", interval="1d")
@@ -352,11 +346,13 @@ async def get_gex_data(symbol: str):
                         params = {
                             'function': 'TIME_SERIES_DAILY',
                             'symbol': symbol,
-                            'outputsize': 'full',  # Get all available data
+                            'outputsize': 'full',
                             'apikey': alpha_vantage_key
                         }
 
                         response = requests.get(url, params=params, timeout=10)
+                        print(f"  📡 Alpha Vantage response: HTTP {response.status_code}")
+
                         if response.status_code == 200:
                             data = response.json()
                             if 'Time Series (Daily)' in data:
@@ -383,7 +379,7 @@ async def get_gex_data(symbol: str):
 
                                 print(f"  📥 1d: Fetched {len(df_1d)} bars from Alpha Vantage")
                             else:
-                                print(f"  ⚠️ Alpha Vantage returned no time series data")
+                                print(f"  ⚠️ Alpha Vantage returned unexpected format: {list(data.keys())}")
                         else:
                             print(f"  ⚠️ Alpha Vantage HTTP {response.status_code}")
                     except Exception as av_error:
@@ -405,86 +401,100 @@ async def get_gex_data(symbol: str):
                 rsi_data['1d'] = None
                 print(f"  ❌ 1d RSI failed: {e}")
 
+            # Intraday data - try yfinance (best effort, may fail from cloud)
+            # Note: Intraday data typically requires yfinance or paid API subscriptions
             try:
-                # Intraday data only available from yfinance
-                df_4h = ticker.history(period="30d", interval="1h")
-                if not df_4h.empty and len(df_4h) >= 56:  # Need enough data for 4h RSI
-                    df_4h_resampled = df_4h.resample('4H').agg({
-                        'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'
-                    }).dropna()
-                    rsi_4h = calculate_rsi(df_4h_resampled)
-                    if rsi_4h is not None:
-                        rsi_data['4h'] = round(float(rsi_4h), 1)
-                        print(f"  ✅ 4h RSI: {rsi_data['4h']}")
+                import yfinance as yf
+                ticker = yf.Ticker(symbol)
+
+                # 4H RSI
+                try:
+                    df_4h = ticker.history(period="30d", interval="1h")
+                    if not df_4h.empty and len(df_4h) >= 56:  # Need enough data for 4h RSI
+                        df_4h_resampled = df_4h.resample('4H').agg({
+                            'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'
+                        }).dropna()
+                        rsi_4h = calculate_rsi(df_4h_resampled)
+                        if rsi_4h is not None:
+                            rsi_data['4h'] = round(float(rsi_4h), 1)
+                            print(f"  ✅ 4h RSI: {rsi_data['4h']}")
+                        else:
+                            rsi_data['4h'] = None
+                            print(f"  ⚠️ 4h RSI: insufficient data after resampling")
                     else:
                         rsi_data['4h'] = None
-                        print(f"  ⚠️ 4h RSI: insufficient data after resampling")
-                else:
+                        print(f"  ⚠️ 4h RSI: insufficient hourly data ({len(df_4h)} bars, need 56+)")
+                except Exception as e:
                     rsi_data['4h'] = None
-                    print(f"  ⚠️ 4h RSI: insufficient hourly data ({len(df_4h)} bars, need 56+)")
-            except Exception as e:
-                rsi_data['4h'] = None
-                print(f"  ❌ 4h RSI failed: {e}")
+                    print(f"  ❌ 4h RSI failed: {e}")
 
-            try:
-                # Intraday data only available from yfinance
-                df_1h = ticker.history(period="7d", interval="1h")
-                print(f"  📥 1h: Fetched {len(df_1h)} bars from yfinance")
-                if not df_1h.empty:
-                    print(f"      Date range: {df_1h.index[0]} to {df_1h.index[-1]}")
-                    rsi_1h = calculate_rsi(df_1h)
-                    if rsi_1h is not None:
-                        rsi_data['1h'] = round(float(rsi_1h), 1)
-                        print(f"  ✅ 1h RSI: {rsi_data['1h']}")
+                # 1H RSI
+                try:
+                    df_1h = ticker.history(period="7d", interval="1h")
+                    print(f"  📥 1h: Fetched {len(df_1h)} bars from yfinance")
+                    if not df_1h.empty:
+                        print(f"      Date range: {df_1h.index[0]} to {df_1h.index[-1]}")
+                        rsi_1h = calculate_rsi(df_1h)
+                        if rsi_1h is not None:
+                            rsi_data['1h'] = round(float(rsi_1h), 1)
+                            print(f"  ✅ 1h RSI: {rsi_data['1h']}")
+                        else:
+                            rsi_data['1h'] = None
+                            print(f"  ⚠️ 1h RSI: insufficient data (need 14+ bars, got {len(df_1h)})")
                     else:
                         rsi_data['1h'] = None
-                        print(f"  ⚠️ 1h RSI: insufficient data (need 14+ bars, got {len(df_1h)})")
-                else:
+                        print(f"  ⚠️ 1h RSI: no data returned")
+                except Exception as e:
                     rsi_data['1h'] = None
-                    print(f"  ⚠️ 1h RSI: no data returned")
-            except Exception as e:
-                rsi_data['1h'] = None
-                print(f"  ❌ 1h RSI failed: {e}")
+                    print(f"  ❌ 1h RSI failed: {e}")
 
-            try:
-                # Intraday data only available from yfinance
-                df_15m = ticker.history(period="5d", interval="15m")
-                print(f"  📥 15m: Fetched {len(df_15m)} bars from yfinance")
-                if not df_15m.empty:
-                    print(f"      Date range: {df_15m.index[0]} to {df_15m.index[-1]}")
-                    rsi_15m = calculate_rsi(df_15m)
-                    if rsi_15m is not None:
-                        rsi_data['15m'] = round(float(rsi_15m), 1)
-                        print(f"  ✅ 15m RSI: {rsi_data['15m']}")
+                # 15M RSI
+                try:
+                    df_15m = ticker.history(period="5d", interval="15m")
+                    print(f"  📥 15m: Fetched {len(df_15m)} bars from yfinance")
+                    if not df_15m.empty:
+                        print(f"      Date range: {df_15m.index[0]} to {df_15m.index[-1]}")
+                        rsi_15m = calculate_rsi(df_15m)
+                        if rsi_15m is not None:
+                            rsi_data['15m'] = round(float(rsi_15m), 1)
+                            print(f"  ✅ 15m RSI: {rsi_data['15m']}")
+                        else:
+                            rsi_data['15m'] = None
+                            print(f"  ⚠️ 15m RSI: insufficient data (need 14+ bars, got {len(df_15m)})")
                     else:
                         rsi_data['15m'] = None
-                        print(f"  ⚠️ 15m RSI: insufficient data (need 14+ bars, got {len(df_15m)})")
-                else:
+                        print(f"  ⚠️ 15m RSI: no data returned")
+                except Exception as e:
                     rsi_data['15m'] = None
-                    print(f"  ⚠️ 15m RSI: no data returned")
-            except Exception as e:
-                rsi_data['15m'] = None
-                print(f"  ❌ 15m RSI failed: {e}")
+                    print(f"  ❌ 15m RSI failed: {e}")
 
-            try:
-                # Intraday data only available from yfinance
-                df_5m = ticker.history(period="2d", interval="5m")
-                print(f"  📥 5m: Fetched {len(df_5m)} bars from yfinance")
-                if not df_5m.empty:
-                    print(f"      Date range: {df_5m.index[0]} to {df_5m.index[-1]}")
-                    rsi_5m = calculate_rsi(df_5m)
-                    if rsi_5m is not None:
-                        rsi_data['5m'] = round(float(rsi_5m), 1)
-                        print(f"  ✅ 5m RSI: {rsi_data['5m']}")
+                # 5M RSI
+                try:
+                    df_5m = ticker.history(period="2d", interval="5m")
+                    print(f"  📥 5m: Fetched {len(df_5m)} bars from yfinance")
+                    if not df_5m.empty:
+                        print(f"      Date range: {df_5m.index[0]} to {df_5m.index[-1]}")
+                        rsi_5m = calculate_rsi(df_5m)
+                        if rsi_5m is not None:
+                            rsi_data['5m'] = round(float(rsi_5m), 1)
+                            print(f"  ✅ 5m RSI: {rsi_data['5m']}")
+                        else:
+                            rsi_data['5m'] = None
+                            print(f"  ⚠️ 5m RSI: insufficient data (need 14+ bars, got {len(df_5m)})")
                     else:
                         rsi_data['5m'] = None
-                        print(f"  ⚠️ 5m RSI: insufficient data (need 14+ bars, got {len(df_5m)})")
-                else:
+                        print(f"  ⚠️ 5m RSI: no data returned")
+                except Exception as e:
                     rsi_data['5m'] = None
-                    print(f"  ⚠️ 5m RSI: no data returned")
+                    print(f"  ❌ 5m RSI failed: {e}")
+
             except Exception as e:
+                # If yfinance not available, all intraday timeframes fail
+                print(f"  ⚠️ Intraday RSI unavailable (yfinance import failed): {e}")
+                rsi_data['4h'] = None
+                rsi_data['1h'] = None
+                rsi_data['15m'] = None
                 rsi_data['5m'] = None
-                print(f"  ❌ 5m RSI failed: {e}")
 
             print(f"📊 RSI Summary: {sum(1 for v in rsi_data.values() if v is not None)}/5 timeframes successful")
 
@@ -551,7 +561,8 @@ async def get_gex_data(symbol: str):
                 vix_level = spot_price
             else:
                 # Try yfinance first
-                vix_ticker = yf.Ticker('VIX')
+                import yfinance as yf
+                vix_ticker = yf.Ticker('^VIX')
                 vix_data = vix_ticker.history(period="1d")
 
                 # Fallback to Alpha Vantage if yfinance fails or returns no data
@@ -572,7 +583,7 @@ async def get_gex_data(symbol: str):
                                 vix_level = float(data['Global Quote']['05. price'])
                                 print(f"  ✅ VIX from Alpha Vantage: {vix_level}")
                             else:
-                                print(f"  ⚠️ Alpha Vantage returned no VIX data")
+                                print(f"  ⚠️ Alpha Vantage returned no VIX data: {list(data.keys())}")
                         else:
                             print(f"  ⚠️ Alpha Vantage HTTP {response.status_code}")
                     except Exception as av_error:
@@ -581,7 +592,7 @@ async def get_gex_data(symbol: str):
                     vix_level = vix_data['Close'].iloc[-1]
                     print(f"  ✅ VIX from yfinance: {vix_level}")
         except Exception as vix_error:
-            print(f"  ⚠️ VIX fetch failed: {vix_error}")
+            print(f"  ⚠️ VIX fetch failed: {vix_error}, using default")
             pass
 
         # Prepare GEX data for probability calculator
@@ -2339,7 +2350,7 @@ async def compare_all_strategies(symbol: str = "SPY"):
                             vix = float(data['Global Quote']['05. price'])
                             print(f"  ✅ VIX from Alpha Vantage: {vix}")
                         else:
-                            print(f"  ⚠️ Alpha Vantage returned no VIX data")
+                            print(f"  ⚠️ Alpha Vantage returned no VIX data: {list(data.keys())}")
                     else:
                         print(f"  ⚠️ Alpha Vantage HTTP {response.status_code}")
                 except Exception as av_error:
@@ -2348,7 +2359,7 @@ async def compare_all_strategies(symbol: str = "SPY"):
                 vix = float(vix_data['Close'].iloc[-1])
                 print(f"  ✅ VIX from yfinance: {vix}")
         except Exception as vix_error:
-            print(f"Warning: Could not fetch VIX: {vix_error}")
+            print(f"Warning: Could not fetch VIX: {vix_error}, using default {vix}")
 
         # Prepare market data for optimizer
         # Use the correct keys from get_net_gamma response
