@@ -740,11 +740,15 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
         total_gamma = total_call_gamma + total_put_gamma
         gamma_exposure_ratio = total_call_gamma / total_put_gamma if total_put_gamma > 0 else 0
 
-        # Simple estimates (can be enhanced later)
-        vanna_exposure = total_gamma * 0.15  # Approximate vanna as % of gamma
-        charm_decay = -total_gamma * 0.05    # Approximate daily theta decay
+        # Calculate derived metrics (real values, not estimates)
         risk_reversal = (total_call_gamma - total_put_gamma) / total_gamma if total_gamma > 0 else 0
         skew_index = gamma_exposure_ratio
+
+        # NOTE: Vanna and Charm require strike-level option data and IV surface
+        # These would need to be calculated from actual option Greeks if available
+        # For now, mark as unavailable rather than showing fake estimates
+        vanna_exposure = None  # Requires proper Greeks calculation
+        charm_decay = None     # Requires proper Greeks calculation
 
         # Determine market regime
         if net_gex > 0:
@@ -756,27 +760,25 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
 
         trend = "Bullish" if total_call_gamma > total_put_gamma else "Bearish" if total_put_gamma > total_call_gamma else "Neutral"
 
-        # Determine Market Maker State and Trading Edge
-        mm_state_name = "NEUTRAL"
-        mm_state_data = STRATEGIES  # Will be replaced with actual MM_STATES
+        # DYNAMIC MM STATE: Calculate confidence based on actual GEX data
+        from strategy_stats import calculate_mm_confidence, get_mm_states
 
-        # Import MM_STATES from config
-        from config_and_database import MM_STATES
+        # Get flip point for confidence calculation
+        flip_point = profile.get('flip_point', 0) if profile else 0
 
-        # Determine which MM state we're in based on net_gex
-        if net_gex < -3e9:
-            mm_state_name = "PANICKING"
-        elif net_gex < -2e9:
-            mm_state_name = "TRAPPED"
-        elif net_gex < -1e9:
-            mm_state_name = "HUNTING"
-        elif net_gex > 1e9:
-            mm_state_name = "DEFENDING"
-        else:
-            mm_state_name = "NEUTRAL"
+        # Calculate MM state and confidence dynamically
+        mm_result = calculate_mm_confidence(net_gex, spot_price, flip_point)
+        mm_state_name = mm_result['state']
+        mm_confidence = mm_result['confidence']
 
-        # Get the MM state configuration
-        mm_state = MM_STATES.get(mm_state_name, MM_STATES['NEUTRAL'])
+        # Get MM state configuration (thresholds are now adaptive)
+        mm_states_config = get_mm_states()
+        mm_state = mm_states_config.get(mm_state_name, mm_states_config['NEUTRAL'])
+
+        # Override hardcoded confidence with calculated confidence
+        mm_state['confidence'] = mm_confidence
+
+        print(f"📊 MM State: {mm_state_name} (confidence: {mm_confidence:.1f}%, calculated dynamically)")
 
         # Generate key observations
         observations = [

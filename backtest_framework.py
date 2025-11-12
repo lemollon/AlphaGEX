@@ -284,7 +284,7 @@ class BacktestBase:
         # Average trade duration
         avg_duration = sum(t.duration_days for t in trades) / len(trades)
 
-        return BacktestResults(
+        results = BacktestResults(
             strategy_name=strategy_name,
             start_date=self.start_date,
             end_date=self.end_date,
@@ -303,6 +303,15 @@ class BacktestBase:
             avg_trade_duration_days=avg_duration,
             trades=trades
         )
+
+        # AUTO-UPDATE: Save strategy stats for dynamic system
+        try:
+            from strategy_stats import update_strategy_stats
+            update_strategy_stats(strategy_name, results.to_dict())
+        except Exception as e:
+            print(f"⚠️  Could not auto-update strategy stats: {e}")
+
+        return results
 
     def save_results_to_db(self, results: BacktestResults):
         """Save backtest results to database"""
