@@ -1062,7 +1062,12 @@ class TradingVolatilityAPI:
 
     # CLASS-LEVEL (SHARED) rate limiting state - applies to ALL instances
     _shared_last_request_time = 0
-    _shared_min_request_interval = 20.0  # 20 SECONDS between requests (increased for better stability)
+    # Import config for rate limiting (4 seconds instead of 20 - matches API quota)
+    try:
+        from config import RateLimitConfig
+        _shared_min_request_interval = RateLimitConfig.MIN_REQUEST_INTERVAL
+    except ImportError:
+        _shared_min_request_interval = 4.0  # Fallback to 4 seconds
     _shared_circuit_breaker_active = False
     _shared_circuit_breaker_until = 0
     _shared_consecutive_rate_limit_errors = 0
@@ -1628,7 +1633,11 @@ class TradingVolatilityAPI:
             spot_price = float(ticker_data.get('price', 0))
 
             # Get implied volatility - try gammaOI first, then fall back to last_response
-            implied_vol = 0.20  # Default 20% IV
+            try:
+                from config import ImpliedVolatilityConfig
+                implied_vol = ImpliedVolatilityConfig.DEFAULT_IV
+            except ImportError:
+                implied_vol = 0.20  # Fallback to 20% IV
             if 'implied_volatility' in ticker_data:
                 # gammaOI includes aggregate data - use it directly!
                 implied_vol = float(ticker_data.get('implied_volatility', 0.20))
