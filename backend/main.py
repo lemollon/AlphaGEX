@@ -4029,24 +4029,24 @@ from psychology_performance import performance_tracker
 from psychology_notifications import notification_manager
 
 # ==============================================================================
-# YFINANCE CACHING - Psychology page fetches once per day, manual refresh only
+# POLYGON.IO PRICE DATA CACHING - Psychology page fetches once per day
 # ==============================================================================
-_yfinance_cache = {}
-_yfinance_cache_ttl = 86400  # 24 hours cache (psychology updates once per day)
+_polygon_price_cache = {}
+_polygon_price_cache_ttl = 86400  # 24 hours cache (psychology updates once per day)
 
 def get_cached_price_data(symbol: str, current_price: float):
     """
-    Get price data for symbol with caching to prevent excessive API calls
+    Get price data for symbol with caching using Polygon.io API
     Cache TTL: 24 hours (86400 seconds)
 
     Psychology page design: Fetch once per day, manual refresh only
 
-    This function makes 5 yfinance API calls:
+    This function makes 5 Polygon.io API calls:
     - 90d daily data
-    - 30d hourly→4h data
-    - 7d hourly data
-    - 5d 15-minute data
-    - 2d 5-minute data
+    - 30d 4-hour data
+    - 14d hourly data
+    - 7d 15-minute data
+    - 3d 5-minute data
 
     With 24h caching: 5 API calls per day (only on first load or manual refresh)
     """
@@ -4054,119 +4054,113 @@ def get_cached_price_data(symbol: str, current_price: float):
     now = datetime.now()
 
     # Check if we have cached data that's still fresh
-    if cache_key in _yfinance_cache:
-        cached_data, cache_time = _yfinance_cache[cache_key]
+    if cache_key in _polygon_price_cache:
+        cached_data, cache_time = _polygon_price_cache[cache_key]
         age_seconds = (now - cache_time).total_seconds()
 
-        if age_seconds < _yfinance_cache_ttl:
+        if age_seconds < _polygon_price_cache_ttl:
             print(f"✅ Using cached price data (age: {age_seconds:.0f}s)")
             return cached_data
         else:
-            print(f"⏰ Cache expired (age: {age_seconds:.0f}s > {_yfinance_cache_ttl}s)")
+            print(f"⏰ Cache expired (age: {age_seconds:.0f}s > {_polygon_price_cache_ttl}s)")
 
-    # Cache miss or expired - fetch fresh data
-    print(f"🔄 Fetching fresh price data from yfinance (5 API calls)")
+    # Cache miss or expired - fetch fresh data from Polygon.io
+    print(f"🔄 Fetching fresh price data from Polygon.io (5 API calls)")
+
+    polygon_key = os.getenv("POLYGON_API_KEY")
+    if not polygon_key:
+        print(f"❌ No POLYGON_API_KEY configured")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Polygon.io API key not configured. Cannot fetch price data for psychology analysis."
+        )
 
     try:
-        import yfinance as yf
         import pandas as pd
-        ticker = yf.Ticker(symbol)
+
+        def fetch_polygon_bars(symbol, multiplier, timespan, days_back):
+            """Fetch price bars from Polygon.io"""
+            try:
+                to_date = datetime.now().strftime('%Y-%m-%d')
+                from_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+
+                url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/{multiplier}/{timespan}/{from_date}/{to_date}"
+                params = {"apiKey": polygon_key, "sort": "asc", "limit": 50000}
+
+                response = requests.get(url, params=params, timeout=10)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    status = data.get('status', '')
+                    if status in ['OK', 'DELAYED'] and data.get('results'):
+                        results = data['results']
+                        return [
+                            {
+                                'close': bar['c'],
+                                'high': bar['h'],
+                                'low': bar['l'],
+                                'volume': bar['v']
+                            }
+                            for bar in results
+                        ]
+                    else:
+                        print(f"    ⚠️ Polygon.io status: {status}, results: {data.get('resultsCount', 0)}")
+                        return []
+                else:
+                    print(f"    ⚠️ Polygon.io HTTP {response.status_code}")
+                    return []
+            except Exception as e:
+                print(f"    ❌ Polygon.io error: {e}")
+                return []
 
         price_data = {}
 
         # Daily data (90 days for RSI calculation)
-        df_1d = ticker.history(period="90d", interval="1d")
-        print(f"  📊 1d data: {len(df_1d)} bars")
-        price_data['1d'] = [
-            {
-                'close': row['Close'],
-                'high': row['High'],
-                'low': row['Low'],
-                'volume': row['Volume']
-            }
-            for _, row in df_1d.iterrows()
-        ]
+        print(f"  🔄 Fetching 1d data...")
+        price_data['1d'] = fetch_polygon_bars(symbol, 1, 'day', 90)
+        print(f"  📊 1d data: {len(price_data['1d'])} bars")
 
         # 4-hour data (30 days)
-        df_4h = ticker.history(period="30d", interval="1h")
-        # Ensure index is DatetimeIndex before resampling
-        if not isinstance(df_4h.index, pd.DatetimeIndex):
-            df_4h.index = pd.to_datetime(df_4h.index)
-        # Resample to 4h
-        df_4h_resampled = df_4h.resample('4H').agg({
-            'Close': 'last',
-            'High': 'max',
-            'Low': 'min',
-            'Volume': 'sum'
-        }).dropna()
-        print(f"  📊 4h data: {len(df_4h_resampled)} bars")
-        price_data['4h'] = [
-            {
-                'close': row['Close'],
-                'high': row['High'],
-                'low': row['Low'],
-                'volume': row['Volume']
-            }
-            for _, row in df_4h_resampled.iterrows()
-        ]
+        print(f"  🔄 Fetching 4h data...")
+        price_data['4h'] = fetch_polygon_bars(symbol, 4, 'hour', 30)
+        print(f"  📊 4h data: {len(price_data['4h'])} bars")
 
-        # 1-hour data (7 days)
-        df_1h = ticker.history(period="7d", interval="1h")
-        print(f"  📊 1h data: {len(df_1h)} bars")
-        price_data['1h'] = [
-            {
-                'close': row['Close'],
-                'high': row['High'],
-                'low': row['Low'],
-                'volume': row['Volume']
-            }
-            for _, row in df_1h.iterrows()
-        ]
+        # 1-hour data (14 days)
+        print(f"  🔄 Fetching 1h data...")
+        price_data['1h'] = fetch_polygon_bars(symbol, 1, 'hour', 14)
+        print(f"  📊 1h data: {len(price_data['1h'])} bars")
 
-        # 15-minute data (5 days)
-        df_15m = ticker.history(period="5d", interval="15m")
-        print(f"  📊 15m data: {len(df_15m)} bars")
-        price_data['15m'] = [
-            {
-                'close': row['Close'],
-                'high': row['High'],
-                'low': row['Low'],
-                'volume': row['Volume']
-            }
-            for _, row in df_15m.iterrows()
-        ]
+        # 15-minute data (7 days)
+        print(f"  🔄 Fetching 15m data...")
+        price_data['15m'] = fetch_polygon_bars(symbol, 15, 'minute', 7)
+        print(f"  📊 15m data: {len(price_data['15m'])} bars")
 
-        # 5-minute data (2 days)
-        df_5m = ticker.history(period="2d", interval="5m")
-        print(f"  📊 5m data: {len(df_5m)} bars")
-        price_data['5m'] = [
-            {
-                'close': row['Close'],
-                'high': row['High'],
-                'low': row['Low'],
-                'volume': row['Volume']
-            }
-            for _, row in df_5m.iterrows()
-        ]
+        # 5-minute data (3 days)
+        print(f"  🔄 Fetching 5m data...")
+        price_data['5m'] = fetch_polygon_bars(symbol, 5, 'minute', 3)
+        print(f"  📊 5m data: {len(price_data['5m'])} bars")
 
         # CRITICAL: Validate that we got actual data
         if len(price_data['1d']) == 0:
-            print(f"❌ Yahoo Finance returned EMPTY data for {symbol}")
-            print(f"   This usually means Yahoo Finance is blocking requests or rate limiting")
-            raise ValueError(f"Yahoo Finance returned no data for {symbol}. All dataframes are empty.")
+            print(f"❌ Polygon.io returned EMPTY data for {symbol}")
+            print(f"   This usually means API key is invalid or rate limit exceeded")
+            raise ValueError(f"Polygon.io returned no data for {symbol}. Check API key and rate limits.")
 
         # Cache the result only if we have valid data
-        _yfinance_cache[cache_key] = (price_data, now)
-        print(f"✅ Cached fresh price data for {_yfinance_cache_ttl}s (24 hours)")
+        _polygon_price_cache[cache_key] = (price_data, now)
+        print(f"✅ Cached fresh price data for {_polygon_price_cache_ttl}s (24 hours)")
 
         return price_data
 
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         # NO FALLBACK - Never use mock data
-        print(f"❌ Could not fetch price data from Yahoo Finance: {e}")
+        print(f"❌ Could not fetch price data from Polygon.io: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to fetch price data for {symbol}. Yahoo Finance API error: {str(e)}"
+            detail=f"Failed to fetch price data for {symbol}. Polygon.io API error: {str(e)}"
         )
 
 @app.get("/api/psychology/current-regime")

@@ -2,12 +2,16 @@
 
 ## ✅ What's Implemented
 
-The AlphaGEX backend now uses **Polygon.io exclusively** for all RSI timeframes (1D, 4H, 1H, 15M, 5M) and VIX data.
+The AlphaGEX backend now uses **Polygon.io exclusively** for ALL market data:
+- **Multi-timeframe RSI** (1D, 4H, 1H, 15M, 5M)
+- **VIX data**
+- **Historical price data** for Psychology Trap analysis
 
 ### Recent Changes
+- **Latest**: Replaced Yahoo Finance with Polygon.io for psychology analysis (price data)
 - **Commit dee6392**: Simplified to use ONLY Polygon.io for all RSI timeframes and VIX
-- **Removed**: Yahoo Finance and Alpha Vantage dependencies
-- **Current Status**: RSI will NOT display unless Polygon.io API key is configured
+- **Removed**: Yahoo Finance and Alpha Vantage dependencies completely
+- **Current Status**: All features require Polygon.io API key (RSI, VIX, Psychology Analysis)
 
 ---
 
