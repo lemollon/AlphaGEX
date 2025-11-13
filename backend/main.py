@@ -4315,6 +4315,13 @@ async def get_current_regime(symbol: str = "SPY"):
 
         # Run complete psychology trap analysis
         try:
+            print(f"  DEBUG: Calling analyze_current_market_complete with:")
+            print(f"    - current_price: {current_price}")
+            print(f"    - price_data keys: {list(price_data.keys())}")
+            print(f"    - price_data['1d'] length: {len(price_data.get('1d', []))}")
+            print(f"    - gamma_data keys: {list(gamma_data_formatted.keys())}")
+            print(f"    - volume_ratio: {volume_ratio}")
+
             analysis = analyze_current_market_complete(
                 current_price=current_price,
                 price_data=price_data,
@@ -4324,9 +4331,18 @@ async def get_current_regime(symbol: str = "SPY"):
             print(f"✅ Analysis complete!")
         except Exception as analysis_error:
             print(f"❌ Error in analyze_current_market_complete:")
+            print(f"❌ Error type: {type(analysis_error).__name__}")
+            print(f"❌ Error message: {str(analysis_error)}")
             import traceback
+            import sys
             traceback.print_exc()
-            raise HTTPException(status_code=500, detail=f"Psychology analysis failed: {str(analysis_error)}")
+            sys.stdout.flush()  # Force flush to ensure error appears in logs
+
+            # Re-raise with more context
+            raise HTTPException(
+                status_code=500,
+                detail=f"Psychology analysis failed: {type(analysis_error).__name__}: {str(analysis_error)}"
+            )
 
         # Save to database
         try:
