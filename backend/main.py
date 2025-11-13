@@ -4076,6 +4076,7 @@ def get_cached_price_data(symbol: str, current_price: float):
 
         # Daily data (90 days for RSI calculation)
         df_1d = ticker.history(period="90d", interval="1d")
+        print(f"  📊 1d data: {len(df_1d)} bars")
         price_data['1d'] = [
             {
                 'close': row['Close'],
@@ -4098,6 +4099,7 @@ def get_cached_price_data(symbol: str, current_price: float):
             'Low': 'min',
             'Volume': 'sum'
         }).dropna()
+        print(f"  📊 4h data: {len(df_4h_resampled)} bars")
         price_data['4h'] = [
             {
                 'close': row['Close'],
@@ -4110,6 +4112,7 @@ def get_cached_price_data(symbol: str, current_price: float):
 
         # 1-hour data (7 days)
         df_1h = ticker.history(period="7d", interval="1h")
+        print(f"  📊 1h data: {len(df_1h)} bars")
         price_data['1h'] = [
             {
                 'close': row['Close'],
@@ -4122,6 +4125,7 @@ def get_cached_price_data(symbol: str, current_price: float):
 
         # 15-minute data (5 days)
         df_15m = ticker.history(period="5d", interval="15m")
+        print(f"  📊 15m data: {len(df_15m)} bars")
         price_data['15m'] = [
             {
                 'close': row['Close'],
@@ -4134,6 +4138,7 @@ def get_cached_price_data(symbol: str, current_price: float):
 
         # 5-minute data (2 days)
         df_5m = ticker.history(period="2d", interval="5m")
+        print(f"  📊 5m data: {len(df_5m)} bars")
         price_data['5m'] = [
             {
                 'close': row['Close'],
@@ -4144,7 +4149,13 @@ def get_cached_price_data(symbol: str, current_price: float):
             for _, row in df_5m.iterrows()
         ]
 
-        # Cache the result
+        # CRITICAL: Validate that we got actual data
+        if len(price_data['1d']) == 0:
+            print(f"❌ Yahoo Finance returned EMPTY data for {symbol}")
+            print(f"   This usually means Yahoo Finance is blocking requests or rate limiting")
+            raise ValueError(f"Yahoo Finance returned no data for {symbol}. All dataframes are empty.")
+
+        # Cache the result only if we have valid data
         _yfinance_cache[cache_key] = (price_data, now)
         print(f"✅ Cached fresh price data for {_yfinance_cache_ttl}s (24 hours)")
 
