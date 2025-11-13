@@ -614,8 +614,8 @@ async def get_gex_data(symbol: str):
             "psychology": psychology_data,
             "mm_state": mm_state,
             "vix": vix_level,
-            # NEW: Add multi-timeframe RSI
-            "rsi": rsi_data
+            # NEW: Add multi-timeframe RSI (return null if no data fetched)
+            "rsi": rsi_data if rsi_data and any(v is not None for v in rsi_data.values()) else None
         }
 
         return {
