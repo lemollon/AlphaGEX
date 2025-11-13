@@ -91,6 +91,11 @@ strategy_optimizer = MultiStrategyOptimizer()
 # Initialize probability calculator (NEW - Phase 2 Self-Learning)
 probability_calc = ProbabilityCalculator()
 
+# RSI Data Cache - Prevent Polygon.io rate limit (5 calls/min on free tier)
+# Cache RSI data for 5 minutes to avoid repeated API calls
+_rsi_cache = {}
+_rsi_cache_ttl = 300  # 5 minutes in seconds
+
 # ============================================================================
 # Health Check & Status Endpoints
 # ============================================================================
@@ -386,6 +391,16 @@ async def get_gex_data(symbol: str):
 
         # Separate try block for RSI fetching to prevent psychology errors from wiping RSI data
         try:
+            # Check RSI cache first to avoid rate limits
+            cache_key = f"rsi_{symbol}"
+            if cache_key in _rsi_cache:
+                cached_entry = _rsi_cache[cache_key]
+                cache_age = (datetime.now() - cached_entry['timestamp']).total_seconds()
+                if cache_age < _rsi_cache_ttl:
+                    print(f"✅ Using cached RSI data for {symbol} (age: {cache_age:.0f}s, TTL: {_rsi_cache_ttl}s)")
+                    rsi_data = cached_entry['data']
+                    # Skip to psychology calculation
+                    raise StopIteration("using_cache")
 
             if polygon_key:
                 print(f"✅ Polygon.io API key configured")
@@ -421,7 +436,9 @@ async def get_gex_data(symbol: str):
 
                     if response.status_code == 200:
                         data = response.json()
-                        if data.get('status') == 'OK' and data.get('results'):
+                        # Accept both 'OK' (paid tier) and 'DELAYED' (free tier)
+                        status = data.get('status', '')
+                        if status in ['OK', 'DELAYED'] and data.get('results'):
                             results = data['results']
 
                             # Convert to DataFrame
@@ -551,6 +568,17 @@ async def get_gex_data(symbol: str):
 
             print(f"📊 RSI Summary: {sum(1 for v in rsi_data.values() if v is not None)}/5 timeframes successful")
 
+            # Cache the RSI data if we got any valid values
+            if rsi_data and any(v is not None for v in rsi_data.values()):
+                _rsi_cache[cache_key] = {
+                    'data': rsi_data.copy(),
+                    'timestamp': datetime.now()
+                }
+                print(f"💾 Cached RSI data for {symbol} (TTL: {_rsi_cache_ttl}s)")
+
+        except StopIteration:
+            # Using cached data - this is normal, not an error
+            pass
         except Exception as e:
             # Only reset RSI if the RSI fetch itself failed
             error_msg = str(e)
