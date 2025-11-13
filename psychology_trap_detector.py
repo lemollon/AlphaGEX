@@ -314,6 +314,11 @@ def calculate_mtf_rsi_score(price_data: Dict[str, List[Dict]]) -> Dict:
 
         prices = np.array([bar['close'] for bar in price_data[tf]])
         rsi = calculate_rsi(prices, period=14)
+
+        # Safety check: if RSI is None for any reason, use default 50.0
+        if rsi is None:
+            rsi = 50.0
+
         rsi_values[tf] = rsi
 
         # Normalize to -100 to +100 scale
