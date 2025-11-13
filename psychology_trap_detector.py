@@ -320,11 +320,11 @@ def calculate_mtf_rsi_score(price_data: Dict[str, List[Dict]]) -> Dict:
         normalized = (rsi - 50) * 2
         weighted_score += normalized * weights[tf]
 
-    # Count aligned extremes
-    overbought_count = sum(1 for v in rsi_values.values() if v > 70)
-    oversold_count = sum(1 for v in rsi_values.values() if v < 30)
-    extreme_ob_count = sum(1 for v in rsi_values.values() if v > 80)
-    extreme_os_count = sum(1 for v in rsi_values.values() if v < 20)
+    # Count aligned extremes (handle None values safely)
+    overbought_count = sum(1 for v in rsi_values.values() if v is not None and v > 70)
+    oversold_count = sum(1 for v in rsi_values.values() if v is not None and v < 30)
+    extreme_ob_count = sum(1 for v in rsi_values.values() if v is not None and v > 80)
+    extreme_os_count = sum(1 for v in rsi_values.values() if v is not None and v < 20)
 
     # Detect coiling (RSI extreme but low volatility)
     coiling = detect_coiling(price_data, rsi_values)
@@ -353,10 +353,10 @@ def detect_coiling(price_data: Dict, rsi_values: Dict) -> bool:
     Returns:
         True if coiling detected, False otherwise
     """
-    # Check if RSI extreme on 3+ timeframes
+    # Check if RSI extreme on 3+ timeframes (handle None values safely)
     rsi_extreme = any([
-        sum(1 for v in rsi_values.values() if v > 70) >= 3,
-        sum(1 for v in rsi_values.values() if v < 30) >= 3
+        sum(1 for v in rsi_values.values() if v is not None and v > 70) >= 3,
+        sum(1 for v in rsi_values.values() if v is not None and v < 30) >= 3
     ])
 
     if not rsi_extreme:

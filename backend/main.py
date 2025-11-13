@@ -589,7 +589,8 @@ async def get_gex_data(symbol: str):
         # Calculate psychology state (separate try block so errors here don't affect RSI)
         try:
             # Use 1d RSI for psychology state (most reliable)
-            current_rsi = rsi_data.get('1d', 50)
+            # Note: .get() returns None if key exists with None value, so we need explicit check
+            current_rsi = rsi_data.get('1d')
             if current_rsi is None:
                 current_rsi = 50
 
