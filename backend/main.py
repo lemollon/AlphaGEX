@@ -300,24 +300,18 @@ async def get_gex_data(symbol: str):
         psychology_data = {}
         rsi_data = {}
         try:
-            # Cloud-compatible approach: Polygon.io (1D) + Twelve Data (intraday)
+            # Simplified approach: Use ONLY Polygon.io for all timeframes
             import requests
             import pandas as pd
             from datetime import datetime, timedelta
 
-            # Get API keys from environment
+            # Get Polygon.io API key
             polygon_key = os.getenv('POLYGON_API_KEY')
-            twelve_data_key = os.getenv('TWELVE_DATA_API_KEY')
 
             if polygon_key:
                 print(f"✅ Polygon.io API key configured")
             else:
-                print(f"⚠️ No Polygon.io API key - 1D RSI may fail")
-
-            if twelve_data_key:
-                print(f"✅ Twelve Data API key configured")
-            else:
-                print(f"⚠️ No Twelve Data API key - intraday RSI may fail")
+                print(f"⚠️ No Polygon.io API key - RSI calculation will fail")
 
             # Calculate RSI for multiple timeframes
             def calculate_rsi(df, period=14):
@@ -331,51 +325,57 @@ async def get_gex_data(symbol: str):
                 rsi = 100 - (100 / (1 + rs))
                 return rsi.iloc[-1] if not rsi.empty else None
 
+            # Helper function to fetch from Polygon.io
+            def fetch_polygon_data(symbol, multiplier, timespan, days_back):
+                """Fetch data from Polygon.io aggregates API"""
+                if not polygon_key:
+                    return None
+
+                try:
+                    to_date = datetime.now().strftime('%Y-%m-%d')
+                    from_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+
+                    url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/{multiplier}/{timespan}/{from_date}/{to_date}"
+                    params = {"apiKey": polygon_key, "sort": "asc"}
+
+                    response = requests.get(url, params=params, timeout=10)
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('status') == 'OK' and data.get('results'):
+                            results = data['results']
+
+                            # Convert to DataFrame
+                            df = pd.DataFrame(results)
+                            df['date'] = pd.to_datetime(df['t'], unit='ms')
+                            df.set_index('date', inplace=True)
+                            df = df.rename(columns={
+                                'o': 'Open', 'h': 'High', 'l': 'Low',
+                                'c': 'Close', 'v': 'Volume'
+                            })
+
+                            return df
+                        else:
+                            print(f"    ⚠️ Polygon.io status: {data.get('status')}, resultsCount: {data.get('resultsCount', 0)}")
+                            return None
+                    else:
+                        print(f"    ⚠️ Polygon.io HTTP {response.status_code}")
+                        return None
+                except Exception as e:
+                    print(f"    ⚠️ Polygon.io error: {e}")
+                    return None
+
             # Fetch data for different timeframes
             print(f"📊 Fetching multi-timeframe RSI for {symbol}...")
 
-            # 1D RSI using Polygon.io (end-of-day data, works from cloud)
+            # 1D RSI (already working)
             try:
-                df_1d = None
+                print(f"  🔄 Fetching 1D data from Polygon.io...")
+                df_1d = fetch_polygon_data(symbol, 1, 'day', 90)
 
-                if polygon_key:
-                    print(f"  🔄 Fetching 1D data from Polygon.io...")
-                    try:
-                        # Polygon.io aggregates endpoint
-                        to_date = datetime.now().strftime('%Y-%m-%d')
-                        from_date = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
-
-                        url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{from_date}/{to_date}"
-                        params = {"apiKey": polygon_key, "sort": "asc"}
-
-                        response = requests.get(url, params=params, timeout=10)
-                        print(f"  📡 Polygon.io response: HTTP {response.status_code}")
-
-                        if response.status_code == 200:
-                            data = response.json()
-                            if data.get('status') == 'OK' and data.get('results'):
-                                results = data['results']
-
-                                # Convert to DataFrame
-                                df_1d = pd.DataFrame(results)
-                                df_1d['date'] = pd.to_datetime(df_1d['t'], unit='ms')
-                                df_1d.set_index('date', inplace=True)
-                                df_1d = df_1d.rename(columns={
-                                    'o': 'Open', 'h': 'High', 'l': 'Low',
-                                    'c': 'Close', 'v': 'Volume'
-                                })
-
-                                print(f"  📥 1d: Fetched {len(df_1d)} bars from Polygon.io")
-                                print(f"      Date range: {df_1d.index[0]} to {df_1d.index[-1]}")
-                            else:
-                                print(f"  ⚠️ Polygon.io returned status: {data.get('status')}, no results")
-                        else:
-                            print(f"  ⚠️ Polygon.io HTTP {response.status_code}")
-                    except Exception as polygon_error:
-                        print(f"  ⚠️ Polygon.io failed: {polygon_error}")
-
-                # Calculate 1D RSI
                 if df_1d is not None and not df_1d.empty:
+                    print(f"  📥 1d: Fetched {len(df_1d)} bars from Polygon.io")
+                    print(f"      Date range: {df_1d.index[0]} to {df_1d.index[-1]}")
                     rsi_1d = calculate_rsi(df_1d)
                     if rsi_1d is not None:
                         rsi_data['1d'] = round(float(rsi_1d), 1)
@@ -390,60 +390,13 @@ async def get_gex_data(symbol: str):
                 rsi_data['1d'] = None
                 print(f"  ❌ 1d RSI failed: {e}")
 
-            # Helper function to fetch from Twelve Data
-            def fetch_twelve_data(symbol, interval, outputsize=100):
-                """Fetch data from Twelve Data API"""
-                if not twelve_data_key:
-                    return None
-
-                try:
-                    url = "https://api.twelvedata.com/time_series"
-                    params = {
-                        'symbol': symbol,
-                        'interval': interval,
-                        'outputsize': outputsize,
-                        'apikey': twelve_data_key
-                    }
-
-                    response = requests.get(url, params=params, timeout=10)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if 'values' in data and len(data['values']) > 0:
-                            # Convert to DataFrame
-                            df = pd.DataFrame(data['values'])
-                            df['datetime'] = pd.to_datetime(df['datetime'])
-                            df.set_index('datetime', inplace=True)
-                            df = df.sort_index()
-
-                            # Convert string columns to float
-                            for col in ['open', 'high', 'low', 'close', 'volume']:
-                                if col in df.columns:
-                                    df[col] = pd.to_numeric(df[col], errors='coerce')
-
-                            # Rename to standard format
-                            df = df.rename(columns={
-                                'open': 'Open', 'high': 'High', 'low': 'Low',
-                                'close': 'Close', 'volume': 'Volume'
-                            })
-
-                            return df
-                        else:
-                            print(f"    ⚠️ Twelve Data returned no values: {data.get('status', 'unknown')}")
-                            return None
-                    else:
-                        print(f"    ⚠️ Twelve Data HTTP {response.status_code}")
-                        return None
-                except Exception as e:
-                    print(f"    ⚠️ Twelve Data error: {e}")
-                    return None
-
-            # Intraday RSI using Twelve Data (real-time data, works from cloud)
             # 4H RSI
             try:
-                print(f"  🔄 Fetching 4H data from Twelve Data...")
-                df_4h = fetch_twelve_data(symbol, '4h', outputsize=100)
+                print(f"  🔄 Fetching 4H data from Polygon.io...")
+                df_4h = fetch_polygon_data(symbol, 4, 'hour', 30)
+
                 if df_4h is not None and not df_4h.empty:
-                    print(f"  📥 4h: Fetched {len(df_4h)} bars from Twelve Data")
+                    print(f"  📥 4h: Fetched {len(df_4h)} bars from Polygon.io")
                     rsi_4h = calculate_rsi(df_4h)
                     if rsi_4h is not None:
                         rsi_data['4h'] = round(float(rsi_4h), 1)
@@ -459,10 +412,11 @@ async def get_gex_data(symbol: str):
 
             # 1H RSI
             try:
-                print(f"  🔄 Fetching 1H data from Twelve Data...")
-                df_1h = fetch_twelve_data(symbol, '1h', outputsize=100)
+                print(f"  🔄 Fetching 1H data from Polygon.io...")
+                df_1h = fetch_polygon_data(symbol, 1, 'hour', 14)
+
                 if df_1h is not None and not df_1h.empty:
-                    print(f"  📥 1h: Fetched {len(df_1h)} bars from Twelve Data")
+                    print(f"  📥 1h: Fetched {len(df_1h)} bars from Polygon.io")
                     rsi_1h = calculate_rsi(df_1h)
                     if rsi_1h is not None:
                         rsi_data['1h'] = round(float(rsi_1h), 1)
@@ -478,10 +432,11 @@ async def get_gex_data(symbol: str):
 
             # 15M RSI
             try:
-                print(f"  🔄 Fetching 15M data from Twelve Data...")
-                df_15m = fetch_twelve_data(symbol, '15min', outputsize=100)
+                print(f"  🔄 Fetching 15M data from Polygon.io...")
+                df_15m = fetch_polygon_data(symbol, 15, 'minute', 7)
+
                 if df_15m is not None and not df_15m.empty:
-                    print(f"  📥 15m: Fetched {len(df_15m)} bars from Twelve Data")
+                    print(f"  📥 15m: Fetched {len(df_15m)} bars from Polygon.io")
                     rsi_15m = calculate_rsi(df_15m)
                     if rsi_15m is not None:
                         rsi_data['15m'] = round(float(rsi_15m), 1)
@@ -497,10 +452,11 @@ async def get_gex_data(symbol: str):
 
             # 5M RSI
             try:
-                print(f"  🔄 Fetching 5M data from Twelve Data...")
-                df_5m = fetch_twelve_data(symbol, '5min', outputsize=100)
+                print(f"  🔄 Fetching 5M data from Polygon.io...")
+                df_5m = fetch_polygon_data(symbol, 5, 'minute', 3)
+
                 if df_5m is not None and not df_5m.empty:
-                    print(f"  📥 5m: Fetched {len(df_5m)} bars from Twelve Data")
+                    print(f"  📥 5m: Fetched {len(df_5m)} bars from Polygon.io")
                     rsi_5m = calculate_rsi(df_5m)
                     if rsi_5m is not None:
                         rsi_data['5m'] = round(float(rsi_5m), 1)
@@ -572,35 +528,37 @@ async def get_gex_data(symbol: str):
         else:
             mm_state = 'NEUTRAL'
 
-        # Get VIX for volatility context using Twelve Data (cloud-compatible)
+        # Get VIX for volatility context using Polygon.io
         vix_level = 18.0  # Default
         try:
             if symbol == 'VIX':
                 vix_level = spot_price
             else:
-                print(f"  🔄 Fetching VIX from Twelve Data...")
-                if twelve_data_key:
+                print(f"  🔄 Fetching VIX from Polygon.io...")
+                if polygon_key:
                     try:
                         import requests
-                        url = "https://api.twelvedata.com/quote"
-                        params = {
-                            'symbol': 'VIX',
-                            'apikey': twelve_data_key
-                        }
+                        # Get last trading day's VIX close
+                        to_date = datetime.now().strftime('%Y-%m-%d')
+                        from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+                        url = f"https://api.polygon.io/v2/aggs/ticker/VIX/range/1/day/{from_date}/{to_date}"
+                        params = {"apiKey": polygon_key, "sort": "desc", "limit": 1}
+
                         response = requests.get(url, params=params, timeout=10)
                         if response.status_code == 200:
                             data = response.json()
-                            if 'close' in data:
-                                vix_level = float(data['close'])
-                                print(f"  ✅ VIX from Twelve Data: {vix_level}")
+                            if data.get('status') == 'OK' and data.get('results'):
+                                vix_level = float(data['results'][0]['c'])  # 'c' is close price
+                                print(f"  ✅ VIX from Polygon.io: {vix_level}")
                             else:
-                                print(f"  ⚠️ Twelve Data returned no VIX close price")
+                                print(f"  ⚠️ Polygon.io returned no VIX data")
                         else:
-                            print(f"  ⚠️ Twelve Data HTTP {response.status_code}")
-                    except Exception as twelve_error:
-                        print(f"  ⚠️ Twelve Data VIX fetch failed: {twelve_error}")
+                            print(f"  ⚠️ Polygon.io HTTP {response.status_code}")
+                    except Exception as polygon_error:
+                        print(f"  ⚠️ Polygon.io VIX fetch failed: {polygon_error}")
                 else:
-                    print(f"  ⚠️ No Twelve Data API key - using default VIX")
+                    print(f"  ⚠️ No Polygon.io API key - using default VIX")
         except Exception as vix_error:
             print(f"  ⚠️ VIX fetch failed: {vix_error}, using default")
             pass
@@ -2331,34 +2289,38 @@ async def compare_all_strategies(symbol: str = "SPY"):
             print(f"⚠️  Missing fields in gex_data: {missing_fields}")
             print(f"Available keys: {list(gex_data.keys())}")
 
-        # Get VIX data for additional context using Twelve Data (cloud-compatible)
-        twelve_data_key = os.getenv('TWELVE_DATA_API_KEY')
+        # Get VIX data for additional context using Polygon.io
+        polygon_key = os.getenv('POLYGON_API_KEY')
         vix = 15.0  # Default fallback
 
         try:
-            print(f"  🔄 Fetching VIX from Twelve Data...")
-            if twelve_data_key:
+            print(f"  🔄 Fetching VIX from Polygon.io...")
+            if polygon_key:
                 try:
                     import requests
-                    url = "https://api.twelvedata.com/quote"
-                    params = {
-                        'symbol': 'VIX',
-                        'apikey': twelve_data_key
-                    }
+                    from datetime import datetime, timedelta
+
+                    # Get last trading day's VIX close
+                    to_date = datetime.now().strftime('%Y-%m-%d')
+                    from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+                    url = f"https://api.polygon.io/v2/aggs/ticker/VIX/range/1/day/{from_date}/{to_date}"
+                    params = {"apiKey": polygon_key, "sort": "desc", "limit": 1}
+
                     response = requests.get(url, params=params, timeout=10)
                     if response.status_code == 200:
                         data = response.json()
-                        if 'close' in data:
-                            vix = float(data['close'])
-                            print(f"  ✅ VIX from Twelve Data: {vix}")
+                        if data.get('status') == 'OK' and data.get('results'):
+                            vix = float(data['results'][0]['c'])  # 'c' is close price
+                            print(f"  ✅ VIX from Polygon.io: {vix}")
                         else:
-                            print(f"  ⚠️ Twelve Data returned no VIX close price")
+                            print(f"  ⚠️ Polygon.io returned no VIX data")
                     else:
-                        print(f"  ⚠️ Twelve Data HTTP {response.status_code}")
-                except Exception as twelve_error:
-                    print(f"  ⚠️ Twelve Data VIX fetch failed: {twelve_error}")
+                        print(f"  ⚠️ Polygon.io HTTP {response.status_code}")
+                except Exception as polygon_error:
+                    print(f"  ⚠️ Polygon.io VIX fetch failed: {polygon_error}")
             else:
-                print(f"  ⚠️ No Twelve Data API key - using default VIX")
+                print(f"  ⚠️ No Polygon.io API key - using default VIX")
         except Exception as vix_error:
             print(f"Warning: Could not fetch VIX: {vix_error}, using default {vix}")
 
