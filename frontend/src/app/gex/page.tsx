@@ -775,8 +775,8 @@ export default function GEXAnalysisPage() {
                         </div>
                       </div>
 
-                      {/* Multi-Timeframe RSI */}
-                      {data.rsi && (
+                      {/* Multi-Timeframe RSI - Only show if we have at least one valid RSI value */}
+                      {data.rsi && Object.values(data.rsi).some(v => v !== null && v !== undefined) && (
                         <div className="bg-background-deep rounded-lg p-4 mb-6">
                           <div className="flex items-center space-x-2 mb-3">
                             <BarChart3 className="w-4 h-4 text-primary" />
