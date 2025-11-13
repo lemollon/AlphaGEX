@@ -367,8 +367,11 @@ export default function GammaIntelligence() {
                     <div>
                       <p className="text-text-secondary text-sm">Vanna Exposure</p>
                       <p className="text-2xl font-bold text-text-primary mt-1">
-                        {formatNumber(intelligence.vanna_exposure)}
+                        {intelligence.vanna_exposure !== null ? formatNumber(intelligence.vanna_exposure) : 'N/A'}
                       </p>
+                      {intelligence.vanna_exposure === null && (
+                        <p className="text-xs text-text-muted mt-1">Requires IV surface</p>
+                      )}
                     </div>
                     <TrendingUp className="text-primary w-8 h-8" />
                   </div>
@@ -379,10 +382,14 @@ export default function GammaIntelligence() {
                     <div>
                       <p className="text-text-secondary text-sm">Charm Decay</p>
                       <p className={`text-2xl font-bold mt-1 ${
-                        intelligence.charm_decay < 0 ? 'text-danger' : 'text-success'
+                        intelligence.charm_decay !== null && intelligence.charm_decay < 0 ? 'text-danger' :
+                        intelligence.charm_decay !== null ? 'text-success' : 'text-text-primary'
                       }`}>
-                        {formatNumber(intelligence.charm_decay)}
+                        {intelligence.charm_decay !== null ? formatNumber(intelligence.charm_decay) : 'N/A'}
                       </p>
+                      {intelligence.charm_decay === null && (
+                        <p className="text-xs text-text-muted mt-1">Requires Greeks data</p>
+                      )}
                     </div>
                     <Clock className="text-primary w-8 h-8" />
                   </div>
