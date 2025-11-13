@@ -13,11 +13,11 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 interface RSIAnalysis {
   score: number
   individual_rsi: {
-    '5m': number
-    '15m': number
-    '1h': number
-    '4h': number
-    '1d': number
+    '5m': number | null
+    '15m': number | null
+    '1h': number | null
+    '4h': number | null
+    '1d': number | null
   }
   aligned_count: {
     overbought: number
@@ -198,7 +198,8 @@ export default function PsychologyTrapDetection() {
 
   // RSI Heatmap Component
   const RSIHeatmap = ({ rsi }: { rsi: RSIAnalysis }) => {
-    const getRSIColor = (value: number) => {
+    const getRSIColor = (value: number | null) => {
+      if (value === null) return 'bg-gray-700'
       if (value >= 80) return 'bg-red-600'
       if (value >= 70) return 'bg-red-500'
       if (value >= 60) return 'bg-orange-500'
@@ -216,11 +217,11 @@ export default function PsychologyTrapDetection() {
             <div className="flex-1 h-6 bg-gray-800 rounded-full overflow-hidden">
               <div
                 className={`h-full ${getRSIColor(value)} transition-all duration-300`}
-                style={{ width: `${value}%` }}
+                style={{ width: value !== null ? `${value}%` : '0%' }}
               />
             </div>
             <div className="w-16 text-sm font-mono text-right">
-              {value.toFixed(1)}
+              {value !== null ? value.toFixed(1) : '---'}
             </div>
           </div>
         ))}
