@@ -1,173 +1,244 @@
 # 🚀 Multi-Timeframe RSI Deployment Guide
 
-## ✅ What Was Fixed (Commit: d2bd47a)
+## ✅ What's Implemented
 
-### ROOT CAUSE
-- Yahoo Finance is blocking all requests (403 errors)
-- No price data = No RSI calculation = Shows "---" in UI
-- Previous attempt referenced non-existent `flexible_price_data.py`
+The AlphaGEX backend now uses **Polygon.io exclusively** for all RSI timeframes (1D, 4H, 1H, 15M, 5M) and VIX data.
 
-### THE FIX
-- Added **direct Alpha Vantage API fallback** for 1D RSI
-- Fallback chain: yfinance (try first) → Alpha Vantage (fallback) → "---" (graceful failure)
-- Already configured your API key: `IW5CSY60VSCU8TUJ`
+### Recent Changes
+- **Commit dee6392**: Simplified to use ONLY Polygon.io for all RSI timeframes and VIX
+- **Removed**: Yahoo Finance and Alpha Vantage dependencies
+- **Current Status**: RSI will NOT display unless Polygon.io API key is configured
 
 ---
 
-## 🔑 YOUR ALPHA VANTAGE API KEY
+## 🔑 REQUIRED: Polygon.io API Key
 
-**Key:** `IW5CSY60VSCU8TUJ`  
-**Status:** ⚠️ Currently returns 403 (may need activation)  
-**Free Tier:** 500 calls/day, 5 calls/minute
+### Why Polygon.io?
+- ✅ **All timeframes supported**: Daily + Intraday (5m, 15m, 1h, 4h)
+- ✅ **Reliable from cloud**: No IP blocking issues
+- ✅ **High rate limits**: Sufficient for production use
+- ✅ **Official API**: Stable and well-documented
+
+### Get Your API Key
+
+**Free Tier (Delayed Data)**
+1. Go to: https://polygon.io/
+2. Click **"Get Free API Key"**
+3. Sign up with your email
+4. Copy your API key from the dashboard
+5. **Free Tier Limits**: Delayed data (15 min), 5 API calls/minute
+
+**Paid Tier (Recommended - $29/month Starter)**
+1. Go to: https://polygon.io/pricing
+2. Select **"Starter"** plan ($29/month)
+3. **Features**:
+   - ✅ Real-time market data
+   - ✅ Unlimited API calls
+   - ✅ All timeframes (1m to 1D)
+   - ✅ Historical data access
+4. Copy your API key from dashboard
 
 ---
 
-## 📋 DEPLOYMENT STEPS (5 Minutes)
+## 📋 DEPLOYMENT STEPS
 
-### STEP 1: Add API Key to Render
+### STEP 1: Add API Key to Render (CRITICAL)
 
 1. Go to: https://dashboard.render.com
 2. Click on **`alphagex-api`** service
 3. Click **Environment** tab (left sidebar)
 4. Click **"Add Environment Variable"**
 5. Add:
-   - **Key**: `ALPHA_VANTAGE_API_KEY`
-   - **Value**: `IW5CSY60VSCU8TUJ`
+   - **Key**: `POLYGON_API_KEY`
+   - **Value**: `<your_polygon_api_key>`
    - **Secret**: ✅ Check this box
 6. Click **"Save Changes"**
 
-Render will auto-redeploy (5-10 minutes).
+⏱️ Render will auto-redeploy in 5-10 minutes.
 
 ---
 
-### STEP 2: Activate Your Alpha Vantage Key (If Needed)
+### STEP 2: Verify Deployment
 
-If you still see "---" after deployment:
-
-1. **Check your email** for activation link from Alpha Vantage
-   - Subject: "Activate your Alpha Vantage API Key"
-   - From: `support@alphavantage.co` or similar
-2. **Click the activation link** in the email
-3. **Wait 5-10 minutes** for activation to propagate
-4. **Test the key** in your browser:
-   ```
-   https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=SPY&apikey=IW5CSY60VSCU8TUJ
-   ```
-   - ✅ Should return JSON with SPY price data
-   - ❌ If 403/error: Key needs activation or is expired
-
----
-
-### STEP 3 (Alternative): Get New Free Key
-
-If the old key doesn't work, get a fresh one:
-
-1. Go to: https://www.alphavantage.co/support/#api-key
-2. Enter your email
-3. Click **"GET FREE API KEY"**
-4. Copy the new key
-5. **Update on Render:**
-   - Dashboard → alphagex-api → Environment
-   - Edit `ALPHA_VANTAGE_API_KEY`
-   - Paste new key
-   - Save (triggers redeploy)
-
----
-
-## 🧪 VERIFY IT WORKS
-
-### Check Render Logs
+#### Check Render Logs
 
 1. Dashboard → alphagex-api → **Logs** tab
-2. Look for:
-   ```
-   ✅ Alpha Vantage API key configured - will use as fallback
-   📊 Fetching multi-timeframe RSI for SPY...
-   📥 1d: Fetched 0 bars from yfinance
-   🔄 yfinance failed, trying Alpha Vantage fallback...
-   📥 1d: Fetched 90 bars from Alpha Vantage
-   ✅ 1d RSI: 54.3
-   ```
+2. Look for successful RSI fetches:
 
-### Expected Results in UI
+```
+✅ Polygon.io API key configured
+📊 Fetching multi-timeframe RSI for SPY...
+  📥 1d: Fetched 90 bars from Polygon.io
+  ✅ 1d RSI: 54.3
+  📥 4h: Fetched 180 bars from Polygon.io
+  ✅ 4h RSI: 52.1
+  📥 1h: Fetched 336 bars from Polygon.io
+  ✅ 1h RSI: 48.7
+  📥 15m: Fetched 672 bars from Polygon.io
+  ✅ 15m RSI: 45.2
+  📥 5m: Fetched 576 bars from Polygon.io
+  ✅ 5m RSI: 43.8
+📊 RSI Summary: 5/5 timeframes successful
+```
 
-**With Working Alpha Vantage Key:**
-- ✅ **1D RSI**: Shows real value (e.g., "54.3")
-- ⚠️ **Intraday RSI (4H, 1H, 15M, 5M)**: Still shows "---" (Alpha Vantage free tier doesn't support intraday)
+#### Check the App
 
-**Without Alpha Vantage Key:**
-- ❌ **All RSI**: Shows "---" (both daily and intraday fail)
+1. Open: https://alphagex.onrender.com/gex
+2. Look for **"Multi-Timeframe RSI"** section
+3. **With API key**: All timeframes show values (e.g., "54.3")
+4. **Without API key**: Section won't appear (returns null)
 
 ---
 
-## 📊 CURRENT STATUS
+## 🧪 TEST LOCALLY (Optional)
+
+```bash
+# Set your API key
+export POLYGON_API_KEY="your_polygon_api_key_here"
+
+# Start backend
+cd backend
+python main.py
+
+# Test endpoint
+curl "http://localhost:8000/api/gex/SPY" | jq '.data.rsi'
+```
+
+Expected output:
+```json
+{
+  "5m": 43.8,
+  "15m": 45.2,
+  "1h": 48.7,
+  "4h": 52.1,
+  "1d": 54.3
+}
+```
+
+If API key not set:
+```json
+null
+```
+
+---
+
+## 📊 CURRENT DATA SOURCES
 
 | Timeframe | Data Source | Status |
 |-----------|-------------|--------|
-| **1D** | yfinance → Alpha Vantage | ✅ Will work with key |
-| **4H** | yfinance only | ⚠️ Shows "---" (blocked) |
-| **1H** | yfinance only | ⚠️ Shows "---" (blocked) |
-| **15M** | yfinance only | ⚠️ Shows "---" (blocked) |
-| **5M** | yfinance only | ⚠️ Shows "---" (blocked) |
+| **1D** | Polygon.io | ✅ Requires API key |
+| **4H** | Polygon.io | ✅ Requires API key |
+| **1H** | Polygon.io | ✅ Requires API key |
+| **15M** | Polygon.io | ✅ Requires API key |
+| **5M** | Polygon.io | ✅ Requires API key |
+| **VIX** | Polygon.io | ✅ Requires API key |
 
 ---
 
-## 🚀 TO GET ALL TIMEFRAMES WORKING
+## ⚠️ TROUBLESHOOTING
 
-If you want **all 5 timeframes** (including intraday), you need a paid service:
+### RSI Not Showing in App
 
-### Option: Polygon.io (Recommended for Intraday)
+**Symptom**: Multi-Timeframe RSI section doesn't appear in GEX page
 
-1. **Sign up**: https://polygon.io/
-2. **Pricing**: $29/month (Starter plan)
-3. **Features**: 
-   - Daily data ✅
-   - Intraday data (1m, 5m, 15m, 1h, 4h) ✅
-   - Unlimited API calls
-4. **Add to Render**:
-   - Key: `POLYGON_API_KEY`
-   - Value: Your Polygon API key
+**Cause**: `POLYGON_API_KEY` not configured in Render
 
-The backend will automatically detect and use Polygon for intraday RSI if the key is present.
+**Fix**:
+1. Check Render dashboard → alphagex-api → Environment
+2. Verify `POLYGON_API_KEY` exists and has correct value
+3. Check logs for: `⚠️ No Polygon.io API key - RSI calculation will fail`
+4. If key is missing, add it (see STEP 1 above)
+
+### Getting "403 Forbidden" Errors
+
+**Symptom**: Logs show `⚠️ Polygon.io HTTP 403`
+
+**Causes**:
+- API key is invalid or expired
+- Accessing real-time data with free tier key
+- Rate limit exceeded
+
+**Fix**:
+1. Verify API key is correct
+2. Check your Polygon.io dashboard for key status
+3. If using free tier, expect 15-minute delays
+4. Consider upgrading to paid tier
+
+### Getting "---" for Some Timeframes
+
+**Symptom**: 1D RSI shows value, but 4H/1H/15M/5M show "---"
+
+**Causes**:
+- Free tier key (doesn't support intraday data)
+- Rate limits exceeded
+- Weekend/market closed (not enough recent data)
+
+**Fix**:
+1. Upgrade to Starter plan ($29/month) for intraday data
+2. Check Polygon.io rate limits
+3. Wait for market open if testing on weekend
+
+### Backend Crashes
+
+**Symptom**: Backend returns 500 errors
+
+**This should NOT happen** - the code gracefully handles missing RSI:
+- Missing API key → Returns `rsi: null`
+- API error → Returns `rsi: null`
+- Frontend → Hides RSI section when `null`
+
+If crashing, check logs for Python exceptions and report as bug.
 
 ---
 
-## ⚠️ IMPORTANT NOTES
+## 🎯 QUICK START CHECKLIST
 
-### Alpha Vantage Free Tier Limits
-- **500 calls/day**
-- **5 calls/minute**
-- **Daily data only** (no intraday)
+- [ ] Get Polygon.io API key (free or paid)
+- [ ] Add `POLYGON_API_KEY` to Render environment
+- [ ] Wait for Render to redeploy (5-10 min)
+- [ ] Check logs for successful RSI fetches
+- [ ] Open app and verify RSI values appear
+- [ ] ✅ Done!
 
-If you exceed limits, you'll see:
-```json
-{"Note": "Thank you for using Alpha Vantage! Our standard API rate limit is 5 requests per minute..."}
-```
+---
 
-### System Behavior
-- ✅ **Never crashes** - always degrades gracefully to "---"
-- ✅ **Automatic fallback** - tries yfinance first, then Alpha Vantage
-- ✅ **Detailed logging** - all attempts logged in Render logs
+## 💰 COST BREAKDOWN
+
+**Option 1: Free Tier**
+- Cost: $0/month
+- Data: 15-minute delayed
+- Rate Limit: 5 calls/minute
+- Use Case: Testing, development
+
+**Option 2: Starter Plan (RECOMMENDED)**
+- Cost: $29/month
+- Data: Real-time
+- Rate Limit: Unlimited
+- Use Case: Production trading app
 
 ---
 
 ## 📞 SUPPORT
 
-**If RSI still shows "---" after configuration:**
+**If RSI still not showing:**
 
-1. Check Render logs for exact error messages
-2. Test Alpha Vantage key in browser (link above)
-3. Verify environment variable is set correctly
-4. Check if API limit exceeded (wait 1 minute and try again)
+1. ✅ Check `POLYGON_API_KEY` is set in Render
+2. ✅ Check Render logs for error messages
+3. ✅ Test API key directly:
+   ```bash
+   curl "https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/2025-01-01/2025-12-31?apiKey=YOUR_KEY"
+   ```
+4. ✅ Verify you're on correct plan (Starter for intraday)
 
-**Quick Debug:**
-```bash
-# Test in Render Shell
-curl "https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=SPY&apikey=IW5CSY60VSCU8TUJ"
-```
+**API Documentation**:
+- https://polygon.io/docs/stocks/getting-started
+
+**Polygon.io Support**:
+- Email: support@polygon.io
+- Dashboard: https://polygon.io/dashboard
 
 ---
 
-**Last Updated:** 2025-11-12  
-**Commit:** d2bd47a  
-**Status:** ✅ Code deployed to feature branch, awaiting Render environment configuration
+**Last Updated**: 2025-11-13
+**Code Fix**: Backend now returns `null` when RSI unavailable (graceful degradation)
+**Required Action**: Add `POLYGON_API_KEY` to Render environment variables

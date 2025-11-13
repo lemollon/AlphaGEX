@@ -299,14 +299,17 @@ async def get_gex_data(symbol: str):
         # Get psychology data and multi-timeframe RSI for probability calculation
         psychology_data = {}
         rsi_data = {}
-        try:
-            # Simplified approach: Use ONLY Polygon.io for all timeframes
-            import requests
-            import pandas as pd
-            from datetime import datetime, timedelta
 
-            # Get Polygon.io API key
-            polygon_key = os.getenv('POLYGON_API_KEY')
+        # Simplified approach: Use ONLY Polygon.io for all timeframes
+        import requests
+        import pandas as pd
+        from datetime import datetime, timedelta
+
+        # Get Polygon.io API key
+        polygon_key = os.getenv('POLYGON_API_KEY')
+
+        # Separate try block for RSI fetching to prevent psychology errors from wiping RSI data
+        try:
 
             if polygon_key:
                 print(f"✅ Polygon.io API key configured")
@@ -472,6 +475,15 @@ async def get_gex_data(symbol: str):
 
             print(f"📊 RSI Summary: {sum(1 for v in rsi_data.values() if v is not None)}/5 timeframes successful")
 
+        except Exception as e:
+            # Only reset RSI if the RSI fetch itself failed
+            error_msg = str(e)
+            print(f"⚠️  Could not fetch RSI data for {symbol}: {error_msg}")
+            rsi_data = {}
+            print(f"📊 RSI Summary: 0/5 timeframes successful")
+
+        # Calculate psychology state (separate try block so errors here don't affect RSI)
+        try:
             # Use 1d RSI for psychology state (most reliable)
             current_rsi = rsi_data.get('1d', 50)
             if current_rsi is None:
@@ -500,18 +512,11 @@ async def get_gex_data(symbol: str):
                     'rsi': current_rsi
                 }
         except Exception as e:
+            # Psychology calculation error - use defaults but DON'T reset RSI data
             error_msg = str(e)
-            if '403' in error_msg or 'Access denied' in error_msg:
-                print(f"⚠️  Yahoo Finance blocked RSI request for {symbol} (HTTP 403)")
-                print(f"    This is normal - Yahoo frequently blocks automated requests")
-                print(f"    Multi-timeframe RSI will show '---' in UI (feature is best-effort)")
-            else:
-                print(f"⚠️  Could not fetch RSI/psychology data for {symbol}: {error_msg}")
-
-            # Return default values - UI will show "---" for RSI
+            print(f"⚠️  Could not calculate psychology state for {symbol}: {error_msg}")
+            # Return default psychology values (RSI data remains intact)
             psychology_data = {'fomo_level': 50, 'fear_level': 50, 'state': 'BALANCED', 'rsi': 50}
-            rsi_data = {}
-            print(f"📊 RSI Summary: 0/5 timeframes successful (Yahoo Finance blocking requests)")
 
         # Calculate probability (EOD and Next Day)
         spot_price = gex_data.get('spot_price', 0)
@@ -614,8 +619,8 @@ async def get_gex_data(symbol: str):
             "psychology": psychology_data,
             "mm_state": mm_state,
             "vix": vix_level,
-            # NEW: Add multi-timeframe RSI
-            "rsi": rsi_data
+            # NEW: Add multi-timeframe RSI (return null if no data fetched)
+            "rsi": rsi_data if rsi_data and any(v is not None for v in rsi_data.values()) else None
         }
 
         return {
