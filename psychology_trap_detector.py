@@ -252,31 +252,42 @@ def calculate_rsi(prices: np.ndarray, period: int = 14) -> float:
         period: RSI period (default 14)
 
     Returns:
-        RSI value (0-100)
+        RSI value (0-100), or 50.0 (neutral) if calculation fails
     """
-    if len(prices) < period + 1:
-        return 50.0  # Default neutral if not enough data
+    try:
+        # Validate input
+        if prices is None or len(prices) < period + 1:
+            return 50.0  # Default neutral if not enough data
 
-    deltas = np.diff(prices)
-    gains = np.where(deltas > 0, deltas, 0)
-    losses = np.where(deltas < 0, -deltas, 0)
+        deltas = np.diff(prices)
+        gains = np.where(deltas > 0, deltas, 0)
+        losses = np.where(deltas < 0, -deltas, 0)
 
-    # Calculate initial averages
-    avg_gain = np.mean(gains[:period])
-    avg_loss = np.mean(losses[:period])
+        # Calculate initial averages
+        avg_gain = np.mean(gains[:period])
+        avg_loss = np.mean(losses[:period])
 
-    # Smooth using Wilder's method
-    for i in range(period, len(gains)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        # Smooth using Wilder's method
+        for i in range(period, len(gains)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
 
-    if avg_loss == 0:
-        return 100.0
+        if avg_loss == 0:
+            return 100.0
 
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
 
-    return float(rsi)
+        # Final safety check: ensure result is valid float
+        result = float(rsi)
+        if np.isnan(result) or np.isinf(result):
+            return 50.0
+
+        return result
+    except Exception as e:
+        # If ANY error occurs in RSI calculation, return neutral default
+        print(f"⚠️ RSI calculation error: {e}, returning default 50.0")
+        return 50.0
 
 
 def calculate_mtf_rsi_score(price_data: Dict[str, List[Dict]]) -> Dict:
