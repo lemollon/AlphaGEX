@@ -197,6 +197,10 @@ async def diagnostic():
     elif os.getenv("tv_username"):
         api_key_source = "tv_username"
 
+    # Check Polygon.io API key
+    polygon_key_configured = bool(os.getenv("POLYGON_API_KEY"))
+    polygon_key_length = len(os.getenv("POLYGON_API_KEY", "")) if polygon_key_configured else 0
+
     # DON'T test API connectivity in health check - causes rate limits on deployment
     # Health checks should be fast and not make external API calls
     # API connectivity will be tested when endpoints are actually called
@@ -207,6 +211,8 @@ async def diagnostic():
         "configuration": {
             "api_key_configured": api_key_configured,
             "api_key_source": api_key_source,
+            "polygon_api_key_configured": polygon_key_configured,
+            "polygon_api_key_length": polygon_key_length,
             "api_endpoint": api_client.endpoint if hasattr(api_client, 'endpoint') else "unknown"
         },
         "connectivity": {
@@ -214,6 +220,76 @@ async def diagnostic():
         },
         "cache_stats": api_client.get_api_usage_stats() if hasattr(api_client, 'get_api_usage_stats') else {}
     }
+
+@app.get("/api/diagnostic/rsi")
+async def diagnostic_rsi():
+    """Diagnostic endpoint specifically for RSI data fetching"""
+    import os
+    import requests
+    from datetime import datetime, timedelta
+
+    polygon_key = os.getenv('POLYGON_API_KEY')
+
+    diagnostic_result = {
+        "timestamp": datetime.now().isoformat(),
+        "polygon_key_configured": bool(polygon_key),
+        "polygon_key_length": len(polygon_key) if polygon_key else 0,
+        "polygon_key_preview": polygon_key[:8] + "..." if polygon_key and len(polygon_key) > 8 else "NOT_SET",
+        "test_results": {}
+    }
+
+    if not polygon_key:
+        diagnostic_result["error"] = "POLYGON_API_KEY environment variable not set"
+        diagnostic_result["solution"] = "Add POLYGON_API_KEY to Render environment variables"
+        return diagnostic_result
+
+    # Test Polygon.io API with a simple request
+    try:
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+        url = f"https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/{from_date}/{to_date}"
+        params = {"apiKey": polygon_key, "sort": "desc", "limit": 5}
+
+        response = requests.get(url, params=params, timeout=10)
+
+        diagnostic_result["test_results"] = {
+            "url": url.replace(polygon_key, "***"),
+            "status_code": response.status_code,
+            "response_size": len(response.text),
+        }
+
+        if response.status_code == 200:
+            data = response.json()
+            diagnostic_result["test_results"]["api_status"] = data.get('status')
+            diagnostic_result["test_results"]["results_count"] = data.get('resultsCount', 0)
+            diagnostic_result["test_results"]["success"] = True
+
+            if data.get('results'):
+                diagnostic_result["test_results"]["sample_data"] = {
+                    "latest_date": datetime.fromtimestamp(data['results'][0]['t']/1000).strftime('%Y-%m-%d'),
+                    "latest_close": data['results'][0]['c']
+                }
+        else:
+            diagnostic_result["test_results"]["success"] = False
+            diagnostic_result["test_results"]["error"] = response.text[:500]
+
+            if response.status_code == 403:
+                diagnostic_result["error"] = "Polygon.io API returned 403 Forbidden"
+                diagnostic_result["possible_causes"] = [
+                    "API key is invalid or expired",
+                    "Free tier key trying to access real-time data (needs paid plan)",
+                    "Rate limit exceeded"
+                ]
+            elif response.status_code == 401:
+                diagnostic_result["error"] = "Polygon.io API returned 401 Unauthorized"
+                diagnostic_result["possible_causes"] = ["API key is invalid"]
+
+    except Exception as e:
+        diagnostic_result["test_results"]["success"] = False
+        diagnostic_result["test_results"]["exception"] = str(e)
+
+    return diagnostic_result
 
 # ============================================================================
 # GEX Data Endpoints
