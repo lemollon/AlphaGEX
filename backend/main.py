@@ -5,6 +5,7 @@ Main application entry point - Professional Options Intelligence Platform
 
 import os
 import sys
+import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 
