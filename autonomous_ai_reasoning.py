@@ -41,12 +41,12 @@ class AutonomousAIReasoning:
         else:
             # Initialize Claude via LangChain
             self.llm = ChatAnthropic(
-                model="claude-sonnet-4-5-20250929",  # Latest Claude Sonnet
+                model="claude-haiku-4-5-20251001",  # Latest Claude Haiku 4.5 (fastest, cheapest)
                 anthropic_api_key=self.claude_api_key,
                 temperature=0.1,  # Low temperature for consistent, logical reasoning
                 max_tokens=2000
             )
-            print("✅ Claude AI reasoning engine initialized (Sonnet 4.5)")
+            print("✅ Claude AI reasoning engine initialized (Haiku 4.5 - fast & cost-effective)")
 
     def analyze_strike_selection(self, regime: Dict, spot_price: float,
                                  alternative_strikes: List[float]) -> Dict:
