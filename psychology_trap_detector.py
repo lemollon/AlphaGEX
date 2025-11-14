@@ -734,7 +734,7 @@ def identify_liberation_setups(expiration_timeline: List[Dict], current_price: f
         distance = current_walls['call_wall']['distance_pct']
 
         # Is price near this wall? (within 3%)
-        if 0 < distance < 3:
+        if distance is not None and 0 < distance < 3:
             gamma_expiring_soon = 0
             gamma_persisting = 0
 
@@ -775,7 +775,7 @@ def identify_liberation_setups(expiration_timeline: List[Dict], current_price: f
         put_strike = current_walls['put_wall']['strike']
         distance = current_walls['put_wall']['distance_pct']
 
-        if 0 < distance < 3:
+        if distance is not None and 0 < distance < 3:
             gamma_expiring_soon = 0
             gamma_persisting = 0
 
@@ -835,7 +835,7 @@ def identify_false_floors(expiration_timeline: List[Dict], current_price: float,
     distance = current_walls['put_wall']['distance_pct']
 
     # Only consider if put wall is close (within 5%)
-    if not (0 < distance < 5):
+    if distance is None or not (0 < distance < 5):
         return false_floors
 
     # Calculate expiring vs persisting gamma
