@@ -545,7 +545,7 @@ export default function AutonomousTrader() {
                 'RISK_CHECK': { color: 'green-500', icon: '✅', title: 'Risk Manager' },
                 'TRADE_DECISION': { color: 'purple-500', icon: '⚡', title: 'Trade Decision' }
               }
-              const config = logTypeConfig[log.log_type] || { color: 'primary', icon: '📝', title: log.log_type }
+              const config = logTypeConfig[log.log_type as keyof typeof logTypeConfig] || { color: 'primary', icon: '📝', title: log.log_type }
 
               return (
                 <div key={idx} className={`p-4 bg-gradient-to-r from-${config.color}/10 to-transparent rounded-lg border-l-4 border-${config.color}`}>
