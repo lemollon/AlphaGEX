@@ -9,50 +9,29 @@ import pandas as pd
 from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
 from config_and_database import DB_PATH
-import yfinance as yf
+from polygon_data_fetcher import polygon_fetcher
 import time
 import os
 
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str) -> Dict:
-    """Get REAL option price from Yahoo Finance"""
+    """Get REAL option price from Polygon.io"""
     try:
-        ticker = yf.Ticker(symbol)
-        options = ticker.option_chain(expiration_date)
+        # Use Polygon.io to get option quote
+        quote = polygon_fetcher.get_option_quote(
+            symbol=symbol,
+            strike=strike,
+            expiration=expiration_date,
+            option_type=option_type
+        )
 
-        if option_type.lower() == 'call':
-            chain = options.calls
-        else:
-            chain = options.puts
+        if quote is None:
+            return {'error': 'No option data found from Polygon.io'}
 
-        # Find exact strike or closest
-        option_data = chain[chain['strike'] == strike]
-
-        if option_data.empty:
-            chain['strike_diff'] = abs(chain['strike'] - strike)
-            closest = chain.nsmallest(1, 'strike_diff')
-            if not closest.empty:
-                option_data = closest
-
-        if option_data.empty:
-            return {'error': 'No option data found'}
-
-        row = option_data.iloc[0]
-
-        return {
-            'bid': float(row.get('bid', 0)),
-            'ask': float(row.get('ask', 0)),
-            'last': float(row.get('lastPrice', 0)),
-            'mid': (float(row.get('bid', 0)) + float(row.get('ask', 0))) / 2,
-            'volume': int(row.get('volume', 0)),
-            'open_interest': int(row.get('openInterest', 0)),
-            'implied_volatility': float(row.get('impliedVolatility', 0)),
-            'strike': float(row['strike']),
-            'contract_symbol': row.get('contractSymbol', '')
-        }
+        return quote
 
     except Exception as e:
-        print(f"Error fetching option price: {e}")
+        print(f"Error fetching option price from Polygon.io: {e}")
         return {'error': str(e)}
 
 
@@ -548,42 +527,28 @@ class AutonomousPaperTrader:
             return None
 
     def _get_vix(self) -> float:
-        """Get current VIX level for volatility regime - REAL-TIME"""
+        """Get current VIX level for volatility regime - REAL-TIME from Polygon.io"""
         try:
-            import yfinance as yf
-            # Force fresh data - don't use cache
-            vix_ticker = yf.Ticker('^VIX')
-            # Try latest quote first (most current)
-            vix_info = vix_ticker.info
-            if vix_info and 'regularMarketPrice' in vix_info:
-                vix_price = float(vix_info['regularMarketPrice'])
-                if vix_price > 0:
-                    print(f"✅ VIX fetched: {vix_price:.2f}")
-                    return vix_price
+            # Get current VIX price from Polygon.io
+            vix_price = polygon_fetcher.get_current_price('^VIX')
 
-            # Fallback to history if info doesn't work
-            vix_data = vix_ticker.history(period='1d', interval='1m')
-            if not vix_data.empty:
-                vix_price = float(vix_data['Close'].iloc[-1])
-                print(f"✅ VIX fetched (history): {vix_price:.2f}")
+            if vix_price and vix_price > 0:
+                print(f"✅ VIX fetched from Polygon.io: {vix_price:.2f}")
                 return vix_price
 
-            print(f"⚠️ VIX data empty - using default 20.0")
+            print(f"⚠️ VIX data unavailable from Polygon.io - using default 20.0")
             return 20.0  # Default neutral VIX
         except Exception as e:
-            print(f"❌ Failed to fetch VIX: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Failed to fetch VIX from Polygon.io: {e}")
             return 20.0
 
     def _get_momentum(self) -> Dict:
-        """Calculate recent momentum (1h, 4h price change)"""
+        """Calculate recent momentum (1h, 4h price change) from Polygon.io"""
         try:
-            import yfinance as yf
-            spy = yf.Ticker('SPY')
-            # Get intraday data
-            data = spy.history(period='5d', interval='1h')
-            if len(data) < 5:
+            # Get hourly data from Polygon.io (5 days to ensure enough data)
+            data = polygon_fetcher.get_price_history('SPY', days=5, timeframe='hour', multiplier=1)
+
+            if data is None or len(data) < 5:
                 return {'1h': 0, '4h': 0, 'trend': 'neutral'}
 
             current_price = float(data['Close'].iloc[-1])
@@ -611,7 +576,7 @@ class AutonomousPaperTrader:
                 'trend': trend
             }
         except Exception as e:
-            print(f"Failed to calculate momentum: {e}")
+            print(f"Failed to calculate momentum from Polygon.io: {e}")
             return {'1h': 0, '4h': 0, 'trend': 'neutral'}
 
     def _get_time_context(self) -> Dict:

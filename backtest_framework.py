@@ -16,12 +16,12 @@ Critical Features:
 """
 
 import sqlite3
-import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from config_and_database import DB_PATH
+from polygon_data_fetcher import polygon_fetcher
 
 
 @dataclass
@@ -125,16 +125,29 @@ class BacktestBase:
         self.trades = []
 
     def fetch_historical_data(self) -> pd.DataFrame:
-        """Fetch historical price data from yfinance"""
+        """Fetch historical price data from Polygon.io"""
         print(f"Fetching {self.symbol} data from {self.start_date} to {self.end_date}...")
 
-        ticker = yf.Ticker(self.symbol)
-        df = ticker.history(start=self.start_date, end=self.end_date, interval='1d')
+        # Calculate number of days between start and end
+        start = datetime.strptime(self.start_date, '%Y-%m-%d')
+        end = datetime.strptime(self.end_date, '%Y-%m-%d')
+        days = (end - start).days
 
-        if df.empty:
-            raise ValueError(f"No data fetched for {self.symbol}")
+        # Fetch from Polygon.io
+        df = polygon_fetcher.get_price_history(
+            symbol=self.symbol,
+            days=days,
+            timeframe='day',
+            multiplier=1
+        )
 
-        print(f"✓ Fetched {len(df)} days of data")
+        if df is None or df.empty:
+            raise ValueError(f"No data fetched for {self.symbol} from Polygon.io")
+
+        # Filter to exact date range
+        df = df[(df.index >= start) & (df.index <= end)]
+
+        print(f"✓ Fetched {len(df)} days of data from Polygon.io")
         self.price_data = df
         return df
 
