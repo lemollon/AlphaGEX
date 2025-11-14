@@ -32,6 +32,27 @@ except ImportError as e:
     print(f"⚠️ Psychology Trap Detector not available: {e}")
     print("   Falling back to basic GEX analysis")
 
+# CRITICAL: Import AI Reasoning Engine (LangChain + Claude)
+try:
+    from autonomous_ai_reasoning import get_ai_reasoning
+    ai_reasoning = get_ai_reasoning()
+    AI_REASONING_AVAILABLE = ai_reasoning.llm is not None
+    if AI_REASONING_AVAILABLE:
+        print("✅ AI Reasoning Engine (LangChain + Claude) ready")
+except ImportError as e:
+    AI_REASONING_AVAILABLE = False
+    ai_reasoning = None
+    print(f"⚠️ AI Reasoning not available: {e}")
+
+# CRITICAL: Import Database Logger
+try:
+    from autonomous_database_logger import get_database_logger
+    DATABASE_LOGGER_AVAILABLE = True
+    print("✅ Database Logger ready for comprehensive logging")
+except ImportError as e:
+    DATABASE_LOGGER_AVAILABLE = False
+    print(f"⚠️ Database Logger not available: {e}")
+
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str) -> Dict:
     """Get REAL option price from Polygon.io"""
