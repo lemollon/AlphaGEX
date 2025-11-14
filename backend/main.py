@@ -4173,6 +4173,12 @@ from psychology_trading_guide import get_trading_guide
 from psychology_performance import performance_tracker
 from psychology_notifications import notification_manager
 
+# Import autonomous trader routes
+from backend.autonomous_routes import router as autonomous_router
+
+# Include autonomous trader routes
+app.include_router(autonomous_router)
+
 # ==============================================================================
 # POLYGON.IO PRICE DATA CACHING - Psychology page fetches once per day
 # ==============================================================================

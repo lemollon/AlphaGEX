@@ -56,6 +56,31 @@ export const apiClient = {
   getStrategies: () => api.get('/api/trader/strategies'),
   compareStrategies: (symbol: string = 'SPY') => api.get('/api/strategies/compare', { params: { symbol } }),
 
+  // Autonomous Trader - Advanced Features
+  getAutonomousLogs: (params?: { limit?: number, log_type?: string, session_id?: string, symbol?: string }) =>
+    api.get('/api/autonomous/logs', { params }),
+  getLogSessions: (limit: number = 10) => api.get('/api/autonomous/logs/sessions', { params: { limit } }),
+  getCompetitionLeaderboard: () => api.get('/api/autonomous/competition/leaderboard'),
+  getStrategyPerformance: (strategyId: string) => api.get(`/api/autonomous/competition/strategy/${strategyId}`),
+  getCompetitionSummary: () => api.get('/api/autonomous/competition/summary'),
+  getAllPatternBacktests: (lookbackDays: number = 90) =>
+    api.get('/api/autonomous/backtests/all-patterns', { params: { lookback_days: lookbackDays } }),
+  getPatternBacktest: (patternName: string, lookbackDays: number = 90) =>
+    api.get(`/api/autonomous/backtests/pattern/${patternName}`, { params: { lookback_days: lookbackDays } }),
+  getLiberationAccuracy: (lookbackDays: number = 90) =>
+    api.get('/api/autonomous/backtests/liberation-accuracy', { params: { lookback_days: lookbackDays } }),
+  getFalseFloorEffectiveness: (lookbackDays: number = 90) =>
+    api.get('/api/autonomous/backtests/false-floor-effectiveness', { params: { lookback_days: lookbackDays } }),
+  getRiskStatus: () => api.get('/api/autonomous/risk/status'),
+  getRiskMetrics: (days: number = 30) => api.get('/api/autonomous/risk/metrics', { params: { days } }),
+  getMLModelStatus: () => api.get('/api/autonomous/ml/model-status'),
+  trainMLModel: (lookbackDays: number = 180) =>
+    api.post('/api/autonomous/ml/train', {}, { params: { lookback_days: lookbackDays } }),
+  getRecentMLPredictions: (limit: number = 20) =>
+    api.get('/api/autonomous/ml/predictions/recent', { params: { limit } }),
+  initializeAutonomousSystem: () => api.post('/api/autonomous/initialize'),
+  getAutonomousHealth: () => api.get('/api/autonomous/health'),
+
   // Market Data
   getPriceHistory: (symbol: string, days: number = 90) =>
     api.get(`/api/market/price-history/${symbol}`, { params: { days } }),
