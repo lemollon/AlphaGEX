@@ -158,9 +158,9 @@ def scan_symbols(symbols: List[str], api_client, force_refresh: bool = False) ->
 
                     scan_result = {
                         'symbol': symbol,
-                        'spot_price': gex_data.get('spot_price', 0),
-                        'net_gex': gex_data.get('net_gex', 0) / 1e9,  # In billions
-                        'flip_point': gex_data.get('flip_point', 0),
+                        'spot_price': gex_data.get('spot_price') or 0,
+                        'net_gex': (gex_data.get('net_gex') or 0) / 1e9,  # In billions
+                        'flip_point': gex_data.get('flip_point') or 0,
                         'distance_to_flip': ((gex_data.get('flip_point', 0) - gex_data.get('spot_price', 0)) /
                                              gex_data.get('spot_price', 1) * 100) if gex_data.get('spot_price') else 0,
                         'setup_type': best_setup.get('strategy', 'N/A') if best_setup else 'N/A',

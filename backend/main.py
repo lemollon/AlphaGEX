@@ -2707,11 +2707,11 @@ async def scan_symbols(request: dict):
                     print(f"⚠️ {symbol} returned error or no data, skipping...")
                     continue
 
-                net_gex = gex_data.get('net_gex', 0)
-                spot_price = gex_data.get('spot_price', 0)
-                flip_point = gex_data.get('flip_point', 0)
-                call_wall = gex_data.get('call_wall', 0)
-                put_wall = gex_data.get('put_wall', 0)
+                net_gex = gex_data.get('net_gex') or 0
+                spot_price = gex_data.get('spot_price') or 0
+                flip_point = gex_data.get('flip_point') or 0
+                call_wall = gex_data.get('call_wall') or 0
+                put_wall = gex_data.get('put_wall') or 0
 
                 # Helper function to round strikes appropriately
                 def round_strike(price, increment=1.0):
