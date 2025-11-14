@@ -4577,6 +4577,19 @@ async def get_sucker_statistics():
     """
     Get statistics on how often newbie logic fails
     Shows historical success/failure rates for different scenarios
+
+    Returns:
+        {
+            "success": bool,
+            "count": int,
+            "statistics": List[dict],
+            "summary": {
+                "total_scenarios": int,
+                "avg_failure_rate": float,
+                "most_dangerous_trap": str,
+                "safest_fade": str
+            }
+        }
     """
     try:
         import sqlite3
@@ -4596,27 +4609,33 @@ async def get_sucker_statistics():
             stat = dict(zip(columns, row))
             stats.append(stat)
 
-        # If no data, return default stats
-        if not stats:
-            stats = [
-                {
-                    'scenario_type': 'LIBERATION_TRADE',
-                    'total_occurrences': 0,
-                    'newbie_fade_failed': 0,
-                    'newbie_fade_succeeded': 0,
-                    'failure_rate': 0,
-                    'avg_price_change_when_failed': 0,
-                    'avg_days_to_resolution': 0,
-                    'last_updated': None
-                }
-            ]
-
         conn.close()
+
+        # Calculate summary statistics
+        summary = {
+            "total_scenarios": len(stats),
+            "avg_failure_rate": 0,
+            "most_dangerous_trap": "N/A",
+            "safest_fade": "N/A"
+        }
+
+        if stats:
+            # Average failure rate
+            summary["avg_failure_rate"] = sum(s.get('failure_rate', 0) for s in stats) / len(stats)
+
+            # Most dangerous trap (highest failure rate)
+            most_dangerous = max(stats, key=lambda x: x.get('failure_rate', 0))
+            summary["most_dangerous_trap"] = most_dangerous.get('scenario_type', 'N/A')
+
+            # Safest fade (lowest failure rate)
+            safest = min(stats, key=lambda x: x.get('failure_rate', 0))
+            summary["safest_fade"] = safest.get('scenario_type', 'N/A')
 
         return {
             "success": True,
             "count": len(stats),
-            "statistics": stats
+            "statistics": stats,
+            "summary": summary
         }
 
     except Exception as e:
