@@ -474,13 +474,18 @@ def init_database():
         CREATE TABLE IF NOT EXISTS historical_open_interest (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date DATE NOT NULL,
+            symbol TEXT NOT NULL,
             strike REAL NOT NULL,
             expiration_date DATE NOT NULL,
 
             call_oi INTEGER,
             put_oi INTEGER,
+            call_volume INTEGER DEFAULT 0,
+            put_volume INTEGER DEFAULT 0,
             call_gamma REAL,
-            put_gamma REAL
+            put_gamma REAL,
+
+            UNIQUE(date, symbol, strike, expiration_date)
         )
     ''')
 
