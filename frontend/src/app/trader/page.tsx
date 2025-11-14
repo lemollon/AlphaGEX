@@ -79,6 +79,12 @@ export default function AutonomousTrader() {
 
   const [recentTrades, setRecentTrades] = useState<Trade[]>([])
 
+  // Autonomous trader advanced features state
+  const [autonomousLogs, setAutonomousLogs] = useState<any[]>([])
+  const [competitionLeaderboard, setCompetitionLeaderboard] = useState<any[]>([])
+  const [backtestResults, setBacktestResults] = useState<any[]>([])
+  const [riskStatus, setRiskStatus] = useState<any>(null)
+
   // Fetch data from API
   useEffect(() => {
     const fetchData = async () => {
@@ -86,11 +92,15 @@ export default function AutonomousTrader() {
         setLoading(true)
 
         // Fetch trader status, performance, and trades in parallel
-        const [statusRes, perfRes, tradesRes, strategiesRes] = await Promise.all([
+        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes] = await Promise.all([
           apiClient.getTraderStatus(),
           apiClient.getTraderPerformance(),
           apiClient.getTraderTrades(10),
-          apiClient.getStrategies()
+          apiClient.getStrategies(),
+          apiClient.getAutonomousLogs({ limit: 20 }),
+          apiClient.getCompetitionLeaderboard(),
+          apiClient.getAllPatternBacktests(90),
+          apiClient.getRiskStatus()
         ])
 
         if (statusRes.data.success) {
@@ -130,6 +140,23 @@ export default function AutonomousTrader() {
             pnl: trade.realized_pnl || trade.unrealized_pnl || 0
           }))
           setRecentTrades(mappedTrades)
+        }
+
+        // Set autonomous trader advanced features data
+        if (logsRes.data.success) {
+          setAutonomousLogs(logsRes.data.data || [])
+        }
+
+        if (leaderboardRes.data.success) {
+          setCompetitionLeaderboard(leaderboardRes.data.data || [])
+        }
+
+        if (backtestsRes.data.success) {
+          setBacktestResults(backtestsRes.data.data || [])
+        }
+
+        if (riskRes.data.success) {
+          setRiskStatus(riskRes.data.data)
         }
       } catch (error) {
         console.error('Error fetching trader data:', error)
@@ -508,56 +535,42 @@ export default function AutonomousTrader() {
         </div>
 
         <div className="space-y-3 max-h-96 overflow-y-auto">
-          {/* These will be populated from autonomous_trader_logs table */}
-          <div className="p-4 bg-gradient-to-r from-primary/10 to-transparent rounded-lg border-l-4 border-primary">
-            <div className="flex items-start gap-3">
-              <span className="text-xs text-text-muted">12:05 PM</span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-primary mb-1">🔍 Psychology Scan Complete</p>
-                <p className="text-text-secondary text-sm">Pattern: LIBERATION_BULLISH | Confidence: 87% | Strike: $585 | RSI aligned oversold across 5 timeframes</p>
-              </div>
-            </div>
-          </div>
+          {autonomousLogs.length > 0 ? (
+            autonomousLogs.map((log, idx) => {
+              const logTypeConfig = {
+                'PSYCHOLOGY_ANALYSIS': { color: 'primary', icon: '🔍', title: 'Psychology Scan' },
+                'STRIKE_SELECTION': { color: 'warning', icon: '🎯', title: 'AI Strike Selection' },
+                'POSITION_SIZING': { color: 'success', icon: '💰', title: 'Position Sizing' },
+                'AI_EVALUATION': { color: 'blue-500', icon: '🤖', title: 'ML Pattern Prediction' },
+                'RISK_CHECK': { color: 'green-500', icon: '✅', title: 'Risk Manager' },
+                'TRADE_DECISION': { color: 'purple-500', icon: '⚡', title: 'Trade Decision' }
+              }
+              const config = logTypeConfig[log.log_type] || { color: 'primary', icon: '📝', title: log.log_type }
 
-          <div className="p-4 bg-gradient-to-r from-warning/10 to-transparent rounded-lg border-l-4 border-warning">
-            <div className="flex items-start gap-3">
-              <span className="text-xs text-text-muted">12:05 PM</span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-warning mb-1">🎯 AI Strike Selection</p>
-                <p className="text-text-secondary text-sm">Recommended: $585 (vs $580/$590 alternatives) | Reason: Optimal delta positioning near liberation wall</p>
-              </div>
+              return (
+                <div key={idx} className={`p-4 bg-gradient-to-r from-${config.color}/10 to-transparent rounded-lg border-l-4 border-${config.color}`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-xs text-text-muted">{formatTime(log.timestamp)}</span>
+                    <div className="flex-1">
+                      <p className={`text-sm font-semibold text-${config.color} mb-1`}>{config.icon} {config.title}</p>
+                      <p className="text-text-secondary text-sm">
+                        {log.log_type === 'PSYCHOLOGY_ANALYSIS' && `Pattern: ${log.pattern_detected || 'N/A'} | Confidence: ${log.confidence_score || 0}% | Symbol: ${log.symbol || 'SPY'}`}
+                        {log.log_type === 'STRIKE_SELECTION' && `Strike: $${log.strike_chosen} | ${log.strike_selection_reason || 'Optimizing delta positioning'}`}
+                        {log.log_type === 'POSITION_SIZING' && `Kelly: ${log.kelly_pct || 0}% | Contracts: ${log.contracts || 0} | ${log.sizing_rationale || ''}`}
+                        {log.log_type === 'AI_EVALUATION' && `AI Confidence: ${log.ai_confidence || 0}% | ${log.ai_thought_process || 'Evaluating market conditions'}`}
+                        {log.log_type === 'RISK_CHECK' && (log.reasoning_summary || 'All risk checks passed')}
+                        {log.log_type === 'TRADE_DECISION' && `Action: ${log.action_taken || 'EVALUATING'} | ${log.reasoning_summary || ''}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )
+            })
+          ) : (
+            <div className="text-center py-8 text-text-secondary">
+              <p>No autonomous trader logs yet. Logs will appear here as the trader analyzes markets.</p>
             </div>
-          </div>
-
-          <div className="p-4 bg-gradient-to-r from-success/10 to-transparent rounded-lg border-l-4 border-success">
-            <div className="flex-1 items-start gap-3">
-              <span className="text-xs text-text-muted">12:05 PM</span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-success mb-1">💰 Position Sizing (Kelly Criterion)</p>
-                <p className="text-text-secondary text-sm">Kelly: 8.2% | Contracts: 3 | Rationale: High confidence + strong win rate justifies larger position</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-4 bg-gradient-to-r from-blue-500/10 to-transparent rounded-lg border-l-4 border-blue-500">
-            <div className="flex items-start gap-3">
-              <span className="text-xs text-text-muted">12:05 PM</span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-blue-500 mb-1">🤖 ML Pattern Prediction</p>
-                <p className="text-text-secondary text-sm">Success Probability: 78% | ML Confidence: HIGH | Adjusted Confidence: 89% (boosted from 87%)</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-4 bg-gradient-to-r from-green-500/10 to-transparent rounded-lg border-l-4 border-green-500">
-            <div className="flex items-start gap-3">
-              <span className="text-xs text-text-muted">12:05 PM</span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-green-500 mb-1">✅ Risk Manager Approval</p>
-                <p className="text-text-secondary text-sm">All checks passed | Drawdown: 3.2% (limit: 15%) | Daily loss: 1.1% (limit: 5%) | Position size: 18% (limit: 20%)</p>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
 
         <div className="mt-4 p-3 bg-primary/10 rounded-lg text-center">
@@ -588,33 +601,35 @@ export default function AutonomousTrader() {
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b border-border/50 hover:bg-background-hover transition-colors bg-warning/5">
-                <td className="py-3 px-4 text-warning font-bold">🥇 1</td>
-                <td className="py-3 px-4 text-text-primary font-semibold">Psychology Trap + Liberation</td>
-                <td className="py-3 px-4 text-right text-success font-bold">+15.2%</td>
-                <td className="py-3 px-4 text-right text-text-primary">72%</td>
-                <td className="py-3 px-4 text-right text-text-primary">18</td>
-                <td className="py-3 px-4 text-right text-text-primary">1.85</td>
-                <td className="py-3 px-4 text-right text-success font-semibold">+$760</td>
-              </tr>
-              <tr className="border-b border-border/50 hover:bg-background-hover transition-colors">
-                <td className="py-3 px-4 text-text-secondary font-bold">🥈 2</td>
-                <td className="py-3 px-4 text-text-primary">AI-Powered (Claude Decision)</td>
-                <td className="py-3 px-4 text-right text-success font-bold">+12.8%</td>
-                <td className="py-3 px-4 text-right text-text-primary">68%</td>
-                <td className="py-3 px-4 text-right text-text-primary">15</td>
-                <td className="py-3 px-4 text-right text-text-primary">1.62</td>
-                <td className="py-3 px-4 text-right text-success font-semibold">+$640</td>
-              </tr>
-              <tr className="border-b border-border/50 hover:bg-background-hover transition-colors">
-                <td className="py-3 px-4 text-text-secondary font-bold">🥉 3</td>
-                <td className="py-3 px-4 text-text-primary">Liberation Only</td>
-                <td className="py-3 px-4 text-right text-success font-bold">+9.4%</td>
-                <td className="py-3 px-4 text-right text-text-primary">80%</td>
-                <td className="py-3 px-4 text-right text-text-primary">10</td>
-                <td className="py-3 px-4 text-right text-text-primary">1.95</td>
-                <td className="py-3 px-4 text-right text-success font-semibold">+$470</td>
-              </tr>
+              {competitionLeaderboard.length > 0 ? (
+                competitionLeaderboard.map((strategy, idx) => {
+                  const rankEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : (idx + 1).toString()
+                  const returnPct = ((strategy.current_capital - strategy.starting_capital) / strategy.starting_capital * 100).toFixed(1)
+                  const isPositive = parseFloat(returnPct) >= 0
+
+                  return (
+                    <tr key={strategy.strategy_id} className={`border-b border-border/50 hover:bg-background-hover transition-colors ${idx === 0 ? 'bg-warning/5' : ''}`}>
+                      <td className={`py-3 px-4 font-bold ${idx === 0 ? 'text-warning' : 'text-text-secondary'}`}>{rankEmoji} {idx + 1}</td>
+                      <td className="py-3 px-4 text-text-primary font-semibold">{strategy.strategy_name}</td>
+                      <td className={`py-3 px-4 text-right font-bold ${isPositive ? 'text-success' : 'text-danger'}`}>
+                        {isPositive ? '+' : ''}{returnPct}%
+                      </td>
+                      <td className="py-3 px-4 text-right text-text-primary">{(strategy.win_rate * 100).toFixed(0)}%</td>
+                      <td className="py-3 px-4 text-right text-text-primary">{strategy.total_trades}</td>
+                      <td className="py-3 px-4 text-right text-text-primary">{strategy.sharpe_ratio?.toFixed(2) || '0.00'}</td>
+                      <td className={`py-3 px-4 text-right font-semibold ${isPositive ? 'text-success' : 'text-danger'}`}>
+                        {isPositive ? '+' : ''}{formatCurrency(strategy.current_capital - strategy.starting_capital)}
+                      </td>
+                    </tr>
+                  )
+                })
+              ) : (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-text-secondary">
+                    No competition data yet. Strategies will appear here as trades execute.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -634,23 +649,46 @@ export default function AutonomousTrader() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="p-4 bg-success/10 rounded-lg border border-success/20">
-            <p className="text-text-secondary text-sm mb-1">Best Pattern</p>
-            <p className="text-text-primary font-bold text-lg">Liberation Bullish</p>
-            <p className="text-success font-semibold text-sm mt-1">Win Rate: 85% | Expectancy: +4.2%</p>
-          </div>
+          {backtestResults.length > 0 ? (
+            <>
+              {/* Best Pattern by Win Rate */}
+              {backtestResults[0] && (
+                <div className="p-4 bg-success/10 rounded-lg border border-success/20">
+                  <p className="text-text-secondary text-sm mb-1">Best Pattern</p>
+                  <p className="text-text-primary font-bold text-lg">{backtestResults[0].pattern}</p>
+                  <p className="text-success font-semibold text-sm mt-1">
+                    Win Rate: {backtestResults[0].win_rate?.toFixed(0)}% | Expectancy: {backtestResults[0].expectancy > 0 ? '+' : ''}{backtestResults[0].expectancy?.toFixed(2)}%
+                  </p>
+                </div>
+              )}
 
-          <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
-            <p className="text-text-secondary text-sm mb-1">Most Accurate</p>
-            <p className="text-text-primary font-bold text-lg">False Floor Detection</p>
-            <p className="text-primary font-semibold text-sm mt-1">Avoided 12 bad trades | $2,100 saved</p>
-          </div>
+              {/* Most Accurate (highest win rate) */}
+              {backtestResults[1] && (
+                <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
+                  <p className="text-text-secondary text-sm mb-1">Most Accurate</p>
+                  <p className="text-text-primary font-bold text-lg">{backtestResults[1].pattern}</p>
+                  <p className="text-primary font-semibold text-sm mt-1">
+                    Win Rate: {backtestResults[1].win_rate?.toFixed(0)}% | Signals: {backtestResults[1].total_signals}
+                  </p>
+                </div>
+              )}
 
-          <div className="p-4 bg-warning/10 rounded-lg border border-warning/20">
-            <p className="text-text-secondary text-sm mb-1">Highest Return</p>
-            <p className="text-text-primary font-bold text-lg">Forward GEX Magnets</p>
-            <p className="text-warning font-semibold text-sm mt-1">Avg Win: +8.5% | Sharpe: 2.1</p>
-          </div>
+              {/* Highest Return (best Sharpe) */}
+              {backtestResults[2] && (
+                <div className="p-4 bg-warning/10 rounded-lg border border-warning/20">
+                  <p className="text-text-secondary text-sm mb-1">Highest Return</p>
+                  <p className="text-text-primary font-bold text-lg">{backtestResults[2].pattern}</p>
+                  <p className="text-warning font-semibold text-sm mt-1">
+                    Avg Win: {backtestResults[2].avg_profit_pct > 0 ? '+' : ''}{backtestResults[2].avg_profit_pct?.toFixed(2)}% | Sharpe: {backtestResults[2].sharpe_ratio?.toFixed(2)}
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="col-span-3 text-center py-8 text-text-secondary">
+              <p>No backtest data yet. Run backtests to see pattern performance.</p>
+            </div>
+          )}
         </div>
 
         <div className="text-center">
@@ -664,51 +702,123 @@ export default function AutonomousTrader() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="card">
           <h2 className="text-lg font-semibold text-text-primary mb-4">🛡️ Risk Management Status</h2>
-          <div className="space-y-3">
-            <div className="p-3 bg-background-hover rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-text-secondary text-sm">Max Drawdown (15% limit)</span>
-                <span className="text-success font-semibold">3.2%</span>
+          {riskStatus ? (
+            <div className="space-y-3">
+              {/* Max Drawdown */}
+              <div className="p-3 bg-background-hover rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-text-secondary text-sm">Max Drawdown ({riskStatus.limits?.max_drawdown || 15}% limit)</span>
+                  <span className={`font-semibold ${
+                    riskStatus.current_drawdown_pct < (riskStatus.limits?.max_drawdown || 15) * 0.7 ? 'text-success' :
+                    riskStatus.current_drawdown_pct < (riskStatus.limits?.max_drawdown || 15) ? 'text-warning' :
+                    'text-danger'
+                  }`}>
+                    {riskStatus.current_drawdown_pct?.toFixed(1) || 0}%
+                  </span>
+                </div>
+                <div className="w-full bg-background-primary rounded-full h-2">
+                  <div className={`h-2 rounded-full ${
+                    riskStatus.current_drawdown_pct < (riskStatus.limits?.max_drawdown || 15) * 0.7 ? 'bg-success' :
+                    riskStatus.current_drawdown_pct < (riskStatus.limits?.max_drawdown || 15) ? 'bg-warning' :
+                    'bg-danger'
+                  }`} style={{ width: `${Math.min((riskStatus.current_drawdown_pct / (riskStatus.limits?.max_drawdown || 15)) * 100, 100)}%` }}></div>
+                </div>
               </div>
-              <div className="w-full bg-background-primary rounded-full h-2">
-                <div className="bg-success h-2 rounded-full" style={{ width: '21.3%' }}></div>
-              </div>
-            </div>
 
-            <div className="p-3 bg-background-hover rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-text-secondary text-sm">Daily Loss Limit (5% limit)</span>
-                <span className="text-success font-semibold">1.1%</span>
+              {/* Daily Loss */}
+              <div className="p-3 bg-background-hover rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-text-secondary text-sm">Daily Loss Limit ({riskStatus.limits?.daily_loss || 5}% limit)</span>
+                  <span className={`font-semibold ${
+                    riskStatus.daily_loss_pct < (riskStatus.limits?.daily_loss || 5) * 0.7 ? 'text-success' :
+                    riskStatus.daily_loss_pct < (riskStatus.limits?.daily_loss || 5) ? 'text-warning' :
+                    'text-danger'
+                  }`}>
+                    {riskStatus.daily_loss_pct?.toFixed(1) || 0}%
+                  </span>
+                </div>
+                <div className="w-full bg-background-primary rounded-full h-2">
+                  <div className={`h-2 rounded-full ${
+                    riskStatus.daily_loss_pct < (riskStatus.limits?.daily_loss || 5) * 0.7 ? 'bg-success' :
+                    riskStatus.daily_loss_pct < (riskStatus.limits?.daily_loss || 5) ? 'bg-warning' :
+                    'bg-danger'
+                  }`} style={{ width: `${Math.min((riskStatus.daily_loss_pct / (riskStatus.limits?.daily_loss || 5)) * 100, 100)}%` }}></div>
+                </div>
               </div>
-              <div className="w-full bg-background-primary rounded-full h-2">
-                <div className="bg-success h-2 rounded-full" style={{ width: '22%' }}></div>
-              </div>
-            </div>
 
-            <div className="p-3 bg-background-hover rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-text-secondary text-sm">Position Size (20% limit)</span>
-                <span className="text-warning font-semibold">18%</span>
+              {/* Position Size */}
+              <div className="p-3 bg-background-hover rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-text-secondary text-sm">Position Size ({riskStatus.limits?.position_size || 20}% limit)</span>
+                  <span className={`font-semibold ${
+                    riskStatus.position_size_pct < (riskStatus.limits?.position_size || 20) * 0.7 ? 'text-success' :
+                    riskStatus.position_size_pct < (riskStatus.limits?.position_size || 20) ? 'text-warning' :
+                    'text-danger'
+                  }`}>
+                    {riskStatus.position_size_pct?.toFixed(1) || 0}%
+                  </span>
+                </div>
+                <div className="w-full bg-background-primary rounded-full h-2">
+                  <div className={`h-2 rounded-full ${
+                    riskStatus.position_size_pct < (riskStatus.limits?.position_size || 20) * 0.7 ? 'bg-success' :
+                    riskStatus.position_size_pct < (riskStatus.limits?.position_size || 20) ? 'bg-warning' :
+                    'bg-danger'
+                  }`} style={{ width: `${Math.min((riskStatus.position_size_pct / (riskStatus.limits?.position_size || 20)) * 100, 100)}%` }}></div>
+                </div>
               </div>
-              <div className="w-full bg-background-primary rounded-full h-2">
-                <div className="bg-warning h-2 rounded-full" style={{ width: '90%' }}></div>
-              </div>
-            </div>
 
-            <div className="p-3 bg-background-hover rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-text-secondary text-sm">Correlation Exposure (50% limit)</span>
-                <span className="text-success font-semibold">25%</span>
+              {/* Correlation */}
+              <div className="p-3 bg-background-hover rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-text-secondary text-sm">Correlation Exposure ({riskStatus.limits?.correlation || 50}% limit)</span>
+                  <span className={`font-semibold ${
+                    riskStatus.correlation_pct < (riskStatus.limits?.correlation || 50) * 0.7 ? 'text-success' :
+                    riskStatus.correlation_pct < (riskStatus.limits?.correlation || 50) ? 'text-warning' :
+                    'text-danger'
+                  }`}>
+                    {riskStatus.correlation_pct?.toFixed(1) || 0}%
+                  </span>
+                </div>
+                <div className="w-full bg-background-primary rounded-full h-2">
+                  <div className={`h-2 rounded-full ${
+                    riskStatus.correlation_pct < (riskStatus.limits?.correlation || 50) * 0.7 ? 'bg-success' :
+                    riskStatus.correlation_pct < (riskStatus.limits?.correlation || 50) ? 'bg-warning' :
+                    'bg-danger'
+                  }`} style={{ width: `${Math.min((riskStatus.correlation_pct / (riskStatus.limits?.correlation || 50)) * 100, 100)}%` }}></div>
+                </div>
               </div>
-              <div className="w-full bg-background-primary rounded-full h-2">
-                <div className="bg-success h-2 rounded-full" style={{ width: '50%' }}></div>
-              </div>
-            </div>
 
-            <div className="mt-4 p-3 bg-success/10 border border-success/20 rounded-lg text-center">
-              <p className="text-success font-semibold text-sm">✅ ALL RISK LIMITS HEALTHY</p>
+              {/* Overall Status */}
+              <div className={`mt-4 p-3 border rounded-lg text-center ${
+                (riskStatus.status?.max_drawdown === 'HEALTHY' &&
+                 riskStatus.status?.daily_loss === 'HEALTHY' &&
+                 riskStatus.status?.position_size === 'HEALTHY' &&
+                 riskStatus.status?.correlation === 'HEALTHY')
+                  ? 'bg-success/10 border-success/20'
+                  : 'bg-danger/10 border-danger/20'
+              }`}>
+                <p className={`font-semibold text-sm ${
+                  (riskStatus.status?.max_drawdown === 'HEALTHY' &&
+                   riskStatus.status?.daily_loss === 'HEALTHY' &&
+                   riskStatus.status?.position_size === 'HEALTHY' &&
+                   riskStatus.status?.correlation === 'HEALTHY')
+                    ? 'text-success'
+                    : 'text-danger'
+                }`}>
+                  {(riskStatus.status?.max_drawdown === 'HEALTHY' &&
+                    riskStatus.status?.daily_loss === 'HEALTHY' &&
+                    riskStatus.status?.position_size === 'HEALTHY' &&
+                    riskStatus.status?.correlation === 'HEALTHY')
+                    ? '✅ ALL RISK LIMITS HEALTHY'
+                    : '⚠️ RISK LIMIT BREACH DETECTED'}
+                </p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="text-center py-8 text-text-secondary">
+              <p>Loading risk management data...</p>
+            </div>
+          )}
         </div>
 
         <div className="card">
