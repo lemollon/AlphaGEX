@@ -1343,6 +1343,150 @@ async def get_gamma_expiration(symbol: str, vix: float = 0):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/gamma/{symbol}/expiration-waterfall")
+async def get_gamma_expiration_waterfall(symbol: str):
+    """
+    Get gamma expiration data formatted for waterfall visualization
+
+    Returns strike-by-strike gamma breakdown by expiration date
+    showing how gamma decays day-by-day across the timeline
+
+    Args:
+        symbol: Stock symbol (e.g., 'SPY')
+
+    Returns:
+        {
+            "expirations": List[dict],  # Expiration-level data
+            "strikes_by_expiration": dict,  # Strike-level data per expiration
+            "current_price": float,
+            "net_gex": float,
+            "summary": dict
+        }
+    """
+    try:
+        symbol = symbol.upper()
+        print(f"=== GAMMA EXPIRATION WATERFALL REQUEST: {symbol} ===")
+
+        # Use gamma expiration builder
+        import sys
+        from pathlib import Path
+        parent_dir = Path(__file__).parent.parent
+        if str(parent_dir) not in sys.path:
+            sys.path.insert(0, str(parent_dir))
+
+        from gamma_expiration_builder import build_gamma_with_expirations
+
+        # Build complete gamma data with expiration breakdown
+        gamma_data = build_gamma_with_expirations(symbol, use_tv_api=True)
+
+        if not gamma_data or not gamma_data.get('expirations'):
+            return {
+                "success": False,
+                "error": "No expiration data available",
+                "expirations": [],
+                "strikes_by_expiration": {},
+                "current_price": 0,
+                "net_gex": 0,
+                "summary": {}
+            }
+
+        # Format expirations for waterfall
+        expirations = []
+        strikes_by_expiration = {}
+
+        for exp in gamma_data['expirations']:
+            exp_date_str = exp['expiration_date'].isoformat()
+
+            # Expiration-level data
+            expirations.append({
+                'expiration_date': exp_date_str,
+                'dte': exp['dte'],
+                'expiration_type': exp['expiration_type'],
+                'total_gamma_expiring': abs(exp['total_call_gamma']) + abs(exp['total_put_gamma']),
+                'net_gamma': exp['net_gamma'],
+                'strikes_count': len(exp['call_strikes']) + len(exp['put_strikes'])
+            })
+
+            # Strike-level data
+            strikes = {}
+
+            # Process call strikes
+            for strike_data in exp['call_strikes']:
+                strike = strike_data['strike']
+                if strike not in strikes:
+                    strikes[strike] = {
+                        'strike': strike,
+                        'call_gamma': 0,
+                        'put_gamma': 0,
+                        'total_gamma': 0,
+                        'distance_pct': (strike - gamma_data['spot_price']) / gamma_data['spot_price'] * 100 if gamma_data['spot_price'] > 0 else 0
+                    }
+                strikes[strike]['call_gamma'] = abs(strike_data['gamma_exposure'])
+                strikes[strike]['total_gamma'] += abs(strike_data['gamma_exposure'])
+
+            # Process put strikes
+            for strike_data in exp['put_strikes']:
+                strike = strike_data['strike']
+                if strike not in strikes:
+                    strikes[strike] = {
+                        'strike': strike,
+                        'call_gamma': 0,
+                        'put_gamma': 0,
+                        'total_gamma': 0,
+                        'distance_pct': (strike - gamma_data['spot_price']) / gamma_data['spot_price'] * 100 if gamma_data['spot_price'] > 0 else 0
+                    }
+                strikes[strike]['put_gamma'] = abs(strike_data['gamma_exposure'])
+                strikes[strike]['total_gamma'] += abs(strike_data['gamma_exposure'])
+
+            # Sort strikes by total gamma (top 20 per expiration)
+            sorted_strikes = sorted(strikes.values(), key=lambda x: x['total_gamma'], reverse=True)[:20]
+            strikes_by_expiration[exp_date_str] = sorted_strikes
+
+        # Calculate summary statistics
+        total_gamma_next_7d = sum(
+            e['total_gamma_expiring']
+            for e in expirations
+            if e['dte'] <= 7
+        )
+
+        total_gamma_next_30d = sum(
+            e['total_gamma_expiring']
+            for e in expirations
+            if e['dte'] <= 30
+        )
+
+        # Find major expiration (largest gamma)
+        major_exp = max(expirations, key=lambda x: x['total_gamma_expiring']) if expirations else None
+
+        summary = {
+            'total_expirations': len(expirations),
+            'total_gamma_next_7d': total_gamma_next_7d,
+            'total_gamma_next_30d': total_gamma_next_30d,
+            'major_expiration': major_exp['expiration_date'] if major_exp else None,
+            'major_expiration_gamma': major_exp['total_gamma_expiring'] if major_exp else 0
+        }
+
+        print(f"✅ Waterfall data generated: {len(expirations)} expirations")
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "expirations": expirations,
+            "strikes_by_expiration": strikes_by_expiration,
+            "current_price": gamma_data['spot_price'],
+            "net_gex": gamma_data['net_gex'],
+            "summary": summary,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        print(f"❌ Error generating waterfall data: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/gamma/{symbol}/history")
 async def get_gamma_history(symbol: str, days: int = 30):
     """
@@ -4537,6 +4681,19 @@ async def get_sucker_statistics():
     """
     Get statistics on how often newbie logic fails
     Shows historical success/failure rates for different scenarios
+
+    Returns:
+        {
+            "success": bool,
+            "count": int,
+            "statistics": List[dict],
+            "summary": {
+                "total_scenarios": int,
+                "avg_failure_rate": float,
+                "most_dangerous_trap": str,
+                "safest_fade": str
+            }
+        }
     """
     try:
         import sqlite3
@@ -4556,27 +4713,33 @@ async def get_sucker_statistics():
             stat = dict(zip(columns, row))
             stats.append(stat)
 
-        # If no data, return default stats
-        if not stats:
-            stats = [
-                {
-                    'scenario_type': 'LIBERATION_TRADE',
-                    'total_occurrences': 0,
-                    'newbie_fade_failed': 0,
-                    'newbie_fade_succeeded': 0,
-                    'failure_rate': 0,
-                    'avg_price_change_when_failed': 0,
-                    'avg_days_to_resolution': 0,
-                    'last_updated': None
-                }
-            ]
-
         conn.close()
+
+        # Calculate summary statistics
+        summary = {
+            "total_scenarios": len(stats),
+            "avg_failure_rate": 0,
+            "most_dangerous_trap": "N/A",
+            "safest_fade": "N/A"
+        }
+
+        if stats:
+            # Average failure rate
+            summary["avg_failure_rate"] = sum(s.get('failure_rate', 0) for s in stats) / len(stats)
+
+            # Most dangerous trap (highest failure rate)
+            most_dangerous = max(stats, key=lambda x: x.get('failure_rate', 0))
+            summary["most_dangerous_trap"] = most_dangerous.get('scenario_type', 'N/A')
+
+            # Safest fade (lowest failure rate)
+            safest = min(stats, key=lambda x: x.get('failure_rate', 0))
+            summary["safest_fade"] = safest.get('scenario_type', 'N/A')
 
         return {
             "success": True,
             "count": len(stats),
-            "statistics": stats
+            "statistics": stats,
+            "summary": summary
         }
 
     except Exception as e:
@@ -4776,6 +4939,222 @@ async def get_notification_stats():
             "stats": stats
         }
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==============================================================================
+# PUSH NOTIFICATION ENDPOINTS (Browser Push API)
+# ==============================================================================
+
+# Import push notification service
+try:
+    import sys
+    from pathlib import Path
+    backend_dir = Path(__file__).parent
+    sys.path.insert(0, str(backend_dir))
+    from push_notification_service import get_push_service
+    push_service = get_push_service()
+    push_notifications_available = True
+except Exception as e:
+    print(f"⚠️ Push notifications not available: {e}")
+    push_service = None
+    push_notifications_available = False
+
+
+@app.get("/api/notifications/vapid-public-key")
+async def get_vapid_public_key():
+    """
+    Get VAPID public key for push notification subscriptions
+
+    Returns:
+        {
+            "public_key": "BKq..."  # Base64-encoded public key
+        }
+    """
+    if not push_notifications_available or not push_service:
+        raise HTTPException(status_code=503, detail="Push notifications not configured")
+
+    public_key = push_service.get_vapid_public_key()
+
+    if not public_key:
+        raise HTTPException(status_code=500, detail="VAPID key not available")
+
+    return {
+        "success": True,
+        "public_key": public_key
+    }
+
+
+@app.post("/api/notifications/subscribe")
+async def subscribe_to_push_notifications(request: dict):
+    """
+    Subscribe to push notifications
+
+    Request body:
+    {
+        "subscription": {
+            "endpoint": "https://...",
+            "keys": {
+                "p256dh": "...",
+                "auth": "..."
+            }
+        },
+        "preferences": {
+            "enabled": true,
+            "criticalAlerts": true,
+            "highAlerts": true,
+            "liberationSetups": true,
+            "falseFloors": true,
+            "regimeChanges": true,
+            "sound": true
+        }
+    }
+
+    Returns:
+        {"success": true}
+    """
+    if not push_notifications_available or not push_service:
+        raise HTTPException(status_code=503, detail="Push notifications not configured")
+
+    try:
+        subscription = request.get('subscription')
+        preferences = request.get('preferences', {})
+
+        if not subscription:
+            raise HTTPException(status_code=400, detail="Subscription object required")
+
+        success = push_service.save_subscription(subscription, preferences)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to save subscription")
+
+        return {
+            "success": True,
+            "message": "Subscription saved successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error subscribing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/notifications/unsubscribe")
+async def unsubscribe_from_push_notifications(request: dict):
+    """
+    Unsubscribe from push notifications
+
+    Request body:
+    {
+        "endpoint": "https://..."
+    }
+
+    Returns:
+        {"success": true}
+    """
+    if not push_notifications_available or not push_service:
+        raise HTTPException(status_code=503, detail="Push notifications not configured")
+
+    try:
+        endpoint = request.get('endpoint')
+
+        if not endpoint:
+            raise HTTPException(status_code=400, detail="Endpoint required")
+
+        success = push_service.remove_subscription(endpoint)
+
+        return {
+            "success": True,
+            "message": "Unsubscribed successfully" if success else "Subscription not found"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error unsubscribing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/notifications/preferences")
+async def update_notification_preferences(request: dict):
+    """
+    Update notification preferences
+
+    Request body:
+    {
+        "endpoint": "https://...",  # Optional, use first subscription if not provided
+        "preferences": {
+            "enabled": true,
+            "criticalAlerts": true,
+            ...
+        }
+    }
+
+    Returns:
+        {"success": true}
+    """
+    if not push_notifications_available or not push_service:
+        raise HTTPException(status_code=503, detail="Push notifications not configured")
+
+    try:
+        endpoint = request.get('endpoint')
+        preferences = request.get('preferences', {})
+
+        if not preferences:
+            raise HTTPException(status_code=400, detail="Preferences required")
+
+        # If no endpoint provided, update first subscription (single-user mode)
+        if not endpoint:
+            subscriptions = push_service.get_all_subscriptions()
+            if not subscriptions:
+                raise HTTPException(status_code=404, detail="No subscriptions found")
+            endpoint = subscriptions[0]['endpoint']
+
+        success = push_service.update_preferences(endpoint, preferences)
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+
+        return {
+            "success": True,
+            "message": "Preferences updated successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error updating preferences: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/notifications/test")
+async def send_test_notification():
+    """
+    Send test push notification to all subscribed users
+
+    Returns:
+        {"success": true, "stats": {...}}
+    """
+    if not push_notifications_available or not push_service:
+        raise HTTPException(status_code=503, detail="Push notifications not configured")
+
+    try:
+        stats = push_service.broadcast_notification(
+            title="Test Alert",
+            body="This is a test notification from AlphaGEX",
+            alert_level="HIGH",
+            data={"type": "test"}
+        )
+
+        return {
+            "success": True,
+            "message": "Test notification sent",
+            "stats": stats
+        }
+
+    except Exception as e:
+        print(f"❌ Error sending test notification: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

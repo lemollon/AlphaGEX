@@ -2,6 +2,14 @@
 Autonomous Paper Trader - Fully Automated SPY Trading
 Finds and executes trades automatically with ZERO manual intervention
 Starting capital: $5,000
+
+CRITICAL INTEGRATION: Uses full Psychology Trap Detection System
+- Multi-timeframe RSI analysis (5m, 15m, 1h, 4h, 1d)
+- Gamma expiration timeline
+- Liberation setups
+- False floor detection
+- Forward GEX magnets
+- All psychology trap patterns
 """
 
 import sqlite3
@@ -12,6 +20,38 @@ from config_and_database import DB_PATH
 from polygon_data_fetcher import polygon_fetcher
 import time
 import os
+
+# CRITICAL: Import Psychology Trap Detector
+try:
+    from psychology_trap_detector import detect_market_regime_complete
+    from gamma_expiration_builder import build_gamma_with_expirations
+    PSYCHOLOGY_AVAILABLE = True
+    print("✅ Psychology Trap Detector integrated with Autonomous Trader")
+except ImportError as e:
+    PSYCHOLOGY_AVAILABLE = False
+    print(f"⚠️ Psychology Trap Detector not available: {e}")
+    print("   Falling back to basic GEX analysis")
+
+# CRITICAL: Import AI Reasoning Engine (LangChain + Claude)
+try:
+    from autonomous_ai_reasoning import get_ai_reasoning
+    ai_reasoning = get_ai_reasoning()
+    AI_REASONING_AVAILABLE = ai_reasoning.llm is not None
+    if AI_REASONING_AVAILABLE:
+        print("✅ AI Reasoning Engine (LangChain + Claude) ready")
+except ImportError as e:
+    AI_REASONING_AVAILABLE = False
+    ai_reasoning = None
+    print(f"⚠️ AI Reasoning not available: {e}")
+
+# CRITICAL: Import Database Logger
+try:
+    from autonomous_database_logger import get_database_logger
+    DATABASE_LOGGER_AVAILABLE = True
+    print("✅ Database Logger ready for comprehensive logging")
+except ImportError as e:
+    DATABASE_LOGGER_AVAILABLE = False
+    print(f"⚠️ Database Logger not available: {e}")
 
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str) -> Dict:
@@ -614,7 +654,16 @@ class AutonomousPaperTrader:
     def _analyze_and_find_trade(self, gex_data: Dict, skew_data: Dict, spot: float,
                                   vix: float = 20, momentum: Dict = None,
                                   time_context: Dict = None, put_call_ratio: float = 1.0) -> Optional[Dict]:
-        """Analyze market and return best trade with enhanced multi-factor scoring"""
+        """
+        Analyze market using FULL Psychology Trap Detection System
+
+        Uses ALL 5 layers:
+        1. Multi-timeframe RSI analysis
+        2. Current gamma walls
+        3. Gamma expiration timeline (liberation/false floor)
+        4. Forward GEX magnets
+        5. Complete regime detection
+        """
 
         if momentum is None:
             momentum = {'1h': 0, '4h': 0, 'trend': 'neutral'}
@@ -634,6 +683,106 @@ class AutonomousPaperTrader:
         momentum_4h = momentum.get('4h', 0)
         session = time_context.get('session', 'morning')
         vol_factor = time_context.get('volatility_factor', 1.0)
+
+        # ============================================================
+        # CRITICAL: USE PSYCHOLOGY TRAP DETECTOR
+        # ============================================================
+        if PSYCHOLOGY_AVAILABLE:
+            try:
+                self.log_action('PSYCHOLOGY_SCAN', '🧠 Running full psychology trap analysis...')
+
+                # Build gamma data with expiration timeline
+                gamma_data = build_gamma_with_expirations('SPY', use_tv_api=True)
+
+                # Run complete regime detection
+                regime_result = detect_market_regime_complete(
+                    symbol='SPY',
+                    gamma_data=gamma_data
+                )
+
+                if regime_result and regime_result.get('regime'):
+                    regime = regime_result['regime']
+
+                    # Extract key psychology trap signals
+                    pattern = regime.get('primary_regime_type', 'UNKNOWN')
+                    confidence = regime.get('confidence_score', 0)
+                    trade_direction = regime.get('trade_direction', 'NEUTRAL')
+                    risk_level = regime.get('risk_level', 'MEDIUM')
+                    description = regime.get('description', '')
+                    psychology_trap = regime.get('psychology_trap', '')
+
+                    # Liberation setup detection
+                    liberation_detected = regime.get('liberation_setup_detected', False)
+                    liberation_strike = regime.get('liberation_target_strike')
+                    liberation_expiry = regime.get('liberation_expiry_date')
+
+                    # False floor detection
+                    false_floor_detected = regime.get('false_floor_detected', False)
+                    false_floor_strike = regime.get('false_floor_strike')
+                    false_floor_expiry = regime.get('false_floor_expiry_date')
+
+                    # Forward GEX magnets
+                    forward_magnet_above = regime.get('monthly_magnet_above')
+                    forward_magnet_below = regime.get('monthly_magnet_below')
+                    polr = regime.get('path_of_least_resistance', 'NEUTRAL')
+
+                    # Multi-timeframe RSI
+                    rsi_aligned_overbought = regime.get('rsi_aligned_overbought', False)
+                    rsi_aligned_oversold = regime.get('rsi_aligned_oversold', False)
+                    rsi_coiling = regime.get('rsi_coiling', False)
+
+                    # Log comprehensive analysis
+                    analysis_log = f"""
+🧠 PSYCHOLOGY TRAP ANALYSIS COMPLETE:
+
+PATTERN: {pattern}
+Confidence: {confidence:.0f}%
+Risk Level: {risk_level}
+Trade Direction: {trade_direction}
+
+DESCRIPTION: {description}
+
+PSYCHOLOGY TRAP: {psychology_trap}
+
+GAMMA DYNAMICS:
+• Liberation Setup: {'YES' if liberation_detected else 'NO'}
+  {f'Strike ${liberation_strike:.0f} expires {liberation_expiry}' if liberation_detected else ''}
+• False Floor: {'YES - AVOID PUTS!' if false_floor_detected else 'NO'}
+  {f'Strike ${false_floor_strike:.0f} expires {false_floor_expiry}' if false_floor_detected else ''}
+
+FORWARD GEX MAGNETS:
+• Above: ${forward_magnet_above:.0f} (monthly OPEX positioning)
+• Below: ${forward_magnet_below:.0f}
+• Path of Least Resistance: {polr}
+
+MULTI-TIMEFRAME RSI:
+• Aligned Overbought: {'YES ⚠️' if rsi_aligned_overbought else 'NO'}
+• Aligned Oversold: {'YES 📈' if rsi_aligned_oversold else 'NO'}
+• Coiling: {'YES 💥' if rsi_coiling else 'NO'}
+"""
+                    self.log_action('PSYCHOLOGY_RESULT', analysis_log, success=True)
+
+                    # Convert psychology signals to trade setup
+                    return self._convert_psychology_to_trade(
+                        regime=regime,
+                        spot=spot,
+                        gex_data=gex_data,
+                        vix=vix,
+                        momentum=momentum,
+                        time_context=time_context
+                    )
+
+            except Exception as e:
+                self.log_action('PSYCHOLOGY_ERROR', f'Psychology trap detector failed: {e}', success=False)
+                print(f"⚠️ Psychology detector error: {e}")
+                import traceback
+                traceback.print_exc()
+                # Fall back to basic analysis
+
+        # ============================================================
+        # FALLBACK: Basic GEX Analysis (if psychology unavailable)
+        # ============================================================
+        self.log_action('BASIC_ANALYSIS', 'Using basic GEX regime analysis (psychology detector unavailable)')
 
         # Determine strategy based on GEX regime
         # REGIME 1: Negative GEX below flip = SQUEEZE
@@ -799,6 +948,210 @@ ENHANCED FACTORS:
                     'stop': spot * 1.02,
                     'reasoning': f"NEUTRAL: GEX ${net_gex/1e9:.2f}B. Above flip. VIX: {vix:.1f}. Momentum: {momentum_trend} ({momentum_4h:+.1f}%). Lean bearish."
                 }
+
+    def _convert_psychology_to_trade(self, regime: Dict, spot: float, gex_data: Dict,
+                                       vix: float, momentum: Dict, time_context: Dict) -> Optional[Dict]:
+        """
+        Convert psychology trap detector signals into actionable trade
+
+        Priority order:
+        1. Liberation setups (highest priority - wall expiring soon)
+        2. Avoid false floors (don't buy puts on temporary support)
+        3. Follow forward GEX magnets
+        4. Use primary regime pattern
+        5. Confirm with multi-timeframe RSI
+        """
+
+        pattern = regime.get('primary_regime_type', 'UNKNOWN')
+        confidence = regime.get('confidence_score', 0)
+        trade_direction = regime.get('trade_direction', 'NEUTRAL')
+        risk_level = regime.get('risk_level', 'MEDIUM')
+
+        # Extract key signals
+        liberation_detected = regime.get('liberation_setup_detected', False)
+        liberation_strike = regime.get('liberation_target_strike')
+        false_floor_detected = regime.get('false_floor_detected', False)
+        false_floor_strike = regime.get('false_floor_strike')
+        forward_magnet_above = regime.get('monthly_magnet_above')
+        forward_magnet_below = regime.get('monthly_magnet_below')
+        polr = regime.get('path_of_least_resistance', 'NEUTRAL')
+        rsi_aligned_overbought = regime.get('rsi_aligned_overbought', False)
+        rsi_aligned_oversold = regime.get('rsi_aligned_oversold', False)
+
+        # ====== PRIORITY 1: LIBERATION SETUP ======
+        if liberation_detected and liberation_strike and confidence >= 75:
+            dte = regime.get('liberation_dte', 3)
+
+            if liberation_strike > spot:
+                # Call wall expiring - price can break upward
+                strike = round(liberation_strike / 5) * 5
+                reasoning = f"""🔓 LIBERATION SETUP (Confidence: {confidence:.0f}%):
+CALL WALL at ${liberation_strike:.0f} EXPIRING in {dte} days
+Current Price: ${spot:.2f}
+→ Gamma wall disappearing, price can run to ${forward_magnet_above:.0f}
+
+Pattern: {pattern}
+Psychology Trap: {regime.get('psychology_trap', 'N/A')}
+
+THESIS: Dealers currently pinning price at ${liberation_strike:.0f}. When options expire, resistance disappears.
+Upside target: {forward_magnet_above:.0f} (monthly OPEX magnet)"""
+
+                return {
+                    'symbol': 'SPY',
+                    'strategy': 'Liberation Trade - Bullish',
+                    'action': 'BUY_CALL',
+                    'option_type': 'call',
+                    'strike': strike,
+                    'dte': max(7, dte + 5),  # Give time for liberation to play out
+                    'confidence': min(95, int(confidence)),
+                    'target': forward_magnet_above if forward_magnet_above else liberation_strike * 1.02,
+                    'stop': spot * 0.985,
+                    'reasoning': reasoning
+                }
+            else:
+                # Put wall expiring - price can break downward
+                strike = round(liberation_strike / 5) * 5
+                reasoning = f"""🔓 LIBERATION SETUP (Confidence: {confidence:.0f}%):
+PUT WALL at ${liberation_strike:.0f} EXPIRING in {dte} days
+Current Price: ${spot:.2f}
+→ Gamma wall disappearing, price can fall to ${forward_magnet_below:.0f}
+
+Pattern: {pattern}
+Psychology Trap: {regime.get('psychology_trap', 'N/A')}
+
+THESIS: Dealers currently supporting price at ${liberation_strike:.0f}. When options expire, support disappears.
+Downside target: {forward_magnet_below:.0f} (monthly OPEX magnet)"""
+
+                return {
+                    'symbol': 'SPY',
+                    'strategy': 'Liberation Trade - Bearish',
+                    'action': 'BUY_PUT',
+                    'option_type': 'put',
+                    'strike': strike,
+                    'dte': max(7, dte + 5),
+                    'confidence': min(95, int(confidence)),
+                    'target': forward_magnet_below if forward_magnet_below else liberation_strike * 0.98,
+                    'stop': spot * 1.015,
+                    'reasoning': reasoning
+                }
+
+        # ====== PRIORITY 2: AVOID FALSE FLOORS ======
+        if false_floor_detected and false_floor_strike:
+            if trade_direction == 'BEARISH' and spot > false_floor_strike * 0.98:
+                # Don't buy puts if we're near a false floor
+                self.log_action('FALSE_FLOOR_WARNING',
+                    f'⚠️ FALSE FLOOR at ${false_floor_strike:.0f} - AVOIDING PUT TRADE\n'
+                    f'Temporary support will trap put buyers. Waiting for better setup.',
+                    success=True)
+                return None  # Skip this trade
+
+        # ====== PRIORITY 3: USE PATTERN + FORWARD MAGNETS ======
+        if confidence >= 70:
+            # High-conviction patterns with psychology confirmation
+            if trade_direction == 'BULLISH':
+                # Target forward magnet above
+                target_strike = forward_magnet_above if forward_magnet_above and forward_magnet_above > spot else spot * 1.02
+                strike = round((spot + target_strike) / 2 / 5) * 5  # ATM to slightly OTM
+
+                # Boost confidence if RSI aligned
+                adj_confidence = confidence
+                if rsi_aligned_oversold:
+                    adj_confidence = min(95, confidence + 5)
+
+                reasoning = f"""📈 BULLISH {pattern} (Confidence: {adj_confidence:.0f}%):
+{regime.get('description', '')}
+
+FORWARD GEX MAGNET: ${forward_magnet_above:.0f} (monthly OPEX)
+Path of Least Resistance: {polr}
+
+Multi-timeframe RSI: {'Aligned Oversold ✅' if rsi_aligned_oversold else 'Confirming'}
+
+Psychology Trap: {regime.get('psychology_trap', 'N/A')}
+
+THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
+
+                return {
+                    'symbol': 'SPY',
+                    'strategy': f'{pattern} - Psychology Confirmed',
+                    'action': 'BUY_CALL',
+                    'option_type': 'call',
+                    'strike': strike,
+                    'dte': 7,
+                    'confidence': int(adj_confidence),
+                    'target': target_strike,
+                    'stop': spot * 0.985,
+                    'reasoning': reasoning
+                }
+
+            elif trade_direction == 'BEARISH':
+                # Target forward magnet below
+                target_strike = forward_magnet_below if forward_magnet_below and forward_magnet_below < spot else spot * 0.98
+                strike = round((spot + target_strike) / 2 / 5) * 5
+
+                # Boost confidence if RSI aligned
+                adj_confidence = confidence
+                if rsi_aligned_overbought:
+                    adj_confidence = min(95, confidence + 5)
+
+                reasoning = f"""📉 BEARISH {pattern} (Confidence: {adj_confidence:.0f}%):
+{regime.get('description', '')}
+
+FORWARD GEX MAGNET: ${forward_magnet_below:.0f} (monthly OPEX)
+Path of Least Resistance: {polr}
+
+Multi-timeframe RSI: {'Aligned Overbought ✅' if rsi_aligned_overbought else 'Confirming'}
+
+Psychology Trap: {regime.get('psychology_trap', 'N/A')}
+
+THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
+
+                return {
+                    'symbol': 'SPY',
+                    'strategy': f'{pattern} - Psychology Confirmed',
+                    'action': 'BUY_PUT',
+                    'option_type': 'put',
+                    'strike': strike,
+                    'dte': 7,
+                    'confidence': int(adj_confidence),
+                    'target': target_strike,
+                    'stop': spot * 1.015,
+                    'reasoning': reasoning
+                }
+
+        # ====== PRIORITY 4: LOWER CONFIDENCE / NEUTRAL ======
+        if confidence >= 60 and polr != 'NEUTRAL':
+            # Use path of least resistance
+            if polr == 'UPWARD':
+                strike = round(spot / 5) * 5
+                return {
+                    'symbol': 'SPY',
+                    'strategy': f'Psychology {pattern} - Moderate',
+                    'action': 'BUY_CALL',
+                    'option_type': 'call',
+                    'strike': strike,
+                    'dte': 7,
+                    'confidence': int(confidence),
+                    'target': forward_magnet_above if forward_magnet_above else spot * 1.02,
+                    'stop': spot * 0.985,
+                    'reasoning': f"{pattern} with {confidence:.0f}% confidence. POLR: {polr}. Forward magnet: ${forward_magnet_above:.0f}"
+                }
+            elif polr == 'DOWNWARD':
+                strike = round(spot / 5) * 5
+                return {
+                    'symbol': 'SPY',
+                    'strategy': f'Psychology {pattern} - Moderate',
+                    'action': 'BUY_PUT',
+                    'option_type': 'put',
+                    'strike': strike,
+                    'dte': 7,
+                    'confidence': int(confidence),
+                    'target': forward_magnet_below if forward_magnet_below else spot * 0.98,
+                    'stop': spot * 1.015,
+                    'reasoning': f"{pattern} with {confidence:.0f}% confidence. POLR: {polr}. Forward magnet: ${forward_magnet_below:.0f}"
+                }
+
+        # No high-confidence setup from psychology detector
+        return None
 
     def _execute_iron_condor(self, spot: float, gex_data: Dict, api_client) -> Optional[int]:
         """
@@ -1027,7 +1380,7 @@ This trade ensures we're always active in the market"""
 
     def _execute_trade(self, trade: Dict, option_data: Dict, contracts: int,
                        entry_price: float, exp_date: str, gex_data: Dict) -> Optional[int]:
-        """Execute the trade"""
+        """Execute the trade and send push notification"""
 
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -1072,7 +1425,64 @@ This trade ensures we're always active in the market"""
         conn.commit()
         conn.close()
 
+        # CRITICAL: Send push notification for high-confidence trades
+        if trade['confidence'] >= 80:
+            self._send_trade_notification(trade, contracts, entry_price, position_id)
+
         return position_id
+
+    def _send_trade_notification(self, trade: Dict, contracts: int, entry_price: float, position_id: int):
+        """Send push notification when autonomous trader executes trade"""
+        try:
+            # Import push notification service
+            import sys
+            from pathlib import Path
+            backend_dir = Path(__file__).parent / 'backend'
+            if backend_dir.exists():
+                sys.path.insert(0, str(backend_dir))
+
+            from backend.push_notification_service import get_push_service
+            push_service = get_push_service()
+
+            # Determine alert level based on confidence
+            alert_level = 'CRITICAL' if trade['confidence'] >= 90 else 'HIGH'
+
+            # Determine alert type
+            alert_type = None
+            if 'liberation' in trade['strategy'].lower():
+                alert_type = 'liberation'
+            elif 'false floor' in trade.get('reasoning', '').lower():
+                alert_type = 'false_floor'
+
+            # Create notification title and body
+            action_emoji = '📈' if 'CALL' in trade['action'] else '📉'
+            title = f"{action_emoji} Autonomous Trade Executed"
+
+            cost = abs(entry_price) * contracts * 100
+            body = f"{trade['strategy']}: {trade['action']} ${trade['strike']:.0f} ({contracts}x) - Confidence: {trade['confidence']}% - Cost: ${cost:.0f}"
+
+            # Send broadcast notification
+            stats = push_service.broadcast_notification(
+                title=title,
+                body=body,
+                alert_level=alert_level,
+                alert_type=alert_type,
+                data={
+                    'symbol': trade['symbol'],
+                    'strategy': trade['strategy'],
+                    'strike': trade['strike'],
+                    'confidence': trade['confidence'],
+                    'position_id': position_id,
+                    'type': 'autonomous_trade'
+                }
+            )
+
+            print(f"📢 Push notification sent: {stats['sent']} delivered, {stats['failed']} failed")
+
+        except Exception as e:
+            # Don't fail trade execution if notification fails
+            print(f"⚠️ Push notification failed: {e}")
+            pass
 
     def auto_manage_positions(self, api_client):
         """

@@ -336,6 +336,83 @@ def init_database():
             confidence_score REAL
         )
     ''')
+
+    # Autonomous Trader Comprehensive Logs
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_trader_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            log_type TEXT NOT NULL,
+
+            -- Market Context
+            symbol TEXT,
+            spot_price REAL,
+            net_gex REAL,
+            flip_point REAL,
+            call_wall REAL,
+            put_wall REAL,
+            vix_level REAL,
+
+            -- Psychology Trap Analysis
+            pattern_detected TEXT,
+            confidence_score REAL,
+            trade_direction TEXT,
+            risk_level TEXT,
+            liberation_setup BOOLEAN,
+            liberation_strike REAL,
+            liberation_expiry DATE,
+            false_floor_detected BOOLEAN,
+            false_floor_strike REAL,
+            forward_magnet_above REAL,
+            forward_magnet_below REAL,
+            polr TEXT,
+
+            -- RSI Analysis
+            rsi_5m REAL,
+            rsi_15m REAL,
+            rsi_1h REAL,
+            rsi_4h REAL,
+            rsi_1d REAL,
+            rsi_aligned_overbought BOOLEAN,
+            rsi_aligned_oversold BOOLEAN,
+            rsi_coiling BOOLEAN,
+
+            -- Strike Selection Reasoning
+            strike_chosen REAL,
+            strike_selection_reason TEXT,
+            alternative_strikes TEXT,
+            why_not_alternatives TEXT,
+
+            -- Position Sizing
+            kelly_pct REAL,
+            position_size_dollars REAL,
+            contracts INTEGER,
+            sizing_rationale TEXT,
+
+            -- AI Reasoning (LangChain + Claude)
+            ai_thought_process TEXT,
+            ai_confidence TEXT,
+            ai_warnings TEXT,
+            langchain_chain_used TEXT,
+
+            -- Trade Decision
+            action_taken TEXT,
+            strategy_name TEXT,
+            reasoning_summary TEXT,
+            full_reasoning TEXT,
+
+            -- Outcome Tracking
+            position_id INTEGER,
+            outcome TEXT,
+            pnl REAL,
+
+            -- Session Tracking
+            scan_cycle INTEGER,
+            session_id TEXT,
+
+            FOREIGN KEY (position_id) REFERENCES autonomous_positions(id)
+        )
+    ''')
     
     # Migrate existing databases to add new columns
     _migrate_positions_table(c)
@@ -474,13 +551,18 @@ def init_database():
         CREATE TABLE IF NOT EXISTS historical_open_interest (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date DATE NOT NULL,
+            symbol TEXT NOT NULL,
             strike REAL NOT NULL,
             expiration_date DATE NOT NULL,
 
             call_oi INTEGER,
             put_oi INTEGER,
+            call_volume INTEGER DEFAULT 0,
+            put_volume INTEGER DEFAULT 0,
             call_gamma REAL,
-            put_gamma REAL
+            put_gamma REAL,
+
+            UNIQUE(date, symbol, strike, expiration_date)
         )
     ''')
 
@@ -533,6 +615,21 @@ def init_database():
             max_move_pct REAL,
 
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # ===== PUSH NOTIFICATION TABLES =====
+
+    # Push notification subscriptions
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            endpoint TEXT UNIQUE NOT NULL,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            preferences TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
@@ -609,6 +706,18 @@ def init_database():
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy ON backtest_results(strategy_name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_timestamp ON backtest_results(timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)")
+
+    # Push notification indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_created_at ON push_subscriptions(created_at)")
+
+    # Autonomous trader logs indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_timestamp ON autonomous_trader_logs(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_type ON autonomous_trader_logs(log_type)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_symbol ON autonomous_trader_logs(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_position ON autonomous_trader_logs(position_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_session ON autonomous_trader_logs(session_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_pattern ON autonomous_trader_logs(pattern_detected)")
 
     # ===== DATABASE MIGRATIONS =====
 

@@ -9,8 +9,14 @@ Features:
 - Options data (chains, Greeks, quotes, trades)
 - VIX and market indices
 - Aggressive caching to minimize API calls
-- Support for both free tier (DELAYED) and paid tier (OK)
+- Support for all Polygon.io tiers (Stocks Starter, Options Developer, Advanced, etc.)
 - Historical data for backtesting
+- Real-time data support for paid tiers
+
+Supported Plans:
+- Stocks Starter: Real-time stock data, all intraday timeframes
+- Options Developer: Real-time options data, Greeks, chains
+- Advanced+: Real-time everything with higher rate limits
 
 Usage:
     from polygon_data_fetcher import polygon_fetcher
@@ -23,6 +29,9 @@ Usage:
 
     # Get current price
     price = polygon_fetcher.get_current_price('SPY')
+
+    # Check your subscription tier
+    tier = polygon_fetcher.detect_subscription_tier()
 """
 
 import os
@@ -75,10 +84,13 @@ class PolygonDataFetcher:
     """
     Comprehensive Polygon.io data fetcher for all AlphaGEX needs
 
-    Supports:
-    - Free tier: DELAYED status, daily data only
-    - Starter tier: DELAYED status, all intraday timeframes
-    - Advanced tier: OK status, real-time data
+    Supports all Polygon.io subscription tiers:
+    - Free: DELAYED status, daily data only
+    - Stocks Starter: OK/DELAYED status, real-time stocks, all intraday timeframes
+    - Options Developer: OK status, real-time options data with Greeks
+    - Advanced+: OK status, real-time everything with higher rate limits
+
+    Current Configuration: Stocks Starter + Options Developer (Real-time capable)
     """
 
     def __init__(self):
@@ -88,6 +100,7 @@ class PolygonDataFetcher:
 
         self.cache = PolygonDataCache()
         self.base_url = "https://api.polygon.io"
+        self._detected_tier = None
 
     def get_price_history(
         self,
@@ -391,6 +404,121 @@ class PolygonDataFetcher:
 
         return result
 
+    def detect_subscription_tier(self) -> Dict[str, any]:
+        """
+        Detect the current Polygon.io subscription tier
+
+        Tests various endpoints to determine tier capabilities:
+        - Stocks real-time (Stocks Starter+)
+        - Options data (Options Developer+)
+        - Response status (OK = real-time, DELAYED = free/limited)
+
+        Returns:
+            {
+                'tier': str,  # 'Free', 'Stocks Starter', 'Options Developer', 'Advanced', or 'Unknown'
+                'has_realtime_stocks': bool,
+                'has_realtime_options': bool,
+                'has_intraday': bool,
+                'stocks_status': str,  # 'OK' or 'DELAYED'
+                'options_status': str,  # 'OK', 'DELAYED', or 'N/A'
+                'detected_at': str
+            }
+        """
+        if self._detected_tier is not None:
+            return self._detected_tier
+
+        result = {
+            'tier': 'Unknown',
+            'has_realtime_stocks': False,
+            'has_realtime_options': False,
+            'has_intraday': False,
+            'stocks_status': 'N/A',
+            'options_status': 'N/A',
+            'detected_at': datetime.now().isoformat()
+        }
+
+        try:
+            # Test 1: Check stock data status
+            print("🔍 Detecting Polygon.io subscription tier...")
+
+            # Try to get 1-minute bars (requires Starter+)
+            df = self.get_price_history('SPY', days=1, timeframe='minute', multiplier=1)
+            if df is not None and not df.empty:
+                result['has_intraday'] = True
+                print("   ✅ Intraday data access confirmed")
+
+            # Test 2: Check stock real-time status
+            url = f"{self.base_url}/v2/last/trade/SPY"
+            params = {"apiKey": self.api_key}
+            response = requests.get(url, params=params, timeout=5)
+
+            if response.status_code == 200:
+                data = response.json()
+                status = data.get('status', 'N/A')
+                result['stocks_status'] = status
+
+                if status == 'OK':
+                    result['has_realtime_stocks'] = True
+                    print("   ✅ Real-time stock data confirmed (status: OK)")
+                elif status == 'DELAYED':
+                    print("   ⚠️  Stock data is delayed (status: DELAYED)")
+
+            # Test 3: Check options access
+            try:
+                exp_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+                exp_str = exp_date.replace('-', '')[2:]
+                option_ticker = f"O:SPY{exp_str}C00570000"
+
+                url = f"{self.base_url}/v3/snapshot/options/SPY/{option_ticker}"
+                params = {"apiKey": self.api_key}
+                response = requests.get(url, params=params, timeout=5)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    status = data.get('status', 'N/A')
+                    result['options_status'] = status
+
+                    if status == 'OK':
+                        result['has_realtime_options'] = True
+                        print("   ✅ Real-time options data confirmed (status: OK)")
+                    elif status == 'DELAYED':
+                        print("   ⚠️  Options data is delayed (status: DELAYED)")
+
+                    if data.get('results'):
+                        print("   ✅ Options data access confirmed")
+                elif response.status_code == 403:
+                    result['options_status'] = 'FORBIDDEN'
+                    print("   ❌ Options data not available (403 Forbidden)")
+            except Exception as e:
+                print(f"   ⚠️  Could not test options access: {e}")
+
+            # Determine tier based on capabilities
+            if result['has_realtime_options'] and result['has_realtime_stocks']:
+                result['tier'] = 'Options Developer + Stocks Starter'
+                print("\n🎉 Detected: Options Developer + Stocks Starter")
+                print("   • Real-time stocks ✅")
+                print("   • Real-time options ✅")
+                print("   • All intraday timeframes ✅")
+            elif result['has_realtime_stocks'] and result['has_intraday']:
+                result['tier'] = 'Stocks Starter'
+                print("\n📊 Detected: Stocks Starter")
+                print("   • Real-time stocks ✅")
+                print("   • All intraday timeframes ✅")
+            elif result['has_intraday']:
+                result['tier'] = 'Basic (with intraday)'
+                print("\n📈 Detected: Basic subscription with intraday access")
+            else:
+                result['tier'] = 'Free'
+                print("\n⚠️  Detected: Free tier (daily data only)")
+
+            self._detected_tier = result
+            return result
+
+        except Exception as e:
+            print(f"❌ Error detecting subscription tier: {e}")
+            result['tier'] = 'Unknown'
+            return result
+
     def clear_cache(self):
         """Clear all cached data"""
         self.cache.clear()
@@ -420,6 +548,11 @@ def get_options_chain(symbol: str, expiration: str = None, strike: float = None)
 def get_option_quote(symbol: str, strike: float, expiration: str, option_type: str) -> Optional[Dict]:
     """Get option quote with Greeks"""
     return polygon_fetcher.get_option_quote(symbol, strike, expiration, option_type)
+
+
+def detect_subscription_tier() -> Dict[str, any]:
+    """Detect current Polygon.io subscription tier"""
+    return polygon_fetcher.detect_subscription_tier()
 
 
 if __name__ == "__main__":
