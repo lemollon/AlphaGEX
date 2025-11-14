@@ -21,7 +21,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import sqlite3
 from config_and_database import DB_PATH
-import yfinance as yf
+
+# Import Polygon.io helper instead of yfinance
+try:
+    from polygon_helper import fetch_vix_data as polygon_fetch_vix_data
+    POLYGON_AVAILABLE = True
+except ImportError:
+    POLYGON_AVAILABLE = False
+    print("⚠️ polygon_helper.py not available - VIX data will use defaults")
 
 # ============================================================================
 # NEW LAYER 0: VIX AND VOLATILITY REGIME DETECTION
@@ -29,7 +36,7 @@ import yfinance as yf
 
 def fetch_vix_data() -> Dict:
     """
-    Fetch VIX (Volatility Index) data from Yahoo Finance
+    Fetch VIX (Volatility Index) data from Polygon.io
 
     Returns:
         {
@@ -42,40 +49,13 @@ def fetch_vix_data() -> Dict:
             'spike_detected': bool  # True if VIX spiked >20%
         }
     """
-    try:
-        vix = yf.Ticker("^VIX")
-
-        # Get current data
-        vix_hist = vix.history(period="2mo", interval="1d")
-
-        if vix_hist.empty:
+    if POLYGON_AVAILABLE:
+        try:
+            return polygon_fetch_vix_data()
+        except Exception as e:
+            print(f"Error fetching VIX data from Polygon.io: {e}")
             return get_default_vix_data()
-
-        current = float(vix_hist['Close'].iloc[-1])
-        previous_close = float(vix_hist['Close'].iloc[-2]) if len(vix_hist) > 1 else current
-        intraday_high = float(vix_hist['High'].iloc[-1])
-        intraday_low = float(vix_hist['Low'].iloc[-1])
-
-        # Calculate 20-day MA
-        ma_20 = float(vix_hist['Close'].rolling(window=20).mean().iloc[-1])
-
-        # Calculate change
-        change_pct = ((current - previous_close) / previous_close * 100) if previous_close > 0 else 0
-
-        # Detect spike (>20% increase OR crossed above MA by >15%)
-        spike_detected = (change_pct > 20) or (current > ma_20 * 1.15 and previous_close < ma_20)
-
-        return {
-            'current': current,
-            'previous_close': previous_close,
-            'change_pct': change_pct,
-            'intraday_high': intraday_high,
-            'intraday_low': intraday_low,
-            'ma_20': ma_20,
-            'spike_detected': spike_detected
-        }
-    except Exception as e:
-        print(f"Error fetching VIX data: {e}")
+    else:
         return get_default_vix_data()
 
 

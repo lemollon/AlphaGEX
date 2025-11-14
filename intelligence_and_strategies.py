@@ -44,14 +44,19 @@ import pytz
 from typing import List, Dict, Optional
 from config_and_database import DB_PATH, MM_STATES, STRATEGIES
 
-# Import the TradingVolatilityAPI if we need it for VIX
+# Import Polygon.io helper for VIX data
 try:
-    import yfinance as yf
+    from polygon_helper import fetch_vix_data
+    POLYGON_AVAILABLE = True
+except ImportError:
+    POLYGON_AVAILABLE = False
+    print("⚠️ polygon_helper.py not available - VIX will use default value")
+
+# Import math libraries
+try:
     from scipy.stats import norm
     import math
-    YFINANCE_AVAILABLE = True
 except ImportError:
-    YFINANCE_AVAILABLE = False
     norm = None
     math = None
 
@@ -109,14 +114,34 @@ def make_json_serializable(obj):
 # ============================================================================
 
 class RealOptionsChainFetcher:
-    """Fetches REAL options chain data from Yahoo Finance"""
+    """
+    Fetches REAL options chain data from Yahoo Finance (optional)
+
+    NOTE: This requires yfinance to be installed. If not available, methods return empty data.
+    For production, consider upgrading to Polygon.io paid tier for options data.
+    """
 
     def __init__(self):
         self.cache = {}
         self.cache_time = {}
 
+        # Check if yfinance is available
+        try:
+            import yfinance as yf
+            self.yf = yf
+            self.available = True
+        except ImportError:
+            self.yf = None
+            self.available = False
+            print("⚠️ yfinance not installed - options chain functionality disabled")
+            print("   Install with: pip install yfinance")
+            print("   Or upgrade to Polygon.io paid tier for options data")
+
     def get_options_chain(self, symbol: str, expiry_date: str = None) -> Dict:
         """Get real options chain with bid/ask/greeks - with retry logic for rate limits"""
+
+        if not self.available:
+            return {}  # Gracefully return empty if yfinance not available
 
         cache_key = f"{symbol}_{expiry_date}"
 
@@ -132,7 +157,7 @@ class RealOptionsChainFetcher:
 
         for attempt in range(max_retries):
             try:
-                ticker = yf.Ticker(symbol)
+                ticker = self.yf.Ticker(symbol)
 
                 # Get available expiration dates
                 expirations = ticker.options
@@ -225,8 +250,8 @@ class GreeksCalculator:
                         option_type: str = 'call') -> Dict:
         """Calculate all Greeks for an option"""
 
-        if not YFINANCE_AVAILABLE or norm is None:
-            return {}
+        if norm is None:
+            return {}  # scipy not available for Greeks calculation
 
         try:
             # Prevent division by zero
@@ -1204,15 +1229,13 @@ class FREDIntegration:
         self.tv_api = None
     
     def get_vix(self) -> float:
-        """Get VIX from Yahoo Finance or default"""
+        """Get VIX from Polygon.io or default"""
         try:
-            if YFINANCE_AVAILABLE:
-                vix = yf.Ticker("^VIX")
-                hist = vix.history(period="1d")
-                if not hist.empty:
-                    return float(hist['Close'].iloc[-1])
-        except:
-            pass
+            if POLYGON_AVAILABLE:
+                vix_data = fetch_vix_data()
+                return float(vix_data.get('current', 20.0))
+        except Exception as e:
+            print(f"Error fetching VIX: {e}")
         return 20.0
     
     def get_economic_data(self) -> Dict:
