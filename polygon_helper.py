@@ -89,7 +89,7 @@ class PolygonDataFetcher:
                         'high': bar['h'],
                         'low': bar['l'],
                         'open': bar['o'],
-                        'volume': bar['v'],
+                        'volume': bar.get('v', 0),  # VIX and other indices don't have volume
                         'time': bar['t']
                     }
                     for bar in data['results']
@@ -127,7 +127,7 @@ class PolygonDataFetcher:
                         'high': bar['h'],
                         'low': bar['l'],
                         'open': bar['o'],
-                        'volume': bar['v'],
+                        'volume': bar.get('v', 0),  # VIX and other indices don't have volume
                         'time': bar['t']
                     }
                     for bar in data['results']
