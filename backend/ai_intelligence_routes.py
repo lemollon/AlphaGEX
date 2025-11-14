@@ -44,8 +44,12 @@ from langchain_anthropic import ChatAnthropic
 
 router = APIRouter(prefix="/api/ai-intelligence", tags=["AI Intelligence"])
 
-# Database path
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'trading.db')
+# Database path - use the same path as the main system
+try:
+    from config_and_database import DB_PATH
+except ImportError:
+    # Fallback to gex_copilot.db in parent directory
+    DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'gex_copilot.db')
 
 # Initialize Claude Haiku 4.5
 llm = ChatAnthropic(
