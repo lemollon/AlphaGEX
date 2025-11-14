@@ -541,6 +541,21 @@ def init_database():
         )
     ''')
 
+    # ===== PUSH NOTIFICATION TABLES =====
+
+    # Push notification subscriptions
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            endpoint TEXT UNIQUE NOT NULL,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            preferences TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     # ===== BACKTEST RESULTS TABLES =====
 
     # Backtest results for all strategies
@@ -614,6 +629,10 @@ def init_database():
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy ON backtest_results(strategy_name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_timestamp ON backtest_results(timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)")
+
+    # Push notification indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_created_at ON push_subscriptions(created_at)")
 
     # ===== DATABASE MIGRATIONS =====
 
