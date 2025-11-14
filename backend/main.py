@@ -2205,95 +2205,74 @@ async def execute_trader_cycle():
 @app.get("/api/market/price-history/{symbol}")
 async def get_price_history(symbol: str, days: int = 90):
     """
-    Get price history for charting using yfinance
+    Get price history for charting using Polygon.io
 
-    YAHOO FINANCE RATE LIMITS (as of 2025):
-    - ~2000 requests per hour per IP
-    - ~48000 requests per day per IP
-    - Rate limit resets every hour
-    - 429 error when limit exceeded
-    - No official documentation - limits discovered through testing
-
-    RECOMMENDATION: Use TradingView widget instead to avoid rate limits
+    Returns daily OHLCV data for the specified period
     """
     try:
         symbol = symbol.upper()
 
-        import yfinance as yf
-        from datetime import datetime, timedelta
-        import time
+        print(f"📊 Fetching {days}-day price history for {symbol} from Polygon.io")
 
-        print(f"📊 Fetching {days}-day price history for {symbol}")
-        print(f"⚠️  Yahoo Finance rate limits: ~2000 req/hour, resets hourly")
+        polygon_key = os.getenv("POLYGON_API_KEY")
+        if not polygon_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Polygon.io API key not configured"
+            )
 
         # Calculate date range
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days + 10)  # Add buffer for weekends/holidays
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        from_date = (datetime.now() - timedelta(days=days + 10)).strftime('%Y-%m-%d')
 
-        try:
-            # Add small delay to avoid rate limiting
-            time.sleep(0.5)
+        # Fetch daily bars from Polygon.io
+        url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{from_date}/{to_date}"
+        params = {"apiKey": polygon_key, "sort": "asc", "limit": 50000}
 
-            # Fetch data using yfinance with explicit date range
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(start=start_date, end=end_date)
+        response = requests.get(url, params=params, timeout=10)
 
-            if hist.empty:
-                print(f"❌ yfinance returned no data for {symbol}")
-                print(f"   Possible reasons:")
-                print(f"   1. Yahoo Finance rate limit (2000 req/hour)")
-                print(f"   2. Invalid symbol")
-                print(f"   3. Yahoo API downtime")
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') in ['OK', 'DELAYED'] and data.get('results'):
+                results = data['results']
+
+                # Convert to chart format
+                chart_data = []
+                for bar in results:
+                    chart_data.append({
+                        "time": bar['t'] // 1000,  # Convert milliseconds to seconds
+                        "value": bar['c']  # Close price
+                    })
+
+                print(f"✅ Successfully fetched {len(chart_data)} data points from Polygon.io")
+
+                return {
+                    "success": True,
+                    "symbol": symbol,
+                    "data": chart_data,
+                    "points": len(chart_data),
+                    "source": "polygon.io"
+                }
+            else:
                 raise HTTPException(
                     status_code=503,
-                    detail=f"Yahoo Finance returned no data. Possible rate limit (2000 req/hour). Use TradingView widget for reliable charts."
+                    detail=f"Polygon.io returned no data for {symbol}"
                 )
-
-            # Convert to chart format
-            chart_data = []
-            for date, row in hist.iterrows():
-                chart_data.append({
-                    "time": int(date.timestamp()),
-                    "value": float(row['Close'])
-                })
-
-            print(f"✅ Successfully fetched {len(chart_data)} data points for {symbol}")
-            print(f"   Date range: {hist.index[0].date()} to {hist.index[-1].date()}")
-            print(f"   Price range: ${hist['Close'].min():.2f} - ${hist['Close'].max():.2f}")
-
-            return {
-                "success": True,
-                "symbol": symbol,
-                "data": chart_data,
-                "points": len(chart_data),
-                "start_date": hist.index[0].isoformat(),
-                "end_date": hist.index[-1].isoformat(),
-                "source": "yfinance",
-                "rate_limit_warning": "Yahoo has ~2000 req/hour limit. Use TradingView widget for production."
-            }
-
-        except Exception as yf_error:
-            error_str = str(yf_error).lower()
-            if '429' in error_str or 'too many' in error_str or 'rate limit' in error_str:
-                print(f"🚨 YAHOO FINANCE RATE LIMIT HIT")
-                print(f"   Limit: ~2000 requests/hour, ~48000/day")
-                print(f"   Resets: Every hour on the hour")
-                raise HTTPException(
-                    status_code=429,
-                    detail=f"Yahoo Finance rate limit exceeded (~2000 req/hour, resets hourly). Use TradingView widget to avoid this."
-                )
-            else:
-                raise
+        else:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Polygon.io API error: {response.status_code}"
+            )
 
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error fetching price history for {symbol}: {str(e)}")
+        print(f"❌ Error fetching price history: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to fetch price history: {str(e)}. Use TradingView widget for reliable charts."
+            detail=f"Failed to fetch price history: {str(e)}"
         )
 
 @app.get("/api/trader/strategies")
@@ -3095,32 +3074,12 @@ async def generate_trade_setups(request: dict):
             regime_info = None
             try:
                 from psychology_trap_detector import analyze_current_market_complete
-                import yfinance as yf
 
-                # Get price data for regime analysis
-                ticker = yf.Ticker(symbol)
-                gex_full_data = api_client.get_net_gamma(symbol)
-
-                # Get historical price data for RSI
-                price_data = {}
-                df_1d = ticker.history(period="90d", interval="1d")
-                price_data['1d'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_1d.iterrows()]
-
-                df_4h = ticker.history(period="30d", interval="1h")
-                df_4h_resampled = df_4h.resample('4H').agg({'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'}).dropna()
-                price_data['4h'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_4h_resampled.iterrows()]
-
-                df_1h = ticker.history(period="7d", interval="1h")
-                price_data['1h'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_1h.iterrows()]
-
-                df_15m = ticker.history(period="5d", interval="15m")
-                price_data['15m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_15m.iterrows()]
-
-                df_5m = ticker.history(period="2d", interval="5m")
-                price_data['5m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']} for _, row in df_5m.iterrows()]
+                # Use Polygon.io for price data (reuse existing function with caching)
+                current_price = spot_price
+                price_data = get_cached_price_data(symbol, current_price)
 
                 # Calculate volume ratio
-                current_price = gex_full_data.get('spot_price', spot_price)
                 if len(price_data.get('1d', [])) >= 20:
                     recent_volume = price_data['1d'][-1]['volume']
                     avg_volume = sum(d['volume'] for d in price_data['1d'][-20:]) / 20
@@ -3130,19 +3089,19 @@ async def generate_trade_setups(request: dict):
 
                 # Format gamma data for analyzer
                 gamma_data_formatted = {
-                    'net_gamma': gex_full_data.get('net_gex', 0),
+                    'net_gamma': net_gex,
                     'expirations': [{
                         'expiration_date': datetime.now() + timedelta(days=7),
                         'dte': 7,
                         'expiration_type': 'weekly',
                         'call_strikes': [{
-                            'strike': gex_full_data.get('call_wall', current_price * 1.02),
-                            'gamma_exposure': gex_full_data.get('net_gex', 0) / 2,
+                            'strike': call_wall if call_wall > 0 else current_price * 1.02,
+                            'gamma_exposure': net_gex / 2,
                             'open_interest': 1000
                         }],
                         'put_strikes': [{
-                            'strike': gex_full_data.get('put_wall', current_price * 0.98),
-                            'gamma_exposure': gex_full_data.get('net_gex', 0) / 2,
+                            'strike': put_wall if put_wall > 0 else current_price * 0.98,
+                            'gamma_exposure': net_gex / 2,
                             'open_interest': 1000
                         }]
                     }]
@@ -5424,44 +5383,16 @@ async def calibrate_probability_model(min_predictions: int = 50):
 @app.get("/api/psychology/rsi-analysis/{symbol}")
 async def get_rsi_analysis(symbol: str = "SPY"):
     """
-    Get multi-timeframe RSI analysis only
+    Get multi-timeframe RSI analysis only using Polygon.io
     Useful for quick RSI checks without full regime analysis
     """
     try:
-        import yfinance as yf
+        # Get current price from GEX data
+        gex_data = api_client.get_net_gamma(symbol)
+        current_price = gex_data.get('spot_price', 0)
 
-        ticker = yf.Ticker(symbol)
-
-        # Get price data for different timeframes
-        price_data = {}
-
-        # Daily
-        df_1d = ticker.history(period="90d", interval="1d")
-        price_data['1d'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
-                           for _, row in df_1d.iterrows()]
-
-        # 4-hour
-        df_4h = ticker.history(period="30d", interval="1h")
-        df_4h_resampled = df_4h.resample('4H').agg({
-            'Close': 'last', 'High': 'max', 'Low': 'min', 'Volume': 'sum'
-        }).dropna()
-        price_data['4h'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
-                           for _, row in df_4h_resampled.iterrows()]
-
-        # 1-hour
-        df_1h = ticker.history(period="7d", interval="1h")
-        price_data['1h'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
-                           for _, row in df_1h.iterrows()]
-
-        # 15-minute
-        df_15m = ticker.history(period="5d", interval="15m")
-        price_data['15m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
-                            for _, row in df_15m.iterrows()]
-
-        # 5-minute
-        df_5m = ticker.history(period="2d", interval="5m")
-        price_data['5m'] = [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
-                           for _, row in df_5m.iterrows()]
+        # Use Polygon.io for price data (with caching)
+        price_data = get_cached_price_data(symbol, current_price)
 
         # Calculate RSI
         rsi_analysis = calculate_mtf_rsi_score(price_data)
@@ -5480,29 +5411,16 @@ async def get_rsi_analysis(symbol: str = "SPY"):
 @app.get("/api/psychology/quick-check/{symbol}")
 async def get_quick_psychology_check(symbol: str = "SPY"):
     """
-    Quick psychology trap check for scanners (lightweight version)
+    Quick psychology trap check for scanners using Polygon.io (lightweight version)
     Returns only regime type, confidence, and trade direction
     """
     try:
-        import yfinance as yf
+        # Get current price from GEX data
+        gex_data = api_client.get_net_gamma(symbol)
+        current_price = gex_data.get('spot_price', 0)
 
-        # Get basic price data (less history for speed)
-        ticker = yf.Ticker(symbol)
-        current_price = ticker.history(period="1d")['Close'].iloc[-1]
-
-        # Get minimal price data for RSI
-        df_1d = ticker.history(period="30d", interval="1d")
-        df_1h = ticker.history(period="3d", interval="1h")
-
-        price_data = {
-            '5m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
-            '15m': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
-            '1h': [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
-                   for _, row in df_1h.iterrows()],
-            '4h': [{'close': current_price, 'high': current_price, 'low': current_price, 'volume': 0} for _ in range(50)],
-            '1d': [{'close': row['Close'], 'high': row['High'], 'low': row['Low'], 'volume': row['Volume']}
-                   for _, row in df_1d.iterrows()]
-        }
+        # Use Polygon.io for price data (with caching)
+        price_data = get_cached_price_data(symbol, current_price)
 
         # Calculate RSI only
         rsi_analysis = calculate_mtf_rsi_score(price_data)
