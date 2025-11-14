@@ -20,9 +20,9 @@ import argparse
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
-import yfinance as yf
 import pandas as pd
 import numpy as np
+from polygon_data_fetcher import polygon_fetcher
 
 from psychology_trap_detector import (
     analyze_current_market_complete,
@@ -41,7 +41,7 @@ class PsychologyBacktester:
 
     def fetch_historical_data(self, start_date: str, end_date: str) -> Dict:
         """
-        Fetch historical price data for all timeframes
+        Fetch historical price data for all timeframes using Polygon.io
 
         Args:
             start_date: Start date (YYYY-MM-DD)
@@ -50,59 +50,56 @@ class PsychologyBacktester:
         Returns:
             Dict with price data for all timeframes
         """
-        print(f"Fetching historical data for {self.symbol} from {start_date} to {end_date}...")
+        print(f"Fetching historical data for {self.symbol} from {start_date} to {end_date} via Polygon.io...")
 
-        ticker = yf.Ticker(self.symbol)
-
-        # Fetch data for all timeframes
-        # Note: We need extra data for RSI calculation
+        # Calculate days needed (add buffer for RSI calculation)
         start_dt = datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=30)
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        total_days = (end_dt - start_dt).days
 
         price_data = {}
 
-        # 5-minute data (limited to last 60 days by Yahoo)
+        # 5-minute data
         try:
-            df_5m = ticker.history(period="60d", interval="5m")
-            price_data['5m'] = self._format_ohlcv(df_5m)
-        except:
-            print("Warning: Could not fetch 5m data")
+            df_5m = polygon_fetcher.get_price_history(self.symbol, days=3, timeframe='minute', multiplier=5)
+            price_data['5m'] = self._format_ohlcv(df_5m) if df_5m is not None else []
+        except Exception as e:
+            print(f"Warning: Could not fetch 5m data: {e}")
             price_data['5m'] = []
 
         # 15-minute data
         try:
-            df_15m = ticker.history(period="60d", interval="15m")
-            price_data['15m'] = self._format_ohlcv(df_15m)
-        except:
-            print("Warning: Could not fetch 15m data")
+            df_15m = polygon_fetcher.get_price_history(self.symbol, days=7, timeframe='minute', multiplier=15)
+            price_data['15m'] = self._format_ohlcv(df_15m) if df_15m is not None else []
+        except Exception as e:
+            print(f"Warning: Could not fetch 15m data: {e}")
             price_data['15m'] = []
 
         # 1-hour data
         try:
-            df_1h = ticker.history(period="730d", interval="1h")
-            price_data['1h'] = self._format_ohlcv(df_1h)
-        except:
-            print("Warning: Could not fetch 1h data")
+            df_1h = polygon_fetcher.get_price_history(self.symbol, days=14, timeframe='hour', multiplier=1)
+            price_data['1h'] = self._format_ohlcv(df_1h) if df_1h is not None else []
+        except Exception as e:
+            print(f"Warning: Could not fetch 1h data: {e}")
             price_data['1h'] = []
 
-        # 4-hour data (resample from 1h)
-        if price_data['1h']:
-            df_4h = pd.DataFrame(price_data['1h']).set_index('timestamp')
-            df_4h = df_4h.resample('4H').agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
-            }).dropna()
-            price_data['4h'] = self._format_ohlcv(df_4h)
-        else:
+        # 4-hour data
+        try:
+            df_4h = polygon_fetcher.get_price_history(self.symbol, days=30, timeframe='hour', multiplier=4)
+            price_data['4h'] = self._format_ohlcv(df_4h) if df_4h is not None else []
+        except Exception as e:
+            print(f"Warning: Could not fetch 4h data: {e}")
             price_data['4h'] = []
 
         # Daily data
-        df_1d = ticker.history(start=start_dt, end=end_date, interval="1d")
-        price_data['1d'] = self._format_ohlcv(df_1d)
+        try:
+            df_1d = polygon_fetcher.get_price_history(self.symbol, days=total_days, timeframe='day', multiplier=1)
+            price_data['1d'] = self._format_ohlcv(df_1d) if df_1d is not None else []
+        except Exception as e:
+            print(f"Warning: Could not fetch 1d data: {e}")
+            price_data['1d'] = []
 
-        print(f"✓ Fetched {len(price_data['1d'])} days of data")
+        print(f"✓ Fetched {len(price_data['1d'])} days of data from Polygon.io")
 
         return price_data
 
