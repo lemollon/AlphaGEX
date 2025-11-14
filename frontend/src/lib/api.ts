@@ -81,6 +81,32 @@ export const apiClient = {
   initializeAutonomousSystem: () => api.post('/api/autonomous/initialize'),
   getAutonomousHealth: () => api.get('/api/autonomous/health'),
 
+  // AI Intelligence Enhancements - 7 Advanced Features
+  generatePreTradeChecklist: (data: {
+    symbol: string,
+    strike: number,
+    option_type: string,
+    contracts: number,
+    cost_per_contract: number,
+    pattern_type?: string,
+    confidence?: number
+  }) => api.post('/api/ai-intelligence/pre-trade-checklist', data),
+  explainTrade: (tradeId: string) => api.get(`/api/ai-intelligence/trade-explainer/${tradeId}`),
+  getDailyTradingPlan: () => api.get('/api/ai-intelligence/daily-trading-plan'),
+  getPositionGuidance: (tradeId: string) => api.get(`/api/ai-intelligence/position-guidance/${tradeId}`),
+  getMarketCommentary: () => api.get('/api/ai-intelligence/market-commentary'),
+  compareAvailableStrategies: () => api.get('/api/ai-intelligence/compare-strategies'),
+  explainGreek: (data: {
+    greek: string,
+    value: number,
+    strike: number,
+    current_price: number,
+    contracts: number,
+    option_type: string,
+    days_to_expiration?: number
+  }) => api.post('/api/ai-intelligence/explain-greek', data),
+  getAIIntelligenceHealth: () => api.get('/api/ai-intelligence/health'),
+
   // Market Data
   getPriceHistory: (symbol: string, days: number = 90) =>
     api.get(`/api/market/price-history/${symbol}`, { params: { days } }),

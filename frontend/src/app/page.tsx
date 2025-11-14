@@ -6,6 +6,8 @@ import Navigation from '@/components/Navigation'
 import StatusCard from '@/components/StatusCard'
 import TradingViewWidget from '@/components/TradingViewWidget'
 import TradingViewChart from '@/components/TradingViewChart'
+import MarketCommentary from '@/components/MarketCommentary'
+import DailyTradingPlan from '@/components/DailyTradingPlan'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { LineData } from 'lightweight-charts'
@@ -222,6 +224,12 @@ export default function Dashboard() {
             changeType="positive"
             subtitle="All time"
           />
+        </div>
+
+        {/* AI Intelligence Widgets */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <MarketCommentary />
+          <DailyTradingPlan />
         </div>
 
         {/* Main Content Grid */}
