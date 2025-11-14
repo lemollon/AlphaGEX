@@ -1375,11 +1375,11 @@ async def get_gamma_history(symbol: str, days: int = 30):
         for entry in history_data:
             formatted_history.append({
                 "date": entry.get('collection_date', ''),
-                "price": float(entry.get('price', 0)),
-                "net_gex": float(entry.get('skew_adjusted_gex', 0)),
-                "flip_point": float(entry.get('gex_flip_price', 0)),
-                "implied_volatility": float(entry.get('implied_volatility', 0)),
-                "put_call_ratio": float(entry.get('put_call_ratio_open_interest', 0))
+                "price": float(entry.get('price') or 0),
+                "net_gex": float(entry.get('skew_adjusted_gex') or 0),
+                "flip_point": float(entry.get('gex_flip_price') or 0),
+                "implied_volatility": float(entry.get('implied_volatility') or 0),
+                "put_call_ratio": float(entry.get('put_call_ratio_open_interest') or 0)
             })
 
         print(f"✅ Fetched {len(formatted_history)} historical data points for {symbol}")
@@ -2436,15 +2436,16 @@ async def compare_all_strategies(symbol: str = "SPY"):
 
         # Prepare market data for optimizer
         # Use the correct keys from get_net_gamma response
+        # CRITICAL: Handle None values properly - use 'or 0' to provide defaults
         market_data = {
-            'spot_price': float(gex_data.get('spot_price', 0)),
-            'net_gex': float(gex_data.get('net_gex', 0)),
-            'flip_point': float(gex_data.get('flip_point', 0)),
-            'call_wall': float(gex_data.get('call_wall', 0)),
-            'put_wall': float(gex_data.get('put_wall', 0)),
-            'call_wall_gamma': float(gex_data.get('call_wall', 0)),
-            'put_wall_gamma': float(gex_data.get('put_wall', 0)),
-            'vix': float(vix)
+            'spot_price': float(gex_data.get('spot_price') or 0),
+            'net_gex': float(gex_data.get('net_gex') or 0),
+            'flip_point': float(gex_data.get('flip_point') or 0),
+            'call_wall': float(gex_data.get('call_wall') or 0),
+            'put_wall': float(gex_data.get('put_wall') or 0),
+            'call_wall_gamma': float(gex_data.get('call_wall') or 0),
+            'put_wall_gamma': float(gex_data.get('put_wall') or 0),
+            'vix': float(vix or 15.0)
         }
 
         print(f"Market data prepared: {market_data}")
@@ -4069,11 +4070,15 @@ def get_cached_price_data(symbol: str, current_price: float):
 
     polygon_key = os.getenv("POLYGON_API_KEY")
     if not polygon_key:
-        print(f"❌ No POLYGON_API_KEY configured")
+        print(f"❌ No POLYGON_API_KEY configured in environment")
+        print(f"❌ Available env vars: {', '.join([k for k in os.environ.keys() if 'POLYGON' in k or 'API' in k])}")
         raise HTTPException(
             status_code=503,
             detail=f"Polygon.io API key not configured. Cannot fetch price data for psychology analysis."
         )
+
+    print(f"✅ POLYGON_API_KEY is set (length: {len(polygon_key)} chars)")
+    print(f"✅ API key starts with: {polygon_key[:8]}...")
 
     try:
         import pandas as pd
@@ -4087,13 +4092,24 @@ def get_cached_price_data(symbol: str, current_price: float):
                 url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/{multiplier}/{timespan}/{from_date}/{to_date}"
                 params = {"apiKey": polygon_key, "sort": "asc", "limit": 50000}
 
+                print(f"    🌐 Calling Polygon.io: {url}")
+                print(f"    📅 Date range: {from_date} to {to_date}")
+
                 response = requests.get(url, params=params, timeout=10)
+
+                print(f"    📡 Response status: {response.status_code}")
 
                 if response.status_code == 200:
                     data = response.json()
                     status = data.get('status', '')
+                    results_count = data.get('resultsCount', 0)
+
+                    print(f"    📊 Polygon status: {status}")
+                    print(f"    📊 Results count: {results_count}")
+
                     if status in ['OK', 'DELAYED'] and data.get('results'):
                         results = data['results']
+                        print(f"    ✅ Got {len(results)} bars")
                         return [
                             {
                                 'close': bar['c'],
@@ -4104,13 +4120,29 @@ def get_cached_price_data(symbol: str, current_price: float):
                             for bar in results
                         ]
                     else:
-                        print(f"    ⚠️ Polygon.io status: {status}, results: {data.get('resultsCount', 0)}")
+                        print(f"    ⚠️ Polygon.io status: {status}, results: {results_count}")
+                        print(f"    ⚠️ Full response: {data}")
                         return []
+                elif response.status_code == 401:
+                    print(f"    ❌ Polygon.io 401 Unauthorized - API key is invalid")
+                    print(f"    ❌ Response: {response.text}")
+                    return []
+                elif response.status_code == 403:
+                    print(f"    ❌ Polygon.io 403 Forbidden - API key may not have access to this data")
+                    print(f"    ❌ Response: {response.text}")
+                    return []
+                elif response.status_code == 429:
+                    print(f"    ❌ Polygon.io 429 Rate Limit - too many requests")
+                    print(f"    ❌ Response: {response.text}")
+                    return []
                 else:
                     print(f"    ⚠️ Polygon.io HTTP {response.status_code}")
+                    print(f"    ⚠️ Response: {response.text[:500]}")
                     return []
             except Exception as e:
                 print(f"    ❌ Polygon.io error: {e}")
+                import traceback
+                traceback.print_exc()
                 return []
 
         price_data = {}
