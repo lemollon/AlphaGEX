@@ -86,6 +86,46 @@ class AutonomousPaperTrader:
         self.starting_capital = 5000  # $5,000 starting capital
         self._ensure_tables()
 
+        # CRITICAL: Initialize all components
+        if DATABASE_LOGGER_AVAILABLE:
+            self.db_logger = get_database_logger('autonomous_trader')
+            print("✅ Database logger initialized")
+        else:
+            self.db_logger = None
+
+        if AI_REASONING_AVAILABLE:
+            self.ai_reasoning = ai_reasoning
+            print("✅ AI reasoning engine ready")
+        else:
+            self.ai_reasoning = None
+
+        # Initialize risk manager
+        try:
+            from autonomous_risk_manager import get_risk_manager
+            self.risk_manager = get_risk_manager()
+            print("✅ Risk manager initialized")
+        except ImportError:
+            self.risk_manager = None
+            print("⚠️ Risk manager not available")
+
+        # Initialize ML pattern learner
+        try:
+            from autonomous_ml_pattern_learner import get_pattern_learner
+            self.ml_learner = get_pattern_learner()
+            print("✅ ML pattern learner initialized")
+        except ImportError:
+            self.ml_learner = None
+            print("⚠️ ML pattern learner not available")
+
+        # Initialize strategy competition
+        try:
+            from autonomous_strategy_competition import get_competition
+            self.competition = get_competition()
+            print("✅ Strategy competition initialized")
+        except ImportError:
+            self.competition = None
+            print("⚠️ Strategy competition not available")
+
         # Initialize if first run
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -334,6 +374,21 @@ class AutonomousPaperTrader:
         Returns position ID if successful (should ALWAYS return a position ID)
         """
 
+        # CRITICAL: Log scan start with database logger
+        if self.db_logger:
+            spot_price = 0
+            try:
+                gex_preview = api_client.get_net_gamma('SPY')
+                spot_price = gex_preview.get('spot_price', 0) if gex_preview else 0
+            except:
+                pass
+
+            self.db_logger.log_scan_start(
+                symbol='SPY',
+                spot_price=spot_price,
+                market_context={'scan_type': 'daily_trade_search'}
+            )
+
         # Update status: Starting trade search
         self.update_live_status(
             status='SEARCHING',
@@ -497,8 +552,54 @@ class AutonomousPaperTrader:
             return None
 
     def _execute_directional_trade(self, trade: Dict, gex_data: Dict, api_client) -> Optional[int]:
-        """Execute directional call/put trade"""
+        """Execute directional call/put trade with AI reasoning and risk checks"""
         try:
+            spot_price = gex_data.get('spot_price', 0)
+
+            # CRITICAL: Use AI reasoning for strike selection
+            if self.ai_reasoning:
+                try:
+                    # Get alternative strikes to consider
+                    base_strike = trade['strike']
+                    alternative_strikes = [
+                        base_strike - 10,
+                        base_strike - 5,
+                        base_strike,
+                        base_strike + 5,
+                        base_strike + 10
+                    ]
+
+                    strike_analysis = self.ai_reasoning.analyze_strike_selection(
+                        regime=trade.get('regime', {}),
+                        spot_price=spot_price,
+                        alternative_strikes=alternative_strikes
+                    )
+
+                    if strike_analysis and strike_analysis.get('recommended_strike'):
+                        # Use AI-recommended strike
+                        ai_strike = strike_analysis['recommended_strike']
+                        if ai_strike in alternative_strikes:
+                            trade['strike'] = ai_strike
+
+                        # Log AI strike selection reasoning
+                        if self.db_logger:
+                            self.db_logger.log_strike_selection(
+                                symbol='SPY',
+                                strike_analysis=strike_analysis,
+                                spot_price=spot_price
+                            )
+
+                        ai_strike_log = f"""
+🎯 AI STRIKE SELECTION:
+• Recommended Strike: ${strike_analysis['recommended_strike']:.0f}
+• Confidence: {strike_analysis.get('confidence', 'N/A')}
+• Reasoning: {strike_analysis.get('reasoning', 'See analysis')}
+"""
+                        self.log_action('AI_STRIKE', ai_strike_log, success=True)
+
+                except Exception as e:
+                    self.log_action('AI_ERROR', f'AI strike selection failed: {e}', success=False)
+
             # Get REAL option price
             exp_date = self._get_expiration_string(trade['dte'])
             option_price_data = get_real_option_price(
@@ -519,18 +620,88 @@ class AutonomousPaperTrader:
 
             available = self.get_available_capital()
 
-            # For $5K account: use max 25% per trade = $1,250
-            max_position = min(available * 0.25, 1250)
-            cost_per_contract = entry_price * 100
+            # CRITICAL: Use AI reasoning for position sizing
+            contracts = 1  # Default
+            if self.ai_reasoning:
+                try:
+                    # Get historical win rate from performance
+                    perf = self.get_performance()
+                    win_rate = perf.get('win_rate', 60) / 100  # Convert to decimal
 
-            if cost_per_contract == 0:
-                self.log_action('ERROR', 'Invalid option price (zero)', success=False)
-                return None
+                    # Estimate risk/reward
+                    target = trade.get('target', trade['strike'] * 1.02)
+                    risk_reward = abs(target - spot_price) / abs(trade['strike'] - spot_price) if abs(trade['strike'] - spot_price) > 0 else 1.5
 
-            contracts = max(1, int(max_position / cost_per_contract))
+                    sizing_analysis = self.ai_reasoning.analyze_position_sizing(
+                        account_size=available,
+                        win_rate=win_rate,
+                        risk_reward=risk_reward,
+                        trade_confidence=trade.get('confidence', 70) / 100,
+                        regime=trade.get('regime', {})
+                    )
+
+                    if sizing_analysis and sizing_analysis.get('recommended_contracts'):
+                        contracts = sizing_analysis['recommended_contracts']
+
+                        # Log AI position sizing
+                        if self.db_logger:
+                            self.db_logger.log_position_sizing(
+                                symbol='SPY',
+                                sizing_analysis=sizing_analysis,
+                                contracts=contracts
+                            )
+
+                        ai_sizing_log = f"""
+💰 AI POSITION SIZING:
+• Kelly %: {sizing_analysis.get('kelly_pct', 0):.1f}%
+• Recommended Contracts: {contracts}
+• Rationale: {sizing_analysis.get('sizing_rationale', 'See analysis')}
+"""
+                        self.log_action('AI_SIZING', ai_sizing_log, success=True)
+
+                except Exception as e:
+                    self.log_action('AI_ERROR', f'AI position sizing failed: {e}', success=False)
+                    # Fall back to basic sizing
+                    cost_per_contract = entry_price * 100
+                    max_position = min(available * 0.25, 1250)
+                    contracts = max(1, int(max_position / cost_per_contract))
+            else:
+                # Basic position sizing if AI not available
+                cost_per_contract = entry_price * 100
+                max_position = min(available * 0.25, 1250)
+                if cost_per_contract == 0:
+                    self.log_action('ERROR', 'Invalid option price (zero)', success=False)
+                    return None
+                contracts = max(1, int(max_position / cost_per_contract))
+
             contracts = min(contracts, 10)  # Max 10 contracts for $5K account
+            total_cost = contracts * entry_price * 100
 
-            total_cost = contracts * cost_per_contract
+            # CRITICAL: Check risk manager limits before executing
+            if self.risk_manager:
+                try:
+                    current_value = available + total_cost  # Approximate account value
+                    proposed_trade = {
+                        'symbol': 'SPY',
+                        'cost': total_cost
+                    }
+
+                    can_trade, risk_reason = self.risk_manager.check_all_limits(current_value, proposed_trade)
+
+                    if not can_trade:
+                        self.log_action('RISK_BLOCK', f'Trade blocked by risk manager: {risk_reason}', success=False)
+                        if self.db_logger:
+                            self.db_logger.log_trade_decision(
+                                symbol='SPY',
+                                decision='BLOCKED',
+                                reasoning=risk_reason
+                            )
+                        return None
+
+                    self.log_action('RISK_CHECK', f'✅ Risk checks passed: {risk_reason}', success=True)
+
+                except Exception as e:
+                    self.log_action('RISK_ERROR', f'Risk manager check failed: {e}', success=False)
 
             # Execute trade automatically
             position_id = self._execute_trade(
@@ -761,6 +932,41 @@ MULTI-TIMEFRAME RSI:
 • Coiling: {'YES 💥' if rsi_coiling else 'NO'}
 """
                     self.log_action('PSYCHOLOGY_RESULT', analysis_log, success=True)
+
+                    # CRITICAL: Log psychology analysis to database
+                    if self.db_logger:
+                        self.db_logger.log_psychology_analysis(
+                            regime=regime,
+                            symbol='SPY',
+                            spot_price=spot
+                        )
+
+                    # CRITICAL: Use ML to predict pattern success and adjust confidence
+                    if self.ml_learner and self.ml_learner.model is not None:
+                        try:
+                            ml_prediction = self.ml_learner.predict_pattern_success(regime)
+
+                            # Log ML prediction
+                            if ml_prediction:
+                                original_conf = regime.get('confidence_score', 0)
+                                ml_adjusted = ml_prediction.get('adjusted_confidence', original_conf)
+                                ml_prob = ml_prediction.get('success_probability', 0.5)
+
+                                ml_log = f"""
+🤖 ML PATTERN PREDICTION:
+• Original Confidence: {original_conf:.0f}%
+• ML Success Probability: {ml_prob:.1%}
+• ML-Adjusted Confidence: {ml_adjusted:.0f}%
+• ML Recommendation: {ml_prediction.get('recommendation', 'TRADE')}
+• ML Confidence Level: {ml_prediction.get('ml_confidence', 'UNKNOWN')}
+"""
+                                self.log_action('ML_PREDICTION', ml_log, success=True)
+
+                                # Adjust regime confidence with ML prediction
+                                regime['confidence_score'] = ml_adjusted
+                                regime['ml_prediction'] = ml_prediction
+                        except Exception as e:
+                            self.log_action('ML_ERROR', f'ML prediction failed: {e}', success=False)
 
                     # Convert psychology signals to trade setup
                     return self._convert_psychology_to_trade(
@@ -1006,7 +1212,8 @@ Upside target: {forward_magnet_above:.0f} (monthly OPEX magnet)"""
                     'confidence': min(95, int(confidence)),
                     'target': forward_magnet_above if forward_magnet_above else liberation_strike * 1.02,
                     'stop': spot * 0.985,
-                    'reasoning': reasoning
+                    'reasoning': reasoning,
+                    'regime': regime  # CRITICAL: Pass regime for AI and competition
                 }
             else:
                 # Put wall expiring - price can break downward
@@ -1032,7 +1239,8 @@ Downside target: {forward_magnet_below:.0f} (monthly OPEX magnet)"""
                     'confidence': min(95, int(confidence)),
                     'target': forward_magnet_below if forward_magnet_below else liberation_strike * 0.98,
                     'stop': spot * 1.015,
-                    'reasoning': reasoning
+                    'reasoning': reasoning,
+                    'regime': regime  # CRITICAL: Pass regime for AI and competition
                 }
 
         # ====== PRIORITY 2: AVOID FALSE FLOORS ======
@@ -1080,7 +1288,8 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
                     'confidence': int(adj_confidence),
                     'target': target_strike,
                     'stop': spot * 0.985,
-                    'reasoning': reasoning
+                    'reasoning': reasoning,
+                    'regime': regime  # CRITICAL: Pass regime for AI and competition
                 }
 
             elif trade_direction == 'BEARISH':
@@ -1115,7 +1324,8 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
                     'confidence': int(adj_confidence),
                     'target': target_strike,
                     'stop': spot * 1.015,
-                    'reasoning': reasoning
+                    'reasoning': reasoning,
+                    'regime': regime  # CRITICAL: Pass regime for AI and competition
                 }
 
         # ====== PRIORITY 4: LOWER CONFIDENCE / NEUTRAL ======
@@ -1133,7 +1343,8 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
                     'confidence': int(confidence),
                     'target': forward_magnet_above if forward_magnet_above else spot * 1.02,
                     'stop': spot * 0.985,
-                    'reasoning': f"{pattern} with {confidence:.0f}% confidence. POLR: {polr}. Forward magnet: ${forward_magnet_above:.0f}"
+                    'reasoning': f"{pattern} with {confidence:.0f}% confidence. POLR: {polr}. Forward magnet: ${forward_magnet_above:.0f}",
+                    'regime': regime  # CRITICAL: Pass regime for AI and competition
                 }
             elif polr == 'DOWNWARD':
                 strike = round(spot / 5) * 5
@@ -1147,7 +1358,8 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
                     'confidence': int(confidence),
                     'target': forward_magnet_below if forward_magnet_below else spot * 0.98,
                     'stop': spot * 1.015,
-                    'reasoning': f"{pattern} with {confidence:.0f}% confidence. POLR: {polr}. Forward magnet: ${forward_magnet_below:.0f}"
+                    'reasoning': f"{pattern} with {confidence:.0f}% confidence. POLR: {polr}. Forward magnet: ${forward_magnet_below:.0f}",
+                    'regime': regime  # CRITICAL: Pass regime for AI and competition
                 }
 
         # No high-confidence setup from psychology detector
@@ -1382,6 +1594,22 @@ This trade ensures we're always active in the market"""
                        entry_price: float, exp_date: str, gex_data: Dict) -> Optional[int]:
         """Execute the trade and send push notification"""
 
+        # CRITICAL: Log trade decision to database
+        if self.db_logger:
+            self.db_logger.log_trade_decision(
+                symbol=trade['symbol'],
+                decision='EXECUTE',
+                reasoning=trade.get('reasoning', 'See trade details'),
+                trade_details={
+                    'strategy': trade['strategy'],
+                    'action': trade['action'],
+                    'strike': trade['strike'],
+                    'contracts': contracts,
+                    'entry_price': entry_price,
+                    'confidence': trade['confidence']
+                }
+            )
+
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
 
@@ -1424,6 +1652,27 @@ This trade ensures we're always active in the market"""
         position_id = c.lastrowid
         conn.commit()
         conn.close()
+
+        # CRITICAL: Record trade in strategy competition
+        if self.competition:
+            try:
+                # Check which strategies would have taken this trade
+                regime = trade.get('regime', {})
+                if regime:
+                    for strategy_id in self.competition.strategies.keys():
+                        should_trade = self.competition.should_trade_for_strategy(strategy_id, regime)
+
+                        if should_trade:
+                            # Record that this strategy participated in the trade
+                            self.log_action(
+                                'COMPETITION',
+                                f'Strategy {strategy_id} participating in trade',
+                                success=True
+                            )
+                            # Note: Actual P&L will be recorded when position closes
+
+            except Exception as e:
+                self.log_action('COMPETITION_ERROR', f'Failed to record competition trade: {e}', success=False)
 
         # CRITICAL: Send push notification for high-confidence trades
         if trade['confidence'] >= 80:
