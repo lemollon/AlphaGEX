@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { X, Brain, Target, AlertTriangle, TrendingUp } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
@@ -13,7 +13,7 @@ function TradeExplainer({ tradeId, onClose }: TradeExplainerProps) {
   const [explanation, setExplanation] = useState<string>('')
   const [loading, setLoading] = useState(true)
 
-  useState(() => {
+  useEffect(() => {
     const fetchExplanation = async () => {
       try {
         const response = await apiClient.explainTrade(tradeId)
@@ -27,7 +27,7 @@ function TradeExplainer({ tradeId, onClose }: TradeExplainerProps) {
       }
     }
     fetchExplanation()
-  })
+  }, [tradeId])
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -72,7 +72,7 @@ function PositionGuidance({ tradeId, onClose }: PositionGuidanceProps) {
   const [loading, setLoading] = useState(true)
   const [currentStatus, setCurrentStatus] = useState<any>(null)
 
-  useState(() => {
+  useEffect(() => {
     const fetchGuidance = async () => {
       try {
         const response = await apiClient.getPositionGuidance(tradeId)
@@ -87,7 +87,7 @@ function PositionGuidance({ tradeId, onClose }: PositionGuidanceProps) {
       }
     }
     fetchGuidance()
-  })
+  }, [tradeId])
 
   const isProfitable = currentStatus?.pnl_pct >= 0
 

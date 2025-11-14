@@ -18,16 +18,29 @@ from pydantic import BaseModel
 import sqlite3
 from datetime import datetime, timedelta
 import os
-from autonomous_ai_reasoning import AutonomousAIReasoning
-from ai_trade_advisor import AITradeAdvisor
-from langchain_prompts import (
-    get_market_analysis_prompt,
-    get_trade_recommendation_prompt,
-    get_educational_prompt
-)
+try:
+    from autonomous_ai_reasoning import AutonomousAIReasoning
+except ImportError:
+    AutonomousAIReasoning = None
+
+try:
+    from ai_trade_advisor import AITradeAdvisor
+except ImportError:
+    AITradeAdvisor = None
+
+try:
+    from langchain_prompts import (
+        get_market_analysis_prompt,
+        get_trade_recommendation_prompt,
+        get_educational_prompt
+    )
+except ImportError:
+    # Fallback if langchain_prompts doesn't exist
+    get_market_analysis_prompt = lambda: ""
+    get_trade_recommendation_prompt = lambda: ""
+    get_educational_prompt = lambda: ""
+
 from langchain_anthropic import ChatAnthropic
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 
 router = APIRouter(prefix="/api/ai-intelligence", tags=["AI Intelligence"])
 
@@ -41,9 +54,9 @@ llm = ChatAnthropic(
     max_tokens=4096
 )
 
-# Initialize AI systems
-ai_reasoning = AutonomousAIReasoning()
-trade_advisor = AITradeAdvisor()
+# Initialize AI systems (if available)
+ai_reasoning = AutonomousAIReasoning() if AutonomousAIReasoning else None
+trade_advisor = AITradeAdvisor() if AITradeAdvisor else None
 
 
 # ============================================================================
