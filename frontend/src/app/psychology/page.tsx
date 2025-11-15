@@ -848,6 +848,7 @@ export default function PsychologyTrapDetection() {
 
             {/* Advanced View Content - Only show if toggled */}
             {isAdvancedView && (
+            <>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* RSI Heatmap */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
@@ -1185,6 +1186,9 @@ export default function PsychologyTrapDetection() {
                   </div>
                 )}
               </div>
+            )}
+
+            </>
             )}
             {/* End Advanced View */}
           </>
