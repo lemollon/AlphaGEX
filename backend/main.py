@@ -4526,25 +4526,39 @@ async def get_current_regime(symbol: str = "SPY"):
             ai_recommendation = None
 
         # Save daily gamma snapshot and get historical comparison
+        historical_comparison = None
+        backtest_stats = None
         try:
             from historical_tracking import save_daily_gamma_snapshot, get_historical_comparison, calculate_regime_backtest_statistics
 
-            # Save snapshot for historical tracking
-            save_daily_gamma_snapshot(symbol, gamma_data_formatted, current_price)
+            # Save snapshot for historical tracking (non-blocking)
+            try:
+                save_daily_gamma_snapshot(symbol, gamma_data_formatted, current_price)
+            except Exception as snap_err:
+                print(f"⚠️  Snapshot save failed (non-critical): {snap_err}")
 
-            # Get historical comparison
-            current_net_gamma = gamma_data_formatted.get('net_gamma', 0)
-            historical_comparison = get_historical_comparison(symbol, current_net_gamma)
+            # Get historical comparison (non-blocking)
+            try:
+                current_net_gamma = gamma_data_formatted.get('net_gamma', 0)
+                historical_comparison = get_historical_comparison(symbol, current_net_gamma)
+            except Exception as comp_err:
+                print(f"⚠️  Historical comparison failed (non-critical): {comp_err}")
 
-            # Get backtest statistics for current regime
-            regime_type = analysis['regime']['primary_type']
-            backtest_stats = calculate_regime_backtest_statistics(regime_type)
+            # Get backtest statistics for current regime (non-blocking)
+            try:
+                regime_type = analysis['regime']['primary_type']
+                backtest_stats = calculate_regime_backtest_statistics(regime_type)
+            except Exception as stats_err:
+                print(f"⚠️  Backtest stats failed (non-critical): {stats_err}")
 
-            print(f"✅ Historical tracking updated")
+            if historical_comparison or backtest_stats:
+                print(f"✅ Historical tracking updated")
+        except ImportError as import_err:
+            print(f"⚠️  Historical tracking not available (module not found): {import_err}")
         except Exception as hist_error:
             print(f"⚠️  Historical tracking failed: {hist_error}")
-            historical_comparison = None
-            backtest_stats = None
+            import traceback
+            traceback.print_exc()
 
         # Add market status and metadata
         from datetime import datetime

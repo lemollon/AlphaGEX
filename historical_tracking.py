@@ -12,6 +12,11 @@ import os
 def get_db_connection():
     """Get database connection"""
     db_path = os.path.join(os.path.dirname(__file__), 'alphagex.db')
+
+    # Create database if it doesn't exist
+    if not os.path.exists(db_path):
+        print(f"⚠️  Database not found at {db_path}, will be created on first write")
+
     return sqlite3.connect(db_path)
 
 
