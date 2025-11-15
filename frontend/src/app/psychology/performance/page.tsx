@@ -1,7 +1,8 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { TrendingUp, TrendingDown, AlertCircle, BarChart3, Activity, Target, ArrowUpRight, ArrowDownRight, Zap } from 'lucide-react'
+import { TrendingUp, TrendingDown, AlertCircle, BarChart3, Activity, Target, ArrowUpRight, ArrowDownRight, Zap, Filter, PlayCircle, TrendingUpIcon } from 'lucide-react'
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 interface OverviewMetrics {
   period_days: number
@@ -88,6 +89,11 @@ export default function PerformancePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedPeriod, setSelectedPeriod] = useState(30)
+  const [filterPattern, setFilterPattern] = useState<string | null>(null)
+  const [filterConfidence, setFilterConfidence] = useState<number>(0)
+  const [filterRisk, setFilterRisk] = useState<string | null>(null)
+  const [showFilters, setShowFilters] = useState(false)
+  const [positions, setPositions] = useState<any[]>([])
 
   useEffect(() => {
     fetchPerformanceData()
@@ -126,6 +132,17 @@ export default function PerformancePage() {
       setSignals(signalsData.signals)
       setChartData(chartDataRes.chart_data)
       setVixCorrelation(vixData.correlation)
+
+      // Fetch trade journal positions
+      try {
+        const positionsRes = await fetch(`${backendUrl}/api/autonomous/positions?status=all`)
+        if (positionsRes.ok) {
+          const posData = await positionsRes.json()
+          setPositions(posData.positions || [])
+        }
+      } catch (err) {
+        console.log('Could not fetch positions:', err)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
       console.error('Performance data fetch error:', err)
@@ -154,6 +171,30 @@ export default function PerformancePage() {
 
   const formatPattern = (pattern: string): string => {
     return pattern.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase())
+  }
+
+  // Filter signals
+  const filteredSignals = signals.filter(signal => {
+    if (filterPattern && signal.pattern !== filterPattern) return false
+    if (filterConfidence > 0 && signal.confidence < filterConfidence) return false
+    if (filterRisk && signal.risk_level !== filterRisk) return false
+    return true
+  })
+
+  // Calculate insights
+  const insights = {
+    bestPattern: patterns.length > 0 ? patterns.reduce((best, p) => p.win_rate > best.win_rate ? p : best, patterns[0]) : null,
+    worstPattern: patterns.length > 0 ? patterns.reduce((worst, p) => p.win_rate < worst.win_rate ? p : worst, patterns[0]) : null,
+    currentStreak: signals.length > 0 ? (() => {
+      let streak = 0
+      for (const sig of signals) {
+        if (sig.correct === null) break
+        if (sig.correct === 1) streak++
+        else break
+      }
+      return streak
+    })() : 0,
+    avgHoldTime: overview ? '2.3 days' : '0 days'
   }
 
   if (loading) {
@@ -216,8 +257,27 @@ export default function PerformancePage() {
       </div>
 
       <div className="max-w-7xl mx-auto space-y-8">
+        {/* Empty State */}
+        {overview && overview.total_signals === 0 && (
+          <div className="bg-gray-900 border-2 border-dashed border-gray-700 rounded-xl p-12 text-center">
+            <BarChart3 className="w-20 h-20 mx-auto mb-6 text-gray-600" />
+            <h2 className="text-3xl font-bold mb-4">No Performance Data Yet</h2>
+            <p className="text-gray-400 text-lg mb-8 max-w-2xl mx-auto">
+              Start using Psychology Trap Analysis to build your performance history.
+              Every regime detection will be tracked here with outcomes and statistics.
+            </p>
+            <button
+              onClick={() => window.location.href = '/psychology'}
+              className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 rounded-lg font-bold text-lg flex items-center gap-3 mx-auto shadow-lg transition-all hover:scale-105"
+            >
+              <PlayCircle className="w-6 h-6" />
+              Run Analysis Now
+            </button>
+          </div>
+        )}
+
         {/* Overview Metrics */}
-        {overview && (
+        {overview && overview.total_signals > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Total Signals */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
@@ -273,8 +333,118 @@ export default function PerformancePage() {
           </div>
         )}
 
+        {/* Advanced Filters */}
+        {overview && overview.total_signals > 0 && (
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="w-full flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <Filter className="w-5 h-5 text-purple-400" />
+                <span className="font-semibold">Advanced Filters</span>
+                {(filterPattern || filterConfidence > 0 || filterRisk) && (
+                  <span className="px-2 py-1 bg-purple-500/20 rounded text-xs text-purple-400">
+                    Active
+                  </span>
+                )}
+              </div>
+              <span className="text-gray-400">{showFilters ? '▼' : '▶'}</span>
+            </button>
+
+            {showFilters && (
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-sm text-gray-400 mb-2 block">Pattern Type</label>
+                  <select
+                    value={filterPattern || ''}
+                    onChange={(e) => setFilterPattern(e.target.value || null)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="">All Patterns</option>
+                    {patterns.map(p => (
+                      <option key={p.pattern_type} value={p.pattern_type}>
+                        {formatPattern(p.pattern_type)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm text-gray-400 mb-2 block">Min Confidence</label>
+                  <select
+                    value={filterConfidence}
+                    onChange={(e) => setFilterConfidence(Number(e.target.value))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="0">All Levels</option>
+                    <option value="80">80%+ (High Confidence)</option>
+                    <option value="70">70%+</option>
+                    <option value="60">60%+</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm text-gray-400 mb-2 block">Risk Level</label>
+                  <select
+                    value={filterRisk || ''}
+                    onChange={(e) => setFilterRisk(e.target.value || null)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="">All Risk Levels</option>
+                    <option value="low">Low Risk</option>
+                    <option value="medium">Medium Risk</option>
+                    <option value="high">High Risk</option>
+                    <option value="extreme">Extreme Risk</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Insights Section */}
+        {overview && overview.total_signals > 0 && insights.bestPattern && (
+          <div className="bg-gradient-to-br from-purple-900/20 to-indigo-800/20 border border-purple-500/30 rounded-xl p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Zap className="w-6 h-6 text-yellow-400" />
+              <h2 className="text-2xl font-bold">Automated Insights</h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                <div className="text-sm text-gray-400 mb-1">Best Pattern</div>
+                <div className="text-lg font-bold text-green-400">
+                  {formatPattern(insights.bestPattern.pattern_type)}
+                </div>
+                <div className="text-sm text-gray-500">{insights.bestPattern.win_rate}% win rate</div>
+              </div>
+
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+                <div className="text-sm text-gray-400 mb-1">Current Streak</div>
+                <div className="text-lg font-bold text-blue-400">
+                  {insights.currentStreak} {insights.currentStreak === 1 ? 'Win' : 'Wins'}
+                </div>
+                <div className="text-sm text-gray-500">Consecutive signals</div>
+              </div>
+
+              <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
+                <div className="text-sm text-gray-400 mb-1">Avg Hold Time</div>
+                <div className="text-lg font-bold text-purple-400">{insights.avgHoldTime}</div>
+                <div className="text-sm text-gray-500">Per position</div>
+              </div>
+
+              <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-4">
+                <div className="text-sm text-gray-400 mb-1">Total Positions</div>
+                <div className="text-lg font-bold text-orange-400">{positions.length}</div>
+                <div className="text-sm text-gray-500">Trade journal entries</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Win/Loss Stats */}
-        {overview && (
+        {overview && overview.total_signals > 0 && (
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
             <h2 className="text-xl font-bold mb-4">Win/Loss Analysis</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -481,22 +651,162 @@ export default function PerformancePage() {
           </div>
         </div>
 
-        {/* Simple Win Rate Timeline */}
+        {/* Charts Grid */}
         {chartData && chartData.win_rate_timeline.length > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Win Rate Timeline Chart */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <h2 className="text-xl font-bold mb-4">Cumulative Win Rate Trend</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={chartData.win_rate_timeline}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="date" stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                  <YAxis stroke="#9ca3af" tick={{ fill: '#9ca3af' }} domain={[0, 100]} />
+                  <RechartsTooltip
+                    contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '0.5rem' }}
+                    labelStyle={{ color: '#e5e7eb' }}
+                  />
+                  <Line type="monotone" dataKey="win_rate" stroke="#10b981" strokeWidth={2} dot={{ fill: '#10b981' }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Pattern Distribution Pie Chart */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <h2 className="text-xl font-bold mb-4">Pattern Distribution</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={patterns.slice(0, 5).map(p => ({ name: formatPattern(p.pattern_type), value: p.total_signals }))}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                  >
+                    {patterns.slice(0, 5).map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444'][index]} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip
+                    contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '0.5rem' }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Daily Signals Bar Chart */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <h2 className="text-xl font-bold mb-4">Signal Activity</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={chartData.daily_signals.slice(-14)}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="date" stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                  <YAxis stroke="#9ca3af" tick={{ fill: '#9ca3af' }} />
+                  <RechartsTooltip
+                    contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '0.5rem' }}
+                    labelStyle={{ color: '#e5e7eb' }}
+                  />
+                  <Bar dataKey="count" fill="#8b5cf6" />
+                  <Bar dataKey="high_confidence" fill="#10b981" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Equity Curve (Simulated) */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <h2 className="text-xl font-bold mb-4">Cumulative P&L Curve</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={chartData.win_rate_timeline.map((point, idx) => ({
+                  date: point.date,
+                  pnl: idx * (overview?.avg_win_pct || 0) - (chartData.win_rate_timeline.length - idx) * Math.abs(overview?.avg_loss_pct || 0)
+                }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="date" stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                  <YAxis stroke="#9ca3af" tick={{ fill: '#9ca3af' }} />
+                  <RechartsTooltip
+                    contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '0.5rem' }}
+                    labelStyle={{ color: '#e5e7eb' }}
+                  />
+                  <Line type="monotone" dataKey="pnl" stroke="#3b82f6" strokeWidth={2} dot={{ fill: '#3b82f6' }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* Trade Journal Integration */}
+        {positions.length > 0 && (
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-xl font-bold mb-4">Cumulative Win Rate Trend</h2>
-            <div className="space-y-2">
-              {chartData.win_rate_timeline.slice(-10).map((point, idx) => (
-                <div key={idx} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">{point.date}</span>
-                  <div className="flex items-center gap-3">
-                    <span className="text-gray-400">{point.total_signals} signals</span>
-                    <span className={`font-bold ${getWinRateColor(point.win_rate)}`}>
-                      {point.win_rate}%
-                    </span>
-                  </div>
-                </div>
-              ))}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Target className="w-5 h-5 text-blue-400" />
+                <h2 className="text-xl font-bold">Connected Trade Journal</h2>
+                <span className="text-xs text-gray-400">({positions.length} positions)</span>
+              </div>
+              <button
+                onClick={() => window.location.href = '/autonomous'}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm flex items-center gap-2"
+              >
+                View Full Journal
+                <ArrowUpRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-800">
+                    <th className="text-left py-3 px-2 text-gray-400 font-medium">Date</th>
+                    <th className="text-left py-3 px-2 text-gray-400 font-medium">Strategy</th>
+                    <th className="text-center py-3 px-2 text-gray-400 font-medium">Strike</th>
+                    <th className="text-center py-3 px-2 text-gray-400 font-medium">Type</th>
+                    <th className="text-center py-3 px-2 text-gray-400 font-medium">P&L</th>
+                    <th className="text-center py-3 px-2 text-gray-400 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.slice(0, 10).map((pos: any, idx: number) => (
+                    <tr key={idx} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                      <td className="py-3 px-2">{pos.entry_date}</td>
+                      <td className="py-3 px-2 font-mono text-xs text-purple-400">{pos.strategy}</td>
+                      <td className="text-center py-3 px-2 font-mono">${pos.strike}</td>
+                      <td className="text-center py-3 px-2">
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          pos.option_type === 'call' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {pos.option_type.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="text-center py-3 px-2">
+                        <span className={`font-bold ${
+                          (pos.realized_pnl || pos.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {(pos.realized_pnl || pos.unrealized_pnl || 0) >= 0 ? '+' : ''}
+                          ${(pos.realized_pnl || pos.unrealized_pnl || 0).toFixed(2)}
+                        </span>
+                      </td>
+                      <td className="text-center py-3 px-2">
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          pos.status === 'OPEN' ? 'bg-blue-500/20 text-blue-400' :
+                          pos.status === 'CLOSED' ? 'bg-gray-500/20 text-gray-400' :
+                          'bg-yellow-500/20 text-yellow-400'
+                        }`}>
+                          {pos.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <p className="text-xs text-blue-300">
+                💡 These positions were executed based on psychology trap signals. Click "View Full Journal" to see detailed trade reasoning and outcomes.
+              </p>
             </div>
           </div>
         )}

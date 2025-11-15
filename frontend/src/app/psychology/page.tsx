@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar, Sparkles, BarChart3 } from 'lucide-react'
+import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar, Sparkles, BarChart3, Eye, EyeOff, PlayCircle, TrendingUpIcon } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import TradingGuide from '@/components/TradingGuide'
 import PsychologyNotifications from '@/components/PsychologyNotifications'
+import InfoTooltip from '@/components/InfoTooltip'
 import { apiClient } from '@/lib/api'
 
 // Get API URL from environment variable (same as rest of the app)
@@ -142,6 +143,9 @@ export default function PsychologyTrapDetection() {
   const [history, setHistory] = useState<any[]>([])
   const [liberationSetups, setLiberationSetups] = useState<any[]>([])
   const [falseFloors, setFalseFloors] = useState<any[]>([])
+  const [isAdvancedView, setIsAdvancedView] = useState(false)
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true)
+  const [nextRefreshIn, setNextRefreshIn] = useState(60)
 
   // Fetch current regime analysis
   const fetchAnalysis = useCallback(async (forceRefresh = false) => {
@@ -216,6 +220,26 @@ export default function PsychologyTrapDetection() {
   useEffect(() => {
     fetchAnalysis()
   }, [fetchAnalysis])
+
+  // Auto-refresh timer
+  useEffect(() => {
+    if (!autoRefreshEnabled || !marketStatus?.is_open) {
+      setNextRefreshIn(60)
+      return
+    }
+
+    const interval = setInterval(() => {
+      setNextRefreshIn((prev) => {
+        if (prev <= 1) {
+          fetchAnalysis(true)
+          return 60
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [autoRefreshEnabled, marketStatus, fetchAnalysis])
 
   // Get regime color
   const getRegimeColor = (type: string) => {
@@ -340,14 +364,48 @@ export default function PsychologyTrapDetection() {
             </div>
           </div>
 
-          <button
-            onClick={() => fetchAnalysis(true)}
-            disabled={isRefreshing}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg flex items-center gap-2 disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Auto-refresh toggle */}
+            {marketStatus?.is_open && (
+              <button
+                onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                className={`px-3 py-2 rounded-lg flex items-center gap-2 text-sm ${
+                  autoRefreshEnabled ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 hover:bg-gray-700'
+                }`}
+              >
+                {autoRefreshEnabled ? (
+                  <>
+                    <Activity className="w-4 h-4 animate-pulse" />
+                    Auto {nextRefreshIn}s
+                  </>
+                ) : (
+                  <>
+                    <Clock className="w-4 h-4" />
+                    Auto Off
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Simple/Advanced toggle */}
+            <button
+              onClick={() => setIsAdvancedView(!isAdvancedView)}
+              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg flex items-center gap-2 text-sm"
+            >
+              {isAdvancedView ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {isAdvancedView ? 'Simple' : 'Advanced'}
+            </button>
+
+            {/* Manual refresh */}
+            <button
+              onClick={() => fetchAnalysis(true)}
+              disabled={isRefreshing}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg flex items-center gap-2 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {/* Push Notifications */}
@@ -435,6 +493,7 @@ export default function PsychologyTrapDetection() {
                     <div className="flex items-center gap-2 mb-2">
                       <Target className="w-5 h-5 text-purple-400" />
                       <span className="text-sm text-gray-400">Flip Point (Zero Gamma)</span>
+                      <InfoTooltip content="The price level where cumulative gamma exposure crosses zero. When price crosses this level, dealer hedging behavior reverses, often creating explosive moves." />
                     </div>
                     <div className="text-3xl font-bold text-purple-400">
                       ${analysis.zero_gamma_level.toFixed(2)}
@@ -447,6 +506,30 @@ export default function PsychologyTrapDetection() {
               </div>
             )}
 
+            {/* Prominent CTA Section */}
+            {aiRecommendation && aiRecommendation.specific_trade && (
+              <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl p-6 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Sparkles className="w-8 h-8 text-white" />
+                      <h2 className="text-2xl font-bold text-white">Ready to Trade This Setup?</h2>
+                    </div>
+                    <p className="text-purple-100 text-lg">
+                      {aiRecommendation.probability}% win probability • {aiRecommendation.risk_reward} R:R
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => window.open('/autonomous', '_blank')}
+                    className="px-8 py-4 bg-white text-purple-600 hover:bg-gray-100 rounded-lg font-bold text-lg flex items-center gap-3 shadow-lg transition-all hover:scale-105"
+                  >
+                    <PlayCircle className="w-6 h-6" />
+                    Paper Trade Now
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* AI Recommendation */}
             {aiRecommendation && aiRecommendation.narrative && (
               <div className="bg-gradient-to-br from-blue-900/20 to-indigo-800/10 border-2 border-blue-500/30 rounded-xl p-6 space-y-4">
@@ -454,6 +537,7 @@ export default function PsychologyTrapDetection() {
                   <Sparkles className="w-6 h-6 text-blue-400" />
                   <h2 className="text-2xl font-bold text-blue-400">AI Trade Recommendation</h2>
                   <span className="text-xs text-gray-400">Powered by Claude Haiku 4.5</span>
+                  <InfoTooltip content="AI-generated trade recommendation based on current market regime, gamma positioning, RSI analysis, and historical pattern performance." />
                 </div>
 
                 {/* AI Narrative */}
@@ -755,22 +839,26 @@ export default function PsychologyTrapDetection() {
             {/* HOW TO MAKE MONEY - Trading Guide */}
             {tradingGuide && (
               <div className="my-8">
-                <TradingGuide 
-                  guide={tradingGuide} 
+                <TradingGuide
+                  guide={tradingGuide}
                   currentPrice={analysis.spy_price}
                 />
               </div>
             )}
 
+            {/* Advanced View Content - Only show if toggled */}
+            {isAdvancedView && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* RSI Heatmap */}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <Activity className="w-5 h-5 text-purple-400" />
                   <h2 className="text-xl font-bold">Multi-Timeframe RSI</h2>
+                  <InfoTooltip content="Relative Strength Index across 5 timeframes (5m, 15m, 1h, 4h, 1d). When multiple timeframes align above 70 (overbought) or below 30 (oversold), it signals strong momentum or potential reversal." />
                   {analysis.rsi_analysis.coiling_detected && (
                     <div className="px-2 py-1 bg-yellow-500/20 rounded text-xs font-semibold text-yellow-400">
                       COILING
+                      <InfoTooltip content="Coiling occurs when RSI is compressed in the middle range across multiple timeframes, indicating a potential explosive breakout in either direction." />
                     </div>
                   )}
                 </div>
@@ -1098,6 +1186,7 @@ export default function PsychologyTrapDetection() {
                 )}
               </div>
             )}
+            {/* End Advanced View */}
           </>
         )}
         </div>
