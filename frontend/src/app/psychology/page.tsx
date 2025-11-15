@@ -104,12 +104,38 @@ interface RegimeAnalysis {
   }
 }
 
+interface HistoricalComparison {
+  yesterday_gamma: number | null
+  change_since_yesterday: number | null
+  change_pct: number | null
+  '7d_avg_gamma': number | null
+  vs_7d_avg: number | null
+  trend: string
+  has_historical_data: boolean
+}
+
+interface BacktestStats {
+  total_signals: number
+  wins: number
+  losses: number
+  win_rate: number
+  avg_gain: number
+  avg_loss: number
+  expectancy: number
+  best_trade: number
+  worst_trade: number
+  avg_hold_days: number
+  has_data: boolean
+}
+
 export default function PsychologyTrapDetection() {
   const [symbol, setSymbol] = useState('SPY')
   const [analysis, setAnalysis] = useState<RegimeAnalysis | null>(null)
   const [tradingGuide, setTradingGuide] = useState<any | null>(null)
   const [aiRecommendation, setAiRecommendation] = useState<AIRecommendation | null>(null)
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null)
+  const [historicalComparison, setHistoricalComparison] = useState<HistoricalComparison | null>(null)
+  const [backtestStats, setBacktestStats] = useState<BacktestStats | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -142,6 +168,8 @@ export default function PsychologyTrapDetection() {
       setTradingGuide(data.trading_guide || null)
       setAiRecommendation(data.ai_recommendation || null)
       setMarketStatus(data.market_status || null)
+      setHistoricalComparison(data.historical_comparison || null)
+      setBacktestStats(data.backtest_stats || null)
 
       // REMOVED: Auto-fetch supporting data to reduce API calls on page load
       // Only fetch these when user explicitly refreshes
@@ -518,6 +546,120 @@ export default function PsychologyTrapDetection() {
                 </div>
               </div>
             )}
+
+            {/* Historical Comparison & Backtest Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Historical Comparison */}
+              {historicalComparison && historicalComparison.has_historical_data && (
+                <div className="bg-gradient-to-br from-gray-900/50 to-gray-800/50 border border-gray-700 rounded-lg p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Calendar className="w-5 h-5 text-blue-400" />
+                    <h3 className="text-lg font-semibold text-white">Historical Context</h3>
+                  </div>
+
+                  <div className="space-y-3">
+                    {historicalComparison.change_since_yesterday !== null && (
+                      <div>
+                        <div className="text-sm text-gray-400 mb-1">Change Since Yesterday</div>
+                        <div className="flex items-baseline gap-2">
+                          <span className={`text-2xl font-bold ${historicalComparison.change_since_yesterday >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {historicalComparison.change_since_yesterday >= 0 ? '+' : ''}{(historicalComparison.change_since_yesterday / 1e9).toFixed(2)}B
+                          </span>
+                          {historicalComparison.change_pct !== null && (
+                            <span className={`text-sm ${historicalComparison.change_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              ({historicalComparison.change_pct >= 0 ? '+' : ''}{historicalComparison.change_pct.toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {historicalComparison['7d_avg_gamma'] !== null && (
+                      <div>
+                        <div className="text-sm text-gray-400 mb-1">vs 7-Day Average</div>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-lg font-mono text-white">
+                            {(historicalComparison['7d_avg_gamma'] / 1e9).toFixed(2)}B
+                          </span>
+                          {historicalComparison.vs_7d_avg !== null && (
+                            <span className={`text-sm ${historicalComparison.vs_7d_avg >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              ({historicalComparison.vs_7d_avg >= 0 ? '+' : ''}{historicalComparison.vs_7d_avg.toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">Trend</div>
+                      <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
+                        historicalComparison.trend === 'increasing' ? 'bg-green-500/20 text-green-400' :
+                        historicalComparison.trend === 'decreasing' ? 'bg-red-500/20 text-red-400' :
+                        'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {historicalComparison.trend === 'increasing' && '↗'}
+                        {historicalComparison.trend === 'decreasing' && '↘'}
+                        {historicalComparison.trend === 'stable' && '→'}
+                        <span className="uppercase">{historicalComparison.trend}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Backtest Statistics */}
+              {backtestStats && backtestStats.has_data && (
+                <div className="bg-gradient-to-br from-purple-900/20 to-indigo-800/20 border border-purple-500/30 rounded-lg p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <BarChart3 className="w-5 h-5 text-purple-400" />
+                    <h3 className="text-lg font-semibold text-white">Backtest Performance</h3>
+                    <span className="text-xs text-gray-400">({backtestStats.total_signals} signals)</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">Win Rate</div>
+                      <div className="text-3xl font-bold text-green-400">{backtestStats.win_rate}%</div>
+                      <div className="text-xs text-gray-500">{backtestStats.wins}W / {backtestStats.losses}L</div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">Expectancy</div>
+                      <div className={`text-3xl font-bold ${backtestStats.expectancy >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {backtestStats.expectancy >= 0 ? '+' : ''}{backtestStats.expectancy.toFixed(2)}%
+                      </div>
+                      <div className="text-xs text-gray-500">per trade</div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">Avg Win</div>
+                      <div className="text-lg font-mono text-green-400">+{backtestStats.avg_gain.toFixed(2)}%</div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">Avg Loss</div>
+                      <div className="text-lg font-mono text-red-400">{backtestStats.avg_loss.toFixed(2)}%</div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">Best Trade</div>
+                      <div className="text-sm font-mono text-green-400">+{backtestStats.best_trade.toFixed(2)}%</div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">Worst Trade</div>
+                      <div className="text-sm font-mono text-red-400">{backtestStats.worst_trade.toFixed(2)}%</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-gray-700">
+                    <div className="text-xs text-gray-400 text-center">
+                      Based on last {backtestStats.total_signals} {analysis.regime.primary_type.replace(/_/g, ' ')} signals
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Main Regime Card */}
             <div className="bg-gradient-to-br from-gray-900 to-gray-800 border-2 border-purple-500/30 rounded-xl p-6 space-y-4">
