@@ -202,9 +202,10 @@ class GEXBacktester(BacktestBase):
     def detect_negative_gex_squeeze(self, row: pd.Series, prev_row: pd.Series) -> Dict:
         """Detect negative GEX squeeze (explosive move)"""
         # Negative GEX + price near flip = squeeze potential
+        # Volume must be 2x average to confirm real dealer activity
         if (row['net_gex'] < -0.5e9 and
             row['dist_to_flip'] < 2.0 and
-            row['Volume'] > row['Volume'].rolling(20).mean() * 1.3):
+            row['Volume'] > row['Volume'].rolling(20).mean() * 2.0):
 
             # Direction based on which side of flip point
             direction = 'LONG' if row['Close'] > row['flip_point'] else 'SHORT'
