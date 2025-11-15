@@ -377,6 +377,42 @@ everyone catches on. You're front-running the regime shift by understanding gamm
                 'pre_work': 'Calculate forward gamma BEFORE opex. If net gamma flips sign, high confidence trade.',
                 'key_insight': 'The week AFTER major OPEX often trends differently than the week before. Trade the NEW structure, not the old.'
             }
+        },
+
+        'SHORT_GAMMA_MOMENTUM': {
+            'strategy': 'MOMENTUM BREAKOUT (Dealer Amplification)',
+            'entry_rules': [
+                '1. Wait for breakout above resistance on 2x+ average volume',
+                f'2. Buy calls 1 strike OTM (${int(current_price + 1)}) on confirmation',
+                '3. Use 2-5 DTE for gamma leverage in short gamma regime',
+                '4. Enter in first 30-60 min after breakout confirmed'
+            ],
+            'exit_rules': [
+                '1. Trail stops 25% below entry (volatility is high)',
+                '2. Take 75%+ profit at next gamma wall resistance',
+                '3. Exit if RSI hits 75+ (extreme overbought)',
+                '4. Close by 3:30 PM to avoid gamma risk'
+            ],
+            'strike_selection': f'Buy ${int(current_price + 1):.0f} calls (0.4-0.5 delta, first OTM)',
+            'position_sizing': 'Risk 2% of account - moves are amplified',
+            'win_rate': 65,
+            'avg_gain': '+80% to +150%',
+            'max_loss': '-40%',
+            'time_horizon': 'Intraday to 2 days',
+            'why_it_works': f'''Dealers are net SHORT ${abs(regime_data.get("net_gamma", 0)/1e9):.1f}B gamma.
+When price moves, they must HEDGE in the same direction, creating a feedback loop. If SPY goes up, dealers
+must BUY to hedge their short calls, pushing price HIGHER. This amplification continues until RSI hits
+extremes or a gamma wall stops the move. You're trading WITH the dealer hedging flow, not against it.
+
+Volume confirmation is critical - need 2x average to ensure it's real dealer activity, not noise.''',
+            'example_trade': {
+                'setup': f'SPY at ${current_price:.2f}. Net gamma -$1.02B SHORT. Volume building. RSI at 52 (room to run).',
+                'entry': f'If SPY breaks ${current_price + 1:.2f} on 2x volume: Buy ${int(current_price + 1)} calls, 3 DTE',
+                'cost': '$2.80 per contract ($280 for 1 contract)',
+                'target': f'Exit at ${current_price + 4:.2f} → Calls worth ~$5.00 (+79%)',
+                'stop': f'${current_price - 1:.2f} → Calls worth ~$1.50 (-46%)',
+                'expected': '+$220 profit per contract (79% gain) in 1-2 days'
+            }
         }
     }
 

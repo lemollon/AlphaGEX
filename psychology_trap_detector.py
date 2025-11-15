@@ -1737,6 +1737,80 @@ Forward magnet:
         regime['psychology_trap'] = 'Market behaves rationally - fade extremes works'
         return regime
 
+    # Short Gamma Momentum (NEW - makes NEGATIVE_GAMMA actionable)
+    elif (net_gamma < -500_000_000 and abs(rsi_score) < 50):
+        # Significant short gamma + not yet at extremes = tradeable momentum
+        # Use VIX regime to determine risk level
+        vix_risk = vol_regime['risk_level'] if vol_regime else 'medium'
+
+        # Determine direction bias from RSI
+        if rsi_score > 10:
+            direction = 'bullish'
+            bias_desc = 'upside bias'
+        elif rsi_score < -10:
+            direction = 'bearish'
+            bias_desc = 'downside bias'
+        else:
+            direction = 'momentum'
+            bias_desc = 'directional breakout'
+
+        regime['primary_type'] = 'SHORT_GAMMA_MOMENTUM'
+        regime['confidence'] = 65 + int(abs(net_gamma) / 1e9 * 5)  # Higher gamma = higher confidence
+        regime['description'] = f'Dealers short ${abs(net_gamma)/1e9:.1f}B gamma - amplification mode with {bias_desc}'
+        regime['detailed_explanation'] = f"""
+SHORT GAMMA MOMENTUM REGIME
+
+Current Situation:
+- Net Gamma: ${net_gamma/1e9:.1f}B (SHORT - dealers amplify moves)
+- RSI: {rsi_score:.0f} (Room to run - not yet extreme)
+- Volume: {volume_ratio:.1f}x average
+- VIX Risk: {vix_risk}
+
+Dealer Mechanics:
+When dealers are net SHORT gamma, they must HEDGE in the direction of price movement:
+- Price moves UP → Dealers must BUY → Pushes price HIGHER
+- Price moves DOWN → Dealers must SELL → Pushes price LOWER
+
+This creates AMPLIFICATION - small moves become bigger moves.
+
+Trading Strategy:
+1. MOMENTUM is your friend - don't fade moves in short gamma
+2. Breakouts have FOLLOW-THROUGH (dealers chase)
+3. Use wider stops - volatility is higher
+4. Trade WITH the trend, not against it
+5. Watch for volume confirmation (need 2x+ for conviction)
+
+Best Setups:
+- Buy breakouts above resistance on volume
+- Use 0.4-0.5 delta options (first OTM strike)
+- Trail stops - let winners run
+- Exit if RSI hits extreme (>75 or <25)
+
+Risk:
+- Moves can reverse just as quickly (dealer hedging works both ways)
+- Avoid overnight holds unless strong trend
+- {vix_risk} volatility environment
+"""
+        regime['trade_direction'] = direction
+        regime['risk_level'] = vix_risk
+        regime['timeline'] = 'Intraday to 2-3 days'
+        regime['psychology_trap'] = 'Traders try to fade "overbought/oversold" but dealer amplification extends moves beyond logic'
+        regime['supporting_factors'] = [
+            f'Short gamma ${abs(net_gamma)/1e9:.1f}B',
+            f'RSI {rsi_score:.0f} (not extreme)',
+            f'Volume {volume_ratio:.1f}x',
+            'Dealer amplification active'
+        ]
+
+        # Add price targets if walls exist
+        if call_wall and call_wall.get('strike'):
+            regime['price_targets'] = {
+                'resistance': call_wall['strike'],
+                'support': put_wall['strike'] if put_wall and put_wall.get('strike') else current_price * 0.97
+            }
+
+        return regime
+
     # Default: Neutral
     else:
         regime['primary_type'] = 'NEUTRAL'

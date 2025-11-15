@@ -4516,6 +4516,30 @@ async def get_current_regime(symbol: str = "SPY"):
             regime_data=analysis['regime']
         )
 
+        # Generate AI-powered trade recommendation
+        try:
+            from ai_trade_recommendations import get_ai_recommendation
+            ai_recommendation = get_ai_recommendation(symbol, analysis)
+            print(f"✅ AI recommendation generated")
+        except Exception as ai_error:
+            print(f"⚠️  AI recommendation failed: {ai_error}")
+            ai_recommendation = None
+
+        # Add market status and metadata
+        from datetime import datetime
+        import pytz
+        eastern = pytz.timezone('US/Eastern')
+        now = datetime.now(eastern)
+        market_open = now.weekday() < 5 and 9 <= now.hour < 16  # Simple check
+
+        market_status = {
+            'is_open': market_open,
+            'timestamp': now.isoformat(),
+            'market_time': now.strftime('%I:%M %p ET'),
+            'status_text': 'OPEN' if market_open else 'CLOSED',
+            'data_age_minutes': 0 if market_open else int((now.hour - 16) * 60) if now.hour >= 16 else 0
+        }
+
         # Convert numpy types to Python native types for JSON serialization
         def convert_numpy_types(obj):
             """Recursively convert numpy types to Python native types"""
@@ -4538,12 +4562,16 @@ async def get_current_regime(symbol: str = "SPY"):
         # Convert all data before returning
         analysis = convert_numpy_types(analysis)
         trading_guide = convert_numpy_types(trading_guide)
+        if ai_recommendation:
+            ai_recommendation = convert_numpy_types(ai_recommendation)
 
         return {
             "success": True,
             "symbol": symbol,
             "analysis": analysis,
-            "trading_guide": trading_guide
+            "trading_guide": trading_guide,
+            "ai_recommendation": ai_recommendation,
+            "market_status": market_status
         }
 
     except HTTPException:
