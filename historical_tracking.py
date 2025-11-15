@@ -11,7 +11,8 @@ import os
 
 def get_db_connection():
     """Get database connection"""
-    db_path = os.path.join(os.path.dirname(__file__), 'alphagex.db')
+    # Use the same database path as config_and_database.py
+    db_path = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(__file__), 'gex_copilot.db'))
 
     # Create database if it doesn't exist
     if not os.path.exists(db_path):

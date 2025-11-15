@@ -4561,7 +4561,6 @@ async def get_current_regime(symbol: str = "SPY"):
             traceback.print_exc()
 
         # Add market status and metadata
-        from datetime import datetime
         import pytz
         eastern = pytz.timezone('US/Eastern')
         now = datetime.now(eastern)
@@ -5921,6 +5920,65 @@ async def get_quick_psychology_check(symbol: str = "SPY"):
             "trade_direction": "wait",
             "error": str(e)
         }
+
+
+@app.get("/api/database/stats")
+async def get_database_stats():
+    """
+    Get statistics about all database tables
+    Returns table names, row counts, and sample data
+    """
+    try:
+        from config_and_database import DB_PATH
+        import sqlite3
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Get all tables
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        tables = [row[0] for row in cursor.fetchall()]
+
+        table_stats = []
+
+        for table_name in tables:
+            # Get row count
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            row_count = cursor.fetchone()[0]
+
+            # Get column info
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [{"name": col[1], "type": col[2]} for col in cursor.fetchall()]
+
+            # Get sample data (first 5 rows)
+            sample_data = []
+            if row_count > 0:
+                cursor.execute(f"SELECT * FROM {table_name} LIMIT 5")
+                rows = cursor.fetchall()
+                column_names = [col["name"] for col in columns]
+
+                for row in rows:
+                    sample_data.append(dict(zip(column_names, row)))
+
+            table_stats.append({
+                "table_name": table_name,
+                "row_count": row_count,
+                "columns": columns,
+                "sample_data": sample_data
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "database_path": str(DB_PATH),
+            "total_tables": len(tables),
+            "tables": table_stats,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database stats error: {str(e)}")
 
 
 # ============================================================================
