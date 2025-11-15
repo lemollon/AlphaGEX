@@ -398,16 +398,33 @@ def analyze_current_gamma_walls(current_price: float, gamma_data: Dict) -> Dict:
 
     for exp in gamma_data.get('expirations', []):
         for call in exp.get('call_strikes', []):
-            strike = call['strike']
+            strike = call.get('strike')
+            # Skip None or invalid strikes
+            if strike is None or not isinstance(strike, (int, float)):
+                continue
             if strike not in all_call_strikes:
                 all_call_strikes[strike] = 0
-            all_call_strikes[strike] += call['gamma_exposure']
+            all_call_strikes[strike] += call.get('gamma_exposure', 0)
 
         for put in exp.get('put_strikes', []):
-            strike = put['strike']
+            strike = put.get('strike')
+            # Skip None or invalid strikes
+            if strike is None or not isinstance(strike, (int, float)):
+                continue
             if strike not in all_put_strikes:
                 all_put_strikes[strike] = 0
-            all_put_strikes[strike] += put['gamma_exposure']
+            all_put_strikes[strike] += put.get('gamma_exposure', 0)
+
+    # Validate current_price
+    if current_price is None or current_price <= 0:
+        # Return empty result if current_price is invalid
+        return {
+            'call_wall': None,
+            'put_wall': None,
+            'net_gamma_regime': 'short' if gamma_data.get('net_gamma', 0) < 0 else 'long',
+            'net_gamma': gamma_data.get('net_gamma', 0),
+            'all_walls': {'calls': [], 'puts': []}
+        }
 
     # Find significant walls (top 20% by absolute gamma)
     if all_call_strikes:
@@ -427,13 +444,13 @@ def analyze_current_gamma_walls(current_price: float, gamma_data: Dict) -> Dict:
     significant_calls = [
         {'strike': k, 'gamma': v}
         for k, v in all_call_strikes.items()
-        if abs(v) >= call_wall_threshold and k > current_price
+        if k is not None and abs(v) >= call_wall_threshold and k > current_price
     ]
 
     significant_puts = [
         {'strike': k, 'gamma': v}
         for k, v in all_put_strikes.items()
-        if abs(v) >= put_wall_threshold and k < current_price
+        if k is not None and abs(v) >= put_wall_threshold and k < current_price
     ]
 
     # Find nearest walls
@@ -510,29 +527,41 @@ def analyze_gamma_expiration(gamma_data: Dict, current_price: float) -> Dict:
         all_strikes = {}
 
         for call in exp.get('call_strikes', []):
-            strike = call['strike']
+            strike = call.get('strike')
+            # Skip None or invalid strikes
+            if strike is None or not isinstance(strike, (int, float)):
+                continue
             if strike not in all_strikes:
                 all_strikes[strike] = {'call_gamma': 0, 'put_gamma': 0}
-            all_strikes[strike]['call_gamma'] += call['gamma_exposure']
+            all_strikes[strike]['call_gamma'] += call.get('gamma_exposure', 0)
 
         for put in exp.get('put_strikes', []):
-            strike = put['strike']
+            strike = put.get('strike')
+            # Skip None or invalid strikes
+            if strike is None or not isinstance(strike, (int, float)):
+                continue
             if strike not in all_strikes:
                 all_strikes[strike] = {'call_gamma': 0, 'put_gamma': 0}
-            all_strikes[strike]['put_gamma'] += put['gamma_exposure']
+            all_strikes[strike]['put_gamma'] += put.get('gamma_exposure', 0)
 
         # Find significant strikes for this expiration
         for strike, gammas in all_strikes.items():
             total_gamma = abs(gammas['call_gamma']) + abs(gammas['put_gamma'])
 
-            if total_gamma > 0:
+            if total_gamma > 0 and strike is not None:
+                # Calculate distance_pct safely
+                if current_price and current_price > 0:
+                    distance_pct = (strike - current_price) / current_price * 100
+                else:
+                    distance_pct = 0
+
                 strikes_analysis.append({
                     'strike': strike,
                     'call_gamma': gammas['call_gamma'],
                     'put_gamma': gammas['put_gamma'],
                     'total_gamma': total_gamma,
                     'net_gamma': gammas['call_gamma'] + gammas['put_gamma'],
-                    'distance_pct': (strike - current_price) / current_price * 100
+                    'distance_pct': distance_pct
                 })
 
         # Sort by gamma strength
@@ -903,7 +932,10 @@ def analyze_forward_gex(gamma_data: Dict, current_price: float) -> Optional[Dict
 
     for exp in monthly_expirations:
         for call in exp.get('call_strikes', []):
-            strike = call['strike']
+            strike = call.get('strike')
+            # Skip None or invalid strikes
+            if strike is None or not isinstance(strike, (int, float)):
+                continue
             if strike not in monthly_strikes:
                 monthly_strikes[strike] = {
                     'call_gamma': 0,
@@ -911,11 +943,14 @@ def analyze_forward_gex(gamma_data: Dict, current_price: float) -> Optional[Dict
                     'call_oi': 0,
                     'put_oi': 0
                 }
-            monthly_strikes[strike]['call_gamma'] += call['gamma_exposure']
+            monthly_strikes[strike]['call_gamma'] += call.get('gamma_exposure', 0)
             monthly_strikes[strike]['call_oi'] += call.get('open_interest', 0)
 
         for put in exp.get('put_strikes', []):
-            strike = put['strike']
+            strike = put.get('strike')
+            # Skip None or invalid strikes
+            if strike is None or not isinstance(strike, (int, float)):
+                continue
             if strike not in monthly_strikes:
                 monthly_strikes[strike] = {
                     'call_gamma': 0,
@@ -923,13 +958,19 @@ def analyze_forward_gex(gamma_data: Dict, current_price: float) -> Optional[Dict
                     'call_oi': 0,
                     'put_oi': 0
                 }
-            monthly_strikes[strike]['put_gamma'] += put['gamma_exposure']
+            monthly_strikes[strike]['put_gamma'] += put.get('gamma_exposure', 0)
             monthly_strikes[strike]['put_oi'] += put.get('open_interest', 0)
+
+    # Validate current_price
+    if not current_price or current_price <= 0:
+        return None
 
     # Calculate magnet strength for each strike
     magnet_strength = {}
 
     for strike, data in monthly_strikes.items():
+        if strike is None:
+            continue
         total_gamma = abs(data['call_gamma']) + abs(data['put_gamma'])
         distance_pct = abs(strike - current_price) / current_price * 100
 
