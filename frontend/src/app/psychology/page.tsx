@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar } from 'lucide-react'
+import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar, Sparkles, BarChart3 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import TradingGuide from '@/components/TradingGuide'
 import PsychologyNotifications from '@/components/PsychologyNotifications'
