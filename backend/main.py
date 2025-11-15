@@ -4561,7 +4561,6 @@ async def get_current_regime(symbol: str = "SPY"):
             traceback.print_exc()
 
         # Add market status and metadata
-        from datetime import datetime
         import pytz
         eastern = pytz.timezone('US/Eastern')
         now = datetime.now(eastern)
