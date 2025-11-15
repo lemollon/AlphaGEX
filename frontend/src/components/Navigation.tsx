@@ -23,7 +23,8 @@ import {
   TrendingDown,
   Sparkles,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Database
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
@@ -43,6 +44,7 @@ const navItems = [
   { href: '/ai/optimizer', label: 'AI Strategy Optimizer', icon: Sparkles, category: 'AI & Testing' },
   { href: '/trader', label: 'Autonomous Trader', icon: Bot, category: 'Automation' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Automation' },
+  { href: '/database', label: 'Database Admin', icon: Database, category: 'System' },
 ]
 
 export default function Navigation() {
