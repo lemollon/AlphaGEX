@@ -46,6 +46,34 @@ interface VolatilityRegime {
   flip_point_distance_pct: number
 }
 
+interface MarketStatus {
+  is_open: boolean
+  timestamp: string
+  market_time: string
+  status_text: string
+  data_age_minutes: number
+}
+
+interface AIRecommendation {
+  narrative: string
+  specific_trade: {
+    strike: number
+    option_type: string
+    expiration: string
+    entry_price: number
+    target: number
+    stop: number
+  } | null
+  entry_triggers: string[]
+  exit_triggers: string[]
+  probability: number
+  risk_reward: string
+  time_window: string
+  generated_at: string
+  regime_type: string
+  confidence: number
+}
+
 interface RegimeAnalysis {
   timestamp: string
   spy_price: number
@@ -80,6 +108,8 @@ export default function PsychologyTrapDetection() {
   const [symbol, setSymbol] = useState('SPY')
   const [analysis, setAnalysis] = useState<RegimeAnalysis | null>(null)
   const [tradingGuide, setTradingGuide] = useState<any | null>(null)
+  const [aiRecommendation, setAiRecommendation] = useState<AIRecommendation | null>(null)
+  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -110,6 +140,8 @@ export default function PsychologyTrapDetection() {
       const data = await response.json()
       setAnalysis(data.analysis)
       setTradingGuide(data.trading_guide || null)
+      setAiRecommendation(data.ai_recommendation || null)
+      setMarketStatus(data.market_status || null)
 
       // REMOVED: Auto-fetch supporting data to reduce API calls on page load
       // Only fetch these when user explicitly refreshes
@@ -169,6 +201,10 @@ export default function PsychologyTrapDetection() {
       'PIN_AT_PUT_WALL': 'text-cyan-400',
       'CAPITULATION_CASCADE': 'text-rose-400',
       'MEAN_REVERSION_ZONE': 'text-purple-400',
+      'SHORT_GAMMA_MOMENTUM': 'text-amber-400',
+      'GAMMA_SQUEEZE_CASCADE': 'text-red-600',
+      'FLIP_POINT_CRITICAL': 'text-pink-500',
+      'POST_OPEX_REGIME_FLIP': 'text-indigo-400',
       'NEUTRAL': 'text-gray-400'
     }
     return colors[type] || 'text-gray-400'
@@ -237,23 +273,41 @@ export default function PsychologyTrapDetection() {
         <div className="container mx-auto px-4 py-8 space-y-6">
           {/* Header */}
         <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Brain className="w-8 h-8 text-purple-400" />
-              <h1 className="text-3xl font-bold">Psychology Trap Detection</h1>
-            </div>
+          <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <p className="text-gray-400">
-                Identify when retail traders get trapped by ignoring market structure
-              </p>
-              {analysis?.timestamp && (
+              <Brain className="w-8 h-8 text-purple-400" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-3xl font-bold">{symbol}</h1>
+                  <span className="text-2xl text-gray-500">Psychology Trap Analysis</span>
+                </div>
+                <p className="text-sm text-gray-400">
+                  Identify when retail traders get trapped by ignoring market structure
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 text-sm">
+              {marketStatus && (
                 <>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${marketStatus.is_open ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                    <span className="font-semibold text-white">MARKET: {marketStatus.status_text}</span>
+                  </div>
                   <span className="text-gray-600">|</span>
-                  <div className="flex items-center gap-1 text-sm text-gray-500">
+                  <div className="flex items-center gap-1 text-gray-400">
                     <Clock className="w-4 h-4" />
-                    <span>Updated: {new Date(analysis.timestamp).toLocaleString()}</span>
+                    <span>{marketStatus.market_time}</span>
+                    {!marketStatus.is_open && marketStatus.data_age_minutes > 0 && (
+                      <span className="text-yellow-500 ml-2">(Data {marketStatus.data_age_minutes} min old)</span>
+                    )}
                   </div>
                 </>
+              )}
+              {analysis?.timestamp && !marketStatus && (
+                <div className="flex items-center gap-1 text-gray-500">
+                  <Clock className="w-4 h-4" />
+                  <span>Updated: {new Date(analysis.timestamp).toLocaleString()}</span>
+                </div>
               )}
             </div>
           </div>
@@ -304,6 +358,163 @@ export default function PsychologyTrapDetection() {
                       {analysis.alert_level.reason}
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Strike Levels */}
+            {analysis.current_walls && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Call Wall */}
+                {analysis.current_walls.call_wall && (
+                  <div className="bg-gradient-to-br from-green-900/20 to-green-800/10 border border-green-500/30 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <TrendingUp className="w-5 h-5 text-green-400" />
+                      <span className="text-sm text-gray-400">Call Wall (Resistance)</span>
+                    </div>
+                    <div className="text-3xl font-bold text-green-400">
+                      ${analysis.current_walls.call_wall.strike?.toFixed(2) || 'N/A'}
+                    </div>
+                    {analysis.current_walls.call_wall.distance_pct !== null && (
+                      <div className="text-sm text-gray-400 mt-1">
+                        {analysis.current_walls.call_wall.distance_pct > 0 ? '▲' : '▼'} {Math.abs(analysis.current_walls.call_wall.distance_pct).toFixed(2)}% away
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Put Wall */}
+                {analysis.current_walls.put_wall && (
+                  <div className="bg-gradient-to-br from-red-900/20 to-red-800/10 border border-red-500/30 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <TrendingDown className="w-5 h-5 text-red-400" />
+                      <span className="text-sm text-gray-400">Put Wall (Support)</span>
+                    </div>
+                    <div className="text-3xl font-bold text-red-400">
+                      ${analysis.current_walls.put_wall.strike?.toFixed(2) || 'N/A'}
+                    </div>
+                    {analysis.current_walls.put_wall.distance_pct !== null && (
+                      <div className="text-sm text-gray-400 mt-1">
+                        {analysis.current_walls.put_wall.distance_pct > 0 ? '▲' : '▼'} {Math.abs(analysis.current_walls.put_wall.distance_pct).toFixed(2)}% away
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Zero Gamma Level / Flip Point */}
+                {analysis.zero_gamma_level && (
+                  <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/30 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Target className="w-5 h-5 text-purple-400" />
+                      <span className="text-sm text-gray-400">Flip Point (Zero Gamma)</span>
+                    </div>
+                    <div className="text-3xl font-bold text-purple-400">
+                      ${analysis.zero_gamma_level.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Dealer hedging changes direction
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* AI Recommendation */}
+            {aiRecommendation && aiRecommendation.narrative && (
+              <div className="bg-gradient-to-br from-blue-900/20 to-indigo-800/10 border-2 border-blue-500/30 rounded-xl p-6 space-y-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-6 h-6 text-blue-400" />
+                  <h2 className="text-2xl font-bold text-blue-400">AI Trade Recommendation</h2>
+                  <span className="text-xs text-gray-400">Powered by Claude Haiku 4.5</span>
+                </div>
+
+                {/* AI Narrative */}
+                <div className="bg-gray-950/50 rounded-lg p-4">
+                  <p className="text-gray-300 whitespace-pre-line">{aiRecommendation.narrative}</p>
+                </div>
+
+                {/* Specific Trade */}
+                {aiRecommendation.specific_trade && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-gray-950/50 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold text-white mb-3">Specific Trade</h3>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Strike:</span>
+                          <span className="text-white font-mono">${aiRecommendation.specific_trade.strike}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Type:</span>
+                          <span className="text-white uppercase">{aiRecommendation.specific_trade.option_type}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Expiration:</span>
+                          <span className="text-white">{aiRecommendation.specific_trade.expiration}</span>
+                        </div>
+                        <div className="flex justify-between border-t border-gray-700 pt-2 mt-2">
+                          <span className="text-gray-400">Entry:</span>
+                          <span className="text-green-400 font-mono">${aiRecommendation.specific_trade.entry_price.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Target:</span>
+                          <span className="text-green-400 font-mono">${aiRecommendation.specific_trade.target.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Stop:</span>
+                          <span className="text-red-400 font-mono">${aiRecommendation.specific_trade.stop.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="bg-gray-950/50 rounded-lg p-4">
+                        <h3 className="text-lg font-semibold text-white mb-2">Win Probability</h3>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-4xl font-bold text-green-400">{aiRecommendation.probability}%</span>
+                          <span className="text-sm text-gray-400">success rate</span>
+                        </div>
+                        <div className="mt-2 text-sm text-gray-400">
+                          Risk/Reward: <span className="text-white font-semibold">{aiRecommendation.risk_reward}</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-950/50 rounded-lg p-4">
+                        <h3 className="text-sm font-semibold text-gray-400 mb-2">Best Entry Window</h3>
+                        <div className="text-white">{aiRecommendation.time_window}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Entry/Exit Triggers */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {aiRecommendation.entry_triggers && aiRecommendation.entry_triggers.length > 0 && (
+                    <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold text-green-400 mb-2">Entry Triggers</h3>
+                      <ul className="space-y-1 text-sm text-gray-300">
+                        {aiRecommendation.entry_triggers.map((trigger, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-green-400 mt-1">▸</span>
+                            <span>{trigger}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {aiRecommendation.exit_triggers && aiRecommendation.exit_triggers.length > 0 && (
+                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold text-red-400 mb-2">Exit Triggers</h3>
+                      <ul className="space-y-1 text-sm text-gray-300">
+                        {aiRecommendation.exit_triggers.map((trigger, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-red-400 mt-1">▸</span>
+                            <span>{trigger}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
