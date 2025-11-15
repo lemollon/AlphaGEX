@@ -141,6 +141,9 @@ export const apiClient = {
     current_price: number,
     risk_per_trade_pct: number
   }) => api.post('/api/position-sizing/calculate', data),
+
+  // Database Administration
+  getDatabaseStats: () => api.get('/api/database/stats'),
 }
 
 // WebSocket connection

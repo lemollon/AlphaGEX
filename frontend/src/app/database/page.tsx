@@ -35,7 +35,7 @@ export default function DatabaseAdminPage() {
     setError(null)
 
     try {
-      const response = await apiClient.get('/api/database/stats')
+      const response = await apiClient.getDatabaseStats()
       setStats(response.data)
     } catch (err: any) {
       setError(err.message || 'Failed to fetch database stats')
