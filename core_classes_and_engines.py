@@ -547,7 +547,82 @@ class GEXAnalyzer:
                 })
         
         return pd.DataFrame(charm_data)
-    
+
+    def analyze_strike_volume_activity(self) -> pd.DataFrame:
+        """
+        Analyze volume activity at high open interest strikes to detect dealer hedging
+
+        This identifies WHERE dealers are actively hedging by comparing volume to OI
+        at strikes with significant positioning.
+
+        Returns:
+            DataFrame with columns:
+            - strike: Option strike price
+            - open_interest: Total OI at strike
+            - volume: Today's volume at strike
+            - volume_oi_ratio: Volume/OI ratio (>2.0 = active hedging)
+            - gex: Gamma exposure at strike
+            - distance_from_spot: Distance from current price (%)
+            - hedging_intensity: Classification of hedging activity
+            - interpretation: Human-readable explanation
+        """
+        if self.options_data is None or self.options_data.empty:
+            return pd.DataFrame()
+
+        # Aggregate by strike
+        strike_analysis = self.options_data.groupby('strike').agg({
+            'open_interest': 'sum',
+            'volume': 'sum',
+            'gex': 'sum'
+        }).reset_index()
+
+        # Calculate volume/OI ratio
+        strike_analysis['volume_oi_ratio'] = strike_analysis['volume'] / (strike_analysis['open_interest'] + 1)
+
+        # Distance from spot
+        strike_analysis['distance_from_spot'] = (
+            (strike_analysis['strike'] - self.spot_price) / self.spot_price
+        ) * 100
+
+        # Calculate OI percentile (identify high OI strikes)
+        strike_analysis['oi_percentile'] = strike_analysis['open_interest'].rank(pct=True) * 100
+
+        # Classify hedging intensity
+        def classify_hedging(row):
+            vol_oi = row['volume_oi_ratio']
+            oi_pct = row['oi_percentile']
+
+            # Only consider strikes with significant OI (top 20%)
+            if oi_pct < 80:
+                return 'low_oi', 'Low open interest - not significant for hedging analysis'
+
+            # Analyze volume/OI ratio at high OI strikes
+            if vol_oi > 5.0:
+                return 'extreme', 'EXTREME hedging activity - dealers actively adjusting positions'
+            elif vol_oi > 3.0:
+                return 'heavy', 'Heavy hedging - significant dealer rebalancing happening'
+            elif vol_oi > 2.0:
+                return 'moderate', 'Moderate hedging - dealers responding to price movement'
+            elif vol_oi > 1.0:
+                return 'light', 'Light activity - normal turnover, not aggressive hedging'
+            else:
+                return 'minimal', 'Minimal activity - no significant dealer hedging detected'
+
+        strike_analysis[['hedging_intensity', 'interpretation']] = strike_analysis.apply(
+            classify_hedging, axis=1, result_type='expand'
+        )
+
+        # Sort by volume/OI ratio (most active first)
+        strike_analysis = strike_analysis.sort_values('volume_oi_ratio', ascending=False)
+
+        # Only return strikes with significant OI (top 20%) for cleaner output
+        high_oi_strikes = strike_analysis[strike_analysis['oi_percentile'] >= 80].copy()
+
+        return high_oi_strikes[[
+            'strike', 'open_interest', 'volume', 'volume_oi_ratio',
+            'gex', 'distance_from_spot', 'hedging_intensity', 'interpretation'
+        ]]
+
     def calculate_vanna(self) -> float:
         """
         Calculate Vanna (sensitivity of gamma to volatility changes)

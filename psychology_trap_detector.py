@@ -192,22 +192,22 @@ def calculate_volume_confirmation(price_data: Dict, volume_ratio: float) -> Dict
     vol_trend_pct = ((recent_vol - prior_vol) / prior_vol * 100) if prior_vol > 0 else 0
 
     volume_expanding = vol_trend_pct > 15  # Volume increasing >15%
-    volume_surge = volume_ratio > 1.5  # Current vol >150% average
+    volume_surge = volume_ratio > 2.0  # Current vol >200% average (2x minimum for dealer activity)
     volume_declining = volume_ratio < 0.7  # Current vol <70% average
 
     # Determine confirmation strength
     if volume_surge and volume_expanding:
         confirmation = 'strong'
-        interpretation = 'Volume surge + expansion = genuine momentum confirmed'
-    elif volume_expanding or volume_ratio > 1.2:
+        interpretation = 'Volume surge 2x+ average + expansion = genuine dealer activity confirmed'
+    elif volume_ratio > 1.5 and volume_expanding:
         confirmation = 'moderate'
-        interpretation = 'Above-average volume = likely continuation'
+        interpretation = 'Above-average volume but needs 2x for full confirmation'
     elif volume_declining:
         confirmation = 'weak'
         interpretation = 'Volume declining = exhaustion/reversal likely'
     else:
         confirmation = 'neutral'
-        interpretation = 'Average volume = no clear confirmation'
+        interpretation = 'Average volume = no clear dealer confirmation (need 2x minimum)'
 
     return {
         'volume_expanding': volume_expanding,
@@ -216,6 +216,482 @@ def calculate_volume_confirmation(price_data: Dict, volume_ratio: float) -> Dict
         'confirmation_strength': confirmation,
         'interpretation': interpretation,
         'volume_trend_pct': vol_trend_pct
+    }
+
+
+def analyze_dealer_feedback_loop_mechanics(
+    strike_data: pd.DataFrame,
+    current_price: float,
+    net_gex: float,
+    price_momentum: float,
+    volume_ratio: float,
+    strike_volume_data: Optional[Dict] = None
+) -> Dict:
+    """
+    DETAILED ANALYSIS: Why dealer hedging creates feedback loops at specific strikes
+
+    This function explains the MECHANICS of how dealer hedging amplifies moves:
+    - Which strikes have the most dealer activity
+    - How much buying/selling is happening at those strikes
+    - WHY dealers must hedge in the direction of the move
+    - What creates the feedback loop amplification
+
+    Args:
+        strike_data: DataFrame with columns ['strike', 'gex', 'open_interest', 'volume']
+        current_price: Current SPY price
+        net_gex: Net gamma exposure (positive = long, negative = short)
+        price_momentum: Price % change (positive = upward, negative = downward)
+        volume_ratio: Current volume / 20-day average
+        strike_volume_data: Optional dict with volume/OI analysis at each strike
+
+    Returns:
+        {
+            'feedback_loop_active': bool,
+            'loop_strength': str,  # 'extreme', 'strong', 'moderate', 'weak', 'none'
+            'direction': str,  # 'bullish', 'bearish', 'neutral'
+            'mechanics_explanation': str,  # Detailed WHY
+            'critical_strikes': List[Dict],  # Strikes where most activity is happening
+            'dealer_hedging_pressure': float,  # Estimated hedging flow in $ millions
+            'amplification_factor': float,  # How much dealers amplify the move (1.0 = no amplification)
+            'volume_at_high_oi_strikes': Dict,  # Volume activity at key strikes
+            'supporting_evidence': List[str]
+        }
+    """
+    result = {
+        'feedback_loop_active': False,
+        'loop_strength': 'none',
+        'direction': 'neutral',
+        'mechanics_explanation': '',
+        'critical_strikes': [],
+        'dealer_hedging_pressure': 0.0,
+        'amplification_factor': 1.0,
+        'volume_at_high_oi_strikes': {},
+        'supporting_evidence': []
+    }
+
+    if strike_data.empty:
+        result['mechanics_explanation'] = 'Insufficient strike data for analysis'
+        return result
+
+    # STEP 1: Identify high OI strikes (top 20% by open interest)
+    strike_data = strike_data.copy()
+    strike_data['oi_percentile'] = strike_data['open_interest'].rank(pct=True) * 100
+    high_oi_strikes = strike_data[strike_data['oi_percentile'] >= 80].copy()
+
+    if high_oi_strikes.empty:
+        result['mechanics_explanation'] = 'No high open interest strikes found'
+        return result
+
+    # STEP 2: Calculate volume/OI ratio at each high OI strike
+    high_oi_strikes['volume_oi_ratio'] = high_oi_strikes['volume'] / (high_oi_strikes['open_interest'] + 1)
+    high_oi_strikes['distance_from_spot'] = ((high_oi_strikes['strike'] - current_price) / current_price) * 100
+
+    # STEP 3: Identify strikes with UNUSUAL VOLUME (volume > 2x OI = active dealer hedging)
+    active_hedging_strikes = high_oi_strikes[high_oi_strikes['volume_oi_ratio'] > 2.0].copy()
+
+    # STEP 4: Determine dealer positioning and hedging direction
+    dealer_position = 'SHORT_GAMMA' if net_gex < -0.5e9 else 'LONG_GAMMA' if net_gex > 0.5e9 else 'NEUTRAL'
+    price_direction = 'UP' if price_momentum > 0 else 'DOWN' if price_momentum < 0 else 'FLAT'
+
+    # STEP 5: Calculate dealer hedging pressure
+    # When dealers are short gamma, they must hedge by buying when price goes up
+    # Hedging pressure = GEX * price move * volume confirmation
+    hedging_pressure_millions = 0.0
+    amplification = 1.0
+
+    if dealer_position == 'SHORT_GAMMA' and abs(price_momentum) > 0.3:
+        # Dealers must hedge in SAME direction as price move
+        # This AMPLIFIES the move (feedback loop)
+        base_pressure = abs(net_gex / 1e9) * abs(price_momentum) * 100  # In millions
+        volume_multiplier = min(volume_ratio / 2.0, 2.0)  # Volume enhances pressure (cap at 2x)
+        hedging_pressure_millions = base_pressure * volume_multiplier
+        amplification = 1.0 + (volume_ratio - 1.0) * 0.5  # Each 1x volume adds 0.5x amplification
+
+        result['feedback_loop_active'] = True
+        result['direction'] = 'bullish' if price_direction == 'UP' else 'bearish'
+
+    elif dealer_position == 'LONG_GAMMA' and abs(price_momentum) > 0.3:
+        # Dealers hedge in OPPOSITE direction (dampens moves)
+        # No feedback loop - mean reversion
+        hedging_pressure_millions = abs(net_gex / 1e9) * abs(price_momentum) * 50
+        amplification = 0.7  # Dealers DAMPEN moves by 30%
+        result['direction'] = 'mean_reversion'
+
+    result['dealer_hedging_pressure'] = hedging_pressure_millions
+    result['amplification_factor'] = amplification
+
+    # STEP 6: Analyze volume at high OI strikes to see WHERE hedging is happening
+    critical_strikes = []
+    for idx, row in active_hedging_strikes.iterrows():
+        strike_info = {
+            'strike': row['strike'],
+            'open_interest': int(row['open_interest']),
+            'volume': int(row['volume']),
+            'volume_oi_ratio': row['volume_oi_ratio'],
+            'distance_pct': row['distance_from_spot'],
+            'gex': row['gex'] if 'gex' in row else 0,
+            'interpretation': ''
+        }
+
+        # Interpret what's happening at this strike
+        if row['volume_oi_ratio'] > 5.0:
+            strike_info['interpretation'] = 'EXTREME hedging activity - dealers actively adjusting positions'
+        elif row['volume_oi_ratio'] > 3.0:
+            strike_info['interpretation'] = 'Heavy hedging - significant dealer rebalancing'
+        elif row['volume_oi_ratio'] > 2.0:
+            strike_info['interpretation'] = 'Moderate hedging - dealers responding to price move'
+
+        critical_strikes.append(strike_info)
+
+    # Sort by volume/OI ratio (most active hedging first)
+    critical_strikes.sort(key=lambda x: x['volume_oi_ratio'], reverse=True)
+    result['critical_strikes'] = critical_strikes[:5]  # Top 5 most active
+
+    # STEP 7: Determine feedback loop strength
+    if result['feedback_loop_active']:
+        if volume_ratio >= 2.0 and amplification > 1.5 and len(critical_strikes) >= 3:
+            result['loop_strength'] = 'extreme'
+        elif volume_ratio >= 1.8 and amplification > 1.3 and len(critical_strikes) >= 2:
+            result['loop_strength'] = 'strong'
+        elif volume_ratio >= 1.5 and amplification > 1.2:
+            result['loop_strength'] = 'moderate'
+        else:
+            result['loop_strength'] = 'weak'
+
+    # STEP 8: Generate detailed mechanics explanation
+    if result['feedback_loop_active']:
+        direction_word = "UP" if price_direction == "UP" else "DOWN"
+        hedge_direction = "BUY" if price_direction == "UP" else "SELL"
+
+        mechanics = f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║              DEALER HEDGING FEEDBACK LOOP - MECHANICS EXPLAINED              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+📊 CURRENT SITUATION:
+   • Dealer Position: {dealer_position} (Net GEX: ${net_gex/1e9:.2f}B)
+   • Price Movement: {direction_word} {abs(price_momentum):.2f}%
+   • Volume: {volume_ratio:.2f}x average ({"✅ SURGE - confirms real move" if volume_ratio >= 2.0 else "⚠️ Needs 2x for confirmation"})
+   • Active Hedging Strikes: {len(critical_strikes)} strikes showing unusual volume
+
+🔄 WHY THE FEEDBACK LOOP EXISTS:
+
+1️⃣  DEALERS ARE SHORT GAMMA
+   → They sold options to market participants
+   → They are now EXPOSED to large price moves
+   → They MUST hedge to stay delta-neutral
+
+2️⃣  PRICE MOVES {direction_word}
+   → Their short gamma position loses money
+   → Delta exposure increases as price moves
+   → They must {hedge_direction} SPY to hedge
+
+3️⃣  DEALER {hedge_direction}ING PUSHES PRICE {direction_word}
+   → Estimated hedging flow: ${hedging_pressure_millions:.1f}M
+   → This creates MORE {direction_word}ward pressure
+   → Price accelerates in same direction
+
+4️⃣  ACCELERATION TRIGGERS MORE HEDGING
+   → As price continues {direction_word}, dealers need to {hedge_direction} MORE
+   → This creates a FEEDBACK LOOP
+   → Move amplified by {(amplification - 1) * 100:.0f}% due to dealer hedging
+
+📍 WHERE THE HEDGING IS HAPPENING (Top Active Strikes):
+"""
+
+        for i, strike in enumerate(result['critical_strikes'][:3], 1):
+            mechanics += f"""
+   {i}. Strike ${strike['strike']:.2f} ({strike['distance_pct']:+.1f}% from spot)
+      → Open Interest: {strike['open_interest']:,} contracts
+      → Today's Volume: {strike['volume']:,} contracts
+      → Volume/OI Ratio: {strike['volume_oi_ratio']:.2f}x
+      → {strike['interpretation']}
+"""
+
+        mechanics += f"""
+⚡ AMPLIFICATION ANALYSIS:
+   • Base move: {abs(price_momentum):.2f}%
+   • Dealer amplification factor: {amplification:.2f}x
+   • Effective move with hedging: {abs(price_momentum) * amplification:.2f}%
+
+🎯 WHAT THIS MEANS FOR TRADING:
+   • Trade WITH the feedback loop, not against it
+   • {hedge_direction} pressure will continue until:
+     - Volume drops below 2x average (hedging exhaustion)
+     - RSI hits extreme (>80 or <20)
+     - Price hits major gamma wall (resistance/support)
+   • This is a {result['loop_strength'].upper()} feedback loop
+   • Expected duration: 2-4 hours typically
+
+⚠️  RISK: Loop can REVERSE quickly if volume dries up or gamma flip is hit
+"""
+
+        result['mechanics_explanation'] = mechanics
+
+        # Add supporting evidence
+        result['supporting_evidence'].append(f"Net GEX ${net_gex/1e9:.2f}B indicates {dealer_position}")
+        result['supporting_evidence'].append(f"Price moving {direction_word} {abs(price_momentum):.2f}%")
+        result['supporting_evidence'].append(f"Volume {volume_ratio:.2f}x average confirms dealer activity")
+        result['supporting_evidence'].append(f"{len(critical_strikes)} strikes showing volume/OI > 2.0x")
+        result['supporting_evidence'].append(f"Estimated hedging pressure: ${hedging_pressure_millions:.1f}M")
+
+    else:
+        result['mechanics_explanation'] = f"""
+No active feedback loop detected.
+
+Current conditions:
+• Dealer Position: {dealer_position} (Net GEX: ${net_gex/1e9:.2f}B)
+• Price Movement: {price_direction} {abs(price_momentum):.2f}%
+• Volume: {volume_ratio:.2f}x average
+
+{"→ Dealers are LONG gamma - they DAMPEN moves, not amplify them" if dealer_position == 'LONG_GAMMA' else ""}
+{"→ Price momentum too weak to trigger dealer hedging" if abs(price_momentum) < 0.3 else ""}
+{"→ Volume too low to confirm dealer activity" if volume_ratio < 1.5 else ""}
+"""
+
+    return result
+
+
+def calculate_breakout_rejection_probability(
+    current_price: float,
+    resistance_strike: float,
+    support_strike: float,
+    net_gex: float,
+    strike_gex: float,
+    volume_ratio: float,
+    rsi_score: float,
+    price_momentum: float,
+    dealer_hedging_pressure: float,
+    distance_to_gamma_flip: float
+) -> Dict:
+    """
+    Calculate probability of breaking through resistance/support vs rejecting
+
+    TRANSPARENT LOGIC showing all factors that influence breakout/rejection:
+    - Volume confirmation (2x minimum for real moves)
+    - GEX concentration at the level
+    - Price momentum strength
+    - Dealer hedging pressure
+    - RSI positioning
+    - Distance to gamma flip point
+
+    Args:
+        current_price: Current SPY price
+        resistance_strike: Resistance level (call wall or gamma flip)
+        support_strike: Support level (put wall or gamma flip)
+        net_gex: Net gamma exposure
+        strike_gex: GEX at the specific strike being tested
+        volume_ratio: Current volume / 20-day average
+        rsi_score: RSI score (-100 to +100)
+        price_momentum: Recent price % change
+        dealer_hedging_pressure: Estimated dealer hedging flow ($ millions)
+        distance_to_gamma_flip: Distance to gamma flip (%)
+
+    Returns:
+        {
+            'level_type': str,  # 'resistance' or 'support'
+            'level_price': float,
+            'breakout_probability': float,  # 0-100
+            'rejection_probability': float,  # 0-100
+            'confidence': str,  # 'high', 'medium', 'low'
+            'logic_breakdown': Dict,  # Transparent scoring for each factor
+            'recommendation': str,
+            'key_factors': List[str]
+        }
+    """
+    # Determine if testing resistance or support
+    distance_to_resistance = ((resistance_strike - current_price) / current_price) * 100
+    distance_to_support = ((current_price - support_strike) / current_price) * 100
+
+    if abs(distance_to_resistance) < abs(distance_to_support):
+        level_type = 'resistance'
+        level_price = resistance_strike
+        distance_pct = distance_to_resistance
+    else:
+        level_type = 'support'
+        level_price = support_strike
+        distance_pct = -distance_to_support
+
+    # Initialize scoring system (0-100 for each factor)
+    logic_breakdown = {}
+    breakout_score = 50  # Start neutral
+
+    # FACTOR 1: Volume Confirmation (30 points max)
+    # Need 2x volume minimum for real breakouts
+    if volume_ratio >= 2.5:
+        volume_score = 30
+        volume_explanation = f"✅ Extreme volume {volume_ratio:.2f}x confirms strong momentum"
+    elif volume_ratio >= 2.0:
+        volume_score = 25
+        volume_explanation = f"✅ Strong volume {volume_ratio:.2f}x supports breakout"
+    elif volume_ratio >= 1.5:
+        volume_score = 15
+        volume_explanation = f"⚠️ Moderate volume {volume_ratio:.2f}x - needs more confirmation"
+    elif volume_ratio >= 1.0:
+        volume_score = 5
+        volume_explanation = f"⚠️ Average volume {volume_ratio:.2f}x - weak confirmation"
+    else:
+        volume_score = -10
+        volume_explanation = f"❌ Below average volume {volume_ratio:.2f}x - likely rejection"
+
+    logic_breakdown['volume'] = {
+        'score': volume_score,
+        'weight': 30,
+        'explanation': volume_explanation
+    }
+    breakout_score += (volume_score - 15)  # Adjust from neutral
+
+    # FACTOR 2: GEX Wall Strength (25 points max)
+    # Strong GEX concentration makes breakouts harder
+    wall_strength_pct = abs(strike_gex) / max(abs(net_gex), 1e9) * 100 if net_gex != 0 else 0
+
+    if wall_strength_pct > 40:
+        gex_score = -20
+        gex_explanation = f"❌ MASSIVE gamma wall ({wall_strength_pct:.0f}% of total GEX) - very hard to break"
+    elif wall_strength_pct > 25:
+        gex_score = -10
+        gex_explanation = f"⚠️ Strong gamma wall ({wall_strength_pct:.0f}% of total GEX) - likely rejection"
+    elif wall_strength_pct > 15:
+        gex_score = 0
+        gex_explanation = f"⚠️ Moderate gamma wall ({wall_strength_pct:.0f}% of total GEX) - uncertain"
+    else:
+        gex_score = 15
+        gex_explanation = f"✅ Weak gamma wall ({wall_strength_pct:.0f}% of total GEX) - can break through"
+
+    logic_breakdown['gex_wall_strength'] = {
+        'score': gex_score,
+        'weight': 25,
+        'explanation': gex_explanation
+    }
+    breakout_score += gex_score
+
+    # FACTOR 3: Price Momentum (20 points max)
+    if level_type == 'resistance':
+        # Need upward momentum to break resistance
+        if price_momentum > 1.0:
+            momentum_score = 20
+            momentum_explanation = f"✅ Strong upward momentum {price_momentum:+.2f}%"
+        elif price_momentum > 0.5:
+            momentum_score = 10
+            momentum_explanation = f"✅ Positive momentum {price_momentum:+.2f}%"
+        elif price_momentum > 0:
+            momentum_score = 5
+            momentum_explanation = f"⚠️ Weak momentum {price_momentum:+.2f}%"
+        else:
+            momentum_score = -15
+            momentum_explanation = f"❌ Negative momentum {price_momentum:+.2f}% - will reject"
+    else:
+        # Need downward momentum to break support
+        if price_momentum < -1.0:
+            momentum_score = 20
+            momentum_explanation = f"✅ Strong downward momentum {price_momentum:+.2f}%"
+        elif price_momentum < -0.5:
+            momentum_score = 10
+            momentum_explanation = f"✅ Negative momentum {price_momentum:+.2f}%"
+        elif price_momentum < 0:
+            momentum_score = 5
+            momentum_explanation = f"⚠️ Weak momentum {price_momentum:+.2f}%"
+        else:
+            momentum_score = -15
+            momentum_explanation = f"❌ Positive momentum {price_momentum:+.2f}% - will bounce"
+
+    logic_breakdown['price_momentum'] = {
+        'score': momentum_score,
+        'weight': 20,
+        'explanation': momentum_explanation
+    }
+    breakout_score += (momentum_score - 10)
+
+    # FACTOR 4: Dealer Hedging Pressure (15 points max)
+    if dealer_hedging_pressure > 100:
+        hedging_score = 15
+        hedging_explanation = f"✅ Massive dealer hedging ${dealer_hedging_pressure:.0f}M pushing price"
+    elif dealer_hedging_pressure > 50:
+        hedging_score = 10
+        hedging_explanation = f"✅ Strong dealer hedging ${dealer_hedging_pressure:.0f}M"
+    elif dealer_hedging_pressure > 20:
+        hedging_score = 5
+        hedging_explanation = f"⚠️ Moderate dealer hedging ${dealer_hedging_pressure:.0f}M"
+    else:
+        hedging_score = 0
+        hedging_explanation = f"⚠️ Minimal dealer hedging ${dealer_hedging_pressure:.0f}M"
+
+    logic_breakdown['dealer_hedging'] = {
+        'score': hedging_score,
+        'weight': 15,
+        'explanation': hedging_explanation
+    }
+    breakout_score += (hedging_score - 7)
+
+    # FACTOR 5: RSI Positioning (10 points max)
+    if level_type == 'resistance':
+        # High RSI at resistance = more likely to reject
+        if rsi_score > 70:
+            rsi_score_points = -10
+            rsi_explanation = f"❌ Overbought RSI {rsi_score:.0f} - likely rejection"
+        elif rsi_score > 50:
+            rsi_score_points = -5
+            rsi_explanation = f"⚠️ Elevated RSI {rsi_score:.0f}"
+        else:
+            rsi_score_points = 10
+            rsi_explanation = f"✅ Not overbought RSI {rsi_score:.0f} - can break"
+    else:
+        # Low RSI at support = more likely to break down
+        if rsi_score < -70:
+            rsi_score_points = -10
+            rsi_explanation = f"❌ Oversold RSI {rsi_score:.0f} - likely bounce"
+        elif rsi_score < -50:
+            rsi_score_points = -5
+            rsi_explanation = f"⚠️ Low RSI {rsi_score:.0f}"
+        else:
+            rsi_score_points = 10
+            rsi_explanation = f"✅ Not oversold RSI {rsi_score:.0f} - can break"
+
+    logic_breakdown['rsi'] = {
+        'score': rsi_score_points,
+        'weight': 10,
+        'explanation': rsi_explanation
+    }
+    breakout_score += rsi_score_points
+
+    # Normalize to 0-100 range
+    breakout_probability = max(0, min(100, breakout_score))
+    rejection_probability = 100 - breakout_probability
+
+    # Determine confidence based on consensus of factors
+    strong_factors = sum(1 for factor in logic_breakdown.values() if abs(factor['score']) > factor['weight'] * 0.6)
+    if strong_factors >= 3:
+        confidence = 'high'
+    elif strong_factors >= 2:
+        confidence = 'medium'
+    else:
+        confidence = 'low'
+
+    # Generate recommendation
+    if breakout_probability > 65:
+        recommendation = f"LIKELY BREAKOUT through ${level_price:.2f} {level_type}"
+    elif breakout_probability < 35:
+        recommendation = f"LIKELY REJECTION at ${level_price:.2f} {level_type}"
+    else:
+        recommendation = f"UNCERTAIN - {level_type} at ${level_price:.2f} is a coin flip"
+
+    # Identify key factors driving the probability
+    key_factors = []
+    for factor_name, factor_data in logic_breakdown.items():
+        if abs(factor_data['score']) > factor_data['weight'] * 0.5:
+            key_factors.append(factor_data['explanation'])
+
+    return {
+        'level_type': level_type,
+        'level_price': level_price,
+        'distance_pct': distance_pct,
+        'breakout_probability': round(breakout_probability, 1),
+        'rejection_probability': round(rejection_probability, 1),
+        'confidence': confidence,
+        'logic_breakdown': logic_breakdown,
+        'recommendation': recommendation,
+        'key_factors': key_factors,
+        'total_score': breakout_score
     }
 
 
@@ -1717,7 +2193,7 @@ Forward magnet:
     # Capitulation Cascade
     elif (rsi_score < -50 and aligned['oversold'] >= 3 and
           put_wall and put_wall.get('distance_pct', 999) < -0.5 and
-          volume_ratio > 1.5):
+          volume_ratio > 2.0):
 
         regime['primary_type'] = 'CAPITULATION_CASCADE'
         regime['confidence'] = min(100, aligned['oversold'] * 15 + volume_ratio * 35)
