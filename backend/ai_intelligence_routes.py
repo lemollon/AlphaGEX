@@ -325,11 +325,11 @@ TRADE EXECUTED:
 • Timestamp: {trade_dict.get('timestamp', 'N/A')}
 
 MARKET CONTEXT AT TRADE TIME:
-• SPY Price: ${market_dict.get('spot_price', 0)}
-• VIX: {market_dict.get('vix', 0)}
-• Net GEX: ${market_dict.get('net_gex', 0)/1e9:.2f}B
-• Call Wall: ${gex_dict.get('call_wall', 0)}
-• Put Wall: ${gex_dict.get('put_wall', 0)}
+• SPY Price: ${market_dict.get('spot_price') or 0}
+• VIX: {market_dict.get('vix') or 0}
+• Net GEX: ${(market_dict.get('net_gex') or 0)/1e9:.2f}B
+• Call Wall: ${gex_dict.get('call_wall') or 0}
+• Put Wall: ${gex_dict.get('put_wall') or 0}
 
 AI REASONING LOGS:
 {chr(10).join([f"• {log.get('log_type', 'N/A')}: {log.get('reasoning_summary', 'N/A')}" for log in logs[:5]])}
@@ -417,9 +417,6 @@ async def generate_daily_trading_plan():
 
         # Get latest market data
         c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 1")
-        market_data = dict(c.fetchone()) if c.fetchone() else {}
-
-        c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 1")
         market_row = c.fetchone()
         market_data = dict(market_row) if market_row else {}
 
@@ -482,14 +479,14 @@ async def generate_daily_trading_plan():
 TODAY: {today}
 
 CURRENT MARKET STATUS:
-• SPY: ${market_data.get('spot_price', 0)}
-• VIX: {market_data.get('vix', 0)}
-• Net GEX: ${market_data.get('net_gex', 0)/1e9:.2f}B
+• SPY: ${market_data.get('spot_price') or 0}
+• VIX: {market_data.get('vix') or 0}
+• Net GEX: ${(market_data.get('net_gex') or 0)/1e9:.2f}B
 • Market Regime: {psychology.get('regime_type', 'UNKNOWN')}
-• Confidence: {psychology.get('confidence', 0)}%
-• Call Wall: ${gex.get('call_wall', 0)}
-• Put Wall: ${gex.get('put_wall', 0)}
-• Flip Point: ${gex.get('flip_point', 0)}
+• Confidence: {psychology.get('confidence') or 0}%
+• Call Wall: ${gex.get('call_wall') or 0}
+• Put Wall: ${gex.get('put_wall') or 0}
+• Flip Point: ${gex.get('flip_point') or 0}
 
 ACCOUNT STATUS:
 • Balance: ${account_value:.2f}
@@ -762,23 +759,23 @@ async def get_market_commentary():
         conn.close()
 
         # Calculate changes
-        vix_change = current_market.get('vix', 15) - previous_market.get('vix', 15)
-        price_change = current_market.get('spot_price', 0) - previous_market.get('spot_price', 0)
+        vix_change = (current_market.get('vix') or 15) - (previous_market.get('vix') or 15)
+        price_change = (current_market.get('spot_price') or 0) - (previous_market.get('spot_price') or 0)
 
         # Generate commentary
         prompt = f"""You are a live market commentator speaking directly to a trader. Provide real-time narration of what's happening NOW and what they should do IMMEDIATELY. Speak in first person to the trader.
 
 CURRENT MARKET (LIVE):
-• SPY: ${current_market.get('spot_price', 0)} ({price_change:+.2f} from previous)
-• VIX: {current_market.get('vix', 0)} ({vix_change:+.2f})
-• Net GEX: ${current_market.get('net_gex', 0)/1e9:.2f}B
-• Call Wall: ${gex.get('call_wall', 0)}
-• Put Wall: ${gex.get('put_wall', 0)}
-• Flip Point: ${gex.get('flip_point', 0)}
+• SPY: ${current_market.get('spot_price') or 0} ({price_change:+.2f} from previous)
+• VIX: {current_market.get('vix') or 0} ({vix_change:+.2f})
+• Net GEX: ${(current_market.get('net_gex') or 0)/1e9:.2f}B
+• Call Wall: ${gex.get('call_wall') or 0}
+• Put Wall: ${gex.get('put_wall') or 0}
+• Flip Point: ${gex.get('flip_point') or 0}
 
 PSYCHOLOGY STATUS:
 • Regime: {psychology.get('regime_type', 'UNKNOWN')}
-• Confidence: {psychology.get('confidence', 0)}%
+• Confidence: {psychology.get('confidence') or 0}%
 • Trap Detected: {psychology.get('psychology_trap', 'NONE')}
 
 YOUR POSITIONS:
@@ -884,13 +881,13 @@ async def compare_strategies():
         prompt = f"""You are a professional trader comparing available strategies for the current market. Provide a detailed head-to-head comparison with specific trade setups.
 
 CURRENT MARKET:
-• SPY: ${market.get('spot_price', 0)}
-• VIX: {market.get('vix', 0)}
-• Net GEX: ${market.get('net_gex', 0)/1e9:.2f}B
+• SPY: ${market.get('spot_price') or 0}
+• VIX: {market.get('vix') or 0}
+• Net GEX: ${(market.get('net_gex') or 0)/1e9:.2f}B
 • Regime: {psychology.get('regime_type', 'UNKNOWN')}
-• Confidence: {psychology.get('confidence', 0)}%
-• Call Wall: ${gex.get('call_wall', 0)}
-• Put Wall: ${gex.get('put_wall', 0)}
+• Confidence: {psychology.get('confidence') or 0}%
+• Call Wall: ${gex.get('call_wall') or 0}
+• Put Wall: ${gex.get('put_wall') or 0}
 
 ACCOUNT:
 • Balance: ${account_value:.2f}

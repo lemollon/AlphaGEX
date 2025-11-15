@@ -29,9 +29,9 @@ def quick_scan(symbols):
                 print(f"❌ Error: {gex_data.get('error', 'No data')}")
                 continue
 
-            net_gex = gex_data.get('net_gex', 0)
-            spot_price = gex_data.get('spot_price', 0)
-            flip_point = gex_data.get('flip_point', 0)
+            net_gex = gex_data.get('net_gex') or 0
+            spot_price = gex_data.get('spot_price') or 0
+            flip_point = gex_data.get('flip_point') or 0
 
             print(f"✅ ${spot_price:.2f} | GEX: ${net_gex/1e9:.1f}B")
 
@@ -40,7 +40,7 @@ def quick_scan(symbols):
 
                 if strategy_name == 'NEGATIVE_GEX_SQUEEZE':
                     if net_gex < config['conditions']['net_gex_threshold']:
-                        distance = abs(spot_price - flip_point) / spot_price * 100
+                        distance = abs(spot_price - flip_point) / spot_price * 100 if spot_price else 0
                         if distance < config['conditions']['distance_to_flip']:
                             confidence = 75 if spot_price < flip_point else 85
                             results.append({
