@@ -5548,6 +5548,174 @@ async def run_backtests(request: dict = None):
         }
 
 
+@app.get("/api/backtests/smart-recommendations")
+async def get_smart_recommendations():
+    """
+    Smart Strategy Picker - Match current market conditions to best backtested strategies
+
+    Returns:
+        - Current market conditions
+        - Top 3-5 strategies that match current conditions
+        - Confidence scores based on condition matching
+        - Actionable setup links
+    """
+    try:
+        import sqlite3
+        from config_and_database import DB_PATH
+
+        # 1. Get current market conditions from latest Psychology Analysis
+        gex_data = api_client.get_net_gamma('SPY')
+
+        if not gex_data or 'error' in gex_data:
+            raise HTTPException(
+                status_code=404,
+                detail="No current market data available. Run Psychology Analysis first."
+            )
+
+        current_price = gex_data.get('price', 0)
+        net_gex = gex_data.get('net_gex', 0)
+
+        # Get RSI and regime detection
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        # Get latest regime signal
+        c.execute('''
+            SELECT
+                primary_regime_type,
+                confidence_score,
+                rsi_score,
+                vix_current
+            FROM regime_signals
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ''')
+
+        regime_row = c.fetchone()
+
+        if not regime_row:
+            raise HTTPException(
+                status_code=404,
+                detail="No regime data available. Run Psychology Analysis first."
+            )
+
+        current_pattern = regime_row['primary_regime_type']
+        rsi_score = regime_row['rsi_score'] or 50
+        vix = regime_row['vix_current'] or 15
+        pattern_confidence = regime_row['confidence_score'] or 0
+
+        market_conditions = {
+            'current_pattern': current_pattern,
+            'spy_price': current_price,
+            'vix': vix,
+            'net_gex': net_gex,
+            'rsi_score': rsi_score,
+            'confidence': pattern_confidence
+        }
+
+        # 2. Get backtest results for strategies matching this pattern
+        c.execute('''
+            SELECT
+                strategy_name,
+                symbol,
+                start_date,
+                end_date,
+                total_trades,
+                win_rate,
+                expectancy_pct,
+                avg_win_pct,
+                avg_loss_pct,
+                max_drawdown_pct,
+                sharpe_ratio
+            FROM backtest_results
+            WHERE strategy_name LIKE ?
+            OR strategy_name LIKE '%TRAP%'
+            OR strategy_name LIKE '%GEX%'
+            ORDER BY expectancy_pct DESC
+        ''', (f'%{current_pattern}%',))
+
+        strategy_rows = c.fetchall()
+
+        # 3. Calculate confidence scores based on condition matching
+        recommendations = []
+
+        for row in strategy_rows:
+            conditions_met = 0
+            conditions_total = 5
+
+            # Condition 1: Expectancy > 0.5%
+            if row['expectancy_pct'] > 0.5:
+                conditions_met += 1
+
+            # Condition 2: Win rate > 55%
+            if row['win_rate'] > 55:
+                conditions_met += 1
+
+            # Condition 3: Sufficient sample size (>20 trades)
+            if row['total_trades'] > 20:
+                conditions_met += 1
+
+            # Condition 4: Max drawdown manageable (<20%)
+            if abs(row['max_drawdown_pct']) < 20:
+                conditions_met += 1
+
+            # Condition 5: Positive Sharpe ratio
+            if row['sharpe_ratio'] > 0.5:
+                conditions_met += 1
+
+            # Calculate confidence score (0-100)
+            confidence_score = (conditions_met / conditions_total) * 100
+
+            # Determine market match description
+            if current_pattern.upper() in row['strategy_name'].upper():
+                market_match = f"Exact match for {current_pattern.replace('_', ' ').title()}"
+            elif 'TRAP' in row['strategy_name'].upper():
+                market_match = f"Psychology pattern strategy"
+            elif 'GEX' in row['strategy_name'].upper():
+                market_match = f"GEX-based strategy"
+            else:
+                market_match = "General strategy"
+
+            recommendations.append({
+                'strategy_name': row['strategy_name'],
+                'win_rate': row['win_rate'],
+                'expectancy_pct': row['expectancy_pct'],
+                'total_trades': row['total_trades'],
+                'confidence_score': confidence_score,
+                'conditions_met': conditions_met,
+                'conditions_total': conditions_total,
+                'market_match': market_match,
+                'avg_win_pct': row['avg_win_pct'],
+                'avg_loss_pct': row['avg_loss_pct'],
+                'sharpe_ratio': row['sharpe_ratio'],
+                'setup_link': f'/psychology?pattern={row["strategy_name"]}'
+            })
+
+        # Sort by confidence score, then expectancy
+        recommendations.sort(key=lambda x: (x['confidence_score'], x['expectancy_pct']), reverse=True)
+
+        conn.close()
+
+        return {
+            'success': True,
+            'market_conditions': market_conditions,
+            'recommendations': recommendations[:10],  # Top 10
+            'total_matches': len(recommendations)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error getting smart recommendations: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate recommendations: {str(e)}"
+        )
+
+
 # ==============================================================================
 # AI-POWERED FEATURES (Claude + LangChain)
 # ==============================================================================
