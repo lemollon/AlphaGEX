@@ -5474,7 +5474,7 @@ async def run_backtests(request: dict = None):
 
         print(f"\n🚀 Running backtests for {symbol} from {start_date} to {end_date}")
 
-        # Run the backtest script
+        # Run the backtest script with environment variables
         result = subprocess.run(
             ['python', 'run_all_backtests.py',
              '--symbol', symbol,
@@ -5482,7 +5482,8 @@ async def run_backtests(request: dict = None):
              '--end', end_date],
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=300,  # 5 minute timeout
+            env=os.environ.copy()  # Pass environment variables to subprocess
         )
 
         if result.returncode == 0:
