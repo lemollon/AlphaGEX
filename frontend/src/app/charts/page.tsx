@@ -92,7 +92,7 @@ export default function ChartsPage() {
                 symbol={symbol}
                 interval={interval}
                 theme="dark"
-                height={'100%'}
+                height={600}
                 autosize={true}
               />
             </div>
