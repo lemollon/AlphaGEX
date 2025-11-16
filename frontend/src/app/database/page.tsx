@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Database, RefreshCw, CheckCircle, AlertCircle, Info, Table2, FileText } from 'lucide-react'
+import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 
 interface Column {
@@ -60,31 +61,37 @@ export default function DatabaseAdminPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background pt-20 pl-64">
-        <div className="p-8">
-          <div className="flex items-center justify-center">
-            <RefreshCw className="w-8 h-8 text-primary animate-spin" />
-            <span className="ml-3 text-lg text-text-secondary">Loading database stats...</span>
+      <div>
+        <Navigation />
+        <main className="min-h-screen bg-background pt-20 pl-64">
+          <div className="p-8">
+            <div className="flex items-center justify-center">
+              <RefreshCw className="w-8 h-8 text-primary animate-spin" />
+              <span className="ml-3 text-lg text-text-secondary">Loading database stats...</span>
+            </div>
           </div>
-        </div>
+        </main>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background pt-20 pl-64">
-        <div className="p-8">
-          <div className="bg-danger/10 border border-danger rounded-lg p-6">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-6 h-6 text-danger" />
-              <div>
-                <h3 className="text-lg font-semibold text-danger">Error Loading Database Stats</h3>
-                <p className="text-sm text-text-secondary mt-1">{error}</p>
+      <div>
+        <Navigation />
+        <main className="min-h-screen bg-background pt-20 pl-64">
+          <div className="p-8">
+            <div className="bg-danger/10 border border-danger rounded-lg p-6">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-6 h-6 text-danger" />
+                <div>
+                  <h3 className="text-lg font-semibold text-danger">Error Loading Database Stats</h3>
+                  <p className="text-sm text-text-secondary mt-1">{error}</p>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </main>
       </div>
     )
   }
@@ -96,8 +103,10 @@ export default function DatabaseAdminPage() {
   const totalRows = stats.tables.reduce((sum, t) => sum + t.row_count, 0)
 
   return (
-    <div className="min-h-screen bg-background pt-20 pl-64">
-      <div className="p-8 space-y-6">
+    <div>
+      <Navigation />
+      <main className="min-h-screen bg-background pt-20 pl-64">
+        <div className="p-8 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -316,7 +325,8 @@ export default function DatabaseAdminPage() {
             </div>
           </div>
         </div>
-      </div>
+        </div>
+      </main>
     </div>
   )
 }
