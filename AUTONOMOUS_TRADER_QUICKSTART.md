@@ -125,7 +125,11 @@ monitor.add_webhook_alert("https://hooks.slack.com/services/YOUR/WEBHOOK/URL")
 
 ## **What It Does Automatically** ⚡
 
-### **Every 5 Minutes (8:30 AM - 3:00 PM CT)**
+### **Continuous Operation (Always Running)**
+The autonomous trader runs **24/7** in the background, but only actively trades during market hours:
+
+**🟢 MARKET HOURS (8:30 AM - 3:00 PM CT, Mon-Fri)**
+Every 5 minutes:
 ```
 ├── Check if already traded today
 ├── Fetch SPY GEX data from Trading Volatility API
@@ -141,6 +145,11 @@ monitor.add_webhook_alert("https://hooks.slack.com/services/YOUR/WEBHOOK/URL")
 ├── Execute trade if conditions met
 └── Log EVERYTHING to database
 ```
+
+**🔴 OUTSIDE MARKET HOURS**
+- Sleeps until market opens
+- Auto-wakes at 8:30 AM CT Monday-Friday
+- No API calls, no resource usage
 
 **GUARANTEED:** Minimum 1 trade per day (3-level fallback)
 

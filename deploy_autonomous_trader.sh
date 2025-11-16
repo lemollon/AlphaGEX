@@ -32,7 +32,7 @@ if [ "$USE_SYSTEMD" = true ]; then
 
     cat > /etc/systemd/system/alphagex-trader.service << EOSERVICE
 [Unit]
-Description=AlphaGEX Autonomous Trader
+Description=AlphaGEX Autonomous Trader - Runs during market hours (8:30 AM - 3:00 PM CT)
 After=network.target
 
 [Service]
@@ -40,11 +40,16 @@ Type=simple
 User=$SUDO_USER
 WorkingDirectory=$WORK_DIR
 Environment="PATH=$WORK_DIR/venv/bin:/usr/local/bin:/usr/bin"
-ExecStart=$WORK_DIR/venv/bin/python3 $WORK_DIR/autonomous_scheduler.py
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=$WORK_DIR/venv/bin/python3 $WORK_DIR/autonomous_scheduler.py --mode continuous
 Restart=always
-RestartSec=10
+RestartSec=30
 StandardOutput=append:$WORK_DIR/logs/trader.log
 StandardError=append:$WORK_DIR/logs/trader.error.log
+
+# Auto-restart on failure
+RestartForceExitStatus=1
+StartLimitInterval=0
 
 [Install]
 WantedBy=multi-user.target
@@ -79,8 +84,13 @@ else
     # Check if screen is available
     if command -v screen &> /dev/null; then
         echo "✓ Using screen for background process"
-        screen -dmS alphagex-trader bash -c "source venv/bin/activate && python3 autonomous_scheduler.py > logs/trader.log 2> logs/trader.error.log"
+        screen -dmS alphagex-trader bash -c "source venv/bin/activate && python3 autonomous_scheduler.py --mode continuous > logs/trader.log 2> logs/trader.error.log"
         echo "✅ Started in screen session 'alphagex-trader'"
+        echo ""
+        echo "🤖 AUTONOMOUS TRADER IS NOW RUNNING"
+        echo "   Mode: Continuous (auto-starts during market hours)"
+        echo "   Hours: 8:30 AM - 3:00 PM CT, Monday-Friday"
+        echo "   Checks: Every 5 minutes"
         echo ""
         echo "Useful commands:"
         echo "  - Attach: screen -r alphagex-trader"
@@ -89,10 +99,15 @@ else
         echo "  - Logs: tail -f logs/trader.log"
     else
         echo "✓ Using nohup for background process"
-        nohup python3 autonomous_scheduler.py > logs/trader.log 2> logs/trader.error.log &
+        nohup python3 autonomous_scheduler.py --mode continuous > logs/trader.log 2> logs/trader.error.log &
         TRADER_PID=$!
         echo $TRADER_PID > logs/trader.pid
         echo "✅ Started with PID: $TRADER_PID"
+        echo ""
+        echo "🤖 AUTONOMOUS TRADER IS NOW RUNNING"
+        echo "   Mode: Continuous (auto-starts during market hours)"
+        echo "   Hours: 8:30 AM - 3:00 PM CT, Monday-Friday"
+        echo "   Checks: Every 5 minutes"
         echo ""
         echo "Useful commands:"
         echo "  - Logs: tail -f logs/trader.log"

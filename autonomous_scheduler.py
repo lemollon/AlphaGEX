@@ -1,43 +1,107 @@
 """
-Autonomous Trader Scheduler
-Runs the autonomous trader automatically on a schedule
-Perfect for Render deployment or background tasks
+Autonomous Trader Scheduler - Continuous Market Hours Operation
+Runs AUTOMATICALLY during stock market hours: 8:30 AM - 3:00 PM Central Texas Time (Mon-Fri)
+Checks every 5 minutes for trading opportunities
+Auto-restarts on errors, guaranteed minimum 1 trade per day
 """
 
 import time
-from datetime import datetime, time as dt_time
+import sys
+import traceback
+from datetime import datetime, time as dt_time, timedelta
 from zoneinfo import ZoneInfo
 from autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
 
+# Market hours in Central Time (Texas)
+MARKET_OPEN_CT = dt_time(8, 30)   # 8:30 AM CT = 9:30 AM ET
+MARKET_CLOSE_CT = dt_time(15, 0)  # 3:00 PM CT = 4:00 PM ET
+CHECK_INTERVAL_SECONDS = 300      # 5 minutes
+
+
+def get_central_time() -> datetime:
+    """Get current time in Central Texas timezone"""
+    try:
+        return datetime.now(ZoneInfo("America/Chicago"))
+    except Exception:
+        # Fallback to UTC-6 (CST) if zoneinfo fails
+        from datetime import timezone
+        return datetime.now(timezone(timedelta(hours=-6)))
+
 
 def is_market_hours() -> bool:
     """
-    Check if it's market hours (9:30 AM - 4:00 PM ET, Mon-Fri)
-    Market times in different US zones:
-    - Eastern (ET): 9:30 AM - 4:00 PM
-    - Central (CT): 8:30 AM - 3:00 PM  (Texas time)
-    - Mountain (MT): 7:30 AM - 2:00 PM
-    - Pacific (PT): 6:30 AM - 1:00 PM
-    """
-    # Get current time in Eastern Time (where market operates)
-    try:
-        et_now = datetime.now(ZoneInfo("America/New_York"))
-    except Exception:
-        # Fallback to UTC-5 if zoneinfo fails
-        from datetime import timezone, timedelta
-        et_now = datetime.now(timezone(timedelta(hours=-5)))
+    Check if it's currently market hours in Central Texas time
+    Market Hours: 8:30 AM - 3:00 PM CT, Monday-Friday
 
-    # Weekend check
-    if et_now.weekday() >= 5:  # Saturday or Sunday
+    Returns:
+        bool: True if market is open, False otherwise
+    """
+    ct_now = get_central_time()
+
+    # Weekend check (0=Monday, 6=Sunday)
+    if ct_now.weekday() >= 5:  # Saturday (5) or Sunday (6)
         return False
 
-    # Time check (9:30 AM - 4:00 PM ET)
-    market_open_time = dt_time(9, 30)
-    market_close_time = dt_time(16, 0)
-    current_time = et_now.time()
+    # Time check
+    current_time = ct_now.time()
+    return MARKET_OPEN_CT <= current_time <= MARKET_CLOSE_CT
 
-    return market_open_time <= current_time <= market_close_time
+
+def time_until_market_open() -> int:
+    """
+    Calculate seconds until market opens
+
+    Returns:
+        int: Seconds until market opens (0 if market is open)
+    """
+    ct_now = get_central_time()
+
+    # If market is currently open, return 0
+    if is_market_hours():
+        return 0
+
+    # Calculate next market open
+    current_date = ct_now.date()
+    current_weekday = ct_now.weekday()
+
+    # If it's after market close today, target tomorrow
+    if ct_now.time() > MARKET_CLOSE_CT:
+        days_ahead = 1
+    else:
+        days_ahead = 0
+
+    # If weekend, skip to Monday
+    if current_weekday == 5:  # Saturday
+        days_ahead = 2
+    elif current_weekday == 6:  # Sunday
+        days_ahead = 1
+
+    next_open_date = current_date + timedelta(days=days_ahead)
+    next_open_time = datetime.combine(
+        next_open_date,
+        MARKET_OPEN_CT,
+        tzinfo=ZoneInfo("America/Chicago")
+    )
+
+    seconds = int((next_open_time - ct_now).total_seconds())
+    return max(0, seconds)
+
+
+def format_time_until(seconds: int) -> str:
+    """Format seconds as human-readable time"""
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        return f"{seconds//60}m"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours}h {minutes}m"
+    else:
+        days = seconds // 86400
+        hours = (seconds % 86400) // 3600
+        return f"{days}d {hours}h"
 
 
 def run_autonomous_trader_cycle():
@@ -45,7 +109,7 @@ def run_autonomous_trader_cycle():
     Run one full cycle of the autonomous trader
 
     What it does:
-    - Checks for new trade opportunities ALL DAY during market hours (9:30 AM - 4:00 PM ET)
+    - Checks for new trade opportunities during market hours (8:30 AM - 3:00 PM CT)
     - Executes MINIMUM ONE trade per day GUARANTEED (multi-level fallback system)
     - Manages existing positions continuously
     - Updates live status for UI monitoring
@@ -54,15 +118,11 @@ def run_autonomous_trader_cycle():
     1. Directional GEX trade (preferred)
     2. Iron Condor fallback (if no directional setup)
     3. ATM Straddle final fallback (if Iron Condor fails)
-
-    This should be called:
-    - Every 5 minutes during market hours (recommended)
-    - OR triggered by Render's cron schedule
-    - OR as a background task in Streamlit
     """
 
+    ct_now = get_central_time()
     print(f"\n{'='*60}")
-    print(f"AUTONOMOUS TRADER CYCLE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"AUTONOMOUS TRADER CYCLE - {ct_now.strftime('%Y-%m-%d %I:%M:%S %p CT')}")
     print(f"{'='*60}\n")
 
     # Initialize with comprehensive error handling
@@ -75,11 +135,10 @@ def run_autonomous_trader_cycle():
         trader.update_live_status(
             status='RUNNING',
             action='Worker is alive and checking market conditions',
-            analysis='System healthy, checking for trading opportunities'
+            analysis=f'System healthy. Current time: {ct_now.strftime("%I:%M %p CT")}'
         )
     except Exception as e:
         print(f"❌ FATAL: Failed to initialize trader: {e}")
-        import traceback
         traceback.print_exc()
         return
 
@@ -96,15 +155,14 @@ def run_autonomous_trader_cycle():
         )
         return
 
-    # Step 1: Check for new trade opportunity (ALL DAY during market hours)
-    # Note: find_and_execute_daily_trade() has built-in protection to only execute ONE trade per day
+    # Step 1: Check for new trade opportunity (ONLY during market hours)
     if is_market_hours():
         print("🔍 MARKET HOURS - Checking for new trade opportunity...")
 
         # Log the check cycle start
         trader.log_action(
             'CHECK_START',
-            f'Starting trade search cycle at {datetime.now().strftime("%I:%M:%S %p ET")}. '
+            f'Starting trade search cycle at {ct_now.strftime("%I:%M:%S %p CT")}. '
             f'Market is open. Analyzing SPY GEX structure and looking for high-probability setups.',
             success=True
         )
@@ -148,14 +206,13 @@ def run_autonomous_trader_cycle():
                 f'Trade search encountered error: {str(e)[:200]}. Will retry on next cycle.',
                 success=False
             )
-            import traceback
             traceback.print_exc()
 
     else:
         print(f"ℹ️ Market closed - skipping new trade search")
         trader.log_action(
             'CHECK_SKIPPED',
-            f'Market is currently closed. Next check will occur during market hours (9:30 AM - 4:00 PM ET). '
+            f'Market is currently closed. Next check will occur during market hours (8:30 AM - 3:00 PM CT). '
             f'Open positions are not actively managed outside market hours.',
             success=True
         )
@@ -175,7 +232,6 @@ def run_autonomous_trader_cycle():
                 print("ℹ️ INFO: All positions look good - no exits needed")
         except Exception as e:
             print(f"❌ ERROR: Failed to manage positions: {e}")
-            import traceback
             traceback.print_exc()
 
     else:
@@ -196,133 +252,131 @@ def run_autonomous_trader_cycle():
     print(f"{'='*60}\n")
 
 
-def run_continuous_scheduler(check_interval_minutes: int = 5):
+def run_continuous_scheduler():
     """
-    Run the autonomous trader continuously
+    Run the autonomous trader continuously during market hours
+    Automatically waits until market opens, then checks every 5 minutes
 
-    Args:
-        check_interval_minutes: How often to check (default: 5 minutes for maximum data freshness)
-
-    Usage:
-        # In a separate Python process or background task:
-        run_continuous_scheduler(check_interval_minutes=5)
-
-    Note:
-        - Trading Volatility API limit: 20 calls/min
-        - Per cycle: ~3-5 calls (GEX data + skew + positions)
-        - Checking every 5 min = 12 cycles/hour = 36-60 calls/hour = ~0.6-1 call/min average
-        - This is WELL within API limits and provides maximum responsiveness
+    This is the MAIN mode for production deployment.
     """
 
-    print("🤖 AUTONOMOUS TRADER SCHEDULER STARTED")
-    print(f"⏰ Check interval: {check_interval_minutes} minutes")
-    print(f"📅 Checks ALL DAY during market hours (9:30 AM - 4:00 PM ET / 8:30 AM - 3:00 PM CT)")
-    print(f"✅ GUARANTEE: MINIMUM ONE trade per day (multi-level fallback system)")
-    print(f"📊 Manages positions continuously every {check_interval_minutes} minutes\n")
+    print("=" * 70)
+    print("🤖 AUTONOMOUS TRADER - CONTINUOUS MODE")
+    print("=" * 70)
+    print(f"⏰ Runs AUTOMATICALLY during market hours: 8:30 AM - 3:00 PM CT")
+    print(f"📅 Active days: Monday - Friday")
+    print(f"🔄 Check interval: Every 5 minutes")
+    print(f"✅ GUARANTEE: MINIMUM ONE trade per day (multi-level fallback)")
+    print(f"🛡️ Auto-restarts on errors")
+    print("=" * 70)
+    print()
+
+    cycle_count = 0
 
     while True:
         try:
-            # Run a cycle
-            run_autonomous_trader_cycle()
+            ct_now = get_central_time()
 
-            # Wait for next cycle
-            print(f"⏳ Waiting {check_interval_minutes} minutes until next cycle...\n")
-            time.sleep(check_interval_minutes * 60)
+            # Check if market is open
+            if is_market_hours():
+                cycle_count += 1
+                print(f"\n🟢 MARKET OPEN - Running cycle #{cycle_count}")
+
+                # Run trading cycle
+                run_autonomous_trader_cycle()
+
+                # Wait 5 minutes before next check
+                print(f"⏳ Waiting 5 minutes until next cycle...")
+                print(f"   Next check at: {(ct_now + timedelta(seconds=300)).strftime('%I:%M %p CT')}")
+                time.sleep(CHECK_INTERVAL_SECONDS)
+
+            else:
+                # Market is closed - calculate wait time
+                seconds_until_open = time_until_market_open()
+
+                if seconds_until_open > 0:
+                    next_open = ct_now + timedelta(seconds=seconds_until_open)
+                    print(f"\n🔴 MARKET CLOSED")
+                    print(f"   Current time: {ct_now.strftime('%I:%M %p CT, %A %B %d')}")
+                    print(f"   Next market open: {next_open.strftime('%I:%M %p CT, %A %B %d')}")
+                    print(f"   Waiting: {format_time_until(seconds_until_open)}")
+
+                    # Sleep until just before market opens
+                    # Wake up 1 minute before to ensure we're ready
+                    sleep_seconds = max(60, seconds_until_open - 60)
+                    time.sleep(sleep_seconds)
+                else:
+                    # Edge case - should never happen
+                    time.sleep(60)
 
         except KeyboardInterrupt:
-            print("\n🛑 Scheduler stopped by user")
+            print("\n🛑 Scheduler stopped by user (Ctrl+C)")
+            print("   To restart: python autonomous_scheduler.py")
             break
+
         except Exception as e:
-            print(f"❌ CRITICAL ERROR in scheduler: {e}")
-            import traceback
+            print(f"\n❌ CRITICAL ERROR in scheduler: {e}")
             traceback.print_exc()
 
-            # Wait a bit before retrying
-            print("⏳ Waiting 5 minutes before retry...")
+            # Wait 5 minutes before retrying
+            print("⏳ Auto-restart in 5 minutes...")
             time.sleep(300)
 
 
-# For Render.com or other cloud deployments
+# For Render.com or other cron-based deployments
 def render_scheduled_task():
     """
     Single execution for cron-based scheduling (Render, Heroku, etc.)
 
     Add to your Render.com cron job:
-
-    Schedule: "0 9-16 * * 1-5"  (Every hour, 9 AM - 4 PM ET, Mon-Fri)
-    Command: python autonomous_scheduler.py
+    Schedule: "*/5 8-15 * * 1-5"  (Every 5 min, 8:30 AM - 3:00 PM CT, Mon-Fri)
+    Command: python autonomous_scheduler.py --mode render
     """
     run_autonomous_trader_cycle()
 
 
-# For Streamlit background task (experimental)
-def streamlit_background_task():
-    """
-    Run as a Streamlit background task
-
-    Add to your main app:
-
-    import threading
-    from autonomous_scheduler import streamlit_background_task
-
-    # Start background thread
-    if 'autonomous_thread_started' not in st.session_state:
-        thread = threading.Thread(target=streamlit_background_task, daemon=True)
-        thread.start()
-        st.session_state.autonomous_thread_started = True
-    """
-
-    print("🤖 Streamlit background task started")
-
-    while True:
-        try:
-            # Only run during market hours to save resources
-            if is_market_hours():
-                run_autonomous_trader_cycle()
-                time.sleep(300)  # 5 minutes for maximum responsiveness
-            else:
-                # Outside market hours, check less frequently
-                print("ℹ️ Market closed - sleeping for 30 minutes")
-                time.sleep(1800)  # 30 minutes when market closed
-
-        except Exception as e:
-            print(f"❌ Error in background task: {e}")
-            time.sleep(300)  # Wait 5 minutes on error
-
-
 if __name__ == "__main__":
     """
-    Run this script directly for standalone operation:
+    Run this script directly for standalone operation
 
-    python autonomous_scheduler.py
+    Modes:
+    - continuous (default): Runs forever, auto-starts/stops with market hours
+    - once: Single cycle then exit
+    - render: Single cycle for cron jobs
     """
 
     import argparse
 
-    parser = argparse.ArgumentParser(description='Autonomous Paper Trader Scheduler')
+    parser = argparse.ArgumentParser(
+        description='Autonomous Trader Scheduler - Runs during market hours (8:30 AM - 3:00 PM CT)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python autonomous_scheduler.py                    # Continuous mode (runs forever)
+  python autonomous_scheduler.py --mode once        # Single test run
+  python autonomous_scheduler.py --mode render      # For cron jobs
+
+Production deployment:
+  sudo ./deploy_autonomous_trader.sh                # Sets up systemd service
+        """
+    )
+
     parser.add_argument(
         '--mode',
-        choices=['once', 'continuous', 'render'],
-        default='once',
-        help='Execution mode: once (single run), continuous (loop), render (cron-friendly)'
-    )
-    parser.add_argument(
-        '--interval',
-        type=int,
-        default=5,
-        help='Check interval in minutes (default: 5 for max data freshness within API limits)'
+        choices=['continuous', 'once', 'render'],
+        default='continuous',
+        help='Execution mode (default: continuous)'
     )
 
     args = parser.parse_args()
 
     if args.mode == 'once':
-        print("Running single cycle...")
+        print("Running single cycle...\n")
         run_autonomous_trader_cycle()
 
     elif args.mode == 'continuous':
-        print(f"Running continuous scheduler with {args.interval}-minute interval...")
-        run_continuous_scheduler(check_interval_minutes=args.interval)
+        run_continuous_scheduler()
 
     elif args.mode == 'render':
-        print("Running Render.com scheduled task...")
+        print("Running Render.com scheduled task...\n")
         render_scheduled_task()
