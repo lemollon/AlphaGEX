@@ -21,7 +21,7 @@ export default function RedFlagsSection({
 }: RedFlagsSectionProps) {
 
   // Calculate red flags
-  const redFlags = []
+  const redFlags: Array<{ flag: string; reason: string }> = []
 
   if (volumeRatio < 1.5) {
     redFlags.push({ flag: 'Volume < 1.5x average', reason: 'No dealer activity confirmed' })
