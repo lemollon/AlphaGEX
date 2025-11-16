@@ -19,24 +19,43 @@ export default function RedFlagsSection({
   strikePrice,
   daysToExpiration
 }: RedFlagsSectionProps) {
-
   // Calculate red flags
   const redFlags: Array<{ flag: string; reason: string }> = []
 
   if (volumeRatio < 1.5) {
-    redFlags.push({ flag: 'Volume < 1.5x average', reason: 'No dealer activity confirmed' })
+    redFlags.push({
+      flag: 'Volume < 1.5x average',
+      reason: 'No dealer activity confirmed'
+    })
   }
+
   if (netGex > 0) {
-    redFlags.push({ flag: 'Net GEX > 0', reason: 'Dealers LONG gamma (dampen, not amplify)' })
+    redFlags.push({
+      flag: 'Net GEX > 0',
+      reason: 'Dealers LONG gamma (dampen, not amplify)'
+    })
   }
+
   if (ivRank < 30) {
-    redFlags.push({ flag: 'IV Rank < 30%', reason: 'Premium too cheap to sell' })
+    redFlags.push({
+      flag: 'IV Rank < 30%',
+      reason: 'Premium too cheap to sell'
+    })
   }
+
   if (daysToExpiration < 2) {
-    redFlags.push({ flag: 'Time to exp < 2 days', reason: 'Gamma risk too high' })
+    redFlags.push({
+      flag: 'Time to exp < 2 days',
+      reason: 'Gamma risk too high'
+    })
   }
+
   if (currentPrice > strikePrice) {
-    redFlags.push({ flag: `Price already > $${strikePrice.toFixed(0)}`, reason: 'Missed entry, wait for next' })
+    const formattedStrike = strikePrice.toFixed(0)
+    redFlags.push({
+      flag: `Price already > $${formattedStrike}`,
+      reason: 'Missed entry, wait for next'
+    })
   }
 
   const hasRedFlags = redFlags.length > 0
@@ -51,7 +70,6 @@ export default function RedFlagsSection({
         </div>
       </div>
 
-      {/* Current Red Flags Alert */}
       {hasRedFlags && (
         <div className="bg-red-500/20 border-2 border-red-500 rounded-lg p-5 mb-6">
           <div className="flex items-start gap-3">
@@ -84,7 +102,6 @@ export default function RedFlagsSection({
         </div>
       )}
 
-      {/* Pre-Entry Invalidation Checklist */}
       <div className="bg-gray-950/50 rounded-lg p-6 mb-6">
         <h3 className="text-xl font-bold text-white mb-4">Pre-Entry Invalidation Checklist:</h3>
         <p className="text-gray-300 text-sm mb-4">Do NOT take trade if ANY of the following are true:</p>
@@ -97,7 +114,7 @@ export default function RedFlagsSection({
               ) : (
                 <span className="text-green-400 text-xl">✓</span>
               )}
-              <h4 className="font-bold text-white">Volume < 1.5x Average</h4>
+              <h4 className="font-bold text-white">Volume &lt; 1.5x Average</h4>
             </div>
             <p className="text-sm text-gray-300">Current: {volumeRatio.toFixed(1)}x</p>
             <p className="text-xs text-gray-400 mt-1">Why: No dealer activity = no edge</p>
@@ -110,7 +127,7 @@ export default function RedFlagsSection({
               ) : (
                 <span className="text-green-400 text-xl">✓</span>
               )}
-              <h4 className="font-bold text-white">Net GEX > 0</h4>
+              <h4 className="font-bold text-white">Net GEX &gt; 0</h4>
             </div>
             <p className="text-sm text-gray-300">Current: ${(netGex / 1e9).toFixed(1)}B</p>
             <p className="text-xs text-gray-400 mt-1">Why: Dealers LONG gamma (dampen moves)</p>
@@ -132,7 +149,7 @@ export default function RedFlagsSection({
               ) : (
                 <span className="text-green-400 text-xl">✓</span>
               )}
-              <h4 className="font-bold text-white">IV Rank < 30%</h4>
+              <h4 className="font-bold text-white">IV Rank &lt; 30%</h4>
             </div>
             <p className="text-sm text-gray-300">Current: {ivRank}%</p>
             <p className="text-xs text-gray-400 mt-1">Why: Premium too cheap to sell</p>
@@ -145,7 +162,7 @@ export default function RedFlagsSection({
               ) : (
                 <span className="text-green-400 text-xl">✓</span>
               )}
-              <h4 className="font-bold text-white">Time to Exp < 2 Days</h4>
+              <h4 className="font-bold text-white">Time to Exp &lt; 2 Days</h4>
             </div>
             <p className="text-sm text-gray-300">Current: {daysToExpiration} days</p>
             <p className="text-xs text-gray-400 mt-1">Why: Gamma risk explodes near expiration</p>
@@ -158,7 +175,7 @@ export default function RedFlagsSection({
               ) : (
                 <span className="text-green-400 text-xl">✓</span>
               )}
-              <h4 className="font-bold text-white">Price Already > ${strikePrice.toFixed(0)}</h4>
+              <h4 className="font-bold text-white">Price Already &gt; ${strikePrice.toFixed(0)}</h4>
             </div>
             <p className="text-sm text-gray-300">Current: ${currentPrice.toFixed(2)}</p>
             <p className="text-xs text-gray-400 mt-1">Why: Missed entry, wait for pullback</p>
@@ -170,7 +187,7 @@ export default function RedFlagsSection({
               <h4 className="font-bold text-white">Weekend Approaching</h4>
             </div>
             <p className="text-sm text-gray-300">Friday PM entries</p>
-            <p className="text-xs text-gray-400 mt-1">Why: 2-day gap risk, can't manage</p>
+            <p className="text-xs text-gray-400 mt-1">Why: 2-day gap risk, cannot manage</p>
           </div>
 
           <div className="rounded-lg p-4 border-2 bg-gray-900/50 border-gray-700">
@@ -184,7 +201,6 @@ export default function RedFlagsSection({
         </div>
       </div>
 
-      {/* Bull Case - When You Might Be Wrong */}
       <div className="bg-gradient-to-r from-green-600/10 to-emerald-600/10 border border-green-500/30 rounded-lg p-6 mb-6">
         <div className="flex items-start gap-3 mb-4">
           <TrendingUp className="w-6 h-6 text-green-400 flex-shrink-0 mt-1" />
@@ -198,13 +214,13 @@ export default function RedFlagsSection({
           <div className="bg-gray-950/50 rounded p-4">
             <div className="font-bold text-green-300 mb-2">🐂 Fed Pivot Announced</div>
             <p className="text-sm text-gray-300 mb-2">Paradigm shift → All assets rally</p>
-            <p className="text-xs text-gray-400">Recognition: Immediate {'>'} 1% gap up + sustained buying</p>
+            <p className="text-xs text-gray-400">Recognition: Immediate &gt; 1% gap up + sustained buying</p>
           </div>
 
           <div className="bg-gray-950/50 rounded p-4">
             <div className="font-bold text-green-300 mb-2">🐂 Massive Buyback Program</div>
             <p className="text-sm text-gray-300 mb-2">Real demand, not just dealer hedging</p>
-            <p className="text-xs text-gray-400">Recognition: Volume {'>'} 5x + corporate announcement</p>
+            <p className="text-xs text-gray-400">Recognition: Volume &gt; 5x + corporate announcement</p>
           </div>
 
           <div className="bg-gray-950/50 rounded p-4">
@@ -214,7 +230,7 @@ export default function RedFlagsSection({
           </div>
 
           <div className="bg-gray-950/50 rounded p-4">
-            <div className="font-bold text-green-300 mb-2">🐂 Momentum > Mechanics</div>
+            <div className="font-bold text-green-300 mb-2">🐂 Momentum &gt; Mechanics</div>
             <p className="text-sm text-gray-300 mb-2">Price breaks wall and HOLDS above</p>
             <p className="text-xs text-gray-400">Recognition: Close above ${(strikePrice + 1).toFixed(0)} for 2+ hours</p>
           </div>
@@ -222,17 +238,16 @@ export default function RedFlagsSection({
 
         <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded p-3">
           <p className="text-yellow-300 text-sm">
-            <strong>What to do:</strong> If ANY bull case scenario occurs, CLOSE position immediately. Don't fight paradigm shifts.
+            <strong>What to do:</strong> If ANY bull case scenario occurs, CLOSE position immediately. Do not fight paradigm shifts.
             Your edge is dealer mechanics in normal conditions, not predicting Fed pivots or corporate announcements.
           </p>
         </div>
       </div>
 
-      {/* Bottom Line */}
       <div className="bg-gradient-to-r from-red-600/20 to-orange-600/20 border border-red-500/30 rounded-lg p-5">
-        <h3 className="text-lg font-bold text-white mb-3">The Professional's Rule:</h3>
+        <h3 className="text-lg font-bold text-white mb-3">The Professional&apos;s Rule:</h3>
         <p className="text-gray-200 text-center text-lg">
-          <span className="text-red-400 font-bold">"When in doubt, stay out."</span>
+          <span className="text-red-400 font-bold">&quot;When in doubt, stay out.&quot;</span>
           <br />
           <span className="text-sm text-gray-300">
             Missing a trade costs $0. Taking a bad trade costs real money. Wait for A+ setups only.
