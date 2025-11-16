@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import StatusCard from '@/components/StatusCard'
-import TradingViewWidget from '@/components/TradingViewWidget'
 import TradingViewChart from '@/components/TradingViewChart'
 import MarketCommentary from '@/components/MarketCommentary'
 import DailyTradingPlan from '@/components/DailyTradingPlan'
@@ -19,7 +18,8 @@ import {
   TrendingUp,
   ArrowUpRight,
   ArrowDownRight,
-  DollarSign
+  DollarSign,
+  Download
 } from 'lucide-react'
 
 interface Position {
@@ -58,12 +58,13 @@ export default function Dashboard() {
         setLoading(true)
 
         // Fetch ALL data in parallel - REAL DATA ONLY
-        // Note: No longer fetching price history - using TradingView widget instead
-        const [gexRes, perfRes, positionsRes, tradeLogRes] = await Promise.all([
+        const [gexRes, perfRes, positionsRes, tradeLogRes, equityCurveRes, priceHistoryRes] = await Promise.all([
           apiClient.getGEX('SPY'),
           apiClient.getTraderPerformance(),
           apiClient.getOpenPositions(),
-          apiClient.getTradeLog()
+          apiClient.getTradeLog(),
+          apiClient.getEquityCurve(30),
+          apiClient.getPriceHistory('SPY', 90)
         ])
 
         // Set GEX data
@@ -74,22 +75,27 @@ export default function Dashboard() {
         // Set REAL performance data
         if (perfRes.data.success) {
           setPerformance(perfRes.data.data)
+        }
 
-          // Generate performance equity curve from real data
-          // TODO: Store historical equity values in database
-          // For now, use current value as endpoint
-          const perfData: LineData[] = []
-          const now = Math.floor(Date.now() / 1000)
-          const currentValue = perfRes.data.data.total_pnl || 0
-
-          for (let i = 30; i >= 0; i--) {
-            const time = (now - i * 86400) as any
-            // Approximate historical values (better than mock, but should be from DB)
-            const progress = (30 - i) / 30
-            const value = currentValue * progress
-            perfData.push({ time, value: 5000 + value })
-          }
+        // Set REAL equity curve from trade history
+        if (equityCurveRes.data.success && equityCurveRes.data.data.length > 0) {
+          const perfData: LineData[] = equityCurveRes.data.data.map((point: any) => ({
+            time: point.timestamp as any,
+            value: point.equity
+          }))
           setPerformanceData(perfData)
+        } else {
+          // No trade history yet - show empty state
+          setPerformanceData([])
+        }
+
+        // Set REAL SPY price history
+        if (priceHistoryRes.data.success && priceHistoryRes.data.data) {
+          const spyData: LineData[] = priceHistoryRes.data.data.map((point: any) => ({
+            time: point.time as any,
+            value: point.value
+          }))
+          setChartData(spyData)
         }
 
         // Set REAL open positions
@@ -144,6 +150,50 @@ export default function Dashboard() {
       }).format(new Date(timeStr))
     } catch {
       return timeStr
+    }
+  }
+
+  const downloadTradeHistory = async () => {
+    try {
+      // Fetch full trade history from API
+      const response = await apiClient.getTradeLog()
+
+      if (!response.data.success || !response.data.data.length) {
+        alert('No trade history available to download')
+        return
+      }
+
+      const trades = response.data.data
+
+      // Create CSV content
+      const headers = ['Date/Time (Central)', 'Action', 'Details', 'P&L']
+      const csvRows = [headers.join(',')]
+
+      trades.forEach((trade: TradeLogEntry) => {
+        const row = [
+          `"${new Date(trade.time).toLocaleString('en-US', { timeZone: 'America/Chicago' })}"`,
+          `"${trade.action}"`,
+          `"${trade.details}"`,
+          trade.pnl ? trade.pnl.toFixed(2) : '0.00'
+        ]
+        csvRows.push(row.join(','))
+      })
+
+      const csvContent = csvRows.join('\n')
+
+      // Create download link
+      const blob = new Blob([csvContent], { type: 'text/csv' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `alphagex-trade-history-${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Failed to download trade history:', error)
+      alert('Failed to download trade history. Please try again.')
     }
   }
 
@@ -249,13 +299,25 @@ export default function Dashboard() {
               </h2>
 
               <div className="bg-background-deep rounded-lg overflow-hidden">
-                <TradingViewWidget
-                  symbol="SPY"
-                  interval="D"
-                  theme="dark"
-                  height={320}
-                  autosize={false}
-                />
+                {chartData.length > 0 ? (
+                  <TradingViewChart
+                    data={chartData}
+                    type="area"
+                    height={320}
+                    colors={{
+                      lineColor: '#3b82f6',
+                      areaTopColor: 'rgba(59, 130, 246, 0.3)',
+                      areaBottomColor: 'rgba(59, 130, 246, 0.0)',
+                    }}
+                  />
+                ) : (
+                  <div className="h-80 flex items-center justify-center">
+                    <div className="text-center text-text-muted">
+                      <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">Loading SPY price data...</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -347,11 +409,11 @@ export default function Dashboard() {
               <span>Gamma Intel</span>
             </button>
             <button
-              onClick={() => router.push('/ai')}
+              onClick={() => router.push('/psychology')}
               className="btn-secondary flex flex-col items-center space-y-2 py-4"
             >
-              <span className="text-2xl">🤖</span>
-              <span>Ask AI</span>
+              <span className="text-2xl">🧠</span>
+              <span>Psychology</span>
             </button>
             <button
               onClick={() => router.push('/trader')}
@@ -367,7 +429,17 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Trade Log - REAL DATA FROM DATABASE (Central Time) */}
           <div className="card">
-            <h3 className="text-lg font-semibold mb-4">📅 Today's Trade Log (Central Time)</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">📅 Today's Trade Log (Central Time)</h3>
+              <button
+                onClick={downloadTradeHistory}
+                className="flex items-center gap-2 px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg transition-colors text-sm"
+                title="Download full trade history as CSV"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download History</span>
+              </button>
+            </div>
             <div className="space-y-2">
               {tradeLog.length === 0 ? (
                 <div className="text-center py-8 text-text-muted">

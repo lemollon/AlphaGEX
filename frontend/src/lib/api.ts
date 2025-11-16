@@ -30,6 +30,9 @@ export const apiClient = {
   getGEX: (symbol: string) => api.get(`/api/gex/${symbol}`),
   getGEXLevels: (symbol: string) => api.get(`/api/gex/${symbol}/levels`),
 
+  // Market Data
+  getPriceHistory: (symbol: string, days: number = 90) => api.get(`/api/market/price-history/${symbol}`, { params: { days } }),
+
   // Gamma Intelligence
   getGammaIntelligence: (symbol: string, vix?: number) =>
     api.get(`/api/gamma/${symbol}/intelligence`, { params: { vix } }),
@@ -53,6 +56,7 @@ export const apiClient = {
   getTraderTrades: (limit: number = 10) => api.get('/api/trader/trades', { params: { limit } }),
   getOpenPositions: () => api.get('/api/trader/positions'),
   getTradeLog: () => api.get('/api/trader/trade-log'),
+  getEquityCurve: (days: number = 30) => api.get('/api/trader/equity-curve', { params: { days } }),
   getStrategies: () => api.get('/api/trader/strategies'),
   compareStrategies: (symbol: string = 'SPY') => api.get('/api/strategies/compare', { params: { symbol } }),
 
