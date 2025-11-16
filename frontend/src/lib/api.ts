@@ -111,10 +111,6 @@ export const apiClient = {
   }) => api.post('/api/ai-intelligence/explain-greek', data),
   getAIIntelligenceHealth: () => api.get('/api/ai-intelligence/health'),
 
-  // Market Data
-  getPriceHistory: (symbol: string, days: number = 90) =>
-    api.get(`/api/market/price-history/${symbol}`, { params: { days } }),
-
   // Multi-Symbol Scanner
   scanSymbols: (symbols: string[]) => api.post('/api/scanner/scan', { symbols }),
   getScannerHistory: (limit: number = 10) => api.get('/api/scanner/history', { params: { limit } }),
