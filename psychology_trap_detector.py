@@ -377,24 +377,61 @@ def analyze_dealer_feedback_loop_mechanics(
 🔄 WHY THE FEEDBACK LOOP EXISTS:
 
 1️⃣  DEALERS ARE SHORT GAMMA
-   → They sold options to market participants
-   → They are now EXPOSED to large price moves
-   → They MUST hedge to stay delta-neutral
+   → They sold options to market participants (calls/puts)
+   → Each sold call = obligation to deliver shares at strike if exercised
+   → Each sold put = obligation to buy shares at strike if exercised
+   → They are now EXPOSED to unlimited losses if unhedged
 
-2️⃣  PRICE MOVES {direction_word}
-   → Their short gamma position loses money
-   → Delta exposure increases as price moves
-   → They must {hedge_direction} SPY to hedge
+2️⃣  WHY DEALERS **MUST** HEDGE (Not Optional):
 
-3️⃣  DEALER {hedge_direction}ING PUSHES PRICE {direction_word}
+   A) CONTRACTUAL OBLIGATION:
+      → Sold options are LEGAL CONTRACTS that must be honored
+      → If SPY rallies to $600 and dealer sold $580 calls, they must deliver shares
+      → Without hedging, they'd need to buy shares at $600 to deliver at $580 = $20 loss per share
+      → Pre-buying shares as price rises LOCKS IN the hedge before it's too expensive
+
+   B) REGULATORY REQUIREMENTS (SEC/FINRA):
+      → Market makers must maintain risk-based capital requirements
+      → Unhedged gamma positions require MASSIVE margin (often prohibitive)
+      → Risk limits are HARD LIMITS enforced by compliance systems
+      → Breach = forced liquidation or trading halt
+
+   C) FIRM RISK MANAGEMENT:
+      → Trading desks have MAX delta exposure limits (e.g., ±$50M notional)
+      → Automated systems FORCE hedging when limits approached
+      → Risk managers can override traders and force hedges
+      → Trader P&L is at risk if they don't hedge (fired if large loss)
+
+   D) MATHEMATICAL INEVITABILITY (Gamma Growth):
+      → Delta changes with price (gamma effect)
+      → $1 move in SPY = thousands of shares of delta change per contract
+      → 10,000 short calls = millions in delta exposure per $1 move
+      → Exposure grows EXPONENTIALLY - waiting makes it worse
+
+   E) MARGIN REQUIREMENTS:
+      → Each dollar of unhedged delta requires ~$0.50 in margin
+      → $100M delta exposure = $50M margin requirement
+      → Most dealers don't have capital for large unhedged books
+      → Margin call = forced liquidation at worst prices
+
+3️⃣  PRICE MOVES {direction_word}
+   → Their short call delta goes more negative (or short put delta goes more positive)
+   → Delta exposure increases EVERY TICK
+   → Systems hit auto-hedge thresholds
+   → They must {hedge_direction} SPY shares to bring delta back to neutral
+
+4️⃣  DEALER {hedge_direction}ING PUSHES PRICE {direction_word}
    → Estimated hedging flow: ${hedging_pressure_millions:.1f}M
-   → This creates MORE {direction_word}ward pressure
+   → When dealers {hedge_direction} large size, they move the market
+   → This creates MORE {direction_word}ward price pressure
    → Price accelerates in same direction
 
-4️⃣  ACCELERATION TRIGGERS MORE HEDGING
-   → As price continues {direction_word}, dealers need to {hedge_direction} MORE
-   → This creates a FEEDBACK LOOP
-   → Move amplified by {(amplification - 1) * 100:.0f}% due to dealer hedging
+5️⃣  ACCELERATION TRIGGERS MORE HEDGING (THE FEEDBACK LOOP)
+   → As price continues {direction_word}, delta changes MORE
+   → Dealers hit thresholds again and must {hedge_direction} MORE
+   → More {hedge_direction}ing → price moves {direction_word} → more delta → more {hedge_direction}ing
+   → This SELF-REINFORCING cycle amplifies moves by {(amplification - 1) * 100:.0f}%
+   → Loop continues until: volume dies, RSI extreme, or gamma wall hit
 
 📍 WHERE THE HEDGING IS HAPPENING (Top Active Strikes):
 """
