@@ -2236,6 +2236,87 @@ async def get_trade_log():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/trader/equity-curve")
+async def get_equity_curve(days: int = 30):
+    """Get historical equity curve from trade log"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": []
+        }
+
+    try:
+        import sqlite3
+        import pandas as pd
+        from datetime import datetime, timedelta
+
+        conn = sqlite3.connect(trader.db_path)
+
+        # Get trade history for specified days
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        # Fetch all trades with realized P&L
+        trades = pd.read_sql_query("""
+            SELECT date, time, action, details, realized_pnl
+            FROM autonomous_trade_log
+            WHERE action IN ('BUY', 'SELL', 'CLOSE')
+            ORDER BY date ASC, time ASC
+        """, conn)
+        conn.close()
+
+        if trades.empty:
+            return {
+                "success": True,
+                "data": [],
+                "message": "No trade history available"
+            }
+
+        # Calculate cumulative equity curve
+        starting_equity = 5000  # TODO: Get from config
+        equity_data = []
+
+        # Add starting point
+        equity_data.append({
+            "timestamp": int(start_date.timestamp()),
+            "equity": starting_equity
+        })
+
+        cumulative_pnl = 0
+        for _, trade in trades.iterrows():
+            if pd.notna(trade['realized_pnl']) and trade['realized_pnl'] != 0:
+                cumulative_pnl += trade['realized_pnl']
+
+                # Parse timestamp
+                trade_datetime = datetime.strptime(f"{trade['date']} {trade['time']}", '%Y-%m-%d %H:%M:%S')
+
+                equity_data.append({
+                    "timestamp": int(trade_datetime.timestamp()),
+                    "equity": starting_equity + cumulative_pnl
+                })
+
+        # Add current point if we have recent data
+        if equity_data:
+            equity_data.append({
+                "timestamp": int(end_date.timestamp()),
+                "equity": starting_equity + cumulative_pnl
+            })
+
+        return {
+            "success": True,
+            "data": equity_data,
+            "total_pnl": cumulative_pnl,
+            "starting_equity": starting_equity
+        }
+    except Exception as e:
+        print(f"Error fetching equity curve: {e}")
+        return {
+            "success": False,
+            "message": str(e),
+            "data": []
+        }
+
 @app.post("/api/trader/execute")
 async def execute_trader_cycle():
     """
