@@ -923,7 +923,7 @@ export default function PsychologyTrapDetection() {
               volumeRatio={2.3} // Should come from real-time data
               currentPrice={analysis.spy_price}
               strikePrice={analysis.current_walls?.call_wall?.strike || analysis.spy_price}
-              openInterestAtStrike={20000} // Should come from strike data
+              openInterest={20000} // Should come from strike data
               volume={50000} // Should come from strike data
             />
 
