@@ -228,12 +228,91 @@ export default function Dashboard() {
   const flipPoint = gexData?.flip_point || 0
   const mmState = getMMState(netGex, spotPrice, flipPoint)
 
+  // Calculate Today's P&L from trade log
+  const todayPnL = tradeLog.reduce((sum, trade) => sum + (trade.pnl || 0), 0)
+  const todayPnLPercent = performance ? (todayPnL / 5000) * 100 : 0  // TODO: Get starting equity from config
+
+  // Calculate unrealized P&L from positions
+  const unrealizedPnL = positions.reduce((sum, pos) => sum + pos.unrealized_pnl, 0)
+  const totalPnL = todayPnL + unrealizedPnL
+
+  // Find best and worst trades today
+  const bestTrade = tradeLog.length > 0 ? tradeLog.reduce((best, trade) =>
+    (trade.pnl || 0) > (best.pnl || 0) ? trade : best
+  , tradeLog[0]) : null
+
+  const worstTrade = tradeLog.length > 0 ? tradeLog.reduce((worst, trade) =>
+    (trade.pnl || 0) < (worst.pnl || 0) ? trade : worst
+  , tradeLog[0]) : null
+
+  // Calculate risk metrics
+  const currentEquity = 5000 + (performance?.total_pnl || 0)  // TODO: Get from config
+  const peakEquity = currentEquity  // TODO: Track peak in DB
+  const currentDrawdown = ((peakEquity - currentEquity) / peakEquity * 100)
+  const dailyLossUsed = todayPnL < 0 ? Math.abs((todayPnL / currentEquity) * 100) : 0
+  const totalExposure = positions.reduce((sum, pos) => sum + (pos.entry_price * pos.contracts * 100), 0)
+  const exposurePercent = (totalExposure / currentEquity) * 100
+
+  // Market hours check
+  const now = new Date()
+  const centralTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+  const hour = centralTime.getHours()
+  const minute = centralTime.getMinutes()
+  const isMarketHours = (hour === 8 && minute >= 30) || (hour > 8 && hour < 15) || (hour === 15 && minute === 0)
+  const marketClose = new Date(centralTime)
+  marketClose.setHours(15, 0, 0, 0)
+  const timeToClose = isMarketHours ? Math.max(0, Math.floor((marketClose.getTime() - centralTime.getTime()) / 1000 / 60)) : 0
+  const hoursToClose = Math.floor(timeToClose / 60)
+  const minutesToClose = timeToClose % 60
+
   return (
     <div className="min-h-screen">
       <Navigation />
 
       <main className="pt-16 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        {/* TODAY'S PERFORMANCE - PROMINENT */}
+        <div className="mb-6">
+          <div className={`card border-2 ${totalPnL >= 0 ? 'border-success/50 bg-success/5' : 'border-danger/50 bg-danger/5'}`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-text-secondary mb-1">TODAY'S PERFORMANCE</h2>
+                <div className={`text-5xl font-bold ${totalPnL >= 0 ? 'text-success' : 'text-danger'}`}>
+                  {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
+                  <span className="text-2xl ml-3">({totalPnL >= 0 ? '+' : ''}{todayPnLPercent.toFixed(2)}%)</span>
+                </div>
+                <div className="flex items-center gap-4 mt-2 text-sm">
+                  <div className="text-text-secondary">
+                    Realized: <span className={`font-semibold ${todayPnL >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {todayPnL >= 0 ? '+' : ''}${todayPnL.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="text-text-secondary">
+                    Unrealized: <span className={`font-semibold ${unrealizedPnL >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {unrealizedPnL >= 0 ? '+' : ''}${unrealizedPnL.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="text-text-secondary">
+                    Trades: <span className="font-semibold text-text-primary">{tradeLog.length}</span>
+                  </div>
+                  {isMarketHours && (
+                    <div className="flex items-center gap-2 text-warning">
+                      <div className="w-2 h-2 rounded-full bg-warning animate-pulse"></div>
+                      <span className="font-semibold">Market closes in {hoursToClose}h {minutesToClose}m</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm text-text-secondary mb-1">Current Equity</div>
+                <div className="text-3xl font-bold text-text-primary">${currentEquity.toFixed(2)}</div>
+                <div className="text-xs text-text-muted mt-1">Start: $5,000.00</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Status Cards - REAL DATA */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
           <StatusCard
@@ -274,6 +353,117 @@ export default function Dashboard() {
             changeType="positive"
             subtitle="All time"
           />
+        </div>
+
+        {/* RISK METRICS & SYSTEM STATUS */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          {/* Risk Dashboard */}
+          <div className="lg:col-span-2">
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-4">⚠️ Risk Dashboard</h3>
+              <div className="grid grid-cols-3 gap-4">
+                {/* Drawdown */}
+                <div className="bg-background-deep rounded-lg p-4">
+                  <div className="text-xs text-text-secondary mb-1">Max Drawdown</div>
+                  <div className={`text-2xl font-bold ${currentDrawdown > 10 ? 'text-danger' : currentDrawdown > 5 ? 'text-warning' : 'text-success'}`}>
+                    {currentDrawdown.toFixed(2)}%
+                  </div>
+                  <div className="text-xs text-text-muted mt-1">Limit: 20%</div>
+                  <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
+                    <div
+                      className={`h-2 rounded-full ${currentDrawdown > 10 ? 'bg-danger' : currentDrawdown > 5 ? 'bg-warning' : 'bg-success'}`}
+                      style={{width: `${Math.min(100, (currentDrawdown / 20) * 100)}%`}}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Daily Loss */}
+                <div className="bg-background-deep rounded-lg p-4">
+                  <div className="text-xs text-text-secondary mb-1">Daily Loss Used</div>
+                  <div className={`text-2xl font-bold ${dailyLossUsed > 3 ? 'text-danger' : dailyLossUsed > 1.5 ? 'text-warning' : 'text-success'}`}>
+                    {dailyLossUsed.toFixed(2)}%
+                  </div>
+                  <div className="text-xs text-text-muted mt-1">Limit: 5%</div>
+                  <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
+                    <div
+                      className={`h-2 rounded-full ${dailyLossUsed > 3 ? 'bg-danger' : dailyLossUsed > 1.5 ? 'bg-warning' : 'bg-success'}`}
+                      style={{width: `${Math.min(100, (dailyLossUsed / 5) * 100)}%`}}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Exposure */}
+                <div className="bg-background-deep rounded-lg p-4">
+                  <div className="text-xs text-text-secondary mb-1">Total Exposure</div>
+                  <div className={`text-2xl font-bold ${exposurePercent > 50 ? 'text-danger' : exposurePercent > 25 ? 'text-warning' : 'text-success'}`}>
+                    {exposurePercent.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-text-muted mt-1">${totalExposure.toFixed(0)}</div>
+                  <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
+                    <div
+                      className={`h-2 rounded-full ${exposurePercent > 50 ? 'bg-danger' : exposurePercent > 25 ? 'bg-warning' : 'bg-success'}`}
+                      style={{width: `${Math.min(100, exposurePercent)}%`}}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* System Status & Streak */}
+          <div className="space-y-6">
+            {/* System Status */}
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-3">🤖 System Status</h3>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text-secondary">Trading Mode:</span>
+                  <span className="text-sm font-semibold text-success">ACTIVE</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text-secondary">Current State:</span>
+                  <span className="text-sm font-semibold text-primary">
+                    {positions.length > 0 ? 'MONITORING' : 'SCANNING'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text-secondary">Next Action:</span>
+                  <span className="text-sm font-semibold text-text-primary">
+                    {isMarketHours ? (positions.length > 0 ? 'Manage Exits' : 'Find Setup') : 'Market Closed'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Win/Loss Streak */}
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-3">🔥 Performance Streak</h3>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text-secondary">Win Rate:</span>
+                  <span className={`text-lg font-bold ${performance && performance.win_rate > 60 ? 'text-success' : 'text-warning'}`}>
+                    {performance ? `${performance.win_rate.toFixed(1)}%` : 'N/A'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text-secondary">Total Trades:</span>
+                  <span className="text-lg font-bold text-text-primary">
+                    {performance ? performance.total_trades : 0}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="bg-success/10 rounded p-2 text-center">
+                    <div className="text-xs text-success">Wins</div>
+                    <div className="text-xl font-bold text-success">{performance?.winning_trades || 0}</div>
+                  </div>
+                  <div className="bg-danger/10 rounded p-2 text-center">
+                    <div className="text-xs text-danger">Losses</div>
+                    <div className="text-xl font-bold text-danger">{performance?.losing_trades || 0}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* AI Intelligence Widgets */}
@@ -386,7 +576,7 @@ export default function Dashboard() {
         {/* Quick Actions - NOW FUNCTIONAL */}
         <div className="card mb-8">
           <h3 className="text-lg font-semibold mb-4">⚡ Quick Actions</h3>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <button
               onClick={() => router.push('/scanner')}
               className="btn-primary flex flex-col items-center space-y-2 py-4"
@@ -416,6 +606,13 @@ export default function Dashboard() {
               <span>Psychology</span>
             </button>
             <button
+              onClick={() => router.push('/charts')}
+              className="btn-secondary flex flex-col items-center space-y-2 py-4"
+            >
+              <span className="text-2xl">📈</span>
+              <span>Charts</span>
+            </button>
+            <button
               onClick={() => router.push('/trader')}
               className="btn-secondary flex flex-col items-center space-y-2 py-4"
             >
@@ -426,9 +623,49 @@ export default function Dashboard() {
         </div>
 
         {/* Bottom Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          {/* Best/Worst Trades Today */}
+          <div className="space-y-6">
+            {/* Best Trade */}
+            <div className="card border-2 border-success/30 bg-success/5">
+              <h3 className="text-lg font-semibold mb-3 text-success">🏆 Best Trade Today</h3>
+              {bestTrade && (bestTrade.pnl || 0) > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-3xl font-bold text-success">
+                    +${(bestTrade.pnl || 0).toFixed(2)}
+                  </div>
+                  <div className="text-sm text-text-secondary">{bestTrade.details}</div>
+                  <div className="text-xs text-text-muted">{formatTime(bestTrade.time)}</div>
+                </div>
+              ) : (
+                <div className="text-center py-4 text-text-muted">
+                  <p className="text-sm">No winning trades yet today</p>
+                </div>
+              )}
+            </div>
+
+            {/* Worst Trade */}
+            <div className="card border-2 border-danger/30 bg-danger/5">
+              <h3 className="text-lg font-semibold mb-3 text-danger">📉 Worst Trade Today</h3>
+              {worstTrade && (worstTrade.pnl || 0) < 0 ? (
+                <div className="space-y-2">
+                  <div className="text-3xl font-bold text-danger">
+                    ${(worstTrade.pnl || 0).toFixed(2)}
+                  </div>
+                  <div className="text-sm text-text-secondary">{worstTrade.details}</div>
+                  <div className="text-xs text-text-muted">{formatTime(worstTrade.time)}</div>
+                </div>
+              ) : (
+                <div className="text-center py-4 text-text-muted">
+                  <p className="text-sm">No losing trades yet today</p>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Trade Log - REAL DATA FROM DATABASE (Central Time) */}
-          <div className="card">
+          <div className="lg:col-span-2">
+            <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">📅 Today's Trade Log (Central Time)</h3>
               <button
@@ -462,32 +699,33 @@ export default function Dashboard() {
                 ))
               )}
             </div>
-          </div>
-
-          {/* Performance - REAL DATA */}
-          <div className="card">
-            <h3 className="text-lg font-semibold mb-4">📊 Performance Equity Curve</h3>
-            <div className="bg-background-deep rounded-lg">
-              {performanceData.length > 0 ? (
-                <TradingViewChart
-                  data={performanceData}
-                  type="area"
-                  height={192}
-                  colors={{
-                    lineColor: '#10b981',
-                    areaTopColor: 'rgba(16, 185, 129, 0.4)',
-                    areaBottomColor: 'rgba(16, 185, 129, 0.0)',
-                  }}
-                />
-              ) : (
-                <div className="h-48 flex items-center justify-center">
-                  <div className="text-center text-text-muted">
-                    <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">No performance data yet</p>
-                  </div>
-                </div>
-              )}
             </div>
+          </div>
+        </div>
+
+        {/* Performance Equity Curve - Full Width */}
+        <div className="card mb-6">
+          <h3 className="text-lg font-semibold mb-4">📊 Performance Equity Curve</h3>
+          <div className="bg-background-deep rounded-lg">
+            {performanceData.length > 0 ? (
+              <TradingViewChart
+                data={performanceData}
+                type="area"
+                height={192}
+                colors={{
+                  lineColor: '#10b981',
+                  areaTopColor: 'rgba(16, 185, 129, 0.4)',
+                  areaBottomColor: 'rgba(16, 185, 129, 0.0)',
+                }}
+              />
+            ) : (
+              <div className="h-48 flex items-center justify-center">
+                <div className="text-center text-text-muted">
+                  <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No performance data yet</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         </div>
