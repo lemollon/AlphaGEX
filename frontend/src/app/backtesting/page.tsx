@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle } from 'lucide-react'
+import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle, Calendar, Clock } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import SmartStrategyPicker from '@/components/SmartStrategyPicker'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -198,6 +199,11 @@ export default function BacktestingPage() {
             </div>
           )}
 
+          {/* Smart Strategy Picker - Only show if we have backtest results */}
+          {results.length > 0 && !running && (
+            <SmartStrategyPicker />
+          )}
+
           {/* Empty State */}
           {results.length === 0 && (
             <div className="bg-gray-900 border-2 border-dashed border-gray-700 rounded-xl p-12 text-center">
@@ -341,27 +347,58 @@ export default function BacktestingPage() {
                     <thead className="bg-gray-950 border-b border-gray-800">
                       <tr className="text-left text-sm text-gray-400">
                         <th className="p-4">Strategy</th>
+                        <th className="p-4">Test Period</th>
+                        <th className="p-4">Freshness</th>
                         <th className="p-4">Trades</th>
                         <th className="p-4">Win Rate</th>
                         <th className="p-4">Expectancy</th>
                         <th className="p-4">Total Return</th>
                         <th className="p-4">Max DD</th>
                         <th className="p-4">Sharpe</th>
-                        <th className="p-4">Avg Win</th>
-                        <th className="p-4">Avg Loss</th>
                         <th className="p-4">Status</th>
                       </tr>
                     </thead>
                     <tbody className="text-sm">
                       {filteredResults
                         .sort((a, b) => b.expectancy_pct - a.expectancy_pct)
-                        .map((result, idx) => (
+                        .map((result, idx) => {
+                          const daysSince = Math.floor(
+                            (new Date().getTime() - new Date(result.timestamp).getTime()) / (1000 * 60 * 60 * 24)
+                          )
+                          const freshnessColor = daysSince <= 7 ? 'text-green-400' : daysSince <= 30 ? 'text-yellow-400' : 'text-red-400'
+                          const freshnessLabel = daysSince <= 7 ? 'FRESH' : daysSince <= 30 ? 'RECENT' : 'STALE'
+                          const confidenceColor = result.total_trades >= 100 ? 'text-green-400' : result.total_trades >= 50 ? 'text-yellow-400' : 'text-orange-400'
+
+                          return (
                           <tr key={idx} className="border-b border-gray-800 hover:bg-gray-950/50">
                             <td className="p-4">
                               <div className="font-semibold">{result.strategy_name.replace(/_/g, ' ')}</div>
                               <div className="text-xs text-gray-500">{result.symbol}</div>
                             </td>
-                            <td className="p-4">{result.total_trades}</td>
+                            <td className="p-4">
+                              <div className="flex items-center gap-1 text-xs text-gray-400">
+                                <Calendar className="w-3 h-3" />
+                                <div>
+                                  <div className="font-mono">{result.start_date}</div>
+                                  <div className="font-mono">to {result.end_date}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <div className="flex items-center gap-1">
+                                <Clock className="w-3 h-3 text-gray-400" />
+                                <div>
+                                  <div className={`text-xs font-bold ${freshnessColor}`}>{freshnessLabel}</div>
+                                  <div className="text-xs text-gray-500">{daysSince}d ago</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <div className={`font-bold ${confidenceColor}`}>{result.total_trades}</div>
+                              <div className="text-xs text-gray-500">
+                                {result.total_trades >= 100 ? 'High conf' : result.total_trades >= 50 ? 'Med conf' : 'Low conf'}
+                              </div>
+                            </td>
                             <td className={`p-4 font-bold ${result.win_rate >= 55 ? 'text-green-400' : result.win_rate >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>
                               {result.win_rate.toFixed(1)}%
                             </td>
@@ -377,12 +414,6 @@ export default function BacktestingPage() {
                             <td className="p-4">
                               {result.sharpe_ratio.toFixed(2)}
                             </td>
-                            <td className="p-4 text-green-400">
-                              +{result.avg_win_pct.toFixed(2)}%
-                            </td>
-                            <td className="p-4 text-red-400">
-                              {result.avg_loss_pct.toFixed(2)}%
-                            </td>
                             <td className="p-4">
                               <span className={`px-3 py-1 rounded-full text-xs font-bold ${
                                 result.expectancy_pct >= 0.5
@@ -395,7 +426,8 @@ export default function BacktestingPage() {
                               </span>
                             </td>
                           </tr>
-                        ))}
+                        )}
+                        )}
                     </tbody>
                   </table>
                 </div>
