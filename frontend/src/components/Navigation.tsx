@@ -40,6 +40,7 @@ const navItems = [
   { href: '/setups', label: 'Trade Setups', icon: Target, category: 'Trading' },
   { href: '/position-sizing', label: 'Position Sizing', icon: Calculator, category: 'Trading' },
   { href: '/charts', label: 'Advanced Charts', icon: BarChart3, category: 'Analysis' },
+  { href: '/ai-copilot', label: 'AI Copilot', icon: MessageSquare, category: 'AI & Testing' },
   { href: '/backtesting', label: 'Backtesting', icon: TestTube, category: 'AI & Testing' },
   { href: '/trader', label: 'Autonomous Trader', icon: Bot, category: 'Automation' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Automation' },

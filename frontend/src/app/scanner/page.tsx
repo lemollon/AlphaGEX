@@ -67,10 +67,11 @@ export default function MultiSymbolScanner() {
   const [scanningStatus, setScanningStatus] = useState<{ symbol: string, progress: string } | null>(null)
   const [scanWarning, setScanWarning] = useState<string | null>(null)
 
+  // Maximum symbols allowed to scan (protects API and keeps scan time reasonable)
+  const MAX_SYMBOLS = 5
+
   const popularSymbols = [
-    'SPY', 'QQQ', 'IWM', 'DIA',
-    'AAPL', 'TSLA', 'NVDA', 'AMD', 'MSFT', 'AMZN', 'GOOGL', 'META',
-    'XLE', 'XLF', 'XLK', 'GLD', 'SLV', 'TLT'
+    'SPY', 'QQQ', 'IWM', 'DIA', 'TSLA', 'NVDA', 'AAPL', 'MSFT'
   ]
 
   // Cache for scan results - 1 hour (only refreshes on manual scan)
@@ -107,12 +108,14 @@ export default function MultiSymbolScanner() {
       return
     }
 
-    // Warn if too many symbols
-    if (selectedSymbols.length > 10) {
-      setScanWarning(`⚠️ Scanning ${selectedSymbols.length} symbols will take ~${Math.ceil(selectedSymbols.length * 0.5)} minutes due to API rate limiting. Consider scanning fewer symbols.`)
-    } else {
-      setScanWarning(null)
+    // Enforce maximum symbols limit
+    if (selectedSymbols.length > MAX_SYMBOLS) {
+      setError(`Maximum ${MAX_SYMBOLS} symbols allowed. Each symbol takes ~20 seconds to scan. Please remove ${selectedSymbols.length - MAX_SYMBOLS} symbol(s).`)
+      return
     }
+
+    // Clear any previous warnings
+    setScanWarning(null)
 
     setLoading(true)
     setError(null)
@@ -203,18 +206,42 @@ export default function MultiSymbolScanner() {
   }
 
   const toggleSymbol = (symbol: string) => {
-    setSelectedSymbols(prev =>
-      prev.includes(symbol)
-        ? prev.filter(s => s !== symbol)
-        : [...prev, symbol]
-    )
+    setSelectedSymbols(prev => {
+      if (prev.includes(symbol)) {
+        // Removing symbol - always allowed
+        return prev.filter(s => s !== symbol)
+      } else {
+        // Adding symbol - check limit
+        if (prev.length >= MAX_SYMBOLS) {
+          setError(`Maximum ${MAX_SYMBOLS} symbols allowed. Remove a symbol before adding another. Each symbol takes ~20 seconds to scan.`)
+          return prev
+        }
+        setError(null)
+        return [...prev, symbol]
+      }
+    })
   }
 
   const addCustomSymbol = () => {
-    if (customSymbol && !selectedSymbols.includes(customSymbol.toUpperCase())) {
-      setSelectedSymbols([...selectedSymbols, customSymbol.toUpperCase()])
-      setCustomSymbol('')
+    const upperSymbol = customSymbol.toUpperCase()
+
+    if (!customSymbol) {
+      return
     }
+
+    if (selectedSymbols.includes(upperSymbol)) {
+      setError(`${upperSymbol} is already selected`)
+      return
+    }
+
+    if (selectedSymbols.length >= MAX_SYMBOLS) {
+      setError(`Maximum ${MAX_SYMBOLS} symbols allowed. Remove a symbol before adding another. Each symbol takes ~20 seconds to scan.`)
+      return
+    }
+
+    setSelectedSymbols([...selectedSymbols, upperSymbol])
+    setCustomSymbol('')
+    setError(null)
   }
 
   const formatTime = (timestamp: string) => {
@@ -266,10 +293,15 @@ export default function MultiSymbolScanner() {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-text-primary">Multi-Symbol Scanner</h1>
-          <p className="text-text-secondary mt-1">Scan multiple symbols for trading opportunities using ALL 4 strategies</p>
-          <p className="text-sm text-warning mt-2">
-            💡 <strong>HOW TO MAKE MONEY:</strong> Find high-probability setups across all tickers, then execute the specific trade plan shown for each setup
-          </p>
+          <p className="text-text-secondary mt-1">Scan up to {MAX_SYMBOLS} symbols for trading opportunities using ALL 4 strategies</p>
+          <div className="flex flex-col sm:flex-row gap-2 mt-2">
+            <p className="text-sm text-warning">
+              💡 <strong>HOW TO MAKE MONEY:</strong> Find high-probability setups across all tickers, then execute the specific trade plan shown for each setup
+            </p>
+            <p className="text-xs text-text-muted sm:ml-auto whitespace-nowrap">
+              ⏱️ Each symbol takes ~20 seconds to scan
+            </p>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
@@ -321,23 +353,35 @@ export default function MultiSymbolScanner() {
 
               {/* Selected Symbols */}
               <div className="mb-4">
-                <p className="text-sm text-text-muted mb-2">Selected ({selectedSymbols.length}):</p>
-                <div className="flex flex-wrap gap-1">
-                  {selectedSymbols.map(symbol => (
-                    <span
-                      key={symbol}
-                      className="px-2 py-1 bg-primary/20 text-primary rounded text-xs font-medium flex items-center gap-1"
-                    >
-                      {symbol}
-                      <button
-                        onClick={() => toggleSymbol(symbol)}
-                        className="hover:text-danger"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm text-text-muted">Selected ({selectedSymbols.length}/{MAX_SYMBOLS}):</p>
+                  <p className="text-xs text-text-muted">~{selectedSymbols.length * 20}s scan time</p>
                 </div>
+                <div className="flex flex-wrap gap-1">
+                  {selectedSymbols.length === 0 ? (
+                    <p className="text-xs text-text-muted italic">No symbols selected</p>
+                  ) : (
+                    selectedSymbols.map(symbol => (
+                      <span
+                        key={symbol}
+                        className="px-2 py-1 bg-primary/20 text-primary rounded text-xs font-medium flex items-center gap-1"
+                      >
+                        {symbol}
+                        <button
+                          onClick={() => toggleSymbol(symbol)}
+                          className="hover:text-danger"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))
+                  )}
+                </div>
+                {selectedSymbols.length === MAX_SYMBOLS && (
+                  <p className="text-xs text-warning mt-2">
+                    ⚠️ Maximum symbols reached. Remove one to add another.
+                  </p>
+                )}
               </div>
 
               {/* Warning Message */}
