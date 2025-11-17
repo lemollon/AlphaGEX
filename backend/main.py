@@ -1045,6 +1045,134 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/gamma/{symbol}/probabilities")
+async def get_gamma_probabilities(symbol: str, vix: float = 20):
+    """
+    Get actionable probability analysis for gamma-based trading
+
+    Returns:
+    - Best current trade setup with win rates and expected value
+    - Strike-specific probability of profit
+    - Wall reach probabilities (1d, 3d, 5d)
+    - Regime-specific edge vs baseline
+    """
+    try:
+        symbol = symbol.upper()
+        print(f"=== PROBABILITY ANALYSIS REQUEST: {symbol}, VIX: {vix} ===")
+
+        # Import probability engine
+        from probability_engine import ProbabilityEngine
+
+        # Get gamma intelligence data first
+        gex_data = api_client.get_net_gamma(symbol)
+
+        if not gex_data or gex_data.get('error'):
+            raise HTTPException(
+                status_code=404,
+                detail=f"GEX data not available for {symbol}"
+            )
+
+        # Get profile for strike data
+        profile = None
+        try:
+            profile = api_client.get_gex_profile(symbol)
+            if profile and profile.get('error'):
+                profile = None
+        except:
+            profile = None
+
+        # Extract key metrics
+        net_gex = gex_data.get('net_gex', 0)
+        spot_price = gex_data.get('spot_price', 0)
+        flip_point = profile.get('flip_point') if profile else None
+        call_wall = profile.get('call_wall') if profile else None
+        put_wall = profile.get('put_wall') if profile else None
+
+        # Get strikes for probability calculation
+        strikes = []
+        if profile and profile.get('strikes'):
+            strikes = [s['strike'] for s in profile['strikes']]
+        else:
+            # Generate estimated strikes around spot
+            for i in range(-5, 6):
+                strikes.append(spot_price + (i * spot_price * 0.01))
+
+        # Determine MM state
+        from strategy_stats import calculate_mm_confidence
+        mm_result = calculate_mm_confidence(net_gex, spot_price, flip_point or spot_price)
+        mm_state = mm_result['state']
+
+        # Initialize probability engine
+        prob_engine = ProbabilityEngine()
+
+        # Calculate complete probability analysis
+        analysis = prob_engine.get_complete_analysis(
+            mm_state=mm_state,
+            spot_price=spot_price,
+            net_gex=net_gex,
+            flip_point=flip_point,
+            call_wall=call_wall,
+            put_wall=put_wall,
+            strikes=strikes
+        )
+
+        # Convert to dict for JSON response
+        response_data = {
+            "best_setup": {
+                "setup_type": analysis.best_setup.setup_type,
+                "mm_state": analysis.best_setup.mm_state,
+                "strike_distance_pct": analysis.best_setup.strike_distance_pct,
+                "win_rate": analysis.best_setup.win_rate,
+                "avg_win": analysis.best_setup.avg_win,
+                "avg_loss": analysis.best_setup.avg_loss,
+                "expected_value": analysis.best_setup.expected_value,
+                "sample_size": analysis.best_setup.sample_size,
+                "confidence_score": analysis.best_setup.confidence_score
+            } if analysis.best_setup else None,
+            "strike_probabilities": analysis.strike_probabilities,
+            "wall_probabilities": {
+                "call_wall": {
+                    "price": call_wall,
+                    "prob_1d": analysis.call_wall_prob_1d,
+                    "prob_3d": analysis.call_wall_prob_3d,
+                    "prob_5d": analysis.call_wall_prob_5d
+                } if call_wall else None,
+                "put_wall": {
+                    "price": put_wall,
+                    "prob_1d": analysis.put_wall_prob_1d,
+                    "prob_3d": analysis.put_wall_prob_3d,
+                    "prob_5d": analysis.put_wall_prob_5d
+                } if put_wall else None
+            },
+            "regime_edge": {
+                "current_win_rate": analysis.current_regime_win_rate,
+                "baseline_win_rate": analysis.baseline_win_rate,
+                "edge_percentage": analysis.edge_percentage,
+                "regime_stats": analysis.regime_stats
+            }
+        }
+
+        print(f"✅ Probability analysis complete for {symbol}")
+        print(f"   Best Setup: {response_data['best_setup']['setup_type'] if response_data['best_setup'] else 'None'}")
+        print(f"   Win Rate: {response_data['best_setup']['win_rate']*100:.1f}%" if response_data['best_setup'] else "   No clear edge")
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "data": response_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in probability analysis: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/gamma/{symbol}/expiration")
 async def get_gamma_expiration(symbol: str, vix: float = 0):
     """
