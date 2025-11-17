@@ -98,6 +98,59 @@ _rsi_cache = {}
 _rsi_cache_ttl = 300  # 5 minutes in seconds
 
 # ============================================================================
+# Helper Functions
+# ============================================================================
+
+def fetch_vix_with_metadata(polygon_key: str = None) -> dict:
+    """
+    Fetch VIX from Polygon.io with metadata about data source and quality.
+
+    Returns dict with:
+    - value: VIX value (float)
+    - source: 'polygon' | 'default'
+    - is_live: True if from real API, False if default
+    - timestamp: ISO timestamp of data
+    - error: Error message if fetch failed (optional)
+    """
+    vix_data = {
+        'value': 18.0,
+        'source': 'default',
+        'is_live': False,
+        'timestamp': datetime.now().isoformat()
+    }
+
+    if not polygon_key:
+        vix_data['error'] = 'No Polygon.io API key configured'
+        return vix_data
+
+    try:
+        # Get last trading day's VIX close
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+        url = f"https://api.polygon.io/v2/aggs/ticker/VIX/range/1/day/{from_date}/{to_date}"
+        params = {"apiKey": polygon_key, "sort": "desc", "limit": 1}
+
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') == 'OK' and data.get('results'):
+                vix_data['value'] = float(data['results'][0]['c'])
+                vix_data['source'] = 'polygon'
+                vix_data['is_live'] = True
+                # No error field when successful
+                if 'error' in vix_data:
+                    del vix_data['error']
+            else:
+                vix_data['error'] = f"Polygon.io returned no VIX data: {data.get('status', 'unknown')}"
+        else:
+            vix_data['error'] = f"Polygon.io HTTP {response.status_code}"
+    except Exception as e:
+        vix_data['error'] = f"VIX fetch failed: {str(e)}"
+
+    return vix_data
+
+# ============================================================================
 # Health Check & Status Endpoints
 # ============================================================================
 
@@ -639,40 +692,24 @@ async def get_gex_data(symbol: str):
         else:
             mm_state = 'NEUTRAL'
 
-        # Get VIX for volatility context using Polygon.io
-        vix_level = 18.0  # Default
-        try:
-            if symbol == 'VIX':
-                vix_level = spot_price
+        # Get VIX for volatility context using Polygon.io with metadata
+        if symbol == 'VIX':
+            vix_metadata = {
+                'value': spot_price,
+                'source': 'symbol_price',
+                'is_live': True,
+                'timestamp': datetime.now().isoformat()
+            }
+        else:
+            print(f"  🔄 Fetching VIX from Polygon.io...")
+            vix_metadata = fetch_vix_with_metadata(polygon_key)
+            if vix_metadata.get('is_live'):
+                print(f"  ✅ VIX from Polygon.io: {vix_metadata['value']}")
             else:
-                print(f"  🔄 Fetching VIX from Polygon.io...")
-                if polygon_key:
-                    try:
-                        import requests
-                        # Get last trading day's VIX close
-                        to_date = datetime.now().strftime('%Y-%m-%d')
-                        from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+                error = vix_metadata.get('error', 'Unknown reason')
+                print(f"  ⚠️ Using default VIX ({vix_metadata['value']}): {error}")
 
-                        url = f"https://api.polygon.io/v2/aggs/ticker/VIX/range/1/day/{from_date}/{to_date}"
-                        params = {"apiKey": polygon_key, "sort": "desc", "limit": 1}
-
-                        response = requests.get(url, params=params, timeout=10)
-                        if response.status_code == 200:
-                            data = response.json()
-                            if data.get('status') == 'OK' and data.get('results'):
-                                vix_level = float(data['results'][0]['c'])  # 'c' is close price
-                                print(f"  ✅ VIX from Polygon.io: {vix_level}")
-                            else:
-                                print(f"  ⚠️ Polygon.io returned no VIX data")
-                        else:
-                            print(f"  ⚠️ Polygon.io HTTP {response.status_code}")
-                    except Exception as polygon_error:
-                        print(f"  ⚠️ Polygon.io VIX fetch failed: {polygon_error}")
-                else:
-                    print(f"  ⚠️ No Polygon.io API key - using default VIX")
-        except Exception as vix_error:
-            print(f"  ⚠️ VIX fetch failed: {vix_error}, using default")
-            pass
+        vix_level = vix_metadata['value']
 
         # Prepare GEX data for probability calculator
         prob_gex_data = {
@@ -733,6 +770,7 @@ async def get_gex_data(symbol: str):
             "success": True,
             "symbol": symbol,
             "data": enhanced_data,
+            "vix_metadata": vix_metadata,  # NEW: Let frontend know if VIX is live or default
             "timestamp": datetime.now().isoformat()
         }
 
@@ -1085,9 +1123,33 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
         except:
             profile = None
 
-        # Extract key metrics
-        net_gex = gex_data.get('net_gex', 0)
-        spot_price = gex_data.get('spot_price', 0)
+        # Extract key metrics with validation
+        # Don't use 0 as default - it masks missing data
+        if 'net_gex' not in gex_data:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid GEX data: missing 'net_gex' field"
+            )
+        if 'spot_price' not in gex_data:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid GEX data: missing 'spot_price' field"
+            )
+
+        net_gex = gex_data['net_gex']
+        spot_price = gex_data['spot_price']
+
+        # Validate values are numeric and reasonable
+        if not isinstance(net_gex, (int, float)):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid GEX data: net_gex is not numeric"
+            )
+        if not isinstance(spot_price, (int, float)) or spot_price <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid GEX data: spot_price must be positive number"
+            )
         flip_point = profile.get('flip_point') if profile else None
         call_wall = profile.get('call_wall') if profile else None
         put_wall = profile.get('put_wall') if profile else None

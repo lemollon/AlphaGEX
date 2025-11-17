@@ -1520,6 +1520,21 @@ class TradingVolatilityAPI:
                 print(f"❌ No data found for {symbol} in API response")
                 return {'error': 'No ticker data in response'}
 
+            # Log what fields we received for debugging
+            received_fields = list(ticker_data.keys())
+            print(f"📋 Received GEX data for {symbol} with fields: {received_fields}")
+
+            # Validate minimum required fields
+            required_fields = ['price', 'skew_adjusted_gex']
+            missing_fields = [f for f in required_fields if f not in ticker_data]
+            if missing_fields:
+                print(f"❌ Incomplete data from API: missing {missing_fields}")
+                return {
+                    'error': f'Incomplete data from API: missing {missing_fields}',
+                    'received_fields': received_fields,
+                    'required_fields': required_fields
+                }
+
             # Extract aggregate metrics from Trading Volatility API
             call_wall = 0
             put_wall = 0
