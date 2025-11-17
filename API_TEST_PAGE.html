@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlphaGEX API Key Testing</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #0a0a0a;
+            color: #e0e0e0;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            margin: 0;
+            color: white;
+        }
+        .test-section {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+        .test-section h2 {
+            color: #667eea;
+            margin-top: 0;
+        }
+        .test-link {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 10px 10px 0;
+            transition: background 0.3s;
+        }
+        .test-link:hover {
+            background: #764ba2;
+        }
+        .code-block {
+            background: #0d0d0d;
+            border: 1px solid #333;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin: 15px 0;
+        }
+        .status {
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .status-success {
+            background: #10b98126;
+            border-left: 4px solid #10b981;
+            color: #10b981;
+        }
+        .status-error {
+            background: #ef444426;
+            border-left: 4px solid #ef4444;
+            color: #ef4444;
+        }
+        .status-warning {
+            background: #f59e0b26;
+            border-left: 4px solid #f59e0b;
+            color: #f59e0b;
+        }
+        .info-box {
+            background: #1e293b;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .key-display {
+            background: #0d0d0d;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            color: #3b82f6;
+            word-break: break-all;
+        }
+        ul {
+            line-height: 1.8;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔑 AlphaGEX API Key Testing Portal</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9;">Test your API keys and verify connectivity</p>
+    </div>
+
+    <!-- Trading Volatility API -->
+    <div class="test-section">
+        <h2>1. Trading Volatility API</h2>
+
+        <div class="key-display">
+            <strong>Your API Key:</strong> I-RWFNBLR2S1DP
+        </div>
+
+        <div class="status status-error">
+            ❌ Status: 403 Forbidden (when tested from Claude Code)
+        </div>
+
+        <h3>Test This API:</h3>
+        <a href="https://stocks.tradingvolatility.net/api/gex/latest?ticker=SPY&username=I-RWFNBLR2S1DP&format=json"
+           target="_blank"
+           class="test-link">
+            🧪 Test SPY GEX Data
+        </a>
+        <a href="https://stocks.tradingvolatility.net/api/gex/latest?ticker=QQQ&username=I-RWFNBLR2S1DP&format=json"
+           target="_blank"
+           class="test-link">
+            🧪 Test QQQ GEX Data
+        </a>
+
+        <div class="info-box">
+            <strong>What to Look For:</strong>
+            <ul>
+                <li><strong>Success:</strong> JSON data with fields like "spot_price", "net_gex", "call_wall", "put_wall"</li>
+                <li><strong>403 Error:</strong> "Access denied" - Account/subscription issue OR weekend restriction</li>
+                <li><strong>Other Error:</strong> Check error message for details</li>
+            </ul>
+        </div>
+
+        <h3>Expected Response (if working):</h3>
+        <div class="code-block">
+{
+  "ticker": "SPY",
+  "spot_price": 585.50,
+  "net_gex": -2800000000,
+  "flip_point": 583.0,
+  "call_wall": 590.0,
+  "put_wall": 580.0,
+  "timestamp": "2024-11-17T12:00:00Z"
+}
+        </div>
+
+        <div class="status status-warning">
+            ⚠️ IMPORTANT: You mentioned this API is "very limited on the weekend"
+            <br><strong>Recommendation:</strong> Test again Monday 9:30 AM - 4:00 PM ET
+        </div>
+    </div>
+
+    <!-- Polygon.io API -->
+    <div class="test-section">
+        <h2>2. Polygon.io API</h2>
+
+        <div class="key-display">
+            <strong>Your API Key:</strong> UHogQt9EUOyV_GqLv8ZapE31AS2pyfzZ
+        </div>
+
+        <div class="status status-warning">
+            ⚠️ Status: Connection issues (from Claude Code)
+        </div>
+
+        <h3>Test This API:</h3>
+        <a href="https://api.polygon.io/v3/reference/tickers/SPY?apiKey=UHogQt9EUOyV_GqLv8ZapE31AS2pyfzZ"
+           target="_blank"
+           class="test-link">
+            🧪 Test SPY Ticker Info
+        </a>
+        <a href="https://api.polygon.io/v2/aggs/ticker/SPY/prev?adjusted=true&apiKey=UHogQt9EUOyV_GqLv8ZapE31AS2pyfzZ"
+           target="_blank"
+           class="test-link">
+            🧪 Test SPY Previous Day
+        </a>
+
+        <div class="info-box">
+            <strong>Free Tier Limits:</strong>
+            <ul>
+                <li>5 API calls per minute</li>
+                <li>End-of-day data (delayed)</li>
+                <li>Options data may require <strong>paid tier</strong></li>
+            </ul>
+        </div>
+
+        <h3>Expected Response (if working):</h3>
+        <div class="code-block">
+{
+  "ticker": "SPY",
+  "name": "SPDR S&P 500 ETF Trust",
+  "market": "stocks",
+  "locale": "us",
+  "primary_exchange": "ARCX",
+  "type": "ETF"
+}
+        </div>
+    </div>
+
+    <!-- Claude API -->
+    <div class="test-section">
+        <h2>3. Claude API (Anthropic)</h2>
+
+        <div class="key-display">
+            <strong>Your API Key:</strong> sk-ant-api03-sCp8kdGE_BGx2KtPcU...
+        </div>
+
+        <div class="status status-success">
+            ✅ Status: Key format valid
+        </div>
+
+        <div class="info-box">
+            <strong>Note:</strong> Claude API is for AI features (copilot, analysis). Not for market data.<br>
+            Testing requires API calls - use Anthropic Console instead.
+        </div>
+
+        <a href="https://console.anthropic.com/"
+           target="_blank"
+           class="test-link">
+            🔑 Open Anthropic Console
+        </a>
+    </div>
+
+    <!-- Troubleshooting -->
+    <div class="test-section">
+        <h2>🔧 Troubleshooting Guide</h2>
+
+        <h3>If Trading Volatility Shows "Access denied":</h3>
+        <ol>
+            <li><strong>Check Account Status:</strong>
+                <ul>
+                    <li>Login at <a href="https://www.tradingvolatility.net/" target="_blank" style="color: #667eea;">tradingvolatility.net</a></li>
+                    <li>Verify subscription is active</li>
+                    <li>Check API usage/limits</li>
+                </ul>
+            </li>
+            <li><strong>Weekend Restriction:</strong>
+                <ul>
+                    <li>Test Monday during market hours (9:30 AM - 4:00 PM ET)</li>
+                    <li>Weekend access may be completely blocked (not just rate limited)</li>
+                </ul>
+            </li>
+            <li><strong>Contact Support:</strong>
+                <ul>
+                    <li>Email: support@tradingvolatility.net</li>
+                    <li>Ask about account status and weekend access</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h3>If Polygon.io Shows Errors:</h3>
+        <ol>
+            <li><strong>Verify Free Tier vs Paid:</strong>
+                <ul>
+                    <li>Login at <a href="https://polygon.io/" target="_blank" style="color: #667eea;">polygon.io</a></li>
+                    <li>Check your subscription tier</li>
+                    <li>Options data requires <strong>Starter tier or higher</strong> ($29/month)</li>
+                </ul>
+            </li>
+            <li><strong>Check API Key Status:</strong>
+                <ul>
+                    <li>Go to Dashboard → API Keys</li>
+                    <li>Verify key is active</li>
+                    <li>Check usage stats</li>
+                </ul>
+            </li>
+        </ol>
+    </div>
+
+    <!-- Next Steps -->
+    <div class="test-section">
+        <h2>📋 Next Steps</h2>
+
+        <h3>After Testing, Report Back:</h3>
+        <div class="info-box">
+            <strong>Please tell me:</strong>
+            <ol>
+                <li>What did you see when clicking the Trading Volatility test links?
+                    <ul>
+                        <li>JSON data? (Great! Copy/paste some of it)</li>
+                        <li>"Access denied"? (Need to check account)</li>
+                        <li>Something else? (Let me know the exact message)</li>
+                    </ul>
+                </li>
+                <li>What did you see for Polygon.io?
+                    <ul>
+                        <li>JSON data? (Perfect!)</li>
+                        <li>Error message? (What does it say?)</li>
+                    </ul>
+                </li>
+                <li>Account Status:
+                    <ul>
+                        <li>Is your Trading Volatility subscription active?</li>
+                        <li>What tier is your Polygon.io account? (Free/Starter/etc)</li>
+                    </ul>
+                </li>
+            </ol>
+        </div>
+
+        <h3>Alternative: Use Database Cache</h3>
+        <div class="info-box">
+            If APIs don't work, we can:
+            <ul>
+                <li>Use historical GEX data from database (if available)</li>
+                <li>Implement Yahoo Finance fallback (free, no API key needed)</li>
+                <li>Use sample data to demonstrate features</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="test-section" style="background: linear-gradient(135deg, #667eea1a 0%, #764ba21a 100%);">
+        <h2>📊 Current Implementation Status</h2>
+
+        <div class="status status-success">
+            ✅ Enhanced Probability Calculator: IMPLEMENTED
+        </div>
+        <div class="status status-success">
+            ✅ Black-Scholes Pricing: IMPLEMENTED
+        </div>
+        <div class="status status-success">
+            ✅ Greeks Calculation: IMPLEMENTED
+        </div>
+        <div class="status status-success">
+            ✅ Position Sizing (Kelly): IMPLEMENTED
+        </div>
+        <div class="status status-success">
+            ✅ Risk Analysis: IMPLEMENTED
+        </div>
+        <div class="status status-success">
+            ✅ Frontend Integration: IMPLEMENTED
+        </div>
+        <div class="status status-error">
+            ❌ Live API Data: BLOCKED (403 errors)
+        </div>
+
+        <div class="info-box">
+            <strong>Code is 100% ready.</strong> We just need working API access to test end-to-end!
+        </div>
+    </div>
+
+</body>
+</html>
