@@ -1287,6 +1287,167 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/gamma/{symbol}/probabilities/demo")
+async def get_gamma_probabilities_demo(symbol: str, vix: float = 20, account_size: float = 10000):
+    """
+    DEMO VERSION - Shows enhanced probability features with sample data
+
+    This endpoint demonstrates all enhanced features WITHOUT requiring live API data:
+    - Black-Scholes option pricing
+    - VIX-based IV estimation
+    - Position sizing with Kelly Criterion
+    - Entry/exit prices
+    - Risk/reward analysis
+    - Historical backtests
+
+    Use this to see the features while Trading Volatility API is unavailable (weekends)
+    """
+    try:
+        symbol = symbol.upper()
+        print(f"=== DEMO PROBABILITY ANALYSIS: {symbol}, VIX: {vix}, Account: ${account_size} ===")
+
+        # Import engines
+        from probability_engine import ProbabilityEngine
+        from enhanced_probability_calculator import EnhancedProbabilityCalculator
+        from strategy_stats import calculate_mm_confidence
+
+        # SAMPLE DATA (replace with live data when API available)
+        spot_price = 585.50 if symbol == 'SPY' else 450.0
+        net_gex = -2.8e9  # Negative = PANICKING state
+        flip_point = 583.0
+        call_wall = 590.0
+        put_wall = 580.0
+
+        # Determine MM state
+        mm_result = calculate_mm_confidence(net_gex, spot_price, flip_point)
+        mm_state = mm_result['state']
+
+        # Initialize engines
+        prob_engine = ProbabilityEngine()
+        price_calc = EnhancedProbabilityCalculator()
+
+        # Calculate enhanced option pricing based on MM state
+        if mm_state == 'PANICKING':
+            option_data = price_calc.calculate_option_for_setup(
+                spot_price=spot_price,
+                strike_distance_pct=0.0,  # ATM
+                days_to_expiry=3,
+                vix=vix,
+                option_type='call'
+            )
+        elif mm_state == 'TRAPPED':
+            option_data = price_calc.calculate_option_for_setup(
+                spot_price=spot_price,
+                strike_distance_pct=0.01,  # 1% OTM
+                days_to_expiry=3,
+                vix=vix,
+                option_type='call'
+            )
+        else:
+            option_data = price_calc.calculate_option_for_setup(
+                spot_price=spot_price,
+                strike_distance_pct=0.0,
+                days_to_expiry=3,
+                vix=vix,
+                option_type='call'
+            )
+
+        option_price = option_data.get('mid', 3.5)
+        strike = option_data.get('strike', spot_price)
+
+        # Generate sample strikes around spot price
+        strikes = []
+        for i in range(-5, 6):
+            strikes.append(spot_price + (i * spot_price * 0.01))
+
+        # Get probability analysis
+        prob_analysis = prob_engine.get_complete_analysis(
+            mm_state=mm_state,
+            spot_price=spot_price,
+            net_gex=net_gex,
+            flip_point=flip_point,
+            call_wall=call_wall,
+            put_wall=put_wall,
+            strikes=strikes,
+            account_size=account_size,
+            option_price=option_price
+        )
+
+        # Build response with all enhanced features
+        # Convert ProbabilityData object to dict
+        from dataclasses import asdict
+        prob_dict = asdict(prob_analysis)
+
+        response_data = {
+            "symbol": symbol,
+            "spot_price": spot_price,
+            "option_price": option_price,
+            "account_size": account_size,
+            "vix": vix,
+            "mm_state": mm_state,
+            "mm_confidence": mm_result.get('confidence', 0),
+            "best_setup": prob_dict.get('best_setup'),
+            "strike_probabilities": prob_dict.get('strike_probabilities', []),
+            "wall_probabilities": {
+                "call_wall": {
+                    "price": call_wall,
+                    "prob_1d": prob_dict.get('call_wall_prob_1d', 0),
+                    "prob_3d": prob_dict.get('call_wall_prob_3d', 0),
+                    "prob_5d": prob_dict.get('call_wall_prob_5d', 0)
+                } if call_wall else None,
+                "put_wall": {
+                    "price": put_wall,
+                    "prob_1d": prob_dict.get('put_wall_prob_1d', 0),
+                    "prob_3d": prob_dict.get('put_wall_prob_3d', 0),
+                    "prob_5d": prob_dict.get('put_wall_prob_5d', 0)
+                } if put_wall else None
+            },
+            "regime_edge": prob_dict.get('regime_stats', {}),
+            "position_sizing": prob_dict.get('position_sizing'),
+            "risk_analysis": prob_dict.get('risk_analysis'),
+            "holding_period": prob_dict.get('holding_period'),
+            "historical_setups": prob_dict.get('historical_setups', []),
+            "regime_stability": prob_dict.get('regime_stability'),
+            "enhanced_pricing": {
+                "bid": option_data.get('bid'),
+                "ask": option_data.get('ask'),
+                "mid": option_data.get('mid'),
+                "spread": option_data.get('estimated_spread'),
+                "spread_pct": option_data.get('estimated_spread_pct'),
+                "delta": option_data.get('delta'),
+                "gamma": option_data.get('gamma'),
+                "theta": option_data.get('theta'),
+                "vega": option_data.get('vega'),
+                "iv_used": option_data.get('iv_used'),
+                "strike": option_data.get('strike'),
+                "dte": option_data.get('dte'),
+                "pricing_method": "BLACK_SCHOLES_DEMO",
+                "note": "⚠️ DEMO MODE: Using sample GEX data. This demonstrates the enhanced probability calculator with Black-Scholes pricing, VIX-based IV, and volatility smile. Real data will be available when Trading Volatility API is accessible (Monday market hours)."
+            },
+            "demo_mode": True,
+            "demo_note": "Using sample data - real data requires Trading Volatility API access"
+        }
+
+        print(f"✅ DEMO probability analysis for {symbol}")
+        print(f"   Setup: {response_data['best_setup']['setup_type'] if response_data['best_setup'] else 'None'}")
+        print(f"   Win Rate: {response_data['best_setup']['win_rate']*100:.1f}%" if response_data['best_setup'] else "   No edge")
+        print(f"   Enhanced Pricing: Bid ${option_data.get('bid'):.2f} / Ask ${option_data.get('ask'):.2f}")
+        print(f"   Delta: {option_data.get('delta'):.3f}, IV: {option_data.get('iv_used'):.1f}%")
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "data": response_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        print(f"❌ Error in demo probability analysis: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/gamma/{symbol}/expiration")
 async def get_gamma_expiration(symbol: str, vix: float = 0):
     """
