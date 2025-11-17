@@ -592,12 +592,13 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-            <div className="bg-background-deep rounded-xl overflow-hidden">
+            <div className="bg-background-deep rounded-xl overflow-hidden" style={{ height: 'calc(100vh - 400px)', minHeight: '600px' }}>
               <TradingViewWidget
                 symbol="SPY"
                 interval="D"
                 theme="dark"
                 height={600}
+                autosize={true}
               />
             </div>
           </div>
@@ -704,13 +705,12 @@ export default function Dashboard() {
             <Zap className="w-6 h-6 text-warning" />
             Quick Actions
           </h3>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {[
               { icon: '🔍', label: 'Scanner', path: '/scanner', color: 'primary' },
               { icon: '📊', label: 'GEX', path: '/gex', color: 'success' },
               { icon: '⚡', label: 'Gamma', path: '/gamma', color: 'warning' },
               { icon: '🧠', label: 'Psychology', path: '/psychology', color: 'danger' },
-              { icon: '📈', label: 'Charts', path: '/charts', color: 'primary' },
               { icon: '🤖', label: 'Trader', path: '/trader', color: 'success' },
             ].map((action, idx) => (
               <button

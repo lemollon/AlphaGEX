@@ -252,20 +252,25 @@ def run_autonomous_trader_cycle():
     print(f"{'='*60}\n")
 
 
-def run_continuous_scheduler():
+def run_continuous_scheduler(check_interval_minutes: int = 5):
     """
     Run the autonomous trader continuously during market hours
-    Automatically waits until market opens, then checks every 5 minutes
+    Automatically waits until market opens, then checks at specified interval
+
+    Args:
+        check_interval_minutes: How often to check for trades (default: 5 minutes)
 
     This is the MAIN mode for production deployment.
     """
+
+    check_interval_seconds = check_interval_minutes * 60
 
     print("=" * 70)
     print("🤖 AUTONOMOUS TRADER - CONTINUOUS MODE")
     print("=" * 70)
     print(f"⏰ Runs AUTOMATICALLY during market hours: 8:30 AM - 3:00 PM CT")
     print(f"📅 Active days: Monday - Friday")
-    print(f"🔄 Check interval: Every 5 minutes")
+    print(f"🔄 Check interval: Every {check_interval_minutes} minutes")
     print(f"✅ GUARANTEE: MINIMUM ONE trade per day (multi-level fallback)")
     print(f"🛡️ Auto-restarts on errors")
     print("=" * 70)
@@ -285,10 +290,10 @@ def run_continuous_scheduler():
                 # Run trading cycle
                 run_autonomous_trader_cycle()
 
-                # Wait 5 minutes before next check
-                print(f"⏳ Waiting 5 minutes until next cycle...")
-                print(f"   Next check at: {(ct_now + timedelta(seconds=300)).strftime('%I:%M %p CT')}")
-                time.sleep(CHECK_INTERVAL_SECONDS)
+                # Wait specified interval before next check
+                print(f"⏳ Waiting {check_interval_minutes} minutes until next cycle...")
+                print(f"   Next check at: {(ct_now + timedelta(seconds=check_interval_seconds)).strftime('%I:%M %p CT')}")
+                time.sleep(check_interval_seconds)
 
             else:
                 # Market is closed - calculate wait time

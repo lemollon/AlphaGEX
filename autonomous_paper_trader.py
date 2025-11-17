@@ -16,10 +16,14 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 from config_and_database import DB_PATH
 from polygon_data_fetcher import polygon_fetcher
 import time
 import os
+
+# Central Time timezone for all timestamps
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # CRITICAL: Import Psychology Trap Detector
 try:
@@ -224,7 +228,7 @@ class AutonomousPaperTrader:
             c.execute("""
                 INSERT INTO autonomous_live_status (id, timestamp, status, current_action, is_working)
                 VALUES (1, ?, 'INITIALIZING', 'System starting up...', 1)
-            """, (datetime.now().isoformat(),))
+            """, (datetime.now(CENTRAL_TZ).isoformat(),))
 
         conn.commit()
         conn.close()
@@ -254,7 +258,8 @@ class AutonomousPaperTrader:
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
 
-        next_check = (datetime.now() + timedelta(hours=1)).isoformat()
+        now_ct = datetime.now(CENTRAL_TZ)
+        next_check = (now_ct + timedelta(minutes=5)).isoformat()
 
         c.execute("""
             UPDATE autonomous_live_status
@@ -266,7 +271,7 @@ class AutonomousPaperTrader:
                 last_decision = ?,
                 is_working = 1
             WHERE id = 1
-        """, (datetime.now().isoformat(), status, action, analysis, next_check, decision))
+        """, (now_ct.isoformat(), status, action, analysis, next_check, decision))
 
         conn.commit()
         conn.close()
@@ -311,7 +316,7 @@ class AutonomousPaperTrader:
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
 
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
         c.execute("""
             INSERT INTO autonomous_trade_log (date, time, action, details, position_id, success)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -329,7 +334,8 @@ class AutonomousPaperTrader:
 
     def should_trade_today(self) -> bool:
         """Check if we should find a new trade today"""
-        today = datetime.now().strftime('%Y-%m-%d')
+        now = datetime.now(CENTRAL_TZ)
+        today = now.strftime('%Y-%m-%d')
         last_trade_date = self.get_config('last_trade_date')
 
         # Trade once per day
@@ -337,7 +343,7 @@ class AutonomousPaperTrader:
             return False
 
         # Check if market is open (simple check - Monday-Friday)
-        if datetime.now().weekday() >= 5:  # Saturday or Sunday
+        if now.weekday() >= 5:  # Saturday or Sunday
             return False
 
         return True
