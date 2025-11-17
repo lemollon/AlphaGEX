@@ -8,8 +8,9 @@ import { useWebSocket } from '@/hooks/useWebSocket'
 import { useDataCache } from '@/hooks/useDataCache'
 import { useRouter } from 'next/navigation'
 import { getCacheTTL } from '@/lib/cacheConfig'
+import ProbabilityAnalysis from '@/components/ProbabilityAnalysis'
 
-type TabType = 'overview' | 'impact' | 'historical'
+type TabType = 'overview' | 'probabilities' | 'impact' | 'historical'
 
 interface Strike {
   strike: number
@@ -73,6 +74,8 @@ export default function GammaIntelligence() {
   const [error, setError] = useState<string | null>(null)
   const [historicalData, setHistoricalData] = useState<HistoricalData[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [probabilityData, setProbabilityData] = useState<any | null>(null)
+  const [loadingProbabilities, setLoadingProbabilities] = useState(false)
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
   // Position simulator state
@@ -152,6 +155,30 @@ export default function GammaIntelligence() {
     }
   }, [symbol])
 
+  // Fetch probability data
+  const fetchProbabilityData = useCallback(async () => {
+    try {
+      setLoadingProbabilities(true)
+      console.log('=== FETCHING PROBABILITY DATA ===')
+      console.log('Symbol:', symbol, 'VIX:', vix)
+
+      const response = await apiClient.getGammaProbabilities(symbol, vix)
+      const data = response.data.data
+
+      console.log('Probability data received:', {
+        has_setup: !!data?.best_setup,
+        strike_count: data?.strike_probabilities?.length || 0
+      })
+
+      setProbabilityData(data || null)
+    } catch (error: any) {
+      console.error('Error fetching probability data:', error)
+      console.error('Error details:', error.response?.data || error.message)
+    } finally {
+      setLoadingProbabilities(false)
+    }
+  }, [symbol, vix])
+
   useEffect(() => {
     // Always fetch fresh data when symbol or vix changes
     fetchData(true)
@@ -164,10 +191,20 @@ export default function GammaIntelligence() {
     }
   }, [activeTab, historicalData.length, fetchHistoricalData])
 
+  useEffect(() => {
+    // Fetch probability data when switching to probabilities tab
+    if (activeTab === 'probabilities' && !probabilityData) {
+      fetchProbabilityData()
+    }
+  }, [activeTab, probabilityData, fetchProbabilityData])
+
   const handleRefresh = () => {
     fetchData(true)
     if (activeTab === 'historical') {
       fetchHistoricalData()
+    }
+    if (activeTab === 'probabilities') {
+      fetchProbabilityData()
     }
   }
 
@@ -188,7 +225,8 @@ export default function GammaIntelligence() {
 
   const tabs = [
     { id: 'overview' as TabType, label: 'Overview', icon: Zap },
-    { id: 'impact' as TabType, label: 'Position Impact', icon: Target },
+    { id: 'probabilities' as TabType, label: 'Probabilities & Edge', icon: Target },
+    { id: 'impact' as TabType, label: 'Position Impact', icon: BarChart3 },
     { id: 'historical' as TabType, label: 'Historical Analysis', icon: Clock }
   ]
 
@@ -675,6 +713,37 @@ export default function GammaIntelligence() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Probabilities & Edge Tab */}
+          {activeTab === 'probabilities' && (
+            <div className="space-y-6">
+              {loadingProbabilities ? (
+                <div className="grid grid-cols-1 gap-6">
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} className="card h-64 skeleton" />
+                  ))}
+                </div>
+              ) : probabilityData && intelligence ? (
+                <ProbabilityAnalysis
+                  data={probabilityData}
+                  symbol={symbol}
+                  spotPrice={intelligence.spot_price}
+                />
+              ) : (
+                <div className="card text-center py-12">
+                  <AlertCircle className="w-16 h-16 text-text-muted mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-text-primary mb-2">No Probability Data Available</h3>
+                  <p className="text-text-secondary mb-4">Unable to load probability analysis</p>
+                  <button
+                    onClick={fetchProbabilityData}
+                    className="px-6 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg font-medium transition-all"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
