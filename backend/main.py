@@ -1109,8 +1109,40 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
         # Initialize probability engine
         prob_engine = ProbabilityEngine()
 
-        # Estimate option price (ATM ~ 1% of stock price for weekly)
-        option_price = spot_price * 0.01 * 3  # Rough ATM estimate
+        # Use enhanced calculator for realistic option pricing
+        from enhanced_probability_calculator import EnhancedProbabilityCalculator
+        price_calc = EnhancedProbabilityCalculator()
+
+        # Calculate realistic option price based on MM state and VIX
+        if mm_state == 'PANICKING':
+            # ATM call for panic buying
+            option_data = price_calc.calculate_option_for_setup(
+                spot_price=spot_price,
+                strike_distance_pct=0.0,  # ATM
+                days_to_expiry=3,
+                vix=vix,
+                option_type='call'
+            )
+        elif mm_state == 'TRAPPED':
+            # Slightly OTM call (0.4 delta)
+            option_data = price_calc.calculate_option_for_setup(
+                spot_price=spot_price,
+                strike_distance_pct=0.01,  # 1% OTM ≈ 0.4 delta
+                days_to_expiry=3,
+                vix=vix,
+                option_type='call'
+            )
+        else:
+            # ATM for other states
+            option_data = price_calc.calculate_option_for_setup(
+                spot_price=spot_price,
+                strike_distance_pct=0.0,
+                days_to_expiry=3,
+                vix=vix,
+                option_type='call'
+            )
+
+        option_price = option_data['mid']  # Use mid price for calculations
 
         # Calculate complete probability analysis with NEW metrics
         analysis = prob_engine.get_complete_analysis(
@@ -1213,7 +1245,24 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
             # Additional context
             "spot_price": spot_price,
             "option_price": option_price,
-            "account_size": account_size
+            "account_size": account_size,
+            # NEW: Enhanced option pricing data with Greeks
+            "enhanced_pricing": {
+                "bid": option_data.get('bid'),
+                "ask": option_data.get('ask'),
+                "mid": option_data.get('mid'),
+                "spread": option_data.get('estimated_spread'),
+                "spread_pct": option_data.get('estimated_spread_pct'),
+                "delta": option_data.get('delta'),
+                "gamma": option_data.get('gamma'),
+                "theta": option_data.get('theta'),
+                "vega": option_data.get('vega'),
+                "iv_used": option_data.get('iv_used'),
+                "strike": option_data.get('strike'),
+                "dte": option_data.get('dte'),
+                "pricing_method": "ENHANCED_ESTIMATE",
+                "note": "Black-Scholes with VIX-based IV and volatility smile. Verify with real market data before trading."
+            }
         }
 
         print(f"✅ COMPLETE probability analysis for {symbol}")
