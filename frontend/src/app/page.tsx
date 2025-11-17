@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import StatusCard from '@/components/StatusCard'
 import TradingViewChart from '@/components/TradingViewChart'
+import TradingViewWidget from '@/components/TradingViewWidget'
 import MarketCommentary from '@/components/MarketCommentary'
 import DailyTradingPlan from '@/components/DailyTradingPlan'
 import { apiClient } from '@/lib/api'
@@ -45,7 +46,6 @@ export default function Dashboard() {
   const router = useRouter()
   const [gexData, setGexData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [chartData, setChartData] = useState<LineData[]>([])
   const [performanceData, setPerformanceData] = useState<LineData[]>([])
   const [positions, setPositions] = useState<Position[]>([])
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
@@ -58,13 +58,12 @@ export default function Dashboard() {
         setLoading(true)
 
         // Fetch ALL data in parallel - REAL DATA ONLY
-        const [gexRes, perfRes, positionsRes, tradeLogRes, equityCurveRes, priceHistoryRes] = await Promise.all([
+        const [gexRes, perfRes, positionsRes, tradeLogRes, equityCurveRes] = await Promise.all([
           apiClient.getGEX('SPY'),
           apiClient.getTraderPerformance(),
           apiClient.getOpenPositions(),
           apiClient.getTradeLog(),
-          apiClient.getEquityCurve(30),
-          apiClient.getPriceHistory('SPY', 90)
+          apiClient.getEquityCurve(30)
         ])
 
         // Set GEX data
@@ -87,15 +86,6 @@ export default function Dashboard() {
         } else {
           // No trade history yet - show empty state
           setPerformanceData([])
-        }
-
-        // Set REAL SPY price history
-        if (priceHistoryRes.data.success && priceHistoryRes.data.data) {
-          const spyData: LineData[] = priceHistoryRes.data.data.map((point: any) => ({
-            time: point.time as any,
-            value: point.value
-          }))
-          setChartData(spyData)
         }
 
         // Set REAL open positions
@@ -466,45 +456,69 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* SPY Market Chart - Full Width for Prominence */}
+        <div className="mb-8">
+          <div className="card">
+            <h2 className="text-xl font-semibold mb-4 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <TrendingUp className="w-5 h-5 text-primary" />
+                <span>SPY Market Overview - 90 Day Candlestick Chart</span>
+                {isConnected && (
+                  <span className="flex items-center space-x-1 text-xs text-success ml-3">
+                    <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+                    <span>Live</span>
+                  </span>
+                )}
+              </div>
+              <div className="text-sm text-text-secondary">
+                Interactive chart with indicators
+              </div>
+            </h2>
+
+            <div className="bg-background-deep rounded-lg overflow-hidden">
+              <TradingViewWidget
+                symbol="SPY"
+                interval="D"
+                theme="dark"
+                height={500}
+              />
+            </div>
+          </div>
+        </div>
+
         {/* AI Intelligence Widgets */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           <MarketCommentary />
           <DailyTradingPlan />
         </div>
 
-        {/* Main Content Grid */}
+        {/* Main Content Grid - Active Positions & Performance */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Market Overview Chart - REAL SPY DATA */}
+          {/* Performance Equity Curve */}
           <div className="lg:col-span-2">
             <div className="card">
-              <h2 className="text-xl font-semibold mb-4 flex items-center space-x-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                <span>SPY Market Overview (90 Days)</span>
-                {isConnected && (
-                  <span className="flex items-center space-x-1 text-xs text-success">
-                    <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
-                    <span>Live</span>
-                  </span>
-                )}
-              </h2>
-
-              <div className="bg-background-deep rounded-lg overflow-hidden">
-                {chartData.length > 0 ? (
+              <h3 className="text-lg font-semibold mb-4 flex items-center space-x-2">
+                <TrendingUp className="w-5 h-5 text-success" />
+                <span>Performance Equity Curve (30 Days)</span>
+              </h3>
+              <div className="bg-background-deep rounded-lg">
+                {performanceData.length > 0 ? (
                   <TradingViewChart
-                    data={chartData}
+                    data={performanceData}
                     type="area"
-                    height={320}
+                    height={300}
                     colors={{
-                      lineColor: '#3b82f6',
-                      areaTopColor: 'rgba(59, 130, 246, 0.3)',
-                      areaBottomColor: 'rgba(59, 130, 246, 0.0)',
+                      lineColor: '#10b981',
+                      areaTopColor: 'rgba(16, 185, 129, 0.4)',
+                      areaBottomColor: 'rgba(16, 185, 129, 0.0)',
                     }}
                   />
                 ) : (
-                  <div className="h-80 flex items-center justify-center">
+                  <div className="h-[300px] flex items-center justify-center">
                     <div className="text-center text-text-muted">
                       <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">Loading SPY price data...</p>
+                      <p className="text-sm">No performance data yet</p>
+                      <p className="text-xs mt-1">Start trading to see your equity curve</p>
                     </div>
                   </div>
                 )}
@@ -622,8 +636,47 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Bottom Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        {/* Trade Activity Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          {/* Trade Log - REAL DATA FROM DATABASE (Central Time) */}
+          <div className="lg:col-span-2">
+            <div className="card">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">📅 Today's Trade Log (Central Time)</h3>
+                <button
+                  onClick={downloadTradeHistory}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg transition-colors text-sm"
+                  title="Download full trade history as CSV"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download History</span>
+                </button>
+              </div>
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {tradeLog.length === 0 ? (
+                  <div className="text-center py-8 text-text-muted">
+                    <p>No trades today</p>
+                    <p className="text-sm mt-2">Check back during market hours</p>
+                  </div>
+                ) : (
+                  tradeLog.map((entry, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-background-hover rounded-lg hover:bg-background-deep transition-colors">
+                      <div className="flex items-center space-x-3">
+                        <div className="text-xs text-text-muted font-mono">{formatTime(entry.time)}</div>
+                        <div className="text-sm text-text-primary">{entry.action}: {entry.details}</div>
+                      </div>
+                      {entry.pnl && (
+                        <div className={`text-sm font-semibold ${entry.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                          {entry.pnl >= 0 ? '+' : ''}${entry.pnl.toFixed(2)}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Best/Worst Trades Today */}
           <div className="space-y-6">
             {/* Best Trade */}
@@ -661,71 +714,6 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-          </div>
-
-          {/* Trade Log - REAL DATA FROM DATABASE (Central Time) */}
-          <div className="lg:col-span-2">
-            <div className="card">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">📅 Today's Trade Log (Central Time)</h3>
-              <button
-                onClick={downloadTradeHistory}
-                className="flex items-center gap-2 px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg transition-colors text-sm"
-                title="Download full trade history as CSV"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download History</span>
-              </button>
-            </div>
-            <div className="space-y-2">
-              {tradeLog.length === 0 ? (
-                <div className="text-center py-8 text-text-muted">
-                  <p>No trades today</p>
-                  <p className="text-sm mt-2">Check back during market hours</p>
-                </div>
-              ) : (
-                tradeLog.map((entry, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <div className="text-xs text-text-muted">{formatTime(entry.time)}</div>
-                      <div className="text-sm text-text-primary">{entry.action}: {entry.details}</div>
-                    </div>
-                    {entry.pnl && (
-                      <div className={`text-sm ${entry.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
-                        {entry.pnl >= 0 ? '+' : ''}${entry.pnl.toFixed(2)}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Performance Equity Curve - Full Width */}
-        <div className="card mb-6">
-          <h3 className="text-lg font-semibold mb-4">📊 Performance Equity Curve</h3>
-          <div className="bg-background-deep rounded-lg">
-            {performanceData.length > 0 ? (
-              <TradingViewChart
-                data={performanceData}
-                type="area"
-                height={192}
-                colors={{
-                  lineColor: '#10b981',
-                  areaTopColor: 'rgba(16, 185, 129, 0.4)',
-                  areaBottomColor: 'rgba(16, 185, 129, 0.0)',
-                }}
-              />
-            ) : (
-              <div className="h-48 flex items-center justify-center">
-                <div className="text-center text-text-muted">
-                  <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No performance data yet</p>
-                </div>
-              </div>
-            )}
           </div>
         </div>
         </div>
