@@ -1,6 +1,43 @@
-import axios from 'axios'
+import axios, { AxiosError } from 'axios'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+// Error type classification
+interface EnhancedError extends Error {
+  status?: number
+  type: 'network' | 'server' | 'client' | 'timeout' | 'unknown'
+  retryable: boolean
+  originalError?: any
+}
+
+// Helper: Check if error is retryable
+function isRetryableError(error: AxiosError): boolean {
+  // Network errors (no response)
+  if (!error.response) return true
+
+  // Server errors (5xx)
+  if (error.response.status >= 500) return true
+
+  // Rate limiting (429)
+  if (error.response.status === 429) return true
+
+  // Timeout errors
+  if (error.code === 'ECONNABORTED') return true
+
+  return false
+}
+
+// Helper: Categorize error type
+function categorizeError(error: AxiosError): EnhancedError['type'] {
+  if (!error.response) return 'network'
+  if (error.code === 'ECONNABORTED') return 'timeout'
+  if (error.response.status >= 500) return 'server'
+  if (error.response.status >= 400) return 'client'
+  return 'unknown'
+}
+
+// Helper: Delay function for retries
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 // Create axios instance with defaults
 export const api = axios.create({
@@ -11,12 +48,41 @@ export const api = axios.create({
   },
 })
 
-// Response interceptor for error handling
+// Response interceptor for enhanced error handling with retry logic
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    console.error('API Error:', error.response?.data || error.message)
-    return Promise.reject(error)
+  async (error: AxiosError) => {
+    const config = error.config as any
+
+    // Retry transient errors (network, 5xx, timeout)
+    if (!config._retryCount && isRetryableError(error)) {
+      config._retryCount = 1
+      const retryDelay = 1000 // 1 second
+
+      console.warn(`API Error (retrying in ${retryDelay}ms):`, error.message)
+      await delay(retryDelay)
+
+      return api(config)
+    }
+
+    // Enhanced error info for final rejection
+    const enhancedError: EnhancedError = {
+      name: error.name,
+      message: error.response?.data?.detail || error.message || 'Unknown error',
+      status: error.response?.status,
+      type: categorizeError(error),
+      retryable: isRetryableError(error),
+      originalError: error
+    }
+
+    console.error('API Error:', {
+      message: enhancedError.message,
+      status: enhancedError.status,
+      type: enhancedError.type,
+      retryable: enhancedError.retryable
+    })
+
+    return Promise.reject(enhancedError)
   }
 )
 

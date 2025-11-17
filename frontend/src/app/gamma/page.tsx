@@ -90,7 +90,7 @@ export default function GammaIntelligence() {
   })
 
   // Fetch gamma intelligence
-  const fetchData = useCallback(async (forceRefresh = false) => {
+  const fetchData = useCallback(async (forceRefresh = false, signal?: AbortSignal) => {
     // Use cached data if fresh
     if (!forceRefresh && gammaCache.isCacheFresh && gammaCache.cachedData) {
       setIntelligence(gammaCache.cachedData)
@@ -105,6 +105,12 @@ export default function GammaIntelligence() {
       console.log('Symbol:', symbol, 'VIX:', vix)
 
       const response = await apiClient.getGammaIntelligence(symbol, vix)
+
+      // Check if request was cancelled
+      if (signal?.aborted) {
+        console.log('Request cancelled')
+        return
+      }
 
       console.log('API Response:', response.data)
       console.log('Has strikes?', response.data.data?.strikes?.length || 0)
@@ -122,6 +128,12 @@ export default function GammaIntelligence() {
       setIntelligence(data)
       gammaCache.setCache(data)
     } catch (error: any) {
+      // Ignore cancellation errors
+      if (error.name === 'AbortError' || signal?.aborted) {
+        console.log('Request cancelled')
+        return
+      }
+
       console.error('Error fetching gamma intelligence:', error)
       const errorMessage = error.response?.data?.detail || error.message || 'Failed to fetch gamma intelligence'
       setError(errorMessage)
@@ -163,26 +175,73 @@ export default function GammaIntelligence() {
       console.log('Symbol:', symbol, 'VIX:', vix)
 
       const response = await apiClient.getGammaProbabilities(symbol, vix)
+
+      // Validate response structure
+      if (!response?.data) {
+        setError('Invalid response from probability API')
+        setProbabilityData(null)
+        return
+      }
+
       const data = response.data.data
+
+      // Validate required fields
+      if (!data) {
+        setError('No probability data available for current conditions')
+        setProbabilityData(null)
+        return
+      }
 
       console.log('Probability data received:', {
         has_setup: !!data?.best_setup,
-        strike_count: data?.strike_probabilities?.length || 0
+        strike_count: data?.strike_probabilities?.length || 0,
+        has_position_sizing: !!data?.position_sizing,
+        has_risk_analysis: !!data?.risk_analysis
       })
 
-      setProbabilityData(data || null)
+      // Check if there's no trading edge
+      if (!data.best_setup) {
+        console.warn('No trading setup available - insufficient edge in current conditions')
+        // Still set the data so components can show "no edge" message
+      }
+
+      setProbabilityData(data)
+      setError(null) // Clear any previous errors
     } catch (error: any) {
       console.error('Error fetching probability data:', error)
       console.error('Error details:', error.response?.data || error.message)
+
+      // Set user-friendly error message
+      if (error.status === 422) {
+        setError('Invalid market data - unable to calculate probabilities')
+      } else if (error.status === 404) {
+        setError(`No probability data available for ${symbol}`)
+      } else if (error.type === 'network') {
+        setError('Network error - please check your connection')
+      } else if (error.type === 'timeout') {
+        setError('Request timed out - please try again')
+      } else {
+        setError(error.message || 'Failed to load probability data')
+      }
+
+      setProbabilityData(null)
     } finally {
       setLoadingProbabilities(false)
     }
   }, [symbol, vix])
 
   useEffect(() => {
+    // Create AbortController for request cancellation
+    const controller = new AbortController()
+
     // Always fetch fresh data when symbol or vix changes
-    fetchData(true)
-  }, [symbol, vix])
+    fetchData(true, controller.signal)
+
+    // Cleanup: cancel request if component unmounts or deps change
+    return () => {
+      controller.abort()
+    }
+  }, [symbol, vix, fetchData])
 
   useEffect(() => {
     // Fetch historical data when switching to historical tab
