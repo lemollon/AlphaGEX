@@ -2,6 +2,13 @@ import axios, { AxiosError } from 'axios'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+// API error response structure
+interface APIErrorResponse {
+  detail?: string
+  message?: string
+  [key: string]: any
+}
+
 // Error type classification
 interface EnhancedError extends Error {
   status?: number
@@ -11,7 +18,7 @@ interface EnhancedError extends Error {
 }
 
 // Helper: Check if error is retryable
-function isRetryableError(error: AxiosError): boolean {
+function isRetryableError(error: AxiosError<APIErrorResponse>): boolean {
   // Network errors (no response)
   if (!error.response) return true
 
@@ -28,7 +35,7 @@ function isRetryableError(error: AxiosError): boolean {
 }
 
 // Helper: Categorize error type
-function categorizeError(error: AxiosError): EnhancedError['type'] {
+function categorizeError(error: AxiosError<APIErrorResponse>): EnhancedError['type'] {
   if (!error.response) return 'network'
   if (error.code === 'ECONNABORTED') return 'timeout'
   if (error.response.status >= 500) return 'server'
@@ -51,7 +58,7 @@ export const api = axios.create({
 // Response interceptor for enhanced error handling with retry logic
 api.interceptors.response.use(
   (response) => response,
-  async (error: AxiosError) => {
+  async (error: AxiosError<APIErrorResponse>) => {
     const config = error.config as any
 
     // Retry transient errors (network, 5xx, timeout)
