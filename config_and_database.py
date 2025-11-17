@@ -519,6 +519,10 @@ def init_database():
             signal_correct INTEGER,
             vix_spike_detected INTEGER,
 
+            -- Additional volatility and flip point tracking
+            volatility_regime TEXT,
+            at_flip_point INTEGER,
+
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -529,6 +533,20 @@ def init_database():
     except:
         c.execute("ALTER TABLE regime_signals ADD COLUMN vix_spike_detected INTEGER")
         print("✓ Added vix_spike_detected column to regime_signals table")
+
+    # Add volatility_regime column if it doesn't exist (migration)
+    try:
+        c.execute("SELECT volatility_regime FROM regime_signals LIMIT 1")
+    except:
+        c.execute("ALTER TABLE regime_signals ADD COLUMN volatility_regime TEXT")
+        print("✓ Added volatility_regime column to regime_signals table")
+
+    # Add at_flip_point column if it doesn't exist (migration)
+    try:
+        c.execute("SELECT at_flip_point FROM regime_signals LIMIT 1")
+    except:
+        c.execute("ALTER TABLE regime_signals ADD COLUMN at_flip_point INTEGER")
+        print("✓ Added at_flip_point column to regime_signals table")
 
     # Gamma expiration timeline table
     c.execute('''
