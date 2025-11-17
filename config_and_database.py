@@ -517,10 +517,18 @@ def init_database():
             price_change_5d REAL,
             price_change_10d REAL,
             signal_correct INTEGER,
+            vix_spike_detected INTEGER,
 
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # Add vix_spike_detected column if it doesn't exist (migration)
+    try:
+        c.execute("SELECT vix_spike_detected FROM regime_signals LIMIT 1")
+    except:
+        c.execute("ALTER TABLE regime_signals ADD COLUMN vix_spike_detected INTEGER")
+        print("✓ Added vix_spike_detected column to regime_signals table")
 
     # Gamma expiration timeline table
     c.execute('''
