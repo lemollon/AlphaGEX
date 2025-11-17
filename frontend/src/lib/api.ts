@@ -68,7 +68,7 @@ api.interceptors.response.use(
     // Enhanced error info for final rejection
     const enhancedError: EnhancedError = {
       name: error.name,
-      message: error.response?.data?.detail || error.message || 'Unknown error',
+      message: (error.response?.data as any)?.detail || error.message || 'Unknown error',
       status: error.response?.status,
       type: categorizeError(error),
       retryable: isRetryableError(error),
