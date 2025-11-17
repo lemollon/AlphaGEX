@@ -1265,12 +1265,16 @@ class TradingVolatilityAPI:
 
     def _get_cache_duration(self) -> int:
         """
-        Get dynamic cache duration based on weekend vs weekday
+        Get dynamic cache duration based on market hours
 
-        Cache Strategy:
-        - Weekend: 24 hours (market closed, data doesn't change)
-        - Weekday trading hours (9:30am-4pm ET): 5 minutes (active market)
-        - Weekday non-trading hours: 4 hours (market closed, pre/post analysis)
+        Cache Strategy (aligned with market close/open):
+        - MARKET CLOSED PERIOD (Fri 4pm ET - Mon 9:30am ET): 24 hours
+          * Friday after 4pm ET (3pm CT)
+          * Saturday all day
+          * Sunday all day
+          * Monday before 9:30am ET (8:30am CT)
+        - MARKET OPEN (Mon-Fri 9:30am-4pm ET): 5 minutes (active trading)
+        - OVERNIGHT (Mon-Thu 4pm-9:30am): 4 hours (market opens next day)
 
         Returns:
             Cache duration in seconds
@@ -1280,25 +1284,39 @@ class TradingVolatilityAPI:
 
         et_tz = pytz.timezone('America/New_York')
         now_et = datetime.now(et_tz)
-        day_of_week = now_et.weekday()  # 0 = Monday, 6 = Sunday
+        day_of_week = now_et.weekday()  # 0 = Monday, 4 = Friday, 5 = Saturday, 6 = Sunday
 
-        # Weekend (Saturday=5, Sunday=6): Cache for 24 hours
-        if day_of_week >= 5:
-            return 86400  # 24 hours
-
-        # Weekday: Check if within trading hours
         current_hour = now_et.hour
         current_minute = now_et.minute
-        market_open_minutes = 9 * 60 + 30  # 9:30 AM
-        market_close_minutes = 16 * 60     # 4:00 PM
         current_minutes = current_hour * 60 + current_minute
 
+        market_open_minutes = 9 * 60 + 30  # 9:30 AM ET
+        market_close_minutes = 16 * 60     # 4:00 PM ET (3:00 PM CT)
+
+        # === FULL WEEKEND PERIOD: Friday close through Monday open ===
+
+        # Saturday or Sunday: Market closed, cache for 24 hours
+        if day_of_week in [5, 6]:
+            return 86400  # 24 hours
+
+        # Friday after 4pm ET (3pm CT): Market closed until Monday, cache for 24 hours
+        if day_of_week == 4 and current_minutes >= market_close_minutes:
+            return 86400  # 24 hours
+
+        # Monday before 9:30am ET: Market still closed, cache for 24 hours
+        if day_of_week == 0 and current_minutes < market_open_minutes:
+            return 86400  # 24 hours
+
+        # === TRADING HOURS: Fresh data needed ===
+
+        # During trading hours (Mon-Fri 9:30am-4pm ET): Cache for 5 minutes
         if market_open_minutes <= current_minutes < market_close_minutes:
-            # During trading hours: Cache for 5 minutes (active market)
             return 300  # 5 minutes
-        else:
-            # Outside trading hours: Cache for 4 hours
-            return 14400  # 4 hours
+
+        # === OVERNIGHT PERIOD (Mon-Thu after close): Market opens next day ===
+
+        # After hours (Mon-Thu 4pm onwards): Cache for 4 hours
+        return 14400  # 4 hours
 
     def _get_cache_key(self, endpoint: str, symbol: str) -> str:
         """Generate cache key for API responses"""
