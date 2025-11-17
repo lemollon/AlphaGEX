@@ -1047,19 +1047,22 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
 
 
 @app.get("/api/gamma/{symbol}/probabilities")
-async def get_gamma_probabilities(symbol: str, vix: float = 20):
+async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: float = 10000):
     """
-    Get actionable probability analysis for gamma-based trading
+    Get actionable probability analysis for gamma-based trading - COMPLETE MONEY-MAKING SYSTEM
 
-    Returns:
-    - Best current trade setup with win rates and expected value
-    - Strike-specific probability of profit
-    - Wall reach probabilities (1d, 3d, 5d)
-    - Regime-specific edge vs baseline
+    Returns ALL actionable metrics:
+    - Position sizing (Kelly Criterion)
+    - Entry/exit prices
+    - Risk/reward in dollars
+    - Strike rankings
+    - Optimal holding period
+    - Historical setups
+    - Regime stability
     """
     try:
         symbol = symbol.upper()
-        print(f"=== PROBABILITY ANALYSIS REQUEST: {symbol}, VIX: {vix} ===")
+        print(f"=== PROBABILITY ANALYSIS REQUEST: {symbol}, VIX: {vix}, Account: ${account_size} ===")
 
         # Import probability engine
         from probability_engine import ProbabilityEngine
@@ -1106,7 +1109,10 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20):
         # Initialize probability engine
         prob_engine = ProbabilityEngine()
 
-        # Calculate complete probability analysis
+        # Estimate option price (ATM ~ 1% of stock price for weekly)
+        option_price = spot_price * 0.01 * 3  # Rough ATM estimate
+
+        # Calculate complete probability analysis with NEW metrics
         analysis = prob_engine.get_complete_analysis(
             mm_state=mm_state,
             spot_price=spot_price,
@@ -1114,10 +1120,12 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20):
             flip_point=flip_point,
             call_wall=call_wall,
             put_wall=put_wall,
-            strikes=strikes
+            strikes=strikes,
+            account_size=account_size,
+            option_price=option_price
         )
 
-        # Convert to dict for JSON response
+        # Convert to dict for JSON response - INCLUDING ALL NEW DATA
         response_data = {
             "best_setup": {
                 "setup_type": analysis.best_setup.setup_type,
@@ -1128,7 +1136,12 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20):
                 "avg_loss": analysis.best_setup.avg_loss,
                 "expected_value": analysis.best_setup.expected_value,
                 "sample_size": analysis.best_setup.sample_size,
-                "confidence_score": analysis.best_setup.confidence_score
+                "confidence_score": analysis.best_setup.confidence_score,
+                "entry_price_low": analysis.best_setup.entry_price_low,
+                "entry_price_high": analysis.best_setup.entry_price_high,
+                "profit_target": analysis.best_setup.profit_target,
+                "stop_loss": analysis.best_setup.stop_loss,
+                "optimal_hold_days": analysis.best_setup.optimal_hold_days
             } if analysis.best_setup else None,
             "strike_probabilities": analysis.strike_probabilities,
             "wall_probabilities": {
@@ -1150,12 +1163,64 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20):
                 "baseline_win_rate": analysis.baseline_win_rate,
                 "edge_percentage": analysis.edge_percentage,
                 "regime_stats": analysis.regime_stats
-            }
+            },
+            # NEW: Position sizing
+            "position_sizing": {
+                "kelly_pct": analysis.position_sizing.kelly_pct,
+                "conservative_pct": analysis.position_sizing.conservative_pct,
+                "aggressive_pct": analysis.position_sizing.aggressive_pct,
+                "recommended_contracts": analysis.position_sizing.recommended_contracts,
+                "max_contracts": analysis.position_sizing.max_contracts,
+                "account_risk_pct": analysis.position_sizing.account_risk_pct
+            } if analysis.position_sizing else None,
+            # NEW: Risk analysis
+            "risk_analysis": {
+                "total_cost": analysis.risk_analysis.total_cost,
+                "best_case_profit": analysis.risk_analysis.best_case_profit,
+                "worst_case_loss": analysis.risk_analysis.worst_case_loss,
+                "expected_value_dollars": analysis.risk_analysis.expected_value_dollars,
+                "roi_percent": analysis.risk_analysis.roi_percent,
+                "max_account_risk_pct": analysis.risk_analysis.max_account_risk_pct
+            } if analysis.risk_analysis else None,
+            # NEW: Holding period
+            "holding_period": {
+                "day_1_win_rate": analysis.holding_period.day_1_win_rate,
+                "day_2_win_rate": analysis.holding_period.day_2_win_rate,
+                "day_3_win_rate": analysis.holding_period.day_3_win_rate,
+                "day_4_win_rate": analysis.holding_period.day_4_win_rate,
+                "day_5_win_rate": analysis.holding_period.day_5_win_rate,
+                "optimal_day": analysis.holding_period.optimal_day
+            } if analysis.holding_period else None,
+            # NEW: Historical setups
+            "historical_setups": [
+                {
+                    "date": setup.date,
+                    "outcome": setup.outcome,
+                    "pnl_dollars": setup.pnl_dollars,
+                    "pnl_percent": setup.pnl_percent,
+                    "hold_days": setup.hold_days
+                }
+                for setup in analysis.historical_setups
+            ] if analysis.historical_setups else [],
+            # NEW: Regime stability
+            "regime_stability": {
+                "current_state": analysis.regime_stability.current_state,
+                "stay_probability": analysis.regime_stability.stay_probability,
+                "shift_probabilities": analysis.regime_stability.shift_probabilities,
+                "alert_threshold": analysis.regime_stability.alert_threshold,
+                "recommendation": analysis.regime_stability.recommendation
+            } if analysis.regime_stability else None,
+            # Additional context
+            "spot_price": spot_price,
+            "option_price": option_price,
+            "account_size": account_size
         }
 
-        print(f"✅ Probability analysis complete for {symbol}")
-        print(f"   Best Setup: {response_data['best_setup']['setup_type'] if response_data['best_setup'] else 'None'}")
-        print(f"   Win Rate: {response_data['best_setup']['win_rate']*100:.1f}%" if response_data['best_setup'] else "   No clear edge")
+        print(f"✅ COMPLETE probability analysis for {symbol}")
+        print(f"   Setup: {response_data['best_setup']['setup_type'] if response_data['best_setup'] else 'None'}")
+        print(f"   Win Rate: {response_data['best_setup']['win_rate']*100:.1f}%" if response_data['best_setup'] else "   No edge")
+        print(f"   Position: {response_data['position_sizing']['recommended_contracts']} contracts" if response_data['position_sizing'] else "")
+        print(f"   Expected Value: ${response_data['risk_analysis']['expected_value_dollars']:.0f}" if response_data['risk_analysis'] else "")
 
         return {
             "success": True,
