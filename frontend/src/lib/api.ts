@@ -146,6 +146,7 @@ export const apiClient = {
 
   // Database Administration
   getDatabaseStats: () => api.get('/api/database/stats'),
+  testConnections: () => api.get('/api/test-connections'),
 }
 
 // WebSocket connection

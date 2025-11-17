@@ -6473,6 +6473,142 @@ async def get_database_stats():
         raise HTTPException(status_code=500, detail=f"Database stats error: {str(e)}")
 
 
+@app.get("/api/test-connections")
+async def test_api_connections():
+    """
+    Test connections to external APIs (Trading Volatility and Polygon)
+    Returns detailed status for each API including response times and data quality
+    """
+    import time
+
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "trading_volatility": {
+            "status": "unknown",
+            "response_time_ms": 0,
+            "error": None,
+            "data_quality": None,
+            "test_symbol": "SPY",
+            "fields_received": []
+        },
+        "polygon": {
+            "status": "unknown",
+            "response_time_ms": 0,
+            "error": None,
+            "data_quality": None,
+            "test_symbol": "VIX",
+            "vix_value": None
+        },
+        "overall_status": "unknown"
+    }
+
+    # Test Trading Volatility API
+    try:
+        api_client = TradingVolatilityAPI()
+        start_time = time.time()
+
+        gex_data = api_client.get_net_gamma("SPY")
+
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        results["trading_volatility"]["response_time_ms"] = elapsed_ms
+
+        if gex_data and not gex_data.get('error'):
+            results["trading_volatility"]["status"] = "connected"
+            results["trading_volatility"]["fields_received"] = list(gex_data.keys())
+
+            # Check data quality
+            required_fields = ['net_gex', 'spot_price', 'collection_date']
+            missing_fields = [f for f in required_fields if f not in gex_data]
+
+            if missing_fields:
+                results["trading_volatility"]["data_quality"] = f"incomplete (missing: {', '.join(missing_fields)})"
+            else:
+                results["trading_volatility"]["data_quality"] = "complete"
+                results["trading_volatility"]["sample_data"] = {
+                    "spot_price": gex_data.get('spot_price'),
+                    "net_gex": gex_data.get('net_gex'),
+                    "collection_date": gex_data.get('collection_date')
+                }
+        else:
+            results["trading_volatility"]["status"] = "error"
+            results["trading_volatility"]["error"] = gex_data.get('error', 'Unknown error')
+            results["trading_volatility"]["data_quality"] = "failed"
+
+    except Exception as e:
+        results["trading_volatility"]["status"] = "error"
+        results["trading_volatility"]["error"] = str(e)
+        results["trading_volatility"]["data_quality"] = "failed"
+
+    # Test Polygon API (VIX data)
+    try:
+        if not POLYGON_API_KEY:
+            results["polygon"]["status"] = "not_configured"
+            results["polygon"]["error"] = "POLYGON_API_KEY not set in environment"
+            results["polygon"]["data_quality"] = "n/a"
+        else:
+            start_time = time.time()
+
+            # Test with VIX symbol
+            url = f"https://api.polygon.io/v2/aggs/ticker/I:VIX/prev"
+            response = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=10)
+
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            results["polygon"]["response_time_ms"] = elapsed_ms
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get('results') and len(data['results']) > 0:
+                    vix_close = data['results'][0].get('c')
+                    results["polygon"]["status"] = "connected"
+                    results["polygon"]["data_quality"] = "complete"
+                    results["polygon"]["vix_value"] = vix_close
+                    results["polygon"]["sample_data"] = {
+                        "close": vix_close,
+                        "timestamp": data['results'][0].get('t'),
+                        "volume": data['results'][0].get('v')
+                    }
+                else:
+                    results["polygon"]["status"] = "error"
+                    results["polygon"]["error"] = "No VIX data in response"
+                    results["polygon"]["data_quality"] = "incomplete"
+            elif response.status_code == 403:
+                results["polygon"]["status"] = "error"
+                results["polygon"]["error"] = "403 Forbidden - Check API key validity or subscription"
+                results["polygon"]["data_quality"] = "failed"
+            elif response.status_code == 429:
+                results["polygon"]["status"] = "error"
+                results["polygon"]["error"] = "429 Rate Limited - Too many requests"
+                results["polygon"]["data_quality"] = "failed"
+            else:
+                results["polygon"]["status"] = "error"
+                results["polygon"]["error"] = f"HTTP {response.status_code}: {response.text[:100]}"
+                results["polygon"]["data_quality"] = "failed"
+
+    except Exception as e:
+        results["polygon"]["status"] = "error"
+        results["polygon"]["error"] = str(e)
+        results["polygon"]["data_quality"] = "failed"
+
+    # Determine overall status
+    tv_ok = results["trading_volatility"]["status"] == "connected"
+    polygon_ok = results["polygon"]["status"] in ["connected", "not_configured"]  # not_configured is acceptable
+
+    if tv_ok and polygon_ok:
+        results["overall_status"] = "all_systems_operational"
+    elif tv_ok:
+        results["overall_status"] = "trading_volatility_only"
+    elif polygon_ok:
+        results["overall_status"] = "polygon_only"
+    else:
+        results["overall_status"] = "all_systems_down"
+
+    return {
+        "success": True,
+        "results": results
+    }
+
+
 # ============================================================================
 # Startup & Shutdown Events
 # ============================================================================
