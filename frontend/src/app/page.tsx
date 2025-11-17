@@ -20,7 +20,14 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   DollarSign,
-  Download
+  Download,
+  BarChart3,
+  Brain,
+  Search,
+  Shield,
+  Flame,
+  Clock,
+  TrendingUpIcon
 } from 'lucide-react'
 
 interface Position {
@@ -57,7 +64,6 @@ export default function Dashboard() {
       try {
         setLoading(true)
 
-        // Fetch ALL data in parallel - REAL DATA ONLY
         const [gexRes, perfRes, positionsRes, tradeLogRes, equityCurveRes] = await Promise.all([
           apiClient.getGEX('SPY'),
           apiClient.getTraderPerformance(),
@@ -66,17 +72,14 @@ export default function Dashboard() {
           apiClient.getEquityCurve(30)
         ])
 
-        // Set GEX data
         if (gexRes.data.success) {
           setGexData(gexRes.data.data)
         }
 
-        // Set REAL performance data
         if (perfRes.data.success) {
           setPerformance(perfRes.data.data)
         }
 
-        // Set REAL equity curve from trade history
         if (equityCurveRes.data.success && equityCurveRes.data.data.length > 0) {
           const perfData: LineData[] = equityCurveRes.data.data.map((point: any) => ({
             time: point.timestamp as any,
@@ -84,16 +87,13 @@ export default function Dashboard() {
           }))
           setPerformanceData(perfData)
         } else {
-          // No trade history yet - show empty state
           setPerformanceData([])
         }
 
-        // Set REAL open positions
         if (positionsRes.data.success) {
           setPositions(positionsRes.data.data)
         }
 
-        // Set REAL trade log
         if (tradeLogRes.data.success) {
           setTradeLog(tradeLogRes.data.data)
         }
@@ -106,12 +106,8 @@ export default function Dashboard() {
     }
 
     fetchData()
-
-    // No auto-refresh - protects API rate limit (20 calls/min shared across all users)
-    // Users can manually refresh or navigate away and back to get fresh data
   }, [])
 
-  // Update data from WebSocket
   useEffect(() => {
     if (wsData?.type === 'market_update' && wsData.data) {
       setGexData(wsData.data)
@@ -130,7 +126,6 @@ export default function Dashboard() {
   }
 
   const formatTime = (timeStr: string) => {
-    // Format time in Central Time
     try {
       return new Intl.DateTimeFormat('en-US', {
         hour: 'numeric',
@@ -145,7 +140,6 @@ export default function Dashboard() {
 
   const downloadTradeHistory = async () => {
     try {
-      // Fetch full trade history from API
       const response = await apiClient.getTradeLog()
 
       if (!response.data.success || !response.data.data.length) {
@@ -154,8 +148,6 @@ export default function Dashboard() {
       }
 
       const trades = response.data.data
-
-      // Create CSV content
       const headers = ['Date/Time (Central)', 'Action', 'Details', 'P&L']
       const csvRows = [headers.join(',')]
 
@@ -170,8 +162,6 @@ export default function Dashboard() {
       })
 
       const csvContent = csvRows.join('\n')
-
-      // Create download link
       const blob = new Blob([csvContent], { type: 'text/csv' })
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -188,25 +178,32 @@ export default function Dashboard() {
   }
 
   const getMMState = (netGex: number, spot: number, flip: number) => {
-    if (netGex < -2e9) return { state: 'PANICKING', color: 'text-danger' }
+    if (netGex < -2e9) return { state: 'PANICKING', color: 'text-danger', bg: 'bg-danger/10' }
     if (netGex < -1e9) {
       return spot < flip
-        ? { state: 'SQUEEZE', color: 'text-success' }
-        : { state: 'BREAKDOWN', color: 'text-danger' }
+        ? { state: 'SQUEEZE', color: 'text-success', bg: 'bg-success/10' }
+        : { state: 'BREAKDOWN', color: 'text-danger', bg: 'bg-danger/10' }
     }
-    if (netGex > 1e9) return { state: 'DEFENDING', color: 'text-warning' }
-    return { state: 'NEUTRAL', color: 'text-text-secondary' }
+    if (netGex > 1e9) return { state: 'DEFENDING', color: 'text-warning', bg: 'bg-warning/10' }
+    return { state: 'NEUTRAL', color: 'text-text-secondary', bg: 'bg-background-deep' }
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-background-deep">
         <Navigation />
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="skeleton h-32 rounded-lg"></div>
-            ))}
+          <div className="space-y-6 animate-pulse">
+            <div className="h-64 bg-background-hover rounded-2xl"></div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="h-32 bg-background-hover rounded-xl"></div>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="h-96 bg-background-hover rounded-xl"></div>
+              <div className="h-96 bg-background-hover rounded-xl"></div>
+            </div>
           </div>
         </main>
       </div>
@@ -218,15 +215,11 @@ export default function Dashboard() {
   const flipPoint = gexData?.flip_point || 0
   const mmState = getMMState(netGex, spotPrice, flipPoint)
 
-  // Calculate Today's P&L from trade log
   const todayPnL = tradeLog.reduce((sum, trade) => sum + (trade.pnl || 0), 0)
-  const todayPnLPercent = performance ? (todayPnL / 5000) * 100 : 0  // TODO: Get starting equity from config
-
-  // Calculate unrealized P&L from positions
+  const todayPnLPercent = performance ? (todayPnL / 5000) * 100 : 0
   const unrealizedPnL = positions.reduce((sum, pos) => sum + pos.unrealized_pnl, 0)
   const totalPnL = todayPnL + unrealizedPnL
 
-  // Find best and worst trades today
   const bestTrade = tradeLog.length > 0 ? tradeLog.reduce((best, trade) =>
     (trade.pnl || 0) > (best.pnl || 0) ? trade : best
   , tradeLog[0]) : null
@@ -235,15 +228,13 @@ export default function Dashboard() {
     (trade.pnl || 0) < (worst.pnl || 0) ? trade : worst
   , tradeLog[0]) : null
 
-  // Calculate risk metrics
-  const currentEquity = 5000 + (performance?.total_pnl || 0)  // TODO: Get from config
-  const peakEquity = currentEquity  // TODO: Track peak in DB
+  const currentEquity = 5000 + (performance?.total_pnl || 0)
+  const peakEquity = currentEquity
   const currentDrawdown = ((peakEquity - currentEquity) / peakEquity * 100)
   const dailyLossUsed = todayPnL < 0 ? Math.abs((todayPnL / currentEquity) * 100) : 0
   const totalExposure = positions.reduce((sum, pos) => sum + (pos.entry_price * pos.contracts * 100), 0)
   const exposurePercent = (totalExposure / currentEquity) * 100
 
-  // Market hours check
   const now = new Date()
   const centralTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
   const hour = centralTime.getHours()
@@ -256,252 +247,245 @@ export default function Dashboard() {
   const minutesToClose = timeToClose % 60
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-background-deep">
       <Navigation />
 
       <main className="pt-16 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
-        {/* TODAY'S PERFORMANCE - PROMINENT */}
-        <div className="mb-6">
-          <div className={`card border-2 ${totalPnL >= 0 ? 'border-success/50 bg-success/5' : 'border-danger/50 bg-danger/5'}`}>
-            <div className="flex items-center justify-between">
+        {/* Hero Performance Card */}
+        <div className="mb-8 relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary/10 via-background-card to-background-card border-2 border-primary/20 shadow-2xl">
+          <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 to-transparent"></div>
+          <div className="relative p-8">
+            <div className="flex items-center justify-between mb-6">
               <div>
-                <h2 className="text-sm font-semibold text-text-secondary mb-1">TODAY'S PERFORMANCE</h2>
-                <div className={`text-5xl font-bold ${totalPnL >= 0 ? 'text-success' : 'text-danger'}`}>
-                  {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
-                  <span className="text-2xl ml-3">({totalPnL >= 0 ? '+' : ''}{todayPnLPercent.toFixed(2)}%)</span>
-                </div>
-                <div className="flex items-center gap-4 mt-2 text-sm">
-                  <div className="text-text-secondary">
-                    Realized: <span className={`font-semibold ${todayPnL >= 0 ? 'text-success' : 'text-danger'}`}>
-                      {todayPnL >= 0 ? '+' : ''}${todayPnL.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="text-text-secondary">
-                    Unrealized: <span className={`font-semibold ${unrealizedPnL >= 0 ? 'text-success' : 'text-danger'}`}>
-                      {unrealizedPnL >= 0 ? '+' : ''}${unrealizedPnL.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="text-text-secondary">
-                    Trades: <span className="font-semibold text-text-primary">{tradeLog.length}</span>
-                  </div>
-                  {isMarketHours && (
-                    <div className="flex items-center gap-2 text-warning">
-                      <div className="w-2 h-2 rounded-full bg-warning animate-pulse"></div>
-                      <span className="font-semibold">Market closes in {hoursToClose}h {minutesToClose}m</span>
+                <div className="flex items-center gap-3 mb-2">
+                  <h1 className="text-3xl font-bold text-text-primary">AlphaGEX Trading Dashboard</h1>
+                  {isConnected && (
+                    <div className="flex items-center gap-2 px-3 py-1 bg-success/20 rounded-full">
+                      <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+                      <span className="text-xs font-semibold text-success">Live Data</span>
                     </div>
                   )}
                 </div>
+                <p className="text-text-secondary">Real-time market intelligence • Autonomous options trading</p>
               </div>
-              <div className="text-right">
-                <div className="text-sm text-text-secondary mb-1">Current Equity</div>
-                <div className="text-3xl font-bold text-text-primary">${currentEquity.toFixed(2)}</div>
-                <div className="text-xs text-text-muted mt-1">Start: $5,000.00</div>
+              {isMarketHours && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-warning/20 rounded-xl border border-warning/30">
+                  <Clock className="w-5 h-5 text-warning" />
+                  <div className="text-right">
+                    <div className="text-sm font-semibold text-warning">Market Closes In</div>
+                    <div className="text-2xl font-bold text-warning">{hoursToClose}h {minutesToClose}m</div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Today's P&L */}
+              <div className={`p-6 rounded-2xl border-2 ${totalPnL >= 0 ? 'bg-success/10 border-success/30' : 'bg-danger/10 border-danger/30'} backdrop-blur-sm`}>
+                <div className="flex items-center gap-2 mb-2">
+                  {totalPnL >= 0 ? <TrendingUp className="w-5 h-5 text-success" /> : <TrendingDown className="w-5 h-5 text-danger" />}
+                  <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">Today's P&L</h3>
+                </div>
+                <div className={`text-5xl font-bold mb-2 ${totalPnL >= 0 ? 'text-success' : 'text-danger'}`}>
+                  {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
+                </div>
+                <div className="flex items-center gap-4 text-sm text-text-secondary">
+                  <span>Realized: <span className={totalPnL >= 0 ? 'text-success font-semibold' : 'text-danger font-semibold'}>{todayPnL >= 0 ? '+' : ''}${todayPnL.toFixed(2)}</span></span>
+                  <span>•</span>
+                  <span>{tradeLog.length} trades</span>
+                </div>
+              </div>
+
+              {/* Account Equity */}
+              <div className="p-6 rounded-2xl bg-primary/10 border-2 border-primary/30 backdrop-blur-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <DollarSign className="w-5 h-5 text-primary" />
+                  <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">Account Value</h3>
+                </div>
+                <div className="text-5xl font-bold mb-2 text-primary">
+                  ${currentEquity.toFixed(2)}
+                </div>
+                <div className="flex items-center gap-4 text-sm text-text-secondary">
+                  <span>Start: $5,000.00</span>
+                  <span>•</span>
+                  <span className={performance && performance.total_pnl >= 0 ? 'text-success font-semibold' : 'text-danger font-semibold'}>
+                    {performance && performance.total_pnl >= 0 ? '+' : ''}{performance?.total_pnl?.toFixed(2) || '0.00'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Win Rate */}
+              <div className="p-6 rounded-2xl bg-background-card border-2 border-border backdrop-blur-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <Flame className="w-5 h-5 text-warning" />
+                  <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">Win Rate</h3>
+                </div>
+                <div className="text-5xl font-bold mb-2 text-text-primary">
+                  {performance ? `${performance.win_rate.toFixed(1)}%` : '0%'}
+                </div>
+                <div className="flex items-center gap-4 text-sm text-text-secondary">
+                  <span className="text-success">{performance?.winning_trades || 0}W</span>
+                  <span>•</span>
+                  <span className="text-danger">{performance?.losing_trades || 0}L</span>
+                  <span>•</span>
+                  <span>{performance?.total_trades || 0} total</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Status Cards - REAL DATA */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-          <StatusCard
-            icon={TrendingDown}
-            label="SPY GEX"
-            value={`$${formatCurrency(netGex)}`}
-            change={netGex < 0 ? '↓ Negative' : '↑ Positive'}
-            changeType={netGex < 0 ? 'negative' : 'positive'}
-          />
+        {/* Market Intelligence Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="card bg-gradient-to-br from-background-card to-background-deep hover:shadow-xl transition-all duration-300 border border-border">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingDown className="w-5 h-5 text-danger" />
+                  <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Net GEX</h4>
+                </div>
+                <div className={`text-3xl font-bold mb-1 ${netGex < 0 ? 'text-danger' : 'text-success'}`}>
+                  ${formatCurrency(netGex)}
+                </div>
+                <p className="text-xs text-text-muted">{netGex < 0 ? 'Short Gamma' : 'Long Gamma'}</p>
+              </div>
+            </div>
+          </div>
 
-          <StatusCard
-            icon={Activity}
-            label="Net Gamma"
-            value={`${formatCurrency(netGex)}`}
-            subtitle={netGex < 0 ? 'Short Gamma' : 'Long Gamma'}
-          />
+          <div className="card bg-gradient-to-br from-background-card to-background-deep hover:shadow-xl transition-all duration-300 border border-border">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <Zap className="w-5 h-5 text-warning" />
+                  <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Flip Point</h4>
+                </div>
+                <div className="text-3xl font-bold mb-1 text-warning">
+                  ${flipPoint.toFixed(2)}
+                </div>
+                <p className="text-xs text-text-muted">
+                  {spotPrice < flipPoint ? `$${(flipPoint - spotPrice).toFixed(2)} away` : 'Above flip'}
+                </p>
+              </div>
+            </div>
+          </div>
 
-          <StatusCard
-            icon={Zap}
-            label="Flip Point"
-            value={`$${flipPoint.toFixed(2)}`}
-            change={spotPrice < flipPoint ? `$${(flipPoint - spotPrice).toFixed(2)} away` : 'Above flip'}
-            changeType="neutral"
-          />
+          <div className="card bg-gradient-to-br from-background-card to-background-deep hover:shadow-xl transition-all duration-300 border border-border">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <Target className="w-5 h-5 text-primary" />
+                  <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">MM State</h4>
+                </div>
+                <div className={`text-3xl font-bold mb-1 ${mmState.color}`}>
+                  {mmState.state}
+                </div>
+                <p className="text-xs text-text-muted">{netGex < -1e9 ? 'Forced hedging' : 'Balanced'}</p>
+              </div>
+            </div>
+          </div>
 
-          <StatusCard
-            icon={Target}
-            label="MM State"
-            value={mmState.state}
-            subtitle={netGex < -1e9 ? 'Forced hedging' : 'Balanced'}
-          />
-
-          <StatusCard
-            icon={TrendingUp}
-            label="Win Rate"
-            value={performance ? `${performance.win_rate.toFixed(1)}%` : '-'}
-            change={performance ? `${performance.winning_trades} / ${performance.total_trades} trades` : 'No trades yet'}
-            changeType="positive"
-            subtitle="All time"
-          />
+          <div className="card bg-gradient-to-br from-background-card to-background-deep hover:shadow-xl transition-all duration-300 border border-border">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <Activity className="w-5 h-5 text-success" />
+                  <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">SPY Price</h4>
+                </div>
+                <div className="text-3xl font-bold mb-1 text-text-primary">
+                  ${spotPrice.toFixed(2)}
+                </div>
+                <p className="text-xs text-text-muted">{positions.length} open positions</p>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* RISK METRICS & SYSTEM STATUS */}
+        {/* Risk Metrics */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Risk Dashboard */}
-          <div className="lg:col-span-2">
-            <div className="card">
-              <h3 className="text-lg font-semibold mb-4">⚠️ Risk Dashboard</h3>
-              <div className="grid grid-cols-3 gap-4">
-                {/* Drawdown */}
-                <div className="bg-background-deep rounded-lg p-4">
-                  <div className="text-xs text-text-secondary mb-1">Max Drawdown</div>
-                  <div className={`text-2xl font-bold ${currentDrawdown > 10 ? 'text-danger' : currentDrawdown > 5 ? 'text-warning' : 'text-success'}`}>
-                    {currentDrawdown.toFixed(2)}%
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">Limit: 20%</div>
-                  <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
-                    <div
-                      className={`h-2 rounded-full ${currentDrawdown > 10 ? 'bg-danger' : currentDrawdown > 5 ? 'bg-warning' : 'bg-success'}`}
-                      style={{width: `${Math.min(100, (currentDrawdown / 20) * 100)}%`}}
-                    ></div>
-                  </div>
+          <div className="card bg-gradient-to-br from-background-card to-background-deep border border-border hover:shadow-xl transition-all">
+            <div className="flex items-center gap-2 mb-4">
+              <Shield className="w-5 h-5 text-danger" />
+              <h3 className="text-lg font-semibold">Drawdown</h3>
+            </div>
+            <div className="flex items-end gap-4">
+              <div>
+                <div className={`text-4xl font-bold ${currentDrawdown > 10 ? 'text-danger' : currentDrawdown > 5 ? 'text-warning' : 'text-success'}`}>
+                  {currentDrawdown.toFixed(2)}%
                 </div>
-
-                {/* Daily Loss */}
-                <div className="bg-background-deep rounded-lg p-4">
-                  <div className="text-xs text-text-secondary mb-1">Daily Loss Used</div>
-                  <div className={`text-2xl font-bold ${dailyLossUsed > 3 ? 'text-danger' : dailyLossUsed > 1.5 ? 'text-warning' : 'text-success'}`}>
-                    {dailyLossUsed.toFixed(2)}%
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">Limit: 5%</div>
-                  <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
-                    <div
-                      className={`h-2 rounded-full ${dailyLossUsed > 3 ? 'bg-danger' : dailyLossUsed > 1.5 ? 'bg-warning' : 'bg-success'}`}
-                      style={{width: `${Math.min(100, (dailyLossUsed / 5) * 100)}%`}}
-                    ></div>
-                  </div>
-                </div>
-
-                {/* Exposure */}
-                <div className="bg-background-deep rounded-lg p-4">
-                  <div className="text-xs text-text-secondary mb-1">Total Exposure</div>
-                  <div className={`text-2xl font-bold ${exposurePercent > 50 ? 'text-danger' : exposurePercent > 25 ? 'text-warning' : 'text-success'}`}>
-                    {exposurePercent.toFixed(1)}%
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">${totalExposure.toFixed(0)}</div>
-                  <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
-                    <div
-                      className={`h-2 rounded-full ${exposurePercent > 50 ? 'bg-danger' : exposurePercent > 25 ? 'bg-warning' : 'bg-success'}`}
-                      style={{width: `${Math.min(100, exposurePercent)}%`}}
-                    ></div>
-                  </div>
+                <p className="text-xs text-text-muted mt-1">Max: 20%</p>
+              </div>
+              <div className="flex-1 mb-2">
+                <div className="w-full bg-background-deep rounded-full h-3">
+                  <div
+                    className={`h-3 rounded-full transition-all ${currentDrawdown > 10 ? 'bg-danger' : currentDrawdown > 5 ? 'bg-warning' : 'bg-success'}`}
+                    style={{width: `${Math.min(100, (currentDrawdown / 20) * 100)}%`}}
+                  ></div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* System Status & Streak */}
-          <div className="space-y-6">
-            {/* System Status */}
-            <div className="card">
-              <h3 className="text-lg font-semibold mb-3">🤖 System Status</h3>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-text-secondary">Trading Mode:</span>
-                  <span className="text-sm font-semibold text-success">ACTIVE</span>
+          <div className="card bg-gradient-to-br from-background-card to-background-deep border border-border hover:shadow-xl transition-all">
+            <div className="flex items-center gap-2 mb-4">
+              <TrendingDown className="w-5 h-5 text-warning" />
+              <h3 className="text-lg font-semibold">Daily Loss</h3>
+            </div>
+            <div className="flex items-end gap-4">
+              <div>
+                <div className={`text-4xl font-bold ${dailyLossUsed > 3 ? 'text-danger' : dailyLossUsed > 1.5 ? 'text-warning' : 'text-success'}`}>
+                  {dailyLossUsed.toFixed(2)}%
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-text-secondary">Current State:</span>
-                  <span className="text-sm font-semibold text-primary">
-                    {positions.length > 0 ? 'MONITORING' : 'SCANNING'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-text-secondary">Next Action:</span>
-                  <span className="text-sm font-semibold text-text-primary">
-                    {isMarketHours ? (positions.length > 0 ? 'Manage Exits' : 'Find Setup') : 'Market Closed'}
-                  </span>
+                <p className="text-xs text-text-muted mt-1">Limit: 5%</p>
+              </div>
+              <div className="flex-1 mb-2">
+                <div className="w-full bg-background-deep rounded-full h-3">
+                  <div
+                    className={`h-3 rounded-full transition-all ${dailyLossUsed > 3 ? 'bg-danger' : dailyLossUsed > 1.5 ? 'bg-warning' : 'bg-success'}`}
+                    style={{width: `${Math.min(100, (dailyLossUsed / 5) * 100)}%`}}
+                  ></div>
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Win/Loss Streak */}
-            <div className="card">
-              <h3 className="text-lg font-semibold mb-3">🔥 Performance Streak</h3>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-text-secondary">Win Rate:</span>
-                  <span className={`text-lg font-bold ${performance && performance.win_rate > 60 ? 'text-success' : 'text-warning'}`}>
-                    {performance ? `${performance.win_rate.toFixed(1)}%` : 'N/A'}
-                  </span>
+          <div className="card bg-gradient-to-br from-background-card to-background-deep border border-border hover:shadow-xl transition-all">
+            <div className="flex items-center gap-2 mb-4">
+              <DollarSign className="w-5 h-5 text-primary" />
+              <h3 className="text-lg font-semibold">Exposure</h3>
+            </div>
+            <div className="flex items-end gap-4">
+              <div>
+                <div className={`text-4xl font-bold ${exposurePercent > 50 ? 'text-danger' : exposurePercent > 25 ? 'text-warning' : 'text-success'}`}>
+                  {exposurePercent.toFixed(1)}%
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-text-secondary">Total Trades:</span>
-                  <span className="text-lg font-bold text-text-primary">
-                    {performance ? performance.total_trades : 0}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <div className="bg-success/10 rounded p-2 text-center">
-                    <div className="text-xs text-success">Wins</div>
-                    <div className="text-xl font-bold text-success">{performance?.winning_trades || 0}</div>
-                  </div>
-                  <div className="bg-danger/10 rounded p-2 text-center">
-                    <div className="text-xs text-danger">Losses</div>
-                    <div className="text-xl font-bold text-danger">{performance?.losing_trades || 0}</div>
-                  </div>
+                <p className="text-xs text-text-muted mt-1">${totalExposure.toFixed(0)}</p>
+              </div>
+              <div className="flex-1 mb-2">
+                <div className="w-full bg-background-deep rounded-full h-3">
+                  <div
+                    className={`h-3 rounded-full transition-all ${exposurePercent > 50 ? 'bg-danger' : exposurePercent > 25 ? 'bg-warning' : 'bg-success'}`}
+                    style={{width: `${Math.min(100, exposurePercent)}%`}}
+                  ></div>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* SPY Market Chart - Full Width, More Prominent */}
-        <div className="mb-8">
-          <div className="card">
-            <div className="mb-6">
-              <h2 className="text-2xl font-bold text-text-primary mb-2 flex items-center space-x-3">
-                <TrendingUp className="w-7 h-7 text-primary" />
-                <span>SPY Market Overview</span>
-                {isConnected && (
-                  <span className="flex items-center space-x-1 text-sm text-success">
-                    <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
-                    <span>Live Data</span>
-                  </span>
-                )}
-              </h2>
-              <p className="text-sm text-text-secondary ml-10">
-                90-Day Candlestick Chart • Interactive with technical indicators
-              </p>
-            </div>
-
-            <div className="bg-background-deep rounded-lg overflow-hidden" style={{ minHeight: '600px' }}>
-              <TradingViewWidget
-                symbol="SPY"
-                interval="D"
-                theme="dark"
-                height={600}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* AI Intelligence Widgets */}
+        {/* Main Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          <MarketCommentary />
-          <DailyTradingPlan />
-        </div>
-
-        {/* Main Content Grid - Performance & Active Positions */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* Performance Equity Curve */}
-          <div className="card">
-            <h3 className="text-xl font-bold mb-4 flex items-center space-x-2">
-              <TrendingUp className="w-6 h-6 text-success" />
-              <span>Performance Equity Curve</span>
-            </h3>
-            <p className="text-sm text-text-secondary mb-4">30-day performance history</p>
-            <div className="bg-background-deep rounded-lg">
+          {/* Equity Curve */}
+          <div className="card bg-gradient-to-br from-background-card to-background-deep border border-border">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <TrendingUpIcon className="w-6 h-6 text-success" />
+                <h3 className="text-xl font-bold">Performance</h3>
+              </div>
+              <span className="text-xs text-text-muted">30-day equity curve</span>
+            </div>
+            <div className="bg-background-deep rounded-xl overflow-hidden">
               {performanceData.length > 0 ? (
                 <TradingViewChart
                   data={performanceData}
@@ -516,69 +500,71 @@ export default function Dashboard() {
               ) : (
                 <div className="h-[350px] flex items-center justify-center">
                   <div className="text-center text-text-muted">
-                    <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">No performance data yet</p>
-                    <p className="text-xs mt-1">Start trading to see your equity curve</p>
+                    <TrendingUpIcon className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                    <p className="font-semibold">No Performance Data</p>
+                    <p className="text-sm mt-2">Start trading to build your equity curve</p>
                   </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Active Positions - REAL DATA FROM DATABASE */}
-          <div className="card">
-            <h3 className="text-xl font-bold mb-4 flex items-center justify-between">
-              <span className="flex items-center space-x-2">
-                <DollarSign className="w-6 h-6 text-success" />
-                <span>Active Positions</span>
+          {/* Active Positions */}
+          <div className="card bg-gradient-to-br from-background-card to-background-deep border border-border">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <DollarSign className="w-6 h-6 text-primary" />
+                <h3 className="text-xl font-bold">Active Positions</h3>
+              </div>
+              <span className="px-3 py-1 bg-primary/20 text-primary text-sm font-semibold rounded-full">
+                {positions.length}
               </span>
-              <span className="text-sm font-normal text-text-secondary">({positions.length})</span>
-            </h3>
-            <p className="text-sm text-text-secondary mb-4">Current open trades</p>
-
-            <div className="space-y-3 max-h-[350px] overflow-y-auto">
+            </div>
+            <div className="space-y-3 max-h-[350px] overflow-y-auto custom-scrollbar">
               {positions.length === 0 ? (
-                <div className="text-center py-12 text-text-muted">
-                  <DollarSign className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                  <p>No open positions</p>
-                  <p className="text-sm mt-2">Trader will open positions when opportunities arise</p>
+                <div className="h-[350px] flex items-center justify-center">
+                  <div className="text-center text-text-muted">
+                    <DollarSign className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                    <p className="font-semibold">No Open Positions</p>
+                    <p className="text-sm mt-2">Waiting for high-probability setups</p>
+                  </div>
                 </div>
               ) : (
                 positions.map((pos) => (
-                  <div key={pos.id} className="bg-background-hover rounded-lg p-4 hover:bg-background-deep transition-colors">
-                    <div className="flex items-start justify-between mb-2">
+                  <div key={pos.id} className="p-4 rounded-xl bg-background-hover border border-border hover:border-primary/50 transition-all">
+                    <div className="flex items-start justify-between mb-3">
                       <div>
-                        <div className="font-semibold text-text-primary flex items-center space-x-2">
-                          <span>{pos.symbol} {pos.strike}{pos.option_type === 'CALL' ? 'C' : 'P'}</span>
+                        <div className="font-bold text-text-primary flex items-center gap-2">
+                          <span className="text-lg">{pos.symbol} ${pos.strike}{pos.option_type === 'CALL' ? 'C' : 'P'}</span>
                           {pos.unrealized_pnl >= 0 ? (
-                            <ArrowUpRight className="w-4 h-4 text-success" />
+                            <ArrowUpRight className="w-5 h-5 text-success" />
                           ) : (
-                            <ArrowDownRight className="w-4 h-4 text-danger" />
+                            <ArrowDownRight className="w-5 h-5 text-danger" />
                           )}
                         </div>
-                        <div className="text-xs text-text-muted">{pos.entry_date}</div>
+                        <div className="text-xs text-text-muted mt-1">{pos.entry_date}</div>
                       </div>
                       <div className="text-right">
-                        <div className={`font-semibold ${pos.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                        <div className={`text-2xl font-bold ${pos.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'}`}>
                           {pos.unrealized_pnl >= 0 ? '+' : ''}{((pos.unrealized_pnl / (pos.entry_price * pos.contracts * 100)) * 100).toFixed(1)}%
                         </div>
-                        <div className="text-xs text-text-muted">
+                        <div className="text-sm text-text-muted">
                           {pos.unrealized_pnl >= 0 ? '+' : ''}${pos.unrealized_pnl.toFixed(2)}
                         </div>
                       </div>
                     </div>
-                    <div className="text-sm space-y-1">
-                      <div className="flex justify-between text-text-secondary">
-                        <span>Entry:</span>
-                        <span className="text-text-primary font-mono">${pos.entry_price.toFixed(2)}</span>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <div className="text-text-muted text-xs">Entry</div>
+                        <div className="font-mono font-semibold text-text-primary">${pos.entry_price.toFixed(2)}</div>
                       </div>
-                      <div className="flex justify-between text-text-secondary">
-                        <span>Current:</span>
-                        <span className="text-text-primary font-mono">${pos.current_price.toFixed(2)}</span>
+                      <div>
+                        <div className="text-text-muted text-xs">Current</div>
+                        <div className="font-mono font-semibold text-text-primary">${pos.current_price.toFixed(2)}</div>
                       </div>
-                      <div className="flex justify-between text-text-secondary">
-                        <span>Contracts:</span>
-                        <span className="text-text-primary font-mono">{pos.contracts}</span>
+                      <div>
+                        <div className="text-text-muted text-xs">Contracts</div>
+                        <div className="font-mono font-semibold text-text-primary">{pos.contracts}</div>
                       </div>
                     </div>
                   </div>
@@ -588,87 +574,77 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Quick Actions - NOW FUNCTIONAL */}
-        <div className="card mb-8">
-          <h3 className="text-lg font-semibold mb-4">⚡ Quick Actions</h3>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-            <button
-              onClick={() => router.push('/scanner')}
-              className="btn-primary flex flex-col items-center space-y-2 py-4"
-            >
-              <span className="text-2xl">🔍</span>
-              <span>Scan Market</span>
-            </button>
-            <button
-              onClick={() => router.push('/gex')}
-              className="btn-secondary flex flex-col items-center space-y-2 py-4"
-            >
-              <span className="text-2xl">📊</span>
-              <span>GEX Analysis</span>
-            </button>
-            <button
-              onClick={() => router.push('/gamma')}
-              className="btn-secondary flex flex-col items-center space-y-2 py-4"
-            >
-              <span className="text-2xl">⚡</span>
-              <span>Gamma Intel</span>
-            </button>
-            <button
-              onClick={() => router.push('/psychology')}
-              className="btn-secondary flex flex-col items-center space-y-2 py-4"
-            >
-              <span className="text-2xl">🧠</span>
-              <span>Psychology</span>
-            </button>
-            <button
-              onClick={() => router.push('/charts')}
-              className="btn-secondary flex flex-col items-center space-y-2 py-4"
-            >
-              <span className="text-2xl">📈</span>
-              <span>Charts</span>
-            </button>
-            <button
-              onClick={() => router.push('/trader')}
-              className="btn-secondary flex flex-col items-center space-y-2 py-4"
-            >
-              <span className="text-2xl">🤖</span>
-              <span>Trader</span>
-            </button>
+        {/* SPY Chart - Full Width */}
+        <div className="mb-8">
+          <div className="card bg-gradient-to-br from-background-card to-background-deep border border-border">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <BarChart3 className="w-7 h-7 text-primary" />
+                <div>
+                  <h2 className="text-2xl font-bold">SPY Market Overview</h2>
+                  <p className="text-sm text-text-secondary">90-day candlestick • Live market data</p>
+                </div>
+              </div>
+              {isConnected && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-success/20 rounded-full">
+                  <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+                  <span className="text-xs font-semibold text-success">Live</span>
+                </div>
+              )}
+            </div>
+            <div className="bg-background-deep rounded-xl overflow-hidden">
+              <TradingViewWidget
+                symbol="SPY"
+                interval="D"
+                theme="dark"
+                height={600}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Trade Activity Section */}
+        {/* AI Intelligence */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* Trade Log - REAL DATA FROM DATABASE (Central Time) */}
-          <div className="card">
+          <MarketCommentary />
+          <DailyTradingPlan />
+        </div>
+
+        {/* Trade Activity */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          {/* Trade Log */}
+          <div className="lg:col-span-2 card bg-gradient-to-br from-background-card to-background-deep border border-border">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold">📅 Today's Trade Log</h3>
+              <div className="flex items-center gap-2">
+                <Activity className="w-6 h-6 text-primary" />
+                <h3 className="text-xl font-bold">Trade Activity</h3>
+              </div>
               <button
                 onClick={downloadTradeHistory}
-                className="flex items-center gap-2 px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg transition-colors text-sm"
-                title="Download full trade history as CSV"
+                className="flex items-center gap-2 px-4 py-2 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg transition-colors text-sm font-semibold"
               >
                 <Download className="w-4 h-4" />
-                <span>Download</span>
+                Export CSV
               </button>
             </div>
-            <p className="text-sm text-text-secondary mb-4">All trades in Central Time</p>
-            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+            <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar">
               {tradeLog.length === 0 ? (
-                <div className="text-center py-12 text-text-muted">
-                  <Activity className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                  <p>No trades today</p>
-                  <p className="text-sm mt-2">Check back during market hours</p>
+                <div className="h-[400px] flex items-center justify-center">
+                  <div className="text-center text-text-muted">
+                    <Activity className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                    <p className="font-semibold">No Trades Today</p>
+                    <p className="text-sm mt-2">Activity will appear during market hours</p>
+                  </div>
                 </div>
               ) : (
                 tradeLog.map((entry, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-background-hover rounded-lg hover:bg-background-deep transition-colors">
-                    <div className="flex items-center space-x-3">
-                      <div className="text-xs text-text-muted font-mono">{formatTime(entry.time)}</div>
-                      <div className="text-sm text-text-primary">{entry.action}: {entry.details}</div>
+                  <div key={idx} className="flex items-center justify-between p-4 bg-background-hover rounded-lg hover:bg-background-deep transition-all border border-transparent hover:border-primary/30">
+                    <div className="flex items-center gap-4">
+                      <div className="text-xs text-text-muted font-mono bg-background-deep px-2 py-1 rounded">{formatTime(entry.time)}</div>
+                      <div className="text-sm font-medium text-text-primary">{entry.action}</div>
+                      <div className="text-sm text-text-secondary">{entry.details}</div>
                     </div>
                     {entry.pnl && (
-                      <div className={`text-sm font-semibold ${entry.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                      <div className={`text-sm font-bold px-3 py-1 rounded-full ${entry.pnl >= 0 ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'}`}>
                         {entry.pnl >= 0 ? '+' : ''}${entry.pnl.toFixed(2)}
                       </div>
                     )}
@@ -678,47 +654,96 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Best/Worst Trades Today - Side by Side */}
-          <div className="grid grid-cols-2 gap-4">
-            {/* Best Trade */}
-            <div className="card border-2 border-success/30 bg-success/5">
-              <h3 className="text-lg font-bold mb-3 text-success">🏆 Best Trade</h3>
+          {/* Best/Worst Trades */}
+          <div className="space-y-4">
+            <div className="card bg-gradient-to-br from-success/10 to-background-deep border-2 border-success/30">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingUp className="w-5 h-5 text-success" />
+                <h3 className="text-lg font-bold text-success">Best Trade</h3>
+              </div>
               {bestTrade && (bestTrade.pnl || 0) > 0 ? (
-                <div className="space-y-2">
-                  <div className="text-3xl font-bold text-success">
+                <div>
+                  <div className="text-4xl font-bold text-success mb-2">
                     +${(bestTrade.pnl || 0).toFixed(2)}
                   </div>
-                  <div className="text-sm text-text-secondary line-clamp-2">{bestTrade.details}</div>
+                  <div className="text-sm text-text-secondary mb-1">{bestTrade.details}</div>
                   <div className="text-xs text-text-muted">{formatTime(bestTrade.time)}</div>
                 </div>
               ) : (
-                <div className="text-center py-8 text-text-muted">
-                  <p className="text-sm">No wins yet</p>
+                <div className="py-8 text-center text-text-muted">
+                  <p className="text-sm">No wins yet today</p>
                 </div>
               )}
             </div>
 
-            {/* Worst Trade */}
-            <div className="card border-2 border-danger/30 bg-danger/5">
-              <h3 className="text-lg font-bold mb-3 text-danger">📉 Worst Trade</h3>
+            <div className="card bg-gradient-to-br from-danger/10 to-background-deep border-2 border-danger/30">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingDown className="w-5 h-5 text-danger" />
+                <h3 className="text-lg font-bold text-danger">Worst Trade</h3>
+              </div>
               {worstTrade && (worstTrade.pnl || 0) < 0 ? (
-                <div className="space-y-2">
-                  <div className="text-3xl font-bold text-danger">
+                <div>
+                  <div className="text-4xl font-bold text-danger mb-2">
                     ${(worstTrade.pnl || 0).toFixed(2)}
                   </div>
-                  <div className="text-sm text-text-secondary line-clamp-2">{worstTrade.details}</div>
+                  <div className="text-sm text-text-secondary mb-1">{worstTrade.details}</div>
                   <div className="text-xs text-text-muted">{formatTime(worstTrade.time)}</div>
                 </div>
               ) : (
-                <div className="text-center py-8 text-text-muted">
-                  <p className="text-sm">No losses yet</p>
+                <div className="py-8 text-center text-text-muted">
+                  <p className="text-sm">No losses yet today</p>
                 </div>
               )}
             </div>
           </div>
         </div>
+
+        {/* Quick Actions */}
+        <div className="card bg-gradient-to-br from-background-card to-background-deep border border-border">
+          <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+            <Zap className="w-6 h-6 text-warning" />
+            Quick Actions
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            {[
+              { icon: '🔍', label: 'Scanner', path: '/scanner', color: 'primary' },
+              { icon: '📊', label: 'GEX', path: '/gex', color: 'success' },
+              { icon: '⚡', label: 'Gamma', path: '/gamma', color: 'warning' },
+              { icon: '🧠', label: 'Psychology', path: '/psychology', color: 'danger' },
+              { icon: '📈', label: 'Charts', path: '/charts', color: 'primary' },
+              { icon: '🤖', label: 'Trader', path: '/trader', color: 'success' },
+            ].map((action, idx) => (
+              <button
+                key={idx}
+                onClick={() => router.push(action.path)}
+                className="group p-6 rounded-xl bg-background-hover border border-border hover:border-primary/50 hover:bg-background-deep transition-all duration-300 hover:scale-105"
+              >
+                <div className="text-4xl mb-3 transform group-hover:scale-110 transition-transform">{action.icon}</div>
+                <div className="text-sm font-semibold text-text-primary group-hover:text-primary transition-colors">{action.label}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         </div>
       </main>
+
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(0, 0, 0, 0.1);
+          border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(99, 102, 241, 0.5);
+          border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(99, 102, 241, 0.7);
+        }
+      `}</style>
     </div>
   )
 }
