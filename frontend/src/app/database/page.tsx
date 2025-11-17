@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Database, RefreshCw, CheckCircle, AlertCircle, Info, Table2, FileText } from 'lucide-react'
+import { Database, RefreshCw, CheckCircle, AlertCircle, Info, Table2, FileText, Wifi, WifiOff } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 
@@ -25,11 +25,37 @@ interface DatabaseStats {
   timestamp: string
 }
 
+interface APITestResults {
+  timestamp: string
+  trading_volatility: {
+    status: string
+    response_time_ms: number
+    error: string | null
+    data_quality: string | null
+    test_symbol: string
+    fields_received: string[]
+    sample_data?: any
+  }
+  polygon: {
+    status: string
+    response_time_ms: number
+    error: string | null
+    data_quality: string | null
+    test_symbol: string
+    vix_value: number | null
+    sample_data?: any
+  }
+  overall_status: string
+}
+
 export default function DatabaseAdminPage() {
   const [stats, setStats] = useState<DatabaseStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set())
+  const [testResults, setTestResults] = useState<APITestResults | null>(null)
+  const [testingAPIs, setTestingAPIs] = useState(false)
+  const [showTestResults, setShowTestResults] = useState(false)
 
   const fetchStats = async () => {
     setLoading(true)
@@ -42,6 +68,20 @@ export default function DatabaseAdminPage() {
       setError(err.message || 'Failed to fetch database stats')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const testAPIConnections = async () => {
+    setTestingAPIs(true)
+    setShowTestResults(true)
+
+    try {
+      const response = await apiClient.testConnections()
+      setTestResults(response.data.results)
+    } catch (err: any) {
+      setError(err.message || 'Failed to test API connections')
+    } finally {
+      setTestingAPIs(false)
     }
   }
 
@@ -116,13 +156,32 @@ export default function DatabaseAdminPage() {
               <p className="text-sm text-text-secondary mt-1">Monitor data collection and table statistics</p>
             </div>
           </div>
-          <button
-            onClick={fetchStats}
-            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-colors"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={testAPIConnections}
+              disabled={testingAPIs}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {testingAPIs ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <Wifi className="w-4 h-4" />
+                  Test API Connections
+                </>
+              )}
+            </button>
+            <button
+              onClick={fetchStats}
+              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {/* Database Info Card */}
@@ -148,6 +207,180 @@ export default function DatabaseAdminPage() {
             </div>
           </div>
         </div>
+
+        {/* API Connection Test Results */}
+        {showTestResults && testResults && (
+          <div className="bg-background-card border border-gray-700 rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-text-primary flex items-center gap-2">
+                <Wifi className="w-5 h-5" />
+                API Connection Test Results
+              </h2>
+              <button
+                onClick={() => setShowTestResults(false)}
+                className="text-text-secondary hover:text-text-primary text-sm"
+              >
+                Hide
+              </button>
+            </div>
+
+            {/* Overall Status */}
+            <div className={`rounded-lg p-4 mb-4 ${
+              testResults.overall_status === 'all_systems_operational' ? 'bg-success/10 border border-success/30' :
+              testResults.overall_status === 'all_systems_down' ? 'bg-danger/10 border border-danger/30' :
+              'bg-warning/10 border border-warning/30'
+            }`}>
+              <div className="flex items-center gap-2">
+                {testResults.overall_status === 'all_systems_operational' ? (
+                  <CheckCircle className="w-5 h-5 text-success" />
+                ) : testResults.overall_status === 'all_systems_down' ? (
+                  <WifiOff className="w-5 h-5 text-danger" />
+                ) : (
+                  <AlertCircle className="w-5 h-5 text-warning" />
+                )}
+                <span className="font-semibold">
+                  {testResults.overall_status === 'all_systems_operational' ? 'All Systems Operational' :
+                   testResults.overall_status === 'all_systems_down' ? 'All Systems Down' :
+                   testResults.overall_status === 'trading_volatility_only' ? 'Trading Volatility Only' :
+                   'Polygon Only'}
+                </span>
+              </div>
+              <div className="text-xs text-text-muted mt-1">
+                Tested at {new Date(testResults.timestamp).toLocaleString()}
+              </div>
+            </div>
+
+            {/* API Results Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Trading Volatility API */}
+              <div className={`border rounded-lg p-4 ${
+                testResults.trading_volatility.status === 'connected' ? 'border-success/30 bg-success/5' : 'border-danger/30 bg-danger/5'
+              }`}>
+                <div className="flex items-center gap-2 mb-3">
+                  {testResults.trading_volatility.status === 'connected' ? (
+                    <CheckCircle className="w-5 h-5 text-success" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-danger" />
+                  )}
+                  <div>
+                    <div className="font-semibold text-text-primary">Trading Volatility API</div>
+                    <div className="text-xs text-text-muted">Test Symbol: {testResults.trading_volatility.test_symbol}</div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Status:</span>
+                    <span className={testResults.trading_volatility.status === 'connected' ? 'text-success' : 'text-danger'}>
+                      {testResults.trading_volatility.status}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Response Time:</span>
+                    <span className="text-text-primary">{testResults.trading_volatility.response_time_ms}ms</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Data Quality:</span>
+                    <span className="text-text-primary">{testResults.trading_volatility.data_quality || 'N/A'}</span>
+                  </div>
+                  {testResults.trading_volatility.fields_received.length > 0 && (
+                    <div>
+                      <div className="text-text-secondary mb-1">Fields Received:</div>
+                      <div className="flex flex-wrap gap-1">
+                        {testResults.trading_volatility.fields_received.slice(0, 5).map((field) => (
+                          <span key={field} className="text-xs bg-gray-800 px-2 py-1 rounded">{field}</span>
+                        ))}
+                        {testResults.trading_volatility.fields_received.length > 5 && (
+                          <span className="text-xs text-text-muted">+{testResults.trading_volatility.fields_received.length - 5} more</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {testResults.trading_volatility.sample_data && (
+                    <div className="mt-2 p-2 bg-gray-900/50 rounded text-xs">
+                      <div className="text-text-secondary mb-1">Sample Data:</div>
+                      <div className="text-text-primary font-mono">
+                        Price: ${testResults.trading_volatility.sample_data.spot_price}
+                      </div>
+                      <div className="text-text-primary font-mono">
+                        Net GEX: {testResults.trading_volatility.sample_data.net_gex}
+                      </div>
+                    </div>
+                  )}
+                  {testResults.trading_volatility.error && (
+                    <div className="mt-2 p-2 bg-danger/10 border border-danger/30 rounded text-xs text-danger">
+                      {testResults.trading_volatility.error}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Polygon API */}
+              <div className={`border rounded-lg p-4 ${
+                testResults.polygon.status === 'connected' ? 'border-success/30 bg-success/5' :
+                testResults.polygon.status === 'not_configured' ? 'border-warning/30 bg-warning/5' :
+                'border-danger/30 bg-danger/5'
+              }`}>
+                <div className="flex items-center gap-2 mb-3">
+                  {testResults.polygon.status === 'connected' ? (
+                    <CheckCircle className="w-5 h-5 text-success" />
+                  ) : testResults.polygon.status === 'not_configured' ? (
+                    <Info className="w-5 h-5 text-warning" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-danger" />
+                  )}
+                  <div>
+                    <div className="font-semibold text-text-primary">Polygon API</div>
+                    <div className="text-xs text-text-muted">Test Symbol: {testResults.polygon.test_symbol}</div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Status:</span>
+                    <span className={
+                      testResults.polygon.status === 'connected' ? 'text-success' :
+                      testResults.polygon.status === 'not_configured' ? 'text-warning' :
+                      'text-danger'
+                    }>
+                      {testResults.polygon.status}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Response Time:</span>
+                    <span className="text-text-primary">{testResults.polygon.response_time_ms}ms</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Data Quality:</span>
+                    <span className="text-text-primary">{testResults.polygon.data_quality || 'N/A'}</span>
+                  </div>
+                  {testResults.polygon.vix_value && (
+                    <div className="flex justify-between">
+                      <span className="text-text-secondary">VIX Value:</span>
+                      <span className="text-text-primary font-mono">{testResults.polygon.vix_value}</span>
+                    </div>
+                  )}
+                  {testResults.polygon.sample_data && (
+                    <div className="mt-2 p-2 bg-gray-900/50 rounded text-xs">
+                      <div className="text-text-secondary mb-1">Sample Data:</div>
+                      <div className="text-text-primary font-mono">
+                        Close: ${testResults.polygon.sample_data.close}
+                      </div>
+                      <div className="text-text-primary font-mono">
+                        Volume: {testResults.polygon.sample_data.volume?.toLocaleString()}
+                      </div>
+                    </div>
+                  )}
+                  {testResults.polygon.error && (
+                    <div className="mt-2 p-2 bg-danger/10 border border-danger/30 rounded text-xs text-danger">
+                      {testResults.polygon.error}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Status Overview */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
