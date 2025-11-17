@@ -456,31 +456,31 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* SPY Market Chart - Full Width for Prominence */}
+        {/* SPY Market Chart - Full Width, More Prominent */}
         <div className="mb-8">
           <div className="card">
-            <h2 className="text-xl font-semibold mb-4 flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                <span>SPY Market Overview - 90 Day Candlestick Chart</span>
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-text-primary mb-2 flex items-center space-x-3">
+                <TrendingUp className="w-7 h-7 text-primary" />
+                <span>SPY Market Overview</span>
                 {isConnected && (
-                  <span className="flex items-center space-x-1 text-xs text-success ml-3">
+                  <span className="flex items-center space-x-1 text-sm text-success">
                     <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
-                    <span>Live</span>
+                    <span>Live Data</span>
                   </span>
                 )}
-              </div>
-              <div className="text-sm text-text-secondary">
-                Interactive chart with indicators
-              </div>
-            </h2>
+              </h2>
+              <p className="text-sm text-text-secondary ml-10">
+                90-Day Candlestick Chart • Interactive with technical indicators
+              </p>
+            </div>
 
-            <div className="bg-background-deep rounded-lg overflow-hidden">
+            <div className="bg-background-deep rounded-lg overflow-hidden" style={{ minHeight: '600px' }}>
               <TradingViewWidget
                 symbol="SPY"
                 interval="D"
                 theme="dark"
-                height={500}
+                height={600}
               />
             </div>
           </div>
@@ -492,53 +492,54 @@ export default function Dashboard() {
           <DailyTradingPlan />
         </div>
 
-        {/* Main Content Grid - Active Positions & Performance */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        {/* Main Content Grid - Performance & Active Positions */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Performance Equity Curve */}
-          <div className="lg:col-span-2">
-            <div className="card">
-              <h3 className="text-lg font-semibold mb-4 flex items-center space-x-2">
-                <TrendingUp className="w-5 h-5 text-success" />
-                <span>Performance Equity Curve (30 Days)</span>
-              </h3>
-              <div className="bg-background-deep rounded-lg">
-                {performanceData.length > 0 ? (
-                  <TradingViewChart
-                    data={performanceData}
-                    type="area"
-                    height={300}
-                    colors={{
-                      lineColor: '#10b981',
-                      areaTopColor: 'rgba(16, 185, 129, 0.4)',
-                      areaBottomColor: 'rgba(16, 185, 129, 0.0)',
-                    }}
-                  />
-                ) : (
-                  <div className="h-[300px] flex items-center justify-center">
-                    <div className="text-center text-text-muted">
-                      <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">No performance data yet</p>
-                      <p className="text-xs mt-1">Start trading to see your equity curve</p>
-                    </div>
+          <div className="card">
+            <h3 className="text-xl font-bold mb-4 flex items-center space-x-2">
+              <TrendingUp className="w-6 h-6 text-success" />
+              <span>Performance Equity Curve</span>
+            </h3>
+            <p className="text-sm text-text-secondary mb-4">30-day performance history</p>
+            <div className="bg-background-deep rounded-lg">
+              {performanceData.length > 0 ? (
+                <TradingViewChart
+                  data={performanceData}
+                  type="area"
+                  height={350}
+                  colors={{
+                    lineColor: '#10b981',
+                    areaTopColor: 'rgba(16, 185, 129, 0.4)',
+                    areaBottomColor: 'rgba(16, 185, 129, 0.0)',
+                  }}
+                />
+              ) : (
+                <div className="h-[350px] flex items-center justify-center">
+                  <div className="text-center text-text-muted">
+                    <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">No performance data yet</p>
+                    <p className="text-xs mt-1">Start trading to see your equity curve</p>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Active Positions - REAL DATA FROM DATABASE */}
           <div className="card">
-            <h3 className="text-lg font-semibold mb-4 flex items-center justify-between">
+            <h3 className="text-xl font-bold mb-4 flex items-center justify-between">
               <span className="flex items-center space-x-2">
-                <DollarSign className="w-5 h-5 text-success" />
+                <DollarSign className="w-6 h-6 text-success" />
                 <span>Active Positions</span>
               </span>
               <span className="text-sm font-normal text-text-secondary">({positions.length})</span>
             </h3>
+            <p className="text-sm text-text-secondary mb-4">Current open trades</p>
 
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-[350px] overflow-y-auto">
               {positions.length === 0 ? (
-                <div className="text-center py-8 text-text-muted">
+                <div className="text-center py-12 text-text-muted">
+                  <DollarSign className="w-12 h-12 mx-auto mb-2 opacity-50" />
                   <p>No open positions</p>
                   <p className="text-sm mt-2">Trader will open positions when opportunities arise</p>
                 </div>
@@ -637,80 +638,80 @@ export default function Dashboard() {
         </div>
 
         {/* Trade Activity Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Trade Log - REAL DATA FROM DATABASE (Central Time) */}
-          <div className="lg:col-span-2">
-            <div className="card">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold">📅 Today's Trade Log (Central Time)</h3>
-                <button
-                  onClick={downloadTradeHistory}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg transition-colors text-sm"
-                  title="Download full trade history as CSV"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download History</span>
-                </button>
-              </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                {tradeLog.length === 0 ? (
-                  <div className="text-center py-8 text-text-muted">
-                    <p>No trades today</p>
-                    <p className="text-sm mt-2">Check back during market hours</p>
-                  </div>
-                ) : (
-                  tradeLog.map((entry, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-3 bg-background-hover rounded-lg hover:bg-background-deep transition-colors">
-                      <div className="flex items-center space-x-3">
-                        <div className="text-xs text-text-muted font-mono">{formatTime(entry.time)}</div>
-                        <div className="text-sm text-text-primary">{entry.action}: {entry.details}</div>
-                      </div>
-                      {entry.pnl && (
-                        <div className={`text-sm font-semibold ${entry.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
-                          {entry.pnl >= 0 ? '+' : ''}${entry.pnl.toFixed(2)}
-                        </div>
-                      )}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold">📅 Today's Trade Log</h3>
+              <button
+                onClick={downloadTradeHistory}
+                className="flex items-center gap-2 px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg transition-colors text-sm"
+                title="Download full trade history as CSV"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download</span>
+              </button>
+            </div>
+            <p className="text-sm text-text-secondary mb-4">All trades in Central Time</p>
+            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              {tradeLog.length === 0 ? (
+                <div className="text-center py-12 text-text-muted">
+                  <Activity className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                  <p>No trades today</p>
+                  <p className="text-sm mt-2">Check back during market hours</p>
+                </div>
+              ) : (
+                tradeLog.map((entry, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-3 bg-background-hover rounded-lg hover:bg-background-deep transition-colors">
+                    <div className="flex items-center space-x-3">
+                      <div className="text-xs text-text-muted font-mono">{formatTime(entry.time)}</div>
+                      <div className="text-sm text-text-primary">{entry.action}: {entry.details}</div>
                     </div>
-                  ))
-                )}
-              </div>
+                    {entry.pnl && (
+                      <div className={`text-sm font-semibold ${entry.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                        {entry.pnl >= 0 ? '+' : ''}${entry.pnl.toFixed(2)}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
-          {/* Best/Worst Trades Today */}
-          <div className="space-y-6">
+          {/* Best/Worst Trades Today - Side by Side */}
+          <div className="grid grid-cols-2 gap-4">
             {/* Best Trade */}
             <div className="card border-2 border-success/30 bg-success/5">
-              <h3 className="text-lg font-semibold mb-3 text-success">🏆 Best Trade Today</h3>
+              <h3 className="text-lg font-bold mb-3 text-success">🏆 Best Trade</h3>
               {bestTrade && (bestTrade.pnl || 0) > 0 ? (
                 <div className="space-y-2">
                   <div className="text-3xl font-bold text-success">
                     +${(bestTrade.pnl || 0).toFixed(2)}
                   </div>
-                  <div className="text-sm text-text-secondary">{bestTrade.details}</div>
+                  <div className="text-sm text-text-secondary line-clamp-2">{bestTrade.details}</div>
                   <div className="text-xs text-text-muted">{formatTime(bestTrade.time)}</div>
                 </div>
               ) : (
-                <div className="text-center py-4 text-text-muted">
-                  <p className="text-sm">No winning trades yet today</p>
+                <div className="text-center py-8 text-text-muted">
+                  <p className="text-sm">No wins yet</p>
                 </div>
               )}
             </div>
 
             {/* Worst Trade */}
             <div className="card border-2 border-danger/30 bg-danger/5">
-              <h3 className="text-lg font-semibold mb-3 text-danger">📉 Worst Trade Today</h3>
+              <h3 className="text-lg font-bold mb-3 text-danger">📉 Worst Trade</h3>
               {worstTrade && (worstTrade.pnl || 0) < 0 ? (
                 <div className="space-y-2">
                   <div className="text-3xl font-bold text-danger">
                     ${(worstTrade.pnl || 0).toFixed(2)}
                   </div>
-                  <div className="text-sm text-text-secondary">{worstTrade.details}</div>
+                  <div className="text-sm text-text-secondary line-clamp-2">{worstTrade.details}</div>
                   <div className="text-xs text-text-muted">{formatTime(worstTrade.time)}</div>
                 </div>
               ) : (
-                <div className="text-center py-4 text-text-muted">
-                  <p className="text-sm">No losing trades yet today</p>
+                <div className="text-center py-8 text-text-muted">
+                  <p className="text-sm">No losses yet</p>
                 </div>
               )}
             </div>
