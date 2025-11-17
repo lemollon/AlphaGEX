@@ -15,15 +15,15 @@ from typing import Dict, List, Optional
 from datetime import datetime
 import json
 
-# Try to import LangChain and Claude
+# Try to import LangChain and Claude (LangChain 1.0+ structure)
 try:
-    from langchain.prompts import PromptTemplate
-    from langchain.chains import LLMChain
+    from langchain_core.prompts import PromptTemplate
+    from langchain_classic.chains import LLMChain
     from langchain_anthropic import ChatAnthropic
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    print("⚠️ LangChain not available. Install with: pip install langchain langchain-anthropic")
+    print("⚠️ LangChain not available. Install with: pip install langchain langchain-anthropic langchain-core langchain-classic")
 
 
 class AutonomousAIReasoning:
