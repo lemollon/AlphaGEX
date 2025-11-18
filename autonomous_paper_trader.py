@@ -333,19 +333,52 @@ class AutonomousPaperTrader:
         conn.close()
 
     def should_trade_today(self) -> bool:
-        """Check if we should find a new trade today"""
+        """Check if we should find a new trade - allows multiple trades per day within risk limits"""
         now = datetime.now(CENTRAL_TZ)
-        today = now.strftime('%Y-%m-%d')
-        last_trade_date = self.get_config('last_trade_date')
-
-        # Trade once per day
-        if last_trade_date == today:
-            return False
 
         # Check if market is open (simple check - Monday-Friday)
         if now.weekday() >= 5:  # Saturday or Sunday
             return False
 
+        # Check risk limits instead of arbitrary daily trade count
+        # Risk Manager will block trades if:
+        # - Daily loss limit exceeded
+        # - Max position size exceeded
+        # - Max drawdown exceeded
+        # - Too many open positions
+
+        # Get today's P&L and check daily loss limit
+        today = now.strftime('%Y-%m-%d')
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+
+        # Count open positions - respect max open positions limit
+        c.execute("SELECT COUNT(*) FROM autonomous_positions WHERE status = 'OPEN'")
+        open_positions = c.fetchone()[0]
+        max_positions = 10  # Configurable limit
+
+        if open_positions >= max_positions:
+            conn.close()
+            return False  # Too many open positions
+
+        # Check today's P&L - respect daily loss limit
+        c.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0) + COALESCE(SUM(unrealized_pnl), 0) as total_pnl
+            FROM autonomous_positions
+            WHERE entry_date = ?
+        """, (today,))
+        today_pnl = c.fetchone()[0]
+        conn.close()
+
+        # Get starting capital
+        capital = float(self.get_config('capital'))
+        daily_loss_limit_pct = 5.0  # 5% daily loss limit
+        daily_loss_limit = capital * (daily_loss_limit_pct / 100)
+
+        if today_pnl < -daily_loss_limit:
+            return False  # Daily loss limit exceeded
+
+        # All risk checks passed - can trade
         return True
 
     def get_available_capital(self) -> float:
@@ -463,6 +496,24 @@ class AutonomousPaperTrader:
             # Step 2: Try to find high-confidence directional trade (with enhanced data)
             trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
 
+            # CRITICAL LOGGING: Log what strategy analysis returned
+            if trade:
+                self.log_action(
+                    'STRATEGY_FOUND',
+                    f"✅ Strategy analysis found: {trade.get('strategy', 'Unknown')} "
+                    f"(Action: {trade.get('action')}, Confidence: {trade.get('confidence', 0)}%, "
+                    f"Strike: ${trade.get('strike', 0):.0f})",
+                    success=True
+                )
+            else:
+                self.log_action(
+                    'NO_STRATEGY',
+                    f"❌ Strategy analysis returned None. "
+                    f"GEX: ${net_gex/1e9:.2f}B, Spot: ${spot_price:.2f}, "
+                    f"Flip: ${flip_point:.2f}, VIX: {vix:.1f}",
+                    success=False
+                )
+
             # Log detailed analysis of what was evaluated
             if trade:
                 confidence = trade.get('confidence', 0)
@@ -489,16 +540,37 @@ class AutonomousPaperTrader:
 
             # GUARANTEED TRADE - MINIMUM ONE PER DAY: Multi-level fallback system
             if not trade or trade.get('confidence', 0) < 70:
-                # Log why directional trade was not suitable
+                # CRITICAL LOGGING: Explain EXACTLY why we're falling back
                 if not trade:
-                    reason = "No directional setup detected. GEX structure unclear or conflicting signals."
+                    reason = "❌ NO STRATEGY FOUND - _analyze_and_find_trade() returned None"
+                    self.log_action(
+                        'FALLBACK_REASON',
+                        f"{reason}\n"
+                        f"Market Data:\n"
+                        f"• GEX: ${net_gex/1e9:.2f}B\n"
+                        f"• Spot: ${spot_price:.2f}\n"
+                        f"• Flip: ${flip_point:.2f}\n"
+                        f"• VIX: {vix:.1f}\n"
+                        f"• Momentum: {momentum.get('trend', 'N/A')} ({momentum.get('4h', 0):+.1f}%)\n"
+                        f"This suggests strategy analysis logic has a bug.",
+                        success=False
+                    )
                 else:
-                    reason = f"Confidence too low ({trade.get('confidence', 0)}% < 70% minimum threshold). Setup not strong enough for directional trade."
+                    reason = f"⚠️ CONFIDENCE TOO LOW: {trade.get('confidence', 0)}% < 70% threshold"
+                    self.log_action(
+                        'FALLBACK_REASON',
+                        f"{reason}\n"
+                        f"Strategy Found: {trade.get('strategy')}\n"
+                        f"Action: {trade.get('action')}\n"
+                        f"Strike: ${trade.get('strike', 0):.0f}\n"
+                        f"Reasoning: {trade.get('reasoning', 'N/A')[:200]}...\n\n"
+                        f"Consider lowering confidence threshold OR improving confidence scoring.",
+                        success=True
+                    )
 
                 self.log_action(
                     'FALLBACK_DECISION',
-                    f"{reason}\n\n"
-                    f"FALLBACK STRATEGY: Using Iron Condor for premium collection. "
+                    f"FALLBACK STRATEGY: Trying Iron Condor for premium collection. "
                     f"IC provides positive expectancy in neutral/uncertain market conditions.",
                     success=True
                 )
@@ -997,11 +1069,30 @@ MULTI-TIMEFRAME RSI:
         # ============================================================
         # FALLBACK: Basic GEX Analysis (if psychology unavailable)
         # ============================================================
-        self.log_action('BASIC_ANALYSIS', 'Using basic GEX regime analysis (psychology detector unavailable)')
+        self.log_action(
+            'BASIC_ANALYSIS',
+            f"📊 Using Basic GEX Regime Analysis (Psychology Detector unavailable)\n"
+            f"Market Conditions:\n"
+            f"• Net GEX: ${net_gex/1e9:.2f}B\n"
+            f"• Spot Price: ${spot:.2f}\n"
+            f"• Flip Point: ${flip:.2f}\n"
+            f"• Distance to Flip: {distance_to_flip:+.2f}%\n"
+            f"• VIX: {vix:.1f} ({vix_regime})\n"
+            f"• Momentum: {momentum_trend} ({momentum_4h:+.1f}% 4h)\n"
+            f"• Session: {session}\n"
+            f"• P/C Ratio: {put_call_ratio:.2f}\n\n"
+            f"Evaluating regime...",
+            success=True
+        )
 
         # Determine strategy based on GEX regime
         # REGIME 1: Negative GEX below flip = SQUEEZE
         if net_gex < -1e9 and spot < flip:
+            self.log_action(
+                'REGIME_DETECTED',
+                f"✅ REGIME 1: Negative GEX Squeeze (GEX < -$1B and spot < flip)",
+                success=True
+            )
             strike = round(flip / 5) * 5
 
             # Enhanced confidence scoring
