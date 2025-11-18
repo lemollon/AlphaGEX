@@ -230,7 +230,7 @@ export default function Dashboard() {
                 <div className="flex items-center gap-4 text-sm text-text-secondary">
                   <span>Realized: <span className={totalPnL >= 0 ? 'text-success font-semibold' : 'text-danger font-semibold'}>{todayPnL >= 0 ? '+' : ''}${todayPnL.toFixed(2)}</span></span>
                   <span>•</span>
-                  <span>{tradeLog.length} trades</span>
+                  <span>{performance?.total_trades || 0} trades</span>
                 </div>
               </div>
 
