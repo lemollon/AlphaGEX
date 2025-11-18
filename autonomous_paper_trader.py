@@ -2156,6 +2156,10 @@ Now analyze this position:"""
             SELECT * FROM autonomous_positions WHERE status = 'OPEN'
         """, conn)
 
+        all_positions = pd.read_sql_query("""
+            SELECT * FROM autonomous_positions
+        """, conn)
+
         conn.close()
 
         capital = float(self.get_config('capital'))
@@ -2176,7 +2180,8 @@ Now analyze this position:"""
             'realized_pnl': total_realized,
             'unrealized_pnl': total_unrealized,
             'return_pct': (total_pnl / capital * 100),
-            'total_trades': len(closed),
+            'total_trades': len(all_positions),  # Count ALL positions (open + closed)
+            'closed_trades': len(closed),  # Add separate count for closed only
             'open_positions': len(open_pos),
             'win_rate': win_rate
         }
