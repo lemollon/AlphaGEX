@@ -1650,12 +1650,15 @@ RATIONALE: Failsafe execution to guarantee MINIMUM one trade per day
 This trade ensures we're always active in the market"""
             }
 
-            # Execute the straddle
-            # CRITICAL: Protect against division by zero in bid/ask calculation
-            bid_ask_price = total_debit / (contracts * 100) if (contracts * 100) > 0 else 0
+            # Execute the straddle with REAL bid/ask from options chain
+            # Straddle bid = call bid + put bid, Straddle ask = call ask + put ask
+            straddle_bid = call_price.get('bid', 0) + put_price.get('bid', 0)
+            straddle_ask = call_price.get('ask', 0) + put_price.get('ask', 0)
+            straddle_mid = call_price['mid'] + put_price['mid']
+
             position_id = self._execute_trade(
                 trade,
-                {'mid': call_price['mid'] + put_price['mid'], 'bid': bid_ask_price, 'ask': bid_ask_price, 'contract_symbol': 'STRADDLE_FALLBACK'},
+                {'mid': straddle_mid, 'bid': straddle_bid, 'ask': straddle_ask, 'contract_symbol': 'STRADDLE_FALLBACK'},
                 contracts,
                 -(call_price['mid'] + put_price['mid']),  # Negative because we're buying (debit)
                 exp_date,
