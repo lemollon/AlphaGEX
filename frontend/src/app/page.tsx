@@ -56,7 +56,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [performanceData, setPerformanceData] = useState<LineData[]>([])
   const [positions, setPositions] = useState<Position[]>([])
-  const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
   const [performance, setPerformance] = useState<any>(null)
   const { data: wsData, isConnected } = useWebSocket('SPY')
 
@@ -65,11 +64,10 @@ export default function Dashboard() {
       try {
         setLoading(true)
 
-        const [gexRes, perfRes, positionsRes, tradeLogRes, equityCurveRes] = await Promise.all([
+        const [gexRes, perfRes, positionsRes, equityCurveRes] = await Promise.all([
           apiClient.getGEX('SPY'),
           apiClient.getTraderPerformance(),
           apiClient.getOpenPositions(),
-          apiClient.getTradeLog(),
           apiClient.getEquityCurve(30)
         ])
 
@@ -93,10 +91,6 @@ export default function Dashboard() {
 
         if (positionsRes.data.success) {
           setPositions(positionsRes.data.data)
-        }
-
-        if (tradeLogRes.data.success) {
-          setTradeLog(tradeLogRes.data.data)
         }
 
         setLoading(false)
@@ -126,79 +120,6 @@ export default function Dashboard() {
     return value.toFixed(2)
   }
 
-  const formatTime = (dateStr?: string, timeStr?: string) => {
-    try {
-      // If only one argument provided and it looks like a full datetime, use it directly
-      if (timeStr === undefined && dateStr) {
-        return new Intl.DateTimeFormat('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-          timeZone: 'America/Chicago'
-        }).format(new Date(dateStr))
-      }
-
-      // Combine date and time if both provided
-      if (dateStr && timeStr) {
-        const datetime = `${dateStr}T${timeStr}`
-        return new Intl.DateTimeFormat('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-          timeZone: 'America/Chicago'
-        }).format(new Date(datetime))
-      }
-
-      return timeStr || dateStr || 'N/A'
-    } catch {
-      return timeStr || dateStr || 'N/A'
-    }
-  }
-
-  const downloadTradeHistory = async () => {
-    try {
-      const response = await apiClient.getTradeLog()
-
-      if (!response.data.success || !response.data.data.length) {
-        alert('No trade history available to download')
-        return
-      }
-
-      const trades = response.data.data
-      const headers = ['Date/Time (Central)', 'Action', 'Details', 'P&L']
-      const csvRows = [headers.join(',')]
-
-      trades.forEach((trade: TradeLogEntry) => {
-        // Combine date and time to create valid datetime
-        const datetime = trade.date && trade.time ? `${trade.date}T${trade.time}` : null
-        const formattedDateTime = datetime
-          ? new Date(datetime).toLocaleString('en-US', { timeZone: 'America/Chicago' })
-          : 'Invalid Date'
-
-        const row = [
-          `"${formattedDateTime}"`,
-          `"${trade.action}"`,
-          `"${trade.details}"`,
-          trade.pnl ? trade.pnl.toFixed(2) : '0.00'
-        ]
-        csvRows.push(row.join(','))
-      })
-
-      const csvContent = csvRows.join('\n')
-      const blob = new Blob([csvContent], { type: 'text/csv' })
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `alphagex-trade-history-${new Date().toISOString().split('T')[0]}.csv`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(url)
-    } catch (error) {
-      console.error('Failed to download trade history:', error)
-      alert('Failed to download trade history. Please try again.')
-    }
-  }
 
   const getMMState = (netGex: number, spot: number, flip: number) => {
     if (netGex < -2e9) return { state: 'PANICKING', color: 'text-danger', bg: 'bg-danger/10' }
@@ -242,14 +163,6 @@ export default function Dashboard() {
   const todayPnLPercent = performance ? (todayPnL / 5000) * 100 : 0
   const unrealizedPnL = positions.reduce((sum, pos) => sum + pos.unrealized_pnl, 0)
   const totalPnL = todayPnL + unrealizedPnL
-
-  const bestTrade = tradeLog.length > 0 ? tradeLog.reduce((best, trade) =>
-    (trade.pnl || 0) > (best.pnl || 0) ? trade : best
-  , tradeLog[0]) : null
-
-  const worstTrade = tradeLog.length > 0 ? tradeLog.reduce((worst, trade) =>
-    (trade.pnl || 0) < (worst.pnl || 0) ? trade : worst
-  , tradeLog[0]) : null
 
   const currentEquity = 5000 + (performance?.total_pnl || 0)
   const peakEquity = currentEquity
@@ -633,94 +546,6 @@ export default function Dashboard() {
           <DailyTradingPlan />
         </div>
 
-        {/* Trade Activity */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Trade Log */}
-          <div className="lg:col-span-2 card bg-gradient-to-br from-background-card to-background-deep border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Activity className="w-6 h-6 text-primary" />
-                <h3 className="text-xl font-bold">Trade Activity</h3>
-              </div>
-              <button
-                onClick={downloadTradeHistory}
-                className="flex items-center gap-2 px-4 py-2 bg-primary/20 hover:bg-primary/30 text-primary rounded-lg transition-colors text-sm font-semibold"
-              >
-                <Download className="w-4 h-4" />
-                Export CSV
-              </button>
-            </div>
-            <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar">
-              {tradeLog.length === 0 ? (
-                <div className="h-[400px] flex items-center justify-center">
-                  <div className="text-center text-text-muted">
-                    <Activity className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                    <p className="font-semibold">No Trades Today</p>
-                    <p className="text-sm mt-2">Activity will appear during market hours</p>
-                  </div>
-                </div>
-              ) : (
-                tradeLog.map((entry, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-4 bg-background-hover rounded-lg hover:bg-background-deep transition-all border border-transparent hover:border-primary/30">
-                    <div className="flex items-center gap-4">
-                      <div className="text-xs text-text-muted font-mono bg-background-deep px-2 py-1 rounded">{formatTime(entry.date, entry.time)}</div>
-                      <div className="text-sm font-medium text-text-primary">{entry.action}</div>
-                      <div className="text-sm text-text-secondary">{entry.details}</div>
-                    </div>
-                    {entry.pnl && (
-                      <div className={`text-sm font-bold px-3 py-1 rounded-full ${entry.pnl >= 0 ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'}`}>
-                        {entry.pnl >= 0 ? '+' : ''}${entry.pnl.toFixed(2)}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Best/Worst Trades */}
-          <div className="space-y-4">
-            <div className="card bg-gradient-to-br from-success/10 to-background-deep border-2 border-success/30">
-              <div className="flex items-center gap-2 mb-3">
-                <TrendingUp className="w-5 h-5 text-success" />
-                <h3 className="text-lg font-bold text-success">Best Trade</h3>
-              </div>
-              {bestTrade && (bestTrade.pnl || 0) > 0 ? (
-                <div>
-                  <div className="text-4xl font-bold text-success mb-2">
-                    +${(bestTrade.pnl || 0).toFixed(2)}
-                  </div>
-                  <div className="text-sm text-text-secondary mb-1">{bestTrade.details}</div>
-                  <div className="text-xs text-text-muted">{formatTime(bestTrade.date, bestTrade.time)}</div>
-                </div>
-              ) : (
-                <div className="py-8 text-center text-text-muted">
-                  <p className="text-sm">No wins yet today</p>
-                </div>
-              )}
-            </div>
-
-            <div className="card bg-gradient-to-br from-danger/10 to-background-deep border-2 border-danger/30">
-              <div className="flex items-center gap-2 mb-3">
-                <TrendingDown className="w-5 h-5 text-danger" />
-                <h3 className="text-lg font-bold text-danger">Worst Trade</h3>
-              </div>
-              {worstTrade && (worstTrade.pnl || 0) < 0 ? (
-                <div>
-                  <div className="text-4xl font-bold text-danger mb-2">
-                    ${(worstTrade.pnl || 0).toFixed(2)}
-                  </div>
-                  <div className="text-sm text-text-secondary mb-1">{worstTrade.details}</div>
-                  <div className="text-xs text-text-muted">{formatTime(worstTrade.date, worstTrade.time)}</div>
-                </div>
-              ) : (
-                <div className="py-8 text-center text-text-muted">
-                  <p className="text-sm">No losses yet today</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
 
         {/* Quick Actions */}
         <div className="card bg-gradient-to-br from-background-card to-background-deep border border-border">

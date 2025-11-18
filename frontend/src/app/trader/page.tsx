@@ -53,6 +53,14 @@ interface Trade {
   pnl?: number
 }
 
+interface TradeLogEntry {
+  date: string
+  time: string
+  action: string
+  details: string
+  pnl: number
+}
+
 export default function AutonomousTrader() {
   const [loading, setLoading] = useState(true)
   const [traderStatus, setTraderStatus] = useState<TraderStatus>({
@@ -79,11 +87,22 @@ export default function AutonomousTrader() {
 
   const [recentTrades, setRecentTrades] = useState<Trade[]>([])
 
+  // Trade Activity Log
+  const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
+
   // Autonomous trader advanced features state
   const [autonomousLogs, setAutonomousLogs] = useState<any[]>([])
   const [competitionLeaderboard, setCompetitionLeaderboard] = useState<any[]>([])
   const [backtestResults, setBacktestResults] = useState<any[]>([])
   const [riskStatus, setRiskStatus] = useState<any>(null)
+
+  // Calculate best and worst trades
+  const bestTrade = tradeLog.length > 0
+    ? Math.max(...tradeLog.map(t => t.pnl))
+    : 0
+  const worstTrade = tradeLog.length > 0
+    ? Math.min(...tradeLog.map(t => t.pnl))
+    : 0
 
   // Fetch data from API
   useEffect(() => {
@@ -92,7 +111,7 @@ export default function AutonomousTrader() {
         setLoading(true)
 
         // Fetch trader status, performance, and trades in parallel
-        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes] = await Promise.all([
+        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes] = await Promise.all([
           apiClient.getTraderStatus(),
           apiClient.getTraderPerformance(),
           apiClient.getTraderTrades(10),
@@ -100,7 +119,8 @@ export default function AutonomousTrader() {
           apiClient.getAutonomousLogs({ limit: 20 }),
           apiClient.getCompetitionLeaderboard(),
           apiClient.getAllPatternBacktests(90),
-          apiClient.getRiskStatus()
+          apiClient.getRiskStatus(),
+          apiClient.getTradeLog()
         ])
 
         if (statusRes.data.success) {
@@ -158,6 +178,10 @@ export default function AutonomousTrader() {
         if (riskRes.data.success) {
           setRiskStatus(riskRes.data.data)
         }
+
+        if (tradeLogRes.data.success) {
+          setTradeLog(tradeLogRes.data.data || [])
+        }
       } catch (error) {
         console.error('Error fetching trader data:', error)
         // Keep default/empty state on error
@@ -211,10 +235,59 @@ export default function AutonomousTrader() {
     }).format(new Date(isoString))
   }
 
+  const formatTradeTime = (dateStr?: string, timeStr?: string) => {
+    if (dateStr && timeStr) {
+      const datetime = `${dateStr}T${timeStr}`
+      return new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'America/Chicago'
+      }).format(new Date(datetime))
+    }
+    return timeStr || dateStr || 'N/A'
+  }
+
   const formatUptime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600)
     const minutes = Math.floor((seconds % 3600) / 60)
     return `${hours}h ${minutes}m`
+  }
+
+  const downloadTradeHistory = () => {
+    if (tradeLog.length === 0) {
+      alert('No trade history to export')
+      return
+    }
+
+    const csvContent = [
+      ['Date/Time (Central)', 'Action', 'Details', 'P&L'],
+      ...tradeLog.map(trade => {
+        const datetime = trade.date && trade.time ? `${trade.date}T${trade.time}` : null
+        const formattedDateTime = datetime
+          ? new Date(datetime).toLocaleString('en-US', { timeZone: 'America/Chicago' })
+          : 'Invalid Date'
+
+        return [
+          formattedDateTime,
+          trade.action,
+          trade.details,
+          trade.pnl.toFixed(2)
+        ]
+      })
+    ]
+      .map(row => row.join(','))
+      .join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `trade-history-${new Date().toISOString().split('T')[0]}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
   }
 
   return (
@@ -524,6 +597,103 @@ export default function AutonomousTrader() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Trade Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Trade Log */}
+        <div className="lg:col-span-2 card">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-text-primary">📋 Trade Activity</h2>
+            <button
+              onClick={downloadTradeHistory}
+              className="btn bg-primary/20 text-primary hover:bg-primary/30 text-sm"
+              disabled={tradeLog.length === 0}
+            >
+              Export CSV
+            </button>
+          </div>
+
+          <div className="overflow-x-auto max-h-96">
+            <table className="w-full">
+              <thead className="sticky top-0 bg-background-primary">
+                <tr className="border-b border-border">
+                  <th className="text-left py-3 px-4 text-text-secondary font-medium">Time</th>
+                  <th className="text-left py-3 px-4 text-text-secondary font-medium">Action</th>
+                  <th className="text-left py-3 px-4 text-text-secondary font-medium">Details</th>
+                  <th className="text-right py-3 px-4 text-text-secondary font-medium">P&L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tradeLog.length > 0 ? (
+                  tradeLog.map((entry, idx) => (
+                    <tr key={idx} className="border-b border-border/50 hover:bg-background-hover transition-colors">
+                      <td className="py-3 px-4 text-text-secondary text-sm">
+                        {formatTradeTime(entry.date, entry.time)}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`text-sm font-semibold ${
+                          entry.action.includes('BUY') || entry.action.includes('OPEN')
+                            ? 'text-success'
+                            : entry.action.includes('SELL') || entry.action.includes('CLOSE')
+                            ? 'text-danger'
+                            : 'text-warning'
+                        }`}>
+                          {entry.action}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-text-primary text-sm">{entry.details}</td>
+                      <td className="py-3 px-4 text-right">
+                        <span className={`font-semibold ${
+                          entry.pnl >= 0 ? 'text-success' : 'text-danger'
+                        }`}>
+                          {entry.pnl >= 0 ? '+' : ''}{formatCurrency(entry.pnl)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={4} className="py-8 text-center text-text-secondary">
+                      No trade activity yet. Trades will appear here as the autonomous trader executes.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Best/Worst Trades */}
+        <div className="space-y-4">
+          <div className="card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-text-secondary text-sm">Best Trade</h3>
+              <TrendingUp className="w-5 h-5 text-success" />
+            </div>
+            <p className="text-2xl font-bold text-success">
+              {bestTrade >= 0 ? '+' : ''}{formatCurrency(bestTrade)}
+            </p>
+          </div>
+
+          <div className="card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-text-secondary text-sm">Worst Trade</h3>
+              <TrendingDown className="w-5 h-5 text-danger" />
+            </div>
+            <p className="text-2xl font-bold text-danger">
+              {worstTrade >= 0 ? '+' : ''}{formatCurrency(worstTrade)}
+            </p>
+          </div>
+
+          <div className="card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-text-secondary text-sm">Total Trades</h3>
+              <Activity className="w-5 h-5 text-primary" />
+            </div>
+            <p className="text-2xl font-bold text-text-primary">{tradeLog.length}</p>
+          </div>
         </div>
       </div>
 

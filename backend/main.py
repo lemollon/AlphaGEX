@@ -2508,16 +2508,18 @@ async def get_open_positions():
 async def get_trade_log():
     """Get today's trade log"""
     if not trader_available:
-        return {
+        return JSONResponse({
             "success": False,
             "message": "Trader not configured",
             "data": []
-        }
+        })
 
     try:
         import sqlite3
         import pandas as pd
         from datetime import datetime
+        import json
+        import math
 
         conn = sqlite3.connect(trader.db_path)
 
@@ -2525,19 +2527,48 @@ async def get_trade_log():
         from intelligence_and_strategies import get_local_time
         today = get_local_time('US/Central').strftime('%Y-%m-%d')
 
+        # Get trade log and join with positions for P&L
         log_entries = pd.read_sql_query(f"""
-            SELECT * FROM autonomous_trade_log
-            WHERE date = '{today}'
-            ORDER BY time DESC
+            SELECT
+                l.id,
+                l.date,
+                l.time,
+                l.action,
+                l.details,
+                l.position_id,
+                l.success,
+                COALESCE(p.realized_pnl, p.unrealized_pnl, 0) as pnl
+            FROM autonomous_trade_log l
+            LEFT JOIN autonomous_positions p ON l.position_id = p.id
+            WHERE l.date = '{today}'
+            ORDER BY l.time DESC
         """, conn)
         conn.close()
 
-        log_list = log_entries.to_dict('records') if not log_entries.empty else []
+        # Clean data for JSON serialization
+        if not log_entries.empty:
+            # Replace NaN and infinity with None
+            log_entries = log_entries.replace([float('inf'), float('-inf')], None)
+            log_list = []
+            for record in log_entries.to_dict('records'):
+                cleaned_record = {}
+                for key, value in record.items():
+                    # Handle NaN and infinity values
+                    if isinstance(value, float):
+                        if math.isnan(value) or math.isinf(value):
+                            cleaned_record[key] = None
+                        else:
+                            cleaned_record[key] = value
+                    else:
+                        cleaned_record[key] = value
+                log_list.append(cleaned_record)
+        else:
+            log_list = []
 
-        return {
+        return JSONResponse({
             "success": True,
             "data": log_list
-        }
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
