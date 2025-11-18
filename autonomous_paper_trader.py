@@ -626,6 +626,12 @@ class AutonomousPaperTrader:
 
             available = self.get_available_capital()
 
+            # CRITICAL: Validate entry_price before any calculations to prevent division by zero
+            cost_per_contract = entry_price * 100
+            if cost_per_contract == 0:
+                self.log_action('ERROR', 'Invalid option price (zero)', success=False)
+                return None
+
             # CRITICAL: Use AI reasoning for position sizing
             contracts = 1  # Default
             if self.ai_reasoning:
@@ -667,17 +673,12 @@ class AutonomousPaperTrader:
 
                 except Exception as e:
                     self.log_action('AI_ERROR', f'AI position sizing failed: {e}', success=False)
-                    # Fall back to basic sizing
-                    cost_per_contract = entry_price * 100
+                    # Fall back to basic sizing (already validated cost_per_contract above)
                     max_position = min(available * 0.25, 1250)
                     contracts = max(1, int(max_position / cost_per_contract))
             else:
-                # Basic position sizing if AI not available
-                cost_per_contract = entry_price * 100
+                # Basic position sizing if AI not available (already validated cost_per_contract above)
                 max_position = min(available * 0.25, 1250)
-                if cost_per_contract == 0:
-                    self.log_action('ERROR', 'Invalid option price (zero)', success=False)
-                    return None
                 contracts = max(1, int(max_position / cost_per_contract))
 
             contracts = min(contracts, 10)  # Max 10 contracts for $5K account
@@ -717,7 +718,7 @@ class AutonomousPaperTrader:
 
             if position_id:
                 # Update last trade date
-                self.set_config('last_trade_date', datetime.now().strftime('%Y-%m-%d'))
+                self.set_config('last_trade_date', datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'))
 
                 # Update live status with successful trade
                 self.update_live_status(
@@ -729,7 +730,7 @@ class AutonomousPaperTrader:
 
                 self.log_action(
                     'EXECUTE',
-                    f"Opened {trade['strategy']}: {contracts} contracts @ ${entry_price:.2f} (${total_cost:.2f} total)",
+                    f"Opened {trade['strategy']}: {contracts} contracts @ ${entry_price:.2f} (${total_cost:.2f} total) | Expiration: {exp_date}",
                     position_id=position_id,
                     success=True
                 )
@@ -798,7 +799,7 @@ class AutonomousPaperTrader:
 
     def _get_time_context(self) -> Dict:
         """Get time of day context for trading"""
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
         hour = now.hour
         minute = now.minute
 
@@ -1404,11 +1405,27 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
                 self.log_action('ERROR', 'Failed to get Iron Condor option prices', success=False)
                 return None
 
+            # CRITICAL: Validate all prices are > 0 to prevent invalid calculations
+            if (call_sell.get('mid', 0) <= 0 or call_buy.get('mid', 0) <= 0 or
+                put_sell.get('mid', 0) <= 0 or put_buy.get('mid', 0) <= 0):
+                self.log_action('ERROR',
+                    f'Iron Condor: Invalid option prices (zero or negative) - '
+                    f'Call Sell: ${call_sell.get("mid", 0):.2f}, Call Buy: ${call_buy.get("mid", 0):.2f}, '
+                    f'Put Sell: ${put_sell.get("mid", 0):.2f}, Put Buy: ${put_buy.get("mid", 0):.2f}',
+                    success=False)
+                return None
+
             # Calculate net credit
             credit = (call_sell['mid'] - call_buy['mid']) + (put_sell['mid'] - put_buy['mid'])
 
             if credit <= 0:
-                self.log_action('ERROR', 'Iron Condor has no credit', success=False)
+                call_spread = call_sell['mid'] - call_buy['mid']
+                put_spread = put_sell['mid'] - put_buy['mid']
+                self.log_action('ERROR',
+                    f'Iron Condor has no credit (total=${credit:.2f}). '
+                    f'Call spread: ${call_spread:.2f}, Put spread: ${put_spread:.2f}. '
+                    f'Strikes: {put_buy_strike}/{put_sell_strike}/{call_sell_strike}/{call_buy_strike}',
+                    success=False)
                 return None
 
             # Position sizing: use conservative 20% of capital for spreads
@@ -1454,10 +1471,10 @@ RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
             )
 
             if position_id:
-                self.set_config('last_trade_date', datetime.now().strftime('%Y-%m-%d'))
+                self.set_config('last_trade_date', datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'))
                 self.log_action(
                     'EXECUTE',
-                    f"Opened Iron Condor: ${net_credit:.0f} credit ({contracts} contracts)",
+                    f"Opened Iron Condor: ${net_credit:.0f} credit ({contracts} contracts) | Expiration: {exp_date} ({dte} DTE)",
                     position_id=position_id,
                     success=True
                 )
@@ -1494,10 +1511,23 @@ RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
                 self.log_action('WARNING', 'Could not fetch real prices - using estimated prices for guaranteed trade')
                 # Typical ATM weekly option is ~1-2% of spot price
                 estimated_premium = spot * 0.015  # 1.5% estimate
-                call_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'SPY{datetime.now().strftime("%y%m%d")}C{strike}'}
-                put_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'SPY{datetime.now().strftime("%y%m%d")}P{strike}'}
+                call_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'SPY{datetime.now(CENTRAL_TZ).strftime("%y%m%d")}C{strike}'}
+                put_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'SPY{datetime.now(CENTRAL_TZ).strftime("%y%m%d")}P{strike}'}
 
             total_cost = (call_price['mid'] + put_price['mid']) * 100  # Cost per straddle
+
+            # CRITICAL: Validate total_cost before division to prevent ZeroDivisionError
+            if total_cost <= 0:
+                self.log_action('ERROR', f'ATM Straddle: Invalid option prices (total cost = ${total_cost:.2f})', success=False)
+                # Try estimating based on spot price and volatility as last resort
+                estimated_cost = spot * 0.02 * 100  # 2% of spot as fallback estimate
+                if estimated_cost > 0:
+                    total_cost = estimated_cost
+                    self.log_action('WARNING', f'Using estimated straddle cost: ${estimated_cost:.2f}')
+                else:
+                    self.log_action('CRITICAL', 'Cannot estimate straddle cost - spot price may be zero', success=False)
+                    return None
+
             available = self.get_available_capital()
 
             # Use 15% of capital for guaranteed trade
@@ -1528,9 +1558,11 @@ This trade ensures we're always active in the market"""
             }
 
             # Execute the straddle
+            # CRITICAL: Protect against division by zero in bid/ask calculation
+            bid_ask_price = total_debit / (contracts * 100) if (contracts * 100) > 0 else 0
             position_id = self._execute_trade(
                 trade,
-                {'mid': call_price['mid'] + put_price['mid'], 'bid': total_debit / (contracts * 100), 'ask': total_debit / (contracts * 100), 'contract_symbol': 'STRADDLE_FALLBACK'},
+                {'mid': call_price['mid'] + put_price['mid'], 'bid': bid_ask_price, 'ask': bid_ask_price, 'contract_symbol': 'STRADDLE_FALLBACK'},
                 contracts,
                 -(call_price['mid'] + put_price['mid']),  # Negative because we're buying (debit)
                 exp_date,
@@ -1538,10 +1570,10 @@ This trade ensures we're always active in the market"""
             )
 
             if position_id:
-                self.set_config('last_trade_date', datetime.now().strftime('%Y-%m-%d'))
+                self.set_config('last_trade_date', datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'))
                 self.log_action(
                     'EXECUTE',
-                    f"GUARANTEED TRADE: ATM Straddle @ ${strike} ({contracts} contracts) - MINIMUM one trade per day fulfilled",
+                    f"GUARANTEED TRADE: ATM Straddle @ ${strike} ({contracts} contracts) | Expiration: {exp_date} ({dte} DTE) - MINIMUM one trade per day fulfilled",
                     position_id=position_id,
                     success=True
                 )
@@ -1564,7 +1596,7 @@ This trade ensures we're always active in the market"""
 
     def _get_expiration_string(self, dte: int) -> str:
         """Get expiration date string for options (weekly)"""
-        today = datetime.now()
+        today = datetime.now(CENTRAL_TZ)
 
         if dte <= 7:
             days_until_friday = (4 - today.weekday()) % 7
@@ -1579,7 +1611,7 @@ This trade ensures we're always active in the market"""
 
     def _get_expiration_string_monthly(self, dte: int) -> str:
         """Get monthly expiration date (3rd Friday of month)"""
-        today = datetime.now()
+        today = datetime.now(CENTRAL_TZ)
         target_date = today + timedelta(days=dte)
 
         # Find 3rd Friday of target month
@@ -1619,7 +1651,7 @@ This trade ensures we're always active in the market"""
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
 
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
 
         c.execute("""
             INSERT INTO autonomous_positions (
@@ -1808,7 +1840,7 @@ This trade ensures we're always active in the market"""
 
                     self.log_action(
                         'CLOSE',
-                        f"Closed {pos['strategy']}: P&L ${unrealized_pnl:+.2f} ({pnl_pct:+.1f}%) - {reason}",
+                        f"Closed {pos['strategy']}: P&L ${unrealized_pnl:+.2f} ({pnl_pct:+.1f}%) | Expiration: {pos['expiration_date']} - {reason}",
                         position_id=pos['id'],
                         success=True
                     )
@@ -1846,7 +1878,7 @@ This trade ensures we're always active in the market"""
 
         # EXPIRATION SAFETY: Close on expiration day
         exp_date = datetime.strptime(pos['expiration_date'], '%Y-%m-%d')
-        dte = (exp_date - datetime.now()).days
+        dte = (exp_date - datetime.now(CENTRAL_TZ)).days
         if dte <= 0:
             return True, f"⏰ EXPIRATION: {dte} DTE - closing to avoid assignment"
 
@@ -1984,7 +2016,7 @@ Now analyze this position:"""
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
 
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
 
         c.execute("""
             UPDATE autonomous_positions
