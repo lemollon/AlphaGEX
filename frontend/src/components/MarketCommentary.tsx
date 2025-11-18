@@ -27,8 +27,17 @@ export default function MarketCommentary() {
       }
     } catch (err: any) {
       console.error('Failed to fetch market commentary:', err)
-      setError('Unable to load commentary')
-      setCommentary('Market commentary temporarily unavailable. Please refresh.')
+
+      // Extract error message from backend or use generic message
+      const errorMessage = err?.message || 'Unable to load commentary'
+      setError(errorMessage)
+
+      // Show helpful fallback message
+      if (errorMessage.includes('API key')) {
+        setCommentary('API key not configured. Please contact your administrator.')
+      } else {
+        setCommentary('Market commentary temporarily unavailable. Please refresh.')
+      }
     } finally {
       setLoading(false)
     }

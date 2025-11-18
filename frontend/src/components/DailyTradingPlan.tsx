@@ -28,7 +28,16 @@ export default function DailyTradingPlan() {
       }
     } catch (err: any) {
       console.error('Failed to fetch daily plan:', err)
-      setPlan('Daily trading plan temporarily unavailable.')
+
+      // Extract error message from backend or use generic message
+      const errorMessage = err?.message || 'Daily trading plan temporarily unavailable.'
+
+      // Show helpful fallback message based on error type
+      if (errorMessage.includes('API key')) {
+        setPlan('⚠️ API key not configured. Please contact your administrator to enable AI-powered trading plans.')
+      } else {
+        setPlan('Daily trading plan temporarily unavailable. Please try refreshing.')
+      }
     } finally {
       setLoading(false)
     }
