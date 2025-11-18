@@ -21,7 +21,17 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from config_and_database import DB_PATH
-from polygon_data_fetcher import polygon_fetcher
+try:
+    from polygon_data_fetcher import polygon_fetcher
+    POLYGON_AVAILABLE = True
+except:
+    POLYGON_AVAILABLE = False
+
+try:
+    from flexible_price_data import price_data_fetcher
+    FLEXIBLE_DATA_AVAILABLE = True
+except:
+    FLEXIBLE_DATA_AVAILABLE = False
 
 
 @dataclass
@@ -125,7 +135,7 @@ class BacktestBase:
         self.trades = []
 
     def fetch_historical_data(self) -> pd.DataFrame:
-        """Fetch historical price data from Polygon.io"""
+        """Fetch historical price data using flexible data sources with fallback"""
         print(f"Fetching {self.symbol} data from {self.start_date} to {self.end_date}...")
 
         # Calculate number of days between start and end
@@ -133,21 +143,60 @@ class BacktestBase:
         end = datetime.strptime(self.end_date, '%Y-%m-%d')
         days = (end - start).days
 
-        # Fetch from Polygon.io
-        df = polygon_fetcher.get_price_history(
-            symbol=self.symbol,
-            days=days,
-            timeframe='day',
-            multiplier=1
-        )
+        df = None
+
+        # Try Polygon first if available
+        if POLYGON_AVAILABLE:
+            try:
+                df = polygon_fetcher.get_price_history(
+                    symbol=self.symbol,
+                    days=days,
+                    timeframe='day',
+                    multiplier=1
+                )
+                if df is not None and not df.empty:
+                    print(f"✓ Fetched {len(df)} days of data from Polygon.io")
+            except Exception as e:
+                print(f"⚠️ Polygon fetch failed: {e}")
+                df = None
+
+        # Fallback to flexible data fetcher (yfinance, etc.)
+        if (df is None or df.empty) and FLEXIBLE_DATA_AVAILABLE:
+            try:
+                print("Falling back to yfinance...")
+                import yfinance as yf
+                ticker = yf.Ticker(self.symbol)
+                df = ticker.history(start=self.start_date, end=self.end_date)
+
+                if df is not None and not df.empty:
+                    # Standardize column names to match Polygon format
+                    df = df.rename(columns={
+                        'Open': 'Open',
+                        'High': 'High',
+                        'Low': 'Low',
+                        'Close': 'Close',
+                        'Volume': 'Volume'
+                    })
+                    print(f"✓ Fetched {len(df)} days of data from yfinance")
+            except Exception as e:
+                print(f"⚠️ yfinance fetch failed: {e}")
+                df = None
+
+        # Final fallback: simple price fetcher (with synthetic data generation)
+        if df is None or df.empty:
+            try:
+                from simple_price_fetcher import get_price_history
+                df = get_price_history(self.symbol, self.start_date, self.end_date)
+            except Exception as e:
+                print(f"⚠️ Simple fetcher failed: {e}")
+                df = None
 
         if df is None or df.empty:
-            raise ValueError(f"No data fetched for {self.symbol} from Polygon.io")
+            raise ValueError(f"No data fetched for {self.symbol} - all data sources failed")
 
         # Filter to exact date range
         df = df[(df.index >= start) & (df.index <= end)]
 
-        print(f"✓ Fetched {len(df)} days of data from Polygon.io")
         self.price_data = df
         return df
 

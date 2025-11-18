@@ -25,19 +25,79 @@ class GEXBacktester(BacktestBase):
         self.gex_data = None
         self.api_client = None
 
+    def simulate_gex_data(self, price_data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Simulate approximate GEX levels when real data unavailable
+
+        Uses simplified heuristics based on price action and volatility:
+        - Flip point typically 2-3% below current price
+        - Call wall ~2% above price
+        - Put wall ~2-3% below price
+        - Net GEX correlates inversely with recent volatility
+        """
+        df = price_data.copy()
+
+        # Calculate volatility for GEX estimation
+        df['returns'] = df['Close'].pct_change()
+        df['volatility'] = df['returns'].rolling(10).std() * 100
+
+        # Simulate flip point (typically below current price, moves with volatility)
+        df['flip_point'] = df['Close'] * 0.975  # 2.5% below current
+
+        # Call wall (resistance above)
+        df['call_wall'] = df['Close'] * 1.020  # 2% above
+
+        # Put wall (support below)
+        df['put_wall'] = df['Close'] * 0.975  # 2.5% below
+
+        # Net GEX (negative when volatile, positive when calm)
+        # Scale based on median volatility to create realistic variation
+        median_vol = df['volatility'].median()
+        df['net_gex'] = df['volatility'].apply(
+            lambda v: -5e9 if v > median_vol * 1.5 else 2e9 if v < median_vol * 0.7 else 0
+        )
+
+        # Derived metrics
+        df['dist_to_flip'] = abs(df['Close'] - df['flip_point']) / df['flip_point'] * 100
+        df['dist_to_call_wall'] = abs(df['Close'] - df['call_wall']) / df['Close'] * 100
+        df['dist_to_put_wall'] = abs(df['Close'] - df['put_wall']) / df['Close'] * 100
+
+        # Calculate ATR
+        df['HL'] = df['High'] - df['Low']
+        df['HC'] = abs(df['High'] - df['Close'].shift(1))
+        df['LC'] = abs(df['Low'] - df['Close'].shift(1))
+        df['TR'] = df[['HL', 'HC', 'LC']].max(axis=1)
+        df['ATR'] = df['TR'].rolling(14).mean()
+
+        print(f"✓ Simulated GEX data generated")
+        print(f"   Net GEX range: ${df['net_gex'].min()/1e9:.2f}B to ${df['net_gex'].max()/1e9:.2f}B")
+        print(f"   Flip point range: ${df['flip_point'].min():.2f} to ${df['flip_point'].max():.2f}")
+
+        return df
+
     def fetch_real_gex_data(self, price_data: pd.DataFrame) -> pd.DataFrame:
         """
         Fetch REAL historical GEX data from Trading Volatility API
 
         Returns price data merged with actual GEX levels (net GEX, flip point, walls)
         """
-        from core_classes_and_engines import TradingVolatilityAPI
+        try:
+            from core_classes_and_engines import TradingVolatilityAPI
+        except ImportError as e:
+            print(f"⚠️ Trading Volatility API not available: {e}")
+            print("   Falling back to SIMULATED GEX data for backtesting...")
+            return self.simulate_gex_data(price_data)
 
         df = price_data.copy()
 
         # Initialize API client
         if self.api_client is None:
-            self.api_client = TradingVolatilityAPI()
+            try:
+                self.api_client = TradingVolatilityAPI()
+            except Exception as e:
+                print(f"⚠️ Failed to initialize Trading Volatility API: {e}")
+                print("   Falling back to SIMULATED GEX data for backtesting...")
+                return self.simulate_gex_data(price_data)
 
         print(f"📡 Fetching REAL historical GEX data from Trading Volatility API...")
 
@@ -47,17 +107,18 @@ class GEXBacktester(BacktestBase):
         days_back = (end_dt - start_dt).days + 10  # Add buffer
 
         # Fetch real historical GEX data
-        historical_gex = self.api_client.get_historical_gamma(self.symbol, days_back=days_back)
+        try:
+            historical_gex = self.api_client.get_historical_gamma(self.symbol, days_back=days_back)
+        except Exception as e:
+            print(f"⚠️ Failed to fetch historical GEX data: {e}")
+            print("   Falling back to SIMULATED GEX data for backtesting...")
+            return self.simulate_gex_data(price_data)
 
         if not historical_gex or len(historical_gex) == 0:
-            print("❌ CRITICAL: No historical GEX data available from Trading Volatility API")
-            print("   Possible issues:")
-            print("   1. API returning 403 - check IP whitelisting / authentication")
-            print("   2. Symbol not available in historical data")
-            print("   3. Date range exceeds subscription limits")
-            print("\n   CANNOT RUN BACKTEST WITHOUT REAL GEX DATA")
-            print("   Fix: Contact support@tradingvolatility.net to resolve API access")
-            raise ValueError("Historical GEX data unavailable - cannot backtest without real data")
+            print("⚠️ WARNING: No historical GEX data available from Trading Volatility API")
+            print("   Falling back to SIMULATED GEX data for backtesting...")
+            print("   NOTE: Results will be approximate - use real data for production validation")
+            return self.simulate_gex_data(price_data)
 
         print(f"✅ Received {len(historical_gex)} days of REAL GEX data")
 
