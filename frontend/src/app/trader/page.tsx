@@ -58,6 +58,7 @@ interface Trade {
   current_price?: number
   current_spot_price?: number
   trade_reasoning?: string
+  expiration_date?: string
 }
 
 interface TradeLogEntry {
@@ -178,7 +179,8 @@ export default function AutonomousTrader() {
             entry_spot_price: trade.entry_spot_price,
             current_price: trade.current_price,
             current_spot_price: trade.current_spot_price,
-            trade_reasoning: trade.trade_reasoning
+            trade_reasoning: trade.trade_reasoning,
+            expiration_date: trade.expiration_date
           }))
           setRecentTrades(mappedTrades)
         }
@@ -641,10 +643,10 @@ export default function AutonomousTrader() {
                           <div className="bg-background-primary p-4 rounded-lg font-mono text-sm whitespace-pre-wrap text-text-secondary">
                             {trade.trade_reasoning}
                           </div>
-                          <div className="grid grid-cols-3 gap-4 mt-4">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
                             <div className="p-3 bg-background-primary rounded-lg">
                               <div className="text-xs text-text-secondary mb-1">Entry Bid/Ask</div>
-                              <div className="text-text-primary font-semibold">${trade.entry_bid?.toFixed(2)} / ${trade.entry_ask?.toFixed(2)}</div>
+                              <div className="text-text-primary font-semibold">${trade.entry_bid?.toFixed(2) || '0.00'} / ${trade.entry_ask?.toFixed(2) || '0.00'}</div>
                             </div>
                             <div className="p-3 bg-background-primary rounded-lg">
                               <div className="text-xs text-text-secondary mb-1">Strike(s)</div>
@@ -653,6 +655,10 @@ export default function AutonomousTrader() {
                             <div className="p-3 bg-background-primary rounded-lg">
                               <div className="text-xs text-text-secondary mb-1">Contracts</div>
                               <div className="text-text-primary font-semibold">{trade.quantity}</div>
+                            </div>
+                            <div className="p-3 bg-background-primary rounded-lg">
+                              <div className="text-xs text-text-secondary mb-1">Expiration</div>
+                              <div className="text-text-primary font-semibold">{trade.expiration_date || 'N/A'}</div>
                             </div>
                           </div>
                         </div>
