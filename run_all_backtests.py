@@ -44,12 +44,12 @@ class MasterBacktestRunner:
         print("1. PSYCHOLOGY TRAP DETECTION (13 Patterns)")
         print("="*77)
         try:
-            psych_backtester = PsychologyBacktester(
-                symbol=self.symbol,
-                start_date=self.start_date,
-                end_date=self.end_date
-            )
-            self.results['psychology'] = psych_backtester.run_backtest()
+            psych_backtester = PsychologyBacktester(symbol=self.symbol)
+            # PsychologyBacktester has different interface - uses separate methods
+            # For now, skip it as it needs database data, not just price history
+            print("⚠️ Psychology backtest requires historical regime signal data from database")
+            print("   Use psychology_backtest.py directly after running the system for 90+ days")
+            self.results['psychology'] = None
         except Exception as e:
             print(f"❌ Psychology backtest failed: {e}")
             self.results['psychology'] = None
