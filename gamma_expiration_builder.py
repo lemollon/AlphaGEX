@@ -14,11 +14,18 @@ Author: AlphaGEX Team
 Date: 2025-11-14
 """
 
-import yfinance as yf
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from scipy import stats
+
+# Try to import yfinance (optional - Polygon.io is primary source)
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+    print("ℹ️  yfinance not available - using Polygon.io for options data")
 
 # Try to import Polygon fetcher as backup
 try:
@@ -40,7 +47,10 @@ class GammaExpirationBuilder:
 
     def __init__(self, symbol: str):
         self.symbol = symbol
-        self.ticker = yf.Ticker(symbol)
+        if YFINANCE_AVAILABLE:
+            self.ticker = yf.Ticker(symbol)
+        else:
+            self.ticker = None  # Will use Polygon.io instead
 
     def calculate_gamma(self, spot: float, strike: float, iv: float, dte: int,
                        option_type: str = 'call', rf_rate: float = 0.045) -> float:
@@ -87,6 +97,11 @@ class GammaExpirationBuilder:
                 'puts': DataFrame
             }
         """
+        if not YFINANCE_AVAILABLE or self.ticker is None:
+            # yfinance not available - Polygon.io paid tier needed for options chains
+            print(f"   ℹ️  yfinance unavailable - options chains require Polygon.io paid tier")
+            return {'calls': None, 'puts': None}
+
         try:
             chain = self.ticker.option_chain(expiration)
             return {'calls': chain.calls, 'puts': chain.puts}
@@ -108,6 +123,11 @@ class GammaExpirationBuilder:
         print(f"\n🔨 Building gamma expiration data for {self.symbol}")
         print(f"   Current price: ${current_price:.2f}")
         print(f"   Max DTE: {max_dte} days")
+
+        if not YFINANCE_AVAILABLE or self.ticker is None:
+            print(f"   ℹ️  yfinance unavailable - returning empty expiration data")
+            print(f"   ℹ️  Psychology detector will use basic GEX analysis instead")
+            return []
 
         try:
             # Get all available expirations
