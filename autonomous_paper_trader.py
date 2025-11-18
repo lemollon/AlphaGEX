@@ -828,11 +828,11 @@ class AutonomousPaperTrader:
                 print(f"✅ VIX fetched from Polygon.io: {vix_price:.2f}")
                 return vix_price
 
-            print(f"⚠️ VIX data unavailable from Polygon.io - using default 20.0")
-            return 20.0  # Default neutral VIX
+            print(f"⚠️ VIX data unavailable from Polygon.io - using default 17.0 (market average)")
+            return 17.0  # Market average VIX (normal conditions)
         except Exception as e:
             print(f"❌ Failed to fetch VIX from Polygon.io: {e}")
-            return 20.0
+            return 17.0
 
     def _get_momentum(self) -> Dict:
         """Calculate recent momentum (1h, 4h price change) from Polygon.io"""
@@ -929,8 +929,18 @@ class AutonomousPaperTrader:
 
         distance_to_flip = ((flip - spot) / spot * 100) if spot else 0
 
-        # Enhanced scoring factors
-        vix_regime = 'high' if vix > 25 else 'low' if vix < 15 else 'normal'
+        # Enhanced scoring factors with accurate VIX classification
+        # VIX Historical Context: <12=very low, 12-15=low, 15-20=normal, 20-30=elevated, >30=high/fear
+        if vix > 30:
+            vix_regime = 'high'  # Fear/panic mode
+        elif vix > 20:
+            vix_regime = 'elevated'  # Heightened concern
+        elif vix > 15:
+            vix_regime = 'normal'  # Typical market conditions
+        elif vix > 12:
+            vix_regime = 'low'  # Calm market
+        else:
+            vix_regime = 'very_low'  # Complacent market
         momentum_trend = momentum.get('trend', 'neutral')
         momentum_4h = momentum.get('4h', 0)
         session = time_context.get('session', 'morning')
@@ -1104,8 +1114,8 @@ MULTI-TIMEFRAME RSI:
             elif momentum_trend in ['bearish', 'strong_bearish']:
                 base_confidence -= 10  # Momentum against us
 
-            # VIX factor: High VIX = more explosive moves with negative GEX
-            if vix_regime == 'high':
+            # VIX factor: Elevated/High VIX = more explosive moves with negative GEX
+            if vix_regime in ['elevated', 'high']:
                 base_confidence += 5
 
             # Time factor: Morning = best for new positions
@@ -1124,7 +1134,7 @@ Price: ${spot:.2f} is {abs(distance_to_flip):.2f}% below flip ${flip:.2f}
 → Rally forces dealers to BUY → accelerates move
 
 ENHANCED FACTORS:
-• VIX: {vix:.1f} ({vix_regime}) - {'Higher vol = stronger moves' if vix_regime == 'high' else 'Normal regime'}
+• VIX: {vix:.1f} ({vix_regime}) - {'FEAR MODE - explosive moves likely' if vix_regime == 'high' else 'Elevated vol - stronger moves' if vix_regime == 'elevated' else 'Normal regime'}
 • Momentum: {momentum_trend} ({momentum_4h:+.1f}% 4h) - {'Aligned!' if momentum_4h > 0 else 'Against us' if momentum_4h < -0.2 else 'Neutral'}
 • Session: {session} - {'Prime time' if session in ['morning', 'opening'] else 'Standard'}
 • P/C Ratio: {put_call_ratio:.2f} - {'Bearish sentiment, squeeze likely' if put_call_ratio > 1.2 else 'Neutral'}"""
@@ -1152,7 +1162,7 @@ ENHANCED FACTORS:
                 base_confidence += 5  # Momentum aligned
             elif momentum_trend in ['bullish', 'strong_bullish']:
                 base_confidence -= 10
-            if vix_regime == 'high':
+            if vix_regime in ['elevated', 'high']:
                 base_confidence += 5
             if session in ['morning', 'opening']:
                 base_confidence += 3
@@ -1182,7 +1192,7 @@ ENHANCED FACTORS:
                 base_confidence += 5
             elif momentum_trend in ['bearish', 'strong_bearish'] and spot >= flip:
                 base_confidence += 5
-            if vix_regime == 'low':
+            if vix_regime in ['low', 'very_low']:
                 base_confidence += 3  # Low VIX good for range trades
             if session in ['morning']:
                 base_confidence += 2
