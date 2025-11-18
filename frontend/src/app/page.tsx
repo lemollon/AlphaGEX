@@ -43,6 +43,7 @@ interface Position {
 }
 
 interface TradeLogEntry {
+  date: string
   time: string
   action: string
   details: string
@@ -125,16 +126,32 @@ export default function Dashboard() {
     return value.toFixed(2)
   }
 
-  const formatTime = (timeStr: string) => {
+  const formatTime = (dateStr?: string, timeStr?: string) => {
     try {
-      return new Intl.DateTimeFormat('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-        timeZone: 'America/Chicago'
-      }).format(new Date(timeStr))
+      // If only one argument provided and it looks like a full datetime, use it directly
+      if (timeStr === undefined && dateStr) {
+        return new Intl.DateTimeFormat('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: 'America/Chicago'
+        }).format(new Date(dateStr))
+      }
+
+      // Combine date and time if both provided
+      if (dateStr && timeStr) {
+        const datetime = `${dateStr}T${timeStr}`
+        return new Intl.DateTimeFormat('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: 'America/Chicago'
+        }).format(new Date(datetime))
+      }
+
+      return timeStr || dateStr || 'N/A'
     } catch {
-      return timeStr
+      return timeStr || dateStr || 'N/A'
     }
   }
 
@@ -152,8 +169,14 @@ export default function Dashboard() {
       const csvRows = [headers.join(',')]
 
       trades.forEach((trade: TradeLogEntry) => {
+        // Combine date and time to create valid datetime
+        const datetime = trade.date && trade.time ? `${trade.date}T${trade.time}` : null
+        const formattedDateTime = datetime
+          ? new Date(datetime).toLocaleString('en-US', { timeZone: 'America/Chicago' })
+          : 'Invalid Date'
+
         const row = [
-          `"${new Date(trade.time).toLocaleString('en-US', { timeZone: 'America/Chicago' })}"`,
+          `"${formattedDateTime}"`,
           `"${trade.action}"`,
           `"${trade.details}"`,
           trade.pnl ? trade.pnl.toFixed(2) : '0.00'
@@ -640,7 +663,7 @@ export default function Dashboard() {
                 tradeLog.map((entry, idx) => (
                   <div key={idx} className="flex items-center justify-between p-4 bg-background-hover rounded-lg hover:bg-background-deep transition-all border border-transparent hover:border-primary/30">
                     <div className="flex items-center gap-4">
-                      <div className="text-xs text-text-muted font-mono bg-background-deep px-2 py-1 rounded">{formatTime(entry.time)}</div>
+                      <div className="text-xs text-text-muted font-mono bg-background-deep px-2 py-1 rounded">{formatTime(entry.date, entry.time)}</div>
                       <div className="text-sm font-medium text-text-primary">{entry.action}</div>
                       <div className="text-sm text-text-secondary">{entry.details}</div>
                     </div>
@@ -668,7 +691,7 @@ export default function Dashboard() {
                     +${(bestTrade.pnl || 0).toFixed(2)}
                   </div>
                   <div className="text-sm text-text-secondary mb-1">{bestTrade.details}</div>
-                  <div className="text-xs text-text-muted">{formatTime(bestTrade.time)}</div>
+                  <div className="text-xs text-text-muted">{formatTime(bestTrade.date, bestTrade.time)}</div>
                 </div>
               ) : (
                 <div className="py-8 text-center text-text-muted">
@@ -688,7 +711,7 @@ export default function Dashboard() {
                     ${(worstTrade.pnl || 0).toFixed(2)}
                   </div>
                   <div className="text-sm text-text-secondary mb-1">{worstTrade.details}</div>
-                  <div className="text-xs text-text-muted">{formatTime(worstTrade.time)}</div>
+                  <div className="text-xs text-text-muted">{formatTime(worstTrade.date, worstTrade.time)}</div>
                 </div>
               ) : (
                 <div className="py-8 text-center text-text-muted">
