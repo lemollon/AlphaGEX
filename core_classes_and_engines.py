@@ -1512,11 +1512,7 @@ class TradingVolatilityAPI:
                         self._handle_rate_limit_error()
                         return {'error': 'rate_limit'}
 
-                    # For 403 without rate limit message, use mock data fallback
-                    if response.status_code == 403:
-                        print(f"⚠️  Trading Volatility API blocked (403) - using mock GEX fallback...")
-                        return self._get_mock_gex_data(symbol)
-
+                    # NO MOCK DATA - Return error if API fails
                     return {'error': f'API returned {response.status_code}'}
 
                 # Check for rate limit error in response text (redundant check but safe)
