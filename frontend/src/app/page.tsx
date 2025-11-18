@@ -159,7 +159,7 @@ export default function Dashboard() {
   const flipPoint = gexData?.flip_point || 0
   const mmState = getMMState(netGex, spotPrice, flipPoint)
 
-  const todayPnL = tradeLog.reduce((sum, trade) => sum + (trade.pnl || 0), 0)
+  const todayPnL = performance?.today_pnl || 0
   const todayPnLPercent = performance ? (todayPnL / 5000) * 100 : 0
   const unrealizedPnL = positions.reduce((sum, pos) => sum + pos.unrealized_pnl, 0)
   const totalPnL = todayPnL + unrealizedPnL
