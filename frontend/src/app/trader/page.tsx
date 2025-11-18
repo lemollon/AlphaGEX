@@ -118,18 +118,24 @@ export default function AutonomousTrader() {
       try {
         setLoading(true)
 
-        // Fetch trader status, performance, and trades in parallel
-        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes] = await Promise.all([
+        // Fetch all data in parallel, but handle failures gracefully with Promise.allSettled
+        // This ensures one failed endpoint doesn't break the entire page
+        const results = await Promise.allSettled([
           apiClient.getTraderStatus(),
           apiClient.getTraderPerformance(),
           apiClient.getTraderTrades(10),
           apiClient.getStrategies(),
-          apiClient.getAutonomousLogs({ limit: 20 }),
-          apiClient.getCompetitionLeaderboard(),
-          apiClient.getAllPatternBacktests(90),
-          apiClient.getRiskStatus(),
+          apiClient.getAutonomousLogs({ limit: 20 }).catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getCompetitionLeaderboard().catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getAllPatternBacktests(90).catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getRiskStatus().catch(() => ({ data: { success: false, data: null } })),
           apiClient.getTradeLog()
         ])
+
+        // Extract results (fulfilled promises only)
+        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes] = results.map(result =>
+          result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
+        )
 
         if (statusRes.data.success) {
           setTraderStatus(statusRes.data.data)
@@ -177,7 +183,7 @@ export default function AutonomousTrader() {
           setRecentTrades(mappedTrades)
         }
 
-        // Set autonomous trader advanced features data
+        // Set autonomous trader advanced features data (gracefully handle missing endpoints)
         if (logsRes.data.success) {
           setAutonomousLogs(logsRes.data.data || [])
         }
