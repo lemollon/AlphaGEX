@@ -51,16 +51,33 @@ except ImportError:
     # Fallback to gex_copilot.db in parent directory
     DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'gex_copilot.db')
 
+# Get API key with fallback support (ANTHROPIC_API_KEY or CLAUDE_API_KEY)
+api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+
+# Ensure ANTHROPIC_API_KEY is set for ChatAnthropic
+if api_key and not os.getenv('ANTHROPIC_API_KEY'):
+    os.environ['ANTHROPIC_API_KEY'] = api_key
+
 # Initialize Claude Haiku 4.5
+# Will use ANTHROPIC_API_KEY from environment
 llm = ChatAnthropic(
     model="claude-haiku-4-20250514",
     temperature=0.1,
     max_tokens=4096
-)
+) if api_key else None
 
 # Initialize AI systems (if available)
 ai_reasoning = AutonomousAIReasoning() if AutonomousAIReasoning else None
 trade_advisor = AITradeAdvisor() if AITradeAdvisor else None
+
+# Helper function to validate API key is configured
+def require_api_key():
+    """Raises HTTPException if API key is not configured"""
+    if not api_key or not llm:
+        raise HTTPException(
+            status_code=500,
+            detail="Claude API key not configured. Set ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable."
+        )
 
 
 # ============================================================================
@@ -83,6 +100,8 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
     Generates comprehensive pre-trade safety checklist with 20+ validations.
     Returns APPROVED/REJECTED with detailed reasoning.
     """
+    require_api_key()
+
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -265,6 +284,8 @@ async def explain_trade(trade_id: str):
     Generates comprehensive explanation of WHY a trade was taken.
     Includes strike selection, position sizing, price targets, Greeks, market mechanics.
     """
+    require_api_key()
+
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -410,6 +431,8 @@ async def generate_daily_trading_plan():
     Generates comprehensive daily trading plan with top 3 opportunities,
     key price levels, psychology traps to avoid, risk allocation, and time-based actions.
     """
+    require_api_key()
+
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -572,6 +595,8 @@ async def get_position_guidance(trade_id: str):
     - Greeks updates
     - Time decay watch
     """
+    require_api_key()
+
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -726,6 +751,8 @@ async def get_market_commentary():
     Generates real-time market narration explaining what's happening NOW
     and what action to take IMMEDIATELY.
     """
+    require_api_key()
+
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -835,6 +862,8 @@ async def compare_strategies():
     Compares all available trading strategies for current market conditions.
     Shows directional, iron condor, wait options with head-to-head comparison.
     """
+    require_api_key()
+
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -980,6 +1009,8 @@ async def explain_greek(request: GreeksExplainerRequest):
     """
     Provides context-aware explanation of a specific Greek for the trader's position.
     """
+    require_api_key()
+
     try:
         # Generate contextual explanation
         prompt = f"""You are teaching an options trader about Greeks in the context of THEIR actual trade. Explain this Greek with specific examples using THEIR numbers.
