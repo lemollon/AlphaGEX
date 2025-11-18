@@ -1420,46 +1420,6 @@ class TradingVolatilityAPI:
             print(f"  ⚠️ Could not parse strike data: {e}")
             return 0, 0
 
-    def _get_mock_gex_data(self, symbol: str) -> Dict:
-        """
-        Generate realistic mock GEX data for testing when API is unavailable
-        Uses live spot price if possible, otherwise defaults
-        """
-        from datetime import datetime
-
-        # Try to get real spot price
-        spot_price = 580.0  # Default
-        try:
-            from polygon_data_fetcher import polygon_fetcher
-            live_price = polygon_fetcher.get_current_price(symbol)
-            if live_price and live_price > 0:
-                spot_price = live_price
-                print(f"✅ Got live price from Polygon: ${spot_price:.2f}")
-        except:
-            print(f"⚠️ Using default spot price: ${spot_price:.2f}")
-
-        # Generate realistic GEX metrics
-        net_gex = -2.1e9  # Short gamma
-        flip_point = spot_price + 2.50
-        call_wall = round(spot_price * 1.015 / 5) * 5
-        put_wall = round(spot_price * 0.985 / 5) * 5
-
-        result = {
-            'symbol': symbol,
-            'spot_price': float(spot_price),
-            'net_gex': float(net_gex),
-            'flip_point': float(flip_point),
-            'call_wall': float(call_wall),
-            'put_wall': float(put_wall),
-            'put_call_ratio': 1.15,
-            'implied_volatility': 0.16,
-            'collection_date': datetime.now().strftime('%Y-%m-%d'),
-            'raw_data': {'source': 'mock_fallback'}
-        }
-
-        print(f"📊 Mock GEX: Spot=${spot_price:.2f}, NetGEX=${net_gex/1e9:.2f}B, Flip=${flip_point:.2f}")
-        return result
-
     def get_net_gamma(self, symbol: str) -> Dict:
         """Fetch net gamma exposure data from Trading Volatility API with intelligent rate limiting"""
         import requests
@@ -1512,11 +1472,7 @@ class TradingVolatilityAPI:
                         self._handle_rate_limit_error()
                         return {'error': 'rate_limit'}
 
-                    # For 403 without rate limit message, use mock data fallback
-                    if response.status_code == 403:
-                        print(f"⚠️  Trading Volatility API blocked (403) - using mock GEX fallback...")
-                        return self._get_mock_gex_data(symbol)
-
+                    # NO MOCK DATA - Return error if API fails
                     return {'error': f'API returned {response.status_code}'}
 
                 # Check for rate limit error in response text (redundant check but safe)

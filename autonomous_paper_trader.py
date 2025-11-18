@@ -700,8 +700,10 @@ class AutonomousPaperTrader:
                         if self.db_logger:
                             self.db_logger.log_trade_decision(
                                 symbol='SPY',
-                                decision='BLOCKED',
-                                reasoning=risk_reason
+                                action='BLOCKED',
+                                strategy=trade.get('strategy', 'Unknown'),
+                                reasoning=risk_reason,
+                                confidence=0
                             )
                         return None
 
@@ -1636,16 +1638,10 @@ This trade ensures we're always active in the market"""
         if self.db_logger:
             self.db_logger.log_trade_decision(
                 symbol=trade['symbol'],
-                decision='EXECUTE',
+                action=trade['action'],
+                strategy=trade['strategy'],
                 reasoning=trade.get('reasoning', 'See trade details'),
-                trade_details={
-                    'strategy': trade['strategy'],
-                    'action': trade['action'],
-                    'strike': trade['strike'],
-                    'contracts': contracts,
-                    'entry_price': entry_price,
-                    'confidence': trade['confidence']
-                }
+                confidence=trade.get('confidence', 0)
             )
 
         conn = sqlite3.connect(self.db_path)
