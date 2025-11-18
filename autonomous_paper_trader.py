@@ -1553,10 +1553,15 @@ EXPIRATION: {dte} DTE (monthly) for theta decay
 RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
             }
 
-            # Execute as multi-leg position
+            # Execute as multi-leg position with REAL bid/ask from options chain
+            # Iron Condor bid (best fill) = max credit we can collect
+            ic_bid = (call_sell.get('bid', 0) - call_buy.get('ask', 0)) + (put_sell.get('bid', 0) - put_buy.get('ask', 0))
+            # Iron Condor ask (worst fill) = min credit we'd collect
+            ic_ask = (call_sell.get('ask', 0) - call_buy.get('bid', 0)) + (put_sell.get('ask', 0) - put_buy.get('bid', 0))
+
             position_id = self._execute_trade(
                 trade,
-                {'mid': credit, 'bid': credit, 'ask': credit, 'contract_symbol': 'IRON_CONDOR'},
+                {'mid': credit, 'bid': ic_bid, 'ask': ic_ask, 'contract_symbol': 'IRON_CONDOR'},
                 contracts,
                 credit,
                 exp_date,
