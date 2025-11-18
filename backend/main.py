@@ -2422,9 +2422,10 @@ async def get_trader_performance():
     try:
         perf = trader.get_performance()
 
-        # Calculate additional metrics
-        winning_trades = int(perf['total_trades'] * perf['win_rate'] / 100) if perf['total_trades'] > 0 else 0
-        losing_trades = perf['total_trades'] - winning_trades
+        # Calculate additional metrics (based on CLOSED trades only, not open positions)
+        closed_count = perf.get('closed_trades', 0)
+        winning_trades = int(closed_count * perf['win_rate'] / 100) if closed_count > 0 else 0
+        losing_trades = closed_count - winning_trades
 
         return {
             "success": True,
@@ -2432,7 +2433,8 @@ async def get_trader_performance():
                 "total_pnl": perf['total_pnl'],
                 "today_pnl": perf['unrealized_pnl'],  # Approximate
                 "win_rate": perf['win_rate'],
-                "total_trades": perf['total_trades'],
+                "total_trades": perf['total_trades'],  # All positions (open + closed)
+                "closed_trades": closed_count,  # Only closed positions
                 "winning_trades": winning_trades,
                 "losing_trades": losing_trades,
                 "sharpe_ratio": 0,  # TODO: Calculate sharpe ratio
