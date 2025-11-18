@@ -129,13 +129,13 @@ export default function AutonomousTrader() {
           // Map database trades to UI format
           const mappedTrades = tradesRes.data.data.map((trade: any) => ({
             id: trade.id?.toString() || trade.timestamp,
-            timestamp: trade.timestamp || new Date().toISOString(),
+            timestamp: `${trade.entry_date}T${trade.entry_time}`,
             symbol: trade.symbol || 'SPY',
             action: trade.action || 'BUY',
             type: trade.option_type || 'CALL',
             strike: trade.strike || 0,
-            quantity: trade.quantity || 0,
-            price: trade.entry_price || 0,
+            quantity: trade.contracts || 0,  // Fixed: use contracts not quantity
+            price: Math.abs(trade.entry_price) || 0,  // Fixed: use absolute value
             status: trade.status === 'OPEN' ? 'filled' : 'filled',
             pnl: trade.realized_pnl || trade.unrealized_pnl || 0
           }))
