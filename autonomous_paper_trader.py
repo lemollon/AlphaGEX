@@ -333,19 +333,52 @@ class AutonomousPaperTrader:
         conn.close()
 
     def should_trade_today(self) -> bool:
-        """Check if we should find a new trade today"""
+        """Check if we should find a new trade - allows multiple trades per day within risk limits"""
         now = datetime.now(CENTRAL_TZ)
-        today = now.strftime('%Y-%m-%d')
-        last_trade_date = self.get_config('last_trade_date')
-
-        # Trade once per day
-        if last_trade_date == today:
-            return False
 
         # Check if market is open (simple check - Monday-Friday)
         if now.weekday() >= 5:  # Saturday or Sunday
             return False
 
+        # Check risk limits instead of arbitrary daily trade count
+        # Risk Manager will block trades if:
+        # - Daily loss limit exceeded
+        # - Max position size exceeded
+        # - Max drawdown exceeded
+        # - Too many open positions
+
+        # Get today's P&L and check daily loss limit
+        today = now.strftime('%Y-%m-%d')
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+
+        # Count open positions - respect max open positions limit
+        c.execute("SELECT COUNT(*) FROM autonomous_positions WHERE status = 'OPEN'")
+        open_positions = c.fetchone()[0]
+        max_positions = 10  # Configurable limit
+
+        if open_positions >= max_positions:
+            conn.close()
+            return False  # Too many open positions
+
+        # Check today's P&L - respect daily loss limit
+        c.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0) + COALESCE(SUM(unrealized_pnl), 0) as total_pnl
+            FROM autonomous_positions
+            WHERE entry_date = ?
+        """, (today,))
+        today_pnl = c.fetchone()[0]
+        conn.close()
+
+        # Get starting capital
+        capital = float(self.get_config('capital'))
+        daily_loss_limit_pct = 5.0  # 5% daily loss limit
+        daily_loss_limit = capital * (daily_loss_limit_pct / 100)
+
+        if today_pnl < -daily_loss_limit:
+            return False  # Daily loss limit exceeded
+
+        # All risk checks passed - can trade
         return True
 
     def get_available_capital(self) -> float:

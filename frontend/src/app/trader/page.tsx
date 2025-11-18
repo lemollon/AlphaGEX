@@ -44,13 +44,20 @@ interface Trade {
   id: string
   timestamp: string
   symbol: string
-  action: 'BUY' | 'SELL'
-  type: 'CALL' | 'PUT'
+  action: 'BUY' | 'SELL' | 'LONG_STRADDLE' | 'IRON_CONDOR' | string
+  type: 'CALL' | 'PUT' | 'straddle' | 'iron_condor' | string
   strike: number
   quantity: number
   price: number
   status: 'filled' | 'pending' | 'cancelled'
   pnl?: number
+  strategy?: string
+  entry_bid?: number
+  entry_ask?: number
+  entry_spot_price?: number
+  current_price?: number
+  current_spot_price?: number
+  trade_reasoning?: string
 }
 
 interface TradeLogEntry {
@@ -86,6 +93,7 @@ export default function AutonomousTrader() {
   const [strategies, setStrategies] = useState<Strategy[]>([])
 
   const [recentTrades, setRecentTrades] = useState<Trade[]>([])
+  const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null)
 
   // Trade Activity Log
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
@@ -146,7 +154,7 @@ export default function AutonomousTrader() {
         }
 
         if (tradesRes.data.success && tradesRes.data.data.length > 0) {
-          // Map database trades to UI format
+          // Map database trades to UI format with full transparency
           const mappedTrades = tradesRes.data.data.map((trade: any) => ({
             id: trade.id?.toString() || trade.timestamp,
             timestamp: `${trade.entry_date}T${trade.entry_time}`,
@@ -154,10 +162,17 @@ export default function AutonomousTrader() {
             action: trade.action || 'BUY',
             type: trade.option_type || 'CALL',
             strike: trade.strike || 0,
-            quantity: trade.contracts || 0,  // Fixed: use contracts not quantity
-            price: Math.abs(trade.entry_price) || 0,  // Fixed: use absolute value
+            quantity: trade.contracts || 0,
+            price: Math.abs(trade.entry_price) || 0,
             status: trade.status === 'OPEN' ? 'filled' : 'filled',
-            pnl: trade.realized_pnl || trade.unrealized_pnl || 0
+            pnl: trade.realized_pnl || trade.unrealized_pnl || 0,
+            strategy: trade.strategy,
+            entry_bid: trade.entry_bid,
+            entry_ask: trade.entry_ask,
+            entry_spot_price: trade.entry_spot_price,
+            current_price: trade.current_price,
+            current_spot_price: trade.current_spot_price,
+            trade_reasoning: trade.trade_reasoning
           }))
           setRecentTrades(mappedTrades)
         }
@@ -546,54 +561,99 @@ export default function AutonomousTrader() {
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left py-3 px-4 text-text-secondary font-medium">Time</th>
+                <th className="text-left py-3 px-4 text-text-secondary font-medium">Strategy</th>
                 <th className="text-left py-3 px-4 text-text-secondary font-medium">Symbol</th>
-                <th className="text-left py-3 px-4 text-text-secondary font-medium">Action</th>
-                <th className="text-left py-3 px-4 text-text-secondary font-medium">Type</th>
-                <th className="text-right py-3 px-4 text-text-secondary font-medium">Strike</th>
-                <th className="text-right py-3 px-4 text-text-secondary font-medium">Qty</th>
-                <th className="text-right py-3 px-4 text-text-secondary font-medium">Price</th>
+                <th className="text-right py-3 px-4 text-text-secondary font-medium">Entry</th>
+                <th className="text-right py-3 px-4 text-text-secondary font-medium">Current</th>
                 <th className="text-right py-3 px-4 text-text-secondary font-medium">Status</th>
                 <th className="text-right py-3 px-4 text-text-secondary font-medium">P&L</th>
+                <th className="text-right py-3 px-4 text-text-secondary font-medium"></th>
               </tr>
             </thead>
             <tbody>
               {recentTrades.map((trade) => (
-                <tr key={trade.id} className="border-b border-border/50 hover:bg-background-hover transition-colors">
-                  <td className="py-3 px-4 text-text-secondary text-sm">{formatTime(trade.timestamp)}</td>
-                  <td className="py-3 px-4 text-text-primary font-medium">{trade.symbol}</td>
-                  <td className="py-3 px-4">
-                    <span className={`text-sm font-semibold ${
-                      trade.action === 'BUY' ? 'text-success' : 'text-danger'
-                    }`}>
-                      {trade.action}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-text-primary">{trade.type}</td>
-                  <td className="py-3 px-4 text-right text-text-primary">{formatCurrency(trade.strike)}</td>
-                  <td className="py-3 px-4 text-right text-text-primary">{trade.quantity}</td>
-                  <td className="py-3 px-4 text-right text-text-primary">{formatCurrency(trade.price)}</td>
-                  <td className="py-3 px-4 text-right">
-                    <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${
-                      trade.status === 'filled' ? 'bg-success/20 text-success' :
-                      trade.status === 'pending' ? 'bg-warning/20 text-warning' :
-                      'bg-danger/20 text-danger'
-                    }`}>
-                      {trade.status === 'filled' && <CheckCircle className="w-3 h-3" />}
-                      {trade.status === 'pending' && <Clock className="w-3 h-3" />}
-                      {trade.status === 'cancelled' && <XCircle className="w-3 h-3" />}
-                      {trade.status.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    {trade.pnl !== undefined && (
-                      <span className={`font-semibold ${
-                        trade.pnl >= 0 ? 'text-success' : 'text-danger'
+                <>
+                  <tr
+                    key={trade.id}
+                    className="border-b border-border/50 hover:bg-background-hover transition-colors cursor-pointer"
+                    onClick={() => setExpandedTradeId(expandedTradeId === trade.id ? null : trade.id)}
+                  >
+                    <td className="py-3 px-4 text-text-secondary text-sm">{formatTime(trade.timestamp)}</td>
+                    <td className="py-3 px-4">
+                      <div className="font-semibold text-text-primary text-sm">{trade.strategy || trade.action}</div>
+                      <div className="text-xs text-text-secondary">{trade.type}</div>
+                    </td>
+                    <td className="py-3 px-4 text-text-primary font-medium">{trade.symbol}</td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="text-text-primary font-semibold">{formatCurrency(Math.abs(trade.price))}</div>
+                      <div className="text-xs text-text-secondary">@ {formatCurrency(trade.entry_spot_price || 0)}</div>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="text-text-primary font-semibold">{formatCurrency(Math.abs(trade.current_price || trade.price))}</div>
+                      <div className="text-xs text-text-secondary">@ {formatCurrency(trade.current_spot_price || trade.entry_spot_price || 0)}</div>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${
+                        trade.status === 'filled' ? 'bg-success/20 text-success' :
+                        trade.status === 'pending' ? 'bg-warning/20 text-warning' :
+                        'bg-danger/20 text-danger'
                       }`}>
-                        {trade.pnl >= 0 ? '+' : ''}{formatCurrency(trade.pnl)}
+                        {trade.status === 'filled' && <CheckCircle className="w-3 h-3" />}
+                        {trade.status === 'pending' && <Clock className="w-3 h-3" />}
+                        {trade.status === 'cancelled' && <XCircle className="w-3 h-3" />}
+                        {trade.status.toUpperCase()}
                       </span>
-                    )}
-                  </td>
-                </tr>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      {trade.pnl !== undefined && (
+                        <div>
+                          <div className={`font-bold text-lg ${
+                            trade.pnl >= 0 ? 'text-success' : 'text-danger'
+                          }`}>
+                            {trade.pnl >= 0 ? '+' : ''}{formatCurrency(trade.pnl)}
+                          </div>
+                          <div className="text-xs text-text-secondary">
+                            {((trade.pnl / Math.abs(trade.price)) * 100).toFixed(1)}%
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button className="text-primary hover:text-primary/80">
+                        {expandedTradeId === trade.id ? '▼' : '▶'}
+                      </button>
+                    </td>
+                  </tr>
+                  {expandedTradeId === trade.id && trade.trade_reasoning && (
+                    <tr className="bg-background-hover">
+                      <td colSpan={8} className="py-4 px-6">
+                        <div className="space-y-3">
+                          <h4 className="font-semibold text-primary flex items-center gap-2">
+                            <Target className="w-4 h-4" />
+                            Multi-Leg Position Details
+                          </h4>
+                          <div className="bg-background-primary p-4 rounded-lg font-mono text-sm whitespace-pre-wrap text-text-secondary">
+                            {trade.trade_reasoning}
+                          </div>
+                          <div className="grid grid-cols-3 gap-4 mt-4">
+                            <div className="p-3 bg-background-primary rounded-lg">
+                              <div className="text-xs text-text-secondary mb-1">Entry Bid/Ask</div>
+                              <div className="text-text-primary font-semibold">${trade.entry_bid?.toFixed(2)} / ${trade.entry_ask?.toFixed(2)}</div>
+                            </div>
+                            <div className="p-3 bg-background-primary rounded-lg">
+                              <div className="text-xs text-text-secondary mb-1">Strike(s)</div>
+                              <div className="text-text-primary font-semibold">{formatCurrency(trade.strike)}</div>
+                            </div>
+                            <div className="p-3 bg-background-primary rounded-lg">
+                              <div className="text-xs text-text-secondary mb-1">Contracts</div>
+                              <div className="text-text-primary font-semibold">{trade.quantity}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>
