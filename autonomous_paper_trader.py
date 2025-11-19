@@ -27,7 +27,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # CRITICAL: Import Psychology Trap Detector
 try:
-    from psychology_trap_detector import analyze_current_market_complete
+    from psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
     from gamma_expiration_builder import build_gamma_with_expirations
     from polygon_helper import PolygonDataFetcher as PolygonHelper
     PSYCHOLOGY_AVAILABLE = True
@@ -1037,6 +1037,21 @@ MULTI-TIMEFRAME RSI:
                             regime=regime,
                             symbol='SPY',
                             spot_price=spot
+                        )
+
+                    # CRITICAL: Save regime signal to database for backtest analysis
+                    try:
+                        signal_id = save_regime_signal_to_db(regime_result)
+                        self.log_action(
+                            'REGIME_SIGNAL',
+                            f"✅ Saved regime signal to database for backtest (ID: {signal_id}): {pattern}",
+                            success=True
+                        )
+                    except Exception as e:
+                        self.log_action(
+                            'REGIME_SIGNAL_ERROR',
+                            f"⚠️ Failed to save regime signal: {str(e)}",
+                            success=False
                         )
 
                     # CRITICAL: Use ML to predict pattern success and adjust confidence
