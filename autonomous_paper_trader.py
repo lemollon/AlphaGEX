@@ -2341,6 +2341,126 @@ Now analyze this position:"""
 
         return False, ""
 
+    def _log_spread_width_performance(self, position_id: int):
+        """
+        Log spread width performance for iron condors and other multi-leg strategies
+        Called when a spread position is closed to track effectiveness of different wing widths
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # Get position details
+            c.execute("""
+                SELECT action, strategy, entry_date, entry_time, entry_price,
+                       entry_spot_price, closed_date, closed_time, exit_price,
+                       realized_pnl, strike, expiration_date, contracts,
+                       entry_net_gex, gex_regime
+                FROM autonomous_positions
+                WHERE id = ?
+            """, (position_id,))
+
+            pos = c.fetchone()
+            if not pos:
+                return
+
+            (action, strategy, entry_date, entry_time, entry_price, entry_spot,
+             closed_date, closed_time, exit_price, realized_pnl, strike,
+             expiration_date, contracts, entry_net_gex, gex_regime) = pos
+
+            # Only log for iron condors
+            if action != 'IRON_CONDOR':
+                conn.close()
+                return
+
+            # Calculate iron condor strikes based on standard parameters
+            # (from _execute_iron_condor: 6% range, $5 wing width)
+            spot = entry_spot if entry_spot else strike
+            wing_width = 5  # Standard wing width from code
+            range_width = spot * 0.06  # 6% from spot
+
+            # Round to nearest $5
+            call_sell_strike = round((spot + range_width) / 5) * 5
+            call_buy_strike = call_sell_strike + wing_width
+            put_sell_strike = round((spot - range_width) / 5) * 5
+            put_buy_strike = put_sell_strike - wing_width
+
+            # Calculate distances from spot
+            short_call_distance_pct = ((call_sell_strike - spot) / spot) * 100
+            long_call_distance_pct = ((call_buy_strike - spot) / spot) * 100
+            short_put_distance_pct = ((put_sell_strike - spot) / spot) * 100
+            long_put_distance_pct = ((put_buy_strike - spot) / spot) * 100
+
+            # Calculate hold time
+            entry_dt = datetime.strptime(f"{entry_date} {entry_time}", "%Y-%m-%d %H:%M:%S")
+            closed_dt = datetime.strptime(f"{closed_date} {closed_time}", "%Y-%m-%d %H:%M:%S")
+            hold_time_hours = int((closed_dt - entry_dt).total_seconds() / 3600)
+
+            # Calculate DTE
+            exp_dt = datetime.strptime(expiration_date, "%Y-%m-%d")
+            dte = (exp_dt - entry_dt).days
+
+            # Calculate performance metrics
+            pnl_dollars = realized_pnl * contracts
+            # For iron condors, max profit = credit received, max loss = wing width - credit
+            entry_credit_total = entry_price * contracts * 100
+            pnl_pct = (pnl_dollars / entry_credit_total * 100) if entry_credit_total > 0 else 0
+
+            # Get current VIX if available
+            vix = self._get_vix() if hasattr(self, '_get_vix') else None
+
+            # Determine win/loss
+            win = 1 if realized_pnl > 0 else 0
+
+            # Insert into spread_width_performance table
+            c.execute("""
+                INSERT INTO spread_width_performance (
+                    timestamp, strategy_name, spread_type,
+                    short_strike_call, long_strike_call, short_strike_put, long_strike_put,
+                    call_spread_width_points, put_spread_width_points,
+                    short_call_distance_pct, long_call_distance_pct,
+                    short_put_distance_pct, long_put_distance_pct,
+                    spot_price, dte, vix_current, net_gex,
+                    entry_credit, exit_cost, pnl_pct, pnl_dollars,
+                    win, hold_time_hours
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S'),
+                strategy,
+                'iron_condor',
+                call_sell_strike,
+                call_buy_strike,
+                put_sell_strike,
+                put_buy_strike,
+                wing_width,  # call spread width
+                wing_width,  # put spread width
+                short_call_distance_pct,
+                long_call_distance_pct,
+                short_put_distance_pct,
+                long_put_distance_pct,
+                spot,
+                dte,
+                vix,
+                entry_net_gex,
+                entry_price,  # entry credit per spread
+                exit_price,   # exit cost per spread
+                pnl_pct,
+                pnl_dollars,
+                win,
+                hold_time_hours
+            ))
+
+            conn.commit()
+            conn.close()
+
+            print(f"✅ Logged spread width performance for position {position_id}: "
+                  f"Wing Width=${wing_width}, P&L=${pnl_dollars:.2f}, Win={bool(win)}")
+
+        except Exception as e:
+            print(f"⚠️ Failed to log spread width performance: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _close_position(self, position_id: int, exit_price: float, realized_pnl: float, reason: str):
         """Close a position"""
         conn = sqlite3.connect(self.db_path)
@@ -2368,6 +2488,9 @@ Now analyze this position:"""
 
         conn.commit()
         conn.close()
+
+        # Log spread width performance if this is an iron condor
+        self._log_spread_width_performance(position_id)
 
     def get_performance(self) -> Dict:
         """Get trading performance stats"""

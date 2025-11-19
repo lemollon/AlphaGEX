@@ -229,6 +229,31 @@ export const apiClient = {
     pattern_type: string
   }) => api.post('/api/optimizer/live-recommendations', data),
 
+  // Probability System
+  getProbabilityOutcomes: (days?: number) => api.get('/api/probability/outcomes', { params: { days: days || 30 } }),
+  getProbabilityWeights: () => api.get('/api/probability/weights'),
+  getCalibrationHistory: (days?: number) => api.get('/api/probability/calibration-history', { params: { days: days || 90 } }),
+
+  // Conversation History
+  getConversations: (limit?: number) => api.get('/api/ai/conversations', { params: { limit: limit || 50 } }),
+  getConversation: (id: number) => api.get(`/api/ai/conversation/${id}`),
+
+  // Open Interest Trends
+  getOITrends: (symbol?: string, days?: number) => api.get('/api/oi/trends', { params: { symbol: symbol || 'SPY', days: days || 30 } }),
+  getUnusualOIActivity: (symbol?: string, days?: number) => api.get('/api/oi/unusual-activity', { params: { symbol: symbol || 'SPY', days: days || 7 } }),
+
+  // Recommendations History
+  getRecommendationsHistory: (days?: number) => api.get('/api/recommendations/history', { params: { days: days || 30 } }),
+  getRecommendationPerformance: () => api.get('/api/recommendations/performance'),
+
+  // GEX History
+  getGEXHistory: (symbol?: string, days?: number) => api.get('/api/gex/history', { params: { symbol: symbol || 'SPY', days: days || 30 } }),
+  getGEXRegimeChanges: (symbol?: string, days?: number) => api.get('/api/gex/regime-changes', { params: { symbol: symbol || 'SPY', days: days || 90 } }),
+
+  // Push Notifications
+  getPushSubscriptions: () => api.get('/api/notifications/subscriptions'),
+  deletePushSubscription: (id: number) => api.delete(`/api/notifications/subscription/${id}`),
+
   // Database Administration
   getDatabaseStats: () => api.get('/api/database/stats'),
   testConnections: () => api.get('/api/test-connections'),

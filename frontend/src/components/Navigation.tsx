@@ -31,8 +31,10 @@ import { apiClient } from '@/lib/api'
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp, category: 'Analysis' },
+  { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
   { href: '/gamma', label: 'Gamma Intelligence', icon: Zap, category: 'Analysis' },
   { href: '/gamma/0dte', label: '0DTE Tracker', icon: Clock, category: 'Analysis' },
+  { href: '/oi/trends', label: 'OI Trends', icon: BarChart3, category: 'Analysis' },
   { href: '/psychology', label: 'Psychology Traps', icon: Brain, category: 'Analysis' },
   { href: '/psychology/performance', label: 'Psychology Performance', icon: BarChart3, category: 'Analysis' },
   { href: '/optimizer', label: 'Strategy Optimizer', icon: TrendingUp, category: 'Trading' },
@@ -41,9 +43,13 @@ const navItems = [
   { href: '/position-sizing', label: 'Position Sizing', icon: Calculator, category: 'Trading' },
   { href: '/charts', label: 'Advanced Charts', icon: BarChart3, category: 'Analysis' },
   { href: '/ai-copilot', label: 'AI Copilot', icon: MessageSquare, category: 'AI & Testing' },
+  { href: '/ai/history', label: 'Conversation History', icon: MessageSquare, category: 'AI & Testing' },
+  { href: '/recommendations/history', label: 'Recommendations', icon: Target, category: 'AI & Testing' },
   { href: '/backtesting', label: 'Backtesting', icon: TestTube, category: 'AI & Testing' },
+  { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
   { href: '/trader', label: 'Autonomous Trader', icon: Bot, category: 'Automation' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Automation' },
+  { href: '/settings/notifications', label: 'Notification Settings', icon: Bell, category: 'System' },
   { href: '/database', label: 'Database Admin', icon: Database, category: 'System' },
 ]
 
