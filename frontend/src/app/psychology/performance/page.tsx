@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { TrendingUp, TrendingDown, BarChart3, Activity, PlayCircle, Filter, ChevronDown, Target, Zap } from 'lucide-react'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import Navigation from '@/components/Navigation'
+import CoolEmptyState from '@/components/CoolEmptyState'
+import TrendBuildingPlaceholder from '@/components/TrendBuildingPlaceholder'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -170,20 +172,27 @@ export default function PsychologyPerformance() {
 
           {/* Empty State */}
           {overview && overview.total_signals === 0 && (
-            <div className="bg-gray-900 border-2 border-dashed border-gray-700 rounded-xl p-12 text-center">
-              <BarChart3 className="w-20 h-20 mx-auto mb-6 text-gray-600" />
-              <h2 className="text-3xl font-bold mb-4">No Performance Data Yet</h2>
-              <p className="text-gray-400 text-lg mb-8 max-w-2xl mx-auto">
-                Start using Psychology Trap Analysis to build your performance history.
-                Every signal you analyze will be tracked here with outcomes.
-              </p>
-              <button
-                onClick={() => window.location.href = '/psychology'}
-                className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 rounded-lg font-bold text-lg inline-flex items-center gap-3"
-              >
-                <PlayCircle className="w-6 h-6" />
-                Run Analysis Now
-              </button>
+            <CoolEmptyState
+              icon={BarChart3}
+              title="Building Your Performance History"
+              description="Psychology trap signals are being tracked automatically. Performance metrics will populate as signals accumulate and outcomes are validated."
+              ctaText="Run Analysis Now"
+              ctaAction={() => window.location.href = '/psychology'}
+              showProgress={true}
+              estimatedDays={30}
+              variant="glow"
+            />
+          )}
+
+          {/* Minimal Data State - Show progress indicators */}
+          {overview && overview.total_signals > 0 && overview.total_signals < 30 && (
+            <div className="mb-6">
+              <TrendBuildingPlaceholder
+                title="Performance Trends Building"
+                dataPoints={overview.total_signals}
+                requiredPoints={30}
+                showMiniChart={true}
+              />
             </div>
           )}
 
