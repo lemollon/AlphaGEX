@@ -24,7 +24,8 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
-  Database
+  Database,
+  Settings
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
@@ -49,6 +50,7 @@ const navItems = [
   { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
   { href: '/trader', label: 'Autonomous Trader', icon: Bot, category: 'Automation' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Automation' },
+  { href: '/settings/system', label: 'System Settings', icon: Settings, category: 'System' },
   { href: '/settings/notifications', label: 'Notification Settings', icon: Bell, category: 'System' },
   { href: '/database', label: 'Database Admin', icon: Database, category: 'System' },
 ]
