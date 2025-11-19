@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { Activity, TrendingUp, Target, BarChart3, AlertCircle, CheckCircle, Settings } from 'lucide-react'
+import CoolEmptyState from '@/components/CoolEmptyState'
 
 interface ProbabilityOutcome {
   prediction_date: string
@@ -156,10 +157,15 @@ export default function ProbabilityDashboard() {
 
                 <div className="overflow-x-auto">
                   {outcomes.length === 0 ? (
-                    <div className="p-8 text-center text-gray-400">
-                      <AlertCircle className="h-12 w-12 mx-auto mb-3 text-gray-600" />
-                      <p>No prediction data available yet</p>
-                      <p className="text-sm mt-1">Predictions will appear as the system makes forecasts</p>
+                    <div className="p-8">
+                      <CoolEmptyState
+                        icon={Target}
+                        title="Prediction Engine Warming Up"
+                        description="The probability engine will begin tracking predictions as the system analyzes patterns and makes forecasts based on market conditions."
+                        showProgress={true}
+                        estimatedDays={7}
+                        variant="gradient"
+                      />
                     </div>
                   ) : (
                     <table className="w-full">
