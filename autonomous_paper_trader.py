@@ -27,7 +27,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # CRITICAL: Import Psychology Trap Detector
 try:
-    from psychology_trap_detector import analyze_current_market_complete
+    from psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
     from gamma_expiration_builder import build_gamma_with_expirations
     from polygon_helper import PolygonDataFetcher as PolygonHelper
     PSYCHOLOGY_AVAILABLE = True
@@ -786,9 +786,11 @@ class AutonomousPaperTrader:
                     self.log_action('RISK_ERROR', f'Risk manager check failed: {e}', success=False)
 
             # Execute trade automatically
+            # Get VIX for strike/Greeks logging
+            vix = self._get_vix()
             position_id = self._execute_trade(
                 trade, option_price_data, contracts, entry_price,
-                exp_date, gex_data
+                exp_date, gex_data, vix, trade.get('regime')
             )
 
             if position_id:
@@ -1045,6 +1047,21 @@ MULTI-TIMEFRAME RSI:
                             regime=regime,
                             symbol='SPY',
                             spot_price=spot
+                        )
+
+                    # CRITICAL: Save regime signal to database for backtest analysis
+                    try:
+                        signal_id = save_regime_signal_to_db(regime_result)
+                        self.log_action(
+                            'REGIME_SIGNAL',
+                            f"✅ Saved regime signal to database for backtest (ID: {signal_id}): {pattern}",
+                            success=True
+                        )
+                    except Exception as e:
+                        self.log_action(
+                            'REGIME_SIGNAL_ERROR',
+                            f"⚠️ Failed to save regime signal: {str(e)}",
+                            success=False
                         )
 
                     # CRITICAL: Use ML to predict pattern success and adjust confidence
@@ -1583,14 +1600,16 @@ RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
             ic_bid = (call_sell.get('bid', 0) - call_buy.get('ask', 0)) + (put_sell.get('bid', 0) - put_buy.get('ask', 0))
             # Iron Condor ask (worst fill) = min credit we'd collect
             ic_ask = (call_sell.get('ask', 0) - call_buy.get('bid', 0)) + (put_sell.get('ask', 0) - put_buy.get('bid', 0))
-
+            # Get VIX for strike/Greeks logging
+            vix = self._get_vix()
             position_id = self._execute_trade(
                 trade,
                 {'mid': credit, 'bid': ic_bid, 'ask': ic_ask, 'contract_symbol': 'IRON_CONDOR'},
                 contracts,
                 credit,
                 exp_date,
-                gex_data
+                gex_data,
+                vix
             )
 
             if position_id:
@@ -1685,14 +1704,16 @@ This trade ensures we're always active in the market"""
             straddle_bid = call_price.get('bid', 0) + put_price.get('bid', 0)
             straddle_ask = call_price.get('ask', 0) + put_price.get('ask', 0)
             straddle_mid = call_price['mid'] + put_price['mid']
-
+            # Get VIX for strike/Greeks logging
+            vix = self._get_vix()
             position_id = self._execute_trade(
                 trade,
                 {'mid': straddle_mid, 'bid': straddle_bid, 'ask': straddle_ask, 'contract_symbol': 'STRADDLE_FALLBACK'},
                 contracts,
-                -(call_price['mid'] + put_price['mid']),  # Negative because we're buying (debit)
+                -straddle_mid,  # Negative because we're buying (debit)
                 exp_date,
-                {'net_gex': 0, 'flip_point': strike}  # Minimal GEX data
+                {'net_gex': 0, 'flip_point': strike, 'spot_price': spot},  # Include spot price for logging
+                vix
             )
 
             if position_id:
@@ -1755,7 +1776,8 @@ This trade ensures we're always active in the market"""
         return third_friday.strftime('%Y-%m-%d')
 
     def _execute_trade(self, trade: Dict, option_data: Dict, contracts: int,
-                       entry_price: float, exp_date: str, gex_data: Dict) -> Optional[int]:
+                       entry_price: float, exp_date: str, gex_data: Dict,
+                       vix_current: float = 18.0, regime_result: Dict = None) -> Optional[int]:
         """Execute the trade and send push notification"""
 
         # CRITICAL: Log trade decision to database
@@ -1767,6 +1789,11 @@ This trade ensures we're always active in the market"""
                 reasoning=trade.get('reasoning', 'See trade details'),
                 confidence=trade.get('confidence', 0)
             )
+
+        # Log strike and Greeks performance data for optimizer intelligence
+        self._log_strike_and_greeks_performance(
+            trade, option_data, gex_data, exp_date, vix_current, regime_result
+        )
 
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -1890,6 +1917,189 @@ This trade ensures we're always active in the market"""
             # Don't fail trade execution if notification fails
             print(f"⚠️ Push notification failed: {e}")
             pass
+
+    def _log_strike_and_greeks_performance(self, trade: Dict, option_data: Dict, gex_data: Dict,
+                                          exp_date: str, vix_current: float, regime_result: Dict = None):
+        """
+        Log detailed strike and Greeks performance data for optimizer intelligence
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            now = datetime.now(CENTRAL_TZ)
+
+            spot_price = gex_data.get('spot_price', 0)
+            strike = trade['strike']
+
+            # Calculate strike distance percentage
+            strike_distance_pct = ((strike - spot_price) / spot_price) * 100
+
+            # Determine moneyness
+            option_type = trade['option_type']
+            if option_type == 'CALL':
+                if abs(strike - spot_price) / spot_price < 0.005:  # Within 0.5%
+                    moneyness = 'ATM'
+                elif strike > spot_price:
+                    moneyness = 'OTM'
+                else:
+                    moneyness = 'ITM'
+            else:  # PUT
+                if abs(strike - spot_price) / spot_price < 0.005:
+                    moneyness = 'ATM'
+                elif strike < spot_price:
+                    moneyness = 'OTM'
+                else:
+                    moneyness = 'ITM'
+
+            # Calculate DTE
+            try:
+                exp_datetime = datetime.strptime(exp_date, '%Y-%m-%d')
+                dte = (exp_datetime - now.replace(tzinfo=None)).days
+            except:
+                dte = 0
+
+            # Determine VIX regime
+            if vix_current < 15:
+                vix_regime = 'low'
+            elif vix_current < 25:
+                vix_regime = 'normal'
+            else:
+                vix_regime = 'high'
+
+            # Get Greeks from option_data (if available)
+            delta = option_data.get('delta', option_data.get('greeks', {}).get('delta', 0))
+            gamma = option_data.get('gamma', option_data.get('greeks', {}).get('gamma', 0))
+            theta = option_data.get('theta', option_data.get('greeks', {}).get('theta', 0))
+            vega = option_data.get('vega', option_data.get('greeks', {}).get('vega', 0))
+
+            # Get pattern type from regime or trade
+            pattern_type = 'NONE'
+            if regime_result:
+                pattern_type = regime_result.get('pattern_type', 'NONE')
+            elif 'liberation' in trade.get('strategy', '').lower():
+                pattern_type = 'LIBERATION'
+            elif 'false floor' in trade.get('reasoning', '').lower():
+                pattern_type = 'FALSE_FLOOR'
+
+            # Get gamma regime
+            net_gex = gex_data.get('net_gex', 0)
+            if net_gex > 0:
+                gamma_regime = 'positive'
+            elif net_gex < 0:
+                gamma_regime = 'negative'
+            else:
+                gamma_regime = 'neutral'
+
+            # Log strike performance
+            c.execute("""
+                INSERT INTO strike_performance (
+                    timestamp, strategy_name, strike_distance_pct, strike_absolute,
+                    spot_price, strike_type, moneyness, delta, gamma, theta, vega,
+                    dte, vix_current, vix_regime, net_gex, gamma_regime,
+                    pnl_pct, win, pattern_type, confidence_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                now.strftime('%Y-%m-%d %H:%M:%S'),
+                trade['strategy'],
+                strike_distance_pct,
+                strike,
+                spot_price,
+                option_type,
+                moneyness,
+                delta,
+                gamma,
+                theta,
+                vega,
+                dte,
+                vix_current,
+                vix_regime,
+                net_gex,
+                gamma_regime,
+                0.0,  # P&L will be updated on exit
+                0,    # Win will be updated on exit
+                pattern_type,
+                trade.get('confidence', 0)
+            ))
+
+            # Log Greeks performance
+            c.execute("""
+                INSERT INTO greeks_performance (
+                    timestamp, strategy_name, pattern_type, vix_regime,
+                    entry_delta, entry_gamma, entry_theta, entry_vega,
+                    exit_delta, exit_gamma, exit_theta, exit_vega,
+                    delta_pnl, gamma_pnl, theta_pnl, vega_pnl,
+                    total_pnl_pct, win, dte, net_gex
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                now.strftime('%Y-%m-%d %H:%M:%S'),
+                trade['strategy'],
+                pattern_type,
+                vix_regime,
+                delta,
+                gamma,
+                theta,
+                vega,
+                0.0,  # Exit Greeks will be updated on exit
+                0.0,
+                0.0,
+                0.0,
+                0.0,  # Greek contributions will be calculated on exit
+                0.0,
+                0.0,
+                0.0,
+                0.0,  # Total P&L will be updated on exit
+                0,    # Win will be updated on exit
+                dte,
+                net_gex
+            ))
+
+            # Determine DTE bucket
+            if dte <= 3:
+                dte_bucket = '0-3'
+            elif dte <= 7:
+                dte_bucket = '4-7'
+            elif dte <= 14:
+                dte_bucket = '8-14'
+            elif dte <= 30:
+                dte_bucket = '15-30'
+            else:
+                dte_bucket = '30+'
+
+            # Log DTE performance
+            c.execute("""
+                INSERT INTO dte_performance (
+                    timestamp, strategy_name, pattern_type, dte, dte_bucket,
+                    vix_regime, entry_price, exit_price, pnl_pct, win,
+                    entry_theta, exit_theta, theta_decay_efficiency,
+                    entry_time, exit_time, holding_hours
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                now.strftime('%Y-%m-%d %H:%M:%S'),
+                trade['strategy'],
+                pattern_type,
+                dte,
+                dte_bucket,
+                vix_regime,
+                option_data.get('ask', 0),  # Entry price
+                0.0,  # Exit price will be updated on exit
+                0.0,  # P&L will be updated on exit
+                0,    # Win will be updated on exit
+                theta,
+                0.0,  # Exit theta will be updated on exit
+                0.0,  # Theta efficiency will be calculated on exit
+                now.strftime('%Y-%m-%d %H:%M:%S'),
+                None,  # Exit time will be updated on exit
+                0.0    # Holding hours will be calculated on exit
+            ))
+
+            conn.commit()
+            conn.close()
+
+            print(f"✅ Strike & Greeks performance logged: {moneyness} {strike_distance_pct:.1f}% strike, Δ={delta:.3f}, DTE={dte}")
+
+        except Exception as e:
+            print(f"⚠️ Failed to log strike/Greeks performance: {e}")
+            # Don't fail trade execution if logging fails
 
     def auto_manage_positions(self, api_client):
         """

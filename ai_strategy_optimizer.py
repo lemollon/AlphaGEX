@@ -369,6 +369,609 @@ class StrategyOptimizerAgent:
             return f"Error saving recommendation: {str(e)}"
 
     # ========================================================================
+    # Enhanced Analysis Functions (Strike, DTE, Greeks, Regime Optimization)
+    # ========================================================================
+
+    def _analyze_strike_performance(self, strategy_name: str = None) -> str:
+        """
+        Analyze which strikes performed best
+
+        Returns performance by:
+        - Strike distance from spot (ATM, 1% OTM, 2% OTM, etc.)
+        - Moneyness (ITM, ATM, OTM)
+        - VIX regime
+        - Win rate and avg P&L per strike type
+        """
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if strategy_name:
+                query = """
+                    SELECT
+                        strategy_name,
+                        moneyness,
+                        ROUND(strike_distance_pct, 1) as strike_distance,
+                        vix_regime,
+                        COUNT(*) as total_trades,
+                        SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END) as wins,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct,
+                        MAX(pnl_pct) as best_trade_pct,
+                        MIN(pnl_pct) as worst_trade_pct,
+                        AVG(delta) as avg_delta,
+                        AVG(dte) as avg_dte
+                    FROM strike_performance
+                    WHERE strategy_name LIKE ?
+                    GROUP BY strategy_name, moneyness, strike_distance, vix_regime
+                    HAVING total_trades >= 3
+                    ORDER BY win_rate DESC, avg_pnl_pct DESC
+                    LIMIT 50
+                """
+                cursor.execute(query, (f'%{strategy_name}%',))
+            else:
+                query = """
+                    SELECT
+                        strategy_name,
+                        moneyness,
+                        ROUND(strike_distance_pct, 1) as strike_distance,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct
+                    FROM strike_performance
+                    GROUP BY strategy_name, moneyness, strike_distance
+                    HAVING total_trades >= 5
+                    ORDER BY strategy_name, win_rate DESC
+                    LIMIT 100
+                """
+                cursor.execute(query)
+
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'strategy': row['strategy_name'],
+                    'moneyness': row['moneyness'],
+                    'strike_distance_pct': row['strike_distance'],
+                    'vix_regime': row.get('vix_regime', 'N/A'),
+                    'total_trades': row['total_trades'],
+                    'wins': row.get('wins', 0),
+                    'win_rate': f"{row['win_rate']:.1f}%",
+                    'avg_pnl': f"{row['avg_pnl_pct']:.2f}%",
+                    'best_trade': f"{row.get('best_trade_pct', 0):.2f}%",
+                    'worst_trade': f"{row.get('worst_trade_pct', 0):.2f}%",
+                    'avg_delta': f"{row.get('avg_delta', 0):.3f}",
+                    'avg_dte': row.get('avg_dte', 'N/A')
+                })
+
+            conn.close()
+
+            if not results:
+                return f"No strike performance data found{' for ' + strategy_name if strategy_name else ''}. Log trades first."
+
+            return json.dumps(results, indent=2)
+
+        except Exception as e:
+            return f"Error analyzing strike performance: {str(e)}"
+
+    def _analyze_dte_performance(self, strategy_name: str = None) -> str:
+        """
+        Analyze performance by Days To Expiration (DTE)
+
+        Shows which DTE ranges work best:
+        - 0-3 DTE (weekly expiration)
+        - 4-7 DTE
+        - 8-14 DTE
+        - 15-30 DTE
+        - 30+ DTE
+        """
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if strategy_name:
+                query = """
+                    SELECT
+                        strategy_name,
+                        dte_bucket,
+                        pattern_type,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct,
+                        AVG(hold_time_hours) / 24.0 as avg_hold_days,
+                        AVG(theta_at_entry) as avg_theta,
+                        SUM(CASE WHEN held_to_expiration = 1 THEN 1 ELSE 0 END) as held_to_exp
+                    FROM dte_performance
+                    WHERE strategy_name LIKE ?
+                    GROUP BY strategy_name, dte_bucket, pattern_type
+                    HAVING total_trades >= 3
+                    ORDER BY win_rate DESC, avg_pnl_pct DESC
+                """
+                cursor.execute(query, (f'%{strategy_name}%',))
+            else:
+                query = """
+                    SELECT
+                        strategy_name,
+                        dte_bucket,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct,
+                        AVG(hold_time_hours) / 24.0 as avg_hold_days
+                    FROM dte_performance
+                    GROUP BY strategy_name, dte_bucket
+                    HAVING total_trades >= 5
+                    ORDER BY strategy_name, win_rate DESC
+                """
+                cursor.execute(query)
+
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'strategy': row['strategy_name'],
+                    'dte_bucket': row['dte_bucket'],
+                    'pattern': row.get('pattern_type', 'N/A'),
+                    'total_trades': row['total_trades'],
+                    'win_rate': f"{row['win_rate']:.1f}%",
+                    'avg_pnl': f"{row['avg_pnl_pct']:.2f}%",
+                    'avg_hold_days': f"{row['avg_hold_days']:.1f}",
+                    'avg_theta': f"{row.get('avg_theta', 0):.2f}",
+                    'held_to_expiration': row.get('held_to_exp', 0)
+                })
+
+            conn.close()
+
+            if not results:
+                return f"No DTE performance data found{' for ' + strategy_name if strategy_name else ''}."
+
+            return json.dumps(results, indent=2)
+
+        except Exception as e:
+            return f"Error analyzing DTE performance: {str(e)}"
+
+    def _optimize_spread_widths(self, strategy_name: str = None) -> str:
+        """
+        Optimize spread widths for multi-leg strategies
+
+        Analyzes:
+        - Iron condor wing widths
+        - Butterfly spread configuration
+        - Vertical spread width
+        - Optimal strike spacing
+        """
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if strategy_name:
+                query = """
+                    SELECT
+                        strategy_name,
+                        spread_type,
+                        ROUND(call_spread_width_points, 0) as call_width,
+                        ROUND(put_spread_width_points, 0) as put_width,
+                        ROUND(AVG(short_call_distance_pct), 1) as avg_short_call_dist,
+                        ROUND(AVG(short_put_distance_pct), 1) as avg_short_put_dist,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct,
+                        AVG(entry_credit) as avg_credit,
+                        AVG(pnl_dollars) as avg_profit_dollars
+                    FROM spread_width_performance
+                    WHERE strategy_name LIKE ?
+                    GROUP BY strategy_name, spread_type, call_width, put_width
+                    HAVING total_trades >= 3
+                    ORDER BY win_rate DESC, avg_pnl_pct DESC
+                """
+                cursor.execute(query, (f'%{strategy_name}%',))
+            else:
+                query = """
+                    SELECT
+                        strategy_name,
+                        spread_type,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct
+                    FROM spread_width_performance
+                    GROUP BY strategy_name, spread_type
+                    HAVING total_trades >= 5
+                    ORDER BY strategy_name, win_rate DESC
+                """
+                cursor.execute(query)
+
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'strategy': row['strategy_name'],
+                    'spread_type': row['spread_type'],
+                    'call_width': row.get('call_width'),
+                    'put_width': row.get('put_width'),
+                    'short_call_distance': f"{row.get('avg_short_call_dist', 0):.1f}%",
+                    'short_put_distance': f"{row.get('avg_short_put_dist', 0):.1f}%",
+                    'total_trades': row['total_trades'],
+                    'win_rate': f"{row['win_rate']:.1f}%",
+                    'avg_pnl': f"{row['avg_pnl_pct']:.2f}%",
+                    'avg_credit': f"${row.get('avg_credit', 0):.2f}",
+                    'avg_profit': f"${row.get('avg_profit_dollars', 0):.2f}"
+                })
+
+            conn.close()
+
+            if not results:
+                return f"No spread width data found{' for ' + strategy_name if strategy_name else ''}."
+
+            return json.dumps(results, indent=2)
+
+        except Exception as e:
+            return f"Error optimizing spread widths: {str(e)}"
+
+    def _optimize_greeks(self, strategy_name: str = None) -> str:
+        """
+        Optimize Greeks (delta, gamma, theta, vega)
+
+        Shows which Greek ranges perform best:
+        - Delta targets (0.20-0.30 vs 0.40-0.50 vs 0.60-0.70)
+        - Theta efficiency (profit per theta decay)
+        - Gamma exposure
+        - Vega exposure in different VIX environments
+        """
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if strategy_name:
+                query = """
+                    SELECT
+                        strategy_name,
+                        delta_target,
+                        theta_strategy,
+                        position_type,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct,
+                        AVG(delta_pnl_ratio) as avg_delta_efficiency,
+                        AVG(theta_pnl_ratio) as avg_theta_efficiency,
+                        AVG(entry_delta) as avg_delta,
+                        AVG(entry_theta) as avg_theta
+                    FROM greeks_performance
+                    WHERE strategy_name LIKE ?
+                    GROUP BY strategy_name, delta_target, theta_strategy, position_type
+                    HAVING total_trades >= 3
+                    ORDER BY win_rate DESC, avg_pnl_pct DESC
+                """
+                cursor.execute(query, (f'%{strategy_name}%',))
+            else:
+                query = """
+                    SELECT
+                        strategy_name,
+                        delta_target,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct
+                    FROM greeks_performance
+                    GROUP BY strategy_name, delta_target
+                    HAVING total_trades >= 5
+                    ORDER BY strategy_name, win_rate DESC
+                """
+                cursor.execute(query)
+
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'strategy': row['strategy_name'],
+                    'delta_target': row['delta_target'],
+                    'theta_strategy': row.get('theta_strategy', 'N/A'),
+                    'position_type': row.get('position_type', 'N/A'),
+                    'total_trades': row['total_trades'],
+                    'win_rate': f"{row['win_rate']:.1f}%",
+                    'avg_pnl': f"{row['avg_pnl_pct']:.2f}%",
+                    'delta_efficiency': f"{row.get('avg_delta_efficiency', 0):.3f}",
+                    'theta_efficiency': f"{row.get('avg_theta_efficiency', 0):.3f}",
+                    'avg_delta': f"{row.get('avg_delta', 0):.3f}",
+                    'avg_theta': f"{row.get('avg_theta', 0):.3f}"
+                })
+
+            conn.close()
+
+            if not results:
+                return f"No Greeks performance data found{' for ' + strategy_name if strategy_name else ''}."
+
+            return json.dumps(results, indent=2)
+
+        except Exception as e:
+            return f"Error optimizing Greeks: {str(e)}"
+
+    def _optimize_by_regime(self, strategy_name: str = None) -> str:
+        """
+        Regime-specific optimization
+
+        Different strategies for different regimes:
+        - VIX < 15 (Low Vol)
+        - VIX 15-25 (Normal Vol)
+        - VIX > 25 (High Vol)
+        - Positive vs Negative Gamma
+        - Different patterns by regime
+        """
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if strategy_name:
+                query = """
+                    SELECT
+                        strategy_name,
+                        vix_regime,
+                        gamma_regime,
+                        pattern_type,
+                        moneyness,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct,
+                        MAX(pnl_pct) as best_trade,
+                        MIN(pnl_pct) as worst_trade,
+                        AVG(vix_current) as avg_vix
+                    FROM strike_performance
+                    WHERE strategy_name LIKE ?
+                    GROUP BY strategy_name, vix_regime, gamma_regime, pattern_type, moneyness
+                    HAVING total_trades >= 3
+                    ORDER BY win_rate DESC, avg_pnl_pct DESC
+                    LIMIT 50
+                """
+                cursor.execute(query, (f'%{strategy_name}%',))
+            else:
+                query = """
+                    SELECT
+                        strategy_name,
+                        vix_regime,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct
+                    FROM strike_performance
+                    GROUP BY strategy_name, vix_regime
+                    HAVING total_trades >= 5
+                    ORDER BY strategy_name, win_rate DESC
+                """
+                cursor.execute(query)
+
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'strategy': row['strategy_name'],
+                    'vix_regime': row['vix_regime'],
+                    'gamma_regime': row.get('gamma_regime', 'N/A'),
+                    'pattern': row.get('pattern_type', 'N/A'),
+                    'moneyness': row.get('moneyness', 'N/A'),
+                    'total_trades': row['total_trades'],
+                    'win_rate': f"{row['win_rate']:.1f}%",
+                    'avg_pnl': f"{row['avg_pnl_pct']:.2f}%",
+                    'best_trade': f"{row.get('best_trade', 0):.2f}%",
+                    'worst_trade': f"{row.get('worst_trade', 0):.2f}%",
+                    'avg_vix': f"{row.get('avg_vix', 0):.1f}"
+                })
+
+            conn.close()
+
+            if not results:
+                return f"No regime-specific data found{' for ' + strategy_name if strategy_name else ''}."
+
+            return json.dumps(results, indent=2)
+
+        except Exception as e:
+            return f"Error analyzing regime optimization: {str(e)}"
+
+    def _find_best_combinations(self, strategy_name: str = None) -> str:
+        """
+        Find winning combinations of conditions
+
+        Examples:
+        "VIX < 16 AND liberation setup AND 5 DTE AND 2% OTM call = 78% win rate"
+        "VIX > 25 AND ATM straddle AND 7 DTE = 85% win rate"
+
+        This is the MOST actionable analysis - shows exact conditions that win
+        """
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Complex multi-condition query
+            if strategy_name:
+                query = """
+                    SELECT
+                        sp.strategy_name,
+                        sp.vix_regime,
+                        sp.pattern_type,
+                        dp.dte_bucket,
+                        sp.moneyness,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN sp.win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(sp.pnl_pct) as avg_pnl_pct,
+                        AVG(sp.vix_current) as avg_vix,
+                        AVG(sp.strike_distance_pct) as avg_strike_distance
+                    FROM strike_performance sp
+                    LEFT JOIN dte_performance dp ON sp.strategy_name = dp.strategy_name
+                        AND sp.timestamp = dp.timestamp
+                    WHERE sp.strategy_name LIKE ?
+                    GROUP BY sp.strategy_name, sp.vix_regime, sp.pattern_type, dp.dte_bucket, sp.moneyness
+                    HAVING total_trades >= 5 AND win_rate >= 60
+                    ORDER BY win_rate DESC, total_trades DESC, avg_pnl_pct DESC
+                    LIMIT 25
+                """
+                cursor.execute(query, (f'%{strategy_name}%',))
+            else:
+                query = """
+                    SELECT
+                        strategy_name,
+                        vix_regime,
+                        pattern_type,
+                        moneyness,
+                        COUNT(*) as total_trades,
+                        AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(pnl_pct) as avg_pnl_pct
+                    FROM strike_performance
+                    GROUP BY strategy_name, vix_regime, pattern_type, moneyness
+                    HAVING total_trades >= 8 AND win_rate >= 65
+                    ORDER BY win_rate DESC, total_trades DESC
+                    LIMIT 30
+                """
+                cursor.execute(query)
+
+            results = []
+            for row in cursor.fetchall():
+                # Build condition string
+                conditions = []
+                if row.get('vix_regime'):
+                    conditions.append(f"VIX {row['vix_regime']}")
+                if row.get('pattern_type'):
+                    conditions.append(row['pattern_type'])
+                if row.get('dte_bucket'):
+                    conditions.append(f"{row['dte_bucket']} DTE")
+                if row.get('moneyness'):
+                    conditions.append(row['moneyness'])
+
+                results.append({
+                    'strategy': row['strategy_name'],
+                    'conditions': ' + '.join(conditions),
+                    'vix_regime': row.get('vix_regime', 'N/A'),
+                    'pattern': row.get('pattern_type', 'N/A'),
+                    'dte_bucket': row.get('dte_bucket', 'N/A'),
+                    'moneyness': row.get('moneyness', 'N/A'),
+                    'total_trades': row['total_trades'],
+                    'win_rate': f"{row['win_rate']:.1f}%",
+                    'avg_pnl': f"{row['avg_pnl_pct']:.2f}%",
+                    'avg_vix': f"{row.get('avg_vix', 0):.1f}",
+                    'avg_strike_distance': f"{row.get('avg_strike_distance', 0):.1f}%"
+                })
+
+            conn.close()
+
+            if not results:
+                return f"No high-probability combinations found{' for ' + strategy_name if strategy_name else ''}. Need more trade data."
+
+            return json.dumps(results, indent=2)
+
+        except Exception as e:
+            return f"Error finding best combinations: {str(e)}"
+
+    def get_optimal_strikes_for_current_market(self, current_market_data: Dict) -> Dict:
+        """
+        Get optimal strike recommendations for current market conditions
+
+        Based on historical performance + current regime, recommend EXACT strikes
+
+        Args:
+            current_market_data: Dict with:
+                - spot_price: Current SPY price
+                - vix_current: Current VIX
+                - net_gex: Current gamma exposure
+                - pattern_type: Detected pattern (e.g., 'LIBERATION', 'GAMMA_SQUEEZE')
+                - regime_analysis: Full psychology trap analysis
+
+        Returns:
+            Dict with exact strike recommendations, expected performance, reasoning
+        """
+        try:
+            spot = current_market_data.get('spot_price')
+            vix = current_market_data.get('vix_current')
+            pattern = current_market_data.get('pattern_type', 'UNKNOWN')
+
+            # Determine VIX regime
+            if vix < 15:
+                vix_regime = 'low'
+            elif vix > 25:
+                vix_regime = 'high'
+            else:
+                vix_regime = 'normal'
+
+            # Query historical performance for this pattern + regime
+            strike_data = self._analyze_strike_performance(pattern)
+            dte_data = self._analyze_dte_performance(pattern)
+            regime_data = self._optimize_by_regime(pattern)
+
+            # Use AI to synthesize recommendations
+            prompt = f"""Given current market conditions, recommend EXACT option strikes for entry.
+
+CURRENT MARKET:
+- SPY Price: ${spot:.2f}
+- VIX: {vix:.1f} ({vix_regime} volatility regime)
+- Pattern: {pattern}
+- Net GEX: {current_market_data.get('net_gex', 0)/1e9:.2f}B
+
+HISTORICAL PERFORMANCE FOR THIS PATTERN:
+Strike Performance:
+{strike_data}
+
+DTE Performance:
+{dte_data}
+
+Regime-Specific Performance:
+{regime_data}
+
+Based on this data, provide EXACT strike recommendations in JSON format:
+
+{{
+  "recommended_strategy": "iron_condor" | "vertical_call" | "vertical_put" | "straddle" | "strangle",
+  "strikes": {{
+    "short_call": <exact strike>,
+    "long_call": <exact strike>,
+    "short_put": <exact strike>,
+    "long_put": <exact strike>
+  }},
+  "distances": {{
+    "short_call_pct": <% from spot>,
+    "short_put_pct": <% from spot>
+  }},
+  "optimal_dte": <days to expiration>,
+  "expiration_date": "<date>",
+  "expected_credit": <dollars>,
+  "expected_win_rate": <percentage>,
+  "expected_profit_pct": <percentage>,
+  "max_loss": <dollars>,
+  "confidence": <0-100>,
+  "reasoning": "<1-2 sentences why these strikes>"
+}}
+
+Be SPECIFIC. Use the historical data to choose strikes that have actually worked in this regime."""
+
+            result = self.llm.invoke(prompt)
+            response_text = result.content if hasattr(result, 'content') else str(result)
+
+            # Try to parse JSON response
+            try:
+                # Extract JSON from markdown code blocks if present
+                if '```json' in response_text:
+                    json_start = response_text.find('```json') + 7
+                    json_end = response_text.find('```', json_start)
+                    response_text = response_text[json_start:json_end].strip()
+                elif '```' in response_text:
+                    json_start = response_text.find('```') + 3
+                    json_end = response_text.find('```', json_start)
+                    response_text = response_text[json_start:json_end].strip()
+
+                recommendation = json.loads(response_text)
+            except:
+                # If JSON parsing fails, return raw text
+                recommendation = {
+                    "raw_response": response_text,
+                    "error": "Could not parse JSON response"
+                }
+
+            return {
+                "current_market": current_market_data,
+                "optimal_strikes": recommendation,
+                "timestamp": datetime.now().isoformat()
+            }
+
+        except Exception as e:
+            return {
+                "error": f"Error getting optimal strikes: {str(e)}",
+                "current_market": current_market_data
+            }
+
+    # ========================================================================
     # Main Optimization Functions
     # ========================================================================
 
@@ -376,36 +979,110 @@ class StrategyOptimizerAgent:
         """
         Analyze a specific strategy and provide optimization recommendations
 
+        NOW INCLUDES:
+        - Strike-level analysis
+        - DTE optimization
+        - Greeks performance
+        - Regime-specific recommendations
+        - Spread width optimization
+        - High-probability combination finder
+
         Args:
             strategy_name: Name of strategy to optimize
 
         Returns:
-            Dict with analysis and recommendations
+            Dict with comprehensive analysis and recommendations
         """
 
-        # Get backtest data from database
+        # Get all performance data
         backtest_data = self._query_backtest_results(strategy_name)
+        strike_data = self._analyze_strike_performance(strategy_name)
+        dte_data = self._analyze_dte_performance(strategy_name)
+        greeks_data = self._optimize_greeks(strategy_name)
+        regime_data = self._optimize_by_regime(strategy_name)
+        spread_data = self._optimize_spread_widths(strategy_name)
+        combinations_data = self._find_best_combinations(strategy_name)
 
-        prompt = f"""You are an expert quantitative trading analyst. Analyze the '{strategy_name}' trading strategy and provide specific optimization recommendations.
+        prompt = f"""You are an expert quantitative trading analyst. Analyze the '{strategy_name}' trading strategy with COMPREHENSIVE strike-level detail.
 
-BACKTEST RESULTS:
+========================================
+OVERALL BACKTEST RESULTS:
+========================================
 {json.dumps(backtest_data, indent=2)}
 
-ANALYSIS PROCESS:
-1. Analyze the performance metrics (win rate, expectancy, drawdown, Sharpe ratio)
-2. Identify strengths and weaknesses
-3. Provide 3-5 specific, actionable recommendations with expected improvements
+========================================
+STRIKE-LEVEL PERFORMANCE:
+========================================
+{strike_data}
 
-FOCUS ON:
-- Parameter adjustments (entry/exit rules, stops, position sizing)
-- Filter improvements (reduce false signals)
-- Risk management enhancements
+========================================
+DTE (DAYS TO EXPIRATION) OPTIMIZATION:
+========================================
+{dte_data}
 
-BE SPECIFIC with numbers. For example:
-"Change RSI oversold threshold from 30 to 25" (not "tighten RSI filter")
-"Add VIX > 18 requirement for entries" (not "consider volatility")
+========================================
+GREEKS PERFORMANCE:
+========================================
+{greeks_data}
 
-END with a clear verdict: IMPLEMENT, TEST CAREFULLY, or KILL STRATEGY.
+========================================
+REGIME-SPECIFIC PERFORMANCE:
+========================================
+{regime_data}
+
+========================================
+SPREAD WIDTH OPTIMIZATION:
+========================================
+{spread_data}
+
+========================================
+BEST WINNING COMBINATIONS:
+========================================
+{combinations_data}
+
+========================================
+PROVIDE DETAILED RECOMMENDATIONS:
+========================================
+
+1. STRIKE SELECTION OPTIMIZATION:
+   - Best performing moneyness (ITM/ATM/OTM)
+   - Optimal strike distance from spot (e.g., "2% OTM calls")
+   - Strike selection by VIX regime
+
+2. DTE OPTIMIZATION:
+   - Best DTE range (e.g., "5-7 DTE for this pattern")
+   - Optimal hold time before expiration
+   - When to hold to expiration vs exit early
+
+3. GREEKS OPTIMIZATION:
+   - Optimal delta range (e.g., "0.30-0.40 delta")
+   - Theta strategy (positive vs negative theta)
+   - Vega exposure recommendations
+
+4. SPREAD CONFIGURATION (if applicable):
+   - Optimal wing widths (e.g., "10-point iron condor")
+   - Strike spacing
+   - Credit targets
+
+5. REGIME-SPECIFIC RULES:
+   - VIX < 15: [specific rules]
+   - VIX 15-25: [specific rules]
+   - VIX > 25: [specific rules]
+
+6. HIGH-PROBABILITY SETUPS:
+   - List the top 3 winning combinations from the data
+   - E.g., "VIX low + Liberation + 5 DTE + 2% OTM = 78% win rate"
+
+BE EXTREMELY SPECIFIC with exact numbers. Examples:
+- "Use 585 strike (2% OTM) when VIX < 16" (not "use OTM strikes")
+- "Enter at 5 DTE, exit at 2 DTE" (not "short DTE works")
+- "Target 0.35 delta" (not "medium delta")
+- "10-point iron condor wings" (not "wider spreads")
+
+END with clear verdict:
+- IMPLEMENT: If win rate >65% and expectancy >1%
+- TEST CAREFULLY: If win rate 55-65%
+- KILL STRATEGY: If win rate <55% or negative expectancy
 """
 
         result = self.llm.invoke(prompt)
@@ -413,6 +1090,15 @@ END with a clear verdict: IMPLEMENT, TEST CAREFULLY, or KILL STRATEGY.
         return {
             "strategy": strategy_name,
             "analysis": result.content if hasattr(result, 'content') else str(result),
+            "detailed_data": {
+                "backtest": backtest_data,
+                "strike_analysis": strike_data,
+                "dte_analysis": dte_data,
+                "greeks_analysis": greeks_data,
+                "regime_analysis": regime_data,
+                "spread_analysis": spread_data,
+                "best_combinations": combinations_data
+            },
             "timestamp": datetime.now().isoformat()
         }
 
@@ -420,17 +1106,33 @@ END with a clear verdict: IMPLEMENT, TEST CAREFULLY, or KILL STRATEGY.
         """
         Analyze all strategies and rank them by profitability
 
+        NOW INCLUDES regime-specific analysis across all strategies
+
         Returns:
             Dict with rankings and recommendations
         """
 
-        # Get all backtest results
+        # Get all backtest results and regime-specific data
         all_results = self._query_backtest_results("all")
+        all_regime_data = self._optimize_by_regime()  # All strategies
+        all_combinations = self._find_best_combinations()  # Best setups across all
 
-        prompt = f"""You are an expert quantitative trading analyst. Analyze ALL trading strategies and provide a comprehensive report.
+        prompt = f"""You are an expert quantitative trading analyst. Analyze ALL trading strategies with regime-specific detail.
 
+========================================
 ALL BACKTEST RESULTS:
+========================================
 {json.dumps(all_results, indent=2)}
+
+========================================
+REGIME-SPECIFIC PERFORMANCE (ALL STRATEGIES):
+========================================
+{all_regime_data}
+
+========================================
+BEST WINNING COMBINATIONS (ALL STRATEGIES):
+========================================
+{all_combinations}
 
 YOUR ANALYSIS SHOULD INCLUDE:
 1. Rank strategies by expectancy (most profitable first)
