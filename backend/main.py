@@ -2010,6 +2010,343 @@ async def get_trade_recommendation(request: dict):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================================
+# Enhanced Strategy Optimizer Endpoints (Strike-Level Intelligence)
+# ============================================================================
+
+@app.get("/api/optimizer/strikes")
+async def get_strike_performance(strategy: str = None):
+    """
+    Get strike-level performance analysis
+
+    Shows which strikes perform best by:
+    - Moneyness (ITM/ATM/OTM)
+    - Strike distance from spot
+    - VIX regime
+    - Win rate and P&L per strike type
+
+    Query params:
+        strategy: Optional strategy name filter
+
+    Returns:
+        Detailed strike performance data with win rates and P&L
+    """
+    try:
+        import os
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set"
+            )
+
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+
+        # Get strike performance data
+        strike_data_json = optimizer._analyze_strike_performance(strategy)
+
+        # Parse JSON response
+        import json
+        try:
+            strike_data = json.loads(strike_data_json)
+        except:
+            # If not valid JSON, return as string
+            strike_data = {"raw_data": strike_data_json}
+
+        return {
+            "success": True,
+            "strategy": strategy or "all",
+            "strike_performance": strike_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in strike performance: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/optimizer/dte")
+async def get_dte_optimization(strategy: str = None):
+    """
+    Get DTE (Days To Expiration) optimization analysis
+
+    Shows which DTE ranges work best:
+    - 0-3 DTE (weekly)
+    - 4-7 DTE
+    - 8-14 DTE
+    - 15-30 DTE
+    - 30+ DTE
+
+    Query params:
+        strategy: Optional strategy name filter
+
+    Returns:
+        DTE performance data with win rates per bucket
+    """
+    try:
+        import os
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set"
+            )
+
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+
+        # Get DTE performance data
+        dte_data_json = optimizer._analyze_dte_performance(strategy)
+
+        # Parse JSON response
+        import json
+        try:
+            dte_data = json.loads(dte_data_json)
+        except:
+            dte_data = {"raw_data": dte_data_json}
+
+        return {
+            "success": True,
+            "strategy": strategy or "all",
+            "dte_optimization": dte_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in DTE optimization: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/optimizer/regime-specific")
+async def get_regime_optimization(strategy: str = None):
+    """
+    Get regime-specific optimization analysis
+
+    Different strategies for different regimes:
+    - VIX < 15 (Low Vol)
+    - VIX 15-25 (Normal Vol)
+    - VIX > 25 (High Vol)
+    - Positive vs Negative Gamma
+
+    Query params:
+        strategy: Optional strategy name filter
+
+    Returns:
+        Regime-specific performance data
+    """
+    try:
+        import os
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set"
+            )
+
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+
+        # Get regime-specific data
+        regime_data_json = optimizer._optimize_by_regime(strategy)
+
+        # Parse JSON response
+        import json
+        try:
+            regime_data = json.loads(regime_data_json)
+        except:
+            regime_data = {"raw_data": regime_data_json}
+
+        return {
+            "success": True,
+            "strategy": strategy or "all",
+            "regime_optimization": regime_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in regime optimization: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/optimizer/live-recommendations")
+async def get_live_strike_recommendations(request: dict):
+    """
+    Get real-time strike recommendations for current market
+
+    Based on historical performance + current regime,
+    recommend EXACT strikes to use
+
+    Request body:
+    {
+        "spot_price": 580.50,
+        "vix_current": 18.5,
+        "net_gex": -2500000000,
+        "pattern_type": "LIBERATION"
+    }
+
+    Returns:
+        Exact strike recommendations with expected performance
+    """
+    try:
+        import os
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set"
+            )
+
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+
+        # Validate required fields
+        required = ['spot_price', 'vix_current']
+        for field in required:
+            if field not in request:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing required field: {field}"
+                )
+
+        # Get optimal strikes
+        recommendations = optimizer.get_optimal_strikes_for_current_market(request)
+
+        return {
+            "success": True,
+            "recommendations": recommendations,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error getting live recommendations: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/optimizer/greeks")
+async def get_greeks_optimization(strategy: str = None):
+    """
+    Get Greeks optimization analysis
+
+    Shows which Greek ranges perform best:
+    - Delta targets (0.20-0.30 vs 0.40-0.50)
+    - Theta efficiency
+    - Gamma exposure
+    - Vega exposure
+
+    Query params:
+        strategy: Optional strategy name filter
+
+    Returns:
+        Greeks performance data with efficiency ratios
+    """
+    try:
+        import os
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set"
+            )
+
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+
+        # Get Greeks optimization data
+        greeks_data_json = optimizer._optimize_greeks(strategy)
+
+        # Parse JSON response
+        import json
+        try:
+            greeks_data = json.loads(greeks_data_json)
+        except:
+            greeks_data = {"raw_data": greeks_data_json}
+
+        return {
+            "success": True,
+            "strategy": strategy or "all",
+            "greeks_optimization": greeks_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in Greeks optimization: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/optimizer/best-combinations")
+async def get_best_combinations(strategy: str = None):
+    """
+    Find winning combinations of conditions
+
+    Examples:
+    "VIX low + Liberation + 5 DTE + 2% OTM = 78% win rate"
+
+    Query params:
+        strategy: Optional strategy name filter
+
+    Returns:
+        High-probability setup combinations
+    """
+    try:
+        import os
+        api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY not set"
+            )
+
+        from ai_strategy_optimizer import StrategyOptimizerAgent
+        optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
+
+        # Get best combinations
+        combinations_json = optimizer._find_best_combinations(strategy)
+
+        # Parse JSON response
+        import json
+        try:
+            combinations_data = json.loads(combinations_json)
+        except:
+            combinations_data = {"raw_data": combinations_json}
+
+        return {
+            "success": True,
+            "strategy": strategy or "all",
+            "best_combinations": combinations_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error finding best combinations: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # AI Copilot Endpoints
 # ============================================================================

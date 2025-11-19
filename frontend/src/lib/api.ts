@@ -217,6 +217,18 @@ export const apiClient = {
     risk_per_trade_pct: number
   }) => api.post('/api/position-sizing/calculate', data),
 
+  // Strategy Optimizer - Strike-Level Intelligence
+  getStrikePerformance: (strategy?: string) => api.get('/api/optimizer/strikes', { params: { strategy } }),
+  getDTEPerformance: (strategy?: string) => api.get('/api/optimizer/dte', { params: { strategy } }),
+  getRegimePerformance: (strategy?: string) => api.get('/api/optimizer/regime-specific', { params: { strategy } }),
+  getGreeksPerformance: (strategy?: string) => api.get('/api/optimizer/greeks', { params: { strategy } }),
+  getBestCombinations: (strategy?: string) => api.get('/api/optimizer/best-combinations', { params: { strategy } }),
+  getLiveStrikeRecommendations: (data: {
+    spot_price: number,
+    vix_current: number,
+    pattern_type: string
+  }) => api.post('/api/optimizer/live-recommendations', data),
+
   // Database Administration
   getDatabaseStats: () => api.get('/api/database/stats'),
   testConnections: () => api.get('/api/test-connections'),
