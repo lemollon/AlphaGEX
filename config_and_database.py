@@ -706,6 +706,181 @@ def init_database():
         )
     ''')
 
+    # ===== STRATEGY OPTIMIZER TABLES =====
+
+    # Strike-level performance tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS strike_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            strategy_name TEXT NOT NULL,
+
+            -- Strike details
+            strike_distance_pct REAL,  -- % from spot (negative = ITM, positive = OTM)
+            strike_absolute REAL,       -- Actual strike price
+            spot_price REAL,             -- SPY price at entry
+            strike_type TEXT,            -- 'CALL' or 'PUT'
+            moneyness TEXT,              -- 'ITM', 'ATM', 'OTM'
+
+            -- Greeks at entry
+            delta REAL,
+            gamma REAL,
+            theta REAL,
+            vega REAL,
+
+            -- Time to expiration
+            dte INTEGER,                 -- Days to expiration
+            expiration_date DATE,
+
+            -- Market regime at entry
+            vix_current REAL,
+            vix_regime TEXT,             -- 'low', 'normal', 'high'
+            net_gex REAL,
+            gamma_regime TEXT,           -- 'positive', 'negative'
+
+            -- Performance
+            entry_premium REAL,
+            exit_premium REAL,
+            pnl_pct REAL,
+            pnl_dollars REAL,
+            max_profit_pct REAL,
+            max_loss_pct REAL,
+            win INTEGER,                 -- 1 = win, 0 = loss
+            hold_time_hours INTEGER,
+
+            -- Pattern context
+            pattern_type TEXT,           -- e.g., 'LIBERATION', 'GAMMA_SQUEEZE'
+            confidence_score REAL,
+
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Spread width performance (for multi-leg strategies)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spread_width_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            strategy_name TEXT NOT NULL,
+            spread_type TEXT,            -- 'iron_condor', 'butterfly', 'vertical_call', 'vertical_put'
+
+            -- Spread configuration
+            short_strike_call REAL,
+            long_strike_call REAL,
+            short_strike_put REAL,
+            long_strike_put REAL,
+
+            -- Distances
+            call_spread_width_points REAL,
+            put_spread_width_points REAL,
+            short_call_distance_pct REAL,  -- % from spot
+            long_call_distance_pct REAL,
+            short_put_distance_pct REAL,
+            long_put_distance_pct REAL,
+
+            -- Entry details
+            spot_price REAL,
+            dte INTEGER,
+            vix_current REAL,
+            net_gex REAL,
+
+            -- Performance
+            entry_credit REAL,
+            exit_cost REAL,
+            pnl_pct REAL,
+            pnl_dollars REAL,
+            max_profit_pct REAL,
+            max_loss_pct REAL,
+            win INTEGER,
+            hold_time_hours INTEGER,
+
+            -- Greeks totals
+            total_delta REAL,
+            total_gamma REAL,
+            total_theta REAL,
+
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Greeks performance analysis
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS greeks_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            strategy_name TEXT NOT NULL,
+
+            -- Entry Greeks
+            entry_delta REAL,
+            entry_gamma REAL,
+            entry_theta REAL,
+            entry_vega REAL,
+            entry_iv_rank REAL,          -- IV percentile
+
+            -- Position characteristics
+            position_type TEXT,          -- 'long', 'short', 'neutral'
+            delta_target TEXT,           -- 'low_delta', 'medium_delta', 'high_delta'
+            theta_strategy TEXT,         -- 'positive_theta', 'negative_theta'
+
+            -- Market context
+            dte INTEGER,
+            vix_current REAL,
+            spot_price REAL,
+
+            -- Performance
+            pnl_pct REAL,
+            pnl_dollars REAL,
+            win INTEGER,
+            hold_time_hours INTEGER,
+
+            -- Greeks efficiency
+            delta_pnl_ratio REAL,        -- PnL / delta (delta efficiency)
+            theta_pnl_ratio REAL,        -- PnL / theta (time decay efficiency)
+
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # DTE (Days To Expiration) performance
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS dte_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            strategy_name TEXT NOT NULL,
+
+            -- Time details
+            dte_at_entry INTEGER,
+            dte_bucket TEXT,             -- '0-3', '4-7', '8-14', '15-30', '30+'
+            hold_time_hours INTEGER,
+            expiration_date DATE,
+
+            -- Entry context
+            spot_price REAL,
+            strike REAL,
+            strike_distance_pct REAL,
+            vix_current REAL,
+            pattern_type TEXT,
+
+            -- Performance
+            entry_premium REAL,
+            exit_premium REAL,
+            pnl_pct REAL,
+            pnl_dollars REAL,
+            win INTEGER,
+
+            -- Time decay analysis
+            theta_at_entry REAL,
+            avg_theta_decay REAL,        -- Average daily theta
+            theta_pnl_contribution REAL, -- How much PnL from time decay
+
+            -- Optimal exit analysis
+            held_to_expiration INTEGER,  -- 1 = yes, 0 = no
+            days_before_expiration_closed INTEGER,
+
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     # Performance optimization: Add indexes for frequently queried columns
     # These indexes significantly speed up queries by symbol, date, and status
     c.execute("CREATE INDEX IF NOT EXISTS idx_gex_history_symbol ON gex_history(symbol)")
@@ -732,6 +907,30 @@ def init_database():
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy ON backtest_results(strategy_name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_timestamp ON backtest_results(timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)")
+
+    # Strategy Optimizer indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_strategy ON strike_performance(strategy_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_timestamp ON strike_performance(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_dte ON strike_performance(dte)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_moneyness ON strike_performance(moneyness)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_vix_regime ON strike_performance(vix_regime)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_win ON strike_performance(win)")
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spread_width_strategy ON spread_width_performance(strategy_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spread_width_timestamp ON spread_width_performance(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spread_width_type ON spread_width_performance(spread_type)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spread_width_win ON spread_width_performance(win)")
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_performance_strategy ON greeks_performance(strategy_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_performance_timestamp ON greeks_performance(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_performance_delta_target ON greeks_performance(delta_target)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_performance_win ON greeks_performance(win)")
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_strategy ON dte_performance(strategy_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_timestamp ON dte_performance(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_bucket ON dte_performance(dte_bucket)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_pattern ON dte_performance(pattern_type)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_win ON dte_performance(win)")
 
     # Push notification indexes
     c.execute("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)")
