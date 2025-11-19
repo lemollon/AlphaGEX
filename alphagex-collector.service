@@ -1,0 +1,19 @@
+[Unit]
+Description=AlphaGEX Automated Data Collector
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/user/AlphaGEX
+ExecStart=/usr/bin/python3 /home/user/AlphaGEX/automated_data_collector.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/user/AlphaGEX/logs/data_collector.log
+StandardError=append:/home/user/AlphaGEX/logs/data_collector_error.log
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target
