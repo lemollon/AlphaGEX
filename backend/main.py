@@ -7768,6 +7768,230 @@ async def delete_push_subscription(subscription_id: int):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+# ============================================================================
+# System Management APIs - Autonomous Trader Control
+# ============================================================================
+
+@app.get("/api/system/trader-status")
+async def get_trader_status():
+    """Get autonomous trader status and auto-start configuration"""
+    import subprocess
+    import os
+
+    try:
+        status = {
+            "trader_running": False,
+            "trader_pid": None,
+            "autostart_enabled": False,
+            "watchdog_enabled": False,
+            "last_log_entry": None,
+            "uptime": None
+        }
+
+        # Check if trader is running
+        alphagex_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pid_file = os.path.join(alphagex_dir, "logs", "trader.pid")
+
+        if os.path.exists(pid_file):
+            with open(pid_file, 'r') as f:
+                pid = f.read().strip()
+                status["trader_pid"] = int(pid)
+
+                # Check if process is actually running
+                try:
+                    result = subprocess.run(['ps', '-p', pid], capture_output=True, text=True)
+                    status["trader_running"] = result.returncode == 0
+                except:
+                    status["trader_running"] = False
+
+        # Check if auto-start is enabled in crontab
+        try:
+            result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+            crontab_content = result.stdout
+            status["autostart_enabled"] = "auto_start_trader.sh" in crontab_content
+            status["watchdog_enabled"] = "trader_watchdog.sh" in crontab_content
+        except:
+            status["autostart_enabled"] = False
+            status["watchdog_enabled"] = False
+
+        # Get last log entry
+        log_file = os.path.join(alphagex_dir, "logs", "trader.log")
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, 'r') as f:
+                    lines = f.readlines()
+                    if lines:
+                        status["last_log_entry"] = lines[-1].strip()
+            except:
+                pass
+
+        return {
+            "success": True,
+            "status": status
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/system/enable-autostart")
+async def enable_autostart():
+    """Enable autonomous trader auto-start on boot + watchdog"""
+    import subprocess
+    import os
+
+    try:
+        alphagex_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        # Get current crontab
+        try:
+            result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+            current_crontab = result.stdout
+        except:
+            current_crontab = ""
+
+        # Check if already enabled
+        if "auto_start_trader.sh" in current_crontab and "trader_watchdog.sh" in current_crontab:
+            return {
+                "success": True,
+                "message": "Auto-start already enabled",
+                "already_enabled": True
+            }
+
+        # Add auto-start and watchdog entries
+        new_entries = f"""
+# AlphaGEX Autonomous Trader - Auto-start on boot
+@reboot {alphagex_dir}/auto_start_trader.sh
+
+# AlphaGEX Autonomous Trader - Watchdog (checks every minute, restarts if crashed)
+* * * * * {alphagex_dir}/trader_watchdog.sh
+"""
+
+        # Remove old entries if they exist (to avoid duplicates)
+        lines = current_crontab.split('\n')
+        filtered_lines = [l for l in lines if 'auto_start_trader.sh' not in l and 'trader_watchdog.sh' not in l]
+        updated_crontab = '\n'.join(filtered_lines) + new_entries
+
+        # Update crontab
+        process = subprocess.Popen(['crontab', '-'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate(input=updated_crontab.encode())
+
+        if process.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Failed to update crontab: {stderr.decode()}"
+            }
+
+        return {
+            "success": True,
+            "message": "Auto-start enabled successfully! Trader will start on boot and auto-restart if crashed.",
+            "already_enabled": False
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/system/disable-autostart")
+async def disable_autostart():
+    """Disable autonomous trader auto-start"""
+    import subprocess
+
+    try:
+        # Get current crontab
+        try:
+            result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+            current_crontab = result.stdout
+        except:
+            return {
+                "success": True,
+                "message": "Auto-start already disabled (no crontab found)"
+            }
+
+        # Remove auto-start entries
+        lines = current_crontab.split('\n')
+        filtered_lines = [l for l in lines if 'auto_start_trader.sh' not in l and 'trader_watchdog.sh' not in l and l.strip()]
+        updated_crontab = '\n'.join(filtered_lines) + '\n'
+
+        # Update crontab
+        process = subprocess.Popen(['crontab', '-'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate(input=updated_crontab.encode())
+
+        if process.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Failed to update crontab: {stderr.decode()}"
+            }
+
+        return {
+            "success": True,
+            "message": "Auto-start disabled. Trader will not start automatically on boot."
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/system/start-trader")
+async def start_trader_manually():
+    """Manually start the autonomous trader"""
+    import subprocess
+    import os
+
+    try:
+        alphagex_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        start_script = os.path.join(alphagex_dir, "auto_start_trader.sh")
+
+        if not os.path.exists(start_script):
+            return {
+                "success": False,
+                "error": f"Start script not found at {start_script}"
+            }
+
+        # Run the start script
+        result = subprocess.run([start_script], capture_output=True, text=True, cwd=alphagex_dir)
+
+        return {
+            "success": True,
+            "message": "Trader started successfully",
+            "output": result.stdout
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/system/stop-trader")
+async def stop_trader_manually():
+    """Manually stop the autonomous trader"""
+    import subprocess
+    import os
+    import signal
+
+    try:
+        alphagex_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pid_file = os.path.join(alphagex_dir, "logs", "trader.pid")
+
+        if not os.path.exists(pid_file):
+            return {
+                "success": False,
+                "error": "Trader is not running (no PID file found)"
+            }
+
+        with open(pid_file, 'r') as f:
+            pid = int(f.read().strip())
+
+        # Kill the process
+        try:
+            os.kill(pid, signal.SIGTERM)
+            return {
+                "success": True,
+                "message": f"Trader stopped (PID: {pid})"
+            }
+        except ProcessLookupError:
+            return {
+                "success": False,
+                "error": "Trader process not found (may have already stopped)"
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown"""
