@@ -7154,6 +7154,620 @@ async def startup_event():
         print("   (Notifications will not be sent)")
         print("=" * 80 + "\n")
 
+# ============================================================================
+# Probability System APIs
+# ============================================================================
+
+@app.get("/api/probability/outcomes")
+async def get_probability_outcomes(days: int = 30):
+    """
+    Get prediction accuracy outcomes over time
+
+    Shows how accurate our probability predictions have been
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                prediction_date,
+                pattern_type,
+                predicted_probability,
+                actual_outcome,
+                correct_prediction,
+                outcome_timestamp
+            FROM probability_outcomes
+            WHERE prediction_date >= datetime('now', '-' || ? || ' days')
+            ORDER BY prediction_date DESC
+        ''', (days,))
+
+        outcomes = []
+        for row in c.fetchall():
+            outcomes.append({
+                'prediction_date': row[0],
+                'pattern_type': row[1],
+                'predicted_probability': row[2],
+                'actual_outcome': row[3],
+                'correct_prediction': bool(row[4]),
+                'outcome_timestamp': row[5]
+            })
+
+        # Calculate accuracy stats
+        total = len(outcomes)
+        correct = sum(1 for o in outcomes if o['correct_prediction'])
+        accuracy = (correct / total * 100) if total > 0 else 0
+
+        conn.close()
+
+        return {
+            "success": True,
+            "outcomes": outcomes,
+            "stats": {
+                "total_predictions": total,
+                "correct": correct,
+                "accuracy_pct": accuracy
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/probability/weights")
+async def get_probability_weights():
+    """Get current probability weighting configuration"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                weight_name,
+                weight_value,
+                description,
+                last_updated,
+                calibration_count
+            FROM probability_weights
+            ORDER BY weight_name
+        ''')
+
+        weights = []
+        for row in c.fetchall():
+            weights.append({
+                'weight_name': row[0],
+                'weight_value': row[1],
+                'description': row[2],
+                'last_updated': row[3],
+                'calibration_count': row[4]
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "weights": weights
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/probability/calibration-history")
+async def get_calibration_history(days: int = 90):
+    """Get model calibration adjustment history"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                calibration_date,
+                weight_name,
+                old_value,
+                new_value,
+                reason,
+                performance_delta
+            FROM calibration_history
+            WHERE calibration_date >= datetime('now', '-' || ? || ' days')
+            ORDER BY calibration_date DESC
+        ''', (days,))
+
+        history = []
+        for row in c.fetchall():
+            history.append({
+                'calibration_date': row[0],
+                'weight_name': row[1],
+                'old_value': row[2],
+                'new_value': row[3],
+                'reason': row[4],
+                'performance_delta': row[5]
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "calibration_history": history
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================================
+# Conversation History APIs
+# ============================================================================
+
+@app.get("/api/ai/conversations")
+async def get_conversation_history(limit: int = 50):
+    """Get AI copilot conversation history"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                id,
+                timestamp,
+                user_message,
+                ai_response,
+                context,
+                session_id
+            FROM conversations
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (limit,))
+
+        conversations = []
+        for row in c.fetchall():
+            conversations.append({
+                'id': row[0],
+                'timestamp': row[1],
+                'user_message': row[2],
+                'ai_response': row[3],
+                'context': row[4],
+                'session_id': row[5]
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "conversations": conversations,
+            "total": len(conversations)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/ai/conversation/{conversation_id}")
+async def get_conversation_detail(conversation_id: int):
+    """Get full conversation thread details"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                id,
+                timestamp,
+                user_message,
+                ai_response,
+                context,
+                session_id
+            FROM conversations
+            WHERE id = ?
+        ''', (conversation_id,))
+
+        row = c.fetchone()
+        conn.close()
+
+        if row:
+            return {
+                "success": True,
+                "conversation": {
+                    'id': row[0],
+                    'timestamp': row[1],
+                    'user_message': row[2],
+                    'ai_response': row[3],
+                    'context': row[4],
+                    'session_id': row[5]
+                }
+            }
+        else:
+            return {"success": False, "error": "Conversation not found"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================================
+# Open Interest Trends APIs
+# ============================================================================
+
+@app.get("/api/oi/trends")
+async def get_oi_trends(symbol: str = "SPY", days: int = 30):
+    """Get historical open interest trends"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                snapshot_date,
+                strike,
+                expiration,
+                call_oi,
+                put_oi,
+                total_oi,
+                call_volume,
+                put_volume,
+                put_call_ratio
+            FROM historical_open_interest
+            WHERE symbol = ?
+            AND snapshot_date >= date('now', '-' || ? || ' days')
+            ORDER BY snapshot_date DESC, total_oi DESC
+        ''', (symbol, days))
+
+        trends = []
+        for row in c.fetchall():
+            trends.append({
+                'snapshot_date': row[0],
+                'strike': row[1],
+                'expiration': row[2],
+                'call_oi': row[3],
+                'put_oi': row[4],
+                'total_oi': row[5],
+                'call_volume': row[6],
+                'put_volume': row[7],
+                'put_call_ratio': row[8]
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "trends": trends,
+            "symbol": symbol
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/oi/unusual-activity")
+async def get_unusual_oi_activity(symbol: str = "SPY", days: int = 7):
+    """Detect unusual open interest changes"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        # Get strikes with significant OI changes
+        c.execute('''
+            SELECT
+                h1.snapshot_date,
+                h1.strike,
+                h1.expiration,
+                h1.total_oi,
+                h2.total_oi as prev_oi,
+                ((h1.total_oi - h2.total_oi) * 100.0 / h2.total_oi) as oi_change_pct
+            FROM historical_open_interest h1
+            LEFT JOIN historical_open_interest h2
+                ON h1.strike = h2.strike
+                AND h1.expiration = h2.expiration
+                AND h2.snapshot_date = date(h1.snapshot_date, '-1 day')
+            WHERE h1.symbol = ?
+            AND h1.snapshot_date >= date('now', '-' || ? || ' days')
+            AND h2.total_oi IS NOT NULL
+            AND abs((h1.total_oi - h2.total_oi) * 100.0 / h2.total_oi) > 20
+            ORDER BY abs((h1.total_oi - h2.total_oi) * 100.0 / h2.total_oi) DESC
+            LIMIT 50
+        ''', (symbol, days))
+
+        unusual = []
+        for row in c.fetchall():
+            unusual.append({
+                'date': row[0],
+                'strike': row[1],
+                'expiration': row[2],
+                'current_oi': row[3],
+                'previous_oi': row[4],
+                'change_pct': row[5]
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "unusual_activity": unusual
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================================
+# Recommendations History APIs
+# ============================================================================
+
+@app.get("/api/recommendations/history")
+async def get_recommendations_history(days: int = 30):
+    """Get past trade recommendations"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                id,
+                timestamp,
+                symbol,
+                strategy,
+                direction,
+                confidence,
+                reasoning,
+                strike,
+                expiration,
+                entry_price,
+                target_price,
+                stop_loss,
+                status,
+                actual_outcome
+            FROM recommendations
+            WHERE timestamp >= datetime('now', '-' || ? || ' days')
+            ORDER BY timestamp DESC
+        ''', (days,))
+
+        recommendations = []
+        for row in c.fetchall():
+            recommendations.append({
+                'id': row[0],
+                'timestamp': row[1],
+                'symbol': row[2],
+                'strategy': row[3],
+                'direction': row[4],
+                'confidence': row[5],
+                'reasoning': row[6],
+                'strike': row[7],
+                'expiration': row[8],
+                'entry_price': row[9],
+                'target_price': row[10],
+                'stop_loss': row[11],
+                'status': row[12],
+                'actual_outcome': row[13]
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "recommendations": recommendations
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/recommendations/performance")
+async def get_recommendation_performance():
+    """Analyze how well past recommendations performed"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        # Get recommendations with outcomes
+        c.execute('''
+            SELECT
+                confidence,
+                actual_outcome,
+                CASE WHEN actual_outcome = 'WIN' THEN 1 ELSE 0 END as won
+            FROM recommendations
+            WHERE status = 'CLOSED'
+            AND actual_outcome IS NOT NULL
+        ''')
+
+        results = c.fetchall()
+
+        # Calculate stats by confidence bucket
+        buckets = {
+            '90-100': {'total': 0, 'wins': 0},
+            '80-89': {'total': 0, 'wins': 0},
+            '70-79': {'total': 0, 'wins': 0},
+            '60-69': {'total': 0, 'wins': 0},
+            'below-60': {'total': 0, 'wins': 0}
+        }
+
+        for row in results:
+            conf = row[0]
+            won = row[2]
+
+            if conf >= 90:
+                bucket = '90-100'
+            elif conf >= 80:
+                bucket = '80-89'
+            elif conf >= 70:
+                bucket = '70-79'
+            elif conf >= 60:
+                bucket = '60-69'
+            else:
+                bucket = 'below-60'
+
+            buckets[bucket]['total'] += 1
+            buckets[bucket]['wins'] += won
+
+        # Calculate win rates
+        performance = []
+        for bucket_name, data in buckets.items():
+            win_rate = (data['wins'] / data['total'] * 100) if data['total'] > 0 else 0
+            performance.append({
+                'confidence_bucket': bucket_name,
+                'total': data['total'],
+                'wins': data['wins'],
+                'win_rate': win_rate
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "performance_by_confidence": performance
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================================
+# GEX History APIs
+# ============================================================================
+
+@app.get("/api/gex/history")
+async def get_gex_history(symbol: str = "SPY", days: int = 30):
+    """Get historical GEX snapshots"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                timestamp,
+                net_gex,
+                flip_point,
+                call_wall,
+                put_wall,
+                spot_price,
+                mm_state,
+                regime,
+                data_source
+            FROM gex_history
+            WHERE symbol = ?
+            AND timestamp >= datetime('now', '-' || ? || ' days')
+            ORDER BY timestamp DESC
+        ''', (symbol, days))
+
+        history = []
+        for row in c.fetchall():
+            history.append({
+                'timestamp': row[0],
+                'net_gex': row[1],
+                'flip_point': row[2],
+                'call_wall': row[3],
+                'put_wall': row[4],
+                'spot_price': row[5],
+                'mm_state': row[6],
+                'regime': row[7],
+                'data_source': row[8]
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "history": history,
+            "symbol": symbol
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/gex/regime-changes")
+async def get_gex_regime_changes(symbol: str = "SPY", days: int = 90):
+    """Identify when GEX regime flipped"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        # Get regime changes
+        c.execute('''
+            SELECT
+                h1.timestamp,
+                h1.regime as new_regime,
+                h2.regime as old_regime,
+                h1.net_gex,
+                h1.spot_price
+            FROM gex_history h1
+            LEFT JOIN gex_history h2
+                ON h2.timestamp = (
+                    SELECT MAX(timestamp)
+                    FROM gex_history
+                    WHERE timestamp < h1.timestamp
+                    AND symbol = h1.symbol
+                )
+            WHERE h1.symbol = ?
+            AND h1.timestamp >= datetime('now', '-' || ? || ' days')
+            AND h1.regime != h2.regime
+            ORDER BY h1.timestamp DESC
+        ''', (symbol, days))
+
+        changes = []
+        for row in c.fetchall():
+            changes.append({
+                'timestamp': row[0],
+                'new_regime': row[1],
+                'old_regime': row[2],
+                'net_gex': row[3],
+                'spot_price': row[4]
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "regime_changes": changes
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================================
+# Push Subscription Management APIs
+# ============================================================================
+
+@app.get("/api/notifications/subscriptions")
+async def get_push_subscriptions():
+    """Get all push notification subscriptions"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT
+                id,
+                endpoint,
+                created_at,
+                last_notification,
+                notification_count,
+                active
+            FROM push_subscriptions
+            WHERE active = 1
+            ORDER BY created_at DESC
+        ''')
+
+        subscriptions = []
+        for row in c.fetchall():
+            subscriptions.append({
+                'id': row[0],
+                'endpoint': row[1][:50] + '...',  # Truncate for security
+                'created_at': row[2],
+                'last_notification': row[3],
+                'notification_count': row[4],
+                'active': bool(row[5])
+            })
+
+        conn.close()
+
+        return {
+            "success": True,
+            "subscriptions": subscriptions
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.delete("/api/notifications/subscription/{subscription_id}")
+async def delete_push_subscription(subscription_id: int):
+    """Unsubscribe from push notifications"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+            UPDATE push_subscriptions
+            SET active = 0
+            WHERE id = ?
+        ''', (subscription_id,))
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": "Subscription deactivated"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown"""
