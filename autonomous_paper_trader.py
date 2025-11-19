@@ -27,8 +27,9 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # CRITICAL: Import Psychology Trap Detector
 try:
-    from psychology_trap_detector import detect_market_regime_complete
+    from psychology_trap_detector import analyze_current_market_complete
     from gamma_expiration_builder import build_gamma_with_expirations
+    from polygon_helper import PolygonDataFetcher as PolygonHelper
     PSYCHOLOGY_AVAILABLE = True
     print("✅ Psychology Trap Detector integrated with Autonomous Trader")
 except ImportError as e:
@@ -956,10 +957,24 @@ class AutonomousPaperTrader:
                 # Build gamma data with expiration timeline
                 gamma_data = build_gamma_with_expirations('SPY', use_tv_api=True)
 
-                # Run complete regime detection
-                regime_result = detect_market_regime_complete(
-                    symbol='SPY',
-                    gamma_data=gamma_data
+                # Fetch multi-timeframe price data
+                polygon_helper = PolygonHelper()
+                price_data = polygon_helper.get_multi_timeframe_data('SPY', spot)
+
+                # Calculate volume ratio from daily data
+                if len(price_data.get('1d', [])) >= 20:
+                    recent_vol = price_data['1d'][-1]['volume']
+                    avg_vol = sum(bar['volume'] for bar in price_data['1d'][-20:]) / 20
+                    volume_ratio = recent_vol / avg_vol if avg_vol > 0 else 1.0
+                else:
+                    volume_ratio = 1.0
+
+                # Run complete regime detection with CORRECT function
+                regime_result = analyze_current_market_complete(
+                    current_price=spot,
+                    price_data=price_data,
+                    gamma_data=gamma_data,
+                    volume_ratio=volume_ratio
                 )
 
                 if regime_result and regime_result.get('regime'):
