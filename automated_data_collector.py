@@ -147,17 +147,17 @@ def run_daily_performance():
 def setup_schedule():
     """Set up the collection schedule"""
 
-    # GEX History: Every 15 minutes
-    schedule.every(15).minutes.do(run_gex_history)
+    # GEX History: Every 5 minutes (increased from 15)
+    schedule.every(5).minutes.do(run_gex_history)
 
-    # Liberation Outcomes: Every 30 minutes
-    schedule.every(30).minutes.do(run_liberation_outcomes)
+    # Liberation Outcomes: Every 10 minutes (increased from 30)
+    schedule.every(10).minutes.do(run_liberation_outcomes)
 
-    # Forward Magnets: Every 15 minutes
-    schedule.every(15).minutes.do(run_forward_magnets)
+    # Forward Magnets: Every 5 minutes (increased from 15)
+    schedule.every(5).minutes.do(run_forward_magnets)
 
-    # Gamma Expiration: Every hour
-    schedule.every(1).hours.do(run_gamma_expiration)
+    # Gamma Expiration: Every 30 minutes (increased from 60)
+    schedule.every(30).minutes.do(run_gamma_expiration)
 
     # Daily Performance: Every 5 minutes (will only run after market close)
     schedule.every(5).minutes.do(run_daily_performance)
@@ -165,13 +165,14 @@ def setup_schedule():
     print("="*70)
     print("🚀 ALPHAGEX AUTOMATED DATA COLLECTION")
     print("="*70)
-    print("\n📅 Schedule Configuration:")
-    print("  • GEX History: Every 15 minutes (market hours)")
-    print("  • Liberation Outcomes: Every 30 minutes (market hours)")
-    print("  • Forward Magnets: Every 15 minutes (market hours)")
-    print("  • Gamma Expiration: Every 60 minutes (market hours)")
-    print("  • Daily Performance: Once at 4:00 PM ET (after close)")
+    print("\n📅 Schedule Configuration (INCREASED FREQUENCY):")
+    print("  • GEX History: Every 5 minutes (market hours) 📊")
+    print("  • Liberation Outcomes: Every 10 minutes (market hours) 🎯")
+    print("  • Forward Magnets: Every 5 minutes (market hours) 🧲")
+    print("  • Gamma Expiration: Every 30 minutes (market hours) 📅")
+    print("  • Daily Performance: Once at 4:00 PM ET (after close) 📈")
     print("\n⏰ Market Hours: 9:30 AM - 4:00 PM ET (Mon-Fri)")
+    print("💡 Collections run 3-6x more frequently for faster data accumulation")
     print("\n✅ Scheduler started. Press Ctrl+C to stop.\n")
     print("="*70)
 
