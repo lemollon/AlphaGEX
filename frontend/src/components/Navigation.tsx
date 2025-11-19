@@ -35,7 +35,7 @@ const navItems = [
   { href: '/gamma/0dte', label: '0DTE Tracker', icon: Clock, category: 'Analysis' },
   { href: '/psychology', label: 'Psychology Traps', icon: Brain, category: 'Analysis' },
   { href: '/psychology/performance', label: 'Psychology Performance', icon: BarChart3, category: 'Analysis' },
-  { href: '/strategies', label: 'Strategy Optimizer', icon: TrendingUp, category: 'Trading' },
+  { href: '/optimizer', label: 'Strategy Optimizer', icon: TrendingUp, category: 'Trading' },
   { href: '/scanner', label: 'Scanner', icon: Search, category: 'Trading' },
   { href: '/setups', label: 'Trade Setups', icon: Target, category: 'Trading' },
   { href: '/position-sizing', label: 'Position Sizing', icon: Calculator, category: 'Trading' },
