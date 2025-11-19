@@ -1570,12 +1570,14 @@ EXPIRATION: {dte} DTE (monthly) for theta decay
 RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
             }
 
-            # Execute as multi-leg position
+            # Execute as multi-leg position with REAL bid/ask from options chain
+            ic_bid = (call_sell.get('bid', 0) - call_buy.get('ask', 0)) + (put_sell.get('bid', 0) - put_buy.get('ask', 0))
+            ic_ask = (call_sell.get('ask', 0) - call_buy.get('bid', 0)) + (put_sell.get('ask', 0) - put_buy.get('bid', 0))
             # Get VIX for strike/Greeks logging
             vix = self._get_vix()
             position_id = self._execute_trade(
                 trade,
-                {'mid': credit, 'bid': credit, 'ask': credit, 'contract_symbol': 'IRON_CONDOR'},
+                {'mid': credit, 'bid': ic_bid, 'ask': ic_ask, 'contract_symbol': 'IRON_CONDOR'},
                 contracts,
                 credit,
                 exp_date,
@@ -1670,16 +1672,17 @@ RATIONALE: Failsafe execution to guarantee MINIMUM one trade per day
 This trade ensures we're always active in the market"""
             }
 
-            # Execute the straddle
-            # CRITICAL: Protect against division by zero in bid/ask calculation
-            bid_ask_price = total_debit / (contracts * 100) if (contracts * 100) > 0 else 0
+            # Execute the straddle with REAL bid/ask from options chain
+            straddle_bid = call_price.get('bid', 0) + put_price.get('bid', 0)
+            straddle_ask = call_price.get('ask', 0) + put_price.get('ask', 0)
+            straddle_mid = call_price['mid'] + put_price['mid']
             # Get VIX for strike/Greeks logging
             vix = self._get_vix()
             position_id = self._execute_trade(
                 trade,
-                {'mid': call_price['mid'] + put_price['mid'], 'bid': bid_ask_price, 'ask': bid_ask_price, 'contract_symbol': 'STRADDLE_FALLBACK'},
+                {'mid': straddle_mid, 'bid': straddle_bid, 'ask': straddle_ask, 'contract_symbol': 'STRADDLE_FALLBACK'},
                 contracts,
-                -(call_price['mid'] + put_price['mid']),  # Negative because we're buying (debit)
+                -straddle_mid,  # Negative because we're buying (debit)
                 exp_date,
                 {'net_gex': 0, 'flip_point': strike, 'spot_price': spot},  # Include spot price for logging
                 vix
