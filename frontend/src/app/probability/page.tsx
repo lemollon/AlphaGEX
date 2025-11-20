@@ -160,10 +160,9 @@ export default function ProbabilityDashboard() {
                     <div className="p-8">
                       <CoolEmptyState
                         icon={Target}
-                        title="Prediction Engine Warming Up"
-                        description="The probability engine will begin tracking predictions as the system analyzes patterns and makes forecasts based on market conditions."
-                        showProgress={true}
-                        estimatedDays={7}
+                        title="No Prediction Data Yet"
+                        description="Historical data is available via Polygon. Run the backfill script to populate your database with historical predictions and pattern analysis."
+                        showProgress={false}
                         variant="gradient"
                       />
                     </div>

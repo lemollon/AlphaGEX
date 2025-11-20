@@ -272,8 +272,12 @@ sqlite3 gex_copilot.db "DELETE FROM historical_open_interest WHERE date < date('
 
 1. **Run first snapshot manually** to verify setup
 2. **Schedule daily job** using cron/Task Scheduler
-3. **Wait 5-7 days** for accumulation data to build
-4. **Test OI accumulation calculations** after 7 days
+3. **Backfill historical data** (optional but recommended):
+   ```bash
+   python backfill_historical_data.py --days 365
+   ```
+   This eliminates the 5-7 day waiting period by populating historical data immediately.
+4. **Test OI accumulation calculations** using historical data
 5. **Integrate with Forward GEX** analysis
 
 ## Support

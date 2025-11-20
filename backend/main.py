@@ -1793,13 +1793,13 @@ async def get_gamma_expiration_waterfall(symbol: str):
 
 
 @app.get("/api/gamma/{symbol}/history")
-async def get_gamma_history(symbol: str, days: int = 30):
+async def get_gamma_history(symbol: str, days: int = 90):
     """
     Get historical gamma exposure data for trend analysis
 
     Args:
         symbol: Stock symbol
-        days: Number of days of history to fetch (default 30)
+        days: Number of days of history to fetch (default 90)
 
     Returns:
         Historical gamma data including net_gex, spot_price, etc.
@@ -7606,7 +7606,7 @@ async def get_recommendation_performance():
 # ============================================================================
 
 @app.get("/api/gex/history")
-async def get_gex_history(symbol: str = "SPY", days: int = 30):
+async def get_gex_history(symbol: str = "SPY", days: int = 90):
     """Get historical GEX snapshots"""
     try:
         conn = sqlite3.connect(DB_PATH)
