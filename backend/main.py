@@ -7072,6 +7072,17 @@ async def startup_event():
     print("  - GET  /api/psychology/statistics         Sucker statistics")
     print("=" * 80)
 
+    # Auto-initialize database with historical data on first startup
+    print("\n🔄 Checking database initialization...")
+    try:
+        import sys
+        sys.path.insert(0, str(parent_dir))
+        from startup_init import initialize_on_startup
+        initialize_on_startup()
+    except Exception as e:
+        print(f"⚠️  Initialization check failed: {e}")
+        print("📊 App will create tables as needed during operation")
+
     # Auto-run backtests on startup IF database is empty
     print("\n🔄 Checking backtest results...")
     try:
