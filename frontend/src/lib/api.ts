@@ -239,15 +239,15 @@ export const apiClient = {
   getConversation: (id: number) => api.get(`/api/ai/conversation/${id}`),
 
   // Open Interest Trends
-  getOITrends: (symbol?: string, days?: number) => api.get('/api/oi/trends', { params: { symbol: symbol || 'SPY', days: days || 30 } }),
-  getUnusualOIActivity: (symbol?: string, days?: number) => api.get('/api/oi/unusual-activity', { params: { symbol: symbol || 'SPY', days: days || 7 } }),
+  getOITrends: (symbol?: string, days?: number) => api.get('/api/oi/trends', { params: { symbol: symbol || 'SPY', days: days || 90 } }),
+  getUnusualOIActivity: (symbol?: string, days?: number) => api.get('/api/oi/unusual-activity', { params: { symbol: symbol || 'SPY', days: days || 14 } }),
 
   // Recommendations History
-  getRecommendationsHistory: (days?: number) => api.get('/api/recommendations/history', { params: { days: days || 30 } }),
+  getRecommendationsHistory: (days?: number) => api.get('/api/recommendations/history', { params: { days: days || 90 } }),
   getRecommendationPerformance: () => api.get('/api/recommendations/performance'),
 
   // GEX History
-  getGEXHistory: (symbol?: string, days?: number) => api.get('/api/gex/history', { params: { symbol: symbol || 'SPY', days: days || 30 } }),
+  getGEXHistory: (symbol?: string, days?: number) => api.get('/api/gex/history', { params: { symbol: symbol || 'SPY', days: days || 90 } }),
   getGEXRegimeChanges: (symbol?: string, days?: number) => api.get('/api/gex/regime-changes', { params: { symbol: symbol || 'SPY', days: days || 90 } }),
 
   // Push Notifications

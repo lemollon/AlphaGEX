@@ -174,23 +174,22 @@ export default function PsychologyPerformance() {
           {overview && overview.total_signals === 0 && (
             <CoolEmptyState
               icon={BarChart3}
-              title="Building Your Performance History"
-              description="Psychology trap signals are being tracked automatically. Performance metrics will populate as signals accumulate and outcomes are validated."
-              ctaText="Run Analysis Now"
+              title="No Historical Data Yet"
+              description="Run the historical data backfill script to populate your database with historical psychology trap signals and performance data. This will give you immediate access to charts and analytics."
+              ctaText="View Psychology Signals"
               ctaAction={() => window.location.href = '/psychology'}
-              showProgress={true}
-              estimatedDays={30}
+              showProgress={false}
               variant="glow"
             />
           )}
 
           {/* Minimal Data State - Show progress indicators */}
-          {overview && overview.total_signals > 0 && overview.total_signals < 30 && (
+          {overview && overview.total_signals > 0 && overview.total_signals < 10 && (
             <div className="mb-6">
               <TrendBuildingPlaceholder
                 title="Performance Trends Building"
                 dataPoints={overview.total_signals}
-                requiredPoints={30}
+                requiredPoints={10}
                 showMiniChart={true}
               />
             </div>

@@ -92,11 +92,18 @@ Once configured, here's what runs automatically:
 
 **Market Hours:** 9:30 AM - 4:00 PM ET (Monday-Friday)
 
-**Data Accumulation:**
-- **Day 1-7:** Shows progress indicators, minimal trends
-- **Day 7-14:** Short-term patterns emerge
-- **Day 14-30:** Reliable trends and performance metrics
-- **Day 30+:** Full historical analysis available
+**Immediate Historical Data Access:**
+Instead of waiting 30+ days for data to accumulate, you can backfill historical data immediately:
+
+```bash
+# Backfill 1 year of historical data from Polygon
+python backfill_historical_data.py --days 365
+
+# Backfill specific symbol
+python backfill_historical_data.py --symbol SPY --days 180
+```
+
+This populates your database with historical GEX, gamma, and psychology signals instantly, giving you immediate access to charts and analytics.
 
 ---
 
