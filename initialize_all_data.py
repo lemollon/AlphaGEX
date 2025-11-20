@@ -30,7 +30,12 @@ class DataInitializer:
 
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, timeout=30.0)
+
+        # Enable WAL mode for concurrent access
+        self.conn.execute('PRAGMA journal_mode=WAL')
+        self.conn.execute('PRAGMA synchronous=NORMAL')
+
         self._ensure_schema_fixes()
 
     def _ensure_schema_fixes(self):

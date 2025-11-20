@@ -42,8 +42,16 @@ def get_db_connection(db_path: str, timeout: float = 30.0) -> sqlite3.Connection
     """
     conn = sqlite3.connect(db_path, timeout=timeout, check_same_thread=False)
 
-    # Enable WAL mode for better concurrency
-    conn.execute('PRAGMA journal_mode=WAL')
+    # Enable WAL mode for better concurrency (may already be enabled)
+    try:
+        result = conn.execute('PRAGMA journal_mode=WAL').fetchone()
+        if result and result[0] == 'wal':
+            print("  ✅ WAL mode enabled (concurrent access safe)")
+        else:
+            print(f"  ⚠️  Journal mode: {result[0] if result else 'unknown'}")
+    except sqlite3.OperationalError as e:
+        print(f"  ⚠️  Could not enable WAL mode: {e}")
+        # Continue anyway - might already be in WAL mode
 
     # Optimize for concurrent access
     conn.execute('PRAGMA synchronous=NORMAL')  # Faster but still safe
