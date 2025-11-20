@@ -7779,13 +7779,18 @@ async def get_trader_status():
     import os
 
     try:
+        # Detect if running on Render
+        is_render = bool(os.getenv("RENDER")) or bool(os.getenv("RENDER_SERVICE_NAME"))
+
         status = {
             "trader_running": False,
             "trader_pid": None,
             "autostart_enabled": False,
             "watchdog_enabled": False,
             "last_log_entry": None,
-            "uptime": None
+            "uptime": None,
+            "platform": "render" if is_render else "local",
+            "autostart_type": None
         }
 
         # Check if trader is running
@@ -7804,15 +7809,23 @@ async def get_trader_status():
                 except:
                     status["trader_running"] = False
 
-        # Check if auto-start is enabled in crontab
-        try:
-            result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
-            crontab_content = result.stdout
-            status["autostart_enabled"] = "auto_start_trader.sh" in crontab_content
-            status["watchdog_enabled"] = "trader_watchdog.sh" in crontab_content
-        except:
-            status["autostart_enabled"] = False
-            status["watchdog_enabled"] = False
+        # Handle auto-start detection based on platform
+        if is_render:
+            # On Render, auto-start is managed via render.yaml worker service
+            status["autostart_enabled"] = True
+            status["watchdog_enabled"] = True
+            status["autostart_type"] = "render_worker"
+        else:
+            # On local/VPS, check crontab
+            try:
+                result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+                crontab_content = result.stdout
+                status["autostart_enabled"] = "auto_start_trader.sh" in crontab_content
+                status["watchdog_enabled"] = "trader_watchdog.sh" in crontab_content
+                status["autostart_type"] = "crontab" if status["autostart_enabled"] else None
+            except:
+                status["autostart_enabled"] = False
+                status["watchdog_enabled"] = False
 
         # Get last log entry
         log_file = os.path.join(alphagex_dir, "logs", "trader.log")
@@ -7840,13 +7853,31 @@ async def enable_autostart():
     import os
 
     try:
+        # Detect if running on Render
+        is_render = bool(os.getenv("RENDER")) or bool(os.getenv("RENDER_SERVICE_NAME"))
+
+        if is_render:
+            # On Render, auto-start is managed via render.yaml
+            return {
+                "success": True,
+                "message": "Auto-start is already configured via Render worker service (render.yaml). The autonomous trader runs automatically as a background worker and restarts if it crashes.",
+                "already_enabled": True,
+                "platform": "render"
+            }
+
         alphagex_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         # Get current crontab
         try:
             result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
             current_crontab = result.stdout
-        except:
+        except FileNotFoundError:
+            return {
+                "success": False,
+                "error": "crontab command not found. This system doesn't support cron-based auto-start.",
+                "platform": "unsupported"
+            }
+        except Exception as e:
             current_crontab = ""
 
         # Check if already enabled

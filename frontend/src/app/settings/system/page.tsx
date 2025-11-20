@@ -13,6 +13,8 @@ interface TraderStatus {
   watchdog_enabled: boolean
   last_log_entry: string | null
   uptime: string | null
+  platform?: string
+  autostart_type?: string
 }
 
 export default function SystemSettings() {
@@ -256,52 +258,77 @@ export default function SystemSettings() {
                 {/* Auto-Start Section */}
                 <div className="border-t border-gray-800 pt-4">
                   <h3 className="text-lg font-semibold mb-3">🚀 Permanent Auto-Start Setup</h3>
-                  <p className="text-gray-400 text-sm mb-4">
-                    Click once to enable auto-start on boot + crash recovery watchdog. The trader will run forever automatically.
-                  </p>
 
-                  {!status?.autostart_enabled ? (
-                    <button
-                      onClick={enableAutoStart}
-                      disabled={actionLoading}
-                      className="w-full px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-gray-700 disabled:to-gray-700 rounded-xl font-semibold text-lg transition-all duration-300 transform hover:scale-105 disabled:scale-100 flex items-center justify-center gap-3 shadow-lg"
-                    >
-                      {actionLoading ? (
-                        <>
-                          <RefreshCw className="w-6 h-6 animate-spin" />
-                          Enabling Auto-Start...
-                        </>
-                      ) : (
-                        <>
-                          <Power className="w-6 h-6" />
-                          Enable Auto-Start (One-Click Permanent Solution)
-                        </>
-                      )}
-                    </button>
-                  ) : (
+                  {status?.platform === 'render' ? (
+                    // Render-specific messaging
                     <div className="space-y-3">
                       <div className="p-4 bg-green-900/20 border border-green-500 rounded-lg">
                         <div className="flex items-center gap-2 text-green-400 mb-2">
                           <CheckCircle className="w-5 h-5" />
-                          <span className="font-semibold">Auto-Start Enabled</span>
+                          <span className="font-semibold">Auto-Start Enabled (Render Worker Service)</span>
                         </div>
                         <ul className="text-sm text-gray-300 space-y-1 ml-7">
-                          <li>✅ Starts automatically on boot</li>
-                          <li>✅ Watchdog checks every minute</li>
-                          <li>✅ Auto-restarts if crashed</li>
-                          <li>✅ No manual intervention needed</li>
+                          <li>✅ Managed via render.yaml configuration</li>
+                          <li>✅ Runs as dedicated background worker</li>
+                          <li>✅ Auto-restarts if crashed (Render manages this)</li>
+                          <li>✅ No manual setup required</li>
                         </ul>
                       </div>
-
-                      <button
-                        onClick={disableAutoStart}
-                        disabled={actionLoading}
-                        className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
-                      >
-                        <PowerOff className="w-4 h-4" />
-                        Disable Auto-Start
-                      </button>
+                      <div className="text-xs text-gray-500 italic">
+                        Note: On Render, the autonomous trader runs as a separate worker service. Check the "alphagex-trader" service in your Render dashboard to see logs and status.
+                      </div>
                     </div>
+                  ) : (
+                    // Local/VPS messaging
+                    <>
+                      <p className="text-gray-400 text-sm mb-4">
+                        Click once to enable auto-start on boot + crash recovery watchdog. The trader will run forever automatically.
+                      </p>
+
+                      {!status?.autostart_enabled ? (
+                        <button
+                          onClick={enableAutoStart}
+                          disabled={actionLoading}
+                          className="w-full px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-gray-700 disabled:to-gray-700 rounded-xl font-semibold text-lg transition-all duration-300 transform hover:scale-105 disabled:scale-100 flex items-center justify-center gap-3 shadow-lg"
+                        >
+                          {actionLoading ? (
+                            <>
+                              <RefreshCw className="w-6 h-6 animate-spin" />
+                              Enabling Auto-Start...
+                            </>
+                          ) : (
+                            <>
+                              <Power className="w-6 h-6" />
+                              Enable Auto-Start (One-Click Permanent Solution)
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="p-4 bg-green-900/20 border border-green-500 rounded-lg">
+                            <div className="flex items-center gap-2 text-green-400 mb-2">
+                              <CheckCircle className="w-5 h-5" />
+                              <span className="font-semibold">Auto-Start Enabled</span>
+                            </div>
+                            <ul className="text-sm text-gray-300 space-y-1 ml-7">
+                              <li>✅ Starts automatically on boot</li>
+                              <li>✅ Watchdog checks every minute</li>
+                              <li>✅ Auto-restarts if crashed</li>
+                              <li>✅ No manual intervention needed</li>
+                            </ul>
+                          </div>
+
+                          <button
+                            onClick={disableAutoStart}
+                            disabled={actionLoading}
+                            className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
+                          >
+                            <PowerOff className="w-4 h-4" />
+                            Disable Auto-Start
+                          </button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 
