@@ -23,6 +23,11 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import time
 import sys
+import os
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 # Import local modules
 from config_and_database import DB_PATH
