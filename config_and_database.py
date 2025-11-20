@@ -241,9 +241,15 @@ STRATEGIES = {
 
 def init_database():
     """Initialize comprehensive database schema"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+
+    # Enable WAL mode for concurrent access (allows reads while writing)
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA synchronous=NORMAL')
+    conn.execute('PRAGMA cache_size=-64000')  # 64MB cache
+
     c = conn.cursor()
-    
+
     # GEX History
     c.execute('''
         CREATE TABLE IF NOT EXISTS gex_history (
