@@ -8,6 +8,59 @@ import random
 from datetime import datetime, timedelta
 from config_and_database import DB_PATH, init_database
 
+def ensure_all_tables_exist(conn):
+    """Explicitly create all tables that might be missing"""
+    c = conn.cursor()
+
+    # Create gamma_history if missing
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS gamma_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            date TEXT NOT NULL,
+            time_of_day TEXT,
+            spot_price REAL NOT NULL,
+            net_gex REAL NOT NULL,
+            flip_point REAL NOT NULL,
+            call_wall REAL,
+            put_wall REAL,
+            implied_volatility REAL,
+            put_call_ratio REAL,
+            distance_to_flip_pct REAL,
+            regime TEXT,
+            UNIQUE(symbol, timestamp)
+        )
+    """)
+
+    # Create gamma_daily_summary if missing
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS gamma_daily_summary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            date TEXT NOT NULL,
+            open_gex REAL,
+            close_gex REAL,
+            high_gex REAL,
+            low_gex REAL,
+            gex_change REAL,
+            gex_change_pct REAL,
+            open_flip REAL,
+            close_flip REAL,
+            flip_change REAL,
+            flip_change_pct REAL,
+            open_price REAL,
+            close_price REAL,
+            price_change_pct REAL,
+            avg_iv REAL,
+            snapshots_count INTEGER,
+            UNIQUE(symbol, date)
+        )
+    """)
+
+    conn.commit()
+    print("✅ All required tables exist")
+
 def check_needs_initialization() -> bool:
     """Check if database needs initialization"""
     try:
@@ -229,12 +282,59 @@ def populate_all_tables(conn, bars):
     print(f"   - Forward Magnets: {magnets_inserted} magnets")
     print(f"   - Expiration Timeline: {timeline_inserted} records")
 
+def check_gamma_tables_need_population():
+    """Check if gamma tables exist and have data"""
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM gamma_history")
+        count = c.fetchone()[0]
+        conn.close()
+        return count == 0
+    except:
+        return True  # Table doesn't exist or error
+
 def initialize_on_startup():
     """Initialize database with tables and ALL data on first startup"""
 
     print("\n" + "="*70)
     print("STARTUP INITIALIZATION CHECK")
     print("="*70)
+
+    # Check if gamma tables need fixing (even if gex_history has data)
+    if check_gamma_tables_need_population():
+        print("📊 Gamma tables need population - fixing...")
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=30.0)
+            conn.execute('PRAGMA journal_mode=WAL')
+            ensure_all_tables_exist(conn)
+
+            # Copy data from gex_history to gamma_history
+            c = conn.cursor()
+            c.execute("""
+                INSERT OR IGNORE INTO gamma_history
+                (symbol, timestamp, date, time_of_day, spot_price, net_gex, flip_point,
+                 call_wall, put_wall, implied_volatility, put_call_ratio, distance_to_flip_pct, regime)
+                SELECT symbol, timestamp, DATE(timestamp), TIME(timestamp), spot_price, net_gex, flip_point,
+                       call_wall, put_wall, 0.25, 1.0,
+                       ((spot_price - flip_point) / spot_price * 100), regime
+                FROM gex_history WHERE symbol = 'SPY'
+            """)
+            print(f"✅ gamma_history: populated from gex_history")
+
+            c.execute("""
+                INSERT OR IGNORE INTO gamma_daily_summary
+                (symbol, date, open_gex, close_gex, high_gex, low_gex, open_price, close_price, avg_iv, snapshots_count)
+                SELECT symbol, DATE(timestamp), MIN(net_gex), MAX(net_gex), MAX(net_gex), MIN(net_gex),
+                       MIN(spot_price), MAX(spot_price), 0.25, COUNT(*)
+                FROM gex_history WHERE symbol = 'SPY' GROUP BY symbol, DATE(timestamp)
+            """)
+            print(f"✅ gamma_daily_summary: populated from gex_history")
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"⚠️  Could not fix gamma tables: {e}")
 
     if not check_needs_initialization():
         print("✅ Database already initialized - skipping")
@@ -246,7 +346,14 @@ def initialize_on_startup():
         # Create tables
         print("Creating database tables...")
         init_database()
-        print("✅ Tables created")
+
+        # Ensure gamma tables exist (they might be missing from old init_database)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
+        conn.execute('PRAGMA journal_mode=WAL')
+        ensure_all_tables_exist(conn)
+        conn.close()
+
+        print("✅ All tables created")
 
         # Try to backfill with Polygon data
         try:
