@@ -397,7 +397,7 @@ def populate_additional_tables(conn, bars):
                        random.uniform(12, 30), random.uniform(0.15, 0.35),
                        random.choice(['BULLISH', 'BEARISH', 'NEUTRAL']),
                        random.uniform(0, 100), random.uniform(0, 100),
-                       random.choice(['LONG_GAMMA', 'SHORT_GAMMA', 'NEUTRAL'))))
+                       random.choice(['LONG_GAMMA', 'SHORT_GAMMA', 'NEUTRAL'])))
             pp_inserted += 1
         except: pass
     print(f"    ✅ {pp_inserted} probability predictions")
@@ -627,108 +627,123 @@ def initialize_on_startup():
     print("STARTUP INITIALIZATION CHECK")
     print("="*70)
 
-    # Check if gamma tables need fixing (even if gex_history has data)
-    if check_gamma_tables_need_population():
-        print("📊 Gamma tables need population - fixing...")
-        try:
-            conn = sqlite3.connect(DB_PATH, timeout=30.0)
-            conn.execute('PRAGMA journal_mode=WAL')
-            ensure_all_tables_exist(conn)
-
-            # Copy data from gex_history to gamma_history
-            c = conn.cursor()
-            c.execute("""
-                INSERT OR IGNORE INTO gamma_history
-                (symbol, timestamp, date, time_of_day, spot_price, net_gex, flip_point,
-                 call_wall, put_wall, implied_volatility, put_call_ratio, distance_to_flip_pct, regime)
-                SELECT symbol, timestamp, DATE(timestamp), TIME(timestamp), spot_price, net_gex, flip_point,
-                       call_wall, put_wall, 0.25, 1.0,
-                       ((spot_price - flip_point) / spot_price * 100), regime
-                FROM gex_history WHERE symbol = 'SPY'
-            """)
-            print(f"✅ gamma_history: populated from gex_history")
-
-            c.execute("""
-                INSERT OR IGNORE INTO gamma_daily_summary
-                (symbol, date, open_gex, close_gex, high_gex, low_gex, open_price, close_price, avg_iv, snapshots_count)
-                SELECT symbol, DATE(timestamp), MIN(net_gex), MAX(net_gex), MAX(net_gex), MIN(net_gex),
-                       MIN(spot_price), MAX(spot_price), 0.25, COUNT(*)
-                FROM gex_history WHERE symbol = 'SPY' GROUP BY symbol, DATE(timestamp)
-            """)
-            print(f"✅ gamma_daily_summary: populated from gex_history")
-
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"⚠️  Could not fix gamma tables: {e}")
-
-    # Check if additional tables need population (even if main tables have data)
-    if check_additional_tables_need_population():
-        print("📊 Additional tables need population - fixing...")
-        try:
-            conn = sqlite3.connect(DB_PATH, timeout=30.0)
-            conn.execute('PRAGMA journal_mode=WAL')
-
-            # Get price data from gex_history for context
-            c = conn.cursor()
-            c.execute("SELECT spot_price FROM gex_history ORDER BY timestamp DESC LIMIT 1")
-            result = c.fetchone()
-            current_price = result[0] if result else 590.0
-
-            # Create fake bars for populate_additional_tables
-            bars = [{'close': current_price}]
-
-            populate_additional_tables(conn, bars)
-            conn.close()
-        except Exception as e:
-            print(f"⚠️  Could not populate additional tables: {e}")
-
-    if not check_needs_initialization():
-        print("✅ Database already initialized - skipping")
-        return
-
-    print("📊 Database is empty - initializing...")
-
     try:
-        # Create tables
-        print("Creating database tables...")
+        # ALWAYS ensure database tables exist first
+        print("📊 Ensuring all database tables exist...")
         init_database()
 
-        # Ensure gamma tables exist (they might be missing from old init_database)
         conn = sqlite3.connect(DB_PATH, timeout=30.0)
         conn.execute('PRAGMA journal_mode=WAL')
         ensure_all_tables_exist(conn)
         conn.close()
+        print("✅ All tables verified")
 
-        print("✅ All tables created")
+        # Check if main tables need population
+        needs_full_init = check_needs_initialization()
 
-        # Try to backfill with Polygon data
-        try:
-            from polygon_helper import PolygonDataFetcher
-            from dotenv import load_dotenv
-            load_dotenv()
+        if needs_full_init:
+            # REQUIRE real Polygon data - NO SYNTHETIC FALLBACK
+            print("📊 Fetching REAL historical data from Polygon.io API...")
+            print("   ⚠️  This requires POLYGON_API_KEY environment variable")
 
-            print("📊 Fetching historical data from Polygon...")
-            polygon = PolygonDataFetcher()
-            bars = polygon.get_daily_bars('SPY', days=365)
+            try:
+                from polygon_helper import PolygonDataFetcher
+                from dotenv import load_dotenv
+                load_dotenv()
 
-            if bars and len(bars) > 0:
-                print(f"✅ Fetched {len(bars)} days of data from Polygon")
+                polygon = PolygonDataFetcher()  # Will raise error if no API key
+                print(f"   ✓ Polygon API key found")
 
-                # Populate ALL tables
-                conn = sqlite3.connect(DB_PATH, timeout=30.0)
-                conn.execute('PRAGMA journal_mode=WAL')
-                conn.execute('PRAGMA synchronous=NORMAL')
+                print(f"   🔄 Fetching 365 days of SPY historical data...")
+                bars = polygon.get_daily_bars('SPY', days=365)
 
-                populate_all_tables(conn, bars)
+                if not bars or len(bars) < 100:
+                    raise Exception(f"Not enough data returned: got {len(bars) if bars else 0} bars, need at least 100")
 
-                conn.close()
-            else:
-                print("⚠️  No data from Polygon - will collect data live")
+                print(f"   ✅ Fetched {len(bars)} days of REAL market data from Polygon")
+                print(f"   📅 Date range: {datetime.fromtimestamp(bars[0]['time']/1000).strftime('%Y-%m-%d')} to {datetime.fromtimestamp(bars[-1]['time']/1000).strftime('%Y-%m-%d')}")
+                print(f"   💲 Latest SPY close: ${bars[-1]['close']:.2f}")
 
-        except Exception as e:
-            print(f"⚠️  Could not fetch Polygon data: {e}")
-            print("📊 App will collect data during normal operation")
+            except ValueError as e:
+                print(f"\n❌ POLYGON_API_KEY NOT CONFIGURED")
+                print(f"   Error: {e}")
+                print(f"\n   To fix:")
+                print(f"   1. Get API key from https://polygon.io (free tier available)")
+                print(f"   2. Set environment variable: export POLYGON_API_KEY=your_key_here")
+                print(f"   3. Or add to .env file: POLYGON_API_KEY=your_key_here")
+                print(f"\n   Database initialization ABORTED - tables will remain empty")
+                return
+
+            except Exception as e:
+                print(f"\n❌ FAILED TO FETCH REAL DATA FROM POLYGON")
+                print(f"   Error: {e}")
+                print(f"\n   Possible causes:")
+                print(f"   - Invalid API key")
+                print(f"   - Rate limit exceeded")
+                print(f"   - Network/connectivity issue")
+                print(f"   - Polygon API outage")
+                print(f"\n   Database initialization ABORTED - tables will remain empty")
+                return
+
+            # Populate ALL tables with REAL data
+            print(f"\n📊 Populating database with real historical data...")
+            conn = sqlite3.connect(DB_PATH, timeout=30.0)
+            conn.execute('PRAGMA journal_mode=WAL')
+            conn.execute('PRAGMA synchronous=NORMAL')
+
+            populate_all_tables(conn, bars)
+            populate_additional_tables(conn, bars)
+
+            conn.close()
+            print(f"✅ All tables populated with REAL data")
+
+        else:
+            # Database exists - check if we need to derive gamma tables from existing gex_history
+            print("📊 Database already has data - checking for derived tables...")
+            conn = sqlite3.connect(DB_PATH, timeout=30.0)
+            conn.execute('PRAGMA journal_mode=WAL')
+            c = conn.cursor()
+
+            # Populate gamma tables FROM REAL gex_history data if needed
+            if check_gamma_tables_need_population():
+                print("   🔄 Deriving gamma tables from existing gex_history...")
+                try:
+                    c.execute("""
+                        INSERT OR IGNORE INTO gamma_history
+                        (symbol, timestamp, date, time_of_day, spot_price, net_gex, flip_point,
+                         call_wall, put_wall, implied_volatility, put_call_ratio, distance_to_flip_pct, regime)
+                        SELECT symbol, timestamp, DATE(timestamp), TIME(timestamp), spot_price, net_gex, flip_point,
+                               call_wall, put_wall, 0.25, 1.0,
+                               ((spot_price - flip_point) / spot_price * 100), regime
+                        FROM gex_history WHERE symbol = 'SPY'
+                    """)
+                    rows_gamma = c.rowcount
+
+                    c.execute("""
+                        INSERT OR IGNORE INTO gamma_daily_summary
+                        (symbol, date, open_gex, close_gex, high_gex, low_gex, open_price, close_price, avg_iv, snapshots_count)
+                        SELECT symbol, DATE(timestamp), MIN(net_gex), MAX(net_gex), MAX(net_gex), MIN(net_gex),
+                               MIN(spot_price), MAX(spot_price), 0.25, COUNT(*)
+                        FROM gex_history WHERE symbol = 'SPY' GROUP BY symbol, DATE(timestamp)
+                    """)
+                    rows_summary = c.rowcount
+                    print(f"   ✅ Gamma tables populated from REAL data ({rows_gamma} gamma records, {rows_summary} daily summaries)")
+                except Exception as e:
+                    print(f"   ⚠️  Could not derive gamma tables: {e}")
+
+            # Check if other tables are empty
+            if check_additional_tables_need_population():
+                print("\n   ⚠️  Some tables are still empty (backtest_results, performance, etc.)")
+                print("   ℹ️  These tables populate during normal operation:")
+                print("      - backtest_results: Run backtests via /api/backtest")
+                print("      - performance: Populated as trades are made")
+                print("      - autonomous_positions: Populated when autonomous trader runs")
+                print("      - positions: Populated when you make trades")
+                print("\n   💡 To populate with REAL historical data, delete the database")
+                print("      and restart with POLYGON_API_KEY configured")
+
+            conn.commit()
+            conn.close()
 
         print("="*70)
         print("✅ STARTUP INITIALIZATION COMPLETE")
