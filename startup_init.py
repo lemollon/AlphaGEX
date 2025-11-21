@@ -397,7 +397,7 @@ def populate_additional_tables(conn, bars):
                        random.uniform(12, 30), random.uniform(0.15, 0.35),
                        random.choice(['BULLISH', 'BEARISH', 'NEUTRAL']),
                        random.uniform(0, 100), random.uniform(0, 100),
-                       random.choice(['LONG_GAMMA', 'SHORT_GAMMA', 'NEUTRAL'))))
+                       random.choice(['LONG_GAMMA', 'SHORT_GAMMA', 'NEUTRAL'])))
             pp_inserted += 1
         except: pass
     print(f"    ✅ {pp_inserted} probability predictions")
@@ -627,108 +627,119 @@ def initialize_on_startup():
     print("STARTUP INITIALIZATION CHECK")
     print("="*70)
 
-    # Check if gamma tables need fixing (even if gex_history has data)
-    if check_gamma_tables_need_population():
-        print("📊 Gamma tables need population - fixing...")
-        try:
-            conn = sqlite3.connect(DB_PATH, timeout=30.0)
-            conn.execute('PRAGMA journal_mode=WAL')
-            ensure_all_tables_exist(conn)
-
-            # Copy data from gex_history to gamma_history
-            c = conn.cursor()
-            c.execute("""
-                INSERT OR IGNORE INTO gamma_history
-                (symbol, timestamp, date, time_of_day, spot_price, net_gex, flip_point,
-                 call_wall, put_wall, implied_volatility, put_call_ratio, distance_to_flip_pct, regime)
-                SELECT symbol, timestamp, DATE(timestamp), TIME(timestamp), spot_price, net_gex, flip_point,
-                       call_wall, put_wall, 0.25, 1.0,
-                       ((spot_price - flip_point) / spot_price * 100), regime
-                FROM gex_history WHERE symbol = 'SPY'
-            """)
-            print(f"✅ gamma_history: populated from gex_history")
-
-            c.execute("""
-                INSERT OR IGNORE INTO gamma_daily_summary
-                (symbol, date, open_gex, close_gex, high_gex, low_gex, open_price, close_price, avg_iv, snapshots_count)
-                SELECT symbol, DATE(timestamp), MIN(net_gex), MAX(net_gex), MAX(net_gex), MIN(net_gex),
-                       MIN(spot_price), MAX(spot_price), 0.25, COUNT(*)
-                FROM gex_history WHERE symbol = 'SPY' GROUP BY symbol, DATE(timestamp)
-            """)
-            print(f"✅ gamma_daily_summary: populated from gex_history")
-
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"⚠️  Could not fix gamma tables: {e}")
-
-    # Check if additional tables need population (even if main tables have data)
-    if check_additional_tables_need_population():
-        print("📊 Additional tables need population - fixing...")
-        try:
-            conn = sqlite3.connect(DB_PATH, timeout=30.0)
-            conn.execute('PRAGMA journal_mode=WAL')
-
-            # Get price data from gex_history for context
-            c = conn.cursor()
-            c.execute("SELECT spot_price FROM gex_history ORDER BY timestamp DESC LIMIT 1")
-            result = c.fetchone()
-            current_price = result[0] if result else 590.0
-
-            # Create fake bars for populate_additional_tables
-            bars = [{'close': current_price}]
-
-            populate_additional_tables(conn, bars)
-            conn.close()
-        except Exception as e:
-            print(f"⚠️  Could not populate additional tables: {e}")
-
-    if not check_needs_initialization():
-        print("✅ Database already initialized - skipping")
-        return
-
-    print("📊 Database is empty - initializing...")
-
     try:
-        # Create tables
-        print("Creating database tables...")
+        # ALWAYS ensure database tables exist first
+        print("📊 Ensuring all database tables exist...")
         init_database()
 
-        # Ensure gamma tables exist (they might be missing from old init_database)
         conn = sqlite3.connect(DB_PATH, timeout=30.0)
         conn.execute('PRAGMA journal_mode=WAL')
         ensure_all_tables_exist(conn)
         conn.close()
+        print("✅ All tables verified")
 
-        print("✅ All tables created")
+        # Check if main tables need population
+        needs_full_init = check_needs_initialization()
 
-        # Try to backfill with Polygon data
-        try:
-            from polygon_helper import PolygonDataFetcher
-            from dotenv import load_dotenv
-            load_dotenv()
+        if needs_full_init:
+            # Get real or synthetic bars data for full initialization
+            bars = None
+            try:
+                from polygon_helper import PolygonDataFetcher
+                from dotenv import load_dotenv
+                load_dotenv()
 
-            print("📊 Fetching historical data from Polygon...")
-            polygon = PolygonDataFetcher()
-            bars = polygon.get_daily_bars('SPY', days=365)
+                print("📊 Fetching historical data from Polygon...")
+                polygon = PolygonDataFetcher()
+                bars = polygon.get_daily_bars('SPY', days=365)
 
-            if bars and len(bars) > 0:
-                print(f"✅ Fetched {len(bars)} days of data from Polygon")
+                if bars and len(bars) > 0:
+                    print(f"✅ Fetched {len(bars)} days of data from Polygon")
+                else:
+                    print("⚠️  No data from Polygon")
+                    bars = None
 
-                # Populate ALL tables
-                conn = sqlite3.connect(DB_PATH, timeout=30.0)
-                conn.execute('PRAGMA journal_mode=WAL')
-                conn.execute('PRAGMA synchronous=NORMAL')
+            except Exception as e:
+                print(f"⚠️  Could not fetch Polygon data: {e}")
+                bars = None
 
-                populate_all_tables(conn, bars)
+            # Generate synthetic data if Polygon failed
+            if not bars:
+                print("📊 Generating synthetic historical data...")
+                bars = []
+                base_price = 590.0
+                for i in range(365):
+                    day_change = random.uniform(-0.02, 0.02)
+                    close_price = base_price * (1 + day_change)
+                    bars.append({
+                        'time': int((datetime.now() - timedelta(days=365-i)).timestamp() * 1000),
+                        'open': base_price,
+                        'high': base_price * 1.01,
+                        'low': base_price * 0.99,
+                        'close': close_price,
+                        'volume': random.randint(50000000, 100000000)
+                    })
+                    base_price = close_price
+                print(f"✅ Generated {len(bars)} days of synthetic data")
 
-                conn.close()
-            else:
-                print("⚠️  No data from Polygon - will collect data live")
+            # Populate ALL tables
+            conn = sqlite3.connect(DB_PATH, timeout=30.0)
+            conn.execute('PRAGMA journal_mode=WAL')
+            conn.execute('PRAGMA synchronous=NORMAL')
 
-        except Exception as e:
-            print(f"⚠️  Could not fetch Polygon data: {e}")
-            print("📊 App will collect data during normal operation")
+            populate_all_tables(conn, bars)
+            populate_additional_tables(conn, bars)
+
+            conn.close()
+
+        else:
+            # Database exists - check and fix empty tables individually
+            conn = sqlite3.connect(DB_PATH, timeout=30.0)
+            conn.execute('PRAGMA journal_mode=WAL')
+            c = conn.cursor()
+
+            # Get current price from existing data
+            try:
+                c.execute("SELECT spot_price FROM gex_history ORDER BY timestamp DESC LIMIT 1")
+                result = c.fetchone()
+                current_price = result[0] if result else 590.0
+            except:
+                current_price = 590.0
+
+            bars = [{'close': current_price, 'time': int(datetime.now().timestamp() * 1000),
+                     'open': current_price, 'high': current_price * 1.01,
+                     'low': current_price * 0.99, 'volume': 75000000}]
+
+            # Check and populate empty tables
+            if check_gamma_tables_need_population():
+                print("📊 Populating gamma tables from existing data...")
+                try:
+                    c.execute("""
+                        INSERT OR IGNORE INTO gamma_history
+                        (symbol, timestamp, date, time_of_day, spot_price, net_gex, flip_point,
+                         call_wall, put_wall, implied_volatility, put_call_ratio, distance_to_flip_pct, regime)
+                        SELECT symbol, timestamp, DATE(timestamp), TIME(timestamp), spot_price, net_gex, flip_point,
+                               call_wall, put_wall, 0.25, 1.0,
+                               ((spot_price - flip_point) / spot_price * 100), regime
+                        FROM gex_history WHERE symbol = 'SPY'
+                    """)
+                    c.execute("""
+                        INSERT OR IGNORE INTO gamma_daily_summary
+                        (symbol, date, open_gex, close_gex, high_gex, low_gex, open_price, close_price, avg_iv, snapshots_count)
+                        SELECT symbol, DATE(timestamp), MIN(net_gex), MAX(net_gex), MAX(net_gex), MIN(net_gex),
+                               MIN(spot_price), MAX(spot_price), 0.25, COUNT(*)
+                        FROM gex_history WHERE symbol = 'SPY' GROUP BY symbol, DATE(timestamp)
+                    """)
+                    print("✅ Gamma tables populated")
+                except Exception as e:
+                    print(f"⚠️  Could not populate gamma tables: {e}")
+
+            if check_additional_tables_need_population():
+                print("📊 Populating additional empty tables...")
+                populate_additional_tables(conn, bars)
+
+            conn.commit()
+            conn.close()
 
         print("="*70)
         print("✅ STARTUP INITIALIZATION COMPLETE")
