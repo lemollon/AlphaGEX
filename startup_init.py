@@ -378,18 +378,26 @@ def populate_additional_tables(conn, bars):
     pp_inserted = 0
     for i in range(20):
         ts = (now - timedelta(days=i*5)).strftime('%Y-%m-%d 16:00:00')
+        target_date = (now + timedelta(days=random.randint(1, 14))).strftime('%Y-%m-%d')
+        range_low = current_price * random.uniform(0.97, 0.99)
+        range_high = current_price * random.uniform(1.01, 1.03)
         try:
             c.execute('''INSERT INTO probability_predictions
-                         (timestamp, symbol, prediction_type, predicted_direction,
-                          confidence, target_price, target_date, current_price,
-                          reasoning, model_version)
-                         VALUES (?, 'SPY', ?, ?, ?, ?, ?, ?, ?, ?)''',
-                      (ts, random.choice(['DAILY', 'WEEKLY', 'MONTHLY']),
-                       random.choice(['UP', 'DOWN', 'NEUTRAL']),
-                       random.uniform(0.55, 0.85),
-                       current_price * random.uniform(0.98, 1.02),
-                       (now + timedelta(days=random.randint(1, 14))).strftime('%Y-%m-%d'),
-                       current_price, "Based on GEX regime and historical patterns", "v1.0"))
+                         (timestamp, symbol, prediction_type, target_date, current_price,
+                          range_low, range_high, prob_in_range, prob_above, prob_below,
+                          confidence_level, net_gex, flip_point, call_wall, put_wall,
+                          vix_level, implied_vol, psychology_state, fomo_level, fear_level, mm_state)
+                         VALUES (?, 'SPY', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (ts, random.choice(['DAILY', 'WEEKLY', 'MONTHLY']), target_date, current_price,
+                       range_low, range_high,
+                       random.uniform(0.45, 0.75), random.uniform(0.1, 0.3), random.uniform(0.1, 0.3),
+                       random.choice(['HIGH', 'MEDIUM', 'LOW']),
+                       random.uniform(-2e9, 2e9), current_price * 0.99,
+                       current_price * 1.02, current_price * 0.98,
+                       random.uniform(12, 30), random.uniform(0.15, 0.35),
+                       random.choice(['BULLISH', 'BEARISH', 'NEUTRAL']),
+                       random.uniform(0, 100), random.uniform(0, 100),
+                       random.choice(['LONG_GAMMA', 'SHORT_GAMMA', 'NEUTRAL'))))
             pp_inserted += 1
         except: pass
     print(f"    ✅ {pp_inserted} probability predictions")
@@ -398,36 +406,29 @@ def populate_additional_tables(conn, bars):
     print("  - probability_outcomes...")
     po_inserted = 0
     for i in range(15):
-        ts = (now - timedelta(days=i*7)).strftime('%Y-%m-%d 16:00:00')
         try:
             c.execute('''INSERT INTO probability_outcomes
-                         (prediction_id, actual_direction, actual_price,
-                          was_correct, pnl_if_traded, notes)
-                         VALUES (?, ?, ?, ?, ?, ?)''',
-                      (i+1, random.choice(['UP', 'DOWN', 'NEUTRAL']),
-                       current_price * random.uniform(0.97, 1.03),
-                       random.choice([0, 1]), random.uniform(-200, 400),
-                       "Outcome recorded"))
+                         (prediction_id, actual_close_price, prediction_correct, error_pct, recorded_at)
+                         VALUES (?, ?, ?, ?, ?)''',
+                      (i+1, current_price * random.uniform(0.97, 1.03),
+                       random.choice([0, 1]), random.uniform(-5, 5),
+                       now.strftime('%Y-%m-%d %H:%M:%S')))
             po_inserted += 1
         except: pass
     print(f"    ✅ {po_inserted} probability outcomes")
 
     # 7. Probability Weights
     print("  - probability_weights...")
-    pw_inserted = 0
-    factors = ['gex_regime', 'vix_level', 'rsi_alignment', 'day_of_week',
-               'time_to_expiry', 'gamma_wall_distance', 'volume_ratio']
-    for factor in factors:
-        try:
-            c.execute('''INSERT INTO probability_weights
-                         (factor_name, weight, last_calibrated, performance_contribution)
-                         VALUES (?, ?, ?, ?)''',
-                      (factor, random.uniform(0.1, 0.3),
-                       now.strftime('%Y-%m-%d %H:%M:%S'),
-                       random.uniform(0.05, 0.2)))
-            pw_inserted += 1
-        except: pass
-    print(f"    ✅ {pw_inserted} probability weights")
+    try:
+        c.execute('''INSERT INTO probability_weights
+                     (timestamp, gex_wall_strength, volatility_impact, psychology_signal,
+                      mm_positioning, historical_pattern, accuracy_score, active)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (now.strftime('%Y-%m-%d %H:%M:%S'),
+                   random.uniform(0.15, 0.35), random.uniform(0.15, 0.35), random.uniform(0.10, 0.25),
+                   random.uniform(0.10, 0.20), random.uniform(0.05, 0.15), random.uniform(0.60, 0.75), 1))
+        print(f"    ✅ 1 probability weights")
+    except: pass
 
     # 8. Strike Performance
     print("  - strike_performance...")
@@ -438,9 +439,10 @@ def populate_additional_tables(conn, bars):
                          (timestamp, strategy_name, strike_distance_pct, strike_absolute,
                           spot_price, strike_type, moneyness, delta, gamma, theta, vega,
                           dte, expiration_date, vix_current, vix_regime, net_gex, gamma_regime,
-                          entry_price, exit_price, pnl_dollars, pnl_pct, outcome,
-                          max_profit_pct, max_loss_pct, time_in_trade_hours)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                          entry_premium, exit_premium, pnl_dollars, pnl_pct,
+                          max_profit_pct, max_loss_pct, win, hold_time_hours,
+                          pattern_type, confidence_score, last_updated)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                       ((now - timedelta(days=i)).strftime('%Y-%m-%d 10:00:00'),
                        random.choice(strategies), random.uniform(-3, 3),
                        current_price + random.randint(-10, 10), current_price,
@@ -452,9 +454,10 @@ def populate_additional_tables(conn, bars):
                        random.uniform(-2e9, 2e9), random.choice(['positive', 'negative']),
                        random.uniform(1, 10), random.uniform(0.5, 15),
                        random.uniform(-300, 500), random.uniform(-50, 100),
-                       random.choice(['WIN', 'LOSS', 'SCRATCH']),
                        random.uniform(50, 200), random.uniform(-80, -20),
-                       random.uniform(1, 48)))
+                       random.choice([0, 1]), random.uniform(1, 48),
+                       random.choice(['LIBERATION', 'FALSE_FLOOR', 'GAMMA_SQUEEZE']),
+                       random.uniform(0.60, 0.90), now.strftime('%Y-%m-%d %H:%M:%S')))
             sp_inserted += 1
         except: pass
     print(f"    ✅ {sp_inserted} strike performance records")
@@ -462,15 +465,27 @@ def populate_additional_tables(conn, bars):
     # 9. DTE Performance
     print("  - dte_performance...")
     dp_inserted = 0
-    for dte in [0, 1, 2, 3, 5, 7, 14, 21, 30, 45]:
+    for i, dte in enumerate([0, 1, 2, 3, 5, 7, 14, 21, 30, 45]):
         try:
             c.execute('''INSERT INTO dte_performance
-                         (dte_bucket, total_trades, winning_trades, win_rate,
-                          avg_pnl_pct, avg_theta_decay, optimal_hold_time_hours)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                      (dte, random.randint(10, 50), random.randint(5, 35),
-                       random.uniform(0.45, 0.72), random.uniform(-2, 5),
-                       random.uniform(-0.5, -0.05), random.uniform(2, 24)))
+                         (timestamp, strategy_name, dte_at_entry, dte_bucket, hold_time_hours,
+                          expiration_date, spot_price, strike, strike_distance_pct, vix_current,
+                          pattern_type, entry_premium, exit_premium, pnl_pct, pnl_dollars, win,
+                          theta_at_entry, avg_theta_decay, theta_pnl_contribution,
+                          held_to_expiration, days_before_expiration_closed, last_updated)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      ((now - timedelta(days=i*5)).strftime('%Y-%m-%d 10:00:00'),
+                       random.choice(strategies), dte, f"{dte}DTE",
+                       random.uniform(2, 24), (now + timedelta(days=dte)).strftime('%Y-%m-%d'),
+                       current_price, current_price + random.randint(-5, 5),
+                       random.uniform(-3, 3), random.uniform(12, 30),
+                       random.choice(['LIBERATION', 'FALSE_FLOOR', 'GAMMA_SQUEEZE']),
+                       random.uniform(1, 10), random.uniform(0.5, 15),
+                       random.uniform(-50, 100), random.uniform(-300, 500),
+                       random.choice([0, 1]), random.uniform(-0.1, -0.01),
+                       random.uniform(-0.5, -0.05), random.uniform(10, 40),
+                       random.choice([0, 1]), random.randint(0, dte),
+                       now.strftime('%Y-%m-%d %H:%M:%S')))
             dp_inserted += 1
         except: pass
     print(f"    ✅ {dp_inserted} DTE performance records")
@@ -478,18 +493,27 @@ def populate_additional_tables(conn, bars):
     # 10. Greeks Performance
     print("  - greeks_performance...")
     gp_inserted = 0
-    for greek in ['delta', 'gamma', 'theta', 'vega']:
-        for bucket in ['low', 'medium', 'high']:
-            try:
-                c.execute('''INSERT INTO greeks_performance
-                             (greek_name, bucket, min_value, max_value,
-                              total_trades, win_rate, avg_pnl_pct)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                          (greek, bucket, random.uniform(0, 0.3), random.uniform(0.3, 1.0),
-                           random.randint(10, 40), random.uniform(0.45, 0.70),
-                           random.uniform(-1, 4)))
-                gp_inserted += 1
-            except: pass
+    for i in range(12):
+        try:
+            c.execute('''INSERT INTO greeks_performance
+                         (timestamp, strategy_name, entry_delta, entry_gamma, entry_theta, entry_vega,
+                          entry_iv_rank, position_type, delta_target, theta_strategy, dte, vix_current,
+                          spot_price, pnl_pct, pnl_dollars, win, hold_time_hours,
+                          delta_pnl_ratio, theta_pnl_ratio, last_updated)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      ((now - timedelta(days=i*7)).strftime('%Y-%m-%d 10:00:00'),
+                       random.choice(strategies),
+                       random.uniform(0.2, 0.8), random.uniform(0.01, 0.05),
+                       random.uniform(-0.1, -0.01), random.uniform(0.1, 0.5),
+                       random.uniform(20, 80), random.choice(['LONG', 'SHORT']),
+                       random.uniform(0.3, 0.7), random.choice(['POSITIVE', 'NEGATIVE', 'NEUTRAL']),
+                       random.randint(3, 30), random.uniform(12, 30), current_price,
+                       random.uniform(-50, 100), random.uniform(-300, 500),
+                       random.choice([0, 1]), random.uniform(1, 48),
+                       random.uniform(1, 5), random.uniform(1, 5),
+                       now.strftime('%Y-%m-%d %H:%M:%S')))
+            gp_inserted += 1
+        except: pass
     print(f"    ✅ {gp_inserted} Greeks performance records")
 
     # 11. Spread Width Performance
@@ -497,14 +521,34 @@ def populate_additional_tables(conn, bars):
     sw_inserted = 0
     for width in [1, 2, 3, 5, 10, 15, 20]:
         try:
+            short_call = current_price + width
+            long_call = short_call + width
+            short_put = current_price - width
+            long_put = short_put - width
+
             c.execute('''INSERT INTO spread_width_performance
-                         (spread_width, strategy_type, total_trades, win_rate,
-                          avg_credit_received, avg_pnl_pct, avg_max_loss_pct)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                      (width, random.choice(['VERTICAL', 'IRON_CONDOR', 'BUTTERFLY']),
-                       random.randint(10, 50), random.uniform(0.50, 0.75),
-                       random.uniform(0.5, 3.0), random.uniform(1, 8),
-                       random.uniform(-15, -5)))
+                         (timestamp, strategy_name, spread_type, short_strike_call, long_strike_call,
+                          short_strike_put, long_strike_put, call_spread_width_points, put_spread_width_points,
+                          short_call_distance_pct, long_call_distance_pct, short_put_distance_pct, long_put_distance_pct,
+                          spot_price, dte, vix_current, net_gex, entry_credit, exit_cost, pnl_pct, pnl_dollars,
+                          max_profit_pct, max_loss_pct, win, hold_time_hours,
+                          total_delta, total_gamma, total_theta, last_updated)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (now.strftime('%Y-%m-%d 10:00:00'),
+                       'IRON_CONDOR', 'IRON_CONDOR',
+                       short_call, long_call, short_put, long_put,
+                       width, width,
+                       (short_call - current_price) / current_price * 100,
+                       (long_call - current_price) / current_price * 100,
+                       (current_price - short_put) / current_price * 100,
+                       (current_price - long_put) / current_price * 100,
+                       current_price, random.randint(7, 30), random.uniform(12, 30),
+                       random.uniform(-2e9, 2e9), random.uniform(0.5, 3.0), random.uniform(0, 2.5),
+                       random.uniform(-50, 100), random.uniform(-300, 500),
+                       random.uniform(20, 80), random.uniform(-100, -20),
+                       random.choice([0, 1]), random.uniform(24, 168),
+                       random.uniform(-0.2, 0.2), random.uniform(0.01, 0.05), random.uniform(-0.2, -0.05),
+                       now.strftime('%Y-%m-%d %H:%M:%S')))
             sw_inserted += 1
         except: pass
     print(f"    ✅ {sw_inserted} spread width records")
@@ -538,13 +582,13 @@ def populate_additional_tables(conn, bars):
     for i in range(10):
         try:
             c.execute('''INSERT INTO calibration_history
-                         (timestamp, model_name, accuracy_before, accuracy_after,
-                          parameters_changed, notes)
-                         VALUES (?, ?, ?, ?, ?, ?)''',
+                         (timestamp, predictions_analyzed, overall_accuracy, eod_accuracy, next_day_accuracy,
+                          high_conf_accuracy, medium_conf_accuracy, low_conf_accuracy, adjustments_made)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                       ((now - timedelta(days=i*30)).strftime('%Y-%m-%d %H:%M:%S'),
-                       random.choice(['probability_model', 'regime_detector', 'strike_selector']),
-                       random.uniform(0.55, 0.65), random.uniform(0.60, 0.72),
-                       "weight_adjustments", "Periodic recalibration"))
+                       random.randint(50, 200), random.uniform(0.60, 0.75), random.uniform(0.55, 0.70),
+                       random.uniform(0.58, 0.72), random.uniform(0.70, 0.85), random.uniform(0.60, 0.72),
+                       random.uniform(0.50, 0.65), "Adjusted weights based on recent performance"))
             ch_inserted += 1
         except: pass
     print(f"    ✅ {ch_inserted} calibration records")
