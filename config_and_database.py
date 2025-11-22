@@ -13,10 +13,17 @@ from pathlib import Path
 TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # Haiku 4.5 (Oct 2025) - Fast, cheap, great for analysis
 
-# Database Path - ABSOLUTE PATH to ensure consistency across services
-# Backend API, Autonomous Trader Worker, and all scripts use the SAME database
+# Database Configuration - Automatically uses PostgreSQL on Render or SQLite locally
 import os
-DB_PATH = Path(os.environ.get('DATABASE_PATH', os.path.join(os.getcwd(), 'gex_copilot.db')))
+
+# Import unified database adapter
+try:
+    from database_adapter import get_connection, get_db_adapter, DB_PATH
+    USING_DATABASE_ADAPTER = True
+except ImportError:
+    # Fallback to legacy SQLite if adapter not available
+    DB_PATH = Path(os.environ.get('DATABASE_PATH', os.path.join(os.getcwd(), 'gex_copilot.db')))
+    USING_DATABASE_ADAPTER = False
 
 # Market Maker Behavioral States
 MM_STATES = {
@@ -241,12 +248,15 @@ STRATEGIES = {
 
 def init_database():
     """Initialize comprehensive database schema"""
-    conn = sqlite3.connect(DB_PATH, timeout=30.0)
-
-    # Enable WAL mode for concurrent access (allows reads while writing)
-    conn.execute('PRAGMA journal_mode=WAL')
-    conn.execute('PRAGMA synchronous=NORMAL')
-    conn.execute('PRAGMA cache_size=-64000')  # 64MB cache
+    # Use unified database adapter (PostgreSQL on Render, SQLite locally)
+    if USING_DATABASE_ADAPTER:
+        conn = get_connection()
+    else:
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
+        # Enable WAL mode for concurrent access (allows reads while writing)
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        conn.execute('PRAGMA cache_size=-64000')  # 64MB cache
 
     c = conn.cursor()
 
