@@ -91,6 +91,10 @@ services:
         sync: false
       - key: TV_USERNAME
         sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
 
 # PostgreSQL Database (shared by both services)
 databases:
