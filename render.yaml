@@ -73,6 +73,25 @@ services:
           name: alphagex-db
           property: connectionString
 
+  # SERVICE 4: Automated Data Collector (Background Worker)
+  - type: worker
+    name: alphagex-collector
+    runtime: python
+    plan: starter
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: python automated_data_collector.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: POLYGON_API_KEY
+        sync: false
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: TV_USERNAME
+        sync: false
+
 # PostgreSQL Database (shared by both services)
 databases:
   - name: alphagex-db
