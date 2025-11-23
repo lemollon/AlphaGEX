@@ -16,7 +16,6 @@ Usage:
     python backfill_historical_data.py [--days 365] [--symbol SPY]
 """
 
-import sqlite3
 import random
 import argparse
 from datetime import datetime, timedelta
@@ -29,17 +28,20 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-# Import local modules
-from config_and_database import DB_PATH
+# Import local modules - use database adapter for PostgreSQL/SQLite support
+from database_adapter import get_connection, get_db_adapter
 from polygon_helper import PolygonDataFetcher
 
 
 class HistoricalDataBackfiller:
     """Backfills historical market data from Polygon.io"""
 
-    def __init__(self, db_path: str = DB_PATH, symbol: str = 'SPY'):
-        self.db_path = db_path
+    def __init__(self, symbol: str = 'SPY'):
         self.symbol = symbol
+        self.db_adapter = get_db_adapter()
+        self.db_type = self.db_adapter.get_db_type()
+
+        print(f"📊 Database: {self.db_type.upper()}")
 
         # Try to initialize Polygon, but don't fail if API key is missing
         try:
@@ -51,7 +53,7 @@ class HistoricalDataBackfiller:
             self.polygon = None
             self.polygon_available = False
 
-        self.conn = sqlite3.connect(db_path)
+        self.conn = get_connection()
         self._ensure_tables_exist()
 
         # Regime types and their characteristics
@@ -180,7 +182,7 @@ class HistoricalDataBackfiller:
             result = c.fetchone()[0]
             if result:
                 return datetime.strptime(result, '%Y-%m-%d %H:%M:%S')
-        except sqlite3.OperationalError:
+        except Exception:
             # Table doesn't exist or column doesn't exist
             pass
 
@@ -712,11 +714,11 @@ class HistoricalDataBackfiller:
     def run_backfill(self, days: int = 365, skip_existing: bool = True):
         """Run complete backfill process"""
         print("=" * 70)
-        print("HISTORICAL DATA BACKFILL")
+        print("HISTORICAL DATA BACKFILL - PostgreSQL/SQLite")
         print("=" * 70)
         print(f"Symbol: {self.symbol}")
         print(f"Days: {days}")
-        print(f"Database: {self.db_path}")
+        print(f"Database: {self.db_type.upper()}")
         print("=" * 70)
 
         # Check existing data
@@ -767,12 +769,35 @@ class HistoricalDataBackfiller:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Backfill historical market data')
-    parser.add_argument('--days', type=int, default=365, help='Number of days to backfill (default: 365)')
-    parser.add_argument('--symbol', type=str, default='SPY', help='Symbol to backfill (default: SPY)')
-    parser.add_argument('--force', action='store_true', help='Overwrite existing data')
+    parser = argparse.ArgumentParser(
+        description='Backfill historical market data to PostgreSQL or SQLite',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Backfill maximum available data (5 years for stocks)
+  python backfill_historical_data.py --days 1825
+
+  # Backfill 1 year for SPY
+  python backfill_historical_data.py --days 365
+
+  # Force re-backfill (overwrite existing)
+  python backfill_historical_data.py --days 365 --force
+        """
+    )
+    parser.add_argument('--days', type=int, default=365,
+                        help='Number of days to backfill (default: 365, max: 1825 for 5 years)')
+    parser.add_argument('--symbol', type=str, default='SPY',
+                        help='Symbol to backfill (default: SPY)')
+    parser.add_argument('--force', action='store_true',
+                        help='Overwrite existing data')
 
     args = parser.parse_args()
+
+    # Warn if requesting more than available data
+    if args.days > 1825:
+        print(f"⚠️  Warning: Requesting {args.days} days, but Polygon Stocks Starter plan provides 5 years (1825 days) max")
+        print(f"⚠️  Limiting to 1825 days")
+        args.days = 1825
 
     backfiller = HistoricalDataBackfiller(symbol=args.symbol)
     success = backfiller.run_backfill(days=args.days, skip_existing=not args.force)
