@@ -44,11 +44,6 @@ from langchain_anthropic import ChatAnthropic
 
 router = APIRouter(prefix="/api/ai-intelligence", tags=["AI Intelligence"])
 
-# Database path - use the same path as the main system
-try:
-except ImportError:
-    # Fallback to gex_copilot.db in parent directory
-
 # Get API key with fallback support (ANTHROPIC_API_KEY or CLAUDE_API_KEY)
 api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
 
