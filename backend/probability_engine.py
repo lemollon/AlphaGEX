@@ -8,7 +8,6 @@ Calculates win rates, expected values, and probabilities based on:
 4. Strike distance and option characteristics
 """
 
-import sqlite3
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timedelta

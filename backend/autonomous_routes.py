@@ -5,7 +5,6 @@ Provides REST APIs for all autonomous trader features
 
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional, Dict, Any
-import sqlite3
 from datetime import datetime, timedelta
 import sys
 import os
@@ -13,7 +12,7 @@ import os
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 # Create router
 router = APIRouter(prefix="/api/autonomous", tags=["Autonomous Trader"])
@@ -42,7 +41,7 @@ async def get_autonomous_logs(
     - Trade executions
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
@@ -82,7 +81,7 @@ async def get_autonomous_logs(
 async def get_log_sessions(limit: int = Query(10, ge=1, le=50)):
     """Get list of recent autonomous trader sessions"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
@@ -429,7 +428,7 @@ async def train_ml_model(lookback_days: int = Query(180, ge=30, le=365)):
 async def get_recent_ml_predictions(limit: int = Query(20, ge=1, le=100)):
     """Get recent ML predictions from logs"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 

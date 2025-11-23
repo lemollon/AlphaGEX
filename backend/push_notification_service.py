@@ -12,7 +12,6 @@ VAPID (Voluntary Application Server Identification):
 
 import os
 import json
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -22,7 +21,7 @@ import sys
 parent_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(parent_dir))
 
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 # Try to import pywebpush, provide helpful error if not installed
 try:
@@ -120,7 +119,7 @@ class PushNotificationService:
             True if successful, False otherwise
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
 
             endpoint = subscription.get('endpoint')
@@ -158,7 +157,7 @@ class PushNotificationService:
     def update_preferences(self, endpoint: str, preferences: Dict) -> bool:
         """Update notification preferences for a subscription"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
 
             preferences_json = json.dumps(preferences)
@@ -187,7 +186,7 @@ class PushNotificationService:
     def remove_subscription(self, endpoint: str) -> bool:
         """Remove push subscription from database"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
 
             c.execute('DELETE FROM push_subscriptions WHERE endpoint = ?', (endpoint,))
@@ -219,7 +218,7 @@ class PushNotificationService:
             List of subscription dicts
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
 
             c.execute('SELECT endpoint, p256dh, auth, preferences FROM push_subscriptions')
