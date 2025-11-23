@@ -11,10 +11,9 @@ Endpoints:
 - GET /api/psychology/performance/chart-data - Time series data for charts
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 
 class PerformanceTracker:
@@ -30,8 +29,8 @@ class PerformanceTracker:
         Returns:
             Dict with overall metrics
         """
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
@@ -122,8 +121,8 @@ class PerformanceTracker:
         Returns:
             List of pattern performance data
         """
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
@@ -183,8 +182,8 @@ class PerformanceTracker:
         Returns:
             List of historical signals
         """
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         if pattern_type:
@@ -244,8 +243,8 @@ class PerformanceTracker:
         Returns:
             Dict with chart data
         """
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
@@ -343,8 +342,8 @@ class PerformanceTracker:
         Returns:
             Dict with VIX correlation data
         """
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')

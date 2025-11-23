@@ -43,15 +43,16 @@ class HistoricalDataBackfiller:
 
         print(f"📊 Database: {self.db_type.upper()}")
 
-        # Try to initialize Polygon, but don't fail if API key is missing
+        # Initialize Polygon - FAIL if API key is missing (NO SYNTHETIC DATA)
         try:
             self.polygon = PolygonDataFetcher()
             self.polygon_available = True
         except ValueError as e:
-            print(f"⚠️  Polygon API not available: {e}")
-            print("⚠️  Will use synthetic data generation instead")
-            self.polygon = None
-            self.polygon_available = False
+            print(f"❌ CRITICAL ERROR: Polygon API not available: {e}")
+            print(f"❌ POLYGON_API_KEY environment variable is required")
+            print(f"❌ Backfill CANNOT proceed without real market data")
+            print(f"❌ Set POLYGON_API_KEY in your environment and try again")
+            raise SystemExit("POLYGON_API_KEY required - NO SYNTHETIC DATA ALLOWED")
 
         self.conn = get_connection()
         self._ensure_tables_exist()
@@ -191,10 +192,7 @@ class HistoricalDataBackfiller:
     def fetch_historical_price_data(self, days: int) -> List[Dict]:
         """Fetch historical price data from Polygon"""
 
-        if not self.polygon_available:
-            print(f"\n📊 Polygon not available, generating {days} days of synthetic price data...")
-            return self._generate_synthetic_price_data(days)
-
+        # Polygon is REQUIRED - no synthetic data fallback
         print(f"\n📊 Fetching {days} days of historical price data from Polygon...")
 
         try:
@@ -208,9 +206,9 @@ class HistoricalDataBackfiller:
             return bars
 
         except Exception as e:
-            print(f"❌ Error fetching price data: {e}")
-            print("⚠️  Falling back to synthetic data generation...")
-            return self._generate_synthetic_price_data(days)
+            print(f"❌ CRITICAL ERROR fetching price data: {e}")
+            print(f"❌ Cannot proceed without real market data")
+            raise SystemExit(f"Failed to fetch real data from Polygon: {e}")
 
     def _generate_synthetic_price_data(self, days: int) -> List[Dict]:
         """Generate synthetic price data if Polygon fails"""

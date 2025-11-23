@@ -8,13 +8,13 @@ Combines GEX, volatility, psychology, and historical data to predict:
 Self-learning system that calibrates based on actual outcomes.
 """
 
-import sqlite3
 import requests
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import json
 from dataclasses import dataclass
+from database_adapter import get_connection
 
 
 @dataclass
@@ -46,7 +46,7 @@ class ProbabilityCalculator:
 
     def _init_database(self):
         """Initialize database tables for predictions, outcomes, and weights"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         # Predictions table
@@ -136,7 +136,7 @@ class ProbabilityCalculator:
     def _load_weights(self) -> ProbabilityWeights:
         """Load active weights from database or use defaults"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_connection()
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -539,7 +539,7 @@ class ProbabilityCalculator:
 
     def _save_prediction(self, **kwargs) -> int:
         """Save prediction to database and return prediction_id"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         gex_data = kwargs.get('gex_data', {})
@@ -591,7 +591,7 @@ class ProbabilityCalculator:
 
     def record_outcome(self, prediction_id: int, actual_close_price: float):
         """Record actual outcome for a prediction"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         # Get prediction
@@ -633,7 +633,7 @@ class ProbabilityCalculator:
 
     def get_accuracy_metrics(self, days: int = 30) -> dict:
         """Get accuracy metrics for past predictions"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
@@ -698,7 +698,7 @@ class ProbabilityCalculator:
 
         This is Phase 2 self-learning: adjust weights to improve accuracy
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         # Get all predictions with outcomes
