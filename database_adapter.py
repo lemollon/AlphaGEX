@@ -223,6 +223,11 @@ class PostgreSQLCursorWrapper:
         # PostgreSQL doesn't have lastrowid, need to use RETURNING
         return None
 
+    @property
+    def description(self):
+        """Return cursor description (column metadata)"""
+        return self._cursor.description
+
     def close(self):
         """Close cursor"""
         self._cursor.close()
