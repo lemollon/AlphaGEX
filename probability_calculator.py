@@ -110,7 +110,7 @@ class ProbabilityCalculator:
                 mm_positioning REAL,
                 historical_pattern REAL,
                 accuracy_score REAL,  -- Overall accuracy with these weights
-                active BOOLEAN DEFAULT 1
+                active BOOLEAN DEFAULT TRUE
             )
         ''')
 
