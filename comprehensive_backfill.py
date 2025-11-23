@@ -93,7 +93,9 @@ class ComprehensiveBackfiller:
                 ''', (self.symbol, timestamp, date, spot_price, net_gex,
                       flip_point, call_wall, put_wall))
                 inserted += 1
-            except:
+            except Exception as e:
+                if inserted == 0:  # Only show first error
+                    print(f"⚠️  Insert error (will continue): {e}")
                 pass
 
         self.conn.commit()
