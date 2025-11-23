@@ -133,6 +133,8 @@ class PostgreSQLConnectionWrapper:
         Translate SQLite-specific SQL to PostgreSQL
         Most SQL is identical, but some keywords differ
         """
+        import re
+
         # SQLite uses AUTOINCREMENT, PostgreSQL uses SERIAL
         sql = sql.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY')
         sql = sql.replace('AUTOINCREMENT', '')
@@ -140,6 +142,10 @@ class PostgreSQLConnectionWrapper:
         # SQLite uses DATETIME('now'), PostgreSQL uses NOW()
         sql = sql.replace("DATETIME('now')", 'NOW()')
         sql = sql.replace("datetime('now')", 'NOW()')
+
+        # SQLite uses DATETIME as column type, PostgreSQL uses TIMESTAMP
+        # Use regex with word boundaries to catch all cases
+        sql = re.sub(r'\bDATETIME\b', 'TIMESTAMP', sql, flags=re.IGNORECASE)
 
         # SQLite uses strftime, PostgreSQL uses TO_CHAR
         # (Only translate if needed - most date functions work similarly)
@@ -209,10 +215,17 @@ class PostgreSQLCursorWrapper:
 
     def _translate_sql(self, sql: str) -> str:
         """Translate SQLite SQL to PostgreSQL"""
+        import re
+
         sql = sql.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY')
         sql = sql.replace('AUTOINCREMENT', '')
         sql = sql.replace("DATETIME('now')", 'NOW()')
         sql = sql.replace("datetime('now')", 'NOW()')
+
+        # SQLite uses DATETIME as column type, PostgreSQL uses TIMESTAMP
+        # Use regex with word boundaries to catch all cases
+        sql = re.sub(r'\bDATETIME\b', 'TIMESTAMP', sql, flags=re.IGNORECASE)
+
         return sql
 
 
