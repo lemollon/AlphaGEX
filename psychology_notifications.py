@@ -17,11 +17,10 @@ Notification Delivery:
 
 import asyncio
 import json
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 from collections import defaultdict
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 
 class NotificationManager:
@@ -102,8 +101,7 @@ class NotificationManager:
         Returns:
             List of new critical signals that should trigger notifications
         """
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
         c = conn.cursor()
 
         # Get new signals since last check
@@ -155,22 +153,27 @@ class NotificationManager:
                 'POST_OPEX_REGIME_FLIP'
             ))
 
+        # Fetch rows and convert to dict (database-agnostic)
+        columns = [desc[0] for desc in c.description]
+        rows = c.fetchall()
+
         signals = []
-        for row in c.fetchall():
+        for row in rows:
+            row_dict = dict(zip(columns, row))
             signals.append({
-                'id': row['id'],
-                'timestamp': row['timestamp'],
-                'price': row['spy_price'],
-                'pattern': row['primary_regime_type'],
-                'confidence': row['confidence_score'],
-                'direction': row['trade_direction'],
-                'risk_level': row['risk_level'],
-                'description': row['description'],
-                'psychology_trap': row['psychology_trap'],
-                'vix': row['vix_current'],
-                'vix_spike': bool(row['vix_spike_detected']) if row['vix_spike_detected'] is not None else False,
-                'volatility_regime': row['volatility_regime'],
-                'at_flip_point': bool(row['at_flip_point']) if row['at_flip_point'] is not None else False
+                'id': row_dict['id'],
+                'timestamp': row_dict['timestamp'],
+                'price': row_dict['spy_price'],
+                'pattern': row_dict['primary_regime_type'],
+                'confidence': row_dict['confidence_score'],
+                'direction': row_dict['trade_direction'],
+                'risk_level': row_dict['risk_level'],
+                'description': row_dict['description'],
+                'psychology_trap': row_dict['psychology_trap'],
+                'vix': row_dict['vix_current'],
+                'vix_spike': bool(row_dict['vix_spike_detected']) if row_dict['vix_spike_detected'] is not None else False,
+                'volatility_regime': row_dict['volatility_regime'],
+                'at_flip_point': bool(row_dict['at_flip_point']) if row_dict['at_flip_point'] is not None else False
             })
 
         conn.close()
