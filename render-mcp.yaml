@@ -1,0 +1,243 @@
+# Render Blueprint for AlphaGEX with MCP Servers
+# Enhanced Architecture: Frontend + Backend API + Autonomous Trader + MCP Server Layer
+
+services:
+  # ===================================================================
+  # EXISTING SERVICES (Unchanged)
+  # ===================================================================
+
+  # SERVICE 1: Streamlit Frontend (User Interface)
+  - type: web
+    name: alphagex-app
+    runtime: python
+    plan: starter
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: streamlit run gex_copilot.py --server.port=8501 --server.enableXsrfProtection=false --server.address=0.0.0.0
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: API_BASE_URL
+        value: https://alphagex-api.onrender.com
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: TV_USERNAME
+        sync: false
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+
+  # SERVICE 2: FastAPI Backend API
+  - type: web
+    name: alphagex-api
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    buildCommand: "chmod +x verify_deployment.sh && ./verify_deployment.sh && pip install --no-cache-dir -r requirements-render.txt"
+    startCommand: "./start.sh"
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: TV_USERNAME
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://alphagex-app.onrender.com,http://localhost:3000,http://localhost:5173
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+      # MCP Server URLs (for client connections)
+      - key: MCP_MARKET_DATA_URL
+        value: https://alphagex-mcp-market-data.onrender.com
+      - key: MCP_INTELLIGENCE_URL
+        value: https://alphagex-mcp-intelligence.onrender.com
+      - key: MCP_EXECUTION_URL
+        value: https://alphagex-mcp-execution.onrender.com
+      - key: MCP_LEARNING_URL
+        value: https://alphagex-mcp-learning.onrender.com
+
+  # SERVICE 3: Autonomous Trader (Background Worker)
+  - type: worker
+    name: alphagex-trader
+    runtime: python
+    plan: starter
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: python autonomous_scheduler.py --mode continuous --interval 5
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TV_USERNAME
+        sync: false
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+      # MCP Server URLs
+      - key: MCP_MARKET_DATA_URL
+        value: https://alphagex-mcp-market-data.onrender.com
+      - key: MCP_INTELLIGENCE_URL
+        value: https://alphagex-mcp-intelligence.onrender.com
+      - key: MCP_EXECUTION_URL
+        value: https://alphagex-mcp-execution.onrender.com
+
+  # SERVICE 4: Automated Data Collector (Background Worker)
+  - type: worker
+    name: alphagex-collector
+    runtime: python
+    plan: starter
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: python automated_data_collector.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: POLYGON_API_KEY
+        sync: false
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: TV_USERNAME
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+      # MCP Server URLs
+      - key: MCP_MARKET_DATA_URL
+        value: https://alphagex-mcp-market-data.onrender.com
+
+  # ===================================================================
+  # NEW: MCP SERVER LAYER
+  # ===================================================================
+
+  # MCP SERVER 1: Market Data Service
+  - type: web
+    name: alphagex-mcp-market-data
+    runtime: python
+    plan: starter  # Can use FREE tier if available
+    region: oregon
+    branch: main
+    autoDeploy: true
+    rootDir: mcp-servers/market-data
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: chmod +x start.sh && ./start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: PORT
+        value: "8080"
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: TV_USERNAME
+        sync: false
+      - key: POLYGON_API_KEY
+        sync: false
+      # Optional: API key for securing MCP endpoints
+      - key: MCP_API_KEY
+        sync: false
+
+  # MCP SERVER 2: Intelligence Service (Claude AI, Pattern Analysis)
+  - type: web
+    name: alphagex-mcp-intelligence
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    rootDir: mcp-servers/intelligence
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: chmod +x start.sh && ./start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: PORT
+        value: "8080"
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+      - key: MCP_API_KEY
+        sync: false
+
+  # MCP SERVER 3: Execution Service (Paper Trading, Position Management)
+  - type: web
+    name: alphagex-mcp-execution
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    rootDir: mcp-servers/execution
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: chmod +x start.sh && ./start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: PORT
+        value: "8080"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+      - key: MCP_API_KEY
+        sync: false
+
+  # MCP SERVER 4: Learning Service (ML Models, Backtests, Strategy Adaptation)
+  - type: web
+    name: alphagex-mcp-learning
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    rootDir: mcp-servers/learning
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: chmod +x start.sh && ./start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: PORT
+        value: "8080"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+      - key: MCP_API_KEY
+        sync: false
+
+# PostgreSQL Database (shared by all services)
+databases:
+  - name: alphagex-db
+    databaseName: alphagex
+    user: alphagex
+    plan: starter  # Free tier available
+    region: oregon
