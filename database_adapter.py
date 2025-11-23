@@ -141,6 +141,12 @@ class PostgreSQLConnectionWrapper:
         sql = sql.replace("DATETIME('now')", 'NOW()')
         sql = sql.replace("datetime('now')", 'NOW()')
 
+        # SQLite uses DATETIME as column type, PostgreSQL uses TIMESTAMP
+        sql = sql.replace(' DATETIME ', ' TIMESTAMP ')
+        sql = sql.replace(' DATETIME,', ' TIMESTAMP,')
+        sql = sql.replace(' DATETIME)', ' TIMESTAMP)')
+        sql = sql.replace(' DATETIME\n', ' TIMESTAMP\n')
+
         # SQLite uses strftime, PostgreSQL uses TO_CHAR
         # (Only translate if needed - most date functions work similarly)
 
@@ -213,6 +219,13 @@ class PostgreSQLCursorWrapper:
         sql = sql.replace('AUTOINCREMENT', '')
         sql = sql.replace("DATETIME('now')", 'NOW()')
         sql = sql.replace("datetime('now')", 'NOW()')
+
+        # SQLite uses DATETIME as column type, PostgreSQL uses TIMESTAMP
+        sql = sql.replace(' DATETIME ', ' TIMESTAMP ')
+        sql = sql.replace(' DATETIME,', ' TIMESTAMP,')
+        sql = sql.replace(' DATETIME)', ' TIMESTAMP)')
+        sql = sql.replace(' DATETIME\n', ' TIMESTAMP\n')
+
         return sql
 
 
