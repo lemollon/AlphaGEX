@@ -6,15 +6,16 @@ This script populates the database with realistic historical data
 so users can see pages working while real data accumulates.
 """
 
-import sqlite3
 import random
 from datetime import datetime, timedelta
 import sys
 import os
 
-# Add parent directory to path
-sys.path.insert(0, '..')
-from config_and_database import DB_PATH
+# Add parent directory to path to import modules
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
+
+from database_adapter import get_connection
 
 def generate_regime_signals(conn, days=30):
     """Generate realistic psychology regime signals"""
@@ -428,16 +429,10 @@ def main():
     print("=" * 60)
     print("AlphaGEX Placeholder Data Generator")
     print("=" * 60)
-    print(f"Database: {DB_PATH}")
     print()
 
-    if not os.path.exists(DB_PATH):
-        print(f"❌ Database not found at {DB_PATH}")
-        print("Please run the backend server first to initialize the database.")
-        return
-
-    # Connect to database
-    conn = sqlite3.connect(DB_PATH)
+    # Connect to database (uses database adapter for PostgreSQL/SQLite)
+    conn = get_connection()
 
     try:
         # Generate all data types
