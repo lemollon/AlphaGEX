@@ -353,6 +353,63 @@ def init_database():
         )
     ''')
 
+    # Autonomous Trader Positions (MUST come before autonomous_trader_logs due to FK)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            strategy TEXT NOT NULL,
+            action TEXT NOT NULL,
+            entry_date TEXT NOT NULL,
+            entry_time TEXT NOT NULL,
+            strike REAL NOT NULL,
+            option_type TEXT NOT NULL,
+            expiration_date TEXT NOT NULL,
+            contracts INTEGER NOT NULL,
+            entry_price REAL NOT NULL,
+            entry_bid REAL,
+            entry_ask REAL,
+            entry_spot_price REAL,
+            current_price REAL,
+            current_spot_price REAL,
+            unrealized_pnl REAL,
+            status TEXT DEFAULT 'OPEN',
+            closed_date TEXT,
+            closed_time TEXT,
+            exit_price REAL,
+            realized_pnl REAL,
+            exit_reason TEXT,
+            confidence INTEGER,
+            gex_regime TEXT,
+            entry_net_gex REAL,
+            entry_flip_point REAL,
+            trade_reasoning TEXT,
+            contract_symbol TEXT
+        )
+    ''')
+
+    # Autonomous Trade Log (daily summaries)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_trade_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            action TEXT NOT NULL,
+            details TEXT,
+            position_id INTEGER,
+            success INTEGER DEFAULT 1,
+            realized_pnl REAL
+        )
+    ''')
+
+    # Autonomous Config
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+
     # Autonomous Trader Comprehensive Logs
     c.execute('''
         CREATE TABLE IF NOT EXISTS autonomous_trader_logs (
@@ -959,6 +1016,17 @@ def init_database():
     c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_position ON autonomous_trader_logs(position_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_session ON autonomous_trader_logs(session_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_pattern ON autonomous_trader_logs(pattern_detected)")
+
+    # Autonomous positions indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_status ON autonomous_positions(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_symbol ON autonomous_positions(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_entry_date ON autonomous_positions(entry_date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_strategy ON autonomous_positions(strategy)")
+
+    # Autonomous trade log indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_date ON autonomous_trade_log(date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_action ON autonomous_trade_log(action)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_position_id ON autonomous_trade_log(position_id)")
 
     # ===== DATABASE MIGRATIONS =====
 
