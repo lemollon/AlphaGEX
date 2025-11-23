@@ -19,8 +19,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-import sqlite3
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 # Import Polygon.io helper instead of yfinance
 try:
@@ -2482,7 +2481,7 @@ def determine_alert_level(regime: Dict, expiration_analysis: Dict) -> Dict:
 
 def save_regime_signal_to_db(analysis: Dict) -> int:
     """Save regime analysis to database"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     c = conn.cursor()
 
     regime = analysis['regime']
@@ -2560,7 +2559,7 @@ def save_regime_signal_to_db(analysis: Dict) -> int:
             vol_regime.get('regime'),
             1 if vol_regime.get('at_flip_point') else 0
         ))
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         # If columns don't exist yet, try without VIX fields (backward compatibility)
         print(f"Warning: Database schema may need updating for VIX fields: {e}")
         c.execute('''

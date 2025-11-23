@@ -27,7 +27,7 @@ import uvicorn
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
 from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
-from config_and_database import STRATEGIES, init_database
+from config_and_database import STRATEGIES, init_database, MM_STATES
 from database_adapter import get_connection
 
 # Import probability calculator (NEW - Phase 2 Self-Learning)
@@ -6868,7 +6868,7 @@ async def get_database_stats():
 
         return {
             "success": True,
-            "database_path": str(DB_PATH),
+            "database_url": os.getenv('DATABASE_URL', 'Not configured'),
             "total_tables": len(tables),
             "tables": table_stats,
             "timestamp": datetime.now().isoformat()

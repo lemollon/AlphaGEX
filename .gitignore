@@ -11,9 +11,12 @@ build/
 dist/
 *.egg-info/
 
-# Streamlit
+# Streamlit (NOT USED - AlphaGEX uses React/Next.js frontend)
 .streamlit/
 secrets.toml
+*streamlit*
+gex_copilot.py
+restart_streamlit.sh
 
 # IDE
 .vscode/

@@ -41,7 +41,6 @@ pandas==2.1.4
 numpy==1.26.2
 # yfinance==0.2.33  # OPTIONAL: Only for options chain data. All market data now uses Polygon.io
 anthropic>=0.16.0
-streamlit==1.29.0  # Keep for reference, won't use in FastAPI
 plotly==5.18.0
 requests==2.31.0
 scipy==1.11.4

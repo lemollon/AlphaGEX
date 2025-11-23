@@ -10,6 +10,9 @@ try:
     STREAMLIT_AVAILABLE = True
 except ImportError:
     STREAMLIT_AVAILABLE = False
+    import os
+    import logging
+
     # Create a mock streamlit object for non-Streamlit contexts
     class MockStreamlit:
         class session_state:
@@ -20,16 +23,21 @@ except ImportError:
         class secrets:
             @staticmethod
             def get(key, default=""):
-                return default
+                # Fallback to environment variables for secrets
+                env_key = key.upper()
+                return os.getenv(env_key, default)
 
         @staticmethod
-        def error(msg): pass
+        def error(msg):
+            logging.error(f"[Streamlit Mock] {msg}")
 
         @staticmethod
-        def warning(msg): pass
+        def warning(msg):
+            logging.warning(f"[Streamlit Mock] {msg}")
 
         @staticmethod
-        def info(msg): pass
+        def info(msg):
+            logging.info(f"[Streamlit Mock] {msg}")
 
     st = MockStreamlit()
 
@@ -39,10 +47,10 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 import time
-import sqlite3
 import pytz
 from typing import List, Dict, Optional
-from config_and_database import DB_PATH, MM_STATES, STRATEGIES
+from config_and_database import MM_STATES, STRATEGIES
+from database_adapter import get_connection
 
 # Import Polygon.io helper for VIX data
 try:
@@ -741,12 +749,11 @@ class TradingRAG:
     """Retrieval Augmented Generation for personalized trading intelligence"""
     
     def __init__(self):
-        self.db_path = DB_PATH
         self.embeddings_cache = {}
-        
+
     def get_similar_trades(self, current_setup: Dict, limit: int = 5) -> List[Dict]:
         """Find similar historical trades based on GEX levels"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         
         current_gex = current_setup.get('net_gex', 0)
         
@@ -773,7 +780,7 @@ class TradingRAG:
     
     def get_personal_stats(self, strategy: str = None) -> Dict:
         """Get personal trading statistics"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         
         base_query = """
             SELECT 
@@ -830,7 +837,7 @@ class TradingRAG:
     
     def get_pattern_success_rate(self, pattern: Dict) -> float:
         """Calculate success rate for specific pattern"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         
         conditions = []
         params = []
@@ -931,7 +938,6 @@ class SmartDTECalculator:
 
     def __init__(self):
         self.rag = TradingRAG()
-        self.db_path = DB_PATH
 
     def calculate_optimal_dte(self, market_data: Dict, strategy_type: str, use_ai_reasoning: bool = False) -> Dict:
         """
@@ -2538,7 +2544,7 @@ Want to dive deeper into a specific concept? Ask me about:
     def _log_conversation(self, query: str, response: str, context: Dict):
         """Log conversation to database"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
             c.execute('''
                 INSERT INTO conversations (user_message, ai_response, context_data, confidence_score)
