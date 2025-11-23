@@ -1030,11 +1030,34 @@ def init_database():
 
     # ===== DATABASE MIGRATIONS =====
 
+    # Helper function to get table columns (works with both SQLite and PostgreSQL)
+    def get_table_columns(cursor, table_name):
+        """Get list of column names for a table (database-agnostic)"""
+        try:
+            # Try PostgreSQL first
+            cursor.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = %s
+            """, (table_name,))
+            columns = [row[0] for row in cursor.fetchall()]
+            if columns:
+                return columns
+        except:
+            pass
+
+        try:
+            # Fall back to SQLite
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            return [row[1] for row in cursor.fetchall()]
+        except:
+            # Table might not exist
+            return []
+
     # Add vix_current column to regime_signals if it doesn't exist
     try:
-        c.execute("PRAGMA table_info(regime_signals)")
-        columns = [row[1] for row in c.fetchall()]
-        if 'vix_current' not in columns:
+        columns = get_table_columns(c, 'regime_signals')
+        if columns and 'vix_current' not in columns:
             print("🔄 Migrating regime_signals table: adding vix_current column")
             c.execute("ALTER TABLE regime_signals ADD COLUMN vix_current REAL")
             print("✅ Migration complete: vix_current column added")
@@ -1044,8 +1067,7 @@ def init_database():
 
     # Migrate backtest_summary table to new schema
     try:
-        c.execute("PRAGMA table_info(backtest_summary)")
-        columns = [row[1] for row in c.fetchall()]
+        columns = get_table_columns(c, 'backtest_summary')
 
         # Check if old schema exists (missing symbol column)
         if 'symbol' not in columns and columns:
@@ -1079,12 +1101,35 @@ def init_database():
     conn.close()
 
 
+def _get_table_columns(cursor, table_name):
+    """Get list of column names for a table (database-agnostic helper)"""
+    try:
+        # Try PostgreSQL first
+        cursor.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = %s
+        """, (table_name,))
+        columns = [row[0] for row in cursor.fetchall()]
+        if columns:
+            return columns
+    except:
+        pass
+
+    try:
+        # Fall back to SQLite
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        return [row[1] for row in cursor.fetchall()]
+    except:
+        # Table might not exist
+        return []
+
+
 def _migrate_positions_table(cursor):
     """Add new columns to existing positions table if they don't exist"""
 
-    # Get existing columns
-    cursor.execute("PRAGMA table_info(positions)")
-    existing_columns = {row[1] for row in cursor.fetchall()}
+    # Get existing columns (database-agnostic)
+    existing_columns = set(_get_table_columns(cursor, 'positions'))
 
     # Define new columns to add
     new_columns = {
@@ -1102,7 +1147,7 @@ def _migrate_positions_table(cursor):
         if column_name not in existing_columns:
             try:
                 cursor.execute(f"ALTER TABLE positions ADD COLUMN {column_name} {column_type}")
-            except sqlite3.OperationalError:
+            except Exception:
                 # Column might already exist or table doesn't exist yet
                 pass
 
