@@ -147,6 +147,20 @@ class PostgreSQLConnectionWrapper:
         # Use regex with word boundaries to catch all cases
         sql = re.sub(r'\bDATETIME\b', 'TIMESTAMP', sql, flags=re.IGNORECASE)
 
+        # SQLite uses INSERT OR IGNORE, PostgreSQL uses INSERT ... ON CONFLICT DO NOTHING
+        # Pattern: INSERT OR IGNORE INTO table_name (columns...) VALUES (...)
+        # Replace with: INSERT INTO table_name (columns...) VALUES (...) ON CONFLICT DO NOTHING
+        if 'INSERT OR IGNORE' in sql.upper():
+            sql = re.sub(
+                r'\bINSERT\s+OR\s+IGNORE\b',
+                'INSERT',
+                sql,
+                flags=re.IGNORECASE
+            )
+            # Add ON CONFLICT DO NOTHING at the end if not already present
+            if 'ON CONFLICT' not in sql.upper():
+                sql = sql.rstrip().rstrip(';') + ' ON CONFLICT DO NOTHING'
+
         # SQLite uses strftime, PostgreSQL uses TO_CHAR
         # (Only translate if needed - most date functions work similarly)
 
@@ -225,6 +239,18 @@ class PostgreSQLCursorWrapper:
         # SQLite uses DATETIME as column type, PostgreSQL uses TIMESTAMP
         # Use regex with word boundaries to catch all cases
         sql = re.sub(r'\bDATETIME\b', 'TIMESTAMP', sql, flags=re.IGNORECASE)
+
+        # SQLite uses INSERT OR IGNORE, PostgreSQL uses INSERT ... ON CONFLICT DO NOTHING
+        if 'INSERT OR IGNORE' in sql.upper():
+            sql = re.sub(
+                r'\bINSERT\s+OR\s+IGNORE\b',
+                'INSERT',
+                sql,
+                flags=re.IGNORECASE
+            )
+            # Add ON CONFLICT DO NOTHING at the end if not already present
+            if 'ON CONFLICT' not in sql.upper():
+                sql = sql.rstrip().rstrip(';') + ' ON CONFLICT DO NOTHING'
 
         return sql
 
