@@ -1,4 +1,5 @@
 """
+from database_adapter import get_connection
 AI Intelligence Enhancement Routes
 Provides 7 advanced AI features for profitable trading with transparency and actionability.
 
@@ -15,7 +16,6 @@ Features:
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
-import sqlite3
 from datetime import datetime, timedelta
 import os
 try:
@@ -46,10 +46,8 @@ router = APIRouter(prefix="/api/ai-intelligence", tags=["AI Intelligence"])
 
 # Database path - use the same path as the main system
 try:
-    from config_and_database import DB_PATH
 except ImportError:
     # Fallback to gex_copilot.db in parent directory
-    DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'gex_copilot.db')
 
 # Get API key with fallback support (ANTHROPIC_API_KEY or CLAUDE_API_KEY)
 api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
@@ -103,7 +101,7 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
     require_api_key()
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get account info
@@ -287,7 +285,7 @@ async def explain_trade(trade_id: str):
     require_api_key()
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
@@ -434,7 +432,7 @@ async def generate_daily_trading_plan():
     require_api_key()
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
@@ -598,7 +596,7 @@ async def get_position_guidance(trade_id: str):
     require_api_key()
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
@@ -754,7 +752,7 @@ async def get_market_commentary():
     require_api_key()
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
@@ -865,7 +863,7 @@ async def compare_strategies():
     require_api_key()
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 

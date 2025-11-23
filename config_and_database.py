@@ -2,8 +2,10 @@
 config_and_database.py - Configuration, Constants, and Database Functions
 """
 
-import sqlite3
-from pathlib import Path
+import os
+
+# Import PostgreSQL database adapter
+from database_adapter import get_connection, get_db_adapter
 
 # ============================================================================
 # CONFIGURATION & CONSTANTS
@@ -12,18 +14,6 @@ from pathlib import Path
 # API Configuration
 TRADINGVOLATILITY_BASE = "https://stocks.tradingvolatility.net/api"
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # Haiku 4.5 (Oct 2025) - Fast, cheap, great for analysis
-
-# Database Configuration - Automatically uses PostgreSQL on Render or SQLite locally
-import os
-
-# Import unified database adapter
-try:
-    from database_adapter import get_connection, get_db_adapter, DB_PATH
-    USING_DATABASE_ADAPTER = True
-except ImportError:
-    # Fallback to legacy SQLite if adapter not available
-    DB_PATH = Path(os.environ.get('DATABASE_PATH', os.path.join(os.getcwd(), 'gex_copilot.db')))
-    USING_DATABASE_ADAPTER = False
 
 # Market Maker Behavioral States
 MM_STATES = {
@@ -248,16 +238,7 @@ STRATEGIES = {
 
 def init_database():
     """Initialize comprehensive database schema"""
-    # Use unified database adapter (PostgreSQL on Render, SQLite locally)
-    if USING_DATABASE_ADAPTER:
-        conn = get_connection()
-    else:
-        conn = sqlite3.connect(DB_PATH, timeout=30.0)
-        # Enable WAL mode for concurrent access (allows reads while writing)
-        conn.execute('PRAGMA journal_mode=WAL')
-        conn.execute('PRAGMA synchronous=NORMAL')
-        conn.execute('PRAGMA cache_size=-64000')  # 64MB cache
-
+    conn = get_connection()
     c = conn.cursor()
 
     # GEX History
@@ -1030,26 +1011,16 @@ def init_database():
 
     # ===== DATABASE MIGRATIONS =====
 
-    # Helper function to get table columns (works with both SQLite and PostgreSQL)
+    # Helper function to get table columns (PostgreSQL)
     def get_table_columns(cursor, table_name):
-        """Get list of column names for a table (database-agnostic)"""
+        """Get list of column names for a table"""
         try:
-            # Try PostgreSQL first
             cursor.execute("""
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_name = %s
             """, (table_name,))
-            columns = [row[0] for row in cursor.fetchall()]
-            if columns:
-                return columns
-        except:
-            pass
-
-        try:
-            # Fall back to SQLite
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            return [row[1] for row in cursor.fetchall()]
+            return [row[0] for row in cursor.fetchall()]
         except:
             # Table might not exist
             return []
@@ -1102,24 +1073,14 @@ def init_database():
 
 
 def _get_table_columns(cursor, table_name):
-    """Get list of column names for a table (database-agnostic helper)"""
+    """Get list of column names for a table (PostgreSQL)"""
     try:
-        # Try PostgreSQL first
         cursor.execute("""
             SELECT column_name
             FROM information_schema.columns
             WHERE table_name = %s
         """, (table_name,))
-        columns = [row[0] for row in cursor.fetchall()]
-        if columns:
-            return columns
-    except:
-        pass
-
-    try:
-        # Fall back to SQLite
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        return [row[1] for row in cursor.fetchall()]
+        return [row[0] for row in cursor.fetchall()]
     except:
         # Table might not exist
         return []

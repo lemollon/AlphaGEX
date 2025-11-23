@@ -28,6 +28,7 @@ import uvicorn
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
 from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
 from config_and_database import STRATEGIES, init_database
+from database_adapter import get_connection
 
 # Import probability calculator (NEW - Phase 2 Self-Learning)
 from probability_calculator import ProbabilityCalculator
@@ -2792,10 +2793,9 @@ async def get_trader_trades(limit: int = 10):
         }
 
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect(trader.db_path)
+        conn = get_connection()
         trades = pd.read_sql_query(f"""
             SELECT * FROM autonomous_positions
             ORDER BY entry_date DESC, entry_time DESC
@@ -2823,10 +2823,9 @@ async def get_open_positions():
         }
 
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect(trader.db_path)
+        conn = get_connection()
         positions = pd.read_sql_query("""
             SELECT * FROM autonomous_positions
             WHERE status = 'OPEN'
@@ -2854,13 +2853,12 @@ async def get_trade_log():
         })
 
     try:
-        import sqlite3
         import pandas as pd
         from datetime import datetime
         import json
         import math
 
-        conn = sqlite3.connect(trader.db_path)
+        conn = get_connection()
 
         # Get today's date in Central Time
         from intelligence_and_strategies import get_local_time
@@ -2922,11 +2920,10 @@ async def get_equity_curve(days: int = 30):
         }
 
     try:
-        import sqlite3
         import pandas as pd
         from datetime import datetime, timedelta
 
-        conn = sqlite3.connect(trader.db_path)
+        conn = get_connection()
 
         # Get trade history for specified days
         end_date = datetime.now()
@@ -3186,10 +3183,9 @@ async def get_strategy_stats():
         }
 
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect(trader.db_path)
+        conn = get_connection()
 
         # Get all positions grouped by strategy
         query = """
@@ -3366,9 +3362,8 @@ async def compare_all_strategies(symbol: str = "SPY"):
 
 def init_scanner_database():
     """Initialize scanner database schema with tracking"""
-    import sqlite3
 
-    conn = sqlite3.connect('scanner_results.db')
+    conn = get_connection()
     c = conn.cursor()
 
     # Scanner runs table
@@ -3424,7 +3419,6 @@ async def scan_symbols(request: dict):
 
     Returns setups with SPECIFIC money-making instructions
     """
-    import sqlite3
     import uuid
     import time
 
@@ -3805,7 +3799,7 @@ Fallback range play. Positive GEX suggests range-bound action.""",
         # Log scan completion
         print(f"✅ Scanner completed: {len(results)} strategies found across {len(symbols)} symbols in {scan_duration:.1f}s")
 
-        conn = sqlite3.connect('scanner_results.db')
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -3849,10 +3843,9 @@ Fallback range play. Positive GEX suggests range-bound action.""",
 async def get_scanner_history(limit: int = 10):
     """Get scanner run history"""
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect('scanner_results.db')
+        conn = get_connection()
 
         runs = pd.read_sql_query(f"""
             SELECT * FROM scanner_runs
@@ -3873,10 +3866,9 @@ async def get_scanner_history(limit: int = 10):
 async def get_scan_results(scan_id: str):
     """Get results for a specific scan"""
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect('scanner_results.db')
+        conn = get_connection()
 
         results = pd.read_sql_query(f"""
             SELECT * FROM scanner_results
@@ -3900,9 +3892,8 @@ async def get_scan_results(scan_id: str):
 
 def init_trade_setups_database():
     """Initialize trade setups database schema"""
-    import sqlite3
 
-    conn = sqlite3.connect('trade_setups.db')
+    conn = get_connection()
     c = conn.cursor()
 
     # Trade setups table
@@ -4304,9 +4295,8 @@ async def save_trade_setup(request: dict):
     Request body: trade setup object
     """
     try:
-        import sqlite3
 
-        conn = sqlite3.connect('trade_setups.db')
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -4347,10 +4337,9 @@ async def save_trade_setup(request: dict):
 async def list_trade_setups(limit: int = 20, status: str = 'active'):
     """Get saved trade setups"""
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect('trade_setups.db')
+        conn = get_connection()
 
         setups = pd.read_sql_query(f"""
             SELECT * FROM trade_setups
@@ -4376,9 +4365,8 @@ async def update_trade_setup(setup_id: int, request: dict):
     Request body can include: status, actual_entry, actual_exit, actual_pnl, notes
     """
     try:
-        import sqlite3
 
-        conn = sqlite3.connect('trade_setups.db')
+        conn = get_connection()
         c = conn.cursor()
 
         update_fields = []
@@ -4428,9 +4416,8 @@ async def update_trade_setup(setup_id: int, request: dict):
 
 def init_alerts_database():
     """Initialize alerts database schema"""
-    import sqlite3
 
-    conn = sqlite3.connect('alerts.db')
+    conn = get_connection()
     c = conn.cursor()
 
     # Alerts table
@@ -4486,7 +4473,6 @@ async def create_alert(request: dict):
     }
     """
     try:
-        import sqlite3
 
         symbol = request.get('symbol', 'SPY').upper()
         alert_type = request.get('alert_type')
@@ -4506,7 +4492,7 @@ async def create_alert(request: dict):
             elif alert_type == 'flip_point':
                 message = f"{symbol} {condition} flip point at ${threshold}"
 
-        conn = sqlite3.connect('alerts.db')
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -4531,10 +4517,9 @@ async def create_alert(request: dict):
 async def list_alerts(status: str = 'active'):
     """Get all alerts with specified status"""
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect('alerts.db')
+        conn = get_connection()
 
         alerts = pd.read_sql_query(f"""
             SELECT * FROM alerts
@@ -4556,9 +4541,8 @@ async def list_alerts(status: str = 'active'):
 async def delete_alert(alert_id: int):
     """Delete an alert"""
     try:
-        import sqlite3
 
-        conn = sqlite3.connect('alerts.db')
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('DELETE FROM alerts WHERE id = ?', (alert_id,))
@@ -4581,10 +4565,9 @@ async def check_alerts():
     This endpoint should be called periodically (e.g., every minute)
     """
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect('alerts.db')
+        conn = get_connection()
 
         # Get all active alerts
         alerts = pd.read_sql_query("""
@@ -4677,10 +4660,9 @@ async def check_alerts():
 async def get_alert_history(limit: int = 50):
     """Get alert trigger history"""
     try:
-        import sqlite3
         import pandas as pd
 
-        conn = sqlite3.connect('alerts.db')
+        conn = get_connection()
 
         history = pd.read_sql_query(f"""
             SELECT * FROM alert_history
@@ -5388,10 +5370,9 @@ async def get_regime_history(limit: int = 50, regime_type: str = None):
         regime_type: Filter by specific regime type (optional)
     """
     try:
-        import sqlite3
-        from config_and_database import DB_PATH
+        
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         if regime_type:
@@ -5435,10 +5416,9 @@ async def get_liberation_setups():
     Returns walls that are about to expire and release price
     """
     try:
-        import sqlite3
-        from config_and_database import DB_PATH
+        
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get recent signals with liberation setups
@@ -5477,10 +5457,9 @@ async def get_false_floors():
     Returns support levels that are temporary and will disappear
     """
     try:
-        import sqlite3
-        from config_and_database import DB_PATH
+        
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get recent signals with false floor warnings
@@ -5532,10 +5511,9 @@ async def get_sucker_statistics():
         }
     """
     try:
-        import sqlite3
-        from config_and_database import DB_PATH
+        
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get sucker statistics
@@ -6011,11 +5989,10 @@ async def get_backtest_results(strategy_name: str = None, limit: int = 50):
         List of backtest results with full metrics
     """
     try:
-        import sqlite3
-        from config_and_database import DB_PATH
+        
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         if strategy_name:
@@ -6079,11 +6056,10 @@ async def get_backtest_summary():
         Summary with psychology, GEX, and options strategy performance
     """
     try:
-        import sqlite3
-        from config_and_database import DB_PATH
+        
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         c.execute('''
@@ -6147,11 +6123,10 @@ async def get_best_strategies(min_expectancy: float = 0.5, min_win_rate: float =
         List of strategies that meet criteria, sorted by expectancy
     """
     try:
-        import sqlite3
-        from config_and_database import DB_PATH
+        
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         c.execute('''
@@ -6246,11 +6221,10 @@ async def run_backtests(request: dict = None):
             print("✅ Backtests completed successfully")
 
             # Fetch the results
-            import sqlite3
-            from config_and_database import DB_PATH
+            
 
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
+            conn = get_connection()
+            
             c = conn.cursor()
 
             # Get latest results
@@ -6317,8 +6291,7 @@ async def get_smart_recommendations():
         - Actionable setup links
     """
     try:
-        import sqlite3
-        from config_and_database import DB_PATH
+        
 
         # 1. Get current market conditions from latest Psychology Analysis
         gex_data = api_client.get_net_gamma('SPY')
@@ -6333,8 +6306,8 @@ async def get_smart_recommendations():
         net_gex = gex_data.get('net_gex', 0)
 
         # Get RSI and regime detection
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
+        
         c = conn.cursor()
 
         # Get latest regime signal
@@ -6854,10 +6827,9 @@ async def get_database_stats():
     Returns table names, row counts, and sample data
     """
     try:
-        from config_and_database import DB_PATH
-        import sqlite3
+        
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         cursor = conn.cursor()
 
         # Get all tables
@@ -7086,8 +7058,7 @@ async def startup_event():
     # Auto-run backtests on startup IF database is empty
     print("\n🔄 Checking backtest results...")
     try:
-        import sqlite3
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM backtest_results")
         count = cursor.fetchone()[0]
@@ -7177,7 +7148,7 @@ async def get_probability_outcomes(days: int = 30):
     Shows how accurate our probability predictions have been
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7227,7 +7198,7 @@ async def get_probability_outcomes(days: int = 30):
 async def get_probability_weights():
     """Get current probability weighting configuration"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7264,7 +7235,7 @@ async def get_probability_weights():
 async def get_calibration_history(days: int = 90):
     """Get model calibration adjustment history"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7308,7 +7279,7 @@ async def get_calibration_history(days: int = 90):
 async def get_conversation_history(limit: int = 50):
     """Get AI copilot conversation history"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7349,7 +7320,7 @@ async def get_conversation_history(limit: int = 50):
 async def get_conversation_detail(conversation_id: int):
     """Get full conversation thread details"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7392,7 +7363,7 @@ async def get_conversation_detail(conversation_id: int):
 async def get_oi_trends(symbol: str = "SPY", days: int = 30):
     """Get historical open interest trends"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7440,7 +7411,7 @@ async def get_oi_trends(symbol: str = "SPY", days: int = 30):
 async def get_unusual_oi_activity(symbol: str = "SPY", days: int = 7):
     """Detect unusual open interest changes"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get strikes with significant OI changes
@@ -7493,7 +7464,7 @@ async def get_unusual_oi_activity(symbol: str = "SPY", days: int = 7):
 async def get_recommendations_history(days: int = 30):
     """Get past trade recommendations"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7549,7 +7520,7 @@ async def get_recommendations_history(days: int = 30):
 async def get_recommendation_performance():
     """Analyze how well past recommendations performed"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get recommendations with outcomes
@@ -7620,7 +7591,7 @@ async def get_recommendation_performance():
 async def get_gex_history(symbol: str = "SPY", days: int = 90):
     """Get historical GEX snapshots"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7668,7 +7639,7 @@ async def get_gex_history(symbol: str = "SPY", days: int = 90):
 async def get_gex_regime_changes(symbol: str = "SPY", days: int = 90):
     """Identify when GEX regime flipped"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get regime changes
@@ -7720,7 +7691,7 @@ async def get_gex_regime_changes(symbol: str = "SPY", days: int = 90):
 async def get_push_subscriptions():
     """Get all push notification subscriptions"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -7760,7 +7731,7 @@ async def get_push_subscriptions():
 async def delete_push_subscription(subscription_id: int):
     """Unsubscribe from push notifications"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
