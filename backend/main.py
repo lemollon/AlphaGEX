@@ -2723,7 +2723,7 @@ async def get_trader_live_status():
 
         # Add diagnostic info
         print(f"📊 Trader Live Status Query:")
-        print(f"   Database: {trader.db_path}")
+        print(f"   Database: PostgreSQL via DATABASE_URL")
         print(f"   Status: {live_status.get('status')}")
         print(f"   Action: {live_status.get('current_action')}")
         print(f"   Timestamp: {live_status.get('timestamp')}")

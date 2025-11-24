@@ -45,7 +45,7 @@ try:
     print("🤖 Initializing autonomous trader...")
     trader = AutonomousPaperTrader()
     print(f"✅ Trader initialized")
-    print(f"   Database: {trader.db_path}")
+    print(f"   Database: PostgreSQL via DATABASE_URL")
     print(f"   Capital: ${trader.capital:,.2f}")
     print(f"   Mode: {trader.mode}\n")
 

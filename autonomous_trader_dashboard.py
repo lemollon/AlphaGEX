@@ -5,9 +5,9 @@ Monitor the fully automated paper trader - NO manual intervention needed
 
 import streamlit as st
 import pandas as pd
-import sqlite3
 from datetime import datetime, timedelta
 from autonomous_paper_trader import AutonomousPaperTrader
+from database_adapter import get_connection
 
 
 def display_autonomous_trader():
@@ -216,7 +216,7 @@ def display_performance(trader: AutonomousPaperTrader):
     st.subheader("📈 Account Value Over Time")
 
     # Get historical performance data
-    conn = sqlite3.connect(trader.db_path)
+    conn = get_connection()
 
     # Get all trades chronologically
     trades = pd.read_sql_query("""
@@ -318,7 +318,7 @@ def display_performance(trader: AutonomousPaperTrader):
         st.subheader("💰 Profitability Analytics - Optimize Your Edge")
 
         # Get all closed trades for analysis
-        conn = sqlite3.connect(trader.db_path)
+        conn = get_connection()
         all_trades = pd.read_sql_query("""
             SELECT
                 strategy,
@@ -556,7 +556,7 @@ def display_current_positions(trader: AutonomousPaperTrader):
     current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     st.caption(f"📅 Data as of: {current_time}")
 
-    conn = sqlite3.connect(trader.db_path)
+    conn = get_connection()
     positions = pd.read_sql_query("""
         SELECT * FROM autonomous_positions
         WHERE status = 'OPEN'
@@ -634,7 +634,7 @@ def display_trade_history(trader: AutonomousPaperTrader):
     current_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     st.caption(f"📅 Data as of: {current_time}")
 
-    conn = sqlite3.connect(trader.db_path)
+    conn = get_connection()
     positions = pd.read_sql_query("""
         SELECT * FROM autonomous_positions
         WHERE status = 'CLOSED'
@@ -713,7 +713,7 @@ def display_activity_log(trader: AutonomousPaperTrader):
     current_time = datetime.now(central_tz).strftime("%Y-%m-%d %I:%M:%S %p CT")
     st.caption(f"📅 Data as of: {current_time}")
 
-    conn = sqlite3.connect(trader.db_path)
+    conn = get_connection()
     log = pd.read_sql_query("""
         SELECT * FROM autonomous_trade_log
         ORDER BY date DESC, time DESC
@@ -1046,7 +1046,7 @@ def display_control_panel(trader: AutonomousPaperTrader):
     traded_today = (last_trade_date == today)
 
     # Get open positions count
-    conn = sqlite3.connect(trader.db_path)
+    conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM autonomous_positions WHERE status = 'OPEN'")
     open_positions = c.fetchone()[0]
@@ -1092,7 +1092,7 @@ def display_control_panel(trader: AutonomousPaperTrader):
             st.caption("⛔ Stopped - trades paused")
 
     # Show bot's live status - what it's thinking and when it last ran
-    conn = sqlite3.connect(trader.db_path)
+    conn = get_connection()
     c = conn.cursor()
     c.execute("""
         SELECT timestamp, status, current_action, market_analysis, last_decision
