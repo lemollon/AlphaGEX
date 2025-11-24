@@ -13,6 +13,7 @@ from database_adapter import get_connection
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import numpy as np
+import psycopg2.extras
 
 
 class RiskManager:
@@ -265,8 +266,7 @@ class RiskManager:
     def _get_open_positions(self) -> List[Dict]:
         """Get all open positions"""
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT * FROM autonomous_positions WHERE status = 'OPEN'

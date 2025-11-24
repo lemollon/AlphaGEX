@@ -16,6 +16,7 @@ from database_adapter import get_connection
 from datetime import datetime
 from typing import Dict, Optional
 import uuid
+import psycopg2.extras
 
 
 class AutonomousDatabaseLogger:
@@ -297,8 +298,7 @@ class AutonomousDatabaseLogger:
     def get_session_logs(self, limit: int = 100) -> list:
         """Get logs for current session"""
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT * FROM autonomous_trader_logs
@@ -315,8 +315,7 @@ class AutonomousDatabaseLogger:
     def get_recent_logs(self, log_type: Optional[str] = None, limit: int = 50) -> list:
         """Get recent logs, optionally filtered by type"""
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         if log_type:
             c.execute("""
@@ -340,8 +339,7 @@ class AutonomousDatabaseLogger:
     def get_logs_by_pattern(self, pattern: str, limit: int = 50) -> list:
         """Get logs for specific pattern detection"""
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT * FROM autonomous_trader_logs

@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import sys
 import os
+import psycopg2.extras
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,8 +43,7 @@ async def get_autonomous_logs(
     """
     try:
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         query = "SELECT * FROM autonomous_trader_logs WHERE 1=1"
         params = []
@@ -82,8 +82,7 @@ async def get_log_sessions(limit: int = Query(10, ge=1, le=50)):
     """Get list of recent autonomous trader sessions"""
     try:
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT
@@ -429,8 +428,7 @@ async def get_recent_ml_predictions(limit: int = Query(20, ge=1, le=100)):
     """Get recent ML predictions from logs"""
     try:
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT

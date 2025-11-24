@@ -18,6 +18,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import os
+import psycopg2.extras
 try:
     from autonomous_ai_reasoning import AutonomousAIReasoning
 except ImportError:
@@ -281,8 +282,7 @@ async def explain_trade(trade_id: str):
 
     try:
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get trade details
         c.execute("""
@@ -428,8 +428,7 @@ async def generate_daily_trading_plan():
 
     try:
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get latest market data
         c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 1")
@@ -592,8 +591,7 @@ async def get_position_guidance(trade_id: str):
 
     try:
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get trade
         c.execute("SELECT * FROM trades WHERE (id = ? OR timestamp = ?) AND status = 'OPEN'", (trade_id, trade_id))
@@ -748,8 +746,7 @@ async def get_market_commentary():
 
     try:
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get current market data
         c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 2")
@@ -859,8 +856,7 @@ async def compare_strategies():
 
     try:
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get market data
         c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 1")

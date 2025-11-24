@@ -25,6 +25,7 @@ from database_adapter import get_connection
 from datetime import datetime
 from typing import Dict, List, Optional
 import pandas as pd
+import psycopg2.extras
 
 
 class StrategyCompetition:
@@ -182,8 +183,7 @@ class StrategyCompetition:
     def get_leaderboard(self) -> List[Dict]:
         """Get current competition leaderboard"""
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT
@@ -207,8 +207,7 @@ class StrategyCompetition:
     def get_strategy_performance(self, strategy_id: str) -> Dict:
         """Get detailed performance for a specific strategy"""
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT * FROM strategy_competition WHERE strategy_id = ?

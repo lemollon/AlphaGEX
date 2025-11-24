@@ -12,16 +12,16 @@ The Goal: Give you intelligent, profitable trade recommendations that improve wi
 """
 
 import os
-import sqlite3
 import json
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+import psycopg2.extras
 
 from langchain_anthropic import ChatAnthropic
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import HumanMessage, SystemMessage
 
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 
 class SmartTradeAdvisor:
@@ -112,9 +112,8 @@ class SmartTradeAdvisor:
     def get_similar_historical_trades(self, current_pattern: str, current_vix: float,
                                       current_regime: str) -> List[Dict]:
         """Find similar historical trades for pattern matching"""
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Find trades with similar conditions
         vix_range = 3.0  # +/- 3 points
@@ -156,9 +155,8 @@ class SmartTradeAdvisor:
 
     def get_ai_track_record(self, days: int = 30) -> Dict:
         """Get AI's recent prediction accuracy"""
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
 
@@ -445,9 +443,8 @@ Your confidence should reflect:
 
     def get_learning_insights(self) -> Dict:
         """Get insights about what the AI has learned"""
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Overall accuracy
         cursor.execute("""

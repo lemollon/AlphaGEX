@@ -14,8 +14,8 @@ The Goal: Make you profitable by continuously improving strategies based on data
 import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-import sqlite3
 import json
+import psycopg2.extras
 
 # Optional langchain imports - only needed if using the AI optimizer feature
 # Compatible with both langchain 0.1.x and 1.0.x
@@ -26,7 +26,7 @@ except ImportError:
     LANGCHAIN_AVAILABLE = False
     ChatAnthropic = None
 
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 
 class StrategyOptimizerAgent:
@@ -71,9 +71,8 @@ class StrategyOptimizerAgent:
     def _query_backtest_results(self, query: str):
         """Query backtest results from database - returns dict/list"""
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             if query.lower() == 'all':
                 cursor.execute("""
@@ -137,9 +136,8 @@ class StrategyOptimizerAgent:
     def _get_winning_trades(self, strategy_name: str) -> str:
         """Get winning trades for analysis"""
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             # Get winning regime signals
             cursor.execute("""
@@ -187,9 +185,8 @@ class StrategyOptimizerAgent:
     def _get_losing_trades(self, strategy_name: str) -> str:
         """Get losing trades for analysis"""
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             cursor.execute("""
                 SELECT
@@ -236,9 +233,8 @@ class StrategyOptimizerAgent:
     def _analyze_pattern_performance(self, pattern: str) -> str:
         """Analyze performance by pattern type"""
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             if pattern.lower() == 'all':
                 cursor.execute("""
@@ -291,9 +287,8 @@ class StrategyOptimizerAgent:
         """Get recent market context"""
         try:
             days_int = int(days)
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             cursor.execute(f"""
                 SELECT
@@ -383,9 +378,8 @@ class StrategyOptimizerAgent:
         - Win rate and avg P&L per strike type
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             if strategy_name:
                 query = """
@@ -466,9 +460,8 @@ class StrategyOptimizerAgent:
         - 30+ DTE
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             if strategy_name:
                 query = """
@@ -540,9 +533,8 @@ class StrategyOptimizerAgent:
         - Optimal strike spacing
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             if strategy_name:
                 query = """
@@ -617,9 +609,8 @@ class StrategyOptimizerAgent:
         - Vega exposure in different VIX environments
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             if strategy_name:
                 query = """
@@ -695,9 +686,8 @@ class StrategyOptimizerAgent:
         - Different patterns by regime
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             if strategy_name:
                 query = """
@@ -773,9 +763,8 @@ class StrategyOptimizerAgent:
         This is the MOST actionable analysis - shows exact conditions that win
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             # Complex multi-condition query
             if strategy_name:
