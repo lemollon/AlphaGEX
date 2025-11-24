@@ -222,6 +222,11 @@ class GEXBacktester(BacktestBase):
             flip_max = float(df['flip_point'].max())
             print(f"   Flip point range: ${flip_min:.2f} to ${flip_max:.2f}")
 
+        # Debug: Show sample data
+        print(f"   Debug: Columns available: {list(df.columns)}")
+        print(f"   Debug: flip_point NaN count: {df['flip_point'].isna().sum()} / {len(df)}")
+        print(f"   Debug: net_gex NaN count: {df['net_gex'].isna().sum()} / {len(df)}")
+
         return df
 
     def detect_flip_point_breakout(self, row: pd.Series, prev_row: pd.Series) -> Dict:
@@ -364,13 +369,22 @@ class GEXBacktester(BacktestBase):
         in_position = False
         entry_signal = None
 
+        # Debug counters
+        total_rows = 0
+        skipped_nan = 0
+        signals_checked = 0
+
         for i in range(20, len(self.gex_data)):  # Start after warmup period
+            total_rows += 1
             row = self.gex_data.iloc[i]
             prev_row = self.gex_data.iloc[i-1]
 
             # Skip if not enough data for rolling calculations
-            if pd.isna(row['ATR']) or pd.isna(row['flip_point']):
+            if pd.isna(row.get('ATR')) or pd.isna(row.get('flip_point')):
+                skipped_nan += 1
                 continue
+
+            signals_checked += 1
 
             # Entry logic
             if not in_position:
@@ -423,6 +437,10 @@ class GEXBacktester(BacktestBase):
                     trades.append(trade)
                     in_position = False
                     entry_signal = None
+
+        # Debug output
+        if total_rows > 0:
+            print(f"  Debug: Processed {total_rows} rows, skipped {skipped_nan} NaN, checked {signals_checked} signals → {len(trades)} trades")
 
         return trades
 
