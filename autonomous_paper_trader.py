@@ -990,17 +990,17 @@ class AutonomousPaperTrader:
 
                     # Liberation setup detection
                     liberation_detected = regime.get('liberation_setup_detected', False)
-                    liberation_strike = regime.get('liberation_target_strike')
-                    liberation_expiry = regime.get('liberation_expiry_date')
+                    liberation_strike = regime.get('liberation_target_strike') or 0
+                    liberation_expiry = regime.get('liberation_expiry_date') or 'N/A'
 
                     # False floor detection
                     false_floor_detected = regime.get('false_floor_detected', False)
-                    false_floor_strike = regime.get('false_floor_strike')
-                    false_floor_expiry = regime.get('false_floor_expiry_date')
+                    false_floor_strike = regime.get('false_floor_strike') or 0
+                    false_floor_expiry = regime.get('false_floor_expiry_date') or 'N/A'
 
                     # Forward GEX magnets
-                    forward_magnet_above = regime.get('monthly_magnet_above')
-                    forward_magnet_below = regime.get('monthly_magnet_below')
+                    forward_magnet_above = regime.get('monthly_magnet_above') or 0
+                    forward_magnet_below = regime.get('monthly_magnet_below') or 0
                     polr = regime.get('path_of_least_resistance', 'NEUTRAL')
 
                     # Multi-timeframe RSI
@@ -2022,16 +2022,15 @@ This trade ensures we're always active in the market"""
             # Log Greeks performance
             c.execute("""
                 INSERT INTO greeks_performance (
-                    timestamp, strategy_name, pattern_type, vix_regime,
+                    timestamp, strategy_name, vix_regime,
                     entry_delta, entry_gamma, entry_theta, entry_vega,
                     exit_delta, exit_gamma, exit_theta, exit_vega,
                     delta_pnl, gamma_pnl, theta_pnl, vega_pnl,
                     total_pnl_pct, win, dte, net_gex
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 now.strftime('%Y-%m-%d %H:%M:%S'),
                 trade['strategy'],
-                pattern_type,
                 vix_regime,
                 delta,
                 gamma,
@@ -2066,15 +2065,14 @@ This trade ensures we're always active in the market"""
             # Log DTE performance
             c.execute("""
                 INSERT INTO dte_performance (
-                    timestamp, strategy_name, pattern_type, dte, dte_bucket,
+                    timestamp, strategy_name, dte, dte_bucket,
                     vix_regime, entry_price, exit_price, pnl_pct, win,
                     entry_theta, exit_theta, theta_decay_efficiency,
                     entry_time, exit_time, holding_hours
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 now.strftime('%Y-%m-%d %H:%M:%S'),
                 trade['strategy'],
-                pattern_type,
                 dte,
                 dte_bucket,
                 vix_regime,
