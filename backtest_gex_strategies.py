@@ -209,6 +209,9 @@ class GEXBacktester(BacktestBase):
         df['TR'] = df[['HL', 'HC', 'LC']].max(axis=1)
         df['ATR'] = df['TR'].rolling(14).mean()
 
+        # Calculate volume moving average for entry conditions
+        df['volume_sma'] = df['Volume'].rolling(20).mean()
+
         print(f"✅ GEX data merged successfully - ready for backtesting")
         if 'net_gex' in df.columns and not df['net_gex'].isna().all():
             net_gex_min = float(df['net_gex'].min())
@@ -226,7 +229,7 @@ class GEXBacktester(BacktestBase):
         # Price breaks above flip point with volume
         if (prev_row['Close'] <= prev_row['flip_point'] and
             row['Close'] > row['flip_point'] and
-            row['Volume'] > row['Volume'].rolling(20).mean() * 1.2):
+            row['Volume'] > row['volume_sma'] * 1.2):
 
             return {
                 'signal': True,
@@ -244,7 +247,7 @@ class GEXBacktester(BacktestBase):
         # Price breaks below flip point with volume
         if (prev_row['Close'] >= prev_row['flip_point'] and
             row['Close'] < row['flip_point'] and
-            row['Volume'] > row['Volume'].rolling(20).mean() * 1.2):
+            row['Volume'] > row['volume_sma'] * 1.2):
 
             return {
                 'signal': True,
@@ -299,7 +302,7 @@ class GEXBacktester(BacktestBase):
         # Volume must be 2x average to confirm real dealer activity
         if (row['net_gex'] < -0.5e9 and
             row['dist_to_flip'] < 2.0 and
-            row['Volume'] > row['Volume'].rolling(20).mean() * 2.0):
+            row['Volume'] > row['volume_sma'] * 2.0):
 
             # Direction based on which side of flip point
             direction = 'LONG' if row['Close'] > row['flip_point'] else 'SHORT'
