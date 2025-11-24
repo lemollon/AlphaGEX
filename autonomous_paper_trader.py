@@ -2291,12 +2291,16 @@ Now analyze this position:"""
             from intelligence_and_strategies import ClaudeIntelligence
             claude = ClaudeIntelligence()
 
-            # Get Claude's response
-            response = claude._call_claude_api(
-                prompt,
-                max_tokens=150,
-                temperature=0.3  # Lower temperature for consistent decisions
-            )
+            # Format prompt as messages list for Anthropic Messages API
+            messages = [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+
+            # Get Claude's response (max_tokens and temperature are set inside _call_claude_api)
+            response = claude._call_claude_api(messages)
 
             # Parse response
             if 'DECISION: CLOSE' in response.upper():
