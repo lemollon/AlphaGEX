@@ -1951,8 +1951,8 @@ This trade ensures we're always active in the market"""
 
             # Calculate DTE
             try:
-                exp_datetime = datetime.strptime(exp_date, '%Y-%m-%d')
-                dte = (exp_datetime - now.replace(tzinfo=None)).days
+                exp_datetime = datetime.strptime(exp_date, '%Y-%m-%d').replace(tzinfo=CENTRAL_TZ)
+                dte = (exp_datetime - now).days
             except:
                 dte = 0
 
@@ -2205,7 +2205,7 @@ This trade ensures we're always active in the market"""
             return True, f"🚨 HARD STOP: {pnl_pct:.1f}% loss - protecting capital"
 
         # EXPIRATION SAFETY: Close on expiration day
-        exp_date = datetime.strptime(pos['expiration_date'], '%Y-%m-%d')
+        exp_date = datetime.strptime(pos['expiration_date'], '%Y-%m-%d').replace(tzinfo=CENTRAL_TZ)
         dte = (exp_date - datetime.now(CENTRAL_TZ)).days
         if dte <= 0:
             return True, f"⏰ EXPIRATION: {dte} DTE - closing to avoid assignment"
@@ -2390,12 +2390,12 @@ Now analyze this position:"""
             long_put_distance_pct = ((put_buy_strike - spot) / spot) * 100
 
             # Calculate hold time
-            entry_dt = datetime.strptime(f"{entry_date} {entry_time}", "%Y-%m-%d %H:%M:%S")
-            closed_dt = datetime.strptime(f"{closed_date} {closed_time}", "%Y-%m-%d %H:%M:%S")
+            entry_dt = datetime.strptime(f"{entry_date} {entry_time}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=CENTRAL_TZ)
+            closed_dt = datetime.strptime(f"{closed_date} {closed_time}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=CENTRAL_TZ)
             hold_time_hours = int((closed_dt - entry_dt).total_seconds() / 3600)
 
             # Calculate DTE
-            exp_dt = datetime.strptime(expiration_date, "%Y-%m-%d")
+            exp_dt = datetime.strptime(expiration_date, "%Y-%m-%d").replace(tzinfo=CENTRAL_TZ)
             dte = (exp_dt - entry_dt).days
 
             # Calculate performance metrics
