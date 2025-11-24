@@ -13,10 +13,10 @@ Usage:
     python polygon_oi_backfill.py --test             # Test mode (no database writes)
 
 Performance Notes:
-    - Polygon.io free tier: 5 requests/minute
-    - This script is rate-limited to stay within free tier limits
-    - Expect ~30-60 minutes for full 90-day backfill
-    - Paid tiers can adjust rate limits for faster processing
+    - Polygon.io Options Developer tier: 100+ requests/minute
+    - This script is optimized for paid tier (0.6s between calls)
+    - Expect ~5-10 minutes for full 90-day backfill
+    - Free tier users should use --rate-limit 12.0
 
 Author: AlphaGEX Team
 Date: 2025-11-24
@@ -34,11 +34,11 @@ from polygon_data_fetcher import polygon_fetcher
 class OIBackfillJob:
     """Backfills historical open interest data using Polygon.io"""
 
-    def __init__(self, test_mode: bool = False, rate_limit_delay: float = 12.0):
+    def __init__(self, test_mode: bool = False, rate_limit_delay: float = 0.6):
         """
         Args:
             test_mode: If True, don't write to database
-            rate_limit_delay: Seconds to wait between API calls (default: 12s = 5 req/min for free tier)
+            rate_limit_delay: Seconds to wait between API calls (default: 0.6s = 100 req/min for paid tier)
         """
         self.test_mode = test_mode
         self.rate_limit_delay = rate_limit_delay
@@ -273,8 +273,8 @@ def main():
     parser.add_argument('--symbol', default='SPY', help='Symbol to backfill (default: SPY)')
     parser.add_argument('--days', type=int, default=90, help='Number of days to backfill (default: 90)')
     parser.add_argument('--test', action='store_true', help='Test mode (no database writes)')
-    parser.add_argument('--rate-limit', type=float, default=12.0,
-                        help='Seconds between API calls (default: 12s for free tier)')
+    parser.add_argument('--rate-limit', type=float, default=0.6,
+                        help='Seconds between API calls (default: 0.6s for Options Developer tier)')
     args = parser.parse_args()
 
     print("\n" + "="*80)

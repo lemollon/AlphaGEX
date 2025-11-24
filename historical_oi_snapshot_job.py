@@ -174,8 +174,8 @@ class OISnapshotJob:
                     result['expirations_processed'] += 1
                     result['strikes_processed'] += strikes_processed
 
-                    # Rate limiting - be nice to Polygon API
-                    time.sleep(0.2)
+                    # Minimal delay for paid tier (100+ req/min)
+                    time.sleep(0.01)
 
                 except Exception as e:
                     print(f" ❌ Error: {e}")
@@ -193,7 +193,7 @@ class OISnapshotJob:
 
     def _get_option_snapshot(self, option_ticker: str) -> Optional[Dict]:
         """
-        Get snapshot data for a specific option ticker
+        Get snapshot data for a specific option ticker using Polygon.io Options Developer API
         Returns: {'open_interest': int, 'volume': int, 'last_price': float, ...}
         """
         try:
@@ -204,16 +204,40 @@ class OISnapshotJob:
 
             parts = option_ticker[2:]  # Remove "O:"
 
-            # This is complex parsing - for now, use the simpler get_option_quote if available
-            # Or we can call Polygon snapshot endpoint directly
-            # For MVP, we'll use what we have in polygon_data_fetcher
+            # Parse the option ticker
+            # Example: SPY241220C00570000
+            # Extract: underlying (SPY), date (241220), type (C), strike (00570000)
 
-            # TODO: Implement proper snapshot fetching
-            # For now, return None and we'll populate what we can
-            return None
+            # Find where the date starts (first digit)
+            i = 0
+            while i < len(parts) and not parts[i].isdigit():
+                i += 1
+
+            underlying = parts[:i]
+            remaining = parts[i:]
+
+            # Date is next 6 digits (YYMMDD)
+            date_str = remaining[:6]
+            remaining = remaining[6:]
+
+            # Type is next char (C or P)
+            option_type = 'call' if remaining[0] == 'C' else 'put'
+            remaining = remaining[1:]
+
+            # Strike is remaining 8 digits
+            strike_int = int(remaining)
+            strike = strike_int / 1000.0
+
+            # Convert date YYMMDD to YYYY-MM-DD
+            expiration = f"20{date_str[:2]}-{date_str[2:4]}-{date_str[4:6]}"
+
+            # Use polygon_fetcher to get the quote
+            quote = polygon_fetcher.get_option_quote(underlying, strike, expiration, option_type)
+
+            return quote
 
         except Exception as e:
-            print(f"      ⚠️  Snapshot error for {option_ticker}: {e}")
+            # Silent fail - not all contracts have snapshots available
             return None
 
     def _save_snapshot(self, symbol: str, strike: float, expiration_date: str,
@@ -293,10 +317,10 @@ class OISnapshotJob:
             result = self.snapshot_symbol(symbol)
             self.results.append(result)
 
-            # Rate limiting between symbols
+            # Minimal delay between symbols for paid tier
             if i < len(symbols):
-                print(f"   ⏸️  Waiting 2s before next symbol (rate limiting)...")
-                time.sleep(2)
+                print(f"   ⏸️  Waiting 0.5s before next symbol...")
+                time.sleep(0.5)
 
         self.print_summary()
 
