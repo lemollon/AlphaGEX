@@ -7071,8 +7071,13 @@ async def startup_event():
 
             def run_backtests_async():
                 try:
+                    # Calculate date range for last 365 days
+                    from datetime import datetime, timedelta
+                    end_date = datetime.now().strftime('%Y-%m-%d')
+                    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+
                     result = subprocess.run(
-                        ['python3', 'run_all_backtests.py', '--symbol', 'SPY', '--days', '365'],
+                        ['python3', 'run_all_backtests.py', '--symbol', 'SPY', '--start', start_date, '--end', end_date],
                         cwd=str(parent_dir),
                         capture_output=True,
                         text=True,
