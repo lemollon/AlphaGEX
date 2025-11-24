@@ -21,19 +21,18 @@ Strategies Competing:
 8. AI-Only (Claude makes all decisions)
 """
 
-import sqlite3
+from database_adapter import get_connection
 from datetime import datetime
 from typing import Dict, List, Optional
-from config_and_database import DB_PATH
 import pandas as pd
+import psycopg2.extras
 
 
 class StrategyCompetition:
     """Run competitive paper trading across multiple strategies"""
 
-    def __init__(self, starting_capital: float = 5000.0, db_path: str = DB_PATH):
+    def __init__(self, starting_capital: float = 5000.0):
         self.starting_capital = starting_capital
-        self.db_path = db_path
 
         # Define competing strategies
         self.strategies = {
@@ -144,7 +143,7 @@ class StrategyCompetition:
 
     def _initialize_competition(self):
         """Initialize competition in database"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Create competition table if not exists
@@ -183,9 +182,8 @@ class StrategyCompetition:
 
     def get_leaderboard(self) -> List[Dict]:
         """Get current competition leaderboard"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT
@@ -208,9 +206,8 @@ class StrategyCompetition:
 
     def get_strategy_performance(self, strategy_id: str) -> Dict:
         """Get detailed performance for a specific strategy"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT * FROM strategy_competition WHERE strategy_id = ?
@@ -231,7 +228,7 @@ class StrategyCompetition:
 
     def record_trade(self, strategy_id: str, trade_result: Dict):
         """Record trade result for a strategy"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get current stats

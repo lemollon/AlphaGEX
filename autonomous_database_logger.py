@@ -12,18 +12,17 @@ Every scan cycle logs:
 - Outcomes
 """
 
-import sqlite3
+from database_adapter import get_connection
 from datetime import datetime
 from typing import Dict, Optional
-from config_and_database import DB_PATH
 import uuid
+import psycopg2.extras
 
 
 class AutonomousDatabaseLogger:
     """Comprehensive database logging for autonomous trader"""
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
         self.session_id = str(uuid.uuid4())[:8]  # Unique session ID
         self.scan_cycle = 0
 
@@ -31,7 +30,7 @@ class AutonomousDatabaseLogger:
         """Log the start of a new scan cycle"""
         self.scan_cycle += 1
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -60,7 +59,7 @@ class AutonomousDatabaseLogger:
 
     def log_psychology_analysis(self, regime: Dict, symbol: str, spot_price: float):
         """Log complete psychology trap analysis"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -114,7 +113,7 @@ class AutonomousDatabaseLogger:
 
     def log_strike_selection(self, symbol: str, strike_analysis: Dict, spot_price: float):
         """Log detailed strike selection reasoning"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Format alternative strikes analysis
@@ -155,7 +154,7 @@ class AutonomousDatabaseLogger:
 
     def log_position_sizing(self, symbol: str, sizing_analysis: Dict, contracts: int):
         """Log position sizing calculations and rationale"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -187,7 +186,7 @@ class AutonomousDatabaseLogger:
     def log_trade_decision(self, symbol: str, action: str, strategy: str,
                           reasoning: str, confidence: float, position_id: Optional[int] = None):
         """Log final trade decision"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -216,7 +215,7 @@ class AutonomousDatabaseLogger:
 
     def log_ai_evaluation(self, symbol: str, evaluation: Dict):
         """Log AI's comprehensive trade evaluation"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -248,7 +247,7 @@ class AutonomousDatabaseLogger:
 
     def log_skip_reason(self, symbol: str, reason: str):
         """Log why a trade was skipped"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -273,7 +272,7 @@ class AutonomousDatabaseLogger:
 
     def log_error(self, symbol: str, error_type: str, error_message: str):
         """Log errors encountered during trading"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -298,9 +297,8 @@ class AutonomousDatabaseLogger:
 
     def get_session_logs(self, limit: int = 100) -> list:
         """Get logs for current session"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT * FROM autonomous_trader_logs
@@ -316,9 +314,8 @@ class AutonomousDatabaseLogger:
 
     def get_recent_logs(self, log_type: Optional[str] = None, limit: int = 50) -> list:
         """Get recent logs, optionally filtered by type"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         if log_type:
             c.execute("""
@@ -341,9 +338,8 @@ class AutonomousDatabaseLogger:
 
     def get_logs_by_pattern(self, pattern: str, limit: int = 50) -> list:
         """Get logs for specific pattern detection"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT * FROM autonomous_trader_logs

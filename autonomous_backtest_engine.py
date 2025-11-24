@@ -16,10 +16,9 @@ Measures:
 - Pattern accuracy
 """
 
-import sqlite3
+from database_adapter import get_connection
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from config_and_database import DB_PATH
 import pandas as pd
 import numpy as np
 
@@ -27,8 +26,8 @@ import numpy as np
 class PatternBacktester:
     """Backtest psychology trap patterns against historical data"""
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
+        pass
 
     def backtest_pattern(self, pattern_name: str, lookback_days: int = 90) -> Dict:
         """
@@ -49,7 +48,7 @@ class PatternBacktester:
                 'signals': List[Dict]  # Individual signal details
             }
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get historical signals for this pattern
@@ -147,7 +146,7 @@ class PatternBacktester:
 
     def analyze_liberation_accuracy(self, lookback_days: int = 90) -> Dict:
         """Analyze accuracy of liberation setup detection"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
@@ -183,7 +182,7 @@ class PatternBacktester:
 
     def analyze_false_floor_effectiveness(self, lookback_days: int = 90) -> Dict:
         """Analyze how effective false floor detection is at preventing bad trades"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
@@ -217,7 +216,7 @@ class PatternBacktester:
 
     def save_backtest_results(self, results: Dict):
         """Save backtest results to database"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -271,7 +270,7 @@ class PatternBacktester:
 
     def _get_all_patterns(self) -> List[str]:
         """Get list of all detected patterns"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""

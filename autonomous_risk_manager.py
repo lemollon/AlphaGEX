@@ -9,18 +9,17 @@ CRITICAL: Prevents catastrophic losses
 - Correlation Limit: Max 50% in correlated symbols
 """
 
-import sqlite3
+from database_adapter import get_connection
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-from config_and_database import DB_PATH
 import numpy as np
+import psycopg2.extras
 
 
 class RiskManager:
     """Enterprise-grade risk management for autonomous trading"""
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
         self.max_drawdown_pct = 15.0  # 15% max drawdown
         self.daily_loss_limit_pct = 5.0  # 5% daily loss limit
         self.position_size_limit_pct = 20.0  # 20% per position
@@ -148,7 +147,7 @@ class RiskManager:
 
     def get_performance_metrics(self, days: int = 30) -> Dict:
         """Get comprehensive performance metrics"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get closed positions in date range
@@ -210,7 +209,7 @@ class RiskManager:
     # Helper methods
     def _get_peak_equity(self) -> float:
         """Get peak equity value"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get max equity from equity_snapshots or calculate from positions
@@ -233,7 +232,7 @@ class RiskManager:
 
     def _get_current_equity(self) -> float:
         """Get current equity value"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -266,9 +265,8 @@ class RiskManager:
 
     def _get_open_positions(self) -> List[Dict]:
         """Get all open positions"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
             SELECT * FROM autonomous_positions WHERE status = 'OPEN'
@@ -296,7 +294,7 @@ class RiskManager:
 
     def _get_daily_returns(self, days: int) -> List[float]:
         """Get daily returns for Sharpe calculation"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
