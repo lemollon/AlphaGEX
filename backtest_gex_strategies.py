@@ -165,7 +165,7 @@ class GEXBacktester(BacktestBase):
         }
 
         for old_name, new_name in column_mapping.items():
-            if old_name in gex_df.columns and new_name not in df.columns:
+            if old_name in gex_df.columns and new_name not in gex_df.columns:
                 gex_df.rename(columns={old_name: new_name}, inplace=True)
 
         # Merge on date index - only include columns that exist
@@ -210,10 +210,14 @@ class GEXBacktester(BacktestBase):
         df['ATR'] = df['TR'].rolling(14).mean()
 
         print(f"✅ GEX data merged successfully - ready for backtesting")
-        if 'net_gex' in df.columns:
-            print(f"   Net GEX range: ${df['net_gex'].min()/1e9:.2f}B to ${df['net_gex'].max()/1e9:.2f}B")
-        if 'flip_point' in df.columns:
-            print(f"   Flip point range: ${df['flip_point'].min():.2f} to ${df['flip_point'].max():.2f}")
+        if 'net_gex' in df.columns and not df['net_gex'].isna().all():
+            net_gex_min = float(df['net_gex'].min())
+            net_gex_max = float(df['net_gex'].max())
+            print(f"   Net GEX range: ${net_gex_min/1e9:.2f}B to ${net_gex_max/1e9:.2f}B")
+        if 'flip_point' in df.columns and not df['flip_point'].isna().all():
+            flip_min = float(df['flip_point'].min())
+            flip_max = float(df['flip_point'].max())
+            print(f"   Flip point range: ${flip_min:.2f} to ${flip_max:.2f}")
 
         return df
 

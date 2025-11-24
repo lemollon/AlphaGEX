@@ -166,18 +166,35 @@ class OptionsBacktester(BacktestBase):
         }
 
         for old_name, new_name in column_mapping.items():
-            if old_name in gex_df.columns and new_name not in df.columns:
+            if old_name in gex_df.columns and new_name not in gex_df.columns:
                 gex_df.rename(columns={old_name: new_name}, inplace=True)
 
-        # Merge on date index
+        # Merge on date index - only include columns that exist
         print("Merging GEX data with price data...")
-        df = df.join(gex_df[['net_gex', 'flip_point', 'call_wall', 'put_wall']], how='left')
+        available_gex_cols = [col for col in ['net_gex', 'flip_point', 'call_wall', 'put_wall']
+                              if col in gex_df.columns]
+
+        if available_gex_cols:
+            df = df.join(gex_df[available_gex_cols], how='left')
+        else:
+            print("⚠️  No recognized GEX columns found, falling back to simulated data")
+            return self.simulate_gex_data(price_data)
 
         # Forward fill missing GEX values (weekends/holidays)
-        df['net_gex'].fillna(method='ffill', inplace=True)
-        df['flip_point'].fillna(method='ffill', inplace=True)
-        df['call_wall'].fillna(method='ffill', inplace=True)
-        df['put_wall'].fillna(method='ffill', inplace=True)
+        if 'net_gex' in df.columns:
+            df['net_gex'].fillna(method='ffill', inplace=True)
+        if 'flip_point' in df.columns:
+            df['flip_point'].fillna(method='ffill', inplace=True)
+        if 'call_wall' in df.columns:
+            df['call_wall'].fillna(method='ffill', inplace=True)
+        else:
+            # Estimate call wall if not provided
+            df['call_wall'] = df['Close'] * 1.05  # 5% above current price
+        if 'put_wall' in df.columns:
+            df['put_wall'].fillna(method='ffill', inplace=True)
+        else:
+            # Estimate put wall if not provided
+            df['put_wall'] = df['Close'] * 0.95  # 5% below current price
 
         # Calculate derived metrics needed for strategy conditions
         df['distance_to_flip'] = abs(df['Close'] - df['flip_point']) / df['flip_point'] * 100
@@ -198,8 +215,14 @@ class OptionsBacktester(BacktestBase):
         )
 
         print(f"✅ GEX data merged successfully - ready for strategy backtesting")
-        print(f"   Net GEX range: ${df['net_gex'].min()/1e9:.2f}B to ${df['net_gex'].max()/1e9:.2f}B")
-        print(f"   Flip point range: ${df['flip_point'].min():.2f} to ${df['flip_point'].max():.2f}")
+        if 'net_gex' in df.columns and not df['net_gex'].isna().all():
+            net_gex_min = float(df['net_gex'].min())
+            net_gex_max = float(df['net_gex'].max())
+            print(f"   Net GEX range: ${net_gex_min/1e9:.2f}B to ${net_gex_max/1e9:.2f}B")
+        if 'flip_point' in df.columns and not df['flip_point'].isna().all():
+            flip_min = float(df['flip_point'].min())
+            flip_max = float(df['flip_point'].max())
+            print(f"   Flip point range: ${flip_min:.2f} to ${flip_max:.2f}")
 
         return df
 
