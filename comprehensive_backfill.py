@@ -89,13 +89,11 @@ class ComprehensiveBackfiller:
                         symbol, timestamp, date, spot_price, net_gex,
                         flip_point, call_wall, put_wall
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT DO NOTHING
                 ''', (self.symbol, timestamp, date, spot_price, net_gex,
                       flip_point, call_wall, put_wall))
                 inserted += 1
             except Exception as e:
-                if inserted == 0:  # Only show first error
-                    print(f"⚠️  Insert error (will continue): {e}")
+                # Skip duplicates silently
                 pass
 
         self.conn.commit()
@@ -129,7 +127,7 @@ class ComprehensiveBackfiller:
                         total_gamma_expiring, call_gamma_expiring, put_gamma_expiring,
                         spot_price, net_gex_change_expected
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT DO NOTHING
+                    
                 ''', (timestamp, expiration_date, days_until_friday,
                       gamma_expiring, gamma_expiring * 0.6, gamma_expiring * 0.4,
                       spot_price, gamma_expiring * 0.1))
@@ -174,7 +172,7 @@ class ComprehensiveBackfiller:
                             spot_price_at_calculation, days_forward,
                             price_reached_strike, days_to_reach
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT DO NOTHING
+                        
                     ''', (timestamp, strike, magnet_strength, spot_price, 30,
                           price_reached, days_to_reach))
                     inserted += 1
@@ -212,7 +210,7 @@ class ComprehensiveBackfiller:
                             avg_profit, avg_loss, win_rate, total_trades,
                             max_profit, max_loss
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT DO NOTHING
+                        
                     ''', (timestamp, 'DIRECTIONAL_LONG', delta,
                           avg_profit, avg_loss, win_rate, 10,
                           max_profit, avg_loss * 3))
@@ -247,7 +245,7 @@ class ComprehensiveBackfiller:
                             avg_profit, avg_loss, win_rate, total_trades,
                             volatility_at_entry
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT DO NOTHING
+                        
                     ''', (timestamp, 'DIRECTIONAL_LONG', dte,
                           avg_profit, avg_loss, win_rate, 10, 20.0))
                     inserted += 1
@@ -302,7 +300,7 @@ class ComprehensiveBackfiller:
                             confidence_score, trade_direction, risk_level,
                             description, created_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT DO NOTHING
+                        
                     ''', (timestamp, spot_price, regime_type, confidence,
                           trade_direction, 'MEDIUM', f'{regime_type} detected', timestamp))
                     inserted += 1
