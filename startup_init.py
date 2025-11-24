@@ -3,10 +3,10 @@
 Startup Initialization Script
 Runs once when the application starts to ensure ALL database tables are populated
 """
-import sqlite3
 import random
 from datetime import datetime, timedelta
-from config_and_database import DB_PATH, init_database
+from config_and_database import init_database
+from database_adapter import get_connection
 
 def ensure_all_tables_exist(conn):
     """Explicitly create all tables that might be missing"""
@@ -64,7 +64,7 @@ def ensure_all_tables_exist(conn):
 def check_needs_initialization() -> bool:
     """Check if database needs initialization"""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        conn = get_connection()
         c = conn.cursor()
 
         # Check if gex_history has any data
@@ -599,7 +599,7 @@ def populate_additional_tables(conn, bars):
 def check_gamma_tables_need_population():
     """Check if gamma tables exist and have data"""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM gamma_history")
         count = c.fetchone()[0]
@@ -611,7 +611,7 @@ def check_gamma_tables_need_population():
 def check_additional_tables_need_population():
     """Check if additional tables (backtest, performance, etc.) need data"""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM backtest_results")
         count = c.fetchone()[0]
@@ -632,8 +632,7 @@ def initialize_on_startup():
         print("📊 Ensuring all database tables exist...")
         init_database()
 
-        conn = sqlite3.connect(DB_PATH, timeout=30.0)
-        conn.execute('PRAGMA journal_mode=WAL')
+        conn = get_connection()
         ensure_all_tables_exist(conn)
         conn.close()
         print("✅ All tables verified")
@@ -687,9 +686,7 @@ def initialize_on_startup():
 
             # Populate ALL tables with REAL data
             print(f"\n📊 Populating database with real historical data...")
-            conn = sqlite3.connect(DB_PATH, timeout=30.0)
-            conn.execute('PRAGMA journal_mode=WAL')
-            conn.execute('PRAGMA synchronous=NORMAL')
+            conn = get_connection()
 
             populate_all_tables(conn, bars)
             populate_additional_tables(conn, bars)
@@ -700,8 +697,7 @@ def initialize_on_startup():
         else:
             # Database exists - check if we need to derive gamma tables from existing gex_history
             print("📊 Database already has data - checking for derived tables...")
-            conn = sqlite3.connect(DB_PATH, timeout=30.0)
-            conn.execute('PRAGMA journal_mode=WAL')
+            conn = get_connection()
             c = conn.cursor()
 
             # Populate gamma tables FROM REAL gex_history data if needed
