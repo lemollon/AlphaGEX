@@ -8,6 +8,14 @@ import os
 from database_adapter import get_connection, get_db_adapter
 
 # ============================================================================
+# DATABASE PATH (DEPRECATED - Using PostgreSQL via DATABASE_URL)
+# ============================================================================
+# Legacy constant for backwards compatibility with scripts that import DB_PATH
+# This system now uses PostgreSQL via DATABASE_URL environment variable
+# Scripts should use: from database_adapter import get_connection
+DB_PATH = None  # No longer using SQLite - PostgreSQL via DATABASE_URL
+
+# ============================================================================
 # CONFIGURATION & CONSTANTS
 # ============================================================================
 

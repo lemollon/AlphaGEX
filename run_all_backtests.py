@@ -12,12 +12,11 @@ Usage:
 """
 
 import argparse
-import sqlite3
 from datetime import datetime
 from backtest_gex_strategies import GEXBacktester
 from backtest_options_strategies import OptionsBacktester
 from psychology_backtest import PsychologyBacktester
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 
 class MasterBacktestRunner:
@@ -177,15 +176,15 @@ class MasterBacktestRunner:
 
     def export_summary(self):
         """Export summary to database"""
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Check if table exists with old schema and drop it
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='backtest_summary'")
+        c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename='backtest_summary'")
         if c.fetchone():
             # Check schema
-            c.execute("PRAGMA table_info(backtest_summary)")
-            columns = [row[1] for row in c.fetchall()]
+            c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='backtest_summary'")
+            columns = [row[0] for row in c.fetchall()]
             # If old schema (missing 'symbol' column), drop and recreate
             if 'symbol' not in columns:
                 print("🔄 Dropping old backtest_summary table (wrong schema)")
@@ -254,5 +253,5 @@ if __name__ == "__main__":
     runner.export_summary()
 
     print("\n✅ ALL BACKTESTS COMPLETE!")
-    print(f"Results saved to: {DB_PATH}")
+    print("Results saved to database (PostgreSQL)")
     print("Check backtest_results and backtest_summary tables for full details\n")

@@ -12,12 +12,11 @@ CRITICAL INTEGRATION: Uses full Psychology Trap Detection System
 - All psychology trap patterns
 """
 
-import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 from polygon_data_fetcher import polygon_fetcher
 import time
 import os
@@ -86,8 +85,7 @@ class AutonomousPaperTrader:
     Finds and executes trades automatically every market day
     """
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
         self.starting_capital = 5000  # $5,000 starting capital
         self._ensure_tables()
 
@@ -132,7 +130,7 @@ class AutonomousPaperTrader:
             print("⚠️ Strategy competition not available")
 
         # Initialize if first run
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT value FROM autonomous_config WHERE key = 'initialized'")
         result = c.fetchone()
@@ -150,7 +148,7 @@ class AutonomousPaperTrader:
 
     def _ensure_tables(self):
         """Create database tables for autonomous trading"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Positions table
@@ -236,7 +234,7 @@ class AutonomousPaperTrader:
 
     def get_config(self, key: str) -> str:
         """Get configuration value"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT value FROM autonomous_config WHERE key = ?", (key,))
         result = c.fetchone()
@@ -245,7 +243,7 @@ class AutonomousPaperTrader:
 
     def set_config(self, key: str, value: str):
         """Set configuration value"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO autonomous_config (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
@@ -256,7 +254,7 @@ class AutonomousPaperTrader:
         Update live status - THINKING OUT LOUD
         This is what lets you see what the trader is doing in real-time
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         now_ct = datetime.now(CENTRAL_TZ)
@@ -289,7 +287,7 @@ class AutonomousPaperTrader:
 
     def get_live_status(self) -> Dict:
         """Get current live status"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT * FROM autonomous_live_status WHERE id = 1")
         row = c.fetchone()
@@ -314,7 +312,7 @@ class AutonomousPaperTrader:
 
     def log_action(self, action: str, details: str, position_id: int = None, success: bool = True):
         """Log trading actions"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         now = datetime.now(CENTRAL_TZ)
@@ -350,7 +348,7 @@ class AutonomousPaperTrader:
 
         # Get today's P&L and check daily loss limit
         today = now.strftime('%Y-%m-%d')
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Count open positions - respect max open positions limit
@@ -387,7 +385,7 @@ class AutonomousPaperTrader:
         total_capital = float(self.get_config('capital'))
 
         # Get current open positions value
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         query = """
             SELECT SUM(ABS(entry_price * contracts * 100)) as used
             FROM autonomous_positions
@@ -1795,7 +1793,7 @@ This trade ensures we're always active in the market"""
             trade, option_data, gex_data, exp_date, vix_current, regime_result
         )
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         now = datetime.now(CENTRAL_TZ)
@@ -1924,7 +1922,7 @@ This trade ensures we're always active in the market"""
         Log detailed strike and Greeks performance data for optimizer intelligence
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_connection()
             c = conn.cursor()
             now = datetime.now(CENTRAL_TZ)
 
@@ -2107,7 +2105,7 @@ This trade ensures we're always active in the market"""
         Runs every time the system checks
         """
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         positions = pd.read_sql_query("""
             SELECT * FROM autonomous_positions WHERE status = 'OPEN'
         """, conn)
@@ -2183,7 +2181,7 @@ This trade ensures we're always active in the market"""
 
     def _update_position(self, position_id: int, current_price: float, current_spot: float, unrealized_pnl: float):
         """Update position with current values"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -2347,7 +2345,7 @@ Now analyze this position:"""
         Called when a spread position is closed to track effectiveness of different wing widths
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_connection()
             c = conn.cursor()
 
             # Get position details
@@ -2463,7 +2461,7 @@ Now analyze this position:"""
 
     def _close_position(self, position_id: int, exit_price: float, realized_pnl: float, reason: str):
         """Close a position"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         now = datetime.now(CENTRAL_TZ)
@@ -2494,7 +2492,7 @@ Now analyze this position:"""
 
     def get_performance(self) -> Dict:
         """Get trading performance stats"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
 
         closed = pd.read_sql_query("""
             SELECT * FROM autonomous_positions WHERE status = 'CLOSED'
