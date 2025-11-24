@@ -15,10 +15,9 @@ Improves:
 - Exit timing
 """
 
-import sqlite3
+from database_adapter import get_connection
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-from config_and_database import DB_PATH
 import numpy as np
 import pandas as pd
 
@@ -38,8 +37,7 @@ except ImportError:
 class PatternLearner:
     """ML-powered pattern recognition and learning"""
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
         self.model = None
         self.scaler = None
         self.feature_importance = {}
@@ -280,7 +278,7 @@ class PatternLearner:
     # Helper methods
     def _load_training_data(self, lookback_days: int) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         """Load training data from database"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
@@ -354,7 +352,7 @@ class PatternLearner:
 
     def _load_historical_patterns(self, lookback_days: int) -> List[Dict]:
         """Load historical patterns with features"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
