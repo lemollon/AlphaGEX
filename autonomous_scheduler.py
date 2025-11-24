@@ -129,7 +129,7 @@ def run_autonomous_trader_cycle():
     try:
         trader = AutonomousPaperTrader()
         print(f"✅ Trader initialized successfully")
-        print(f"   Database: {trader.db_path}")
+        print(f"   Database: PostgreSQL via DATABASE_URL")
 
         # CRITICAL: Update heartbeat immediately so UI knows worker is alive
         trader.update_live_status(

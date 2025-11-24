@@ -31,7 +31,7 @@ print("\n2️⃣  Testing trader initialization...")
 try:
     trader = AutonomousPaperTrader()
     print(f"✅ Trader initialized")
-    print(f"   Database: {trader.db_path}")
+    print(f"   Database: PostgreSQL via DATABASE_URL")
 except Exception as e:
     print(f"❌ Trader init failed: {e}")
     import traceback
