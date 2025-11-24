@@ -127,7 +127,7 @@ class GEXBacktester(BacktestBase):
 
         # Parse date field (handle different possible formats)
         date_field = None
-        for field in ['date', 'Date', 'timestamp', 'trading_date']:
+        for field in ['date', 'Date', 'timestamp', 'trading_date', 'collection_date']:
             if field in gex_df.columns:
                 date_field = field
                 break
@@ -148,9 +148,12 @@ class GEXBacktester(BacktestBase):
             'net_gex': 'net_gex',
             'netGex': 'net_gex',
             'net_gamma': 'net_gex',
+            'gex_per_1pct_chg': 'net_gex',
+            'nearest_gex_value': 'net_gex',
             'flip_point': 'flip_point',
             'flipPoint': 'flip_point',
             'zero_gamma': 'flip_point',
+            'gex_flip_price': 'flip_point',
             'call_wall': 'call_wall',
             'callWall': 'call_wall',
             'put_wall': 'put_wall',
@@ -161,19 +164,39 @@ class GEXBacktester(BacktestBase):
             if old_name in gex_df.columns and new_name not in df.columns:
                 gex_df.rename(columns={old_name: new_name}, inplace=True)
 
-        # Merge on date index
-        df = df.join(gex_df[['net_gex', 'flip_point', 'call_wall', 'put_wall']], how='left')
+        # Merge on date index - only include columns that exist
+        available_gex_cols = [col for col in ['net_gex', 'flip_point', 'call_wall', 'put_wall']
+                              if col in gex_df.columns]
+
+        if available_gex_cols:
+            df = df.join(gex_df[available_gex_cols], how='left')
+        else:
+            print("⚠️  No recognized GEX columns found, falling back to simulated data")
+            return self.simulate_gex_data(price_data)
 
         # Forward fill missing GEX values (weekends/holidays)
-        df['net_gex'].fillna(method='ffill', inplace=True)
-        df['flip_point'].fillna(method='ffill', inplace=True)
-        df['call_wall'].fillna(method='ffill', inplace=True)
-        df['put_wall'].fillna(method='ffill', inplace=True)
+        if 'net_gex' in df.columns:
+            df['net_gex'].fillna(method='ffill', inplace=True)
+        if 'flip_point' in df.columns:
+            df['flip_point'].fillna(method='ffill', inplace=True)
+        if 'call_wall' in df.columns:
+            df['call_wall'].fillna(method='ffill', inplace=True)
+        if 'put_wall' in df.columns:
+            df['put_wall'].fillna(method='ffill', inplace=True)
 
         # Calculate derived metrics
-        df['dist_to_flip'] = abs(df['Close'] - df['flip_point']) / df['flip_point'] * 100
-        df['dist_to_call_wall'] = abs(df['Close'] - df['call_wall']) / df['Close'] * 100
-        df['dist_to_put_wall'] = abs(df['Close'] - df['put_wall']) / df['Close'] * 100
+        if 'flip_point' in df.columns:
+            df['dist_to_flip'] = abs(df['Close'] - df['flip_point']) / df['flip_point'] * 100
+        if 'call_wall' in df.columns:
+            df['dist_to_call_wall'] = abs(df['Close'] - df['call_wall']) / df['Close'] * 100
+        else:
+            df['call_wall'] = df['Close'] * 1.05  # Estimate 5% above price
+            df['dist_to_call_wall'] = 5.0
+        if 'put_wall' in df.columns:
+            df['dist_to_put_wall'] = abs(df['Close'] - df['put_wall']) / df['Close'] * 100
+        else:
+            df['put_wall'] = df['Close'] * 0.95  # Estimate 5% below price
+            df['dist_to_put_wall'] = 5.0
 
         # Calculate ATR for additional analysis
         df['HL'] = df['High'] - df['Low']
@@ -183,8 +206,10 @@ class GEXBacktester(BacktestBase):
         df['ATR'] = df['TR'].rolling(14).mean()
 
         print(f"✅ GEX data merged successfully - ready for backtesting")
-        print(f"   Net GEX range: ${df['net_gex'].min()/1e9:.2f}B to ${df['net_gex'].max()/1e9:.2f}B")
-        print(f"   Flip point range: ${df['flip_point'].min():.2f} to ${df['flip_point'].max():.2f}")
+        if 'net_gex' in df.columns:
+            print(f"   Net GEX range: ${df['net_gex'].min()/1e9:.2f}B to ${df['net_gex'].max()/1e9:.2f}B")
+        if 'flip_point' in df.columns:
+            print(f"   Flip point range: ${df['flip_point'].min():.2f} to ${df['flip_point'].max():.2f}")
 
         return df
 
