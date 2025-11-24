@@ -142,6 +142,10 @@ class GEXBacktester(BacktestBase):
         # - "2022-01-20_20:47:25" (underscore separator)
         # - "2022-01-10 14:36:25.864668" (space separator with microseconds)
         gex_df['date'] = pd.to_datetime(gex_df[date_field].str.replace('_', ' '), format='mixed', errors='coerce')
+
+        # Normalize to date-only (strip time) to match price data index
+        # Price data has dates like "2022-01-20" while GEX has "2022-01-20 20:47:25"
+        gex_df['date'] = gex_df['date'].dt.normalize()
         gex_df.set_index('date', inplace=True)
 
         # Merge GEX data with price data by date
