@@ -148,6 +148,12 @@ class GEXBacktester(BacktestBase):
         gex_df['date'] = gex_df['date'].dt.normalize()
         gex_df.set_index('date', inplace=True)
 
+        # Debug: Check index compatibility
+        print(f"   Debug: GEX index sample: {gex_df.index[:3].tolist()}")
+        print(f"   Debug: Price index sample: {df.index[:3].tolist()}")
+        print(f"   Debug: GEX date range: {gex_df.index.min()} to {gex_df.index.max()}")
+        print(f"   Debug: Price date range: {df.index.min()} to {df.index.max()}")
+
         # Merge GEX data with price data by date
         print("Merging GEX data with price data...")
 
@@ -176,8 +182,13 @@ class GEXBacktester(BacktestBase):
         available_gex_cols = [col for col in ['net_gex', 'flip_point', 'call_wall', 'put_wall']
                               if col in gex_df.columns]
 
+        print(f"   Debug: Columns to merge: {available_gex_cols}")
+        print(f"   Debug: GEX columns available: {list(gex_df.columns)}")
+
         if available_gex_cols:
             df = df.join(gex_df[available_gex_cols], how='left')
+            print(f"   Debug: After join - df shape: {df.shape}")
+            print(f"   Debug: After join - sample GEX values: flip_point[0]={df['flip_point'].iloc[0] if 'flip_point' in df.columns else 'N/A'}")
         else:
             print("⚠️  No recognized GEX columns found, falling back to simulated data")
             return self.simulate_gex_data(price_data)
