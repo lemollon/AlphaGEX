@@ -131,7 +131,7 @@ class OptionsBacktester(BacktestBase):
 
         # Parse date field (handle different possible formats)
         date_field = None
-        for field in ['date', 'Date', 'timestamp', 'trading_date']:
+        for field in ['date', 'Date', 'timestamp', 'trading_date', 'collection_date']:
             if field in gex_df.columns:
                 date_field = field
                 break
@@ -141,7 +141,11 @@ class OptionsBacktester(BacktestBase):
             print(f"   Available fields: {list(gex_df.columns)}")
             raise ValueError("Cannot parse dates from GEX historical data")
 
-        gex_df['date'] = pd.to_datetime(gex_df[date_field])
+        # Parse dates with flexible format handling
+        # Trading Volatility API returns inconsistent formats:
+        # - "2022-01-20_20:47:25" (underscore separator)
+        # - "2022-01-10 14:36:25.864668" (space separator with microseconds)
+        gex_df['date'] = pd.to_datetime(gex_df[date_field].str.replace('_', ' '), format='mixed', errors='coerce')
         gex_df.set_index('date', inplace=True)
 
         # Rename columns to standard names if needed
@@ -149,9 +153,12 @@ class OptionsBacktester(BacktestBase):
             'net_gex': 'net_gex',
             'netGex': 'net_gex',
             'net_gamma': 'net_gex',
+            'gex_per_1pct_chg': 'net_gex',
+            'nearest_gex_value': 'net_gex',
             'flip_point': 'flip_point',
             'flipPoint': 'flip_point',
             'zero_gamma': 'flip_point',
+            'gex_flip_price': 'flip_point',
             'call_wall': 'call_wall',
             'callWall': 'call_wall',
             'put_wall': 'put_wall',

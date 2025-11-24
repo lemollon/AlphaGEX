@@ -137,7 +137,11 @@ class GEXBacktester(BacktestBase):
             print(f"   Available fields: {list(gex_df.columns)}")
             raise ValueError("Cannot parse dates from GEX historical data")
 
-        gex_df['date'] = pd.to_datetime(gex_df[date_field])
+        # Parse dates with flexible format handling
+        # Trading Volatility API returns inconsistent formats:
+        # - "2022-01-20_20:47:25" (underscore separator)
+        # - "2022-01-10 14:36:25.864668" (space separator with microseconds)
+        gex_df['date'] = pd.to_datetime(gex_df[date_field].str.replace('_', ' '), format='mixed', errors='coerce')
         gex_df.set_index('date', inplace=True)
 
         # Merge GEX data with price data by date
