@@ -1148,6 +1148,7 @@ class TradingVolatilityAPI:
     _shared_circuit_breaker_until = 0
     _shared_consecutive_rate_limit_errors = 0
     _shared_api_call_count = 0
+    _shared_cache_duration = 300  # Cache responses for 5 minutes (300 seconds)
     _shared_api_call_count_minute = 0
     _shared_minute_reset_time = 0
 
