@@ -15,12 +15,11 @@ Critical Features:
 - Trade-by-trade audit trail
 """
 
-import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 try:
     from polygon_data_fetcher import polygon_fetcher
     POLYGON_AVAILABLE = True
@@ -377,7 +376,7 @@ class BacktestBase:
 
     def save_results_to_db(self, results: BacktestResults):
         """Save backtest results to database"""
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Create backtest_results table if not exists
