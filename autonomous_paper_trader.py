@@ -241,6 +241,14 @@ class AutonomousPaperTrader:
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('auto_execute', 'true')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('last_trade_date', '')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('mode', 'paper')")
+            # Signal-only mode: Generate entry signals without auto-execution
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('signal_only', 'false')")
+            conn.commit()
+
+        # Ensure signal_only key exists for existing installations
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'signal_only'")
+        if not c.fetchone():
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('signal_only', 'false')")
             conn.commit()
 
         conn.close()
@@ -576,6 +584,189 @@ class AutonomousPaperTrader:
 
         used = result.iloc[0]['used'] if not pd.isna(result.iloc[0]['used']) else 0
         return total_capital - used
+
+    def is_signal_only_mode(self) -> bool:
+        """Check if signal-only mode is enabled (no auto-execution)"""
+        return self.get_config('signal_only') == 'true'
+
+    def set_signal_only_mode(self, enabled: bool):
+        """Enable or disable signal-only mode"""
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("UPDATE autonomous_config SET value = ? WHERE key = 'signal_only'",
+                  ('true' if enabled else 'false',))
+        conn.commit()
+        conn.close()
+        print(f"{'✅' if enabled else '❌'} Signal-only mode {'enabled' if enabled else 'disabled'}")
+
+    def generate_entry_signal(self, api_client) -> Optional[Dict]:
+        """
+        SIGNAL-ONLY MODE: Generate entry price signal WITHOUT executing a trade.
+
+        Use this when you have 15-minute delayed option data and want to:
+        1. See the trade recommendation
+        2. Get entry price guidance with delay buffer
+        3. Manually execute in your broker
+
+        Returns dict with signal details and delayed data warnings, or None if no signal.
+        """
+        from polygon_data_fetcher import calculate_delayed_price_range
+
+        self.log_action('SIGNAL_SCAN', 'Generating entry signal (NO EXECUTION)...')
+        self.update_live_status(
+            status='SIGNAL_SCAN',
+            action='Generating entry signal (signal-only mode)...',
+            analysis='Finding optimal trade setup'
+        )
+
+        try:
+            # Step 1: Get market data
+            gex_data = api_client.get_net_gamma('SPY')
+            skew_data = api_client.get_skew_data('SPY')
+
+            if not gex_data or gex_data.get('error'):
+                return {'error': 'Failed to get GEX data', 'signal': None}
+
+            spot_price = gex_data.get('spot_price', 0)
+            net_gex = gex_data.get('net_gex', 0)
+            flip_point = gex_data.get('flip_point', 0)
+
+            # Enhanced market context
+            vix = self._get_vix()
+            momentum = self._get_momentum()
+            time_context = self._get_time_context()
+            put_call_ratio = skew_data.get('put_call_ratio', 1.0) if skew_data else 1.0
+
+            if spot_price == 0:
+                return {'error': 'Invalid spot price', 'signal': None}
+
+            # Step 2: Find trade setup
+            trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
+
+            if not trade or trade.get('confidence', 0) < 70:
+                return {
+                    'signal': None,
+                    'reason': 'No high-confidence setup found',
+                    'market_summary': f"SPY ${spot_price:.2f} | GEX: ${net_gex/1e9:.2f}B | VIX: {vix:.1f}",
+                    'recommendation': 'Wait for better conditions'
+                }
+
+            # Step 3: Get option pricing with delayed data tracking
+            exp_date = self._get_expiration_string(trade['dte'])
+            liquid_strike, option_quote = find_liquid_strike(
+                symbol='SPY',
+                base_strike=trade['strike'],
+                option_type=trade['option_type'],
+                expiration_date=exp_date,
+                spot_price=spot_price,
+                max_attempts=5
+            )
+
+            if liquid_strike is None or option_quote is None:
+                return {
+                    'signal': None,
+                    'error': f"No liquid options found near ${trade['strike']:.0f}",
+                    'recommendation': 'Try a different strike or wait for market open'
+                }
+
+            # Step 4: Calculate price range for delayed data
+            price_range = calculate_delayed_price_range(
+                quote=option_quote,
+                underlying_price=spot_price,
+                vix=vix
+            )
+
+            # Step 5: Build signal response
+            is_delayed = option_quote.get('is_delayed', False)
+            data_status = option_quote.get('data_status', 'UNKNOWN')
+
+            signal = {
+                'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+                'symbol': 'SPY',
+                'spot_price': spot_price,
+
+                # Trade details
+                'strategy': trade.get('strategy', 'Unknown'),
+                'action': trade.get('action', 'Unknown'),
+                'option_type': trade['option_type'].upper(),
+                'strike': liquid_strike,
+                'expiration': exp_date,
+                'confidence': trade.get('confidence', 0),
+                'trade_reasoning': trade.get('reasoning', ''),
+
+                # PRICING - with delayed data handling
+                'data_status': data_status,
+                'is_delayed': is_delayed,
+                'delay_minutes': 15 if is_delayed else 0,
+                'quote_time': option_quote.get('quote_timestamp'),
+
+                # Raw prices (may be 15-min delayed)
+                'displayed_bid': option_quote.get('bid', 0),
+                'displayed_ask': option_quote.get('ask', 0),
+                'displayed_mid': price_range.get('displayed_mid', 0),
+
+                # Adjusted price range (accounts for 15-min delay)
+                'estimated_low': price_range.get('estimated_current_low', 0),
+                'estimated_high': price_range.get('estimated_current_high', 0),
+                'spread_buffer_pct': price_range.get('spread_buffer_pct', 0),
+
+                # Entry recommendation
+                'entry_recommendation': price_range.get('entry_recommendation', ''),
+                'delay_warning': price_range.get('delay_warning'),
+
+                # Greeks
+                'delta': option_quote.get('delta', 0),
+                'gamma': option_quote.get('gamma', 0),
+                'theta': option_quote.get('theta', 0),
+                'iv': option_quote.get('implied_volatility', 0),
+
+                # Market context
+                'market_context': {
+                    'net_gex': net_gex,
+                    'flip_point': flip_point,
+                    'vix': vix,
+                    'momentum': momentum,
+                    'put_call_ratio': put_call_ratio
+                }
+            }
+
+            # Log the signal
+            self.log_action('SIGNAL_GENERATED', f"""
+========================================
+ENTRY SIGNAL (NO AUTO-EXECUTION)
+========================================
+{'⏱️ DATA IS 15 MINUTES DELAYED!' if is_delayed else '✅ REAL-TIME DATA'}
+----------------------------------------
+Setup: {signal['strategy']} - {signal['action']}
+Option: SPY ${liquid_strike:.0f} {signal['option_type']} exp {exp_date}
+Confidence: {signal['confidence']}%
+
+PRICING:
+  Displayed Mid: ${signal['displayed_mid']:.2f} ({data_status})
+  Expected Range: ${signal['estimated_low']:.2f} - ${signal['estimated_high']:.2f}
+  Buffer: {signal['spread_buffer_pct']:.1f}%
+
+ENTRY RECOMMENDATION:
+  {signal['entry_recommendation']}
+
+Greeks: Delta={signal['delta']:.3f}, Theta=${signal['theta']:.2f}, IV={signal['iv']*100:.1f}%
+
+Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
+========================================
+""", success=True)
+
+            self.update_live_status(
+                status='SIGNAL_READY',
+                action=f"Signal: {signal['action']} SPY ${liquid_strike:.0f} {signal['option_type']}",
+                analysis=f"Entry: ${signal['estimated_low']:.2f}-${signal['estimated_high']:.2f} | {'DELAYED' if is_delayed else 'LIVE'}",
+                decision=signal['entry_recommendation']
+            )
+
+            return signal
+
+        except Exception as e:
+            self.log_action('SIGNAL_ERROR', f'Error generating signal: {e}', success=False)
+            return {'error': str(e), 'signal': None}
 
     def find_and_execute_daily_trade(self, api_client) -> Optional[int]:
         """

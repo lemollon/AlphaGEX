@@ -114,6 +114,7 @@ def display_autonomous_trader():
         "📈 Current Positions",
         "📜 Trade History",
         "📋 Activity Log",
+        "🎯 Signal Only",
         "🔄 Auto-Pilot",
         "⚙️ Settings"
     ])
@@ -134,12 +135,16 @@ def display_autonomous_trader():
     with tabs[3]:
         display_activity_log(trader)
 
-    # TAB 5: Auto-Pilot Scheduler
+    # TAB 5: Signal Only Mode (No Auto-Execution)
     with tabs[4]:
+        display_signal_only(trader)
+
+    # TAB 6: Auto-Pilot Scheduler
+    with tabs[5]:
         display_autopilot_scheduler(scheduler)
 
-    # TAB 6: Settings
-    with tabs[5]:
+    # TAB 7: Settings
+    with tabs[6]:
         display_settings(trader)
 
     # Control Panel
@@ -782,6 +787,200 @@ def display_activity_log(trader: AutonomousPaperTrader):
                 st.text(entry['details'])
                 if entry['position_id']:
                     st.caption(f"Position ID: {entry['position_id']}")
+
+
+def display_signal_only(trader: AutonomousPaperTrader):
+    """Display Signal-Only mode for users with delayed data who want entry recommendations"""
+
+    st.header("🎯 Signal-Only Mode")
+
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, rgba(255, 184, 0, 0.15) 0%, rgba(255, 136, 0, 0.1) 100%);
+                padding: 20px; border-radius: 12px; border: 1px solid rgba(255, 184, 0, 0.3);
+                margin-bottom: 20px;'>
+        <div style='color: #FFB800; font-weight: 700; font-size: 16px; margin-bottom: 10px;'>
+            ⏱️ FOR 15-MINUTE DELAYED DATA USERS
+        </div>
+        <div style='color: #d4d8e1; font-size: 14px; line-height: 1.6;'>
+            <strong>Options Developer Plan</strong> provides 15-minute delayed option prices.<br>
+            This mode shows you <strong>entry signals without auto-execution</strong> so you can:<br>
+            • See trade recommendations<br>
+            • Get estimated price ranges that account for the delay<br>
+            • Manually execute in your broker at your discretion
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Check data status first
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔍 Check Data Status", type="secondary"):
+            try:
+                from polygon_data_fetcher import detect_subscription_tier
+                tier_info = detect_subscription_tier()
+                options_status = tier_info.get('options_status', 'UNKNOWN')
+
+                if options_status == 'DELAYED':
+                    st.warning(f"⏱️ **Options data is 15-min DELAYED**")
+                elif options_status == 'OK':
+                    st.success(f"✅ **Real-time options data**")
+                else:
+                    st.info(f"ℹ️ Options status: {options_status}")
+
+                st.caption(f"Tier: {tier_info.get('tier', 'Unknown')}")
+            except Exception as e:
+                st.error(f"Error checking status: {e}")
+
+    st.divider()
+
+    # Generate Signal button
+    if st.button("🎯 Generate Entry Signal", type="primary", use_container_width=True):
+        with st.spinner("Analyzing market and generating signal..."):
+            try:
+                from trading_volatility_api import TradingVolatilityAPI
+                api_client = TradingVolatilityAPI()
+
+                signal = trader.generate_entry_signal(api_client)
+
+                if signal and signal.get('error'):
+                    st.error(f"❌ Error: {signal.get('error')}")
+                    st.info(signal.get('recommendation', 'Wait for better conditions'))
+                elif not signal or signal.get('signal') is None:
+                    st.warning("⏳ No High-Confidence Setup Found")
+                    st.markdown(f"""
+                    **Market Summary:** {signal.get('market_summary', 'N/A') if signal else 'N/A'}
+
+                    **Recommendation:** {signal.get('recommendation', 'Wait for better conditions') if signal else 'Wait'}
+                    """)
+                else:
+                    # We have a signal!
+                    is_delayed = signal.get('is_delayed', False)
+
+                    # Delayed data warning banner
+                    if is_delayed:
+                        st.markdown("""
+                        <div style='background: rgba(255, 68, 68, 0.15); padding: 15px; border-radius: 10px;
+                                    border: 2px solid #FF4444; margin-bottom: 15px;'>
+                            <div style='color: #FF6666; font-weight: 700; font-size: 16px;'>
+                                ⏱️ PRICES ARE 15 MINUTES DELAYED
+                            </div>
+                            <div style='color: #d4d8e1; font-size: 13px;'>
+                                The displayed prices are from ~15 minutes ago. Actual entry price will differ!
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    # Main signal card
+                    st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, rgba(0, 255, 136, 0.15) 0%, rgba(0, 212, 255, 0.1) 100%);
+                                padding: 25px; border-radius: 15px; border: 2px solid rgba(0, 255, 136, 0.4);'>
+                        <div style='text-align: center; margin-bottom: 20px;'>
+                            <span style='font-size: 28px; font-weight: 900; color: #00FF88;'>
+                                {signal.get('action', 'SIGNAL')}
+                            </span>
+                            <div style='color: white; font-size: 24px; font-weight: 700; margin-top: 10px;'>
+                                SPY ${signal.get('strike', 0):.0f} {signal.get('option_type', 'CALL')}
+                            </div>
+                            <div style='color: #8b92a7; font-size: 14px;'>
+                                Exp: {signal.get('expiration', 'N/A')} | Confidence: {signal.get('confidence', 0)}%
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Pricing section
+                    st.markdown("### 💰 Entry Pricing")
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric(
+                            "Displayed Mid",
+                            f"${signal.get('displayed_mid', 0):.2f}",
+                            delta=f"{'⏱️ DELAYED' if is_delayed else '✅ LIVE'}",
+                            delta_color="off"
+                        )
+
+                    with col2:
+                        st.metric(
+                            "Expected Low",
+                            f"${signal.get('estimated_low', 0):.2f}",
+                            help="Lower bound of expected current price"
+                        )
+
+                    with col3:
+                        st.metric(
+                            "Expected High",
+                            f"${signal.get('estimated_high', 0):.2f}",
+                            help="Upper bound of expected current price"
+                        )
+
+                    # Entry recommendation box
+                    st.markdown(f"""
+                    <div style='background: rgba(0, 212, 255, 0.1); padding: 15px; border-radius: 10px;
+                                border-left: 4px solid #00D4FF; margin: 15px 0;'>
+                        <div style='color: #00D4FF; font-weight: 700; font-size: 14px; margin-bottom: 5px;'>
+                            📋 ENTRY RECOMMENDATION
+                        </div>
+                        <div style='color: white; font-size: 16px;'>
+                            {signal.get('entry_recommendation', 'Use limit order at mid price')}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Greeks and market context
+                    with st.expander("📊 Greeks & Market Context", expanded=False):
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            st.markdown("**Greeks:**")
+                            st.text(f"Delta: {signal.get('delta', 0):.3f}")
+                            st.text(f"Gamma: {signal.get('gamma', 0):.5f}")
+                            st.text(f"Theta: ${signal.get('theta', 0):.2f}")
+                            st.text(f"IV: {(signal.get('iv', 0) or 0) * 100:.1f}%")
+
+                        with col2:
+                            ctx = signal.get('market_context', {})
+                            st.markdown("**Market Context:**")
+                            st.text(f"SPY: ${signal.get('spot_price', 0):.2f}")
+                            st.text(f"Net GEX: ${ctx.get('net_gex', 0)/1e9:.2f}B")
+                            st.text(f"VIX: {ctx.get('vix', 0):.1f}")
+                            st.text(f"P/C Ratio: {ctx.get('put_call_ratio', 0):.2f}")
+
+                    # Trade reasoning
+                    if signal.get('trade_reasoning'):
+                        with st.expander("🧠 Trade Reasoning", expanded=False):
+                            st.markdown(signal.get('trade_reasoning'))
+
+                    # Important disclaimer
+                    st.caption("⚠️ This is a signal only. No trade has been executed. You must manually enter this trade in your broker if desired.")
+
+            except Exception as e:
+                st.error(f"Error generating signal: {e}")
+                import traceback
+                st.caption(traceback.format_exc())
+
+    # Show recent signals from log
+    st.divider()
+    st.markdown("### 📜 Recent Signal History")
+
+    conn = get_connection()
+    signals = pd.read_sql_query("""
+        SELECT date, time, action, details, success
+        FROM autonomous_trade_log
+        WHERE action IN ('SIGNAL_GENERATED', 'SIGNAL_SCAN', 'SIGNAL_ERROR')
+        ORDER BY date DESC, time DESC
+        LIMIT 10
+    """, conn)
+    conn.close()
+
+    if signals.empty:
+        st.info("No signal history yet. Click 'Generate Entry Signal' to create your first signal.")
+    else:
+        for _, sig in signals.iterrows():
+            icon = "🎯" if sig['action'] == 'SIGNAL_GENERATED' else "🔍" if sig['action'] == 'SIGNAL_SCAN' else "❌"
+            with st.expander(f"{icon} {sig['date']} {sig['time'][:8]} - {sig['action'].replace('_', ' ')}", expanded=False):
+                st.text(sig['details'])
 
 
 def display_settings(trader: AutonomousPaperTrader):

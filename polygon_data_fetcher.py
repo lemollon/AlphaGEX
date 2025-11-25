@@ -343,6 +343,20 @@ class PolygonDataFetcher:
                         print(f"    last_trade: {last_trade}")
                         print(f"    API status: {data.get('status')}")
 
+                    # Track data freshness - DELAYED means 15-minute delay
+                    data_status = data.get('status', 'UNKNOWN')
+                    is_delayed = data_status == 'DELAYED'
+
+                    # Extract quote timestamp if available
+                    quote_timestamp = last_quote.get('sip_timestamp') or last_quote.get('participant_timestamp')
+                    if quote_timestamp:
+                        # Convert nanoseconds to datetime
+                        from datetime import datetime
+                        quote_time = datetime.fromtimestamp(quote_timestamp / 1e9)
+                        quote_time_str = quote_time.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        quote_time_str = None
+
                     return {
                         'bid': bid,
                         'ask': ask,
@@ -357,7 +371,12 @@ class PolygonDataFetcher:
                         'vega': greeks.get('vega', 0),
                         'strike': strike,
                         'expiration': expiration,
-                        'contract_symbol': option_ticker
+                        'contract_symbol': option_ticker,
+                        # New fields for delayed data tracking
+                        'data_status': data_status,  # 'OK' = real-time, 'DELAYED' = 15-min delay
+                        'is_delayed': is_delayed,
+                        'quote_timestamp': quote_time_str,
+                        'delay_minutes': 15 if is_delayed else 0
                     }
                 else:
                     print(f"⚠️  Polygon response missing results for {option_ticker}:")
@@ -566,6 +585,104 @@ def get_option_quote(symbol: str, strike: float, expiration: str, option_type: s
 def detect_subscription_tier() -> Dict[str, any]:
     """Detect current Polygon.io subscription tier"""
     return polygon_fetcher.detect_subscription_tier()
+
+
+def calculate_delayed_price_range(
+    quote: Dict,
+    underlying_price: float = None,
+    vix: float = None
+) -> Dict:
+    """
+    Calculate expected price range for a delayed option quote.
+
+    With 15-minute delayed data, prices can move significantly.
+    This function provides a realistic range to expect at entry.
+
+    Args:
+        quote: Option quote dict from get_option_quote()
+        underlying_price: Current underlying price (for delta calculation)
+        vix: Current VIX level (for volatility adjustment)
+
+    Returns:
+        {
+            'displayed_mid': float,       # The 15-min delayed mid price
+            'estimated_current_low': float,   # Likely lower bound now
+            'estimated_current_high': float,  # Likely upper bound now
+            'spread_buffer_pct': float,   # % buffer to add
+            'entry_recommendation': str,  # Recommended limit price strategy
+            'is_delayed': bool,
+            'delay_warning': str
+        }
+    """
+    if quote is None:
+        return {'error': 'No quote data'}
+
+    bid = quote.get('bid', 0) or 0
+    ask = quote.get('ask', 0) or 0
+    mid = quote.get('mid', 0) or (bid + ask) / 2
+    is_delayed = quote.get('is_delayed', False)
+    delta = abs(quote.get('delta', 0.5) or 0.5)
+    iv = quote.get('implied_volatility', 0.25) or 0.25
+
+    # For non-delayed data, return simple values
+    if not is_delayed:
+        return {
+            'displayed_mid': mid,
+            'estimated_current_low': bid,
+            'estimated_current_high': ask,
+            'spread_buffer_pct': 0,
+            'entry_recommendation': f'Use limit order at ${mid:.2f} (real-time data)',
+            'is_delayed': False,
+            'delay_warning': None
+        }
+
+    # For delayed data (15 minutes):
+    # SPY typically moves 0.1-0.3% in 15 minutes
+    # Option prices can move 2-10% based on delta and IV
+
+    # Base buffer: account for typical 15-min SPY movement
+    base_move_pct = 0.15  # SPY moves ~0.15% in 15 min on average
+
+    # Adjust for VIX (higher VIX = more movement)
+    vix_multiplier = 1.0
+    if vix:
+        if vix > 25:
+            vix_multiplier = 1.5  # High volatility
+        elif vix > 20:
+            vix_multiplier = 1.25
+        elif vix < 15:
+            vix_multiplier = 0.75  # Low volatility
+
+    # Option price change estimate: delta * underlying move + IV factor
+    # Higher delta options move more with underlying
+    option_move_pct = (delta * base_move_pct * 100 * vix_multiplier) + (iv * 0.02)
+
+    # Minimum 3% buffer, maximum 15% buffer
+    spread_buffer_pct = max(3.0, min(15.0, option_move_pct * 100))
+
+    # Calculate range
+    buffer = mid * (spread_buffer_pct / 100)
+    estimated_low = max(0.01, mid - buffer)
+    estimated_high = mid + buffer
+
+    # Entry recommendation
+    if spread_buffer_pct > 8:
+        entry_rec = f"⚠️ WIDE RANGE: Bid at ${estimated_low:.2f}, may fill up to ${estimated_high:.2f}"
+    else:
+        entry_rec = f"Use limit at ${mid:.2f}, expect to pay ${estimated_low:.2f}-${estimated_high:.2f}"
+
+    return {
+        'displayed_mid': mid,
+        'displayed_bid': bid,
+        'displayed_ask': ask,
+        'estimated_current_low': round(estimated_low, 2),
+        'estimated_current_high': round(estimated_high, 2),
+        'spread_buffer_pct': round(spread_buffer_pct, 1),
+        'entry_recommendation': entry_rec,
+        'is_delayed': True,
+        'delay_warning': '⏱️ Price is 15 minutes delayed - actual price will differ!',
+        'quote_time': quote.get('quote_timestamp')
+    }
 
 
 if __name__ == "__main__":
