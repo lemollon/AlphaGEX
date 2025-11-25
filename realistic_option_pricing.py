@@ -285,15 +285,18 @@ class SpreadPricer:
         long_price = long_option.price()
         short_price = short_option.price()
 
-        # Apply bid/ask spread if requested (typically 3-5% of option price)
+        # Apply bid/ask spread if requested
+        # SPY options are extremely liquid - use realistic spreads
         if include_slippage:
             # Pay ask when buying, receive bid when selling
-            bid_ask_pct = 0.04  # 4% bid/ask spread
+            # SPY typical bid/ask: 0.5-2% (use 1.5% conservative estimate)
+            bid_ask_pct = 0.015  # 1.5% bid/ask spread for SPY
             long_price_ask = long_price * (1 + bid_ask_pct)
             short_price_bid = short_price * (1 - bid_ask_pct)
 
-            # Additional slippage for multi-leg orders (1-2%)
-            slippage_pct = 0.015  # 1.5% additional slippage
+            # Additional slippage for multi-leg orders
+            # SPY multi-leg slippage typically 0.3-0.5%
+            slippage_pct = 0.005  # 0.5% multi-leg slippage
             debit = (long_price_ask - short_price_bid) * (1 + slippage_pct)
         else:
             debit = long_price - short_price
