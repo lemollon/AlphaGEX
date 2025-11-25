@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react'
+import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { useTraderWebSocket } from '@/hooks/useTraderWebSocket'
 
 interface TraderStatus {
   is_active: boolean
@@ -105,6 +106,61 @@ export default function AutonomousTrader() {
   const [backtestResults, setBacktestResults] = useState<any[]>([])
   const [riskStatus, setRiskStatus] = useState<any>(null)
 
+  // VIX Hedge Signal state
+  const [vixSignal, setVixSignal] = useState<any>(null)
+  const [vixData, setVixData] = useState<any>(null)
+
+  // WebSocket connection for real-time updates
+  const { data: wsData, isConnected: wsConnected, error: wsError } = useTraderWebSocket()
+
+  // Update state from WebSocket data
+  useEffect(() => {
+    if (wsData && wsData.type === 'trader_update') {
+      // Update performance from WebSocket
+      if (wsData.performance) {
+        setPerformance(prev => ({
+          ...prev,
+          total_pnl: wsData.performance.net_pnl || 0,
+          win_rate: wsData.performance.win_rate || 0,
+          total_trades: wsData.performance.total_trades || 0,
+          winning_trades: wsData.performance.winning_trades || 0,
+          losing_trades: wsData.performance.losing_trades || 0,
+        }))
+      }
+
+      // Update status from WebSocket
+      if (wsData.status) {
+        setTraderStatus(prev => ({
+          ...prev,
+          is_active: true,
+          status: wsData.status.status,
+          current_action: wsData.status.current_action,
+          market_analysis: wsData.status.market_analysis,
+          last_decision: wsData.status.last_decision,
+          last_check: wsData.status.last_updated || new Date().toISOString(),
+        }))
+      }
+
+      // Update positions from WebSocket
+      if (wsData.positions && wsData.positions.length > 0) {
+        const mappedTrades = wsData.positions.map((trade: any) => ({
+          id: trade.id?.toString(),
+          timestamp: `${trade.entry_date}T${trade.entry_time || '00:00:00'}`,
+          symbol: trade.symbol || 'SPY',
+          action: trade.action || 'BUY',
+          type: trade.option_type || 'CALL',
+          strike: trade.strike || 0,
+          quantity: trade.contracts || 0,
+          price: Math.abs(trade.entry_price) || 0,
+          status: 'filled',
+          pnl: trade.unrealized_pnl || 0,
+          strategy: trade.strategy,
+        }))
+        setRecentTrades(mappedTrades)
+      }
+    }
+  }, [wsData])
+
   // Calculate best and worst trades
   const bestTrade = tradeLog.length > 0
     ? Math.max(...tradeLog.map(t => t.pnl))
@@ -204,6 +260,22 @@ export default function AutonomousTrader() {
 
         if (tradeLogRes.data.success) {
           setTradeLog(tradeLogRes.data.data || [])
+        }
+
+        // Fetch VIX hedge signal data
+        try {
+          const [vixSignalRes, vixDataRes] = await Promise.all([
+            apiClient.getVIXHedgeSignal(),
+            apiClient.getVIXCurrent()
+          ])
+          if (vixSignalRes.data.success) {
+            setVixSignal(vixSignalRes.data.data)
+          }
+          if (vixDataRes.data.success) {
+            setVixData(vixDataRes.data.data)
+          }
+        } catch (vixError) {
+          console.log('VIX data not available:', vixError)
         }
       } catch (error) {
         console.error('Error fetching trader data:', error)
@@ -326,6 +398,15 @@ export default function AutonomousTrader() {
           <p className="text-text-secondary mt-1">Automated trading based on gamma exposure signals</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* WebSocket Connection Indicator */}
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
+            wsConnected
+              ? 'bg-success/20 text-success'
+              : 'bg-text-muted/20 text-text-muted'
+          }`}>
+            {wsConnected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+            {wsConnected ? 'Live' : 'Offline'}
+          </div>
           <div className={`px-4 py-2 rounded-lg font-semibold ${
             traderStatus.mode === 'paper'
               ? 'bg-warning/20 text-warning'
@@ -493,6 +574,95 @@ export default function AutonomousTrader() {
           </div>
         </div>
       </div>
+
+      {/* VIX Hedge Signal - Risk Management */}
+      {vixSignal && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <Shield className="w-6 h-6 text-primary" />
+              <h2 className="text-xl font-semibold text-text-primary">VIX Hedge Signal</h2>
+            </div>
+            {vixData && (
+              <div className="flex items-center gap-4 text-sm">
+                <div className="px-3 py-1 bg-background-hover rounded-lg">
+                  <span className="text-text-muted">VIX:</span>
+                  <span className="text-text-primary font-bold ml-2">{vixData.vix_spot?.toFixed(2)}</span>
+                </div>
+                <div className={`px-3 py-1 rounded-lg ${
+                  vixData.vol_regime === 'low' || vixData.vol_regime === 'very_low' ? 'bg-success/20 text-success' :
+                  vixData.vol_regime === 'elevated' || vixData.vol_regime === 'high' ? 'bg-warning/20 text-warning' :
+                  vixData.vol_regime === 'extreme' ? 'bg-danger/20 text-danger' :
+                  'bg-primary/20 text-primary'
+                }`}>
+                  {vixData.vol_regime?.toUpperCase()}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Signal Card */}
+            <div className={`p-4 rounded-lg border ${
+              vixSignal.signal_type === 'buy_vix_call_spread' ? 'bg-success/10 border-success/30' :
+              vixSignal.signal_type === 'reduce_hedge' ? 'bg-warning/10 border-warning/30' :
+              vixSignal.signal_type === 'no_action' ? 'bg-background-hover border-border' :
+              'bg-primary/10 border-primary/30'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                <BarChart3 className="w-5 h-5" />
+                <span className="font-semibold text-text-primary">
+                  {vixSignal.signal_type?.replace(/_/g, ' ').toUpperCase()}
+                </span>
+                <span className="text-text-muted text-sm ml-auto">
+                  Confidence: {vixSignal.confidence?.toFixed(0)}%
+                </span>
+              </div>
+              <p className="text-text-secondary text-sm">{vixSignal.reasoning}</p>
+            </div>
+
+            {/* Recommendation Card */}
+            <div className="p-4 bg-background-hover rounded-lg">
+              <p className="text-text-muted text-xs font-medium mb-2">RECOMMENDED ACTION</p>
+              <p className="text-text-primary text-sm">{vixSignal.recommended_action}</p>
+              {vixSignal.risk_warning && vixSignal.risk_warning !== 'None' && (
+                <div className="mt-3 p-2 bg-danger/10 rounded border border-danger/20">
+                  <p className="text-danger text-xs flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    {vixSignal.risk_warning}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* VIX Metrics */}
+          {vixData && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+              <div className="p-3 bg-background-hover rounded-lg">
+                <p className="text-text-muted text-xs">IV Percentile</p>
+                <p className="text-text-primary font-semibold mt-1">{vixData.iv_percentile?.toFixed(0)}th</p>
+              </div>
+              <div className="p-3 bg-background-hover rounded-lg">
+                <p className="text-text-muted text-xs">Realized Vol (20d)</p>
+                <p className="text-text-primary font-semibold mt-1">{vixData.realized_vol_20d?.toFixed(1)}%</p>
+              </div>
+              <div className="p-3 bg-background-hover rounded-lg">
+                <p className="text-text-muted text-xs">IV-RV Spread</p>
+                <p className={`font-semibold mt-1 ${vixData.iv_rv_spread > 5 ? 'text-warning' : 'text-success'}`}>
+                  {vixData.iv_rv_spread?.toFixed(1)} pts
+                </p>
+              </div>
+              <div className="p-3 bg-background-hover rounded-lg">
+                <p className="text-text-muted text-xs">Term Structure</p>
+                <p className={`font-semibold mt-1 ${vixData.term_structure_pct > 0 ? 'text-text-primary' : 'text-warning'}`}>
+                  {vixData.term_structure_pct?.toFixed(1)}% ({vixData.structure_type})
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Strategies */}
       <div className="card">

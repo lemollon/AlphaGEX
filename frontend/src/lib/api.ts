@@ -257,6 +257,23 @@ export const apiClient = {
   // Database Administration
   getDatabaseStats: () => api.get('/api/database/stats'),
   testConnections: () => api.get('/api/test-connections'),
+
+  // VIX Hedge Manager
+  getVIXHedgeSignal: (portfolioDelta?: number, portfolioValue?: number) =>
+    api.get('/api/vix/hedge-signal', {
+      params: { portfolio_delta: portfolioDelta, portfolio_value: portfolioValue }
+    }),
+  getVIXSignalHistory: (days?: number) =>
+    api.get('/api/vix/signal-history', { params: { days: days || 30 } }),
+  getVIXCurrent: () => api.get('/api/vix/current'),
+
+  // SPX Institutional Trader
+  getSPXStatus: () => api.get('/api/spx/status'),
+  getSPXPerformance: () => api.get('/api/spx/performance'),
+  checkSPXRiskLimits: (contracts: number, entryPrice: number, delta?: number) =>
+    api.post('/api/spx/check-risk', {}, {
+      params: { contracts, entry_price: entryPrice, delta: delta || 0.5 }
+    }),
 }
 
 // WebSocket connection

@@ -2431,6 +2431,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Track subscriptions per connection
+_connection_subscriptions: dict = {}
+
 @app.websocket("/ws/market-data")
 async def websocket_market_data(websocket: WebSocket, symbol: str = "SPY"):
     """
@@ -2479,6 +2482,452 @@ async def websocket_market_data(websocket: WebSocket, symbol: str = "SPY"):
     except Exception as e:
         manager.disconnect(websocket)
         print(f"WebSocket error: {e}")
+
+
+@app.websocket("/ws/trader")
+async def websocket_trader(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time trader updates
+
+    Streams:
+    - Trader status updates
+    - Position updates with P&L
+    - Trade executions
+    - Risk alerts
+
+    Update frequency: Every 10 seconds during market hours
+    """
+    await manager.connect(websocket)
+    connection_id = id(websocket)
+    _connection_subscriptions[connection_id] = {'symbols': ['SPY', 'SPX']}
+
+    try:
+        import asyncio
+
+        # Send initial connection acknowledgment
+        await websocket.send_json({
+            "type": "connected",
+            "message": "Trader WebSocket connected",
+            "timestamp": datetime.now().isoformat()
+        })
+
+        while True:
+            try:
+                # Check for incoming messages (subscriptions, commands)
+                # Use wait_for with timeout to allow periodic updates
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive_json(),
+                        timeout=0.1
+                    )
+                    # Handle subscription changes
+                    if message.get('type') == 'subscribe':
+                        symbols = message.get('symbols', ['SPY'])
+                        _connection_subscriptions[connection_id]['symbols'] = [s.upper() for s in symbols]
+                        await websocket.send_json({
+                            "type": "subscribed",
+                            "symbols": _connection_subscriptions[connection_id]['symbols'],
+                            "timestamp": datetime.now().isoformat()
+                        })
+                except asyncio.TimeoutError:
+                    pass  # No message, continue with updates
+
+                # Send comprehensive update
+                update_data = await _get_trader_update_data()
+                await websocket.send_json(update_data)
+
+                # Wait 10 seconds before next update
+                await asyncio.sleep(10)
+
+            except Exception as e:
+                # Send error but continue
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(e),
+                    "timestamp": datetime.now().isoformat()
+                })
+                await asyncio.sleep(10)
+
+    except WebSocketDisconnect:
+        if connection_id in _connection_subscriptions:
+            del _connection_subscriptions[connection_id]
+        manager.disconnect(websocket)
+    except Exception as e:
+        if connection_id in _connection_subscriptions:
+            del _connection_subscriptions[connection_id]
+        manager.disconnect(websocket)
+        print(f"Trader WebSocket error: {e}")
+
+
+async def _get_trader_update_data() -> dict:
+    """
+    Gather all trader data for WebSocket update.
+
+    Returns comprehensive update including:
+    - Trader status
+    - Open positions with real-time P&L
+    - Recent trades
+    - Risk metrics
+    - Market data
+    """
+    update = {
+        "type": "trader_update",
+        "timestamp": datetime.now().isoformat(),
+        "market_open": is_market_open()
+    }
+
+    try:
+        conn = get_connection()
+        import pandas as pd
+
+        # Get trader status
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT key, value FROM autonomous_config
+            WHERE key IN ('capital', 'auto_execute', 'last_trade_date', 'mode', 'signal_only')
+        """)
+        config = {row[0]: row[1] for row in cursor.fetchall()}
+        update['config'] = config
+
+        # Get live status
+        cursor.execute("""
+            SELECT status, current_action, market_analysis, last_decision, last_updated
+            FROM autonomous_live_status
+            ORDER BY last_updated DESC
+            LIMIT 1
+        """)
+        status_row = cursor.fetchone()
+        if status_row:
+            update['status'] = {
+                'status': status_row[0],
+                'current_action': status_row[1],
+                'market_analysis': status_row[2],
+                'last_decision': status_row[3],
+                'last_updated': status_row[4].isoformat() if status_row[4] else None
+            }
+
+        # Get open positions with current P&L
+        positions_df = pd.read_sql_query("""
+            SELECT id, symbol, strategy, action, strike, option_type,
+                   expiration_date, contracts, entry_price, entry_spot_price,
+                   current_price, current_spot_price, unrealized_pnl,
+                   unrealized_pnl_pct, confidence, entry_date, entry_time
+            FROM autonomous_open_positions
+            ORDER BY entry_date DESC, entry_time DESC
+        """, conn)
+
+        update['positions'] = positions_df.to_dict(orient='records') if not positions_df.empty else []
+
+        # Get recent closed trades (last 10)
+        trades_df = pd.read_sql_query("""
+            SELECT id, symbol, strategy, action, strike, option_type,
+                   entry_date, exit_date, entry_price, exit_price,
+                   realized_pnl, realized_pnl_pct, exit_reason
+            FROM autonomous_closed_trades
+            ORDER BY exit_date DESC, exit_time DESC
+            LIMIT 10
+        """, conn)
+
+        update['recent_trades'] = trades_df.to_dict(orient='records') if not trades_df.empty else []
+
+        # Calculate performance metrics
+        cursor.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM autonomous_closed_trades")
+        total_realized = float(cursor.fetchone()[0] or 0)
+
+        cursor.execute("SELECT COALESCE(SUM(unrealized_pnl), 0) FROM autonomous_open_positions")
+        total_unrealized = float(cursor.fetchone()[0] or 0)
+
+        cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades WHERE realized_pnl > 0")
+        winners = cursor.fetchone()[0] or 0
+
+        cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades WHERE realized_pnl <= 0")
+        losers = cursor.fetchone()[0] or 0
+
+        total_trades = winners + losers
+        win_rate = (winners / total_trades * 100) if total_trades > 0 else 0
+
+        starting_capital = float(config.get('capital', 5000))
+        current_equity = starting_capital + total_realized + total_unrealized
+
+        update['performance'] = {
+            'starting_capital': starting_capital,
+            'current_equity': current_equity,
+            'total_realized_pnl': total_realized,
+            'total_unrealized_pnl': total_unrealized,
+            'net_pnl': total_realized + total_unrealized,
+            'return_pct': ((total_realized + total_unrealized) / starting_capital * 100) if starting_capital > 0 else 0,
+            'total_trades': total_trades,
+            'winning_trades': winners,
+            'losing_trades': losers,
+            'win_rate': win_rate,
+            'open_positions': len(positions_df)
+        }
+
+        # Risk alerts
+        alerts = []
+        drawdown_pct = ((starting_capital - current_equity) / starting_capital * 100) if starting_capital > 0 and current_equity < starting_capital else 0
+        if drawdown_pct > 10:
+            alerts.append({
+                'level': 'critical',
+                'message': f'Drawdown alert: {drawdown_pct:.1f}% from starting capital'
+            })
+        elif drawdown_pct > 5:
+            alerts.append({
+                'level': 'warning',
+                'message': f'Drawdown warning: {drawdown_pct:.1f}% from starting capital'
+            })
+
+        if len(positions_df) > 5:
+            alerts.append({
+                'level': 'info',
+                'message': f'High position count: {len(positions_df)} open positions'
+            })
+
+        update['alerts'] = alerts
+
+        # Market data snapshot
+        try:
+            gex_data = api_client.get_net_gamma('SPY')
+            if gex_data and not gex_data.get('error'):
+                update['market'] = {
+                    'symbol': 'SPY',
+                    'spot_price': gex_data.get('spot_price', 0),
+                    'net_gex': gex_data.get('net_gex', 0),
+                    'flip_point': gex_data.get('flip_point', 0),
+                    'call_wall': gex_data.get('call_wall', 0),
+                    'put_wall': gex_data.get('put_wall', 0)
+                }
+        except:
+            update['market'] = None
+
+        conn.close()
+
+    except Exception as e:
+        update['error'] = str(e)
+
+    return update
+
+
+@app.websocket("/ws/positions")
+async def websocket_positions(websocket: WebSocket):
+    """
+    WebSocket endpoint for position-only updates (lightweight)
+
+    Streams position P&L updates every 5 seconds
+    """
+    await manager.connect(websocket)
+
+    try:
+        import asyncio
+
+        while True:
+            try:
+                conn = get_connection()
+                import pandas as pd
+
+                positions_df = pd.read_sql_query("""
+                    SELECT id, symbol, strategy, strike, option_type,
+                           expiration_date, contracts, entry_price,
+                           current_price, unrealized_pnl, unrealized_pnl_pct
+                    FROM autonomous_open_positions
+                    ORDER BY unrealized_pnl DESC
+                """, conn)
+                conn.close()
+
+                await websocket.send_json({
+                    "type": "positions_update",
+                    "positions": positions_df.to_dict(orient='records') if not positions_df.empty else [],
+                    "count": len(positions_df),
+                    "total_unrealized": float(positions_df['unrealized_pnl'].sum()) if not positions_df.empty else 0,
+                    "timestamp": datetime.now().isoformat()
+                })
+
+                await asyncio.sleep(5)
+
+            except Exception as e:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(e),
+                    "timestamp": datetime.now().isoformat()
+                })
+                await asyncio.sleep(5)
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        manager.disconnect(websocket)
+        print(f"Positions WebSocket error: {e}")
+
+# ============================================================================
+# VIX Hedge Manager Endpoints
+# ============================================================================
+
+@app.get("/api/vix/hedge-signal")
+async def get_vix_hedge_signal(portfolio_delta: float = 0, portfolio_value: float = 100000):
+    """
+    Generate a VIX-based hedge signal for portfolio protection.
+
+    This is a SIGNAL GENERATOR only - does not auto-execute trades.
+
+    Args:
+        portfolio_delta: Current portfolio delta exposure (default 0)
+        portfolio_value: Total portfolio value (default $100K)
+
+    Returns:
+        Hedge signal with recommendation, reasoning, and risk warning
+    """
+    try:
+        from vix_hedge_manager import get_vix_hedge_manager
+
+        manager = get_vix_hedge_manager()
+        signal = manager.generate_hedge_signal(
+            portfolio_delta=portfolio_delta,
+            portfolio_value=portfolio_value
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "timestamp": signal.timestamp.isoformat(),
+                "signal_type": signal.signal_type.value,
+                "confidence": signal.confidence,
+                "vol_regime": signal.vol_regime.value,
+                "reasoning": signal.reasoning,
+                "recommended_action": signal.recommended_action,
+                "risk_warning": signal.risk_warning,
+                "metrics": signal.metrics
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/vix/signal-history")
+async def get_vix_signal_history(days: int = 30):
+    """Get historical VIX hedge signals"""
+    try:
+        from vix_hedge_manager import get_vix_hedge_manager
+
+        manager = get_vix_hedge_manager()
+        history = manager.get_signal_history(days)
+
+        return {
+            "success": True,
+            "data": history.to_dict(orient='records') if not history.empty else []
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/vix/current")
+async def get_vix_current():
+    """Get current VIX data and analysis"""
+    try:
+        from vix_hedge_manager import get_vix_hedge_manager
+
+        manager = get_vix_hedge_manager()
+        vix_data = manager.get_vix_data()
+        vix_spot = vix_data.get('vix_spot', 18.0)
+
+        iv_percentile = manager.calculate_iv_percentile(vix_spot)
+        realized_vol = manager.calculate_realized_vol('SPY')
+        vol_regime = manager.get_vol_regime(vix_spot)
+
+        return {
+            "success": True,
+            "data": {
+                "vix_spot": vix_spot,
+                "vix_m1": vix_data.get('vix_m1', 0),
+                "vix_m2": vix_data.get('vix_m2', 0),
+                "term_structure_pct": vix_data.get('term_structure_m1_pct', 0),
+                "structure_type": vix_data.get('structure_type', 'unknown'),
+                "iv_percentile": iv_percentile,
+                "realized_vol_20d": realized_vol,
+                "iv_rv_spread": vix_spot - realized_vol,
+                "vol_regime": vol_regime.value,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# SPX Institutional Trader Endpoints
+# ============================================================================
+
+@app.get("/api/spx/status")
+async def get_spx_trader_status():
+    """Get SPX institutional trader status"""
+    try:
+        from spx_institutional_trader import get_spx_trader_100m
+
+        trader = get_spx_trader_100m()
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": trader.symbol,
+                "starting_capital": trader.starting_capital,
+                "available_capital": trader.get_available_capital(),
+                "max_position_pct": trader.max_position_pct,
+                "max_delta_exposure": trader.max_delta_exposure,
+                "max_contracts_per_trade": trader.max_contracts_per_trade,
+                "greeks": trader.get_portfolio_greeks()
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/spx/performance")
+async def get_spx_performance():
+    """Get SPX institutional trader performance summary"""
+    try:
+        from spx_institutional_trader import get_spx_trader_100m
+
+        trader = get_spx_trader_100m()
+        performance = trader.get_performance_summary()
+
+        return {
+            "success": True,
+            "data": performance
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/spx/check-risk")
+async def check_spx_risk_limits(
+    contracts: int,
+    entry_price: float,
+    delta: float = 0.5
+):
+    """Check if a proposed SPX trade passes risk limits"""
+    try:
+        from spx_institutional_trader import get_spx_trader_100m
+
+        trader = get_spx_trader_100m()
+
+        proposed_trade = {
+            'contracts': contracts,
+            'entry_price': entry_price,
+            'delta': delta
+        }
+
+        can_trade, reason = trader.check_risk_limits(proposed_trade)
+
+        return {
+            "success": True,
+            "data": {
+                "can_trade": can_trade,
+                "reason": reason,
+                "proposed_trade": proposed_trade
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================================
 # Error Handlers
