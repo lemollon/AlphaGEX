@@ -49,6 +49,8 @@ const navItems = [
   { href: '/backtesting', label: 'Backtesting', icon: TestTube, category: 'AI & Testing' },
   { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
   { href: '/trader', label: 'Autonomous Trader', icon: Bot, category: 'Automation' },
+  { href: '/spx', label: 'SPX Institutional', icon: TrendingUp, category: 'Automation' },
+  { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Automation' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Automation' },
   { href: '/settings/system', label: 'System Settings', icon: Settings, category: 'System' },
   { href: '/settings/notifications', label: 'Notification Settings', icon: Bell, category: 'System' },
