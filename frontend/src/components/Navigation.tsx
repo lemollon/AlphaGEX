@@ -62,16 +62,18 @@ export default function Navigation() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [spyPrice, setSpyPrice] = useState<number | null>(null)
+  const [vixPrice, setVixPrice] = useState<number | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
   const [apiConnected, setApiConnected] = useState(true)
 
-  // Fetch SPY price and market status - ONCE on mount only (no auto-refresh)
+  // Fetch SPY/VIX prices and market status with 5-minute auto-refresh
   useEffect(() => {
     const fetchMarketData = async () => {
       try {
-        const [gexRes, timeRes] = await Promise.all([
+        const [gexRes, timeRes, vixRes] = await Promise.all([
           apiClient.getGEX('SPY').catch(() => null),
-          apiClient.time().catch(() => null)
+          apiClient.time().catch(() => null),
+          apiClient.getVIXCurrent().catch(() => null)
         ])
 
         if (gexRes?.data?.data?.spot_price) {
@@ -79,6 +81,10 @@ export default function Navigation() {
           setApiConnected(true)
         } else {
           setApiConnected(false)
+        }
+
+        if (vixRes?.data?.data?.vix_spot) {
+          setVixPrice(vixRes.data.data.vix_spot)
         }
 
         if (timeRes?.data?.market_open !== undefined) {
@@ -91,7 +97,11 @@ export default function Navigation() {
     }
 
     fetchMarketData()
-    // No auto-refresh - protects API rate limit (20 calls/min shared across all users)
+
+    // Auto-refresh every 5 minutes (300000ms)
+    const interval = setInterval(fetchMarketData, 5 * 60 * 1000)
+
+    return () => clearInterval(interval)
   }, [])
 
   // Group nav items by category
@@ -126,12 +136,22 @@ export default function Navigation() {
 
           {/* Right: Market Status */}
           <div className="flex items-center space-x-4">
-            <div className="hidden sm:flex items-center space-x-2 text-sm">
-              <span className="text-text-secondary">SPY:</span>
-              <span className="text-text-primary font-mono font-semibold">
-                {spyPrice ? `$${spyPrice.toFixed(2)}` : (apiConnected ? '---' : 'Error')}
-              </span>
-              {spyPrice && <span className="text-success">▲</span>}
+            <div className="hidden sm:flex items-center space-x-4 text-sm">
+              <div className="flex items-center space-x-2">
+                <span className="text-text-secondary">SPY:</span>
+                <span className="text-text-primary font-mono font-semibold">
+                  {spyPrice ? `$${spyPrice.toFixed(2)}` : (apiConnected ? '---' : 'Error')}
+                </span>
+                {spyPrice && <span className="text-success">▲</span>}
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-text-secondary">VIX:</span>
+                <span className={`font-mono font-semibold ${
+                  vixPrice ? (vixPrice > 25 ? 'text-danger' : vixPrice > 18 ? 'text-warning' : 'text-success') : 'text-text-primary'
+                }`}>
+                  {vixPrice ? vixPrice.toFixed(2) : '---'}
+                </span>
+              </div>
             </div>
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${apiConnected ? (marketOpen ? 'bg-success' : 'bg-warning') : 'bg-danger'} ${apiConnected ? 'animate-pulse' : ''}`}></div>

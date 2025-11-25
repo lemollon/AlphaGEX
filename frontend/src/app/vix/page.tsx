@@ -41,9 +41,11 @@ export default function VIXDashboard() {
   const [signalHistory, setSignalHistory] = useState<SignalHistory[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  const fetchData = async () => {
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+
+  const fetchData = async (showLoading = true) => {
     try {
-      setLoading(true)
+      if (showLoading) setLoading(true)
       const [vixRes, signalRes, historyRes] = await Promise.all([
         apiClient.getVIXCurrent().catch(() => ({ data: { success: false } })),
         apiClient.getVIXHedgeSignal().catch(() => ({ data: { success: false } })),
@@ -59,6 +61,7 @@ export default function VIXDashboard() {
       if (historyRes.data.success) {
         setSignalHistory(historyRes.data.data || [])
       }
+      setLastUpdated(new Date())
     } catch (err: any) {
       setError(err.message || 'Failed to load VIX data')
     } finally {
@@ -66,8 +69,16 @@ export default function VIXDashboard() {
     }
   }
 
+  // Initial fetch and 5-minute auto-refresh
   useEffect(() => {
     fetchData()
+
+    // Auto-refresh every 5 minutes (300000ms)
+    const interval = setInterval(() => {
+      fetchData(false) // Don't show loading spinner for auto-refresh
+    }, 5 * 60 * 1000)
+
+    return () => clearInterval(interval)
   }, [])
 
   const getVolRegimeColor = (regime: string) => {
@@ -98,6 +109,17 @@ export default function VIXDashboard() {
     return 'text-primary bg-primary/20 border-primary/30'
   }
 
+  const formatSignalDate = (timestamp: string | null | undefined) => {
+    if (!timestamp) return 'N/A'
+    try {
+      const date = new Date(timestamp)
+      if (isNaN(date.getTime())) return 'N/A'
+      return date.toLocaleString()
+    } catch {
+      return 'N/A'
+    }
+  }
+
   return (
     <div className="min-h-screen">
       <Navigation />
@@ -113,14 +135,22 @@ export default function VIXDashboard() {
                 </div>
                 <p className="text-text-secondary mt-1">Volatility analysis and hedge signal management</p>
               </div>
-              <button
-                onClick={fetchData}
-                disabled={loading}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-primary text-white hover:bg-primary/90 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
+              <div className="flex items-center gap-4">
+                {lastUpdated && (
+                  <div className="text-xs text-text-muted">
+                    Updated: {lastUpdated.toLocaleTimeString()}
+                    <span className="ml-2 text-success">(auto-refresh 5min)</span>
+                  </div>
+                )}
+                <button
+                  onClick={() => fetchData()}
+                  disabled={loading}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-primary text-white hover:bg-primary/90 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
             </div>
 
             {loading && !vixData ? (
@@ -335,11 +365,11 @@ export default function VIXDashboard() {
                           {signalHistory.slice(0, 10).map((signal, idx) => (
                             <tr key={idx} className="border-b border-border/50 hover:bg-background-hover">
                               <td className="py-3 px-4 text-text-secondary text-sm">
-                                {new Date(signal.timestamp).toLocaleString()}
+                                {formatSignalDate(signal.timestamp)}
                               </td>
                               <td className="py-3 px-4">
-                                <span className={`px-2 py-1 rounded text-xs font-semibold ${getSignalColor(signal.signal_type)}`}>
-                                  {signal.signal_type.replace(/_/g, ' ').toUpperCase()}
+                                <span className={`px-2 py-1 rounded text-xs font-semibold ${getSignalColor(signal.signal_type || 'no_action')}`}>
+                                  {(signal.signal_type || 'no_action').replace(/_/g, ' ').toUpperCase()}
                                 </span>
                               </td>
                               <td className="py-3 px-4 text-center font-semibold">
