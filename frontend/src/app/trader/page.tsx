@@ -50,7 +50,7 @@ interface Trade {
   strike: number
   quantity: number
   price: number
-  status: 'filled' | 'pending' | 'cancelled'
+  status: 'filled' | 'pending' | 'cancelled' | 'OPEN' | 'CLOSED'
   pnl?: number
   strategy?: string
   entry_bid?: number
