@@ -112,7 +112,7 @@ export default function AutonomousTrader() {
   const [vixData, setVixData] = useState<any>(null)
 
   // P&L Chart state
-  const [equityCurve, setEquityCurve] = useState<{timestamp: string, equity: number, pnl: number}[]>([])
+  const [equityCurve, setEquityCurve] = useState<{timestamp: string, equity: number, pnl: number, date: string}[]>([])
   const [chartPeriod, setChartPeriod] = useState<7 | 30 | 90>(30)
 
   // Closed Trades state
