@@ -150,6 +150,13 @@ class OptionsBacktester(BacktestBase):
         # Normalize to date-only (strip time) to match price data index
         # Price data has dates like "2022-01-20" while GEX has "2022-01-20 20:47:25"
         gex_df['date'] = gex_df['date'].dt.normalize()
+
+        # CRITICAL: Remove timezone info to match price data (which is timezone-naive)
+        # pd.to_datetime with format='mixed' sometimes creates tz-aware timestamps
+        # Timezone-aware and naive timestamps WON'T match in pandas joins
+        if gex_df['date'].dt.tz is not None:
+            gex_df['date'] = gex_df['date'].dt.tz_localize(None)
+
         gex_df.set_index('date', inplace=True)
 
         # Rename columns to standard names if needed
