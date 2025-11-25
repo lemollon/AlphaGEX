@@ -118,26 +118,28 @@ export default function AutonomousTrader() {
     if (wsData && wsData.type === 'trader_update') {
       // Update performance from WebSocket
       if (wsData.performance) {
+        const perf = wsData.performance
         setPerformance(prev => ({
           ...prev,
-          total_pnl: wsData.performance.net_pnl || 0,
-          win_rate: wsData.performance.win_rate || 0,
-          total_trades: wsData.performance.total_trades || 0,
-          winning_trades: wsData.performance.winning_trades || 0,
-          losing_trades: wsData.performance.losing_trades || 0,
+          total_pnl: perf.net_pnl || 0,
+          win_rate: perf.win_rate || 0,
+          total_trades: perf.total_trades || 0,
+          winning_trades: perf.winning_trades || 0,
+          losing_trades: perf.losing_trades || 0,
         }))
       }
 
       // Update status from WebSocket
       if (wsData.status) {
+        const status = wsData.status
         setTraderStatus(prev => ({
           ...prev,
           is_active: true,
-          status: wsData.status.status,
-          current_action: wsData.status.current_action,
-          market_analysis: wsData.status.market_analysis,
-          last_decision: wsData.status.last_decision,
-          last_check: wsData.status.last_updated || new Date().toISOString(),
+          status: status.status,
+          current_action: status.current_action,
+          market_analysis: status.market_analysis,
+          last_decision: status.last_decision,
+          last_check: status.last_updated || new Date().toISOString(),
         }))
       }
 
