@@ -2811,9 +2811,31 @@ async def get_vix_signal_history(days: int = 30):
         manager = get_vix_hedge_manager()
         history = manager.get_signal_history(days)
 
+        if history.empty:
+            return {"success": True, "data": []}
+
+        # Format data for frontend - combine signal_date and signal_time into timestamp
+        formatted_data = []
+        for _, row in history.iterrows():
+            try:
+                # Combine date and time into ISO timestamp
+                date_str = str(row.get('signal_date', ''))
+                time_str = str(row.get('signal_time', '00:00:00'))
+                timestamp = f"{date_str}T{time_str}"
+            except Exception:
+                timestamp = None
+
+            formatted_data.append({
+                "timestamp": timestamp,
+                "signal_type": row.get('signal_type', 'no_action'),
+                "vix_level": float(row.get('vix_spot', 0)) if row.get('vix_spot') else None,
+                "confidence": float(row.get('confidence', 0)) if row.get('confidence') else None,
+                "action_taken": row.get('recommended_action', 'Monitored')
+            })
+
         return {
             "success": True,
-            "data": history.to_dict(orient='records') if not history.empty else []
+            "data": formatted_data
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -544,8 +544,8 @@ export default function AutonomousTrader() {
             {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-text-primary">Autonomous Trader</h1>
-          <p className="text-text-secondary mt-1">Automated trading based on gamma exposure signals</p>
+          <h1 className="text-3xl font-bold text-text-primary">SPY Autonomous Trader</h1>
+          <p className="text-text-secondary mt-1">$100M capital management for autonomous trading strategies</p>
         </div>
         <div className="flex items-center gap-3">
           {/* WebSocket Connection Indicator */}
@@ -662,7 +662,7 @@ export default function AutonomousTrader() {
       {/* Live Status - Trader Thinking Out Loud */}
       <div className="card">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-text-primary">🤖 Autonomous Trader - Live Status</h2>
+          <h2 className="text-xl font-semibold text-text-primary">SPY Autonomous Trader - Live Status</h2>
           <Bot className="text-primary w-6 h-6 animate-pulse" />
         </div>
 
