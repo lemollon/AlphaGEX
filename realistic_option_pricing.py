@@ -301,26 +301,40 @@ class SpreadPricer:
         # Calculate spread parameters
         spread_width = abs(long_strike - short_strike)
 
+        # Validate spread - width must be greater than debit for debit spreads
+        # For credit spreads, debit will be negative
+        if spread_width < 0.01:
+            # Invalid spread - strikes too close
+            raise ValueError(f"Invalid spread: strikes too close ({long_strike:.2f} vs {short_strike:.2f})")
+
         if option_type == 'call':
             if long_strike < short_strike:
-                # Bull call spread
+                # Bull call spread (debit spread)
+                if debit > spread_width:
+                    # Invalid: paying more than max profit potential
+                    # This can happen with high bid/ask spreads
+                    # Adjust debit to 80% of spread width max
+                    debit = min(debit, spread_width * 0.80)
                 max_profit = spread_width - debit
                 max_loss = debit
                 breakeven = long_strike + debit
             else:
                 # Bear call spread (credit spread)
-                max_profit = debit  # Would be negative (credit received)
+                max_profit = abs(debit)  # Credit received
                 max_loss = spread_width - abs(debit)
                 breakeven = short_strike + abs(debit)
         else:
             if long_strike > short_strike:
-                # Bear put spread
+                # Bear put spread (debit spread)
+                if debit > spread_width:
+                    # Invalid: paying more than max profit potential
+                    debit = min(debit, spread_width * 0.80)
                 max_profit = spread_width - debit
                 max_loss = debit
                 breakeven = long_strike - debit
             else:
                 # Bull put spread (credit spread)
-                max_profit = debit  # Would be negative (credit received)
+                max_profit = abs(debit)  # Credit received
                 max_loss = spread_width - abs(debit)
                 breakeven = short_strike - abs(debit)
 
@@ -419,7 +433,15 @@ class SpreadPricer:
         # Calculate P&L
         entry_debit = spread_details['debit']
         pnl_dollars = current_value - entry_debit
-        pnl_percent = (pnl_dollars / entry_debit) * 100 if entry_debit != 0 else 0
+
+        # Handle edge cases for P&L percentage calculation
+        # For debit spreads: debit should be positive
+        # For credit spreads: debit is negative (but abs used in calculation)
+        if abs(entry_debit) > 0.01:  # Minimum $0.01 debit to avoid division issues
+            pnl_percent = (pnl_dollars / abs(entry_debit)) * 100
+        else:
+            # Invalid spread - debit too small
+            pnl_percent = 0.0
 
         # Estimate IV contribution (rough approximation)
         iv_change = exit_volatility - entry_volatility
