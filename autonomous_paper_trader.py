@@ -18,6 +18,10 @@ from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 from database_adapter import get_connection
 from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
+from trading_costs import (
+    TradingCostsCalculator, get_costs_calculator, PAPER_TRADING_COSTS,
+    OrderSide, SymbolType, apply_slippage_to_entry, apply_slippage_to_exit
+)
 import time
 import os
 
@@ -258,6 +262,10 @@ class AutonomousPaperTrader:
         except ImportError:
             self.competition = None
             print("⚠️ Strategy competition not available")
+
+        # Initialize trading costs calculator for realistic P&L
+        self.costs_calculator = get_costs_calculator('SPY', 'paper')
+        print("✅ Trading costs calculator initialized (slippage + commission modeling)")
 
         # Initialize if first run
         conn = get_connection()
@@ -1178,15 +1186,31 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
 
             # Use theoretical/recommended price if available and data is delayed
             if is_delayed and recommended_entry > 0:
-                entry_price = recommended_entry
+                base_price = recommended_entry
                 calculation_method = option_price_data.get('calculation_method', 'Black-Scholes')
                 price_adjustment_pct = option_price_data.get('price_adjustment_pct', 0)
                 self.log_action('THEORETICAL_PRICE',
-                    f"Using Black-Scholes price: ${entry_price:.2f} (vs delayed mid ${mid:.2f}, {price_adjustment_pct:+.1f}% adj, confidence={confidence})",
+                    f"Using Black-Scholes price: ${base_price:.2f} (vs delayed mid ${mid:.2f}, {price_adjustment_pct:+.1f}% adj, confidence={confidence})",
                     success=True)
             else:
                 # Use mid price (already validated to be > 0)
-                entry_price = mid if mid > 0 else (bid + ask) / 2
+                base_price = mid if mid > 0 else (bid + ask) / 2
+
+            # CRITICAL: Apply slippage to entry price for realistic cost modeling
+            # When buying options, we pay above mid; use actual bid/ask for slippage calc
+            entry_price, slippage_details = self.costs_calculator.calculate_entry_price(
+                bid=bid,
+                ask=ask,
+                contracts=1,  # Will recalculate after sizing
+                side=OrderSide.BUY,
+                symbol_type=SymbolType.ETF
+            )
+
+            # Log slippage impact
+            slippage_cents = (entry_price - mid) * 100  # In cents
+            self.log_action('SLIPPAGE_APPLIED',
+                f"Entry Price: ${entry_price:.4f} (Mid: ${mid:.2f}, Slippage: {slippage_cents:+.1f}¢ or {slippage_details.get('slippage_pct', 0):.2f}%)",
+                success=True)
 
             available = self.get_available_capital()
 
@@ -1246,7 +1270,16 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 contracts = max(1, int(max_position / cost_per_contract))
 
             contracts = min(contracts, 10)  # Max 10 contracts for $5K account
-            total_cost = contracts * entry_price * 100
+
+            # Calculate total cost WITH commission for accurate capital management
+            premium_cost = contracts * entry_price * 100
+            commission = self.costs_calculator.calculate_commission(contracts)
+            total_cost = premium_cost + commission['total_commission']
+
+            # Log commission impact
+            self.log_action('COMMISSION',
+                f"Premium: ${premium_cost:.2f} + Commission: ${commission['total_commission']:.2f} = Total: ${total_cost:.2f}",
+                success=True)
 
             # CRITICAL: Check risk manager limits before executing
             if self.risk_manager:
@@ -2669,26 +2702,46 @@ This trade ensures we're always active in the market"""
                 if option_data.get('error'):
                     continue
 
-                current_price = option_data['mid']
-                if current_price == 0:
-                    current_price = option_data.get('last', pos['entry_price'])
+                current_bid = option_data.get('bid', 0) or 0
+                current_ask = option_data.get('ask', 0) or 0
+                current_mid = option_data['mid']
+                if current_mid == 0:
+                    current_mid = option_data.get('last', pos['entry_price'])
 
-                # Calculate P&L
+                # CRITICAL: Apply exit slippage for realistic P&L
+                # When selling to close a long position, we receive below mid
+                if current_bid > 0 and current_ask > 0:
+                    exit_price, exit_slippage = self.costs_calculator.calculate_entry_price(
+                        bid=current_bid,
+                        ask=current_ask,
+                        contracts=int(pos['contracts']),
+                        side=OrderSide.SELL,  # Selling to close
+                        symbol_type=SymbolType.ETF
+                    )
+                else:
+                    exit_price = current_mid
+                    exit_slippage = {}
+
+                # Calculate P&L with exit slippage and commission
                 entry_value = pos['entry_price'] * pos['contracts'] * 100
-                current_value = current_price * pos['contracts'] * 100
-                unrealized_pnl = current_value - entry_value
+                gross_exit_value = exit_price * pos['contracts'] * 100
+                exit_commission = self.costs_calculator.calculate_commission(int(pos['contracts']))
+                net_exit_value = gross_exit_value - exit_commission['total_commission']
+
+                # P&L = Exit proceeds - Entry cost (commission already paid on entry)
+                unrealized_pnl = net_exit_value - entry_value
                 pnl_pct = (unrealized_pnl / entry_value * 100) if entry_value > 0 else 0
 
-                # Update position with pnl_pct
-                self._update_position(pos['id'], current_price, current_spot, unrealized_pnl, pnl_pct)
+                # Update position with pnl_pct (use exit_price for display)
+                self._update_position(pos['id'], exit_price, current_spot, unrealized_pnl, pnl_pct)
 
                 # Check exit conditions
                 should_exit, reason = self._check_exit_conditions(
-                    pos, pnl_pct, current_price, current_spot, gex_data
+                    pos, pnl_pct, exit_price, current_spot, gex_data
                 )
 
                 if should_exit:
-                    self._close_position(pos['id'], current_price, unrealized_pnl, reason)
+                    self._close_position(pos['id'], exit_price, unrealized_pnl, reason)
 
                     actions_taken.append({
                         'position_id': pos['id'],
