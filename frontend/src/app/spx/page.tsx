@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Building2, DollarSign, TrendingUp, TrendingDown, Activity, Shield, AlertTriangle, Target, BarChart3, PieChart, Briefcase } from 'lucide-react'
+import { Building2, DollarSign, TrendingUp, TrendingDown, Activity, Shield, AlertTriangle, Target, BarChart3, PieChart, Briefcase, Clock } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 
@@ -45,6 +45,38 @@ export default function SPXInstitutionalTrader() {
   const [status, setStatus] = useState<SPXStatus | null>(null)
   const [performance, setPerformance] = useState<SPXPerformance | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [countdown, setCountdown] = useState<string>('--:--')
+
+  // Live countdown timer - updates every second (5-minute scan intervals)
+  useEffect(() => {
+    const updateCountdown = () => {
+      const now = new Date()
+      const minutes = now.getMinutes()
+      const seconds = now.getSeconds()
+
+      // Calculate minutes until next 5-minute mark (0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55)
+      const nextFiveMin = Math.ceil((minutes + 1) / 5) * 5
+      const minutesLeft = nextFiveMin - minutes - 1
+      const secondsLeft = 60 - seconds
+
+      // Handle edge case when we're at exactly a 5-minute mark
+      if (secondsLeft === 60) {
+        setCountdown(`${minutesLeft + 1}:00`)
+      } else if (minutesLeft < 0 || (minutesLeft === 0 && secondsLeft === 0)) {
+        setCountdown('0:00')
+      } else {
+        setCountdown(`${minutesLeft}:${secondsLeft.toString().padStart(2, '0')}`)
+      }
+    }
+
+    // Update immediately
+    updateCountdown()
+
+    // Update every second
+    const interval = setInterval(updateCountdown, 1000)
+
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -102,6 +134,14 @@ export default function SPXInstitutionalTrader() {
                 <p className="text-text-secondary mt-1">$100M capital management for SPX index options</p>
               </div>
               <div className="flex items-center gap-3">
+                {/* Live Countdown Timer */}
+                <div className="flex items-center gap-3 px-4 py-2 bg-background-primary rounded-lg border border-border">
+                  <Clock className="w-5 h-5 text-warning animate-pulse" />
+                  <div>
+                    <p className="text-xs text-text-muted">Next Scan In</p>
+                    <p className="text-xl font-bold text-warning font-mono">{countdown}</p>
+                  </div>
+                </div>
                 <div className="px-4 py-2 rounded-lg font-semibold bg-primary/20 text-primary">
                   INSTITUTIONAL
                 </div>
