@@ -97,7 +97,7 @@ export default function SPXInstitutionalTrader() {
               <div>
                 <div className="flex items-center gap-3">
                   <Building2 className="w-8 h-8 text-primary" />
-                  <h1 className="text-3xl font-bold text-text-primary">SPX Institutional Trader</h1>
+                  <h1 className="text-3xl font-bold text-text-primary">SPX Autonomous Trader</h1>
                 </div>
                 <p className="text-text-secondary mt-1">$100M capital management for SPX index options</p>
               </div>
