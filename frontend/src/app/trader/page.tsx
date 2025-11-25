@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3 } from 'lucide-react'
+import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3, Calendar } from 'lucide-react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useTraderWebSocket } from '@/hooks/useTraderWebSocket'
@@ -110,6 +111,10 @@ export default function AutonomousTrader() {
   const [vixSignal, setVixSignal] = useState<any>(null)
   const [vixData, setVixData] = useState<any>(null)
 
+  // P&L Chart state
+  const [equityCurve, setEquityCurve] = useState<{timestamp: string, equity: number, pnl: number}[]>([])
+  const [chartPeriod, setChartPeriod] = useState<7 | 30 | 90>(30)
+
   // WebSocket connection for real-time updates
   const { data: wsData, isConnected: wsConnected, error: wsError } = useTraderWebSocket()
 
@@ -188,11 +193,12 @@ export default function AutonomousTrader() {
           apiClient.getCompetitionLeaderboard().catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getAllPatternBacktests(90).catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getRiskStatus().catch(() => ({ data: { success: false, data: null } })),
-          apiClient.getTradeLog()
+          apiClient.getTradeLog(),
+          apiClient.getEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
         ])
 
         // Extract results (fulfilled promises only)
-        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes] = results.map(result =>
+        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes] = results.map(result =>
           result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
         )
 
@@ -264,6 +270,22 @@ export default function AutonomousTrader() {
           setTradeLog(tradeLogRes.data.data || [])
         }
 
+        // Set equity curve data for P&L chart
+        if (equityCurveRes.data.success && equityCurveRes.data.data) {
+          const curveData = equityCurveRes.data.data.map((point: any, idx: number, arr: any[]) => {
+            // Calculate cumulative P&L from starting equity
+            const startingEquity = arr[0]?.equity || 10000
+            const pnl = point.equity - startingEquity
+            return {
+              timestamp: point.timestamp,
+              equity: point.equity,
+              pnl: pnl,
+              date: new Date(point.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          })
+          setEquityCurve(curveData)
+        }
+
         // Fetch VIX hedge signal data
         try {
           const [vixSignalRes, vixDataRes] = await Promise.all([
@@ -291,7 +313,7 @@ export default function AutonomousTrader() {
 
     // No auto-refresh - protects API rate limit (20 calls/min shared across all users)
     // Trader background worker updates independently - UI will refresh when user navigates
-  }, [])
+  }, [chartPeriod])
 
   // Trader runs automatically as a background worker - no manual control needed
   // It checks every 5 minutes ALL DAY during market hours (8:30 AM - 3:00 PM CT)
@@ -575,6 +597,125 @@ export default function AutonomousTrader() {
             <TrendingUp className="text-primary w-8 h-8" />
           </div>
         </div>
+      </div>
+
+      {/* P&L Over Time Chart */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <TrendingUp className="w-6 h-6 text-primary" />
+            <h2 className="text-xl font-semibold text-text-primary">P&L Over Time</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Time Period Selector */}
+            <div className="flex bg-background-hover rounded-lg p-1">
+              {[7, 30, 90].map((days) => (
+                <button
+                  key={days}
+                  onClick={() => setChartPeriod(days as 7 | 30 | 90)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    chartPeriod === days
+                      ? 'bg-primary text-white'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {days}D
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {equityCurve.length > 0 ? (
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={equityCurve} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorPnl" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis
+                  dataKey="date"
+                  stroke="#9ca3af"
+                  tick={{ fontSize: 12 }}
+                  tickLine={false}
+                />
+                <YAxis
+                  stroke="#9ca3af"
+                  tick={{ fontSize: 12 }}
+                  tickLine={false}
+                  tickFormatter={(value) => `$${value >= 0 ? '+' : ''}${value.toLocaleString()}`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#1f2937',
+                    border: '1px solid #374151',
+                    borderRadius: '8px',
+                    padding: '12px'
+                  }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number) => [
+                    <span style={{ color: value >= 0 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>
+                      ${value >= 0 ? '+' : ''}{value.toFixed(2)}
+                    </span>,
+                    'P&L'
+                  ]}
+                />
+                <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="3 3" />
+                <Area
+                  type="monotone"
+                  dataKey="pnl"
+                  stroke={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"}
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorPnl)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="h-80 flex items-center justify-center">
+            <div className="text-center">
+              <BarChart3 className="w-12 h-12 text-text-muted mx-auto mb-3" />
+              <p className="text-text-secondary">No trading data available yet</p>
+              <p className="text-text-muted text-sm mt-1">P&L chart will appear as trades are executed</p>
+            </div>
+          </div>
+        )}
+
+        {/* Chart Summary Stats */}
+        {equityCurve.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-border">
+            <div className="text-center">
+              <p className="text-text-muted text-xs mb-1">Period Start</p>
+              <p className="text-text-primary font-semibold">
+                {equityCurve[0]?.date || 'N/A'}
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-text-muted text-xs mb-1">Period End</p>
+              <p className="text-text-primary font-semibold">
+                {equityCurve[equityCurve.length - 1]?.date || 'N/A'}
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-text-muted text-xs mb-1">Total P&L</p>
+              <p className={`font-bold ${equityCurve[equityCurve.length - 1]?.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                {equityCurve[equityCurve.length - 1]?.pnl >= 0 ? '+' : ''}
+                {formatCurrency(equityCurve[equityCurve.length - 1]?.pnl || 0)}
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-text-muted text-xs mb-1">Current Equity</p>
+              <p className="text-text-primary font-bold">
+                {formatCurrency(equityCurve[equityCurve.length - 1]?.equity || 0)}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* VIX Hedge Signal - Risk Management */}
