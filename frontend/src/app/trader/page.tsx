@@ -570,16 +570,36 @@ export default function AutonomousTrader() {
               <tr className="border-b border-border">
                 <th className="text-left py-3 px-4 text-text-secondary font-medium">Time</th>
                 <th className="text-left py-3 px-4 text-text-secondary font-medium">Strategy</th>
-                <th className="text-left py-3 px-4 text-text-secondary font-medium">Symbol</th>
-                <th className="text-right py-3 px-4 text-text-secondary font-medium">Entry</th>
-                <th className="text-right py-3 px-4 text-text-secondary font-medium">Current</th>
+                <th className="text-left py-3 px-4 text-text-secondary font-medium">Contract</th>
+                <th className="text-center py-3 px-4 text-text-secondary font-medium">Expiration</th>
+                <th className="text-right py-3 px-4 text-text-secondary font-medium">Entry $</th>
+                <th className="text-right py-3 px-4 text-text-secondary font-medium">Current $</th>
                 <th className="text-right py-3 px-4 text-text-secondary font-medium">Status</th>
                 <th className="text-right py-3 px-4 text-text-secondary font-medium">P&L</th>
                 <th className="text-right py-3 px-4 text-text-secondary font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {recentTrades.map((trade) => (
+              {recentTrades.map((trade) => {
+                // Calculate real P&L from entry and current prices
+                const entryPrice = Math.abs(trade.price || 0);
+                const currentPrice = Math.abs(trade.current_price || trade.price || 0);
+                const contracts = trade.quantity || 1;
+                const entryValue = entryPrice * contracts * 100;
+                const currentValue = currentPrice * contracts * 100;
+                const dollarChange = currentValue - entryValue;
+                const pctChange = entryValue > 0 ? (dollarChange / entryValue) * 100 : 0;
+                const displayPnl = trade.pnl !== undefined && trade.pnl !== null ? trade.pnl : dollarChange;
+
+                // Format contract display (e.g., "SPY $595C")
+                const optionType = trade.type?.toUpperCase()?.charAt(0) || 'C';
+                const strike = trade.strike || 0;
+                const contractDisplay = strike > 0 ? `${trade.symbol} $${strike}${optionType}` : trade.symbol;
+
+                // Format expiration
+                const expDate = trade.expiration_date ? new Date(trade.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
+
+                return (
                 <>
                   <tr
                     key={trade.id}
@@ -589,41 +609,53 @@ export default function AutonomousTrader() {
                     <td className="py-3 px-4 text-text-secondary text-sm">{formatTime(trade.timestamp)}</td>
                     <td className="py-3 px-4">
                       <div className="font-semibold text-text-primary text-sm">{trade.strategy || trade.action}</div>
-                      <div className="text-xs text-text-secondary">{trade.type}</div>
+                      <div className="text-xs text-text-secondary">{contracts}x contracts</div>
                     </td>
-                    <td className="py-3 px-4 text-text-primary font-medium">{trade.symbol}</td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="text-text-primary font-semibold">{formatCurrency(Math.abs(trade.price))}</div>
-                      <div className="text-xs text-text-secondary">@ {formatCurrency(trade.entry_spot_price || 0)}</div>
+                    <td className="py-3 px-4">
+                      <div className="text-text-primary font-medium">{contractDisplay}</div>
+                      <div className="text-xs text-text-secondary">@ {formatCurrency(trade.entry_spot_price || 0)} spot</div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className="text-text-primary text-sm">{expDate}</span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <div className="text-text-primary font-semibold">{formatCurrency(Math.abs(trade.current_price || trade.price))}</div>
+                      <div className={`font-semibold ${entryPrice > 0 ? 'text-text-primary' : 'text-danger'}`}>
+                        {entryPrice > 0 ? formatCurrency(entryPrice) : '$0.00 ⚠️'}
+                      </div>
+                      <div className="text-xs text-text-secondary">per contract</div>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="text-text-primary font-semibold">{formatCurrency(currentPrice)}</div>
                       <div className="text-xs text-text-secondary">@ {formatCurrency(trade.current_spot_price || trade.entry_spot_price || 0)}</div>
                     </td>
                     <td className="py-3 px-4 text-right">
                       <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${
+                        trade.status === 'OPEN' ? 'bg-success/20 text-success' :
+                        trade.status === 'CLOSED' ? 'bg-primary/20 text-primary' :
                         trade.status === 'filled' ? 'bg-success/20 text-success' :
                         trade.status === 'pending' ? 'bg-warning/20 text-warning' :
                         'bg-danger/20 text-danger'
                       }`}>
-                        {trade.status === 'filled' && <CheckCircle className="w-3 h-3" />}
+                        {(trade.status === 'filled' || trade.status === 'OPEN') && <CheckCircle className="w-3 h-3" />}
+                        {trade.status === 'CLOSED' && <XCircle className="w-3 h-3" />}
                         {trade.status === 'pending' && <Clock className="w-3 h-3" />}
-                        {trade.status === 'cancelled' && <XCircle className="w-3 h-3" />}
-                        {trade.status.toUpperCase()}
+                        {trade.status?.toUpperCase() || 'UNKNOWN'}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      {trade.pnl !== undefined && (
+                      {entryPrice > 0 ? (
                         <div>
                           <div className={`font-bold text-lg ${
-                            trade.pnl >= 0 ? 'text-success' : 'text-danger'
+                            displayPnl >= 0 ? 'text-success' : 'text-danger'
                           }`}>
-                            {trade.pnl >= 0 ? '+' : ''}{formatCurrency(trade.pnl)}
+                            {displayPnl >= 0 ? '+' : ''}{formatCurrency(displayPnl)}
                           </div>
-                          <div className="text-xs text-text-secondary">
-                            {((trade.pnl / Math.abs(trade.price)) * 100).toFixed(1)}%
+                          <div className={`text-xs ${pctChange >= 0 ? 'text-success' : 'text-danger'}`}>
+                            {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(1)}%
                           </div>
                         </div>
+                      ) : (
+                        <div className="text-danger text-sm">No entry price</div>
                       )}
                     </td>
                     <td className="py-3 px-4 text-right">
@@ -634,7 +666,7 @@ export default function AutonomousTrader() {
                   </tr>
                   {expandedTradeId === trade.id && trade.trade_reasoning && (
                     <tr className="bg-background-hover">
-                      <td colSpan={8} className="py-4 px-6">
+                      <td colSpan={9} className="py-4 px-6">
                         <div className="space-y-3">
                           <h4 className="font-semibold text-primary flex items-center gap-2">
                             <Target className="w-4 h-4" />
@@ -677,7 +709,8 @@ export default function AutonomousTrader() {
                     </tr>
                   )}
                 </>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

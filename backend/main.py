@@ -2740,7 +2740,7 @@ async def get_trader_live_status():
 
 @app.get("/api/trader/performance")
 async def get_trader_performance():
-    """Get autonomous trader performance metrics"""
+    """Get autonomous trader performance metrics with real calculations"""
     if not trader_available:
         return {
             "success": False,
@@ -2760,23 +2760,61 @@ async def get_trader_performance():
     try:
         perf = trader.get_performance()
 
-        # Calculate additional metrics (based on CLOSED trades only, not open positions)
-        closed_count = perf.get('closed_trades', 0)
-        winning_trades = int(closed_count * perf['win_rate'] / 100) if closed_count > 0 else 0
-        losing_trades = closed_count - winning_trades
+        # Get latest equity snapshot for real Sharpe and max drawdown
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get latest equity snapshot
+        cursor.execute("""
+            SELECT sharpe_ratio, max_drawdown_pct, daily_pnl
+            FROM autonomous_equity_snapshots
+            ORDER BY snapshot_date DESC, snapshot_time DESC
+            LIMIT 1
+        """)
+        snapshot = cursor.fetchone()
+        sharpe_ratio = float(snapshot[0] or 0) if snapshot else 0
+        max_drawdown = float(snapshot[1] or 0) if snapshot else 0
+
+        # Get today's P&L from closed trades and open positions
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM autonomous_closed_trades
+            WHERE exit_date = %s
+        """, (today,))
+        today_realized = cursor.fetchone()[0] or 0
+
+        cursor.execute("""
+            SELECT COALESCE(SUM(unrealized_pnl), 0)
+            FROM autonomous_open_positions
+        """)
+        today_unrealized = cursor.fetchone()[0] or 0
+
+        conn.close()
+
+        today_pnl = float(today_realized) + float(today_unrealized)
 
         return {
             "success": True,
             "data": {
                 "total_pnl": perf['total_pnl'],
-                "today_pnl": perf['unrealized_pnl'],  # Approximate
+                "today_pnl": today_pnl,
                 "win_rate": perf['win_rate'],
-                "total_trades": perf['total_trades'],  # All positions (open + closed)
-                "closed_trades": closed_count,  # Only closed positions
-                "winning_trades": winning_trades,
-                "losing_trades": losing_trades,
-                "sharpe_ratio": 0,  # TODO: Calculate sharpe ratio
-                "max_drawdown": 0  # TODO: Calculate max drawdown
+                "total_trades": perf['total_trades'],
+                "closed_trades": perf.get('closed_trades', 0),
+                "open_positions": perf.get('open_positions', 0),
+                "winning_trades": perf.get('winning_trades', 0),
+                "losing_trades": perf.get('losing_trades', 0),
+                "sharpe_ratio": sharpe_ratio,
+                "max_drawdown": max_drawdown,
+                "realized_pnl": perf.get('realized_pnl', 0),
+                "unrealized_pnl": perf.get('unrealized_pnl', 0),
+                "starting_capital": perf.get('starting_capital', 5000),
+                "current_value": perf.get('current_value', 5000),
+                "return_pct": perf.get('return_pct', 0)
             }
         }
     except Exception as e:
@@ -2784,7 +2822,7 @@ async def get_trader_performance():
 
 @app.get("/api/trader/trades")
 async def get_trader_trades(limit: int = 10):
-    """Get recent trades from autonomous trader"""
+    """Get recent trades from autonomous trader - combines open and closed positions"""
     if not trader_available:
         return {
             "success": False,
@@ -2796,14 +2834,46 @@ async def get_trader_trades(limit: int = 10):
         import pandas as pd
 
         conn = get_connection()
-        trades = pd.read_sql_query(f"""
-            SELECT * FROM autonomous_positions
+
+        # Get open positions
+        open_trades = pd.read_sql_query(f"""
+            SELECT id, symbol, strategy, action, strike, option_type, expiration_date,
+                   contracts, contract_symbol, entry_date, entry_time, entry_price,
+                   entry_bid, entry_ask, entry_spot_price, current_price,
+                   current_spot_price, unrealized_pnl, unrealized_pnl_pct,
+                   confidence, gex_regime, trade_reasoning, 'OPEN' as status,
+                   NULL as exit_date, NULL as exit_time, NULL as exit_price,
+                   NULL as realized_pnl, NULL as exit_reason
+            FROM autonomous_open_positions
             ORDER BY entry_date DESC, entry_time DESC
             LIMIT {limit}
         """, conn)
+
+        # Get closed trades
+        closed_trades = pd.read_sql_query(f"""
+            SELECT id, symbol, strategy, action, strike, option_type, expiration_date,
+                   contracts, contract_symbol, entry_date, entry_time, entry_price,
+                   entry_bid, entry_ask, entry_spot_price, exit_price as current_price,
+                   exit_spot_price as current_spot_price, realized_pnl as unrealized_pnl,
+                   realized_pnl_pct as unrealized_pnl_pct, confidence, gex_regime,
+                   trade_reasoning, 'CLOSED' as status, exit_date, exit_time,
+                   exit_price, realized_pnl, exit_reason
+            FROM autonomous_closed_trades
+            ORDER BY exit_date DESC, exit_time DESC
+            LIMIT {limit}
+        """, conn)
+
         conn.close()
 
-        trades_list = trades.to_dict('records') if not trades.empty else []
+        # Combine and sort by date
+        all_trades = pd.concat([open_trades, closed_trades], ignore_index=True)
+        if not all_trades.empty:
+            all_trades = all_trades.sort_values(
+                by=['entry_date', 'entry_time'],
+                ascending=[False, False]
+            ).head(limit)
+
+        trades_list = all_trades.to_dict('records') if not all_trades.empty else []
 
         return {
             "success": True,
@@ -2814,7 +2884,7 @@ async def get_trader_trades(limit: int = 10):
 
 @app.get("/api/trader/positions")
 async def get_open_positions():
-    """Get currently open positions"""
+    """Get currently open positions from autonomous_open_positions table"""
     if not trader_available:
         return {
             "success": False,
@@ -2827,8 +2897,7 @@ async def get_open_positions():
 
         conn = get_connection()
         positions = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions
-            WHERE status = 'OPEN'
+            SELECT * FROM autonomous_open_positions
             ORDER BY entry_date DESC, entry_time DESC
         """, conn)
         conn.close()
@@ -2842,9 +2911,39 @@ async def get_open_positions():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/trader/closed-trades")
+async def get_closed_trades(limit: int = 50):
+    """Get closed trades from autonomous_closed_trades table"""
+    if not trader_available:
+        return {
+            "success": False,
+            "message": "Trader not configured",
+            "data": []
+        }
+
+    try:
+        import pandas as pd
+
+        conn = get_connection()
+        trades = pd.read_sql_query(f"""
+            SELECT * FROM autonomous_closed_trades
+            ORDER BY exit_date DESC, exit_time DESC
+            LIMIT {limit}
+        """, conn)
+        conn.close()
+
+        trades_list = trades.to_dict('records') if not trades.empty else []
+
+        return {
+            "success": True,
+            "data": trades_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/trader/trade-log")
 async def get_trade_log():
-    """Get today's trade log"""
+    """Get today's trade activity from autonomous_trade_activity table"""
     if not trader_available:
         return JSONResponse({
             "success": False,
@@ -2864,21 +2963,21 @@ async def get_trade_log():
         from intelligence_and_strategies import get_local_time
         today = get_local_time('US/Central').strftime('%Y-%m-%d')
 
-        # Get trade log and join with positions for P&L
+        # Get trade activity from new table
         log_entries = pd.read_sql_query(f"""
             SELECT
-                l.id,
-                l.date,
-                l.time,
-                l.action,
-                l.details,
-                l.position_id,
-                l.success,
-                COALESCE(p.realized_pnl, p.unrealized_pnl, 0) as pnl
-            FROM autonomous_trade_log l
-            LEFT JOIN autonomous_positions p ON l.position_id = p.id
-            WHERE l.date = '{today}'
-            ORDER BY l.time DESC
+                id,
+                activity_date as date,
+                activity_time as time,
+                action_type as action,
+                details,
+                position_id,
+                pnl_impact as pnl,
+                success,
+                error_message
+            FROM autonomous_trade_activity
+            WHERE activity_date = '{today}'
+            ORDER BY activity_time DESC
         """, conn)
         conn.close()
 
@@ -2911,7 +3010,7 @@ async def get_trade_log():
 
 @app.get("/api/trader/equity-curve")
 async def get_equity_curve(days: int = 30):
-    """Get historical equity curve from trade log"""
+    """Get historical equity curve from equity_snapshots table"""
     if not trader_available:
         return {
             "success": False,
@@ -2929,57 +3028,85 @@ async def get_equity_curve(days: int = 30):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
 
-        # Fetch all trades with realized P&L
-        trades = pd.read_sql_query("""
-            SELECT date, time, action, details, realized_pnl
-            FROM autonomous_trade_log
-            WHERE action IN ('BUY', 'SELL', 'CLOSE')
-            ORDER BY date ASC, time ASC
+        # Fetch equity snapshots from new table
+        snapshots = pd.read_sql_query(f"""
+            SELECT
+                snapshot_date,
+                snapshot_time,
+                starting_capital,
+                total_realized_pnl,
+                total_unrealized_pnl,
+                account_value,
+                daily_pnl,
+                daily_return_pct,
+                total_return_pct,
+                max_drawdown_pct,
+                sharpe_ratio,
+                win_rate,
+                total_trades
+            FROM autonomous_equity_snapshots
+            WHERE snapshot_date >= '{start_date.strftime('%Y-%m-%d')}'
+            ORDER BY snapshot_date ASC, snapshot_time ASC
         """, conn)
         conn.close()
 
-        if trades.empty:
+        starting_equity = 5000
+
+        if snapshots.empty:
+            # Return starting point if no snapshots
             return {
                 "success": True,
-                "data": [],
-                "message": "No trade history available"
+                "data": [{
+                    "timestamp": int(start_date.timestamp()),
+                    "equity": starting_equity,
+                    "daily_pnl": 0,
+                    "total_return_pct": 0,
+                    "max_drawdown_pct": 0,
+                    "sharpe_ratio": 0,
+                    "win_rate": 0
+                }],
+                "total_pnl": 0,
+                "starting_equity": starting_equity,
+                "sharpe_ratio": 0,
+                "max_drawdown_pct": 0,
+                "win_rate": 0,
+                "message": "No equity snapshots yet - data will appear after first trade"
             }
 
-        # Calculate cumulative equity curve
-        starting_equity = 5000  # TODO: Get from config
+        # Convert snapshots to equity curve data
         equity_data = []
-
-        # Add starting point
-        equity_data.append({
-            "timestamp": int(start_date.timestamp()),
-            "equity": starting_equity
-        })
-
-        cumulative_pnl = 0
-        for _, trade in trades.iterrows():
-            if pd.notna(trade['realized_pnl']) and trade['realized_pnl'] != 0:
-                cumulative_pnl += trade['realized_pnl']
-
-                # Parse timestamp
-                trade_datetime = datetime.strptime(f"{trade['date']} {trade['time']}", '%Y-%m-%d %H:%M:%S')
+        for _, snapshot in snapshots.iterrows():
+            try:
+                snapshot_datetime = datetime.strptime(
+                    f"{snapshot['snapshot_date']} {snapshot['snapshot_time']}",
+                    '%Y-%m-%d %H:%M:%S'
+                )
 
                 equity_data.append({
-                    "timestamp": int(trade_datetime.timestamp()),
-                    "equity": starting_equity + cumulative_pnl
+                    "timestamp": int(snapshot_datetime.timestamp()),
+                    "equity": float(snapshot['account_value']),
+                    "daily_pnl": float(snapshot['daily_pnl'] or 0),
+                    "total_return_pct": float(snapshot['total_return_pct'] or 0),
+                    "max_drawdown_pct": float(snapshot['max_drawdown_pct'] or 0),
+                    "sharpe_ratio": float(snapshot['sharpe_ratio'] or 0),
+                    "win_rate": float(snapshot['win_rate'] or 0)
                 })
+            except Exception:
+                continue
 
-        # Add current point if we have recent data
-        if equity_data:
-            equity_data.append({
-                "timestamp": int(end_date.timestamp()),
-                "equity": starting_equity + cumulative_pnl
-            })
+        # Get latest metrics
+        latest = snapshots.iloc[-1] if not snapshots.empty else None
+        total_pnl = float(latest['total_realized_pnl'] or 0) + float(latest['total_unrealized_pnl'] or 0) if latest is not None else 0
 
         return {
             "success": True,
             "data": equity_data,
-            "total_pnl": cumulative_pnl,
-            "starting_equity": starting_equity
+            "total_pnl": total_pnl,
+            "starting_equity": starting_equity,
+            "sharpe_ratio": float(latest['sharpe_ratio'] or 0) if latest is not None else 0,
+            "max_drawdown_pct": float(latest['max_drawdown_pct'] or 0) if latest is not None else 0,
+            "win_rate": float(latest['win_rate'] or 0) if latest is not None else 0,
+            "total_trades": int(latest['total_trades'] or 0) if latest is not None else 0
         }
     except Exception as e:
         print(f"Error fetching equity curve: {e}")

@@ -147,42 +147,115 @@ class AutonomousPaperTrader:
         conn.close()
 
     def _ensure_tables(self):
-        """Create database tables for autonomous trading"""
+        """Create database tables for autonomous trading - NEW SCHEMA"""
         conn = get_connection()
         c = conn.cursor()
 
-        # Positions table
+        # OPEN POSITIONS table - currently active trades
         c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_positions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                strategy TEXT NOT NULL,
-                action TEXT NOT NULL,
-                entry_date TEXT NOT NULL,
-                entry_time TEXT NOT NULL,
-                strike REAL NOT NULL,
-                option_type TEXT NOT NULL,
-                expiration_date TEXT NOT NULL,
-                contracts INTEGER NOT NULL,
-                entry_price REAL NOT NULL,
-                entry_bid REAL,
-                entry_ask REAL,
-                entry_spot_price REAL,
-                current_price REAL,
-                current_spot_price REAL,
-                unrealized_pnl REAL,
-                status TEXT DEFAULT 'OPEN',
-                closed_date TEXT,
-                closed_time TEXT,
-                exit_price REAL,
-                realized_pnl REAL,
-                exit_reason TEXT,
+            CREATE TABLE IF NOT EXISTS autonomous_open_positions (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                strategy VARCHAR(100) NOT NULL,
+                action VARCHAR(50) NOT NULL,
+                strike DECIMAL(10,2) NOT NULL,
+                option_type VARCHAR(20) NOT NULL,
+                expiration_date DATE NOT NULL,
+                contracts INTEGER NOT NULL DEFAULT 1,
+                contract_symbol VARCHAR(50),
+                entry_date DATE NOT NULL,
+                entry_time TIME NOT NULL,
+                entry_price DECIMAL(10,4) NOT NULL,
+                entry_bid DECIMAL(10,4),
+                entry_ask DECIMAL(10,4),
+                entry_spot_price DECIMAL(10,2),
+                current_price DECIMAL(10,4),
+                current_spot_price DECIMAL(10,2),
+                last_updated TIMESTAMP DEFAULT NOW(),
+                unrealized_pnl DECIMAL(12,2) DEFAULT 0,
+                unrealized_pnl_pct DECIMAL(8,4) DEFAULT 0,
                 confidence INTEGER,
-                gex_regime TEXT,
-                entry_net_gex REAL,
-                entry_flip_point REAL,
+                gex_regime VARCHAR(100),
+                entry_net_gex DECIMAL(15,2),
+                entry_flip_point DECIMAL(10,2),
                 trade_reasoning TEXT,
-                contract_symbol TEXT
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+
+        # CLOSED TRADES table - historical trades with real P&L
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS autonomous_closed_trades (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                strategy VARCHAR(100) NOT NULL,
+                action VARCHAR(50) NOT NULL,
+                strike DECIMAL(10,2) NOT NULL,
+                option_type VARCHAR(20) NOT NULL,
+                expiration_date DATE NOT NULL,
+                contracts INTEGER NOT NULL DEFAULT 1,
+                contract_symbol VARCHAR(50),
+                entry_date DATE NOT NULL,
+                entry_time TIME NOT NULL,
+                entry_price DECIMAL(10,4) NOT NULL,
+                entry_bid DECIMAL(10,4),
+                entry_ask DECIMAL(10,4),
+                entry_spot_price DECIMAL(10,2),
+                exit_date DATE NOT NULL,
+                exit_time TIME NOT NULL,
+                exit_price DECIMAL(10,4) NOT NULL,
+                exit_spot_price DECIMAL(10,2),
+                exit_reason VARCHAR(100),
+                realized_pnl DECIMAL(12,2) NOT NULL,
+                realized_pnl_pct DECIMAL(8,4) NOT NULL,
+                confidence INTEGER,
+                gex_regime VARCHAR(100),
+                entry_net_gex DECIMAL(15,2),
+                entry_flip_point DECIMAL(10,2),
+                trade_reasoning TEXT,
+                hold_duration_minutes INTEGER,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+
+        # EQUITY SNAPSHOTS table - for P&L time series graphing
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS autonomous_equity_snapshots (
+                id SERIAL PRIMARY KEY,
+                snapshot_date DATE NOT NULL,
+                snapshot_time TIME NOT NULL,
+                snapshot_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                starting_capital DECIMAL(12,2) NOT NULL DEFAULT 5000,
+                total_realized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
+                total_unrealized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
+                account_value DECIMAL(12,2) NOT NULL,
+                daily_pnl DECIMAL(12,2) DEFAULT 0,
+                daily_return_pct DECIMAL(8,4) DEFAULT 0,
+                total_return_pct DECIMAL(8,4) DEFAULT 0,
+                max_drawdown_pct DECIMAL(8,4) DEFAULT 0,
+                sharpe_ratio DECIMAL(8,4) DEFAULT 0,
+                open_positions_count INTEGER DEFAULT 0,
+                total_trades INTEGER DEFAULT 0,
+                winning_trades INTEGER DEFAULT 0,
+                losing_trades INTEGER DEFAULT 0,
+                win_rate DECIMAL(6,4) DEFAULT 0
+            )
+        """)
+
+        # TRADE ACTIVITY table - all trader actions/decisions
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS autonomous_trade_activity (
+                id SERIAL PRIMARY KEY,
+                activity_date DATE NOT NULL,
+                activity_time TIME NOT NULL,
+                activity_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                action_type VARCHAR(50) NOT NULL,
+                symbol VARCHAR(10) DEFAULT 'SPY',
+                details TEXT,
+                position_id INTEGER,
+                pnl_impact DECIMAL(12,2),
+                success BOOLEAN DEFAULT TRUE,
+                error_message TEXT
             )
         """)
 
@@ -352,7 +425,7 @@ class AutonomousPaperTrader:
         c = conn.cursor()
 
         # Count open positions - respect max open positions limit
-        c.execute("SELECT COUNT(*) FROM autonomous_positions WHERE status = 'OPEN'")
+        c.execute("SELECT COUNT(*) FROM autonomous_open_positions")
         open_positions = c.fetchone()[0]
         max_positions = 10  # Configurable limit
 
@@ -361,12 +434,20 @@ class AutonomousPaperTrader:
             return False  # Too many open positions
 
         # Check today's P&L - respect daily loss limit
+        # Get realized from closed trades + unrealized from open positions
         c.execute("""
-            SELECT COALESCE(SUM(realized_pnl), 0) + COALESCE(SUM(unrealized_pnl), 0) as total_pnl
-            FROM autonomous_positions
-            WHERE entry_date = ?
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM autonomous_closed_trades
+            WHERE exit_date = ?
         """, (today,))
-        today_pnl = c.fetchone()[0]
+        today_realized = c.fetchone()[0] or 0
+
+        c.execute("""
+            SELECT COALESCE(SUM(unrealized_pnl), 0)
+            FROM autonomous_open_positions
+        """)
+        today_unrealized = c.fetchone()[0] or 0
+        today_pnl = float(today_realized) + float(today_unrealized)
         conn.close()
 
         # Get starting capital
@@ -1778,6 +1859,18 @@ This trade ensures we're always active in the market"""
                        vix_current: float = 18.0, regime_result: Dict = None) -> Optional[int]:
         """Execute the trade and send push notification"""
 
+        # CRITICAL VALIDATION: Entry price must be > 0
+        # This prevents fake P&L calculations
+        abs_entry_price = abs(entry_price) if entry_price else 0
+        if abs_entry_price <= 0:
+            self.log_action(
+                'ERROR',
+                f"REJECTED: Cannot execute trade with $0 entry price. Strategy: {trade['strategy']}",
+                success=False
+            )
+            self._log_trade_activity('ERROR', 'SPY', f"Trade rejected - entry price is $0 for {trade['strategy']}", None, None, False, "Entry price validation failed")
+            return None
+
         # CRITICAL: Log trade decision to database
         if self.db_logger:
             self.db_logger.log_trade_decision(
@@ -1798,14 +1891,16 @@ This trade ensures we're always active in the market"""
 
         now = datetime.now(CENTRAL_TZ)
 
+        # Insert into NEW autonomous_open_positions table with RETURNING for PostgreSQL
         c.execute("""
-            INSERT INTO autonomous_positions (
+            INSERT INTO autonomous_open_positions (
                 symbol, strategy, action, entry_date, entry_time, strike, option_type,
                 expiration_date, contracts, entry_price, entry_bid, entry_ask,
                 entry_spot_price, current_price, current_spot_price, unrealized_pnl,
-                status, confidence, gex_regime, entry_net_gex, entry_flip_point,
+                unrealized_pnl_pct, confidence, gex_regime, entry_net_gex, entry_flip_point,
                 trade_reasoning, contract_symbol
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
         """, (
             trade['symbol'],
             trade['strategy'],
@@ -1816,14 +1911,14 @@ This trade ensures we're always active in the market"""
             trade['option_type'],
             exp_date,
             contracts,
-            entry_price,
+            abs_entry_price,  # Use absolute value for storage
             option_data.get('bid', 0),
             option_data.get('ask', 0),
             gex_data.get('spot_price', 0),
-            entry_price,
+            abs_entry_price,  # Current price starts at entry
             gex_data.get('spot_price', 0),
-            0.0,
-            'OPEN',
+            0.0,  # unrealized_pnl starts at 0
+            0.0,  # unrealized_pnl_pct starts at 0
             trade['confidence'],
             f"GEX: ${gex_data.get('net_gex', 0)/1e9:.2f}B",
             gex_data.get('net_gex', 0),
@@ -1832,8 +1927,23 @@ This trade ensures we're always active in the market"""
             option_data.get('contract_symbol', '')
         ))
 
-        position_id = c.lastrowid
+        # Get the inserted position ID (PostgreSQL RETURNING)
+        result = c.fetchone()
+        position_id = result[0] if result else None
         conn.commit()
+
+        # Log to trade activity
+        total_cost = abs_entry_price * contracts * 100
+        self._log_trade_activity(
+            'ENTRY',
+            trade['symbol'],
+            f"Opened {trade['strategy']}: {trade['action']} ${trade['strike']} x{contracts} @ ${abs_entry_price:.2f} (Total: ${total_cost:.0f})",
+            position_id,
+            -total_cost,  # Negative because we're spending money
+            True,
+            None
+        )
+
         conn.close()
 
         # CRITICAL: Record trade in strategy competition
@@ -2105,7 +2215,7 @@ This trade ensures we're always active in the market"""
 
         conn = get_connection()
         positions = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions WHERE status = 'OPEN'
+            SELECT * FROM autonomous_open_positions
         """, conn)
         conn.close()
 
@@ -2144,8 +2254,8 @@ This trade ensures we're always active in the market"""
                 unrealized_pnl = current_value - entry_value
                 pnl_pct = (unrealized_pnl / entry_value * 100) if entry_value > 0 else 0
 
-                # Update position
-                self._update_position(pos['id'], current_price, current_spot, unrealized_pnl)
+                # Update position with pnl_pct
+                self._update_position(pos['id'], current_price, current_spot, unrealized_pnl, pnl_pct)
 
                 # Check exit conditions
                 should_exit, reason = self._check_exit_conditions(
@@ -2177,16 +2287,18 @@ This trade ensures we're always active in the market"""
 
         return actions_taken
 
-    def _update_position(self, position_id: int, current_price: float, current_spot: float, unrealized_pnl: float):
-        """Update position with current values"""
+    def _update_position(self, position_id: int, current_price: float, current_spot: float,
+                         unrealized_pnl: float, pnl_pct: float = 0):
+        """Update position with current values in autonomous_open_positions"""
         conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
-            UPDATE autonomous_positions
-            SET current_price = ?, current_spot_price = ?, unrealized_pnl = ?
+            UPDATE autonomous_open_positions
+            SET current_price = ?, current_spot_price = ?, unrealized_pnl = ?,
+                unrealized_pnl_pct = ?, last_updated = NOW()
             WHERE id = ?
-        """, (current_price, current_spot, unrealized_pnl, position_id))
+        """, (current_price, current_spot, unrealized_pnl, pnl_pct, position_id))
 
         conn.commit()
         conn.close()
@@ -2462,74 +2574,274 @@ Now analyze this position:"""
             traceback.print_exc()
 
     def _close_position(self, position_id: int, exit_price: float, realized_pnl: float, reason: str):
-        """Close a position"""
+        """Close a position - move from open_positions to closed_trades"""
         conn = get_connection()
         c = conn.cursor()
 
         now = datetime.now(CENTRAL_TZ)
 
+        # First, get the full position data from open_positions
         c.execute("""
-            UPDATE autonomous_positions
-            SET status = 'CLOSED',
-                closed_date = ?,
-                closed_time = ?,
-                exit_price = ?,
-                realized_pnl = ?,
-                exit_reason = ?
+            SELECT symbol, strategy, action, strike, option_type, expiration_date,
+                   contracts, contract_symbol, entry_date, entry_time, entry_price,
+                   entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
+                   entry_net_gex, entry_flip_point, trade_reasoning, current_spot_price
+            FROM autonomous_open_positions
             WHERE id = ?
+        """, (position_id,))
+
+        pos = c.fetchone()
+        if not pos:
+            print(f"⚠️ Position {position_id} not found in open_positions")
+            conn.close()
+            return
+
+        (symbol, strategy, action, strike, option_type, expiration_date,
+         contracts, contract_symbol, entry_date, entry_time, entry_price,
+         entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
+         entry_net_gex, entry_flip_point, trade_reasoning, exit_spot_price) = pos
+
+        # Calculate proper P&L percentage
+        entry_value = float(entry_price) * contracts * 100 if entry_price else 0
+        realized_pnl_pct = (realized_pnl / entry_value * 100) if entry_value > 0 else 0
+
+        # Calculate hold duration
+        try:
+            entry_dt = datetime.strptime(f"{entry_date} {entry_time}", '%Y-%m-%d %H:%M:%S')
+            hold_minutes = int((now.replace(tzinfo=None) - entry_dt).total_seconds() / 60)
+        except:
+            hold_minutes = 0
+
+        # Insert into closed_trades table
+        c.execute("""
+            INSERT INTO autonomous_closed_trades (
+                symbol, strategy, action, strike, option_type, expiration_date,
+                contracts, contract_symbol, entry_date, entry_time, entry_price,
+                entry_bid, entry_ask, entry_spot_price, exit_date, exit_time,
+                exit_price, exit_spot_price, exit_reason, realized_pnl,
+                realized_pnl_pct, confidence, gex_regime, entry_net_gex,
+                entry_flip_point, trade_reasoning, hold_duration_minutes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
+            symbol, strategy, action, strike, option_type, expiration_date,
+            contracts, contract_symbol, entry_date, entry_time, entry_price,
+            entry_bid, entry_ask, entry_spot_price,
             now.strftime('%Y-%m-%d'),
             now.strftime('%H:%M:%S'),
             exit_price,
-            realized_pnl,
+            exit_spot_price,
             reason,
-            position_id
+            realized_pnl,
+            realized_pnl_pct,
+            confidence, gex_regime, entry_net_gex, entry_flip_point,
+            trade_reasoning, hold_minutes
         ))
 
+        # Delete from open_positions
+        c.execute("DELETE FROM autonomous_open_positions WHERE id = ?", (position_id,))
+
         conn.commit()
+
+        # Log to trade activity
+        self._log_trade_activity(
+            'EXIT',
+            symbol,
+            f"Closed {strategy}: {action} ${strike} x{contracts} @ ${exit_price:.2f} | P&L: ${realized_pnl:+.2f} ({realized_pnl_pct:+.1f}%) | Reason: {reason}",
+            position_id,
+            realized_pnl,
+            True,
+            None
+        )
+
+        # Create equity snapshot after closing
+        self._create_equity_snapshot()
+
         conn.close()
 
         # Log spread width performance if this is an iron condor
         self._log_spread_width_performance(position_id)
 
+    def _log_trade_activity(self, action_type: str, symbol: str, details: str,
+                            position_id: int = None, pnl_impact: float = None,
+                            success: bool = True, error_message: str = None):
+        """Log activity to autonomous_trade_activity table"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            now = datetime.now(CENTRAL_TZ)
+
+            c.execute("""
+                INSERT INTO autonomous_trade_activity (
+                    activity_date, activity_time, activity_timestamp,
+                    action_type, symbol, details, position_id,
+                    pnl_impact, success, error_message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                now.strftime('%Y-%m-%d %H:%M:%S'),
+                action_type,
+                symbol,
+                details,
+                position_id,
+                pnl_impact,
+                success,
+                error_message
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Failed to log trade activity: {e}")
+
+    def _create_equity_snapshot(self):
+        """Create a snapshot of current equity for P&L time series graphing"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            now = datetime.now(CENTRAL_TZ)
+
+            # Get performance data
+            perf = self.get_performance()
+
+            # Get daily returns for Sharpe calculation
+            c.execute("""
+                SELECT snapshot_date, account_value
+                FROM autonomous_equity_snapshots
+                ORDER BY snapshot_date DESC, snapshot_time DESC
+                LIMIT 30
+            """)
+            snapshots = c.fetchall()
+
+            # Calculate Sharpe ratio (annualized)
+            sharpe_ratio = 0.0
+            if len(snapshots) >= 2:
+                daily_returns = []
+                for i in range(len(snapshots) - 1):
+                    if snapshots[i+1][1] and snapshots[i+1][1] > 0:
+                        ret = (float(snapshots[i][1]) - float(snapshots[i+1][1])) / float(snapshots[i+1][1])
+                        daily_returns.append(ret)
+
+                if daily_returns:
+                    import numpy as np
+                    avg_return = np.mean(daily_returns)
+                    std_return = np.std(daily_returns)
+                    if std_return > 0:
+                        sharpe_ratio = (avg_return / std_return) * np.sqrt(252)  # Annualized
+
+            # Calculate max drawdown
+            max_drawdown_pct = 0.0
+            if snapshots:
+                peak = float(perf.get('starting_capital', 5000))
+                for s in reversed(snapshots):
+                    val = float(s[1]) if s[1] else peak
+                    if val > peak:
+                        peak = val
+                    drawdown = (peak - val) / peak * 100 if peak > 0 else 0
+                    if drawdown > max_drawdown_pct:
+                        max_drawdown_pct = drawdown
+
+            # Get today's P&L
+            today_str = now.strftime('%Y-%m-%d')
+            c.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM autonomous_closed_trades
+                WHERE exit_date = ?
+            """, (today_str,))
+            daily_realized = c.fetchone()[0] or 0
+
+            c.execute("""
+                SELECT COALESCE(SUM(unrealized_pnl), 0)
+                FROM autonomous_open_positions
+            """)
+            daily_unrealized = c.fetchone()[0] or 0
+            daily_pnl = float(daily_realized) + float(daily_unrealized)
+
+            # Calculate daily return %
+            starting = float(perf.get('starting_capital', 5000))
+            daily_return_pct = (daily_pnl / starting * 100) if starting > 0 else 0
+
+            # Insert snapshot
+            c.execute("""
+                INSERT INTO autonomous_equity_snapshots (
+                    snapshot_date, snapshot_time, snapshot_timestamp,
+                    starting_capital, total_realized_pnl, total_unrealized_pnl,
+                    account_value, daily_pnl, daily_return_pct, total_return_pct,
+                    max_drawdown_pct, sharpe_ratio, open_positions_count,
+                    total_trades, winning_trades, losing_trades, win_rate
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                now.strftime('%Y-%m-%d %H:%M:%S'),
+                perf.get('starting_capital', 5000),
+                perf.get('realized_pnl', 0),
+                perf.get('unrealized_pnl', 0),
+                perf.get('current_value', 5000),
+                daily_pnl,
+                daily_return_pct,
+                perf.get('return_pct', 0),
+                max_drawdown_pct,
+                sharpe_ratio,
+                perf.get('open_positions', 0),
+                perf.get('total_trades', 0),
+                perf.get('winning_trades', 0),
+                perf.get('losing_trades', 0),
+                perf.get('win_rate', 0)
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Failed to create equity snapshot: {e}")
+
     def get_performance(self) -> Dict:
-        """Get trading performance stats"""
+        """Get trading performance stats from NEW tables"""
         conn = get_connection()
 
+        # Get closed trades from dedicated table
         closed = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions WHERE status = 'CLOSED'
+            SELECT * FROM autonomous_closed_trades
+            ORDER BY exit_date DESC, exit_time DESC
         """, conn)
 
+        # Get open positions from dedicated table
         open_pos = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions WHERE status = 'OPEN'
-        """, conn)
-
-        all_positions = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions
+            SELECT * FROM autonomous_open_positions
         """, conn)
 
         conn.close()
 
-        capital = float(self.get_config('capital'))
+        capital = float(self.get_config('capital') or 5000)
         total_realized = closed['realized_pnl'].sum() if not closed.empty else 0
         total_unrealized = open_pos['unrealized_pnl'].sum() if not open_pos.empty else 0
         total_pnl = total_realized + total_unrealized
         current_value = capital + total_pnl
 
         win_rate = 0
+        winning_trades = 0
+        losing_trades = 0
         if not closed.empty:
             winners = closed[closed['realized_pnl'] > 0]
-            win_rate = (len(winners) / len(closed) * 100)
+            losers = closed[closed['realized_pnl'] <= 0]
+            winning_trades = len(winners)
+            losing_trades = len(losers)
+            win_rate = (winning_trades / len(closed) * 100)
+
+        # Calculate total trades (closed + open)
+        total_trades = len(closed) + len(open_pos)
 
         return {
             'starting_capital': capital,
             'current_value': current_value,
             'total_pnl': total_pnl,
-            'realized_pnl': total_realized,
-            'unrealized_pnl': total_unrealized,
-            'return_pct': (total_pnl / capital * 100),
-            'total_trades': len(all_positions),  # Count ALL positions (open + closed)
-            'closed_trades': len(closed),  # Add separate count for closed only
+            'realized_pnl': float(total_realized),
+            'unrealized_pnl': float(total_unrealized),
+            'return_pct': (total_pnl / capital * 100) if capital > 0 else 0,
+            'total_trades': total_trades,
+            'closed_trades': len(closed),
             'open_positions': len(open_pos),
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
             'win_rate': win_rate
         }
