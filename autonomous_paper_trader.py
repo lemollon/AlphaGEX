@@ -446,6 +446,28 @@ class AutonomousPaperTrader:
                 VALUES (1, ?, 'INITIALIZING', 'System starting up...', 1)
             """, (datetime.now(CENTRAL_TZ).isoformat(),))
 
+        # Add theoretical pricing columns (Black-Scholes) if they don't exist
+        theoretical_columns = [
+            ('theoretical_price', 'DECIMAL(10,4)'),
+            ('theoretical_bid', 'DECIMAL(10,4)'),
+            ('theoretical_ask', 'DECIMAL(10,4)'),
+            ('recommended_entry', 'DECIMAL(10,4)'),
+            ('price_adjustment', 'DECIMAL(10,4)'),
+            ('price_adjustment_pct', 'DECIMAL(8,4)'),
+            ('is_delayed', 'BOOLEAN'),
+            ('data_confidence', 'VARCHAR(20)'),
+        ]
+
+        for col_name, col_type in theoretical_columns:
+            try:
+                c.execute(f"ALTER TABLE autonomous_open_positions ADD COLUMN {col_name} {col_type}")
+            except:
+                pass  # Column already exists
+            try:
+                c.execute(f"ALTER TABLE autonomous_closed_trades ADD COLUMN {col_name} {col_type}")
+            except:
+                pass  # Column already exists
+
         conn.commit()
         conn.close()
 
@@ -2282,14 +2304,18 @@ This trade ensures we're always active in the market"""
         now = datetime.now(CENTRAL_TZ)
 
         # Insert into NEW autonomous_open_positions table with RETURNING for PostgreSQL
+        # Include theoretical pricing columns (Black-Scholes)
         c.execute("""
             INSERT INTO autonomous_open_positions (
                 symbol, strategy, action, entry_date, entry_time, strike, option_type,
                 expiration_date, contracts, entry_price, entry_bid, entry_ask,
                 entry_spot_price, current_price, current_spot_price, unrealized_pnl,
                 unrealized_pnl_pct, confidence, gex_regime, entry_net_gex, entry_flip_point,
-                trade_reasoning, contract_symbol
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                trade_reasoning, contract_symbol,
+                theoretical_price, theoretical_bid, theoretical_ask, recommended_entry,
+                price_adjustment, price_adjustment_pct, is_delayed, data_confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
         """, (
             trade['symbol'],
@@ -2314,7 +2340,16 @@ This trade ensures we're always active in the market"""
             gex_data.get('net_gex', 0),
             gex_data.get('flip_point', 0),
             trade['reasoning'],
-            option_data.get('contract_symbol', '')
+            option_data.get('contract_symbol', ''),
+            # Theoretical pricing columns (Black-Scholes)
+            option_data.get('theoretical_price'),
+            option_data.get('theoretical_bid'),
+            option_data.get('theoretical_ask'),
+            option_data.get('recommended_entry'),
+            option_data.get('price_adjustment'),
+            option_data.get('price_adjustment_pct'),
+            option_data.get('is_delayed', False),
+            option_data.get('confidence', 'unknown')
         ))
 
         # Get the inserted position ID (PostgreSQL RETURNING)

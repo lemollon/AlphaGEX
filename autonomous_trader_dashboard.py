@@ -56,7 +56,7 @@ def display_autonomous_trader():
             </div>
             <div style='background: rgba(0, 0, 0, 0.3); padding: 15px; border-radius: 10px; border: 1px solid rgba(0, 212, 255, 0.2);'>
                 <div style='color: #00FF88; font-size: 13px; font-weight: 800; margin-bottom: 8px;'>✅ REAL OPTION PRICES</div>
-                <div style='color: white; font-size: 14px; font-weight: 700;'>From Yahoo Finance</div>
+                <div style='color: white; font-size: 14px; font-weight: 700;'>Polygon.io + Black-Scholes</div>
             </div>
         </div>
         <div style='margin-top: 20px; padding: 15px; background: rgba(0, 255, 136, 0.1); border-radius: 10px; border: 1px solid rgba(0, 255, 136, 0.3);'>
@@ -623,6 +623,25 @@ def display_current_positions(trader: AutonomousPaperTrader):
                 st.text(f"SPY: ${pos['entry_spot_price']:.2f}")
                 st.text(f"Confidence: {pos['confidence']}%")
 
+                # Show theoretical pricing if available (Black-Scholes)
+                theo_price = pos.get('theoretical_price')
+                if theo_price and theo_price > 0:
+                    st.markdown("**📊 Black-Scholes Pricing:**")
+                    is_delayed = pos.get('is_delayed', False)
+                    price_adj = pos.get('price_adjustment_pct', 0) or 0
+                    data_conf = pos.get('data_confidence', 'unknown')
+
+                    if is_delayed:
+                        st.warning("⏱️ Entry used 15-min delayed data")
+
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.text(f"Theoretical: ${theo_price:.2f}")
+                        st.text(f"Adjustment: {price_adj:+.1f}%")
+                    with col_b:
+                        st.text(f"Recommended: ${pos.get('recommended_entry', 0):.2f}")
+                        st.text(f"Confidence: {data_conf}")
+
                 if pos['contract_symbol']:
                     st.caption(f"Contract: {pos['contract_symbol']}")
 
@@ -1029,6 +1048,41 @@ def display_settings(trader: AutonomousPaperTrader):
 
     with col3:
         st.metric("Max Drawdown", "< 20%")
+
+    st.divider()
+
+    # Pricing Mode Settings
+    st.markdown("### 📊 Pricing Mode Settings")
+
+    st.markdown("""
+    **Black-Scholes Theoretical Pricing** compensates for 15-minute delayed option data:
+    - Uses current SPY price (fresher than option quote)
+    - Calculates theoretical price using Black-Scholes model
+    - Provides recommended entry price closer to live
+    """)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Get current setting
+        theo_enabled = trader.is_theoretical_pricing_enabled()
+        new_theo_setting = st.toggle(
+            "Enable Black-Scholes Pricing",
+            value=theo_enabled,
+            help="Use Black-Scholes to calculate theoretical prices when data is delayed"
+        )
+
+        if new_theo_setting != theo_enabled:
+            trader.set_theoretical_pricing(new_theo_setting)
+            st.rerun()
+
+    with col2:
+        if theo_enabled:
+            st.success("📊 **Black-Scholes ENABLED**")
+            st.caption("Theoretical prices calculated for delayed data")
+        else:
+            st.warning("📊 **Black-Scholes DISABLED**")
+            st.caption("Using raw delayed prices")
 
 
 def display_autopilot_scheduler(scheduler):
