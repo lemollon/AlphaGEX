@@ -163,6 +163,7 @@ export default function AutonomousTrader() {
           market_analysis: status.market_analysis,
           last_decision: status.last_decision,
           last_check: status.last_updated || new Date().toISOString(),
+          next_check_time: status.next_check_time,
         }))
       }
 

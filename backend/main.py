@@ -2591,9 +2591,9 @@ async def _get_trader_update_data() -> dict:
 
         # Get live status
         cursor.execute("""
-            SELECT status, current_action, market_analysis, last_decision, last_updated
+            SELECT status, current_action, market_analysis, last_decision, timestamp, next_check_time
             FROM autonomous_live_status
-            ORDER BY last_updated DESC
+            ORDER BY timestamp DESC
             LIMIT 1
         """)
         status_row = cursor.fetchone()
@@ -2603,7 +2603,8 @@ async def _get_trader_update_data() -> dict:
                 'current_action': status_row[1],
                 'market_analysis': status_row[2],
                 'last_decision': status_row[3],
-                'last_updated': status_row[4].isoformat() if status_row[4] else None
+                'last_updated': status_row[4] if status_row[4] else None,
+                'next_check_time': status_row[5] if status_row[5] else None
             }
 
         # Get open positions with current P&L
