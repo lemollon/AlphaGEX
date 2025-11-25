@@ -205,6 +205,11 @@ class GEXBacktester(BacktestBase):
             df = df.join(gex_df[available_gex_cols], how='left')
             print(f"   Debug: After join - df shape: {df.shape}")
             print(f"   Debug: After join - sample GEX values: flip_point[0]={df['flip_point'].iloc[0] if 'flip_point' in df.columns else 'N/A'}")
+
+            # CRITICAL: Convert GEX columns to numeric (API returns strings)
+            for col in available_gex_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
         else:
             print("⚠️  No recognized GEX columns found, falling back to simulated data")
             return self.simulate_gex_data(price_data)
