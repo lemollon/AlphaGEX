@@ -196,6 +196,11 @@ class OptionsBacktester(BacktestBase):
 
         if available_gex_cols:
             df = df.join(gex_df[available_gex_cols], how='left')
+
+            # CRITICAL: Convert GEX columns to numeric (API returns strings)
+            for col in available_gex_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
         else:
             print("⚠️  No recognized GEX columns found, falling back to simulated data")
             return self.simulate_gex_data(price_data)
