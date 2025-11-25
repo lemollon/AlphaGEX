@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 from database_adapter import get_connection
-from polygon_data_fetcher import polygon_fetcher
+from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 import time
 import os
 
@@ -58,8 +58,27 @@ except ImportError as e:
     print(f"⚠️ Database Logger not available: {e}")
 
 
-def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str) -> Dict:
-    """Get REAL option price from Polygon.io"""
+def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
+                          current_spot: float = None, use_theoretical: bool = True) -> Dict:
+    """
+    Get REAL option price from Polygon.io, enhanced with Black-Scholes theoretical pricing.
+
+    When data is 15-minute delayed, calculates theoretical price using:
+    - Current SPY spot price (fresher than option quote)
+    - IV from the delayed quote
+    - Black-Scholes model
+
+    Args:
+        symbol: Underlying symbol
+        strike: Option strike price
+        option_type: 'call' or 'put'
+        expiration_date: Expiration date YYYY-MM-DD
+        current_spot: Current underlying price (optional, will fetch if None)
+        use_theoretical: Whether to enhance with theoretical pricing (default True)
+
+    Returns:
+        Dict with quote data, optionally enhanced with theoretical prices
+    """
     try:
         # Use Polygon.io to get option quote
         quote = polygon_fetcher.get_option_quote(
@@ -72,11 +91,122 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
         if quote is None:
             return {'error': 'No option data found from Polygon.io'}
 
+        # If delayed data and theoretical pricing enabled, enhance with Black-Scholes
+        if use_theoretical and quote.get('is_delayed', False):
+            enhanced_quote = calculate_theoretical_option_price(quote, current_spot)
+            if 'error' not in enhanced_quote:
+                # Log the theoretical vs delayed price comparison
+                theo_price = enhanced_quote.get('theoretical_price', 0)
+                delayed_mid = quote.get('mid', 0)
+                adjustment = enhanced_quote.get('price_adjustment_pct', 0)
+                print(f"   📊 Black-Scholes: Delayed mid=${delayed_mid:.2f} → Theoretical=${theo_price:.2f} ({adjustment:+.1f}%)")
+                return enhanced_quote
+
         return quote
 
     except Exception as e:
         print(f"Error fetching option price from Polygon.io: {e}")
         return {'error': str(e)}
+
+
+def validate_option_liquidity(quote: Dict, min_bid: float = 0.01, max_spread_pct: float = 50.0) -> tuple[bool, str]:
+    """
+    Validate that an option quote has sufficient liquidity for trading.
+
+    Args:
+        quote: Option quote dict from Polygon
+        min_bid: Minimum bid price required (default $0.01)
+        max_spread_pct: Maximum bid/ask spread as % of mid (default 50%)
+
+    Returns:
+        (is_valid, reason) tuple
+    """
+    if quote is None or quote.get('error'):
+        return False, f"No quote data: {quote.get('error', 'None returned')}"
+
+    bid = quote.get('bid', 0) or 0
+    ask = quote.get('ask', 0) or 0
+
+    if bid <= 0:
+        return False, f"No bid price (bid=${bid:.2f})"
+    if ask <= 0:
+        return False, f"No ask price (ask=${ask:.2f})"
+    if bid < min_bid:
+        return False, f"Bid too low (${bid:.2f} < ${min_bid:.2f})"
+
+    mid = (bid + ask) / 2
+    spread = ask - bid
+    spread_pct = (spread / mid * 100) if mid > 0 else 100
+
+    if spread_pct > max_spread_pct:
+        return False, f"Spread too wide ({spread_pct:.1f}% > {max_spread_pct:.1f}%)"
+
+    return True, f"Valid: bid=${bid:.2f}, ask=${ask:.2f}, spread={spread_pct:.1f}%"
+
+
+def find_liquid_strike(symbol: str, base_strike: float, option_type: str, expiration_date: str,
+                       spot_price: float = None, max_attempts: int = 5) -> tuple[Optional[float], Optional[Dict]]:
+    """
+    Find a liquid strike near the base strike by trying multiple strikes.
+
+    For SPY, tries strikes in order of likely liquidity:
+    1. ATM strike (nearest to spot)
+    2. Base strike
+    3. Strikes ±5, ±10 from base
+
+    Args:
+        symbol: Underlying symbol
+        base_strike: Initial strike to try
+        option_type: 'call' or 'put'
+        expiration_date: Expiration date string
+        spot_price: Current spot price (for ATM calculation)
+        max_attempts: Maximum strikes to try
+
+    Returns:
+        (strike, quote) tuple, or (None, None) if no liquid strike found
+    """
+    # Build list of strikes to try, ordered by likely liquidity
+    strikes_to_try = []
+
+    # 1. ATM strike (most liquid) - nearest $1 increment for SPY
+    if spot_price:
+        atm_strike = round(spot_price)  # Nearest $1
+        atm_strike_5 = round(spot_price / 5) * 5  # Nearest $5
+        if atm_strike not in strikes_to_try:
+            strikes_to_try.append(atm_strike)
+        if atm_strike_5 not in strikes_to_try:
+            strikes_to_try.append(atm_strike_5)
+
+    # 2. Base strike
+    if base_strike not in strikes_to_try:
+        strikes_to_try.append(base_strike)
+
+    # 3. Nearby strikes (SPY has $1 increments for ATM, $5 for further OTM)
+    for offset in [5, -5, 10, -10, 1, -1, 2, -2]:
+        strike = base_strike + offset
+        if strike > 0 and strike not in strikes_to_try:
+            strikes_to_try.append(strike)
+
+    # Try each strike until we find one with liquidity
+    attempts = 0
+    tried_strikes = []
+
+    for strike in strikes_to_try[:max_attempts]:
+        attempts += 1
+        # Pass spot_price for Black-Scholes theoretical pricing
+        quote = get_real_option_price(symbol, strike, option_type, expiration_date, current_spot=spot_price)
+        is_valid, reason = validate_option_liquidity(quote)
+        tried_strikes.append(f"${strike:.0f}: {reason}")
+
+        if is_valid:
+            print(f"✅ Found liquid strike ${strike:.0f} after {attempts} attempts")
+            return strike, quote
+
+    print(f"❌ No liquid strike found after {attempts} attempts:")
+    for ts in tried_strikes:
+        print(f"   - {ts}")
+
+    return None, None
 
 
 class AutonomousPaperTrader:
@@ -142,47 +272,134 @@ class AutonomousPaperTrader:
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('auto_execute', 'true')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('last_trade_date', '')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('mode', 'paper')")
+            # Signal-only mode: Generate entry signals without auto-execution
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('signal_only', 'false')")
+            conn.commit()
+
+        # Ensure signal_only key exists for existing installations
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'signal_only'")
+        if not c.fetchone():
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('signal_only', 'false')")
+            conn.commit()
+
+        # Ensure use_theoretical_pricing key exists (Black-Scholes for delayed data)
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'use_theoretical_pricing'")
+        if not c.fetchone():
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('use_theoretical_pricing', 'true')")
             conn.commit()
 
         conn.close()
 
     def _ensure_tables(self):
-        """Create database tables for autonomous trading"""
+        """Create database tables for autonomous trading - NEW SCHEMA"""
         conn = get_connection()
         c = conn.cursor()
 
-        # Positions table
+        # OPEN POSITIONS table - currently active trades
         c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_positions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                strategy TEXT NOT NULL,
-                action TEXT NOT NULL,
-                entry_date TEXT NOT NULL,
-                entry_time TEXT NOT NULL,
-                strike REAL NOT NULL,
-                option_type TEXT NOT NULL,
-                expiration_date TEXT NOT NULL,
-                contracts INTEGER NOT NULL,
-                entry_price REAL NOT NULL,
-                entry_bid REAL,
-                entry_ask REAL,
-                entry_spot_price REAL,
-                current_price REAL,
-                current_spot_price REAL,
-                unrealized_pnl REAL,
-                status TEXT DEFAULT 'OPEN',
-                closed_date TEXT,
-                closed_time TEXT,
-                exit_price REAL,
-                realized_pnl REAL,
-                exit_reason TEXT,
+            CREATE TABLE IF NOT EXISTS autonomous_open_positions (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                strategy VARCHAR(100) NOT NULL,
+                action VARCHAR(50) NOT NULL,
+                strike DECIMAL(10,2) NOT NULL,
+                option_type VARCHAR(20) NOT NULL,
+                expiration_date DATE NOT NULL,
+                contracts INTEGER NOT NULL DEFAULT 1,
+                contract_symbol VARCHAR(50),
+                entry_date DATE NOT NULL,
+                entry_time TIME NOT NULL,
+                entry_price DECIMAL(10,4) NOT NULL,
+                entry_bid DECIMAL(10,4),
+                entry_ask DECIMAL(10,4),
+                entry_spot_price DECIMAL(10,2),
+                current_price DECIMAL(10,4),
+                current_spot_price DECIMAL(10,2),
+                last_updated TIMESTAMP DEFAULT NOW(),
+                unrealized_pnl DECIMAL(12,2) DEFAULT 0,
+                unrealized_pnl_pct DECIMAL(8,4) DEFAULT 0,
                 confidence INTEGER,
-                gex_regime TEXT,
-                entry_net_gex REAL,
-                entry_flip_point REAL,
+                gex_regime VARCHAR(100),
+                entry_net_gex DECIMAL(15,2),
+                entry_flip_point DECIMAL(10,2),
                 trade_reasoning TEXT,
-                contract_symbol TEXT
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+
+        # CLOSED TRADES table - historical trades with real P&L
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS autonomous_closed_trades (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                strategy VARCHAR(100) NOT NULL,
+                action VARCHAR(50) NOT NULL,
+                strike DECIMAL(10,2) NOT NULL,
+                option_type VARCHAR(20) NOT NULL,
+                expiration_date DATE NOT NULL,
+                contracts INTEGER NOT NULL DEFAULT 1,
+                contract_symbol VARCHAR(50),
+                entry_date DATE NOT NULL,
+                entry_time TIME NOT NULL,
+                entry_price DECIMAL(10,4) NOT NULL,
+                entry_bid DECIMAL(10,4),
+                entry_ask DECIMAL(10,4),
+                entry_spot_price DECIMAL(10,2),
+                exit_date DATE NOT NULL,
+                exit_time TIME NOT NULL,
+                exit_price DECIMAL(10,4) NOT NULL,
+                exit_spot_price DECIMAL(10,2),
+                exit_reason VARCHAR(100),
+                realized_pnl DECIMAL(12,2) NOT NULL,
+                realized_pnl_pct DECIMAL(8,4) NOT NULL,
+                confidence INTEGER,
+                gex_regime VARCHAR(100),
+                entry_net_gex DECIMAL(15,2),
+                entry_flip_point DECIMAL(10,2),
+                trade_reasoning TEXT,
+                hold_duration_minutes INTEGER,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+
+        # EQUITY SNAPSHOTS table - for P&L time series graphing
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS autonomous_equity_snapshots (
+                id SERIAL PRIMARY KEY,
+                snapshot_date DATE NOT NULL,
+                snapshot_time TIME NOT NULL,
+                snapshot_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                starting_capital DECIMAL(12,2) NOT NULL DEFAULT 5000,
+                total_realized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
+                total_unrealized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
+                account_value DECIMAL(12,2) NOT NULL,
+                daily_pnl DECIMAL(12,2) DEFAULT 0,
+                daily_return_pct DECIMAL(8,4) DEFAULT 0,
+                total_return_pct DECIMAL(8,4) DEFAULT 0,
+                max_drawdown_pct DECIMAL(8,4) DEFAULT 0,
+                sharpe_ratio DECIMAL(8,4) DEFAULT 0,
+                open_positions_count INTEGER DEFAULT 0,
+                total_trades INTEGER DEFAULT 0,
+                winning_trades INTEGER DEFAULT 0,
+                losing_trades INTEGER DEFAULT 0,
+                win_rate DECIMAL(6,4) DEFAULT 0
+            )
+        """)
+
+        # TRADE ACTIVITY table - all trader actions/decisions
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS autonomous_trade_activity (
+                id SERIAL PRIMARY KEY,
+                activity_date DATE NOT NULL,
+                activity_time TIME NOT NULL,
+                activity_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                action_type VARCHAR(50) NOT NULL,
+                symbol VARCHAR(10) DEFAULT 'SPY',
+                details TEXT,
+                position_id INTEGER,
+                pnl_impact DECIMAL(12,2),
+                success BOOLEAN DEFAULT TRUE,
+                error_message TEXT
             )
         """)
 
@@ -228,6 +445,28 @@ class AutonomousPaperTrader:
                 INSERT INTO autonomous_live_status (id, timestamp, status, current_action, is_working)
                 VALUES (1, ?, 'INITIALIZING', 'System starting up...', 1)
             """, (datetime.now(CENTRAL_TZ).isoformat(),))
+
+        # Add theoretical pricing columns (Black-Scholes) if they don't exist
+        theoretical_columns = [
+            ('theoretical_price', 'DECIMAL(10,4)'),
+            ('theoretical_bid', 'DECIMAL(10,4)'),
+            ('theoretical_ask', 'DECIMAL(10,4)'),
+            ('recommended_entry', 'DECIMAL(10,4)'),
+            ('price_adjustment', 'DECIMAL(10,4)'),
+            ('price_adjustment_pct', 'DECIMAL(8,4)'),
+            ('is_delayed', 'BOOLEAN'),
+            ('data_confidence', 'VARCHAR(20)'),
+        ]
+
+        for col_name, col_type in theoretical_columns:
+            try:
+                c.execute(f"ALTER TABLE autonomous_open_positions ADD COLUMN {col_name} {col_type}")
+            except:
+                pass  # Column already exists
+            try:
+                c.execute(f"ALTER TABLE autonomous_closed_trades ADD COLUMN {col_name} {col_type}")
+            except:
+                pass  # Column already exists
 
         conn.commit()
         conn.close()
@@ -352,7 +591,7 @@ class AutonomousPaperTrader:
         c = conn.cursor()
 
         # Count open positions - respect max open positions limit
-        c.execute("SELECT COUNT(*) FROM autonomous_positions WHERE status = 'OPEN'")
+        c.execute("SELECT COUNT(*) FROM autonomous_open_positions")
         open_positions = c.fetchone()[0]
         max_positions = 10  # Configurable limit
 
@@ -361,12 +600,20 @@ class AutonomousPaperTrader:
             return False  # Too many open positions
 
         # Check today's P&L - respect daily loss limit
+        # Get realized from closed trades + unrealized from open positions
         c.execute("""
-            SELECT COALESCE(SUM(realized_pnl), 0) + COALESCE(SUM(unrealized_pnl), 0) as total_pnl
-            FROM autonomous_positions
-            WHERE entry_date = ?
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM autonomous_closed_trades
+            WHERE exit_date = ?
         """, (today,))
-        today_pnl = c.fetchone()[0]
+        today_realized = c.fetchone()[0] or 0
+
+        c.execute("""
+            SELECT COALESCE(SUM(unrealized_pnl), 0)
+            FROM autonomous_open_positions
+        """)
+        today_unrealized = c.fetchone()[0] or 0
+        today_pnl = float(today_realized) + float(today_unrealized)
         conn.close()
 
         # Get starting capital
@@ -396,6 +643,210 @@ class AutonomousPaperTrader:
 
         used = result.iloc[0]['used'] if not pd.isna(result.iloc[0]['used']) else 0
         return total_capital - used
+
+    def is_signal_only_mode(self) -> bool:
+        """Check if signal-only mode is enabled (no auto-execution)"""
+        return self.get_config('signal_only') == 'true'
+
+    def set_signal_only_mode(self, enabled: bool):
+        """Enable or disable signal-only mode"""
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("UPDATE autonomous_config SET value = ? WHERE key = 'signal_only'",
+                  ('true' if enabled else 'false',))
+        conn.commit()
+        conn.close()
+        print(f"{'✅' if enabled else '❌'} Signal-only mode {'enabled' if enabled else 'disabled'}")
+
+    def is_theoretical_pricing_enabled(self) -> bool:
+        """Check if Black-Scholes theoretical pricing is enabled for delayed data"""
+        return self.get_config('use_theoretical_pricing') == 'true'
+
+    def set_theoretical_pricing(self, enabled: bool):
+        """Enable or disable Black-Scholes theoretical pricing for delayed data"""
+        conn = get_connection()
+        c = conn.cursor()
+        # Ensure the key exists first
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'use_theoretical_pricing'")
+        if not c.fetchone():
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('use_theoretical_pricing', ?)",
+                      ('true' if enabled else 'false',))
+        else:
+            c.execute("UPDATE autonomous_config SET value = ? WHERE key = 'use_theoretical_pricing'",
+                      ('true' if enabled else 'false',))
+        conn.commit()
+        conn.close()
+        status = '✅ ENABLED' if enabled else '❌ DISABLED'
+        print(f"{status} Black-Scholes theoretical pricing for delayed option data")
+
+    def generate_entry_signal(self, api_client) -> Optional[Dict]:
+        """
+        SIGNAL-ONLY MODE: Generate entry price signal WITHOUT executing a trade.
+
+        Use this when you have 15-minute delayed option data and want to:
+        1. See the trade recommendation
+        2. Get entry price guidance with delay buffer
+        3. Manually execute in your broker
+
+        Returns dict with signal details and delayed data warnings, or None if no signal.
+        """
+        from polygon_data_fetcher import calculate_delayed_price_range
+
+        self.log_action('SIGNAL_SCAN', 'Generating entry signal (NO EXECUTION)...')
+        self.update_live_status(
+            status='SIGNAL_SCAN',
+            action='Generating entry signal (signal-only mode)...',
+            analysis='Finding optimal trade setup'
+        )
+
+        try:
+            # Step 1: Get market data
+            gex_data = api_client.get_net_gamma('SPY')
+            skew_data = api_client.get_skew_data('SPY')
+
+            if not gex_data or gex_data.get('error'):
+                return {'error': 'Failed to get GEX data', 'signal': None}
+
+            spot_price = gex_data.get('spot_price', 0)
+            net_gex = gex_data.get('net_gex', 0)
+            flip_point = gex_data.get('flip_point', 0)
+
+            # Enhanced market context
+            vix = self._get_vix()
+            momentum = self._get_momentum()
+            time_context = self._get_time_context()
+            put_call_ratio = skew_data.get('put_call_ratio', 1.0) if skew_data else 1.0
+
+            if spot_price == 0:
+                return {'error': 'Invalid spot price', 'signal': None}
+
+            # Step 2: Find trade setup
+            trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
+
+            if not trade or trade.get('confidence', 0) < 70:
+                return {
+                    'signal': None,
+                    'reason': 'No high-confidence setup found',
+                    'market_summary': f"SPY ${spot_price:.2f} | GEX: ${net_gex/1e9:.2f}B | VIX: {vix:.1f}",
+                    'recommendation': 'Wait for better conditions'
+                }
+
+            # Step 3: Get option pricing with delayed data tracking
+            exp_date = self._get_expiration_string(trade['dte'])
+            liquid_strike, option_quote = find_liquid_strike(
+                symbol='SPY',
+                base_strike=trade['strike'],
+                option_type=trade['option_type'],
+                expiration_date=exp_date,
+                spot_price=spot_price,
+                max_attempts=5
+            )
+
+            if liquid_strike is None or option_quote is None:
+                return {
+                    'signal': None,
+                    'error': f"No liquid options found near ${trade['strike']:.0f}",
+                    'recommendation': 'Try a different strike or wait for market open'
+                }
+
+            # Step 4: Calculate price range for delayed data
+            price_range = calculate_delayed_price_range(
+                quote=option_quote,
+                underlying_price=spot_price,
+                vix=vix
+            )
+
+            # Step 5: Build signal response
+            is_delayed = option_quote.get('is_delayed', False)
+            data_status = option_quote.get('data_status', 'UNKNOWN')
+
+            signal = {
+                'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+                'symbol': 'SPY',
+                'spot_price': spot_price,
+
+                # Trade details
+                'strategy': trade.get('strategy', 'Unknown'),
+                'action': trade.get('action', 'Unknown'),
+                'option_type': trade['option_type'].upper(),
+                'strike': liquid_strike,
+                'expiration': exp_date,
+                'confidence': trade.get('confidence', 0),
+                'trade_reasoning': trade.get('reasoning', ''),
+
+                # PRICING - with delayed data handling
+                'data_status': data_status,
+                'is_delayed': is_delayed,
+                'delay_minutes': 15 if is_delayed else 0,
+                'quote_time': option_quote.get('quote_timestamp'),
+
+                # Raw prices (may be 15-min delayed)
+                'displayed_bid': option_quote.get('bid', 0),
+                'displayed_ask': option_quote.get('ask', 0),
+                'displayed_mid': price_range.get('displayed_mid', 0),
+
+                # Adjusted price range (accounts for 15-min delay)
+                'estimated_low': price_range.get('estimated_current_low', 0),
+                'estimated_high': price_range.get('estimated_current_high', 0),
+                'spread_buffer_pct': price_range.get('spread_buffer_pct', 0),
+
+                # Entry recommendation
+                'entry_recommendation': price_range.get('entry_recommendation', ''),
+                'delay_warning': price_range.get('delay_warning'),
+
+                # Greeks
+                'delta': option_quote.get('delta', 0),
+                'gamma': option_quote.get('gamma', 0),
+                'theta': option_quote.get('theta', 0),
+                'iv': option_quote.get('implied_volatility', 0),
+
+                # Market context
+                'market_context': {
+                    'net_gex': net_gex,
+                    'flip_point': flip_point,
+                    'vix': vix,
+                    'momentum': momentum,
+                    'put_call_ratio': put_call_ratio
+                }
+            }
+
+            # Log the signal
+            self.log_action('SIGNAL_GENERATED', f"""
+========================================
+ENTRY SIGNAL (NO AUTO-EXECUTION)
+========================================
+{'⏱️ DATA IS 15 MINUTES DELAYED!' if is_delayed else '✅ REAL-TIME DATA'}
+----------------------------------------
+Setup: {signal['strategy']} - {signal['action']}
+Option: SPY ${liquid_strike:.0f} {signal['option_type']} exp {exp_date}
+Confidence: {signal['confidence']}%
+
+PRICING:
+  Displayed Mid: ${signal['displayed_mid']:.2f} ({data_status})
+  Expected Range: ${signal['estimated_low']:.2f} - ${signal['estimated_high']:.2f}
+  Buffer: {signal['spread_buffer_pct']:.1f}%
+
+ENTRY RECOMMENDATION:
+  {signal['entry_recommendation']}
+
+Greeks: Delta={signal['delta']:.3f}, Theta=${signal['theta']:.2f}, IV={signal['iv']*100:.1f}%
+
+Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
+========================================
+""", success=True)
+
+            self.update_live_status(
+                status='SIGNAL_READY',
+                action=f"Signal: {signal['action']} SPY ${liquid_strike:.0f} {signal['option_type']}",
+                analysis=f"Entry: ${signal['estimated_low']:.2f}-${signal['estimated_high']:.2f} | {'DELAYED' if is_delayed else 'LIVE'}",
+                decision=signal['entry_recommendation']
+            )
+
+            return signal
+
+        except Exception as e:
+            self.log_action('SIGNAL_ERROR', f'Error generating signal: {e}', success=False)
+            return {'error': str(e), 'signal': None}
 
     def find_and_execute_daily_trade(self, api_client) -> Optional[int]:
         """
@@ -677,30 +1128,72 @@ class AutonomousPaperTrader:
                 except Exception as e:
                     self.log_action('AI_ERROR', f'AI strike selection failed: {e}', success=False)
 
-            # Get REAL option price
+            # Get REAL option price with smart strike selection
+            # This will try multiple strikes if the first one lacks liquidity
             exp_date = self._get_expiration_string(trade['dte'])
-            option_price_data = get_real_option_price(
-                'SPY',
-                trade['strike'],
-                trade['option_type'],
-                exp_date
+            original_strike = trade['strike']
+
+            # Use find_liquid_strike to automatically find a liquid option
+            liquid_strike, option_price_data = find_liquid_strike(
+                symbol='SPY',
+                base_strike=trade['strike'],
+                option_type=trade['option_type'],
+                expiration_date=exp_date,
+                spot_price=spot_price,
+                max_attempts=5
             )
 
-            if option_price_data.get('error'):
-                self.log_action('ERROR', f"Failed to get option price: {option_price_data.get('error')}", success=False)
+            if liquid_strike is None or option_price_data is None:
+                self.log_action('ERROR',
+                    f"No liquid options found near ${original_strike:.0f} {trade['option_type'].upper()}. "
+                    f"Tried multiple strikes - all had missing or invalid bid/ask data from Polygon.",
+                    success=False)
                 return None
 
-            # Calculate position size for $5K account
-            entry_price = option_price_data['mid']
-            if entry_price == 0:
-                entry_price = option_price_data.get('last', 1.0)
+            # Update trade with the liquid strike if different
+            if liquid_strike != original_strike:
+                self.log_action('STRIKE_ADJUSTED',
+                    f"Adjusted strike from ${original_strike:.0f} to ${liquid_strike:.0f} for liquidity",
+                    success=True)
+                trade['strike'] = liquid_strike
+
+            # Extract pricing data (already validated by find_liquid_strike)
+            bid = option_price_data.get('bid', 0) or 0
+            ask = option_price_data.get('ask', 0) or 0
+            last = option_price_data.get('last', 0) or 0
+            mid = option_price_data.get('mid', 0) or 0
+            spread = ask - bid
+            spread_pct = (spread / mid * 100) if mid > 0 else 0
+
+            # Log what Polygon actually returned for debugging
+            self.log_action('PRICE_DATA',
+                f"Polygon: bid=${bid:.2f}, ask=${ask:.2f}, mid=${mid:.2f}, last=${last:.2f}, spread={spread_pct:.1f}%",
+                success=True)
+
+            # Check if we have theoretical pricing (Black-Scholes enhanced)
+            is_delayed = option_price_data.get('is_delayed', False)
+            theoretical_price = option_price_data.get('theoretical_price', 0)
+            recommended_entry = option_price_data.get('recommended_entry', 0)
+            confidence = option_price_data.get('confidence', 'unknown')
+
+            # Use theoretical/recommended price if available and data is delayed
+            if is_delayed and recommended_entry > 0:
+                entry_price = recommended_entry
+                calculation_method = option_price_data.get('calculation_method', 'Black-Scholes')
+                price_adjustment_pct = option_price_data.get('price_adjustment_pct', 0)
+                self.log_action('THEORETICAL_PRICE',
+                    f"Using Black-Scholes price: ${entry_price:.2f} (vs delayed mid ${mid:.2f}, {price_adjustment_pct:+.1f}% adj, confidence={confidence})",
+                    success=True)
+            else:
+                # Use mid price (already validated to be > 0)
+                entry_price = mid if mid > 0 else (bid + ask) / 2
 
             available = self.get_available_capital()
 
             # CRITICAL: Validate entry_price before any calculations to prevent division by zero
             cost_per_contract = entry_price * 100
-            if cost_per_contract == 0:
-                self.log_action('ERROR', 'Invalid option price (zero)', success=False)
+            if cost_per_contract <= 0:
+                self.log_action('ERROR', f'Invalid option price (${entry_price:.2f})', success=False)
                 return None
 
             # CRITICAL: Use AI reasoning for position sizing
@@ -1778,6 +2271,18 @@ This trade ensures we're always active in the market"""
                        vix_current: float = 18.0, regime_result: Dict = None) -> Optional[int]:
         """Execute the trade and send push notification"""
 
+        # CRITICAL VALIDATION: Entry price must be > 0
+        # This prevents fake P&L calculations
+        abs_entry_price = abs(entry_price) if entry_price else 0
+        if abs_entry_price <= 0:
+            self.log_action(
+                'ERROR',
+                f"REJECTED: Cannot execute trade with $0 entry price. Strategy: {trade['strategy']}",
+                success=False
+            )
+            self._log_trade_activity('ERROR', 'SPY', f"Trade rejected - entry price is $0 for {trade['strategy']}", None, None, False, "Entry price validation failed")
+            return None
+
         # CRITICAL: Log trade decision to database
         if self.db_logger:
             self.db_logger.log_trade_decision(
@@ -1798,14 +2303,20 @@ This trade ensures we're always active in the market"""
 
         now = datetime.now(CENTRAL_TZ)
 
+        # Insert into NEW autonomous_open_positions table with RETURNING for PostgreSQL
+        # Include theoretical pricing columns (Black-Scholes)
         c.execute("""
-            INSERT INTO autonomous_positions (
+            INSERT INTO autonomous_open_positions (
                 symbol, strategy, action, entry_date, entry_time, strike, option_type,
                 expiration_date, contracts, entry_price, entry_bid, entry_ask,
                 entry_spot_price, current_price, current_spot_price, unrealized_pnl,
-                status, confidence, gex_regime, entry_net_gex, entry_flip_point,
-                trade_reasoning, contract_symbol
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                unrealized_pnl_pct, confidence, gex_regime, entry_net_gex, entry_flip_point,
+                trade_reasoning, contract_symbol,
+                theoretical_price, theoretical_bid, theoretical_ask, recommended_entry,
+                price_adjustment, price_adjustment_pct, is_delayed, data_confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
         """, (
             trade['symbol'],
             trade['strategy'],
@@ -1816,24 +2327,48 @@ This trade ensures we're always active in the market"""
             trade['option_type'],
             exp_date,
             contracts,
-            entry_price,
+            abs_entry_price,  # Use absolute value for storage
             option_data.get('bid', 0),
             option_data.get('ask', 0),
             gex_data.get('spot_price', 0),
-            entry_price,
+            abs_entry_price,  # Current price starts at entry
             gex_data.get('spot_price', 0),
-            0.0,
-            'OPEN',
+            0.0,  # unrealized_pnl starts at 0
+            0.0,  # unrealized_pnl_pct starts at 0
             trade['confidence'],
             f"GEX: ${gex_data.get('net_gex', 0)/1e9:.2f}B",
             gex_data.get('net_gex', 0),
             gex_data.get('flip_point', 0),
             trade['reasoning'],
-            option_data.get('contract_symbol', '')
+            option_data.get('contract_symbol', ''),
+            # Theoretical pricing columns (Black-Scholes)
+            option_data.get('theoretical_price'),
+            option_data.get('theoretical_bid'),
+            option_data.get('theoretical_ask'),
+            option_data.get('recommended_entry'),
+            option_data.get('price_adjustment'),
+            option_data.get('price_adjustment_pct'),
+            option_data.get('is_delayed', False),
+            option_data.get('confidence', 'unknown')
         ))
 
-        position_id = c.lastrowid
+        # Get the inserted position ID (PostgreSQL RETURNING)
+        result = c.fetchone()
+        position_id = result[0] if result else None
         conn.commit()
+
+        # Log to trade activity
+        total_cost = abs_entry_price * contracts * 100
+        self._log_trade_activity(
+            'ENTRY',
+            trade['symbol'],
+            f"Opened {trade['strategy']}: {trade['action']} ${trade['strike']} x{contracts} @ ${abs_entry_price:.2f} (Total: ${total_cost:.0f})",
+            position_id,
+            -total_cost,  # Negative because we're spending money
+            True,
+            None
+        )
+
         conn.close()
 
         # CRITICAL: Record trade in strategy competition
@@ -2105,7 +2640,7 @@ This trade ensures we're always active in the market"""
 
         conn = get_connection()
         positions = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions WHERE status = 'OPEN'
+            SELECT * FROM autonomous_open_positions
         """, conn)
         conn.close()
 
@@ -2144,8 +2679,8 @@ This trade ensures we're always active in the market"""
                 unrealized_pnl = current_value - entry_value
                 pnl_pct = (unrealized_pnl / entry_value * 100) if entry_value > 0 else 0
 
-                # Update position
-                self._update_position(pos['id'], current_price, current_spot, unrealized_pnl)
+                # Update position with pnl_pct
+                self._update_position(pos['id'], current_price, current_spot, unrealized_pnl, pnl_pct)
 
                 # Check exit conditions
                 should_exit, reason = self._check_exit_conditions(
@@ -2177,16 +2712,18 @@ This trade ensures we're always active in the market"""
 
         return actions_taken
 
-    def _update_position(self, position_id: int, current_price: float, current_spot: float, unrealized_pnl: float):
-        """Update position with current values"""
+    def _update_position(self, position_id: int, current_price: float, current_spot: float,
+                         unrealized_pnl: float, pnl_pct: float = 0):
+        """Update position with current values in autonomous_open_positions"""
         conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
-            UPDATE autonomous_positions
-            SET current_price = ?, current_spot_price = ?, unrealized_pnl = ?
+            UPDATE autonomous_open_positions
+            SET current_price = ?, current_spot_price = ?, unrealized_pnl = ?,
+                unrealized_pnl_pct = ?, last_updated = NOW()
             WHERE id = ?
-        """, (current_price, current_spot, unrealized_pnl, position_id))
+        """, (current_price, current_spot, unrealized_pnl, pnl_pct, position_id))
 
         conn.commit()
         conn.close()
@@ -2462,74 +2999,274 @@ Now analyze this position:"""
             traceback.print_exc()
 
     def _close_position(self, position_id: int, exit_price: float, realized_pnl: float, reason: str):
-        """Close a position"""
+        """Close a position - move from open_positions to closed_trades"""
         conn = get_connection()
         c = conn.cursor()
 
         now = datetime.now(CENTRAL_TZ)
 
+        # First, get the full position data from open_positions
         c.execute("""
-            UPDATE autonomous_positions
-            SET status = 'CLOSED',
-                closed_date = ?,
-                closed_time = ?,
-                exit_price = ?,
-                realized_pnl = ?,
-                exit_reason = ?
+            SELECT symbol, strategy, action, strike, option_type, expiration_date,
+                   contracts, contract_symbol, entry_date, entry_time, entry_price,
+                   entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
+                   entry_net_gex, entry_flip_point, trade_reasoning, current_spot_price
+            FROM autonomous_open_positions
             WHERE id = ?
+        """, (position_id,))
+
+        pos = c.fetchone()
+        if not pos:
+            print(f"⚠️ Position {position_id} not found in open_positions")
+            conn.close()
+            return
+
+        (symbol, strategy, action, strike, option_type, expiration_date,
+         contracts, contract_symbol, entry_date, entry_time, entry_price,
+         entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
+         entry_net_gex, entry_flip_point, trade_reasoning, exit_spot_price) = pos
+
+        # Calculate proper P&L percentage
+        entry_value = float(entry_price) * contracts * 100 if entry_price else 0
+        realized_pnl_pct = (realized_pnl / entry_value * 100) if entry_value > 0 else 0
+
+        # Calculate hold duration
+        try:
+            entry_dt = datetime.strptime(f"{entry_date} {entry_time}", '%Y-%m-%d %H:%M:%S')
+            hold_minutes = int((now.replace(tzinfo=None) - entry_dt).total_seconds() / 60)
+        except:
+            hold_minutes = 0
+
+        # Insert into closed_trades table
+        c.execute("""
+            INSERT INTO autonomous_closed_trades (
+                symbol, strategy, action, strike, option_type, expiration_date,
+                contracts, contract_symbol, entry_date, entry_time, entry_price,
+                entry_bid, entry_ask, entry_spot_price, exit_date, exit_time,
+                exit_price, exit_spot_price, exit_reason, realized_pnl,
+                realized_pnl_pct, confidence, gex_regime, entry_net_gex,
+                entry_flip_point, trade_reasoning, hold_duration_minutes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
+            symbol, strategy, action, strike, option_type, expiration_date,
+            contracts, contract_symbol, entry_date, entry_time, entry_price,
+            entry_bid, entry_ask, entry_spot_price,
             now.strftime('%Y-%m-%d'),
             now.strftime('%H:%M:%S'),
             exit_price,
-            realized_pnl,
+            exit_spot_price,
             reason,
-            position_id
+            realized_pnl,
+            realized_pnl_pct,
+            confidence, gex_regime, entry_net_gex, entry_flip_point,
+            trade_reasoning, hold_minutes
         ))
 
+        # Delete from open_positions
+        c.execute("DELETE FROM autonomous_open_positions WHERE id = ?", (position_id,))
+
         conn.commit()
+
+        # Log to trade activity
+        self._log_trade_activity(
+            'EXIT',
+            symbol,
+            f"Closed {strategy}: {action} ${strike} x{contracts} @ ${exit_price:.2f} | P&L: ${realized_pnl:+.2f} ({realized_pnl_pct:+.1f}%) | Reason: {reason}",
+            position_id,
+            realized_pnl,
+            True,
+            None
+        )
+
+        # Create equity snapshot after closing
+        self._create_equity_snapshot()
+
         conn.close()
 
         # Log spread width performance if this is an iron condor
         self._log_spread_width_performance(position_id)
 
+    def _log_trade_activity(self, action_type: str, symbol: str, details: str,
+                            position_id: int = None, pnl_impact: float = None,
+                            success: bool = True, error_message: str = None):
+        """Log activity to autonomous_trade_activity table"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            now = datetime.now(CENTRAL_TZ)
+
+            c.execute("""
+                INSERT INTO autonomous_trade_activity (
+                    activity_date, activity_time, activity_timestamp,
+                    action_type, symbol, details, position_id,
+                    pnl_impact, success, error_message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                now.strftime('%Y-%m-%d %H:%M:%S'),
+                action_type,
+                symbol,
+                details,
+                position_id,
+                pnl_impact,
+                success,
+                error_message
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Failed to log trade activity: {e}")
+
+    def _create_equity_snapshot(self):
+        """Create a snapshot of current equity for P&L time series graphing"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            now = datetime.now(CENTRAL_TZ)
+
+            # Get performance data
+            perf = self.get_performance()
+
+            # Get daily returns for Sharpe calculation
+            c.execute("""
+                SELECT snapshot_date, account_value
+                FROM autonomous_equity_snapshots
+                ORDER BY snapshot_date DESC, snapshot_time DESC
+                LIMIT 30
+            """)
+            snapshots = c.fetchall()
+
+            # Calculate Sharpe ratio (annualized)
+            sharpe_ratio = 0.0
+            if len(snapshots) >= 2:
+                daily_returns = []
+                for i in range(len(snapshots) - 1):
+                    if snapshots[i+1][1] and snapshots[i+1][1] > 0:
+                        ret = (float(snapshots[i][1]) - float(snapshots[i+1][1])) / float(snapshots[i+1][1])
+                        daily_returns.append(ret)
+
+                if daily_returns:
+                    import numpy as np
+                    avg_return = np.mean(daily_returns)
+                    std_return = np.std(daily_returns)
+                    if std_return > 0:
+                        sharpe_ratio = (avg_return / std_return) * np.sqrt(252)  # Annualized
+
+            # Calculate max drawdown
+            max_drawdown_pct = 0.0
+            if snapshots:
+                peak = float(perf.get('starting_capital', 5000))
+                for s in reversed(snapshots):
+                    val = float(s[1]) if s[1] else peak
+                    if val > peak:
+                        peak = val
+                    drawdown = (peak - val) / peak * 100 if peak > 0 else 0
+                    if drawdown > max_drawdown_pct:
+                        max_drawdown_pct = drawdown
+
+            # Get today's P&L
+            today_str = now.strftime('%Y-%m-%d')
+            c.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM autonomous_closed_trades
+                WHERE exit_date = ?
+            """, (today_str,))
+            daily_realized = c.fetchone()[0] or 0
+
+            c.execute("""
+                SELECT COALESCE(SUM(unrealized_pnl), 0)
+                FROM autonomous_open_positions
+            """)
+            daily_unrealized = c.fetchone()[0] or 0
+            daily_pnl = float(daily_realized) + float(daily_unrealized)
+
+            # Calculate daily return %
+            starting = float(perf.get('starting_capital', 5000))
+            daily_return_pct = (daily_pnl / starting * 100) if starting > 0 else 0
+
+            # Insert snapshot
+            c.execute("""
+                INSERT INTO autonomous_equity_snapshots (
+                    snapshot_date, snapshot_time, snapshot_timestamp,
+                    starting_capital, total_realized_pnl, total_unrealized_pnl,
+                    account_value, daily_pnl, daily_return_pct, total_return_pct,
+                    max_drawdown_pct, sharpe_ratio, open_positions_count,
+                    total_trades, winning_trades, losing_trades, win_rate
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                now.strftime('%Y-%m-%d %H:%M:%S'),
+                perf.get('starting_capital', 5000),
+                perf.get('realized_pnl', 0),
+                perf.get('unrealized_pnl', 0),
+                perf.get('current_value', 5000),
+                daily_pnl,
+                daily_return_pct,
+                perf.get('return_pct', 0),
+                max_drawdown_pct,
+                sharpe_ratio,
+                perf.get('open_positions', 0),
+                perf.get('total_trades', 0),
+                perf.get('winning_trades', 0),
+                perf.get('losing_trades', 0),
+                perf.get('win_rate', 0)
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Failed to create equity snapshot: {e}")
+
     def get_performance(self) -> Dict:
-        """Get trading performance stats"""
+        """Get trading performance stats from NEW tables"""
         conn = get_connection()
 
+        # Get closed trades from dedicated table
         closed = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions WHERE status = 'CLOSED'
+            SELECT * FROM autonomous_closed_trades
+            ORDER BY exit_date DESC, exit_time DESC
         """, conn)
 
+        # Get open positions from dedicated table
         open_pos = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions WHERE status = 'OPEN'
-        """, conn)
-
-        all_positions = pd.read_sql_query("""
-            SELECT * FROM autonomous_positions
+            SELECT * FROM autonomous_open_positions
         """, conn)
 
         conn.close()
 
-        capital = float(self.get_config('capital'))
+        capital = float(self.get_config('capital') or 5000)
         total_realized = closed['realized_pnl'].sum() if not closed.empty else 0
         total_unrealized = open_pos['unrealized_pnl'].sum() if not open_pos.empty else 0
         total_pnl = total_realized + total_unrealized
         current_value = capital + total_pnl
 
         win_rate = 0
+        winning_trades = 0
+        losing_trades = 0
         if not closed.empty:
             winners = closed[closed['realized_pnl'] > 0]
-            win_rate = (len(winners) / len(closed) * 100)
+            losers = closed[closed['realized_pnl'] <= 0]
+            winning_trades = len(winners)
+            losing_trades = len(losers)
+            win_rate = (winning_trades / len(closed) * 100)
+
+        # Calculate total trades (closed + open)
+        total_trades = len(closed) + len(open_pos)
 
         return {
             'starting_capital': capital,
             'current_value': current_value,
             'total_pnl': total_pnl,
-            'realized_pnl': total_realized,
-            'unrealized_pnl': total_unrealized,
-            'return_pct': (total_pnl / capital * 100),
-            'total_trades': len(all_positions),  # Count ALL positions (open + closed)
-            'closed_trades': len(closed),  # Add separate count for closed only
+            'realized_pnl': float(total_realized),
+            'unrealized_pnl': float(total_unrealized),
+            'return_pct': (total_pnl / capital * 100) if capital > 0 else 0,
+            'total_trades': total_trades,
+            'closed_trades': len(closed),
             'open_positions': len(open_pos),
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
             'win_rate': win_rate
         }

@@ -187,6 +187,129 @@ async def get_competition_summary():
 
 
 # ============================================================================
+# SIGNAL-ONLY MODE (No Auto-Execution)
+# ============================================================================
+
+@router.get("/signal")
+async def get_entry_signal():
+    """
+    Generate entry signal WITHOUT executing a trade (Signal-Only Mode).
+
+    Perfect for users with 15-minute delayed option data who want to:
+    1. See trade recommendations
+    2. Get entry price guidance with delay buffer
+    3. Manually execute in their broker
+
+    Returns:
+    - Trade setup (strategy, strike, option type)
+    - Pricing with delayed data handling:
+      - displayed_mid: The 15-min delayed price shown
+      - estimated_low/high: Likely current price range
+      - spread_buffer_pct: Buffer % to account for delay
+    - Entry recommendation text
+    - Delay warning if data is delayed
+    """
+    try:
+        from autonomous_paper_trader import AutonomousPaperTrader
+        from trading_volatility_api import TradingVolatilityAPI
+
+        trader = AutonomousPaperTrader()
+        api_client = TradingVolatilityAPI()
+
+        signal = trader.generate_entry_signal(api_client)
+
+        if signal and signal.get('error'):
+            return {
+                'success': False,
+                'error': signal.get('error'),
+                'recommendation': signal.get('recommendation', 'Wait for better conditions')
+            }
+
+        if not signal or signal.get('signal') is None:
+            return {
+                'success': True,
+                'has_signal': False,
+                'reason': signal.get('reason', 'No setup found') if signal else 'No setup found',
+                'market_summary': signal.get('market_summary', '') if signal else '',
+                'recommendation': signal.get('recommendation', 'Wait for better conditions') if signal else 'Wait'
+            }
+
+        return {
+            'success': True,
+            'has_signal': True,
+            'signal': signal
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/signal/mode")
+async def get_signal_mode():
+    """Check if signal-only mode is enabled"""
+    try:
+        from autonomous_paper_trader import AutonomousPaperTrader
+
+        trader = AutonomousPaperTrader()
+        is_signal_only = trader.is_signal_only_mode()
+
+        return {
+            'success': True,
+            'signal_only_mode': is_signal_only,
+            'description': 'When enabled, generates signals without auto-execution'
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/signal/mode")
+async def set_signal_mode(enabled: bool = True):
+    """Enable or disable signal-only mode"""
+    try:
+        from autonomous_paper_trader import AutonomousPaperTrader
+
+        trader = AutonomousPaperTrader()
+        trader.set_signal_only_mode(enabled)
+
+        return {
+            'success': True,
+            'signal_only_mode': enabled,
+            'message': f"Signal-only mode {'enabled' if enabled else 'disabled'}"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/data-status")
+async def get_data_status():
+    """
+    Check Polygon.io subscription tier and data delay status.
+
+    Returns whether option data is real-time (OK) or delayed (DELAYED).
+    Options Developer plan = 15-minute delayed data.
+    """
+    try:
+        from polygon_data_fetcher import detect_subscription_tier
+
+        tier_info = detect_subscription_tier()
+
+        return {
+            'success': True,
+            'data': tier_info,
+            'delay_info': {
+                'options_delayed': tier_info.get('options_status') == 'DELAYED',
+                'delay_minutes': 15 if tier_info.get('options_status') == 'DELAYED' else 0,
+                'warning': '⏱️ Options data is 15 minutes delayed. Entry prices will differ from displayed prices.' if tier_info.get('options_status') == 'DELAYED' else None
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # BACKTEST RESULTS
 # ============================================================================
 
