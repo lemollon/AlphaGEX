@@ -13,6 +13,7 @@ interface TraderUpdate {
     market_analysis: string
     last_decision: string
     last_updated: string
+    next_check_time?: string
   }
   positions?: Array<{
     id: number
