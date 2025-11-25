@@ -630,12 +630,28 @@ class OptionsBacktester(BacktestBase):
                 # Create trade with option PnL
                 # Override calculate_pnl to use simulated option PnL
                 position_size = self.initial_capital * (self.position_size_pct / 100)
-                commission = position_size * (self.commission_pct / 100) * 2
-                slippage = position_size * (self.slippage_pct / 100)
-                total_costs = commission + slippage
-                cost_pct = (total_costs / position_size) * 100
 
-                net_pnl_pct = option_pnl_pct - cost_pct
+                # IMPORTANT: When using realistic pricing, costs are ALREADY included
+                # in the option_pnl_pct (bid/ask spreads + market slippage)
+                # Only add small broker commission for realistic pricing
+                if self.use_realistic_pricing and strategy_name in [
+                    'BULLISH_CALL_SPREAD', 'BEARISH_PUT_SPREAD',
+                    'BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD'
+                ]:
+                    # Realistic pricing already includes bid/ask + market slippage
+                    # Only subtract small broker commission (~$1-2 per contract)
+                    # For $10k position (~28 contracts), commission ~$56 = 0.56%
+                    commission = position_size * 0.005  # 0.5% broker commission only
+                    slippage = 0  # Already included in realistic pricing
+                    net_pnl_pct = option_pnl_pct - (commission / position_size * 100)
+                else:
+                    # Simplified pricing needs full costs applied
+                    commission = position_size * (self.commission_pct / 100) * 2
+                    slippage = position_size * (self.slippage_pct / 100)
+                    total_costs = commission + slippage
+                    cost_pct = (total_costs / position_size) * 100
+                    net_pnl_pct = option_pnl_pct - cost_pct
+
                 net_pnl_dollars = position_size * (net_pnl_pct / 100)
 
                 trade = Trade(
