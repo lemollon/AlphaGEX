@@ -94,6 +94,15 @@ class OptionsBacktester(BacktestBase):
 
         df = price_data.copy()
 
+        # CRITICAL: Normalize price data index to midnight
+        # Polygon returns timestamps like "2022-11-28 05:00:00"
+        # We need "2022-11-28 00:00:00" to match GEX data
+        if isinstance(df.index, pd.DatetimeIndex):
+            df.index = df.index.normalize()
+            # Also strip timezone if present
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
+
         # Initialize API client
         if self.api_client is None:
             try:
