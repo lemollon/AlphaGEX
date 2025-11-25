@@ -3177,6 +3177,146 @@ async def get_trader_status():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/trader/diagnostics")
+async def get_trader_diagnostics():
+    """
+    Run comprehensive diagnostics on the autonomous trader
+    Returns detailed status of all components to help debug issues
+    """
+    from datetime import datetime, timedelta, time as dt_time
+    from zoneinfo import ZoneInfo
+
+    diagnostics = {
+        "timestamp": datetime.now().isoformat(),
+        "checks": {},
+        "recommendations": []
+    }
+
+    # 1. Check market hours
+    try:
+        ct_now = datetime.now(ZoneInfo("America/Chicago"))
+        market_open = dt_time(8, 30)
+        market_close = dt_time(15, 0)
+        current_time = ct_now.time()
+        is_weekday = ct_now.weekday() < 5
+        is_market_hours = is_weekday and market_open <= current_time <= market_close
+
+        diagnostics["checks"]["market_hours"] = {
+            "status": "open" if is_market_hours else "closed",
+            "current_time_ct": ct_now.strftime('%I:%M:%S %p CT'),
+            "day_of_week": ct_now.strftime('%A'),
+            "is_trading_day": is_weekday,
+            "market_open": "8:30 AM CT",
+            "market_close": "3:00 PM CT"
+        }
+
+        if not is_market_hours:
+            diagnostics["recommendations"].append("Market is closed - trader only runs during 8:30 AM - 3:00 PM CT, Mon-Fri")
+    except Exception as e:
+        diagnostics["checks"]["market_hours"] = {"error": str(e)}
+
+    # 2. Check trader availability
+    diagnostics["checks"]["trader_available"] = trader_available
+
+    if not trader_available:
+        diagnostics["recommendations"].append("Trader is not available - check startup logs for errors")
+
+    # 3. Check live status
+    if trader_available:
+        try:
+            live_status = trader.get_live_status()
+            diagnostics["checks"]["live_status"] = live_status
+
+            # Check if status is stale
+            if live_status.get('timestamp'):
+                try:
+                    last_update = datetime.fromisoformat(live_status['timestamp'].replace('Z', '+00:00'))
+                    now = datetime.now(last_update.tzinfo) if last_update.tzinfo else datetime.now()
+                    age_minutes = (now - last_update).total_seconds() / 60
+                    diagnostics["checks"]["live_status"]["age_minutes"] = round(age_minutes, 1)
+
+                    if age_minutes > 10:
+                        diagnostics["checks"]["live_status"]["stale"] = True
+                        diagnostics["recommendations"].append(f"Status is {age_minutes:.0f} minutes old - scheduler thread may have crashed")
+                except:
+                    pass
+        except Exception as e:
+            diagnostics["checks"]["live_status"] = {"error": str(e)}
+
+    # 4. Check configuration
+    if trader_available:
+        try:
+            config = {
+                "capital": trader.get_config('capital'),
+                "mode": trader.get_config('mode'),
+                "signal_only": trader.get_config('signal_only'),
+                "last_trade_date": trader.get_config('last_trade_date'),
+                "auto_execute": trader.get_config('auto_execute')
+            }
+            diagnostics["checks"]["config"] = config
+
+            if config.get('signal_only', '').lower() == 'true':
+                diagnostics["recommendations"].append("signal_only mode is ENABLED - trades will NOT auto-execute!")
+        except Exception as e:
+            diagnostics["checks"]["config"] = {"error": str(e)}
+
+    # 5. Check database tables
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        tables = {}
+        for table in ['autonomous_live_status', 'autonomous_trade_log', 'autonomous_open_positions',
+                      'autonomous_closed_trades', 'autonomous_config', 'autonomous_trader_logs']:
+            try:
+                c.execute(f"SELECT COUNT(*) FROM {table}")
+                tables[table] = c.fetchone()[0]
+            except Exception as e:
+                tables[table] = f"Error: {e}"
+
+        diagnostics["checks"]["database_tables"] = tables
+        conn.close()
+    except Exception as e:
+        diagnostics["checks"]["database_tables"] = {"error": str(e)}
+
+    # 6. Check recent activity
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute("""
+            SELECT action, details, timestamp, success
+            FROM autonomous_trade_log
+            ORDER BY timestamp DESC
+            LIMIT 5
+        """)
+        recent_logs = []
+        for row in c.fetchall():
+            recent_logs.append({
+                "action": row[0],
+                "details": str(row[1])[:100] if row[1] else None,
+                "timestamp": str(row[2]),
+                "success": row[3]
+            })
+        diagnostics["checks"]["recent_activity"] = recent_logs
+
+        # Count open positions
+        c.execute("SELECT COUNT(*) FROM autonomous_open_positions")
+        diagnostics["checks"]["open_positions"] = c.fetchone()[0]
+
+        conn.close()
+    except Exception as e:
+        diagnostics["checks"]["recent_activity"] = {"error": str(e)}
+
+    # 7. Summary
+    has_issues = len(diagnostics["recommendations"]) > 0
+    diagnostics["summary"] = {
+        "healthy": not has_issues,
+        "issues_found": len(diagnostics["recommendations"])
+    }
+
+    return {"success": True, "data": diagnostics}
+
 @app.get("/api/trader/live-status")
 async def get_trader_live_status():
     """
