@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 from database_adapter import get_connection
-from polygon_data_fetcher import polygon_fetcher
+from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 import time
 import os
 
@@ -58,8 +58,27 @@ except ImportError as e:
     print(f"⚠️ Database Logger not available: {e}")
 
 
-def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str) -> Dict:
-    """Get REAL option price from Polygon.io"""
+def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
+                          current_spot: float = None, use_theoretical: bool = True) -> Dict:
+    """
+    Get REAL option price from Polygon.io, enhanced with Black-Scholes theoretical pricing.
+
+    When data is 15-minute delayed, calculates theoretical price using:
+    - Current SPY spot price (fresher than option quote)
+    - IV from the delayed quote
+    - Black-Scholes model
+
+    Args:
+        symbol: Underlying symbol
+        strike: Option strike price
+        option_type: 'call' or 'put'
+        expiration_date: Expiration date YYYY-MM-DD
+        current_spot: Current underlying price (optional, will fetch if None)
+        use_theoretical: Whether to enhance with theoretical pricing (default True)
+
+    Returns:
+        Dict with quote data, optionally enhanced with theoretical prices
+    """
     try:
         # Use Polygon.io to get option quote
         quote = polygon_fetcher.get_option_quote(
@@ -71,6 +90,17 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
 
         if quote is None:
             return {'error': 'No option data found from Polygon.io'}
+
+        # If delayed data and theoretical pricing enabled, enhance with Black-Scholes
+        if use_theoretical and quote.get('is_delayed', False):
+            enhanced_quote = calculate_theoretical_option_price(quote, current_spot)
+            if 'error' not in enhanced_quote:
+                # Log the theoretical vs delayed price comparison
+                theo_price = enhanced_quote.get('theoretical_price', 0)
+                delayed_mid = quote.get('mid', 0)
+                adjustment = enhanced_quote.get('price_adjustment_pct', 0)
+                print(f"   📊 Black-Scholes: Delayed mid=${delayed_mid:.2f} → Theoretical=${theo_price:.2f} ({adjustment:+.1f}%)")
+                return enhanced_quote
 
         return quote
 
@@ -163,7 +193,8 @@ def find_liquid_strike(symbol: str, base_strike: float, option_type: str, expira
 
     for strike in strikes_to_try[:max_attempts]:
         attempts += 1
-        quote = get_real_option_price(symbol, strike, option_type, expiration_date)
+        # Pass spot_price for Black-Scholes theoretical pricing
+        quote = get_real_option_price(symbol, strike, option_type, expiration_date, current_spot=spot_price)
         is_valid, reason = validate_option_liquidity(quote)
         tried_strikes.append(f"${strike:.0f}: {reason}")
 
@@ -249,6 +280,12 @@ class AutonomousPaperTrader:
         c.execute("SELECT value FROM autonomous_config WHERE key = 'signal_only'")
         if not c.fetchone():
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('signal_only', 'false')")
+            conn.commit()
+
+        # Ensure use_theoretical_pricing key exists (Black-Scholes for delayed data)
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'use_theoretical_pricing'")
+        if not c.fetchone():
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('use_theoretical_pricing', 'true')")
             conn.commit()
 
         conn.close()
@@ -598,6 +635,27 @@ class AutonomousPaperTrader:
         conn.commit()
         conn.close()
         print(f"{'✅' if enabled else '❌'} Signal-only mode {'enabled' if enabled else 'disabled'}")
+
+    def is_theoretical_pricing_enabled(self) -> bool:
+        """Check if Black-Scholes theoretical pricing is enabled for delayed data"""
+        return self.get_config('use_theoretical_pricing') == 'true'
+
+    def set_theoretical_pricing(self, enabled: bool):
+        """Enable or disable Black-Scholes theoretical pricing for delayed data"""
+        conn = get_connection()
+        c = conn.cursor()
+        # Ensure the key exists first
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'use_theoretical_pricing'")
+        if not c.fetchone():
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('use_theoretical_pricing', ?)",
+                      ('true' if enabled else 'false',))
+        else:
+            c.execute("UPDATE autonomous_config SET value = ? WHERE key = 'use_theoretical_pricing'",
+                      ('true' if enabled else 'false',))
+        conn.commit()
+        conn.close()
+        status = '✅ ENABLED' if enabled else '❌ DISABLED'
+        print(f"{status} Black-Scholes theoretical pricing for delayed option data")
 
     def generate_entry_signal(self, api_client) -> Optional[Dict]:
         """
@@ -1090,8 +1148,23 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 f"Polygon: bid=${bid:.2f}, ask=${ask:.2f}, mid=${mid:.2f}, last=${last:.2f}, spread={spread_pct:.1f}%",
                 success=True)
 
-            # Use mid price (already validated to be > 0)
-            entry_price = mid if mid > 0 else (bid + ask) / 2
+            # Check if we have theoretical pricing (Black-Scholes enhanced)
+            is_delayed = option_price_data.get('is_delayed', False)
+            theoretical_price = option_price_data.get('theoretical_price', 0)
+            recommended_entry = option_price_data.get('recommended_entry', 0)
+            confidence = option_price_data.get('confidence', 'unknown')
+
+            # Use theoretical/recommended price if available and data is delayed
+            if is_delayed and recommended_entry > 0:
+                entry_price = recommended_entry
+                calculation_method = option_price_data.get('calculation_method', 'Black-Scholes')
+                price_adjustment_pct = option_price_data.get('price_adjustment_pct', 0)
+                self.log_action('THEORETICAL_PRICE',
+                    f"Using Black-Scholes price: ${entry_price:.2f} (vs delayed mid ${mid:.2f}, {price_adjustment_pct:+.1f}% adj, confidence={confidence})",
+                    success=True)
+            else:
+                # Use mid price (already validated to be > 0)
+                entry_price = mid if mid > 0 else (bid + ask) / 2
 
             available = self.get_available_capital()
 

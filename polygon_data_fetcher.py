@@ -36,11 +36,13 @@ Usage:
 
 import os
 import time
+import math
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 from functools import lru_cache
+from scipy.stats import norm
 
 
 class PolygonDataCache:
@@ -683,6 +685,230 @@ def calculate_delayed_price_range(
         'delay_warning': '⏱️ Price is 15 minutes delayed - actual price will differ!',
         'quote_time': quote.get('quote_timestamp')
     }
+
+
+def calculate_black_scholes_price(
+    spot_price: float,
+    strike: float,
+    time_to_expiry: float,
+    volatility: float,
+    option_type: str = 'call',
+    risk_free_rate: float = 0.05
+) -> float:
+    """
+    Calculate theoretical option price using Black-Scholes model.
+
+    Args:
+        spot_price: Current underlying price
+        strike: Option strike price
+        time_to_expiry: Time to expiration in years (e.g., 7 days = 7/365)
+        volatility: Implied volatility as decimal (e.g., 0.25 for 25%)
+        option_type: 'call' or 'put'
+        risk_free_rate: Risk-free interest rate (default 5%)
+
+    Returns:
+        Theoretical option price
+    """
+    if time_to_expiry <= 0:
+        # At expiration, only intrinsic value
+        if option_type.lower() == 'call':
+            return max(0, spot_price - strike)
+        else:
+            return max(0, strike - spot_price)
+
+    # Ensure volatility is reasonable
+    volatility = max(0.01, min(volatility, 5.0))  # Cap at 500% IV
+
+    # Calculate d1 and d2
+    d1 = (math.log(spot_price / strike) + (risk_free_rate + 0.5 * volatility**2) * time_to_expiry) / (volatility * math.sqrt(time_to_expiry))
+    d2 = d1 - volatility * math.sqrt(time_to_expiry)
+
+    if option_type.lower() == 'call':
+        price = spot_price * norm.cdf(d1) - strike * math.exp(-risk_free_rate * time_to_expiry) * norm.cdf(d2)
+    else:
+        price = strike * math.exp(-risk_free_rate * time_to_expiry) * norm.cdf(-d2) - spot_price * norm.cdf(-d1)
+
+    return max(0, price)
+
+
+def calculate_theoretical_option_price(
+    quote: Dict,
+    current_spot: float = None,
+    current_vix: float = None
+) -> Dict:
+    """
+    Calculate theoretical option price using Black-Scholes to compensate for 15-minute delay.
+
+    This function takes a delayed option quote and calculates what the price
+    SHOULD be based on the current underlying price and the IV from the quote.
+
+    Args:
+        quote: Option quote dict from get_option_quote()
+        current_spot: Current SPY price (if None, uses estimate from quote)
+        current_vix: Current VIX level (for IV adjustment)
+
+    Returns:
+        Enhanced quote dict with theoretical prices:
+        {
+            ...original quote fields...,
+            'theoretical_price': float,      # Black-Scholes calculated price
+            'theoretical_bid': float,        # Estimated bid (theoretical - spread/2)
+            'theoretical_ask': float,        # Estimated ask (theoretical + spread/2)
+            'price_adjustment': float,       # Difference from delayed mid
+            'price_adjustment_pct': float,   # Adjustment as percentage
+            'recommended_entry': float,      # Recommended entry price
+            'confidence': str,               # 'high', 'medium', 'low'
+            'calculation_method': str        # Explanation of how price was calculated
+        }
+    """
+    if quote is None:
+        return {'error': 'No quote data'}
+
+    # Extract quote data
+    bid = quote.get('bid', 0) or 0
+    ask = quote.get('ask', 0) or 0
+    mid = quote.get('mid', 0) or (bid + ask) / 2
+    strike = quote.get('strike', 0)
+    expiration = quote.get('expiration', '')
+    iv = quote.get('implied_volatility', 0) or 0.25  # Default 25% IV
+    delta = quote.get('delta', 0)
+    is_delayed = quote.get('is_delayed', False)
+
+    # Determine option type from delta (positive = call, negative = put)
+    if delta is None or delta == 0:
+        # Try to infer from contract symbol
+        contract = quote.get('contract_symbol', '')
+        option_type = 'call' if 'C' in contract else 'put'
+    else:
+        option_type = 'call' if delta > 0 else 'put'
+
+    # Calculate time to expiry
+    try:
+        exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+        days_to_exp = (exp_date - datetime.now()).days
+        time_to_expiry = max(1, days_to_exp) / 365.0  # At least 1 day
+    except:
+        time_to_expiry = 7 / 365.0  # Default to 7 days
+
+    # Get current spot price
+    if current_spot is None or current_spot <= 0:
+        # Try to fetch current price
+        current_spot = get_current_price('SPY')
+        if current_spot is None or current_spot <= 0:
+            # Fall back to estimating from quote
+            # Use the strike and delta to estimate spot
+            if abs(delta) > 0.01:
+                # ATM option has ~0.50 delta
+                # Rough estimate: spot ≈ strike when delta is near 0.50
+                current_spot = strike
+            else:
+                current_spot = strike
+
+    # Adjust IV based on VIX if available (IV tends to track VIX)
+    adjusted_iv = iv
+    if current_vix and current_vix > 0:
+        # VIX is annualized, so use it to sanity-check IV
+        vix_decimal = current_vix / 100.0
+        # Blend quote IV with VIX-implied IV (70% quote, 30% VIX)
+        adjusted_iv = (iv * 0.7) + (vix_decimal * 0.3)
+
+    # Calculate theoretical price using Black-Scholes
+    theoretical_price = calculate_black_scholes_price(
+        spot_price=current_spot,
+        strike=strike,
+        time_to_expiry=time_to_expiry,
+        volatility=adjusted_iv,
+        option_type=option_type
+    )
+
+    # Estimate bid/ask spread from original quote
+    original_spread = ask - bid if (ask > 0 and bid > 0) else mid * 0.02  # Default 2% spread
+    spread_pct = (original_spread / mid * 100) if mid > 0 else 2.0
+
+    # Apply spread to theoretical price
+    half_spread = original_spread / 2
+    theoretical_bid = max(0.01, theoretical_price - half_spread)
+    theoretical_ask = theoretical_price + half_spread
+
+    # Calculate price adjustment
+    price_adjustment = theoretical_price - mid if mid > 0 else 0
+    price_adjustment_pct = (price_adjustment / mid * 100) if mid > 0 else 0
+
+    # Determine confidence level
+    if abs(price_adjustment_pct) < 3:
+        confidence = 'high'  # Theoretical close to quoted
+        recommended_entry = theoretical_price
+    elif abs(price_adjustment_pct) < 8:
+        confidence = 'medium'  # Moderate difference
+        # Use weighted average of theoretical and quoted
+        recommended_entry = (theoretical_price * 0.6 + mid * 0.4)
+    else:
+        confidence = 'low'  # Large difference - market may have moved significantly
+        # Be more conservative
+        if option_type == 'call':
+            # For calls, if theoretical > quoted, market moved up
+            recommended_entry = max(theoretical_price, mid) if price_adjustment > 0 else min(theoretical_price, mid)
+        else:
+            # For puts, if theoretical > quoted, market moved down
+            recommended_entry = max(theoretical_price, mid) if price_adjustment > 0 else min(theoretical_price, mid)
+
+    # Build calculation explanation
+    calculation_method = (
+        f"Black-Scholes with SPY=${current_spot:.2f}, "
+        f"K=${strike:.0f}, IV={adjusted_iv*100:.1f}%, "
+        f"DTE={int(time_to_expiry*365)}, {option_type.upper()}"
+    )
+
+    # Return enhanced quote
+    result = dict(quote)  # Copy original quote
+    result.update({
+        'theoretical_price': round(theoretical_price, 2),
+        'theoretical_bid': round(theoretical_bid, 2),
+        'theoretical_ask': round(theoretical_ask, 2),
+        'theoretical_mid': round(theoretical_price, 2),
+        'price_adjustment': round(price_adjustment, 2),
+        'price_adjustment_pct': round(price_adjustment_pct, 1),
+        'recommended_entry': round(recommended_entry, 2),
+        'confidence': confidence,
+        'calculation_method': calculation_method,
+        'current_spot_used': round(current_spot, 2),
+        'adjusted_iv_used': round(adjusted_iv, 4),
+        'use_theoretical': is_delayed,  # Flag to indicate theoretical should be preferred
+    })
+
+    return result
+
+
+def get_best_entry_price(quote: Dict, current_spot: float = None, use_theoretical: bool = True) -> float:
+    """
+    Get the best entry price for an option, using theoretical pricing if delayed data.
+
+    Args:
+        quote: Option quote from get_option_quote()
+        current_spot: Current SPY price (optional)
+        use_theoretical: Whether to use theoretical pricing for delayed data
+
+    Returns:
+        Best estimated entry price
+    """
+    if quote is None:
+        return 0.0
+
+    is_delayed = quote.get('is_delayed', False)
+    mid = quote.get('mid', 0) or 0
+
+    # For real-time data, just use the mid
+    if not is_delayed or not use_theoretical:
+        return mid
+
+    # For delayed data, calculate theoretical price
+    enhanced = calculate_theoretical_option_price(quote, current_spot)
+
+    if 'error' in enhanced:
+        return mid
+
+    # Return the recommended entry price
+    return enhanced.get('recommended_entry', mid)
 
 
 if __name__ == "__main__":
