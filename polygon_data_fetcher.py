@@ -359,11 +359,27 @@ class PolygonDataFetcher:
                     else:
                         quote_time_str = None
 
+                    # Calculate mid price - use last trade price as fallback when bid/ask missing
+                    last_price = last_trade.get('price', 0)
+                    if bid > 0 and ask > 0:
+                        mid_price = (bid + ask) / 2
+                    elif last_price > 0:
+                        # Fallback to last trade price when quotes unavailable (e.g., after hours)
+                        mid_price = last_price
+                        # Estimate bid/ask spread around last price (typically 2-5% for options)
+                        spread_estimate = last_price * 0.03  # 3% spread estimate
+                        if bid == 0:
+                            bid = last_price - spread_estimate / 2
+                        if ask == 0:
+                            ask = last_price + spread_estimate / 2
+                    else:
+                        mid_price = 0
+
                     return {
                         'bid': bid,
                         'ask': ask,
-                        'last': last_trade.get('price', 0),
-                        'mid': (bid + ask) / 2,
+                        'last': last_price,
+                        'mid': mid_price,
                         'volume': details.get('volume', 0),
                         'open_interest': details.get('open_interest', 0),
                         'implied_volatility': greeks.get('implied_volatility', 0),
@@ -621,7 +637,9 @@ def calculate_delayed_price_range(
 
     bid = quote.get('bid', 0) or 0
     ask = quote.get('ask', 0) or 0
-    mid = quote.get('mid', 0) or (bid + ask) / 2
+    last_price = quote.get('last', 0) or 0
+    # Use mid from quote, or calculate from bid/ask, or fallback to last price
+    mid = quote.get('mid', 0) or ((bid + ask) / 2 if bid > 0 and ask > 0 else last_price)
     is_delayed = quote.get('is_delayed', False)
     delta = abs(quote.get('delta', 0.5) or 0.5)
     iv = quote.get('implied_volatility', 0.25) or 0.25
@@ -767,7 +785,9 @@ def calculate_theoretical_option_price(
     # Extract quote data
     bid = quote.get('bid', 0) or 0
     ask = quote.get('ask', 0) or 0
-    mid = quote.get('mid', 0) or (bid + ask) / 2
+    last_price = quote.get('last', 0) or 0
+    # Use mid from quote, or calculate from bid/ask, or fallback to last price
+    mid = quote.get('mid', 0) or ((bid + ask) / 2 if bid > 0 and ask > 0 else last_price)
     strike = quote.get('strike', 0)
     expiration = quote.get('expiration', '')
     iv = quote.get('implied_volatility', 0) or 0.25  # Default 25% IV
