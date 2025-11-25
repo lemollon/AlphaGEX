@@ -37,9 +37,9 @@ interface Strategy {
   name: string
   status: 'active' | 'paused' | 'stopped'
   win_rate: number
-  trades_today: number
+  total_trades: number
   pnl: number
-  last_signal: string
+  last_trade_date: string
 }
 
 interface Trade {
@@ -130,6 +130,9 @@ export default function AutonomousTrader() {
   const [executing, setExecuting] = useState(false)
   const [traderControlLoading, setTraderControlLoading] = useState(false)
 
+  // Countdown timer state
+  const [countdown, setCountdown] = useState<string>('--:--')
+
   // WebSocket connection for real-time updates
   const { data: wsData, isConnected: wsConnected, error: wsError } = useTraderWebSocket()
 
@@ -183,6 +186,37 @@ export default function AutonomousTrader() {
     }
   }, [wsData])
 
+  // Live countdown timer - updates every second
+  useEffect(() => {
+    const updateCountdown = () => {
+      const now = new Date()
+      const minutes = now.getMinutes()
+      const seconds = now.getSeconds()
+
+      // Calculate minutes until next 5-minute mark (0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55)
+      const nextFiveMin = Math.ceil((minutes + 1) / 5) * 5
+      const minutesLeft = nextFiveMin - minutes - 1
+      const secondsLeft = 60 - seconds
+
+      // Handle edge case when we're at exactly a 5-minute mark
+      if (secondsLeft === 60) {
+        setCountdown(`${minutesLeft + 1}:00`)
+      } else if (minutesLeft < 0 || (minutesLeft === 0 && secondsLeft === 0)) {
+        setCountdown('0:00')
+      } else {
+        setCountdown(`${minutesLeft}:${secondsLeft.toString().padStart(2, '0')}`)
+      }
+    }
+
+    // Update immediately
+    updateCountdown()
+
+    // Update every second
+    const interval = setInterval(updateCountdown, 1000)
+
+    return () => clearInterval(interval)
+  }, [])
+
   // Calculate best and worst trades
   const bestTrade = tradeLog.length > 0
     ? Math.max(...tradeLog.map(t => t.pnl))
@@ -234,11 +268,11 @@ export default function AutonomousTrader() {
           const mappedStrategies = strategiesRes.data.data.map((strat: any, idx: number) => ({
             id: idx.toString(),
             name: strat.name,
-            status: 'active',
-            win_rate: strat.win_rate,
-            trades_today: 0,  // TODO: Get from API
-            pnl: strat.total_pnl,
-            last_signal: strat.last_trade_date
+            status: strat.status || 'active',
+            win_rate: strat.win_rate || 0,
+            total_trades: strat.total_trades || 0,
+            pnl: strat.total_pnl || 0,
+            last_trade_date: strat.last_trade_date || 'Never'
           }))
           setStrategies(mappedStrategies)
         }
@@ -546,11 +580,22 @@ export default function AutonomousTrader() {
       {/* Trader Control Panel */}
       <div className="card bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Cpu className="w-6 h-6 text-primary" />
-            <div>
-              <h3 className="font-semibold text-text-primary">Trader Controls</h3>
-              <p className="text-xs text-text-secondary">Manual execution and system controls</p>
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3">
+              <Cpu className="w-6 h-6 text-primary" />
+              <div>
+                <h3 className="font-semibold text-text-primary">Trader Controls</h3>
+                <p className="text-xs text-text-secondary">Manual execution and system controls</p>
+              </div>
+            </div>
+
+            {/* Live Countdown Timer */}
+            <div className="flex items-center gap-3 px-4 py-2 bg-background-primary rounded-lg border border-border">
+              <Clock className="w-5 h-5 text-warning animate-pulse" />
+              <div>
+                <p className="text-xs text-text-muted">Next Scan In</p>
+                <p className="text-xl font-bold text-warning font-mono">{countdown}</p>
+              </div>
             </div>
           </div>
 
@@ -1175,69 +1220,76 @@ export default function AutonomousTrader() {
 
       {/* Strategies */}
       <div className="card">
-        <h2 className="text-xl font-semibold text-text-primary mb-4">Active Strategies</h2>
-        <div className="space-y-3">
-          {strategies.map((strategy) => (
-            <div
-              key={strategy.id}
-              className="p-4 bg-background-hover rounded-lg flex items-center justify-between"
-            >
-              <div className="flex items-center gap-4 flex-1">
-                <div className={`w-3 h-3 rounded-full ${
-                  strategy.status === 'active' ? 'bg-success animate-pulse' :
-                  strategy.status === 'paused' ? 'bg-warning' :
-                  'bg-text-muted'
-                }`} />
-
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <h3 className="text-text-primary font-semibold">{strategy.name}</h3>
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                      strategy.status === 'active' ? 'bg-success/20 text-success' :
-                      strategy.status === 'paused' ? 'bg-warning/20 text-warning' :
-                      'bg-text-muted/20 text-text-muted'
-                    }`}>
-                      {strategy.status.toUpperCase()}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-6 text-sm">
-                    <div>
-                      <span className="text-text-muted">Win Rate:</span>
-                      <span className="text-text-primary font-semibold ml-2">{strategy.win_rate}%</span>
-                    </div>
-                    <div>
-                      <span className="text-text-muted">Today:</span>
-                      <span className="text-text-primary font-semibold ml-2">{strategy.trades_today} trades</span>
-                    </div>
-                    <div>
-                      <span className="text-text-muted">P&L:</span>
-                      <span className={`font-semibold ml-2 ${
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold text-text-primary">Active Strategies</h2>
+          <span className="text-xs text-text-muted">From trade database</span>
+        </div>
+        {strategies.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-3 px-4 text-text-secondary font-medium">Strategy</th>
+                  <th className="text-center py-3 px-4 text-text-secondary font-medium">Total Trades</th>
+                  <th className="text-center py-3 px-4 text-text-secondary font-medium">Win Rate</th>
+                  <th className="text-right py-3 px-4 text-text-secondary font-medium">Total P&L</th>
+                  <th className="text-right py-3 px-4 text-text-secondary font-medium">Last Trade</th>
+                </tr>
+              </thead>
+              <tbody>
+                {strategies.map((strategy) => (
+                  <tr key={strategy.id} className="border-b border-border/50 hover:bg-background-hover transition-colors">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-2 h-2 rounded-full ${
+                          strategy.status === 'active' ? 'bg-success' : 'bg-text-muted'
+                        }`} />
+                        <span className="text-text-primary font-semibold">{strategy.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className="text-text-primary font-semibold">{strategy.total_trades}</span>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className={`font-semibold ${
+                        strategy.win_rate >= 60 ? 'text-success' :
+                        strategy.win_rate >= 40 ? 'text-warning' :
+                        'text-danger'
+                      }`}>
+                        {strategy.win_rate.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <span className={`font-bold ${
                         strategy.pnl >= 0 ? 'text-success' : 'text-danger'
                       }`}>
-                        {formatCurrency(strategy.pnl)}
+                        {strategy.pnl >= 0 ? '+' : ''}{formatCurrency(strategy.pnl)}
                       </span>
-                    </div>
-                    <div>
-                      <span className="text-text-muted">Last Signal:</span>
-                      <span className="text-text-primary font-semibold ml-2">{strategy.last_signal}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <button
-                onClick={() => handleToggleStrategy(strategy.id)}
-                disabled={!traderStatus.is_active}
-                className={`btn ${
-                  strategy.status === 'active' ? 'bg-warning/20 text-warning hover:bg-warning/30' : 'bg-success/20 text-success hover:bg-success/30'
-                } disabled:opacity-50 disabled:cursor-not-allowed`}
-              >
-                {strategy.status === 'active' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-              </button>
-            </div>
-          ))}
-        </div>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <span className="text-text-secondary text-sm">
+                        {strategy.last_trade_date && strategy.last_trade_date !== 'Never'
+                          ? new Date(strategy.last_trade_date).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric'
+                            })
+                          : 'Never'
+                        }
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-8 text-text-secondary">
+            <Target className="w-10 h-10 text-text-muted mx-auto mb-2" />
+            <p>No strategies with trades yet</p>
+            <p className="text-xs text-text-muted mt-1">Strategies will appear here as trades are executed</p>
+          </div>
+        )}
       </div>
 
       {/* Recent Trades */}
