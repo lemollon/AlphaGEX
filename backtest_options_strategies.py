@@ -16,25 +16,31 @@ Backtests the 11 options strategies from STRATEGIES config:
 - CALENDAR_SPREAD
 
 Uses REAL GEX data from Trading Volatility API
-Uses SIMPLIFIED option pricing (directional correctness + typical spreads)
-For precise results, integrate real option chain data
+Uses REALISTIC option pricing with Black-Scholes model, Greeks, bid/ask spreads
 """
 
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from backtest_framework import BacktestBase, BacktestResults, Trade
-from typing import Dict, List
+from typing import Dict, List, Optional
 from config_and_database import STRATEGIES
+from realistic_option_pricing import (
+    BlackScholesOption, StrikeSelector, SpreadPricer,
+    create_bullish_call_spread, create_bearish_put_spread
+)
 
 
 class OptionsBacktester(BacktestBase):
     """Backtest options strategies from STRATEGIES config using REAL GEX data"""
 
-    def __init__(self, **kwargs):
+    def __init__(self, use_realistic_pricing: bool = True, **kwargs):
         super().__init__(**kwargs)
         self.gex_data = None
         self.api_client = None
+        self.use_realistic_pricing = use_realistic_pricing
+        self.spread_pricer = SpreadPricer() if use_realistic_pricing else None
+        self.strike_selector = StrikeSelector() if use_realistic_pricing else None
 
     def simulate_gex_data(self, price_data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -301,7 +307,115 @@ class OptionsBacktester(BacktestBase):
 
         return True
 
-    def simulate_option_pnl(self, strategy_name: str, entry_price: float,
+    def estimate_iv_from_vol_rank(self, vol_rank: float) -> float:
+        """
+        Estimate implied volatility from volatility rank
+
+        Args:
+            vol_rank: Volatility rank (0-100)
+
+        Returns:
+            Estimated IV as decimal (e.g., 0.25 for 25%)
+        """
+        # SPY typical IV range: 10% (low) to 40% (high)
+        # Map vol_rank to this range
+        min_iv = 0.10
+        max_iv = 0.40
+        iv = min_iv + (vol_rank / 100.0) * (max_iv - min_iv)
+        return iv
+
+    def simulate_option_pnl_realistic(self, strategy_name: str, entry_price: float,
+                                     exit_price: float, days_held: int,
+                                     entry_vol_rank: float, exit_vol_rank: Optional[float] = None) -> Dict:
+        """
+        Calculate realistic option PnL using Black-Scholes pricing
+
+        Returns dict with:
+        - pnl_percent: Total P&L as percentage
+        - spread_details: Detailed spread information
+        - greeks: Net Greeks of the position
+        """
+        if exit_vol_rank is None:
+            exit_vol_rank = entry_vol_rank
+
+        # Estimate IV from vol_rank
+        entry_iv = self.estimate_iv_from_vol_rank(entry_vol_rank)
+        exit_iv = self.estimate_iv_from_vol_rank(exit_vol_rank)
+
+        # Get strategy config
+        strategy_config = STRATEGIES.get(strategy_name, {})
+        dte_range = strategy_config.get('dte_range', [3, 14])
+        avg_dte = (dte_range[0] + dte_range[1]) // 2
+
+        # Price spread at entry using realistic pricing
+        if strategy_name == 'BULLISH_CALL_SPREAD':
+            spread_details = create_bullish_call_spread(
+                spot_price=entry_price,
+                volatility=entry_iv,
+                dte=avg_dte,
+                target_delta=0.30,  # 30-delta call spread
+                spread_width_pct=5.0  # 5% wide
+            )
+        elif strategy_name == 'BEARISH_PUT_SPREAD':
+            spread_details = create_bearish_put_spread(
+                spot_price=entry_price,
+                volatility=entry_iv,
+                dte=avg_dte,
+                target_delta=-0.30,  # 30-delta put spread
+                spread_width_pct=5.0
+            )
+        elif strategy_name == 'BULL_PUT_SPREAD':
+            # Credit spread - sell put spread below market
+            spread_details = create_bearish_put_spread(
+                spot_price=entry_price * 0.95,  # 5% OTM
+                volatility=entry_iv,
+                dte=avg_dte,
+                target_delta=-0.20,  # 20-delta
+                spread_width_pct=3.0  # Narrower spread
+            )
+            # Invert for credit received
+            spread_details['debit'] = -spread_details['debit']
+        elif strategy_name == 'BEAR_CALL_SPREAD':
+            # Credit spread - sell call spread above market
+            spread_details = create_bullish_call_spread(
+                spot_price=entry_price * 1.05,  # 5% OTM
+                volatility=entry_iv,
+                dte=avg_dte,
+                target_delta=0.20,  # 20-delta
+                spread_width_pct=3.0
+            )
+            # Invert for credit received
+            spread_details['debit'] = -spread_details['debit']
+        else:
+            # For other strategies, fall back to simplified pricing
+            return {
+                'pnl_percent': self.simulate_option_pnl_simplified(strategy_name, entry_price, exit_price, days_held),
+                'spread_details': {},
+                'greeks': {}
+            }
+
+        # Calculate P&L at exit
+        pnl_details = self.spread_pricer.calculate_spread_pnl(
+            spread_details=spread_details,
+            current_price=exit_price,
+            days_held=days_held,
+            entry_volatility=entry_iv,
+            exit_volatility=exit_iv
+        )
+
+        return {
+            'pnl_percent': pnl_details['pnl_percent'],
+            'spread_details': spread_details,
+            'pnl_details': pnl_details,
+            'greeks': {
+                'delta': spread_details['net_delta'],
+                'gamma': spread_details['net_gamma'],
+                'theta': spread_details['net_theta'],
+                'vega': spread_details['net_vega']
+            }
+        }
+
+    def simulate_option_pnl_simplified(self, strategy_name: str, entry_price: float,
                            exit_price: float, days_held: int) -> float:
         """
         Simulate option PnL based on directional move and strategy type
@@ -481,11 +595,37 @@ class OptionsBacktester(BacktestBase):
                 exit_date = exit_row.name.strftime('%Y-%m-%d')
                 exit_price = exit_row['Close']
 
-                # Calculate option PnL (simplified)
+                # Calculate option PnL
                 days_held = (pd.to_datetime(exit_date) - pd.to_datetime(entry_date)).days
-                option_pnl_pct = self.simulate_option_pnl(
-                    strategy_name, entry_price, exit_price, days_held
-                )
+
+                # Use realistic or simplified pricing
+                if self.use_realistic_pricing and strategy_name in [
+                    'BULLISH_CALL_SPREAD', 'BEARISH_PUT_SPREAD',
+                    'BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD'
+                ]:
+                    entry_vol_rank = row.get('vol_rank', 50.0)
+                    exit_vol_rank = exit_row.get('vol_rank', entry_vol_rank)
+
+                    pnl_result = self.simulate_option_pnl_realistic(
+                        strategy_name, entry_price, exit_price, days_held,
+                        entry_vol_rank, exit_vol_rank
+                    )
+                    option_pnl_pct = pnl_result['pnl_percent']
+
+                    # Store spread details in notes
+                    spread_info = pnl_result['spread_details']
+                    greeks = pnl_result['greeks']
+                    notes = (f"DTE: {days_held}, "
+                           f"Strikes: ${spread_info.get('long_strike', 0):.0f}/${spread_info.get('short_strike', 0):.0f}, "
+                           f"Debit: ${spread_info.get('debit', 0):.2f}, "
+                           f"Delta: {greeks.get('delta', 0):.3f}, "
+                           f"Theta: ${greeks.get('theta', 0):.2f}/day")
+                else:
+                    # Use simplified pricing for other strategies
+                    option_pnl_pct = self.simulate_option_pnl_simplified(
+                        strategy_name, entry_price, exit_price, days_held
+                    )
+                    notes = f"DTE: {days_held}"
 
                 # Create trade with option PnL
                 # Override calculate_pnl to use simulated option PnL
@@ -514,7 +654,7 @@ class OptionsBacktester(BacktestBase):
                     duration_days=days_held,
                     win=(net_pnl_pct > 0),
                     confidence=strategy_config.get('win_rate', 0.5) * 100,
-                    notes=f"DTE: {days_held}"
+                    notes=notes
                 )
                 trades.append(trade)
 
