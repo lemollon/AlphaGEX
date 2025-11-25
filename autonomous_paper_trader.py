@@ -79,6 +79,105 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
         return {'error': str(e)}
 
 
+def validate_option_liquidity(quote: Dict, min_bid: float = 0.01, max_spread_pct: float = 50.0) -> tuple[bool, str]:
+    """
+    Validate that an option quote has sufficient liquidity for trading.
+
+    Args:
+        quote: Option quote dict from Polygon
+        min_bid: Minimum bid price required (default $0.01)
+        max_spread_pct: Maximum bid/ask spread as % of mid (default 50%)
+
+    Returns:
+        (is_valid, reason) tuple
+    """
+    if quote is None or quote.get('error'):
+        return False, f"No quote data: {quote.get('error', 'None returned')}"
+
+    bid = quote.get('bid', 0) or 0
+    ask = quote.get('ask', 0) or 0
+
+    if bid <= 0:
+        return False, f"No bid price (bid=${bid:.2f})"
+    if ask <= 0:
+        return False, f"No ask price (ask=${ask:.2f})"
+    if bid < min_bid:
+        return False, f"Bid too low (${bid:.2f} < ${min_bid:.2f})"
+
+    mid = (bid + ask) / 2
+    spread = ask - bid
+    spread_pct = (spread / mid * 100) if mid > 0 else 100
+
+    if spread_pct > max_spread_pct:
+        return False, f"Spread too wide ({spread_pct:.1f}% > {max_spread_pct:.1f}%)"
+
+    return True, f"Valid: bid=${bid:.2f}, ask=${ask:.2f}, spread={spread_pct:.1f}%"
+
+
+def find_liquid_strike(symbol: str, base_strike: float, option_type: str, expiration_date: str,
+                       spot_price: float = None, max_attempts: int = 5) -> tuple[Optional[float], Optional[Dict]]:
+    """
+    Find a liquid strike near the base strike by trying multiple strikes.
+
+    For SPY, tries strikes in order of likely liquidity:
+    1. ATM strike (nearest to spot)
+    2. Base strike
+    3. Strikes ±5, ±10 from base
+
+    Args:
+        symbol: Underlying symbol
+        base_strike: Initial strike to try
+        option_type: 'call' or 'put'
+        expiration_date: Expiration date string
+        spot_price: Current spot price (for ATM calculation)
+        max_attempts: Maximum strikes to try
+
+    Returns:
+        (strike, quote) tuple, or (None, None) if no liquid strike found
+    """
+    # Build list of strikes to try, ordered by likely liquidity
+    strikes_to_try = []
+
+    # 1. ATM strike (most liquid) - nearest $1 increment for SPY
+    if spot_price:
+        atm_strike = round(spot_price)  # Nearest $1
+        atm_strike_5 = round(spot_price / 5) * 5  # Nearest $5
+        if atm_strike not in strikes_to_try:
+            strikes_to_try.append(atm_strike)
+        if atm_strike_5 not in strikes_to_try:
+            strikes_to_try.append(atm_strike_5)
+
+    # 2. Base strike
+    if base_strike not in strikes_to_try:
+        strikes_to_try.append(base_strike)
+
+    # 3. Nearby strikes (SPY has $1 increments for ATM, $5 for further OTM)
+    for offset in [5, -5, 10, -10, 1, -1, 2, -2]:
+        strike = base_strike + offset
+        if strike > 0 and strike not in strikes_to_try:
+            strikes_to_try.append(strike)
+
+    # Try each strike until we find one with liquidity
+    attempts = 0
+    tried_strikes = []
+
+    for strike in strikes_to_try[:max_attempts]:
+        attempts += 1
+        quote = get_real_option_price(symbol, strike, option_type, expiration_date)
+        is_valid, reason = validate_option_liquidity(quote)
+        tried_strikes.append(f"${strike:.0f}: {reason}")
+
+        if is_valid:
+            print(f"✅ Found liquid strike ${strike:.0f} after {attempts} attempts")
+            return strike, quote
+
+    print(f"❌ No liquid strike found after {attempts} attempts:")
+    for ts in tried_strikes:
+        print(f"   - {ts}")
+
+    return None, None
+
+
 class AutonomousPaperTrader:
     """
     Fully autonomous paper trader - NO manual intervention required
@@ -758,30 +857,57 @@ class AutonomousPaperTrader:
                 except Exception as e:
                     self.log_action('AI_ERROR', f'AI strike selection failed: {e}', success=False)
 
-            # Get REAL option price
+            # Get REAL option price with smart strike selection
+            # This will try multiple strikes if the first one lacks liquidity
             exp_date = self._get_expiration_string(trade['dte'])
-            option_price_data = get_real_option_price(
-                'SPY',
-                trade['strike'],
-                trade['option_type'],
-                exp_date
+            original_strike = trade['strike']
+
+            # Use find_liquid_strike to automatically find a liquid option
+            liquid_strike, option_price_data = find_liquid_strike(
+                symbol='SPY',
+                base_strike=trade['strike'],
+                option_type=trade['option_type'],
+                expiration_date=exp_date,
+                spot_price=spot_price,
+                max_attempts=5
             )
 
-            if option_price_data.get('error'):
-                self.log_action('ERROR', f"Failed to get option price: {option_price_data.get('error')}", success=False)
+            if liquid_strike is None or option_price_data is None:
+                self.log_action('ERROR',
+                    f"No liquid options found near ${original_strike:.0f} {trade['option_type'].upper()}. "
+                    f"Tried multiple strikes - all had missing or invalid bid/ask data from Polygon.",
+                    success=False)
                 return None
 
-            # Calculate position size for $5K account
-            entry_price = option_price_data['mid']
-            if entry_price == 0:
-                entry_price = option_price_data.get('last', 1.0)
+            # Update trade with the liquid strike if different
+            if liquid_strike != original_strike:
+                self.log_action('STRIKE_ADJUSTED',
+                    f"Adjusted strike from ${original_strike:.0f} to ${liquid_strike:.0f} for liquidity",
+                    success=True)
+                trade['strike'] = liquid_strike
+
+            # Extract pricing data (already validated by find_liquid_strike)
+            bid = option_price_data.get('bid', 0) or 0
+            ask = option_price_data.get('ask', 0) or 0
+            last = option_price_data.get('last', 0) or 0
+            mid = option_price_data.get('mid', 0) or 0
+            spread = ask - bid
+            spread_pct = (spread / mid * 100) if mid > 0 else 0
+
+            # Log what Polygon actually returned for debugging
+            self.log_action('PRICE_DATA',
+                f"Polygon: bid=${bid:.2f}, ask=${ask:.2f}, mid=${mid:.2f}, last=${last:.2f}, spread={spread_pct:.1f}%",
+                success=True)
+
+            # Use mid price (already validated to be > 0)
+            entry_price = mid if mid > 0 else (bid + ask) / 2
 
             available = self.get_available_capital()
 
             # CRITICAL: Validate entry_price before any calculations to prevent division by zero
             cost_per_contract = entry_price * 100
-            if cost_per_contract == 0:
-                self.log_action('ERROR', 'Invalid option price (zero)', success=False)
+            if cost_per_contract <= 0:
+                self.log_action('ERROR', f'Invalid option price (${entry_price:.2f})', success=False)
                 return None
 
             # CRITICAL: Use AI reasoning for position sizing

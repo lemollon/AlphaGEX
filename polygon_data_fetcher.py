@@ -333,11 +333,21 @@ class PolygonDataFetcher:
                     details = result.get('details', {})
                     greeks = result.get('greeks', {})
 
+                    bid = last_quote.get('bid', 0)
+                    ask = last_quote.get('ask', 0)
+
+                    # Debug logging when bid/ask is missing
+                    if bid == 0 or ask == 0:
+                        print(f"⚠️  Polygon returned missing bid/ask for {option_ticker}:")
+                        print(f"    last_quote: {last_quote}")
+                        print(f"    last_trade: {last_trade}")
+                        print(f"    API status: {data.get('status')}")
+
                     return {
-                        'bid': last_quote.get('bid', 0),
-                        'ask': last_quote.get('ask', 0),
+                        'bid': bid,
+                        'ask': ask,
                         'last': last_trade.get('price', 0),
-                        'mid': (last_quote.get('bid', 0) + last_quote.get('ask', 0)) / 2,
+                        'mid': (bid + ask) / 2,
                         'volume': details.get('volume', 0),
                         'open_interest': details.get('open_interest', 0),
                         'implied_volatility': greeks.get('implied_volatility', 0),
@@ -349,8 +359,11 @@ class PolygonDataFetcher:
                         'expiration': expiration,
                         'contract_symbol': option_ticker
                     }
+                else:
+                    print(f"⚠️  Polygon response missing results for {option_ticker}:")
+                    print(f"    status: {data.get('status')}, results: {data.get('results')}")
 
-            print(f"⚠️  Could not fetch option quote for {option_ticker}")
+            print(f"⚠️  Could not fetch option quote for {option_ticker} (HTTP {response.status_code})")
             return None
 
         except Exception as e:
