@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3 } from 'lucide-react'
+import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3, Calendar, Zap, Brain, RefreshCw, Power, PowerOff, History, Cpu, ChevronDown, ChevronUp } from 'lucide-react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useTraderWebSocket } from '@/hooks/useTraderWebSocket'
@@ -110,6 +111,25 @@ export default function AutonomousTrader() {
   const [vixSignal, setVixSignal] = useState<any>(null)
   const [vixData, setVixData] = useState<any>(null)
 
+  // P&L Chart state
+  const [equityCurve, setEquityCurve] = useState<{timestamp: string, equity: number, pnl: number}[]>([])
+  const [chartPeriod, setChartPeriod] = useState<7 | 30 | 90>(30)
+
+  // Closed Trades state
+  const [closedTrades, setClosedTrades] = useState<any[]>([])
+  const [showClosedTrades, setShowClosedTrades] = useState(false)
+
+  // ML Model state
+  const [mlModelStatus, setMlModelStatus] = useState<any>(null)
+  const [mlPredictions, setMlPredictions] = useState<any[]>([])
+
+  // Risk Metrics History state
+  const [riskMetricsHistory, setRiskMetricsHistory] = useState<any[]>([])
+
+  // Trader Control state
+  const [executing, setExecuting] = useState(false)
+  const [traderControlLoading, setTraderControlLoading] = useState(false)
+
   // WebSocket connection for real-time updates
   const { data: wsData, isConnected: wsConnected, error: wsError } = useTraderWebSocket()
 
@@ -188,11 +208,16 @@ export default function AutonomousTrader() {
           apiClient.getCompetitionLeaderboard().catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getAllPatternBacktests(90).catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getRiskStatus().catch(() => ({ data: { success: false, data: null } })),
-          apiClient.getTradeLog()
+          apiClient.getTradeLog(),
+          apiClient.getEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getClosedTrades(20).catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getMLModelStatus().catch(() => ({ data: { success: false, data: null } })),
+          apiClient.getRecentMLPredictions(10).catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getRiskMetrics(30).catch(() => ({ data: { success: false, data: [] } }))
         ])
 
         // Extract results (fulfilled promises only)
-        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes] = results.map(result =>
+        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes] = results.map(result =>
           result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
         )
 
@@ -264,6 +289,42 @@ export default function AutonomousTrader() {
           setTradeLog(tradeLogRes.data.data || [])
         }
 
+        // Set equity curve data for P&L chart
+        if (equityCurveRes.data.success && equityCurveRes.data.data) {
+          const curveData = equityCurveRes.data.data.map((point: any, idx: number, arr: any[]) => {
+            // Calculate cumulative P&L from starting equity
+            const startingEquity = arr[0]?.equity || 10000
+            const pnl = point.equity - startingEquity
+            return {
+              timestamp: point.timestamp,
+              equity: point.equity,
+              pnl: pnl,
+              date: new Date(point.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          })
+          setEquityCurve(curveData)
+        }
+
+        // Set closed trades
+        if (closedTradesRes.data.success && closedTradesRes.data.data) {
+          setClosedTrades(closedTradesRes.data.data)
+        }
+
+        // Set ML model status
+        if (mlStatusRes.data.success && mlStatusRes.data.data) {
+          setMlModelStatus(mlStatusRes.data.data)
+        }
+
+        // Set ML predictions
+        if (mlPredictionsRes.data.success && mlPredictionsRes.data.data) {
+          setMlPredictions(mlPredictionsRes.data.data)
+        }
+
+        // Set risk metrics history
+        if (riskMetricsRes.data.success && riskMetricsRes.data.data) {
+          setRiskMetricsHistory(riskMetricsRes.data.data)
+        }
+
         // Fetch VIX hedge signal data
         try {
           const [vixSignalRes, vixDataRes] = await Promise.all([
@@ -291,7 +352,7 @@ export default function AutonomousTrader() {
 
     // No auto-refresh - protects API rate limit (20 calls/min shared across all users)
     // Trader background worker updates independently - UI will refresh when user navigates
-  }, [])
+  }, [chartPeriod])
 
   // Trader runs automatically as a background worker - no manual control needed
   // It checks every 5 minutes ALL DAY during market hours (8:30 AM - 3:00 PM CT)
@@ -387,6 +448,59 @@ export default function AutonomousTrader() {
     window.URL.revokeObjectURL(url)
   }
 
+  // Execute a single trader cycle manually
+  const handleExecuteTraderCycle = async () => {
+    setExecuting(true)
+    try {
+      const res = await apiClient.executeTraderCycle()
+      if (res.data.success) {
+        alert('Trader cycle executed successfully! Check AI Thought Process for results.')
+        // Refresh data after execution
+        window.location.reload()
+      } else {
+        alert(`Execution failed: ${res.data.error || 'Unknown error'}`)
+      }
+    } catch (error: any) {
+      alert(`Error executing trader: ${error.message || 'Network error'}`)
+    } finally {
+      setExecuting(false)
+    }
+  }
+
+  // Start the trader
+  const handleStartTrader = async () => {
+    setTraderControlLoading(true)
+    try {
+      const res = await apiClient.startTrader()
+      if (res.data.success) {
+        setTraderStatus(prev => ({ ...prev, is_active: true }))
+      } else {
+        alert(`Failed to start: ${res.data.error || 'Unknown error'}`)
+      }
+    } catch (error: any) {
+      alert(`Error: ${error.message || 'Network error'}`)
+    } finally {
+      setTraderControlLoading(false)
+    }
+  }
+
+  // Stop the trader
+  const handleStopTrader = async () => {
+    setTraderControlLoading(true)
+    try {
+      const res = await apiClient.stopTrader()
+      if (res.data.success) {
+        setTraderStatus(prev => ({ ...prev, is_active: false }))
+      } else {
+        alert(`Failed to stop: ${res.data.error || 'Unknown error'}`)
+      }
+    } catch (error: any) {
+      alert(`Error: ${error.message || 'Network error'}`)
+    } finally {
+      setTraderControlLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen">
       <Navigation />
@@ -425,6 +539,64 @@ export default function AutonomousTrader() {
               traderStatus.is_active ? 'bg-success animate-pulse' : 'bg-text-muted'
             }`} />
             {traderStatus.is_active ? 'ACTIVE' : 'STOPPED'}
+          </div>
+        </div>
+      </div>
+
+      {/* Trader Control Panel */}
+      <div className="card bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Cpu className="w-6 h-6 text-primary" />
+            <div>
+              <h3 className="font-semibold text-text-primary">Trader Controls</h3>
+              <p className="text-xs text-text-secondary">Manual execution and system controls</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Manual Execute Button */}
+            <button
+              onClick={handleExecuteTraderCycle}
+              disabled={executing}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {executing ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Zap className="w-4 h-4" />
+              )}
+              {executing ? 'Executing...' : 'Execute Now'}
+            </button>
+
+            {/* Start/Stop Buttons */}
+            {traderStatus.is_active ? (
+              <button
+                onClick={handleStopTrader}
+                disabled={traderControlLoading}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-danger/20 text-danger hover:bg-danger/30 disabled:opacity-50 transition-colors"
+              >
+                {traderControlLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <PowerOff className="w-4 h-4" />
+                )}
+                Stop Trader
+              </button>
+            ) : (
+              <button
+                onClick={handleStartTrader}
+                disabled={traderControlLoading}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-success/20 text-success hover:bg-success/30 disabled:opacity-50 transition-colors"
+              >
+                {traderControlLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Power className="w-4 h-4" />
+                )}
+                Start Trader
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -575,6 +747,341 @@ export default function AutonomousTrader() {
             <TrendingUp className="text-primary w-8 h-8" />
           </div>
         </div>
+      </div>
+
+      {/* P&L Over Time Chart */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <TrendingUp className="w-6 h-6 text-primary" />
+            <h2 className="text-xl font-semibold text-text-primary">P&L Over Time</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Time Period Selector */}
+            <div className="flex bg-background-hover rounded-lg p-1">
+              {[7, 30, 90].map((days) => (
+                <button
+                  key={days}
+                  onClick={() => setChartPeriod(days as 7 | 30 | 90)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    chartPeriod === days
+                      ? 'bg-primary text-white'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {days}D
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {equityCurve.length > 0 ? (
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={equityCurve} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorPnl" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis
+                  dataKey="date"
+                  stroke="#9ca3af"
+                  tick={{ fontSize: 12 }}
+                  tickLine={false}
+                />
+                <YAxis
+                  stroke="#9ca3af"
+                  tick={{ fontSize: 12 }}
+                  tickLine={false}
+                  tickFormatter={(value) => `$${value >= 0 ? '+' : ''}${value.toLocaleString()}`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#1f2937',
+                    border: '1px solid #374151',
+                    borderRadius: '8px',
+                    padding: '12px'
+                  }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number) => [
+                    <span style={{ color: value >= 0 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>
+                      ${value >= 0 ? '+' : ''}{value.toFixed(2)}
+                    </span>,
+                    'P&L'
+                  ]}
+                />
+                <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="3 3" />
+                <Area
+                  type="monotone"
+                  dataKey="pnl"
+                  stroke={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"}
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorPnl)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="h-80 flex items-center justify-center">
+            <div className="text-center">
+              <BarChart3 className="w-12 h-12 text-text-muted mx-auto mb-3" />
+              <p className="text-text-secondary">No trading data available yet</p>
+              <p className="text-text-muted text-sm mt-1">P&L chart will appear as trades are executed</p>
+            </div>
+          </div>
+        )}
+
+        {/* Chart Summary Stats */}
+        {equityCurve.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-border">
+            <div className="text-center">
+              <p className="text-text-muted text-xs mb-1">Period Start</p>
+              <p className="text-text-primary font-semibold">
+                {equityCurve[0]?.date || 'N/A'}
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-text-muted text-xs mb-1">Period End</p>
+              <p className="text-text-primary font-semibold">
+                {equityCurve[equityCurve.length - 1]?.date || 'N/A'}
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-text-muted text-xs mb-1">Total P&L</p>
+              <p className={`font-bold ${equityCurve[equityCurve.length - 1]?.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                {equityCurve[equityCurve.length - 1]?.pnl >= 0 ? '+' : ''}
+                {formatCurrency(equityCurve[equityCurve.length - 1]?.pnl || 0)}
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-text-muted text-xs mb-1">Current Equity</p>
+              <p className="text-text-primary font-bold">
+                {formatCurrency(equityCurve[equityCurve.length - 1]?.equity || 0)}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ML Model Status & Predictions */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ML Model Status */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <Brain className="w-6 h-6 text-primary" />
+              <h2 className="text-lg font-semibold text-text-primary">ML Model Status</h2>
+            </div>
+            {mlModelStatus?.is_trained && (
+              <span className="px-2 py-1 bg-success/20 text-success text-xs font-semibold rounded-full">
+                TRAINED
+              </span>
+            )}
+          </div>
+
+          {mlModelStatus ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-background-hover rounded-lg">
+                  <p className="text-text-muted text-xs">Model Accuracy</p>
+                  <p className="text-text-primary font-bold text-lg">
+                    {((mlModelStatus.accuracy || 0) * 100).toFixed(1)}%
+                  </p>
+                </div>
+                <div className="p-3 bg-background-hover rounded-lg">
+                  <p className="text-text-muted text-xs">Training Samples</p>
+                  <p className="text-text-primary font-bold text-lg">
+                    {mlModelStatus.training_samples?.toLocaleString() || 'N/A'}
+                  </p>
+                </div>
+                <div className="p-3 bg-background-hover rounded-lg">
+                  <p className="text-text-muted text-xs">Features Used</p>
+                  <p className="text-text-primary font-bold text-lg">
+                    {mlModelStatus.feature_count || 'N/A'}
+                  </p>
+                </div>
+                <div className="p-3 bg-background-hover rounded-lg">
+                  <p className="text-text-muted text-xs">Last Trained</p>
+                  <p className="text-text-primary font-semibold text-sm">
+                    {mlModelStatus.last_trained ? new Date(mlModelStatus.last_trained).toLocaleDateString() : 'Never'}
+                  </p>
+                </div>
+              </div>
+
+              {mlModelStatus.feature_importance && (
+                <div className="mt-4">
+                  <p className="text-text-muted text-xs mb-2">Top Features</p>
+                  <div className="space-y-2">
+                    {Object.entries(mlModelStatus.feature_importance || {}).slice(0, 5).map(([feature, importance]: [string, any]) => (
+                      <div key={feature} className="flex items-center gap-2">
+                        <span className="text-text-secondary text-xs w-32 truncate">{feature}</span>
+                        <div className="flex-1 bg-background-primary rounded-full h-2">
+                          <div
+                            className="bg-primary h-2 rounded-full"
+                            style={{ width: `${(importance * 100).toFixed(0)}%` }}
+                          />
+                        </div>
+                        <span className="text-text-muted text-xs w-12 text-right">{(importance * 100).toFixed(0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-text-secondary">
+              <Brain className="w-10 h-10 text-text-muted mx-auto mb-2" />
+              <p>ML model not trained yet</p>
+              <p className="text-xs text-text-muted mt-1">Model will train automatically with trade data</p>
+            </div>
+          )}
+        </div>
+
+        {/* Recent ML Predictions */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <Zap className="w-6 h-6 text-warning" />
+              <h2 className="text-lg font-semibold text-text-primary">Recent ML Predictions</h2>
+            </div>
+            <span className="text-xs text-text-muted">{mlPredictions.length} predictions</span>
+          </div>
+
+          {mlPredictions.length > 0 ? (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {mlPredictions.map((pred, idx) => (
+                <div key={idx} className="p-3 bg-background-hover rounded-lg flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                      pred.prediction === 'bullish' || pred.predicted_direction > 0
+                        ? 'bg-success/20 text-success'
+                        : pred.prediction === 'bearish' || pred.predicted_direction < 0
+                        ? 'bg-danger/20 text-danger'
+                        : 'bg-warning/20 text-warning'
+                    }`}>
+                      {pred.prediction === 'bullish' || pred.predicted_direction > 0 ? (
+                        <TrendingUp className="w-4 h-4" />
+                      ) : pred.prediction === 'bearish' || pred.predicted_direction < 0 ? (
+                        <TrendingDown className="w-4 h-4" />
+                      ) : (
+                        <Activity className="w-4 h-4" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-text-primary font-semibold text-sm">
+                        {pred.symbol || 'SPY'} - {pred.pattern || pred.prediction?.toUpperCase() || 'NEUTRAL'}
+                      </p>
+                      <p className="text-text-muted text-xs">
+                        {pred.timestamp ? new Date(pred.timestamp).toLocaleString() : 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className={`font-bold ${
+                      (pred.confidence || 0) >= 70 ? 'text-success' :
+                      (pred.confidence || 0) >= 50 ? 'text-warning' :
+                      'text-text-muted'
+                    }`}>
+                      {pred.confidence?.toFixed(0) || pred.probability?.toFixed(0) || 0}%
+                    </p>
+                    <p className="text-text-muted text-xs">confidence</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-text-secondary">
+              <Zap className="w-10 h-10 text-text-muted mx-auto mb-2" />
+              <p>No predictions yet</p>
+              <p className="text-xs text-text-muted mt-1">Predictions appear during market analysis</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Closed Trades Section */}
+      <div className="card">
+        <div
+          className="flex items-center justify-between cursor-pointer"
+          onClick={() => setShowClosedTrades(!showClosedTrades)}
+        >
+          <div className="flex items-center gap-3">
+            <History className="w-6 h-6 text-primary" />
+            <h2 className="text-xl font-semibold text-text-primary">Closed Trades</h2>
+            <span className="px-2 py-1 bg-primary/20 text-primary text-xs font-semibold rounded-full">
+              {closedTrades.length} trades
+            </span>
+          </div>
+          <button className="p-2 hover:bg-background-hover rounded-lg transition-colors">
+            {showClosedTrades ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          </button>
+        </div>
+
+        {showClosedTrades && (
+          <div className="mt-4 overflow-x-auto">
+            {closedTrades.length > 0 ? (
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-3 px-4 text-text-secondary font-medium">Date</th>
+                    <th className="text-left py-3 px-4 text-text-secondary font-medium">Strategy</th>
+                    <th className="text-left py-3 px-4 text-text-secondary font-medium">Contract</th>
+                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Entry</th>
+                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Exit</th>
+                    <th className="text-right py-3 px-4 text-text-secondary font-medium">P&L</th>
+                    <th className="text-center py-3 px-4 text-text-secondary font-medium">Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {closedTrades.map((trade, idx) => {
+                    const pnl = trade.realized_pnl || trade.pnl || 0
+                    const isWin = pnl > 0
+                    return (
+                      <tr key={idx} className="border-b border-border/50 hover:bg-background-hover transition-colors">
+                        <td className="py-3 px-4 text-text-secondary text-sm">
+                          {trade.closed_date || trade.exit_date || 'N/A'}
+                        </td>
+                        <td className="py-3 px-4 text-text-primary font-semibold text-sm">
+                          {trade.strategy || 'Unknown'}
+                        </td>
+                        <td className="py-3 px-4 text-text-primary text-sm">
+                          {trade.symbol} ${trade.strike}{trade.option_type?.charAt(0) || 'C'}
+                        </td>
+                        <td className="py-3 px-4 text-right text-text-primary">
+                          {formatCurrency(Math.abs(trade.entry_price || 0))}
+                        </td>
+                        <td className="py-3 px-4 text-right text-text-primary">
+                          {formatCurrency(Math.abs(trade.exit_price || 0))}
+                        </td>
+                        <td className={`py-3 px-4 text-right font-bold ${isWin ? 'text-success' : 'text-danger'}`}>
+                          {isWin ? '+' : ''}{formatCurrency(pnl)}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                            isWin ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
+                          }`}>
+                            {isWin ? 'WIN' : 'LOSS'}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <div className="text-center py-8 text-text-secondary">
+                <History className="w-10 h-10 text-text-muted mx-auto mb-2" />
+                <p>No closed trades yet</p>
+                <p className="text-xs text-text-muted mt-1">Closed trades will appear here as positions are exited</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* VIX Hedge Signal - Risk Management */}

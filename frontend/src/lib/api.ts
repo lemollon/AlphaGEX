@@ -130,10 +130,19 @@ export const apiClient = {
   getTraderPerformance: () => api.get('/api/trader/performance'),
   getTraderTrades: (limit: number = 10) => api.get('/api/trader/trades', { params: { limit } }),
   getOpenPositions: () => api.get('/api/trader/positions'),
+  getClosedTrades: (limit: number = 50) => api.get('/api/trader/closed-trades', { params: { limit } }),
   getTradeLog: () => api.get('/api/trader/trade-log'),
   getEquityCurve: (days: number = 30) => api.get('/api/trader/equity-curve', { params: { days } }),
   getStrategies: () => api.get('/api/trader/strategies'),
   compareStrategies: (symbol: string = 'SPY') => api.get('/api/strategies/compare', { params: { symbol } }),
+  executeTraderCycle: () => api.post('/api/trader/execute'),
+
+  // Trader System Controls
+  getSystemTraderStatus: () => api.get('/api/system/trader-status'),
+  startTrader: () => api.post('/api/system/start-trader'),
+  stopTrader: () => api.post('/api/system/stop-trader'),
+  enableTraderAutostart: () => api.post('/api/system/enable-autostart'),
+  disableTraderAutostart: () => api.post('/api/system/disable-autostart'),
 
   // Autonomous Trader - Advanced Features
   getAutonomousLogs: (params?: { limit?: number, log_type?: string, session_id?: string, symbol?: string }) =>
