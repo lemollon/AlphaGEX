@@ -154,7 +154,7 @@ export default function AutonomousTrader() {
           strike: trade.strike || 0,
           quantity: trade.contracts || 0,
           price: Math.abs(trade.entry_price) || 0,
-          status: 'filled',
+          status: 'filled' as const,
           pnl: trade.unrealized_pnl || 0,
           strategy: trade.strategy,
         }))
