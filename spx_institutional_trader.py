@@ -298,11 +298,15 @@ class SPXInstitutionalTrader:
         conn = get_connection()
         positions = pd.read_sql_query("""
             SELECT * FROM spx_institutional_positions WHERE status = 'OPEN'
-        """, conn)
+        """, conn.raw_connection)
         conn.close()
 
         if positions.empty:
             return {
+                'delta': 0,
+                'gamma': 0,
+                'vega': 0,
+                'theta': 0,
                 'total_delta': 0,
                 'total_gamma': 0,
                 'total_vega': 0,
@@ -329,6 +333,10 @@ class SPXInstitutionalTrader:
             total_notional += pos['entry_price'] * contracts * multiplier
 
         return {
+            'delta': total_delta,
+            'gamma': total_gamma,
+            'vega': total_vega,
+            'theta': total_theta,
             'total_delta': total_delta,
             'total_gamma': total_gamma,
             'total_vega': total_vega,
@@ -583,12 +591,12 @@ class SPXInstitutionalTrader:
         closed = pd.read_sql_query("""
             SELECT * FROM spx_institutional_closed_trades
             ORDER BY exit_date DESC, exit_time DESC
-        """, conn)
+        """, conn.raw_connection)
 
         # Get open positions
         open_pos = pd.read_sql_query("""
             SELECT * FROM spx_institutional_positions WHERE status = 'OPEN'
-        """, conn)
+        """, conn.raw_connection)
 
         conn.close()
 
@@ -596,8 +604,16 @@ class SPXInstitutionalTrader:
             return {
                 'total_trades': 0,
                 'open_positions': 0,
-                'net_pnl': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
                 'win_rate': 0,
+                'total_pnl': 0,
+                'realized_pnl': 0,
+                'unrealized_pnl': 0,
+                'net_pnl': 0,
+                'avg_win': 0,
+                'avg_loss': 0,
+                'profit_factor': 0,
                 'sharpe_ratio': 0,
                 'max_drawdown': 0
             }
@@ -606,9 +622,27 @@ class SPXInstitutionalTrader:
         total_realized = closed['net_pnl'].sum() if not closed.empty else 0
         total_unrealized = open_pos['unrealized_pnl'].sum() if not open_pos.empty else 0
 
-        winning_trades = len(closed[closed['net_pnl'] > 0]) if not closed.empty else 0
-        losing_trades = len(closed[closed['net_pnl'] <= 0]) if not closed.empty else 0
+        winning_trades_df = closed[closed['net_pnl'] > 0] if not closed.empty else pd.DataFrame()
+        losing_trades_df = closed[closed['net_pnl'] <= 0] if not closed.empty else pd.DataFrame()
+        winning_trades = len(winning_trades_df)
+        losing_trades = len(losing_trades_df)
         win_rate = (winning_trades / len(closed) * 100) if len(closed) > 0 else 0
+
+        # Calculate avg win and avg loss
+        avg_win = winning_trades_df['net_pnl'].mean() if not winning_trades_df.empty else 0
+        avg_loss = abs(losing_trades_df['net_pnl'].mean()) if not losing_trades_df.empty else 0
+
+        # Calculate profit factor (sum of wins / sum of losses)
+        total_wins = winning_trades_df['net_pnl'].sum() if not winning_trades_df.empty else 0
+        total_losses = abs(losing_trades_df['net_pnl'].sum()) if not losing_trades_df.empty else 0
+        profit_factor = (total_wins / total_losses) if total_losses > 0 else 0
+
+        # Calculate Sharpe ratio (simplified - using daily returns if available)
+        sharpe_ratio = 0
+        if not closed.empty and len(closed) > 1:
+            returns = closed['net_pnl'] / self.starting_capital
+            if returns.std() > 0:
+                sharpe_ratio = (returns.mean() / returns.std()) * (252 ** 0.5)  # Annualized
 
         total_commission = closed['total_commission'].sum() if not closed.empty else 0
         total_slippage = closed['total_slippage'].sum() if not closed.empty else 0
@@ -619,9 +653,16 @@ class SPXInstitutionalTrader:
             'winning_trades': winning_trades,
             'losing_trades': losing_trades,
             'win_rate': win_rate,
+            'total_pnl': total_realized + total_unrealized,
+            'realized_pnl': total_realized,
+            'unrealized_pnl': total_unrealized,
             'total_realized_pnl': total_realized,
             'total_unrealized_pnl': total_unrealized,
             'net_pnl': total_realized + total_unrealized,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'profit_factor': profit_factor,
+            'sharpe_ratio': sharpe_ratio,
             'total_commission_paid': total_commission,
             'total_slippage_paid': total_slippage,
             'cost_drag': total_commission + total_slippage,
