@@ -56,8 +56,15 @@ class PostgreSQLConnection:
     def __init__(self, conn):
         self._conn = conn
 
-    def cursor(self):
-        """Return cursor"""
+    @property
+    def raw_connection(self):
+        """Return raw psycopg2 connection for pandas compatibility"""
+        return self._conn
+
+    def cursor(self, cursor_factory=None):
+        """Return cursor with optional cursor_factory support"""
+        if cursor_factory:
+            return PostgreSQLCursor(self._conn.cursor(cursor_factory=cursor_factory))
         return PostgreSQLCursor(self._conn.cursor())
 
     def execute(self, sql, params=None):

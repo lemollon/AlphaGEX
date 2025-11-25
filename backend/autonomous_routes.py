@@ -60,8 +60,8 @@ async def get_autonomous_logs(
             query += " AND symbol = ?"
             params.append(symbol)
 
-        query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
+        # PostgreSQL doesn't support parameterized LIMIT - use validated int literal
+        query += f" ORDER BY timestamp DESC LIMIT {int(limit)}"
 
         c.execute(query, params)
         logs = [dict(row) for row in c.fetchall()]
@@ -84,7 +84,8 @@ async def get_log_sessions(limit: int = Query(10, ge=1, le=50)):
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        c.execute("""
+        # PostgreSQL doesn't support parameterized LIMIT - use validated int literal
+        c.execute(f"""
             SELECT
                 session_id,
                 MIN(timestamp) as start_time,
@@ -95,8 +96,8 @@ async def get_log_sessions(limit: int = Query(10, ge=1, le=50)):
             WHERE session_id IS NOT NULL
             GROUP BY session_id
             ORDER BY start_time DESC
-            LIMIT ?
-        """, (limit,))
+            LIMIT {int(limit)}
+        """)
 
         sessions = [dict(row) for row in c.fetchall()]
         conn.close()
@@ -553,7 +554,8 @@ async def get_recent_ml_predictions(limit: int = Query(20, ge=1, le=100)):
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        c.execute("""
+        # PostgreSQL doesn't support parameterized LIMIT - use validated int literal
+        c.execute(f"""
             SELECT
                 timestamp,
                 symbol,
@@ -565,8 +567,8 @@ async def get_recent_ml_predictions(limit: int = Query(20, ge=1, le=100)):
             WHERE log_type = 'AI_EVALUATION'
             AND ai_confidence IS NOT NULL
             ORDER BY timestamp DESC
-            LIMIT ?
-        """, (limit,))
+            LIMIT {int(limit)}
+        """)
 
         predictions = [dict(row) for row in c.fetchall()]
         conn.close()

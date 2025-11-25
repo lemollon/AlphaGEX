@@ -3440,7 +3440,8 @@ async def get_trade_log():
         today = get_local_time('US/Central').strftime('%Y-%m-%d')
 
         # Get trade activity from new table
-        log_entries = pd.read_sql_query(f"""
+        # Use raw_connection for pandas compatibility
+        log_entries = pd.read_sql_query("""
             SELECT
                 id,
                 activity_date as date,
@@ -3452,9 +3453,9 @@ async def get_trade_log():
                 success,
                 error_message
             FROM autonomous_trade_activity
-            WHERE activity_date = '{today}'
+            WHERE activity_date = %s
             ORDER BY activity_time DESC
-        """, conn)
+        """, conn.raw_connection, params=(today,))
         conn.close()
 
         # Clean data for JSON serialization
