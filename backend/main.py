@@ -3285,9 +3285,9 @@ async def get_trader_diagnostics():
         c = conn.cursor()
 
         c.execute("""
-            SELECT action, details, timestamp, success
+            SELECT action, details, date, time, success
             FROM autonomous_trade_log
-            ORDER BY timestamp DESC
+            ORDER BY id DESC
             LIMIT 5
         """)
         recent_logs = []
@@ -3295,8 +3295,8 @@ async def get_trader_diagnostics():
             recent_logs.append({
                 "action": row[0],
                 "details": str(row[1])[:100] if row[1] else None,
-                "timestamp": str(row[2]),
-                "success": row[3]
+                "timestamp": f"{row[2]} {row[3]}",
+                "success": row[4]
             })
         diagnostics["checks"]["recent_activity"] = recent_logs
 
