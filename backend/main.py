@@ -3129,9 +3129,13 @@ try:
     from autonomous_paper_trader import AutonomousPaperTrader
     trader = AutonomousPaperTrader()
     trader_available = True
-except:
+    print("✅ SPY Autonomous Trader initialized successfully")
+except Exception as e:
     trader = None
     trader_available = False
+    print(f"⚠️ SPY Autonomous Trader not available: {e}")
+    import traceback
+    traceback.print_exc()
 
 @app.get("/api/trader/status")
 async def get_trader_status():

@@ -121,6 +121,29 @@ class PostgreSQLCursor:
             if 'ON CONFLICT' not in sql.upper():
                 sql = sql.rstrip().rstrip(';') + ' ON CONFLICT DO NOTHING'
 
+        # INSERT OR REPLACE → INSERT ... ON CONFLICT DO UPDATE
+        # This handles common key-value config tables like autonomous_config, paper_config, etc.
+        if 'INSERT OR REPLACE' in sql.upper():
+            # Extract table name and columns
+            match = re.search(
+                r'INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)',
+                sql, flags=re.IGNORECASE
+            )
+            if match:
+                table_name = match.group(1)
+                columns = [col.strip() for col in match.group(2).split(',')]
+                # First column is typically the primary key
+                pk_column = columns[0]
+                # Build the ON CONFLICT UPDATE clause for all non-PK columns
+                update_cols = [col for col in columns if col != pk_column]
+                update_clause = ', '.join([f'{col} = EXCLUDED.{col}' for col in update_cols])
+
+                # Remove OR REPLACE
+                sql = re.sub(r'\bINSERT\s+OR\s+REPLACE\b', 'INSERT', sql, flags=re.IGNORECASE)
+                # Add ON CONFLICT clause
+                if 'ON CONFLICT' not in sql.upper() and update_clause:
+                    sql = sql.rstrip().rstrip(';') + f' ON CONFLICT ({pk_column}) DO UPDATE SET {update_clause}'
+
         if params:
             self._cursor.execute(sql, params)
         else:
