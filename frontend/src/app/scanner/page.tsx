@@ -536,7 +536,7 @@ export default function MultiSymbolScanner() {
                     <Search className="w-16 h-16 mx-auto text-text-muted opacity-50 mb-4" />
                     <p className="text-text-muted">No results yet. Select symbols and click "Scan" to find opportunities</p>
                     <p className="text-sm text-text-secondary mt-2">
-                      The scanner checks ALL 4 strategies: Negative GEX Squeeze, Positive GEX Breakdown, Iron Condor, and Premium Selling
+                      The scanner checks ALL strategies: Negative GEX Squeeze, Positive GEX Breakdown, Iron Condor, Bull Put Spread, Bear Call Spread, and Cash Secured Put
                     </p>
                   </div>
                 ) : (
@@ -667,6 +667,14 @@ export default function MultiSymbolScanner() {
               <p className="text-xs text-text-primary mb-1"><strong>Win: 68%</strong> | R:R 0.4:1 | 5-21 DTE</p>
               <p className="text-xs text-text-secondary">
                 Sell call at resistance, buy higher call. Collect premium on bearish/neutral outlook.
+              </p>
+            </div>
+
+            <div className="p-3 bg-success/10 border border-success/30 rounded-lg">
+              <h4 className="font-bold text-success text-sm mb-1">Cash Secured Put</h4>
+              <p className="text-xs text-text-primary mb-1"><strong>Win: 75%</strong> | R:R 0.3:1 | 30-45 DTE</p>
+              <p className="text-xs text-text-secondary">
+                Sell naked put with cash to cover. Collect premium, willing to own shares at discount.
               </p>
             </div>
 
