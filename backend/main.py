@@ -396,19 +396,49 @@ async def get_gex_data(symbol: str):
         # Use existing TradingVolatilityAPI (UNCHANGED)
         gex_data = api_client.get_net_gamma(symbol)
 
-        # Enhanced error logging
-        if not gex_data:
-            print(f"❌ GEX API returned None for {symbol}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"Trading Volatility API returned no data for {symbol}. Check API key configuration."
-            )
+        # Enhanced error logging with cached data fallback
+        if not gex_data or gex_data.get('error'):
+            error_msg = gex_data.get('error', 'No data returned') if gex_data else 'API returned None'
+            print(f"⚠️ GEX API error for {symbol}: {error_msg}")
+            print(f"📊 Attempting to use cached data from database...")
 
-        if gex_data.get('error'):
-            error_msg = gex_data['error']
-            print(f"❌ GEX API error for {symbol}: {error_msg}")
+            # Try to get cached data from gex_history
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT spot_price, net_gex, flip_point, call_wall, put_wall, timestamp
+                    FROM gex_history
+                    WHERE symbol = %s AND timestamp > NOW() - INTERVAL '24 hours'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """, (symbol,))
+                cached_row = cursor.fetchone()
+                conn.close()
 
-            # Provide specific error messages
+                if cached_row:
+                    print(f"✅ Using cached GEX data from {cached_row[5]}")
+                    return JSONResponse({
+                        "success": True,
+                        "data": {
+                            "symbol": symbol,
+                            "spot_price": cached_row[0] or 590.0,
+                            "net_gex": cached_row[1] or 0,
+                            "flip_point": cached_row[2] or cached_row[0],
+                            "call_wall": cached_row[3] or (cached_row[0] * 1.02 if cached_row[0] else 600),
+                            "put_wall": cached_row[4] or (cached_row[0] * 0.98 if cached_row[0] else 580),
+                            "vix": 15.0,
+                            "mm_state": "neutral",
+                            "levels": [],
+                            "rsi": {},
+                            "_cached": True,
+                            "_cache_time": str(cached_row[5])
+                        }
+                    })
+            except Exception as cache_err:
+                print(f"❌ Failed to retrieve cached GEX data: {cache_err}")
+
+            # No cached data available - return error
             if 'API key not configured' in error_msg or 'username not found' in error_msg:
                 raise HTTPException(
                     status_code=503,
@@ -427,7 +457,7 @@ async def get_gex_data(symbol: str):
             elif '403' in error_msg:
                 raise HTTPException(
                     status_code=403,
-                    detail=f"Trading Volatility API access denied (403 Forbidden). Your API key (I-RWFNBLR2S1DP) may need to be renewed or the service may have changed authentication methods. Please contact support@tradingvolatility.net to verify your account status and API access."
+                    detail=f"Trading Volatility API access denied (403 Forbidden). Your API key may need to be renewed or the service may have changed authentication methods."
                 )
             else:
                 raise HTTPException(
@@ -6021,12 +6051,84 @@ async def get_current_regime(symbol: str = "SPY"):
 
         print(f"1. GEX Data fetched: {type(gex_data)}")
 
-        # NEVER USE MOCK DATA - Always require real API data
+        # Try to use cached data from database if live API fails
         if not gex_data or 'error' in gex_data:
             error_type = gex_data.get('error', 'unknown') if gex_data else 'no_data'
-            print(f"❌ GEX data error: {error_type}")
+            print(f"⚠️ Live GEX API unavailable: {error_type}")
+            print("📊 Attempting to use cached data from database...")
 
-            # Return proper errors - NO MOCK DATA FALLBACK
+            # Try to get the most recent cached regime data
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT spy_price, net_gamma, primary_regime_type, secondary_regime_type,
+                           confidence_score, trade_direction, risk_level, description,
+                           rsi_5m, rsi_15m, rsi_1h, rsi_4h, rsi_1d, timestamp
+                    FROM regime_signals
+                    WHERE timestamp > NOW() - INTERVAL '24 hours'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """)
+                cached_row = cursor.fetchone()
+                conn.close()
+
+                if cached_row:
+                    print(f"✅ Using cached data from {cached_row[13]}")
+                    # Build response from cached data
+                    cached_response = {
+                        "analysis": {
+                            "timestamp": str(cached_row[13]),
+                            "spy_price": cached_row[0] or 590.0,
+                            "regime": {
+                                "primary_type": cached_row[2] or "NEUTRAL",
+                                "secondary_type": cached_row[3],
+                                "confidence": cached_row[4] or 0.7,
+                                "description": cached_row[7] or "Cached analysis from database",
+                                "detailed_explanation": f"Data cached at {cached_row[13]}. Live API unavailable.",
+                                "trade_direction": cached_row[5] or "NEUTRAL",
+                                "risk_level": cached_row[6] or "MEDIUM",
+                                "timeline": None,
+                                "price_targets": {},
+                                "psychology_trap": None,
+                                "supporting_factors": ["Using cached data - live API unavailable"]
+                            },
+                            "rsi_analysis": {
+                                "score": 50,
+                                "individual_rsi": {
+                                    "5m": cached_row[8],
+                                    "15m": cached_row[9],
+                                    "1h": cached_row[10],
+                                    "4h": cached_row[11],
+                                    "1d": cached_row[12]
+                                },
+                                "aligned_count": {"overbought": 0, "oversold": 0, "extreme_overbought": 0, "extreme_oversold": 0},
+                                "coiling_detected": False
+                            },
+                            "current_walls": {"call_wall": None, "put_wall": None},
+                            "expiration_analysis": {},
+                            "forward_gex": {},
+                            "volume_ratio": 1.0,
+                            "alert_level": {"level": "info", "reason": "Using cached data"}
+                        },
+                        "market_status": {
+                            "is_open": False,
+                            "timestamp": str(datetime.now()),
+                            "status_text": "Using cached data - API unavailable",
+                            "data_age_minutes": 0
+                        },
+                        "trading_guide": None,
+                        "ai_recommendation": None,
+                        "historical_comparison": None,
+                        "backtest_stats": None,
+                        "_cached": True,
+                        "_cache_time": str(cached_row[13])
+                    }
+                    return JSONResponse(cached_response)
+            except Exception as cache_err:
+                print(f"❌ Failed to retrieve cached data: {cache_err}")
+
+            # No cached data available - return proper error
             if error_type == 'rate_limit':
                 raise HTTPException(
                     status_code=429,

@@ -117,7 +117,7 @@ export default function AutonomousTrader() {
 
   // Closed Trades state
   const [closedTrades, setClosedTrades] = useState<any[]>([])
-  const [showClosedTrades, setShowClosedTrades] = useState(false)
+  const [showClosedTrades, setShowClosedTrades] = useState(true)
 
   // ML Model state
   const [mlModelStatus, setMlModelStatus] = useState<any>(null)

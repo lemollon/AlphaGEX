@@ -70,15 +70,126 @@ interface TraderUpdate {
     call_wall: number
     put_wall: number
   }
+  ai_logs?: Array<{
+    id: number
+    timestamp: string
+    log_type: string
+    symbol: string
+    pattern_detected: string
+    confidence_score: number
+    trade_direction: string
+    ai_thought_process: string
+    action_taken: string
+    reasoning_summary: string
+  }>
   error?: string
+}
+
+// Fetch data from REST API as fallback
+async function fetchTraderData(): Promise<TraderUpdate | null> {
+  try {
+    const [statusRes, perfRes, positionsRes, tradesRes, logsRes, gexRes] = await Promise.all([
+      fetch(`${API_BASE}/api/trader/status`).then(r => r.json()).catch(() => null),
+      fetch(`${API_BASE}/api/trader/performance`).then(r => r.json()).catch(() => null),
+      fetch(`${API_BASE}/api/trader/positions`).then(r => r.json()).catch(() => null),
+      fetch(`${API_BASE}/api/trader/closed-trades`).then(r => r.json()).catch(() => null),
+      fetch(`${API_BASE}/api/autonomous/logs?limit=20`).then(r => r.json()).catch(() => null),
+      fetch(`${API_BASE}/api/gex/SPY`).then(r => r.json()).catch(() => null)
+    ])
+
+    const statusData = statusRes?.data || statusRes
+    const perfData = perfRes?.data || perfRes
+    const positionsData = positionsRes?.data || []
+    const tradesData = tradesRes?.data || []
+    const logsData = logsRes?.data || []
+    const gexData = gexRes?.data || gexRes
+
+    return {
+      type: 'rest_update',
+      timestamp: new Date().toISOString(),
+      market_open: statusData?.is_active || false,
+      status: statusData ? {
+        status: statusData.status || 'UNKNOWN',
+        current_action: statusData.current_action || '',
+        market_analysis: statusData.market_analysis || '',
+        last_decision: statusData.last_decision || '',
+        last_updated: statusData.last_check || new Date().toISOString(),
+        next_check_time: statusData.next_check
+      } : undefined,
+      positions: positionsData,
+      recent_trades: tradesData,
+      performance: perfData ? {
+        starting_capital: perfData.starting_capital || 10000,
+        current_equity: perfData.current_value || perfData.starting_capital || 10000,
+        total_realized_pnl: perfData.realized_pnl || perfData.total_pnl || 0,
+        total_unrealized_pnl: perfData.unrealized_pnl || 0,
+        net_pnl: perfData.total_pnl || 0,
+        return_pct: perfData.return_pct || 0,
+        total_trades: perfData.total_trades || 0,
+        winning_trades: perfData.winning_trades || 0,
+        losing_trades: perfData.losing_trades || 0,
+        win_rate: perfData.win_rate || 0,
+        open_positions: perfData.open_positions || 0
+      } : undefined,
+      market: gexData ? {
+        symbol: gexData.symbol || 'SPY',
+        spot_price: gexData.spot_price || 0,
+        net_gex: gexData.net_gex || 0,
+        flip_point: gexData.flip_point || 0,
+        call_wall: gexData.call_wall || 0,
+        put_wall: gexData.put_wall || 0
+      } : undefined,
+      ai_logs: logsData
+    }
+  } catch (err) {
+    console.error('Failed to fetch trader data via REST:', err)
+    return null
+  }
 }
 
 export function useTraderWebSocket() {
   const [data, setData] = useState<TraderUpdate | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [usingRestFallback, setUsingRestFallback] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>()
+  const pollingIntervalRef = useRef<NodeJS.Timeout>()
+  const wsFailCountRef = useRef(0)
+
+  // REST API polling fallback
+  const startPolling = useCallback(() => {
+    if (pollingIntervalRef.current) return // Already polling
+
+    console.log('Starting REST API polling fallback...')
+    setUsingRestFallback(true)
+
+    // Immediate fetch
+    fetchTraderData().then(d => {
+      if (d) {
+        setData(d)
+        setIsConnected(true)
+        setError(null)
+      }
+    })
+
+    // Poll every 10 seconds
+    pollingIntervalRef.current = setInterval(async () => {
+      const d = await fetchTraderData()
+      if (d) {
+        setData(d)
+        setIsConnected(true)
+      }
+    }, 10000)
+  }, [])
+
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = undefined
+      setUsingRestFallback(false)
+    }
+  }, [])
 
   const connect = useCallback(() => {
     try {
@@ -89,6 +200,8 @@ export function useTraderWebSocket() {
         console.log('Trader WebSocket connected')
         setIsConnected(true)
         setError(null)
+        wsFailCountRef.current = 0
+        stopPolling() // Stop REST polling if WS connects
       }
 
       ws.onmessage = (event) => {
@@ -104,26 +217,44 @@ export function useTraderWebSocket() {
 
       ws.onerror = (event) => {
         console.error('WebSocket error:', event)
+        wsFailCountRef.current++
         setError('WebSocket connection error')
+
+        // After 2 failed attempts, switch to REST polling
+        if (wsFailCountRef.current >= 2) {
+          console.log('WebSocket unavailable, switching to REST API fallback')
+          startPolling()
+        }
       }
 
       ws.onclose = () => {
         console.log('Trader WebSocket disconnected')
         setIsConnected(false)
 
-        // Attempt to reconnect after 5 seconds
+        // Start REST polling immediately on close
+        if (!pollingIntervalRef.current) {
+          startPolling()
+        }
+
+        // Still try to reconnect WebSocket in background
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('Attempting to reconnect...')
+          console.log('Attempting WebSocket reconnect...')
           connect()
-        }, 5000)
+        }, 30000) // Try WS reconnect every 30s
       }
 
       wsRef.current = ws
     } catch (err) {
       console.error('Failed to create WebSocket:', err)
       setError('Failed to establish WebSocket connection')
+      wsFailCountRef.current++
+
+      // Fall back to REST polling
+      if (wsFailCountRef.current >= 2) {
+        startPolling()
+      }
     }
-  }, [])
+  }, [startPolling, stopPolling])
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -133,7 +264,8 @@ export function useTraderWebSocket() {
       wsRef.current.close()
       wsRef.current = null
     }
-  }, [])
+    stopPolling()
+  }, [stopPolling])
 
   const subscribe = useCallback((symbols: string[]) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -153,6 +285,7 @@ export function useTraderWebSocket() {
     data,
     isConnected,
     error,
+    usingRestFallback,
     reconnect: connect,
     subscribe
   }
