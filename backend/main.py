@@ -6735,14 +6735,20 @@ async def get_backtest_results(strategy_name: str = None, limit: int = 50):
         List of backtest results with full metrics
     """
     import math
+    from decimal import Decimal
 
     def safe_round(value, decimals=2, default=0):
-        """Round a value, returning default if inf/nan"""
+        """Round a value, returning default if inf/nan or any non-serializable float"""
         if value is None:
             return default
-        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        try:
+            # Convert to float first to handle Decimal and other numeric types
+            float_val = float(value)
+            if math.isnan(float_val) or math.isinf(float_val):
+                return default
+            return round(float_val, decimals)
+        except (ValueError, TypeError, OverflowError):
             return default
-        return round(value, decimals)
 
     try:
         conn = get_connection()
