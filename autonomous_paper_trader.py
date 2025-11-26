@@ -1,7 +1,7 @@
 """
 Autonomous Paper Trader - Fully Automated SPY Trading
 Finds and executes trades automatically with ZERO manual intervention
-Starting capital: $5,000
+Starting capital: $1,000,000
 
 CRITICAL INTEGRATION: Uses full Psychology Trap Detection System
 - Multi-timeframe RSI analysis (5m, 15m, 1h, 4h, 1d)
@@ -290,7 +290,7 @@ class AutonomousPaperTrader:
     """
 
     def __init__(self):
-        self.starting_capital = 5000  # $5,000 starting capital
+        self.starting_capital = 1000000  # $1,000,000 starting capital
         self._ensure_tables()
 
         # CRITICAL: Initialize all components
@@ -1158,18 +1158,31 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 )
                 return self._execute_atm_straddle_fallback(spot_price, api_client)
 
-            # Step 3: Execute directional trade (calls/puts)
+            # Step 3: Execute trade based on action type
             self.update_live_status(
                 status='EXECUTING',
                 action=f'Found {trade["strategy"]} setup (confidence: {trade["confidence"]}%)',
                 analysis=market_summary,
-                decision=f'Executing {trade["action"]} at ${trade["strike"]:.0f}'
+                decision=f'Executing {trade["action"]} at ${trade.get("strike", spot_price):.0f}'
             )
-            position_id = self._execute_directional_trade(trade, gex_data, api_client)
 
-            # GUARANTEE CHECK: If directional trade failed, ensure we still get a trade
+            # Route to correct execution method based on action
+            action = trade.get('action', '')
+            if action == 'IRON_CONDOR':
+                position_id = self._execute_iron_condor(spot_price, gex_data, api_client)
+            elif action == 'BULL_PUT_SPREAD':
+                position_id = self._execute_bull_put_spread(spot_price, gex_data, api_client, trade.get('regime'))
+            elif action == 'BEAR_CALL_SPREAD':
+                position_id = self._execute_bear_call_spread(spot_price, gex_data, api_client, trade.get('regime'))
+            elif action == 'CASH_SECURED_PUT':
+                position_id = self._execute_cash_secured_put(spot_price, gex_data, api_client, trade.get('regime'))
+            else:
+                # Directional trades (BUY_CALL, BUY_PUT)
+                position_id = self._execute_directional_trade(trade, gex_data, api_client)
+
+            # GUARANTEE CHECK: If trade failed, ensure we still get a trade
             if not position_id:
-                self.log_action('FALLBACK_L1', 'Directional trade execution failed - trying Iron Condor')
+                self.log_action('FALLBACK_L1', f'{action} execution failed - trying Iron Condor')
                 position_id = self._execute_iron_condor(spot_price, gex_data, api_client)
 
                 if not position_id:
@@ -1686,19 +1699,66 @@ RISK PARAMS:
                 action = 'BUY_PUT'
                 option_type = 'put'
             elif regime.recommended_action == MarketAction.SELL_PREMIUM:
-                # Use Iron Condor for premium selling
-                return {
-                    'symbol': 'SPY',
-                    'strategy': 'Unified Regime: SELL_PREMIUM',
-                    'action': 'IRON_CONDOR',
-                    'option_type': 'iron_condor',
-                    'confidence': int(regime.confidence),
-                    'target': spot_price,  # Stay near current price
-                    'stop': regime.stop_loss_pct * 100,
-                    'reasoning': f"UNIFIED CLASSIFIER: {regime.reasoning}",
-                    'regime': regime,
-                    'is_unified': True
-                }
+                # Route to different credit strategies based on trend regime
+                trend = regime.trend_regime
+                iv_rank = regime.iv_rank
+
+                # STRONG_UPTREND + High IV = Cash Secured Put (willing to own shares)
+                if trend == TrendRegime.STRONG_UPTREND and iv_rank >= 50:
+                    return {
+                        'symbol': 'SPY',
+                        'strategy': 'Unified Regime: CASH_SECURED_PUT',
+                        'action': 'CASH_SECURED_PUT',
+                        'option_type': 'csp',
+                        'confidence': int(regime.confidence),
+                        'target': spot_price,
+                        'stop': regime.stop_loss_pct * 100,
+                        'reasoning': f"UNIFIED CLASSIFIER: Strong uptrend + high IV = CSP. {regime.reasoning}",
+                        'regime': regime,
+                        'is_unified': True
+                    }
+                # UPTREND or mild STRONG_UPTREND = Bull Put Spread (bullish credit)
+                elif trend in [TrendRegime.UPTREND, TrendRegime.STRONG_UPTREND]:
+                    return {
+                        'symbol': 'SPY',
+                        'strategy': 'Unified Regime: BULL_PUT_SPREAD',
+                        'action': 'BULL_PUT_SPREAD',
+                        'option_type': 'bull_put_spread',
+                        'confidence': int(regime.confidence),
+                        'target': spot_price,
+                        'stop': regime.stop_loss_pct * 100,
+                        'reasoning': f"UNIFIED CLASSIFIER: Uptrend = bullish credit spread. {regime.reasoning}",
+                        'regime': regime,
+                        'is_unified': True
+                    }
+                # DOWNTREND or STRONG_DOWNTREND = Bear Call Spread (bearish credit)
+                elif trend in [TrendRegime.DOWNTREND, TrendRegime.STRONG_DOWNTREND]:
+                    return {
+                        'symbol': 'SPY',
+                        'strategy': 'Unified Regime: BEAR_CALL_SPREAD',
+                        'action': 'BEAR_CALL_SPREAD',
+                        'option_type': 'bear_call_spread',
+                        'confidence': int(regime.confidence),
+                        'target': spot_price,
+                        'stop': regime.stop_loss_pct * 100,
+                        'reasoning': f"UNIFIED CLASSIFIER: Downtrend = bearish credit spread. {regime.reasoning}",
+                        'regime': regime,
+                        'is_unified': True
+                    }
+                # RANGE_BOUND = Iron Condor (neutral)
+                else:
+                    return {
+                        'symbol': 'SPY',
+                        'strategy': 'Unified Regime: IRON_CONDOR',
+                        'action': 'IRON_CONDOR',
+                        'option_type': 'iron_condor',
+                        'confidence': int(regime.confidence),
+                        'target': spot_price,
+                        'stop': regime.stop_loss_pct * 100,
+                        'reasoning': f"UNIFIED CLASSIFIER: Range-bound = Iron Condor. {regime.reasoning}",
+                        'regime': regime,
+                        'is_unified': True
+                    }
             else:
                 return None
 
@@ -2341,15 +2401,15 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
         Used when no clear directional setup exists
         """
         try:
-            # Iron Condor parameters for $5K account
+            # Iron Condor parameters for $1M account
             # Use 30-45 DTE for better theta decay
             dte = 35  # ~5 weeks out
             exp_date = self._get_expiration_string_monthly(dte)
 
             # Set strikes: ±5-7% from spot for safety
-            # SPY at $500: Sell 475/525, Buy 470/530 (10-point wings)
-            wing_width = 5  # $5 wings
-            range_width = spot * 0.06  # 6% from spot
+            # SPY at $600: Sell 570/630, Buy 560/640 (10-point wings)
+            wing_width = 10  # $10 wings for $1M account
+            range_width = spot * 0.05  # 5% from spot
 
             # Round to nearest $5
             call_sell_strike = round((spot + range_width) / 5) * 5
@@ -2393,10 +2453,10 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
 
             # Position sizing: use conservative 20% of capital for spreads
             available = self.get_available_capital()
-            max_risk = wing_width * 100  # $5 wing = $500 risk per spread
+            max_risk = wing_width * 100  # $10 wing = $1000 risk per spread
             max_position = available * 0.20  # 20% for Iron Condor
             contracts = max(1, int(max_position / max_risk))
-            contracts = min(contracts, 5)  # Max 5 Iron Condors for $5K account
+            contracts = min(contracts, 100)  # Max 100 Iron Condors for $1M account
 
             net_credit = credit * contracts * 100
 
@@ -2420,7 +2480,7 @@ STRATEGY: Collect premium betting SPY stays between ${put_sell_strike:.0f} - ${c
 NET CREDIT: ${credit:.2f} per spread × {contracts} contracts = ${net_credit:.0f}
 MAX RISK: ${max_risk * contracts:,.0f}
 EXPIRATION: {dte} DTE (monthly) for theta decay
-RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
+RANGE: ±5% from ${spot:.2f} ($1M account)"""
             }
 
             # Execute as multi-leg position with REAL bid/ask from options chain
@@ -2454,6 +2514,325 @@ RANGE: ±6% from ${spot:.2f} (conservative for $5K account)"""
 
         except Exception as e:
             self.log_action('ERROR', f'Iron Condor execution failed: {str(e)}', success=False)
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _execute_bull_put_spread(self, spot: float, gex_data: Dict, api_client, regime=None) -> Optional[int]:
+        """
+        Execute Bull Put Spread - bullish credit spread
+        Sell higher strike put, buy lower strike put
+        Profit if SPY stays above short put strike
+        """
+        try:
+            # Bull Put Spread parameters for $1M account
+            dte = 30  # ~4 weeks out
+            exp_date = self._get_expiration_string_monthly(dte)
+
+            # Set strikes: Sell put 3-5% below spot, buy put $5-10 below that
+            wing_width = 10  # $10 wings for $1M account
+            otm_distance = spot * 0.04  # 4% OTM for short put
+
+            # Round to nearest $5
+            put_sell_strike = round((spot - otm_distance) / 5) * 5
+            put_buy_strike = put_sell_strike - wing_width
+
+            # Get option prices
+            put_sell = get_real_option_price('SPY', put_sell_strike, 'put', exp_date)
+            put_buy = get_real_option_price('SPY', put_buy_strike, 'put', exp_date)
+
+            # Check for errors
+            if put_sell.get('error') or put_buy.get('error'):
+                self.log_action('ERROR', 'Failed to get Bull Put Spread option prices', success=False)
+                return None
+
+            # Validate prices
+            if put_sell.get('mid', 0) <= 0 or put_buy.get('mid', 0) <= 0:
+                self.log_action('ERROR',
+                    f'Bull Put Spread: Invalid option prices - '
+                    f'Sell Put: ${put_sell.get("mid", 0):.2f}, Buy Put: ${put_buy.get("mid", 0):.2f}',
+                    success=False)
+                return None
+
+            # Calculate net credit (sell higher strike - buy lower strike)
+            credit = put_sell['mid'] - put_buy['mid']
+
+            if credit <= 0:
+                self.log_action('ERROR',
+                    f'Bull Put Spread has no credit (${credit:.2f}). '
+                    f'Strikes: {put_buy_strike}/{put_sell_strike}',
+                    success=False)
+                return None
+
+            # Position sizing for $1M account
+            available = self.get_available_capital()
+            max_risk = wing_width * 100  # $10 wing = $1000 risk per spread
+            max_position = available * 0.15  # 15% for bull put spread
+            contracts = max(1, int(max_position / max_risk))
+            contracts = min(contracts, 50)  # Max 50 spreads for $1M account
+
+            net_credit = credit * contracts * 100
+
+            # Build trade dict
+            trade = {
+                'symbol': 'SPY',
+                'strategy': f'Bull Put Spread (Collect ${net_credit:.0f} premium)',
+                'action': 'BULL_PUT_SPREAD',
+                'option_type': 'bull_put_spread',
+                'strike': put_sell_strike,
+                'dte': dte,
+                'confidence': regime.confidence if regime else 80,
+                'reasoning': f"""BULL PUT SPREAD: Bullish credit spread in uptrend.
+
+STRATEGY: Collect premium betting SPY stays above ${put_sell_strike:.0f}
+- Sell {put_sell_strike} Put @ ${put_sell['mid']:.2f}
+- Buy {put_buy_strike} Put @ ${put_buy['mid']:.2f}
+
+NET CREDIT: ${credit:.2f} per spread × {contracts} contracts = ${net_credit:.0f}
+MAX RISK: ${max_risk * contracts:,.0f}
+BREAKEVEN: ${put_sell_strike - credit:.2f}
+EXPIRATION: {dte} DTE"""
+            }
+
+            # Execute trade
+            vix = self._get_vix()
+            bp_bid = put_sell.get('bid', 0) - put_buy.get('ask', 0)
+            bp_ask = put_sell.get('ask', 0) - put_buy.get('bid', 0)
+
+            position_id = self._execute_trade(
+                trade,
+                {'mid': credit, 'bid': bp_bid, 'ask': bp_ask, 'contract_symbol': 'BULL_PUT_SPREAD'},
+                contracts,
+                credit,
+                exp_date,
+                gex_data,
+                vix
+            )
+
+            if position_id:
+                self.set_config('last_trade_date', datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'))
+                self.log_action(
+                    'EXECUTE',
+                    f"Opened Bull Put Spread: ${net_credit:.0f} credit ({contracts} contracts) "
+                    f"| Strikes: {put_buy_strike}/{put_sell_strike} | Exp: {exp_date}",
+                    position_id=position_id,
+                    success=True
+                )
+                return position_id
+
+            return None
+
+        except Exception as e:
+            self.log_action('ERROR', f'Bull Put Spread execution failed: {str(e)}', success=False)
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _execute_bear_call_spread(self, spot: float, gex_data: Dict, api_client, regime=None) -> Optional[int]:
+        """
+        Execute Bear Call Spread - bearish credit spread
+        Sell lower strike call, buy higher strike call
+        Profit if SPY stays below short call strike
+        """
+        try:
+            # Bear Call Spread parameters for $1M account
+            dte = 30  # ~4 weeks out
+            exp_date = self._get_expiration_string_monthly(dte)
+
+            # Set strikes: Sell call 3-5% above spot, buy call $5-10 above that
+            wing_width = 10  # $10 wings for $1M account
+            otm_distance = spot * 0.04  # 4% OTM for short call
+
+            # Round to nearest $5
+            call_sell_strike = round((spot + otm_distance) / 5) * 5
+            call_buy_strike = call_sell_strike + wing_width
+
+            # Get option prices
+            call_sell = get_real_option_price('SPY', call_sell_strike, 'call', exp_date)
+            call_buy = get_real_option_price('SPY', call_buy_strike, 'call', exp_date)
+
+            # Check for errors
+            if call_sell.get('error') or call_buy.get('error'):
+                self.log_action('ERROR', 'Failed to get Bear Call Spread option prices', success=False)
+                return None
+
+            # Validate prices
+            if call_sell.get('mid', 0) <= 0 or call_buy.get('mid', 0) <= 0:
+                self.log_action('ERROR',
+                    f'Bear Call Spread: Invalid option prices - '
+                    f'Sell Call: ${call_sell.get("mid", 0):.2f}, Buy Call: ${call_buy.get("mid", 0):.2f}',
+                    success=False)
+                return None
+
+            # Calculate net credit (sell lower strike - buy higher strike)
+            credit = call_sell['mid'] - call_buy['mid']
+
+            if credit <= 0:
+                self.log_action('ERROR',
+                    f'Bear Call Spread has no credit (${credit:.2f}). '
+                    f'Strikes: {call_sell_strike}/{call_buy_strike}',
+                    success=False)
+                return None
+
+            # Position sizing for $1M account
+            available = self.get_available_capital()
+            max_risk = wing_width * 100  # $10 wing = $1000 risk per spread
+            max_position = available * 0.15  # 15% for bear call spread
+            contracts = max(1, int(max_position / max_risk))
+            contracts = min(contracts, 50)  # Max 50 spreads for $1M account
+
+            net_credit = credit * contracts * 100
+
+            # Build trade dict
+            trade = {
+                'symbol': 'SPY',
+                'strategy': f'Bear Call Spread (Collect ${net_credit:.0f} premium)',
+                'action': 'BEAR_CALL_SPREAD',
+                'option_type': 'bear_call_spread',
+                'strike': call_sell_strike,
+                'dte': dte,
+                'confidence': regime.confidence if regime else 80,
+                'reasoning': f"""BEAR CALL SPREAD: Bearish credit spread in downtrend.
+
+STRATEGY: Collect premium betting SPY stays below ${call_sell_strike:.0f}
+- Sell {call_sell_strike} Call @ ${call_sell['mid']:.2f}
+- Buy {call_buy_strike} Call @ ${call_buy['mid']:.2f}
+
+NET CREDIT: ${credit:.2f} per spread × {contracts} contracts = ${net_credit:.0f}
+MAX RISK: ${max_risk * contracts:,.0f}
+BREAKEVEN: ${call_sell_strike + credit:.2f}
+EXPIRATION: {dte} DTE"""
+            }
+
+            # Execute trade
+            vix = self._get_vix()
+            bc_bid = call_sell.get('bid', 0) - call_buy.get('ask', 0)
+            bc_ask = call_sell.get('ask', 0) - call_buy.get('bid', 0)
+
+            position_id = self._execute_trade(
+                trade,
+                {'mid': credit, 'bid': bc_bid, 'ask': bc_ask, 'contract_symbol': 'BEAR_CALL_SPREAD'},
+                contracts,
+                credit,
+                exp_date,
+                gex_data,
+                vix
+            )
+
+            if position_id:
+                self.set_config('last_trade_date', datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'))
+                self.log_action(
+                    'EXECUTE',
+                    f"Opened Bear Call Spread: ${net_credit:.0f} credit ({contracts} contracts) "
+                    f"| Strikes: {call_sell_strike}/{call_buy_strike} | Exp: {exp_date}",
+                    position_id=position_id,
+                    success=True
+                )
+                return position_id
+
+            return None
+
+        except Exception as e:
+            self.log_action('ERROR', f'Bear Call Spread execution failed: {str(e)}', success=False)
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _execute_cash_secured_put(self, spot: float, gex_data: Dict, api_client, regime=None) -> Optional[int]:
+        """
+        Execute Cash Secured Put - sell naked put with cash to cover assignment
+        Most bullish premium selling strategy - willing to own SPY at lower price
+        Requires significant capital (~$60K per contract at SPY $600)
+        """
+        try:
+            # CSP parameters for $1M account
+            dte = 45  # ~6 weeks out for better premium
+            exp_date = self._get_expiration_string_monthly(dte)
+
+            # Set strike: 5-8% below spot (willing to buy at this level)
+            otm_distance = spot * 0.06  # 6% OTM
+
+            # Round to nearest $5
+            put_strike = round((spot - otm_distance) / 5) * 5
+
+            # Get option price
+            put_option = get_real_option_price('SPY', put_strike, 'put', exp_date)
+
+            # Check for errors
+            if put_option.get('error'):
+                self.log_action('ERROR', 'Failed to get CSP option price', success=False)
+                return None
+
+            # Validate price
+            if put_option.get('mid', 0) <= 0:
+                self.log_action('ERROR',
+                    f'Cash Secured Put: Invalid option price - Put: ${put_option.get("mid", 0):.2f}',
+                    success=False)
+                return None
+
+            premium = put_option['mid']
+
+            # Position sizing for CSP - need cash to buy 100 shares per contract
+            available = self.get_available_capital()
+            cash_per_contract = put_strike * 100  # Cash needed if assigned
+            max_position = available * 0.25  # 25% max for CSPs (capital intensive)
+            contracts = max(1, int(max_position / cash_per_contract))
+            contracts = min(contracts, 10)  # Max 10 CSPs (~$600K collateral at SPY $600)
+
+            total_premium = premium * contracts * 100
+            total_collateral = cash_per_contract * contracts
+
+            # Build trade dict
+            trade = {
+                'symbol': 'SPY',
+                'strategy': f'Cash Secured Put (Collect ${total_premium:.0f} premium)',
+                'action': 'CASH_SECURED_PUT',
+                'option_type': 'csp',
+                'strike': put_strike,
+                'dte': dte,
+                'confidence': regime.confidence if regime else 85,
+                'reasoning': f"""CASH SECURED PUT: Strong uptrend + high IV = sell naked put.
+
+STRATEGY: Collect premium, willing to own SPY at ${put_strike:.0f}
+- Sell {put_strike} Put @ ${premium:.2f}
+
+PREMIUM COLLECTED: ${premium:.2f} × {contracts} contracts = ${total_premium:.0f}
+COLLATERAL REQUIRED: ${total_collateral:,.0f} ({contracts} × ${cash_per_contract:,.0f})
+BREAKEVEN: ${put_strike - premium:.2f}
+YIELD: {(total_premium / total_collateral) * 100:.2f}% in {dte} days
+EXPIRATION: {dte} DTE
+
+If assigned: Own SPY at ${put_strike:.0f} (effective cost ${put_strike - premium:.2f})"""
+            }
+
+            # Execute trade
+            vix = self._get_vix()
+
+            position_id = self._execute_trade(
+                trade,
+                {'mid': premium, 'bid': put_option.get('bid', 0), 'ask': put_option.get('ask', 0), 'contract_symbol': 'CASH_SECURED_PUT'},
+                contracts,
+                premium,
+                exp_date,
+                gex_data,
+                vix
+            )
+
+            if position_id:
+                self.set_config('last_trade_date', datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'))
+                self.log_action(
+                    'EXECUTE',
+                    f"Opened Cash Secured Put: ${total_premium:.0f} premium ({contracts} contracts) "
+                    f"| Strike: {put_strike} | Collateral: ${total_collateral:,.0f} | Exp: {exp_date}",
+                    position_id=position_id,
+                    success=True
+                )
+                return position_id
+
+            return None
+
+        except Exception as e:
+            self.log_action('ERROR', f'Cash Secured Put execution failed: {str(e)}', success=False)
             import traceback
             traceback.print_exc()
             return None
