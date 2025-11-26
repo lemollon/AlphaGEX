@@ -128,6 +128,7 @@ export const apiClient = {
   getTraderStatus: () => api.get('/api/trader/status'),
   getTraderLiveStatus: () => api.get('/api/trader/live-status'),
   getTraderPerformance: () => api.get('/api/trader/performance'),
+  getTraderDiagnostics: () => api.get('/api/trader/diagnostics'),
   getTraderTrades: (limit: number = 10) => api.get('/api/trader/trades', { params: { limit } }),
   getOpenPositions: () => api.get('/api/trader/positions'),
   getClosedTrades: (limit: number = 50) => api.get('/api/trader/closed-trades', { params: { limit } }),

@@ -130,6 +130,9 @@ export default function AutonomousTrader() {
   const [executing, setExecuting] = useState(false)
   const [traderControlLoading, setTraderControlLoading] = useState(false)
 
+  // Diagnostics state
+  const [diagnostics, setDiagnostics] = useState<any>(null)
+
   // Countdown timer state
   const [countdown, setCountdown] = useState<string>('--:--')
 
@@ -253,11 +256,12 @@ export default function AutonomousTrader() {
           apiClient.getClosedTrades(20).catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getMLModelStatus().catch(() => ({ data: { success: false, data: null } })),
           apiClient.getRecentMLPredictions(10).catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getRiskMetrics(30).catch(() => ({ data: { success: false, data: [] } }))
+          apiClient.getRiskMetrics(30).catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getTraderDiagnostics().catch(() => ({ data: { success: false, data: null } }))
         ])
 
         // Extract results (fulfilled promises only)
-        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes] = results.map(result =>
+        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = results.map(result =>
           result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
         )
 
@@ -363,6 +367,11 @@ export default function AutonomousTrader() {
         // Set risk metrics history
         if (riskMetricsRes.data.success && riskMetricsRes.data.data) {
           setRiskMetricsHistory(riskMetricsRes.data.data)
+        }
+
+        // Set diagnostics for debugging
+        if (diagnosticsRes.data.success && diagnosticsRes.data.data) {
+          setDiagnostics(diagnosticsRes.data.data)
         }
 
         // Fetch VIX hedge signal data
@@ -582,6 +591,33 @@ export default function AutonomousTrader() {
           </div>
         </div>
       </div>
+
+      {/* Diagnostics Warning Banner - Shows when there are issues */}
+      {diagnostics && diagnostics.recommendations && diagnostics.recommendations.length > 0 && (
+        <div className="bg-warning/10 border border-warning/30 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-warning mb-2">Trader Diagnostics</h3>
+              <ul className="text-sm text-text-secondary space-y-1">
+                {diagnostics.recommendations.map((rec: string, idx: number) => (
+                  <li key={idx} className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 bg-warning rounded-full" />
+                    {rec}
+                  </li>
+                ))}
+              </ul>
+              {diagnostics.checks?.market_hours && (
+                <div className="mt-3 text-xs text-text-muted">
+                  Current time: {diagnostics.checks.market_hours.current_time_ct} ({diagnostics.checks.market_hours.day_of_week})
+                  {' | '}
+                  Market: {diagnostics.checks.market_hours.status === 'open' ? '🟢 Open' : '🔴 Closed'}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Trader Control Panel */}
       <div className="card bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
