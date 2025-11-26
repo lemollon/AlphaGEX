@@ -6733,27 +6733,25 @@ async def get_backtest_results(strategy_name: str = None, limit: int = 50):
         List of backtest results with full metrics
     """
     try:
-        
-
         conn = get_connection()
-        
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
+        # PostgreSQL doesn't support parameterized LIMIT - use validated int literal
         if strategy_name:
-            c.execute('''
+            c.execute(f'''
                 SELECT *
                 FROM backtest_results
-                WHERE strategy_name = ?
+                WHERE strategy_name = %s
                 ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (strategy_name, limit))
+                LIMIT {int(limit)}
+            ''', (strategy_name,))
         else:
-            c.execute('''
+            c.execute(f'''
                 SELECT *
                 FROM backtest_results
                 ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (limit,))
+                LIMIT {int(limit)}
+            ''')
 
         results = []
         for row in c.fetchall():
@@ -6800,11 +6798,8 @@ async def get_backtest_summary():
         Summary with psychology, GEX, and options strategy performance
     """
     try:
-        
-
         conn = get_connection()
-        
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute('''
             SELECT *
@@ -6867,17 +6862,14 @@ async def get_best_strategies(min_expectancy: float = 0.5, min_win_rate: float =
         List of strategies that meet criteria, sorted by expectancy
     """
     try:
-        
-
         conn = get_connection()
-        
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute('''
             SELECT *
             FROM backtest_results
-            WHERE expectancy_pct >= ?
-            AND win_rate >= ?
+            WHERE expectancy_pct >= %s
+            AND win_rate >= %s
             AND total_trades >= 10
             ORDER BY expectancy_pct DESC
             LIMIT 20
@@ -7051,8 +7043,7 @@ async def get_smart_recommendations():
 
         # Get RSI and regime detection
         conn = get_connection()
-        
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get latest regime signal
         c.execute('''
@@ -7103,9 +7094,9 @@ async def get_smart_recommendations():
                 max_drawdown_pct,
                 sharpe_ratio
             FROM backtest_results
-            WHERE strategy_name LIKE ?
-            OR strategy_name LIKE '%TRAP%'
-            OR strategy_name LIKE '%GEX%'
+            WHERE strategy_name LIKE %s
+            OR strategy_name LIKE '%%TRAP%%'
+            OR strategy_name LIKE '%%GEX%%'
             ORDER BY expectancy_pct DESC
         ''', (f'%{current_pattern}%',))
 
