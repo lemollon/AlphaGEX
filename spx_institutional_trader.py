@@ -101,6 +101,15 @@ except ImportError as e:
     AI_REASONING_AVAILABLE = False
     print(f"⚠️ SPX Trader: AI Reasoning not available: {e}")
 
+# CRITICAL: Import Strategy Stats for backtester integration
+try:
+    from strategy_stats import get_strategy_stats, get_recent_changes
+    STRATEGY_STATS_AVAILABLE = True
+    print("✅ SPX Trader: Strategy Stats (Backtester Integration) available")
+except ImportError as e:
+    STRATEGY_STATS_AVAILABLE = False
+    print(f"⚠️ SPX Trader: Strategy Stats not available: {e}")
+
 
 class SPXInstitutionalTrader:
     """
@@ -174,12 +183,149 @@ class SPXInstitutionalTrader:
         else:
             self.ai_reasoning = None
 
+        # Load backtest-informed parameters
+        self.strategy_stats = self._load_strategy_stats()
+
         print(f"✅ SPX Institutional Trader initialized")
         print(f"   Capital: ${self.starting_capital:,.0f}")
         print(f"   Max position: ${self.starting_capital * self.max_position_pct:,.0f}")
         print(f"   Max contracts/trade: {self.max_contracts_per_trade}")
         print(f"   Data Source: SPX GEX from Trading Volatility API")
         print(f"   AI Logging: {'ENABLED' if self.db_logger else 'DISABLED'}")
+        print(f"   Backtester Integration: {'ENABLED' if self.strategy_stats else 'DISABLED'}")
+
+    # ============================================================================
+    # BACKTESTER INTEGRATION - Use backtest results for informed trading
+    # ============================================================================
+
+    def _load_strategy_stats(self) -> Optional[Dict]:
+        """Load strategy statistics from backtest results"""
+        if not STRATEGY_STATS_AVAILABLE:
+            return None
+
+        try:
+            stats = get_strategy_stats()
+            if stats:
+                proven_strategies = [k for k, v in stats.items()
+                                   if v.get('total_trades', 0) >= 10]
+                print(f"   📊 Loaded {len(proven_strategies)} proven strategies from backtest")
+            return stats
+        except Exception as e:
+            print(f"⚠️ Could not load strategy stats: {e}")
+            return None
+
+    def get_backtest_params_for_strategy(self, strategy_name: str) -> Dict:
+        """
+        Get backtest-informed parameters for a specific strategy.
+
+        Returns:
+            Dict with win_rate, expectancy, sharpe, max_drawdown, etc.
+        """
+        if not self.strategy_stats:
+            return {
+                'win_rate': 0.60,  # Default 60% win rate
+                'expectancy': 0.0,
+                'sharpe_ratio': 0.0,
+                'is_proven': False,
+                'total_trades': 0,
+                'source': 'default'
+            }
+
+        # Try exact match first
+        if strategy_name in self.strategy_stats:
+            stats = self.strategy_stats[strategy_name]
+            return {
+                'win_rate': stats.get('win_rate', 0.60),
+                'expectancy': stats.get('expectancy', 0.0),
+                'sharpe_ratio': stats.get('sharpe_ratio', 0.0),
+                'avg_win': stats.get('avg_win', 0.0),
+                'avg_loss': stats.get('avg_loss', 0.0),
+                'is_proven': stats.get('total_trades', 0) >= 10,
+                'total_trades': stats.get('total_trades', 0),
+                'source': 'backtest'
+            }
+
+        # Try fuzzy matching for similar strategies
+        for key in self.strategy_stats:
+            if key.upper() in strategy_name.upper() or strategy_name.upper() in key.upper():
+                stats = self.strategy_stats[key]
+                return {
+                    'win_rate': stats.get('win_rate', 0.60),
+                    'expectancy': stats.get('expectancy', 0.0),
+                    'sharpe_ratio': stats.get('sharpe_ratio', 0.0),
+                    'avg_win': stats.get('avg_win', 0.0),
+                    'avg_loss': stats.get('avg_loss', 0.0),
+                    'is_proven': stats.get('total_trades', 0) >= 10,
+                    'total_trades': stats.get('total_trades', 0),
+                    'source': f'backtest_match:{key}'
+                }
+
+        return {
+            'win_rate': 0.60,
+            'expectancy': 0.0,
+            'sharpe_ratio': 0.0,
+            'is_proven': False,
+            'total_trades': 0,
+            'source': 'default'
+        }
+
+    def should_trade_strategy(self, strategy_name: str, min_trades: int = 10,
+                             min_expectancy: float = -5.0) -> Tuple[bool, str]:
+        """
+        Check if a strategy should be traded based on backtest performance.
+
+        Args:
+            strategy_name: Name of the strategy
+            min_trades: Minimum trades required to consider "proven"
+            min_expectancy: Minimum expectancy % to allow trading
+
+        Returns:
+            (should_trade, reason)
+        """
+        params = self.get_backtest_params_for_strategy(strategy_name)
+
+        # Check if proven
+        if not params['is_proven']:
+            return True, "Unproven strategy - using conservative sizing"
+
+        # Check expectancy
+        if params['expectancy'] < min_expectancy:
+            return False, f"Strategy has negative expectancy ({params['expectancy']:.1f}%)"
+
+        # Check if recently updated
+        if params.get('source') == 'backtest':
+            return True, f"Proven strategy: {params['total_trades']} trades, {params['win_rate']*100:.0f}% win rate"
+
+        return True, "Default parameters"
+
+    def calculate_kelly_from_backtest(self, strategy_name: str) -> float:
+        """
+        Calculate Kelly criterion position size from backtest results.
+
+        Kelly % = W - [(1-W)/R]
+        Where: W = win rate, R = risk/reward ratio
+
+        Returns Kelly % (0.0 to 0.25 for institutional)
+        """
+        params = self.get_backtest_params_for_strategy(strategy_name)
+
+        win_rate = params['win_rate']
+        avg_win = abs(params.get('avg_win', 20.0))  # Default 20%
+        avg_loss = abs(params.get('avg_loss', 15.0))  # Default 15%
+
+        if avg_loss == 0:
+            avg_loss = 15.0  # Prevent division by zero
+
+        risk_reward = avg_win / avg_loss
+
+        # Kelly formula
+        kelly = win_rate - ((1 - win_rate) / risk_reward)
+
+        # Institutional half-Kelly (more conservative)
+        half_kelly = kelly * 0.5
+
+        # Cap at 25% for institutional
+        return max(0.01, min(0.25, half_kelly))
 
     def _ensure_tables(self):
         """Create database tables for SPX trading"""
@@ -381,17 +527,20 @@ class SPXInstitutionalTrader:
         self,
         entry_price: float,
         confidence: float,
-        volatility_regime: str = 'normal'
+        volatility_regime: str = 'normal',
+        strategy_name: str = None
     ) -> Tuple[int, Dict]:
         """
         Calculate optimal position size for institutional capital.
 
         Uses modified Kelly criterion with institutional constraints.
+        INTEGRATES BACKTESTER RESULTS for proven win rates.
 
         Args:
             entry_price: Option premium price
             confidence: Trade confidence (0-100)
             volatility_regime: 'low', 'normal', 'high', 'extreme'
+            strategy_name: Strategy name for backtest lookup
 
         Returns:
             (contracts, sizing_details)
@@ -399,8 +548,31 @@ class SPXInstitutionalTrader:
         # Get current available capital
         available = self.get_available_capital()
 
-        # Base position size: Max 5% of capital per trade
-        max_position_value = available * self.max_position_pct
+        # BACKTESTER INTEGRATION: Get historical performance
+        backtest_params = {}
+        kelly_pct = 0.05  # Default 5%
+
+        if strategy_name:
+            # Check if strategy should be traded
+            should_trade, reason = self.should_trade_strategy(strategy_name)
+            if not should_trade:
+                print(f"⚠️ Strategy blocked: {reason}")
+                return 0, {'error': reason, 'blocked': True}
+
+            # Get backtest-informed parameters
+            backtest_params = self.get_backtest_params_for_strategy(strategy_name)
+
+            # Calculate Kelly from backtest
+            kelly_pct = self.calculate_kelly_from_backtest(strategy_name)
+
+            if backtest_params.get('is_proven'):
+                print(f"📊 Backtest-informed sizing: Kelly={kelly_pct*100:.1f}%, "
+                      f"WinRate={backtest_params['win_rate']*100:.0f}%, "
+                      f"Expectancy={backtest_params['expectancy']:.1f}%")
+
+        # Base position size: Use Kelly % or max 5% of capital
+        base_pct = min(kelly_pct, self.max_position_pct)
+        max_position_value = available * base_pct
 
         # Adjust for confidence (Kelly-inspired)
         # Higher confidence = closer to max position
@@ -415,8 +587,14 @@ class SPXInstitutionalTrader:
         }
         vol_factor = vol_adjustments.get(volatility_regime, 1.0)
 
+        # BACKTEST ADJUSTMENT: Reduce size for unproven strategies
+        backtest_factor = 1.0
+        if backtest_params and not backtest_params.get('is_proven'):
+            backtest_factor = 0.5  # Half size for unproven strategies
+            print(f"⚠️ Unproven strategy - reducing size by 50%")
+
         # Adjusted position value
-        position_value = max_position_value * confidence_factor * vol_factor
+        position_value = max_position_value * confidence_factor * vol_factor * backtest_factor
 
         # Calculate contracts
         cost_per_contract = entry_price * self.multiplier
@@ -434,17 +612,21 @@ class SPXInstitutionalTrader:
             market_impact_warning = f"Large order ({contracts} contracts) may incur significant market impact"
 
         sizing_details = {
+            'methodology': 'Kelly-Backtest Hybrid',
             'available_capital': available,
+            'kelly_pct': kelly_pct * 100,
             'max_position_value': max_position_value,
             'confidence_factor': confidence_factor,
             'vol_factor': vol_factor,
+            'backtest_factor': backtest_factor,
             'adjusted_position_value': position_value,
             'cost_per_contract': cost_per_contract,
             'raw_contracts': raw_contracts,
             'final_contracts': contracts,
             'liquidity_constraint_applied': contracts < raw_contracts,
             'market_impact_warning': market_impact_warning,
-            'total_premium': contracts * cost_per_contract
+            'total_premium': contracts * cost_per_contract,
+            'backtest_params': backtest_params
         }
 
         return contracts, sizing_details
@@ -1225,10 +1407,12 @@ REASONING:
         else:
             entry_price = spot * 0.01  # Credit spread
 
+        # BACKTESTER INTEGRATION: Pass strategy name for backtest-informed sizing
         contracts, sizing = self.calculate_position_size(
             entry_price=entry_price,
             confidence=trade['confidence'],
-            volatility_regime='normal' if trade.get('regime') and trade['regime'].volatility_regime == VolatilityRegime.NORMAL else 'high'
+            volatility_regime='normal' if trade.get('regime') and trade['regime'].volatility_regime == VolatilityRegime.NORMAL else 'high',
+            strategy_name=trade.get('strategy', '')
         )
 
         if contracts == 0:
@@ -1243,14 +1427,16 @@ REASONING:
             print("❌ Position sizing returned 0 contracts")
             return None
 
-        # Log position sizing decision
+        # Log position sizing decision with backtest info
+        backtest_info = sizing.get('backtest_params', {})
         self._log_trade_activity(
             action_type='POSITION_SIZING',
             details=f"Sized {contracts} contracts for {trade['strategy']} @ ${trade['strike']}",
             spot_price=spot,
             ai_thought_process=f"Position sizing: {sizing.get('methodology', 'Kelly')} - "
-                              f"Risk: {sizing.get('risk_pct', 'N/A')}%, "
-                              f"Max capital: ${sizing.get('max_position_value', 0):,.0f}",
+                              f"Kelly: {sizing.get('kelly_pct', 0):.1f}%, "
+                              f"Max capital: ${sizing.get('max_position_value', 0):,.0f}, "
+                              f"Backtest WinRate: {backtest_info.get('win_rate', 0)*100:.0f}%",
             ai_confidence=trade.get('confidence', 0)
         )
 
