@@ -124,7 +124,7 @@ class TradierDataFetcher:
         self,
         api_key: Optional[str] = None,
         account_id: Optional[str] = None,
-        sandbox: bool = True
+        sandbox: Optional[bool] = None
     ):
         """
         Initialize Tradier client.
@@ -132,14 +132,17 @@ class TradierDataFetcher:
         Args:
             api_key: Tradier API key (falls back to env var)
             account_id: Tradier account ID (falls back to env var)
-            sandbox: If True, use sandbox/paper trading. If False, live trading.
+            sandbox: If True, use sandbox/paper trading. If False, live trading. None = read from env.
         """
         self.api_key = api_key or os.getenv('TRADIER_API_KEY')
         self.account_id = account_id or os.getenv('TRADIER_ACCOUNT_ID')
 
         # Check sandbox setting from env if not explicitly set
-        sandbox_env = os.getenv('TRADIER_SANDBOX', 'true').lower()
-        self.sandbox = sandbox if sandbox is not None else (sandbox_env == 'true')
+        if sandbox is not None:
+            self.sandbox = sandbox
+        else:
+            sandbox_env = os.getenv('TRADIER_SANDBOX', 'true').lower()
+            self.sandbox = sandbox_env == 'true'
 
         if not self.api_key:
             raise ValueError("TRADIER_API_KEY is required. Set in .env or pass directly.")
