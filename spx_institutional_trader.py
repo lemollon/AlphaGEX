@@ -26,7 +26,6 @@ from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 from database_adapter import get_connection
-from polygon_data_fetcher import polygon_fetcher
 from trading_costs import (
     TradingCostsCalculator, SPX_COSTS, INSTITUTIONAL_COSTS,
     OrderSide, SymbolType
@@ -34,6 +33,28 @@ from trading_costs import (
 import os
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# CRITICAL: Import UNIFIED Data Provider (Tradier primary, Polygon fallback)
+try:
+    from unified_data_provider import (
+        get_data_provider,
+        get_quote,
+        get_price,
+        get_options_chain,
+        get_gex,
+        get_vix
+    )
+    UNIFIED_DATA_AVAILABLE = True
+    print("✅ SPX Trader: Unified Data Provider (Tradier) integrated")
+except ImportError as e:
+    UNIFIED_DATA_AVAILABLE = False
+    print(f"⚠️ SPX Trader: Unified Data Provider not available: {e}")
+    # Fallback
+    from polygon_data_fetcher import polygon_fetcher
+
+# Legacy Polygon fallback
+if not UNIFIED_DATA_AVAILABLE:
+    from polygon_data_fetcher import polygon_fetcher
 
 # CRITICAL: Import UNIFIED Market Regime Classifier
 # This is the SINGLE source of truth - SPX uses SPX data, NOT SPY data

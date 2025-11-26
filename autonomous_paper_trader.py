@@ -17,7 +17,6 @@ from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 from database_adapter import get_connection
-from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 from trading_costs import (
     TradingCostsCalculator, get_costs_calculator, PAPER_TRADING_COSTS,
     OrderSide, SymbolType, apply_slippage_to_entry, apply_slippage_to_exit
@@ -27,6 +26,28 @@ import os
 
 # Central Time timezone for all timestamps
 CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# CRITICAL: Import UNIFIED Data Provider (Tradier primary, Polygon fallback)
+try:
+    from unified_data_provider import (
+        get_data_provider,
+        get_quote,
+        get_price,
+        get_options_chain,
+        get_gex,
+        get_vix
+    )
+    UNIFIED_DATA_AVAILABLE = True
+    print("✅ Unified Data Provider (Tradier) integrated")
+except ImportError as e:
+    UNIFIED_DATA_AVAILABLE = False
+    print(f"⚠️ Unified Data Provider not available: {e}")
+    # Fallback imports
+    from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
+
+# Legacy Polygon imports (fallback only)
+if not UNIFIED_DATA_AVAILABLE:
+    from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 
 # CRITICAL: Import UNIFIED Market Regime Classifier
 # This is the SINGLE source of truth for ALL trading decisions
@@ -83,12 +104,10 @@ except ImportError as e:
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
                           current_spot: float = None, use_theoretical: bool = True) -> Dict:
     """
-    Get REAL option price from Polygon.io, enhanced with Black-Scholes theoretical pricing.
+    Get REAL option price - Tradier (live) or Polygon (fallback).
 
-    When data is 15-minute delayed, calculates theoretical price using:
-    - Current SPY spot price (fresher than option quote)
-    - IV from the delayed quote
-    - Black-Scholes model
+    Tradier provides REAL-TIME data with Greeks included.
+    Polygon is 15-minute delayed and requires theoretical pricing adjustment.
 
     Args:
         symbol: Underlying symbol
@@ -96,13 +115,45 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
         option_type: 'call' or 'put'
         expiration_date: Expiration date YYYY-MM-DD
         current_spot: Current underlying price (optional, will fetch if None)
-        use_theoretical: Whether to enhance with theoretical pricing (default True)
+        use_theoretical: Whether to enhance with theoretical pricing (Polygon only)
 
     Returns:
-        Dict with quote data, optionally enhanced with theoretical prices
+        Dict with quote data including bid, ask, mid, greeks
     """
+    # Try Tradier first (REAL-TIME data with Greeks)
+    if UNIFIED_DATA_AVAILABLE:
+        try:
+            provider = get_data_provider()
+            chain = provider.get_options_chain(symbol, expiration_date, greeks=True)
+
+            if chain and expiration_date in chain.chains:
+                # Find the specific contract
+                for contract in chain.chains[expiration_date]:
+                    if contract.strike == strike and contract.option_type == option_type:
+                        return {
+                            'bid': contract.bid,
+                            'ask': contract.ask,
+                            'mid': contract.mid,
+                            'last': contract.last,
+                            'volume': contract.volume,
+                            'open_interest': contract.open_interest,
+                            'delta': contract.delta,
+                            'gamma': contract.gamma,
+                            'theta': contract.theta,
+                            'vega': contract.vega,
+                            'iv': contract.implied_volatility,
+                            'is_delayed': False,  # Tradier is real-time
+                            'source': 'tradier'
+                        }
+
+            # If exact strike not found, try nearest
+            print(f"   ⚠️ Strike {strike} not found in Tradier chain, checking nearest...")
+
+        except Exception as e:
+            print(f"   ⚠️ Tradier option fetch failed: {e}, falling back to Polygon")
+
+    # Fallback to Polygon (15-minute delayed)
     try:
-        # Use Polygon.io to get option quote
         quote = polygon_fetcher.get_option_quote(
             symbol=symbol,
             strike=strike,
@@ -111,13 +162,14 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
         )
 
         if quote is None:
-            return {'error': 'No option data found from Polygon.io'}
+            return {'error': 'No option data found'}
+
+        quote['source'] = 'polygon'
 
         # If delayed data and theoretical pricing enabled, enhance with Black-Scholes
         if use_theoretical and quote.get('is_delayed', False):
             enhanced_quote = calculate_theoretical_option_price(quote, current_spot)
             if 'error' not in enhanced_quote:
-                # Log the theoretical vs delayed price comparison
                 theo_price = enhanced_quote.get('theoretical_price', 0)
                 delayed_mid = quote.get('mid', 0)
                 adjustment = enhanced_quote.get('price_adjustment_pct', 0)
@@ -127,7 +179,7 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
         return quote
 
     except Exception as e:
-        print(f"Error fetching option price from Polygon.io: {e}")
+        print(f"Error fetching option price: {e}")
         return {'error': str(e)}
 
 
@@ -1394,25 +1446,56 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             return None
 
     def _get_vix(self) -> float:
-        """Get current VIX level for volatility regime - REAL-TIME from Polygon.io"""
+        """Get current VIX level for volatility regime - Tradier or Polygon"""
         try:
-            # Get current VIX price from Polygon.io
-            vix_price = polygon_fetcher.get_current_price('^VIX')
+            # Try unified data provider first (Tradier)
+            if UNIFIED_DATA_AVAILABLE:
+                vix_price = get_vix()
+                if vix_price and vix_price > 0:
+                    print(f"✅ VIX fetched from Tradier: {vix_price:.2f}")
+                    return vix_price
 
+            # Fallback to Polygon
+            vix_price = polygon_fetcher.get_current_price('^VIX')
             if vix_price and vix_price > 0:
-                print(f"✅ VIX fetched from Polygon.io: {vix_price:.2f}")
+                print(f"✅ VIX fetched from Polygon: {vix_price:.2f}")
                 return vix_price
 
-            print(f"⚠️ VIX data unavailable from Polygon.io - using default 17.0 (market average)")
-            return 17.0  # Market average VIX (normal conditions)
+            print(f"⚠️ VIX data unavailable - using default 17.0 (market average)")
+            return 17.0
         except Exception as e:
-            print(f"❌ Failed to fetch VIX from Polygon.io: {e}")
+            print(f"❌ Failed to fetch VIX: {e}")
             return 17.0
 
     def _get_momentum(self) -> Dict:
-        """Calculate recent momentum (1h, 4h price change) from Polygon.io"""
+        """Calculate recent momentum (1h, 4h price change) - Tradier or Polygon"""
         try:
-            # Get hourly data from Polygon.io (5 days to ensure enough data)
+            # Try unified data provider first (Tradier)
+            if UNIFIED_DATA_AVAILABLE:
+                provider = get_data_provider()
+                bars = provider.get_historical_bars('SPY', days=5, interval='1hour')
+                if bars and len(bars) >= 5:
+                    current_price = bars[-1].close
+                    price_1h_ago = bars[-2].close if len(bars) >= 2 else current_price
+                    price_4h_ago = bars[-5].close if len(bars) >= 5 else current_price
+
+                    change_1h = ((current_price - price_1h_ago) / price_1h_ago * 100)
+                    change_4h = ((current_price - price_4h_ago) / price_4h_ago * 100)
+
+                    if change_4h > 0.5:
+                        trend = 'strong_bullish'
+                    elif change_4h > 0.2:
+                        trend = 'bullish'
+                    elif change_4h < -0.5:
+                        trend = 'strong_bearish'
+                    elif change_4h < -0.2:
+                        trend = 'bearish'
+                    else:
+                        trend = 'neutral'
+
+                    return {'1h': round(change_1h, 2), '4h': round(change_4h, 2), 'trend': trend}
+
+            # Fallback to Polygon
             data = polygon_fetcher.get_price_history('SPY', days=5, timeframe='hour', multiplier=1)
 
             if data is None or len(data) < 5:
