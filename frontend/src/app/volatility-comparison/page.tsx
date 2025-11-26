@@ -61,11 +61,14 @@ export default function VolatilityComparison() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [usingFallback, setUsingFallback] = useState(false)
+  const [tradingVolError, setTradingVolError] = useState<string | null>(null)
 
   const fetchData = useCallback(async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true)
       setError(null)
+      setTradingVolError(null)
 
       // Fetch all data in parallel
       const [gexRes, vixRes, levelsRes] = await Promise.all([
@@ -74,8 +77,12 @@ export default function VolatilityComparison() {
         apiClient.getGEXLevels(symbol).catch((e) => ({ data: { success: false, data: [] } }))
       ])
 
-      // Trading Volatility API data
-      if (gexRes.data?.success && gexRes.data?.data) {
+      // Check if Trading Volatility API succeeded
+      const tradingVolSuccess = gexRes.data?.success && gexRes.data?.data
+      const traderCalcsSuccess = vixRes.data?.success && vixRes.data?.data
+
+      // Trading Volatility API data (PRIMARY SOURCE)
+      if (tradingVolSuccess) {
         const data = gexRes.data.data
         setTradingVolData({
           symbol: data.symbol || symbol,
@@ -89,10 +96,16 @@ export default function VolatilityComparison() {
           collection_date: data.collection_date || new Date().toISOString(),
           gamma_array: data.gamma_array || []
         })
+        setUsingFallback(false)
+      } else {
+        // Trading Vol API failed - set error and mark as using fallback
+        setTradingVolData(null)
+        setTradingVolError(gexRes.data?.error || 'Trading Volatility API unavailable')
+        setUsingFallback(true)
       }
 
-      // Trader calculations (VIX-based)
-      if (vixRes.data?.success && vixRes.data?.data) {
+      // Trader calculations (VIX-based) - FALLBACK SOURCE
+      if (traderCalcsSuccess) {
         setTraderCalcs(vixRes.data.data)
       }
 
@@ -102,21 +115,26 @@ export default function VolatilityComparison() {
         setGexLevels(levels.slice(0, 30)) // Top 30 levels
       }
 
-      // Build comparison history (simulated historical data for the chart)
-      if (gexRes.data?.success && vixRes.data?.success) {
-        const currentComparison: ComparisonHistory = {
-          timestamp: new Date().toISOString(),
-          trading_vol_iv: (gexRes.data.data?.implied_vol || gexRes.data.data?.implied_volatility || 0) * 100,
-          trader_realized_vol: vixRes.data.data?.realized_vol_20d || 0,
-          vix_level: vixRes.data.data?.vix_spot || 0,
-          spread: vixRes.data.data?.iv_rv_spread || 0
-        }
+      // Build comparison history
+      const currentComparison: ComparisonHistory = {
+        timestamp: new Date().toISOString(),
+        trading_vol_iv: tradingVolSuccess
+          ? (gexRes.data.data?.implied_vol || gexRes.data.data?.implied_volatility || 0) * 100
+          : 0,
+        trader_realized_vol: vixRes.data?.data?.realized_vol_20d || 0,
+        vix_level: vixRes.data?.data?.vix_spot || 0,
+        spread: vixRes.data?.data?.iv_rv_spread || 0
+      }
 
-        setComparisonHistory(prev => {
-          const newHistory = [...prev, currentComparison]
-          // Keep last 50 data points
-          return newHistory.slice(-50)
-        })
+      setComparisonHistory(prev => {
+        const newHistory = [...prev, currentComparison]
+        // Keep last 50 data points
+        return newHistory.slice(-50)
+      })
+
+      // Only set error if BOTH sources failed
+      if (!tradingVolSuccess && !traderCalcsSuccess) {
+        setError('Both Trading Volatility API and Trader calculations unavailable')
       }
 
       setLastUpdated(new Date())
@@ -226,7 +244,7 @@ export default function VolatilityComparison() {
               </div>
             </div>
 
-            {loading && !tradingVolData ? (
+            {loading && !tradingVolData && !traderCalcs ? (
               <div className="text-center py-12">
                 <Activity className="w-8 h-8 text-primary mx-auto animate-spin" />
                 <p className="text-text-secondary mt-2">Loading volatility data...</p>
@@ -243,21 +261,95 @@ export default function VolatilityComparison() {
               </div>
             ) : (
               <>
+                {/* Fallback Warning Banner */}
+                {usingFallback && (
+                  <div className="card bg-warning/10 border-warning/30 border">
+                    <div className="flex items-center gap-3">
+                      <AlertTriangle className="w-6 h-6 text-warning flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-warning font-semibold">Using Fallback Data</p>
+                        <p className="text-text-secondary text-sm">
+                          Trading Volatility API unavailable ({tradingVolError}). Displaying Trader calculations as fallback.
+                        </p>
+                      </div>
+                      <div className="px-3 py-1 rounded-full bg-warning/20 text-warning text-xs font-semibold">
+                        FALLBACK MODE
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Active Data Source Indicator */}
+                <div className="card bg-background-hover">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-3 h-3 rounded-full ${usingFallback ? 'bg-warning' : 'bg-success'} animate-pulse`}></div>
+                      <span className="text-text-primary font-semibold">Active Data Source:</span>
+                      <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                        usingFallback
+                          ? 'bg-green-500/20 text-green-400'
+                          : 'bg-blue-500/20 text-blue-400'
+                      }`}>
+                        {usingFallback ? 'Trader Calculations (Fallback)' : 'Trading Volatility API (Primary)'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      {usingFallback ? 'VIX-based internal calculations' : 'External GEX data provider'}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Source Labels */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="card bg-gradient-to-r from-blue-900/20 to-transparent border-blue-500/30">
-                    <div className="flex items-center gap-2 mb-2">
-                      <ExternalLink className="w-5 h-5 text-blue-400" />
-                      <h2 className="text-lg font-semibold text-blue-400">Trading Volatility API</h2>
+                  <div className={`card bg-gradient-to-r ${
+                    !usingFallback
+                      ? 'from-blue-900/20 to-transparent border-blue-500/30'
+                      : 'from-gray-900/20 to-transparent border-gray-500/30 opacity-50'
+                  }`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <ExternalLink className={`w-5 h-5 ${!usingFallback ? 'text-blue-400' : 'text-gray-400'}`} />
+                        <h2 className={`text-lg font-semibold ${!usingFallback ? 'text-blue-400' : 'text-gray-400'}`}>
+                          Trading Volatility API
+                        </h2>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                        !usingFallback
+                          ? 'bg-success/20 text-success'
+                          : 'bg-danger/20 text-danger'
+                      }`}>
+                        {!usingFallback ? 'ACTIVE' : 'UNAVAILABLE'}
+                      </span>
                     </div>
-                    <p className="text-text-secondary text-sm">External data source - GEX, IV, walls, gamma profiles</p>
+                    <p className="text-text-secondary text-sm">
+                      {!usingFallback
+                        ? 'Primary source - GEX, IV, walls, gamma profiles'
+                        : tradingVolError || 'API connection failed'}
+                    </p>
                   </div>
-                  <div className="card bg-gradient-to-r from-green-900/20 to-transparent border-green-500/30">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Database className="w-5 h-5 text-green-400" />
-                      <h2 className="text-lg font-semibold text-green-400">Trader Calculations</h2>
+                  <div className={`card bg-gradient-to-r ${
+                    usingFallback
+                      ? 'from-green-900/20 to-transparent border-green-500/30'
+                      : 'from-green-900/10 to-transparent border-green-500/20'
+                  }`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Database className="w-5 h-5 text-green-400" />
+                        <h2 className="text-lg font-semibold text-green-400">Trader Calculations</h2>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                        usingFallback
+                          ? 'bg-warning/20 text-warning'
+                          : 'bg-primary/20 text-primary'
+                      }`}>
+                        {usingFallback ? 'FALLBACK ACTIVE' : 'STANDBY'}
+                      </span>
                     </div>
-                    <p className="text-text-secondary text-sm">Internal calculations - VIX, realized vol, IV percentile</p>
+                    <p className="text-text-secondary text-sm">
+                      {usingFallback
+                        ? 'Active fallback - VIX, realized vol, IV percentile'
+                        : 'Ready as fallback - VIX-based calculations'}
+                    </p>
                   </div>
                 </div>
 
