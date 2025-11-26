@@ -23,7 +23,7 @@ CRITICAL: Uses SPX-specific GEX data from Trading Volatility API
 
 import pandas as pd
 from datetime import datetime, timedelta, time as dt_time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from zoneinfo import ZoneInfo
 from database_adapter import get_connection
 from trading_costs import (
@@ -1302,6 +1302,245 @@ REASONING:
             )
 
         return position_id
+
+    # ============================================================================
+    # EXIT LOGIC - CRITICAL FOR POSITION MANAGEMENT
+    # ============================================================================
+
+    def auto_manage_positions(self) -> List[Dict]:
+        """
+        AUTONOMOUS: Manage all open SPX positions
+        Checks exit conditions and closes positions when criteria are met
+
+        Returns list of actions taken
+        """
+        conn = get_connection()
+        positions = pd.read_sql_query("""
+            SELECT * FROM spx_institutional_positions WHERE status = 'OPEN'
+        """, conn.raw_connection)
+        conn.close()
+
+        if positions.empty:
+            return []
+
+        actions_taken = []
+
+        # Get current market data
+        gex_data = self.get_spx_gex_data()
+        current_spot = gex_data.get('spot_price', 0) if gex_data else self.get_current_spot()
+        vix = self._get_vix()
+
+        for _, pos in positions.iterrows():
+            try:
+                # Calculate current P&L (simplified - would need real options prices)
+                entry_value = float(pos['entry_price']) * int(pos['contracts']) * self.multiplier
+
+                # Estimate current price based on spot movement
+                spot_move_pct = (current_spot - float(pos['entry_spot_price'])) / float(pos['entry_spot_price'])
+                delta = float(pos.get('entry_delta', 0.5))
+
+                # Simple estimation: price change = delta * spot move * spot price
+                estimated_price_change = delta * spot_move_pct * float(pos['entry_price'])
+                current_price = max(0.01, float(pos['entry_price']) + estimated_price_change)
+
+                current_value = current_price * int(pos['contracts']) * self.multiplier
+                unrealized_pnl = current_value - entry_value
+                pnl_pct = (unrealized_pnl / entry_value * 100) if entry_value > 0 else 0
+
+                # Update position
+                self._update_position(int(pos['id']), current_price, current_spot, unrealized_pnl, pnl_pct)
+
+                # Check exit conditions
+                should_exit, reason = self._check_exit_conditions(
+                    pos, pnl_pct, current_price, current_spot, gex_data or {}, vix
+                )
+
+                if should_exit:
+                    self._close_position(int(pos['id']), current_price, unrealized_pnl, reason)
+
+                    actions_taken.append({
+                        'position_id': int(pos['id']),
+                        'strategy': pos['strategy'],
+                        'action': 'CLOSE',
+                        'reason': reason,
+                        'pnl': unrealized_pnl,
+                        'pnl_pct': pnl_pct
+                    })
+
+                    self._log_trade_activity(
+                        action_type='POSITION_CLOSED',
+                        details=f"Closed {pos['strategy']}: P&L ${unrealized_pnl:+,.2f} ({pnl_pct:+.1f}%) - {reason}",
+                        spot_price=current_spot,
+                        vix=vix,
+                        ai_thought_process=reason,
+                        position_id=int(pos['id']),
+                        pnl_impact=unrealized_pnl
+                    )
+
+            except Exception as e:
+                print(f"Error managing SPX position {pos['id']}: {e}")
+                continue
+
+        return actions_taken
+
+    def _update_position(self, position_id: int, current_price: float, current_spot: float,
+                         unrealized_pnl: float, pnl_pct: float):
+        """Update position with current values"""
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute("""
+            UPDATE spx_institutional_positions
+            SET current_price = %s, current_spot_price = %s,
+                unrealized_pnl = %s, unrealized_pnl_pct = %s
+            WHERE id = %s
+        """, (current_price, current_spot, unrealized_pnl, pnl_pct, position_id))
+
+        conn.commit()
+        conn.close()
+
+    def _check_exit_conditions(self, pos: Dict, pnl_pct: float, current_price: float,
+                               current_spot: float, gex_data: Dict, vix: float) -> Tuple[bool, str]:
+        """
+        SPX EXIT STRATEGY - Institutional risk management
+        More conservative than retail due to larger position sizes
+        """
+        # HARD STOP: -30% loss for institutional (tighter than retail)
+        if pnl_pct <= -30:
+            return True, f"🚨 HARD STOP: {pnl_pct:.1f}% loss - institutional risk limit"
+
+        # EXPIRATION SAFETY: Close 1 day before for SPX (European style but be safe)
+        try:
+            exp_date = datetime.strptime(str(pos['expiration_date']), '%Y-%m-%d').replace(tzinfo=CENTRAL_TZ)
+            dte = (exp_date - datetime.now(CENTRAL_TZ)).days
+        except:
+            dte = 7  # Default to 7 if parsing fails
+
+        if dte <= 1:
+            return True, f"⏰ EXPIRATION: {dte} DTE - closing before expiry"
+
+        # VIX SPIKE: Exit if VIX spikes significantly (risk-off)
+        entry_iv = float(pos.get('entry_iv', 0.15))
+        current_iv = vix / 100 * 0.9  # SPX IV ~ 90% of VIX
+        if current_iv > entry_iv * 1.5 and pnl_pct < 0:
+            return True, f"📈 VIX SPIKE: IV up {((current_iv/entry_iv)-1)*100:.0f}% with losing position"
+
+        # PROFIT TARGET: Take profits at +25% for institutional (lower than retail)
+        if pnl_pct >= 25:
+            return True, f"💰 PROFIT TARGET: +{pnl_pct:.1f}% (institutional target)"
+
+        # GEX REGIME CHANGE: Exit if gamma regime flips
+        entry_gex = float(pos.get('entry_net_gex', 0)) if pos.get('entry_net_gex') else 0
+        current_gex = gex_data.get('net_gex', 0)
+        if entry_gex != 0 and current_gex != 0:
+            if (entry_gex > 0 and current_gex < 0) or (entry_gex < 0 and current_gex > 0):
+                return True, f"📊 GEX FLIP: Regime changed from {'positive' if entry_gex > 0 else 'negative'} to {'positive' if current_gex > 0 else 'negative'}"
+
+        # TIME DECAY: Exit credit spreads at 50% profit (theta decay captured)
+        if pos.get('action') == 'SELL' and pnl_pct >= 50:
+            return True, f"⏱️ THETA DECAY: Captured {pnl_pct:.0f}% of credit"
+
+        return False, ""
+
+    def _close_position(self, position_id: int, exit_price: float, realized_pnl: float, reason: str):
+        """Close position - move from open positions to closed trades"""
+        conn = get_connection()
+        c = conn.cursor()
+        now = datetime.now(CENTRAL_TZ)
+
+        # Get position data
+        c.execute("""
+            SELECT symbol, strategy, action, strike, option_type, expiration_date,
+                   contracts, entry_date, entry_time, entry_price,
+                   entry_bid, entry_ask, entry_spot_price, confidence,
+                   gex_regime, trade_reasoning, current_spot_price,
+                   entry_commission, entry_slippage
+            FROM spx_institutional_positions
+            WHERE id = %s
+        """, (position_id,))
+
+        pos = c.fetchone()
+        if not pos:
+            print(f"⚠️ SPX Position {position_id} not found")
+            conn.close()
+            return
+
+        (symbol, strategy, action, strike, option_type, expiration_date,
+         contracts, entry_date, entry_time, entry_price,
+         entry_bid, entry_ask, entry_spot_price, confidence,
+         gex_regime, trade_reasoning, exit_spot_price,
+         entry_commission, entry_slippage) = pos
+
+        # Calculate exit costs
+        exit_commission = self.costs_calculator.calculate_commission(contracts)
+        total_commission = float(entry_commission or 0) + exit_commission['total_commission']
+        total_slippage = float(entry_slippage or 0)  # Exit slippage included in realized_pnl estimate
+
+        # Calculate hold duration
+        try:
+            entry_dt = datetime.strptime(f"{entry_date} {entry_time}", '%Y-%m-%d %H:%M:%S')
+            hold_minutes = int((now.replace(tzinfo=None) - entry_dt).total_seconds() / 60)
+        except:
+            hold_minutes = 0
+
+        # Calculate net P&L
+        gross_pnl = realized_pnl
+        net_pnl = gross_pnl - exit_commission['total_commission']
+        entry_value = float(entry_price) * contracts * self.multiplier
+        net_pnl_pct = (net_pnl / entry_value * 100) if entry_value > 0 else 0
+
+        # Insert into closed trades
+        c.execute("""
+            INSERT INTO spx_institutional_closed_trades (
+                symbol, strategy, action, strike, option_type, expiration_date,
+                contracts, entry_date, entry_time, entry_price, entry_spot_price,
+                exit_date, exit_time, exit_price, exit_spot_price, exit_reason,
+                gross_pnl, total_commission, total_slippage, net_pnl, net_pnl_pct,
+                hold_duration_minutes
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s
+            )
+        """, (
+            symbol, strategy, action, strike, option_type, expiration_date,
+            contracts, entry_date, entry_time, entry_price, entry_spot_price,
+            now.strftime('%Y-%m-%d'), now.strftime('%H:%M:%S'),
+            exit_price, exit_spot_price, reason,
+            gross_pnl, total_commission, total_slippage, net_pnl, net_pnl_pct,
+            hold_minutes
+        ))
+
+        # Update position status to CLOSED
+        c.execute("""
+            UPDATE spx_institutional_positions SET status = 'CLOSED' WHERE id = %s
+        """, (position_id,))
+
+        conn.commit()
+        conn.close()
+
+        print(f"✅ SPX Position {position_id} CLOSED: {reason}")
+        print(f"   Net P&L: ${net_pnl:+,.2f} ({net_pnl_pct:+.1f}%)")
+        print(f"   Hold time: {hold_minutes} minutes")
+
+    def get_open_positions_summary(self) -> Dict:
+        """Get summary of all open SPX positions"""
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute("""
+            SELECT COUNT(*) as count,
+                   COALESCE(SUM(unrealized_pnl), 0) as total_unrealized,
+                   COALESCE(SUM(delta_exposure), 0) as total_delta
+            FROM spx_institutional_positions WHERE status = 'OPEN'
+        """)
+        result = c.fetchone()
+        conn.close()
+
+        return {
+            'open_positions': result[0] or 0,
+            'total_unrealized_pnl': float(result[1] or 0),
+            'total_delta_exposure': float(result[2] or 0)
+        }
 
 
 # Factory function
