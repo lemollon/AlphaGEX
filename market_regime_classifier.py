@@ -39,6 +39,13 @@ try:
 except ImportError:
     POLYGON_AVAILABLE = False
 
+# Tradier for live options data and execution
+try:
+    from tradier_data_fetcher import TradierDataFetcher, TradierExecutor
+    TRADIER_AVAILABLE = True
+except ImportError:
+    TRADIER_AVAILABLE = False
+
 
 class MarketAction(Enum):
     """The ONLY actions the system can take"""
@@ -817,6 +824,103 @@ def reset_classifier(symbol: str = "SPY"):
     """Reset classifier state (e.g., for new backtest run)"""
     if symbol in _classifiers:
         del _classifiers[symbol]
+
+
+# ============================================================================
+# TRADIER EXECUTION INTEGRATION
+# ============================================================================
+
+def execute_with_tradier(
+    symbol: str = "SPY",
+    position_size: int = 1,
+    default_dte: int = 7,
+    delta_target: float = 0.30
+) -> dict:
+    """
+    Execute the current regime recommendation via Tradier.
+
+    This is the bridge between classification and execution.
+
+    Args:
+        symbol: Underlying symbol (SPY, SPX)
+        position_size: Number of contracts
+        default_dte: Default days to expiration
+        delta_target: Target delta for options
+
+    Returns:
+        Execution result dictionary
+    """
+    if not TRADIER_AVAILABLE:
+        return {
+            'success': False,
+            'error': 'Tradier not available - check TRADIER_API_KEY in .env'
+        }
+
+    try:
+        # Get current regime classification
+        classifier = get_classifier(symbol)
+        classification = classifier.current_regime
+
+        if not classification:
+            return {
+                'success': False,
+                'error': 'No regime classification available - call classify() first'
+            }
+
+        # Create executor
+        executor = TradierExecutor(
+            symbol=symbol,
+            max_position_size=position_size * 2,  # Allow some buffer
+            default_dte=default_dte,
+            delta_target=delta_target
+        )
+
+        # Execute based on classification
+        action = classification.recommended_action.value
+        result = executor.execute_regime_action(
+            action=action,
+            position_size=position_size
+        )
+
+        return {
+            'success': True,
+            'action': action,
+            'confidence': classification.confidence,
+            'order_result': result,
+            'classification': {
+                'volatility_regime': classification.volatility_regime.value,
+                'gamma_regime': classification.gamma_regime.value,
+                'trend_regime': classification.trend_regime.value,
+                'iv_rank': classification.iv_rank,
+                'net_gex': classification.net_gex
+            }
+        }
+
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+def get_tradier_portfolio(symbol: str = "SPY") -> dict:
+    """
+    Get current portfolio state from Tradier.
+
+    Args:
+        symbol: Filter positions by underlying (or 'ALL' for everything)
+
+    Returns:
+        Portfolio summary
+    """
+    if not TRADIER_AVAILABLE:
+        return {'error': 'Tradier not available'}
+
+    try:
+        executor = TradierExecutor(symbol=symbol)
+        return executor.get_portfolio_summary()
+    except Exception as e:
+        return {'error': str(e)}
 
 
 # ============================================================================
