@@ -3,8 +3,7 @@
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { Power, PowerOff, PlayCircle, StopCircle, RefreshCw, AlertCircle, CheckCircle, Activity, Database, Wifi, WifiOff, Clock, Zap } from 'lucide-react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { apiClient } from '@/lib/api'
 
 interface TraderStatus {
   trader_running: boolean
@@ -46,11 +45,11 @@ export default function SystemSettings() {
 
   const fetchStatus = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/system/trader-status`)
-      const data = await response.json()
+      const response = await apiClient.getSystemTraderStatus()
+      const respData = response.data.data || response.data
 
-      if (data.success) {
-        setStatus(data.status)
+      if (respData.success !== false) {
+        setStatus(respData.status)
       }
     } catch (error) {
       console.error('Error fetching trader status:', error)
@@ -62,8 +61,8 @@ export default function SystemSettings() {
   const fetchDataSources = async () => {
     setDataSourceLoading(true)
     try {
-      const response = await fetch(`${API_URL}/api/test-connections`)
-      const data = await response.json()
+      const response = await apiClient.testConnections()
+      const data = response.data.data || response.data
 
       if (data.results) {
         setDataSourceStatus({
@@ -107,19 +106,17 @@ export default function SystemSettings() {
     setMessage(null)
 
     try {
-      const response = await fetch(`${API_URL}/api/system/enable-autostart`, {
-        method: 'POST'
-      })
-      const data = await response.json()
+      const response = await apiClient.enableTraderAutostart()
+      const data = response.data.data || response.data
 
-      if (data.success) {
-        setMessage({ type: 'success', text: data.message })
+      if (data.success !== false) {
+        setMessage({ type: 'success', text: data.message || 'Auto-start enabled' })
         fetchStatus()
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to enable auto-start' })
       }
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Network error. Please try again.' })
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Network error. Please try again.' })
     } finally {
       setActionLoading(false)
     }
@@ -130,48 +127,44 @@ export default function SystemSettings() {
     setMessage(null)
 
     try {
-      const response = await fetch(`${API_URL}/api/system/disable-autostart`, {
-        method: 'POST'
-      })
-      const data = await response.json()
+      const response = await apiClient.disableTraderAutostart()
+      const data = response.data.data || response.data
 
-      if (data.success) {
-        setMessage({ type: 'success', text: data.message })
+      if (data.success !== false) {
+        setMessage({ type: 'success', text: data.message || 'Auto-start disabled' })
         fetchStatus()
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to disable auto-start' })
       }
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Network error. Please try again.' })
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Network error. Please try again.' })
     } finally {
       setActionLoading(false)
     }
   }
 
-  const startTrader = async () => {
+  const startTraderHandler = async () => {
     setActionLoading(true)
     setMessage(null)
 
     try {
-      const response = await fetch(`${API_URL}/api/system/start-trader`, {
-        method: 'POST'
-      })
-      const data = await response.json()
+      const response = await apiClient.startTrader()
+      const data = response.data.data || response.data
 
-      if (data.success) {
-        setMessage({ type: 'success', text: data.message })
+      if (data.success !== false) {
+        setMessage({ type: 'success', text: data.message || 'Trader started' })
         setTimeout(fetchStatus, 2000) // Wait 2s for trader to start
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to start trader' })
       }
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Network error. Please try again.' })
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Network error. Please try again.' })
     } finally {
       setActionLoading(false)
     }
   }
 
-  const stopTrader = async () => {
+  const stopTraderHandler = async () => {
     if (!confirm('Are you sure you want to stop the autonomous trader?')) {
       return
     }
@@ -180,19 +173,17 @@ export default function SystemSettings() {
     setMessage(null)
 
     try {
-      const response = await fetch(`${API_URL}/api/system/stop-trader`, {
-        method: 'POST'
-      })
-      const data = await response.json()
+      const response = await apiClient.stopTrader()
+      const data = response.data.data || response.data
 
-      if (data.success) {
-        setMessage({ type: 'success', text: data.message })
+      if (data.success !== false) {
+        setMessage({ type: 'success', text: data.message || 'Trader stopped' })
         setTimeout(fetchStatus, 1000)
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to stop trader' })
       }
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Network error. Please try again.' })
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Network error. Please try again.' })
     } finally {
       setActionLoading(false)
     }
@@ -393,7 +384,7 @@ export default function SystemSettings() {
                   <h3 className="text-lg font-semibold mb-3">Manual Control</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <button
-                      onClick={startTrader}
+                      onClick={startTraderHandler}
                       disabled={actionLoading || status?.trader_running}
                       className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
                     >
@@ -402,7 +393,7 @@ export default function SystemSettings() {
                     </button>
 
                     <button
-                      onClick={stopTrader}
+                      onClick={stopTraderHandler}
                       disabled={actionLoading || !status?.trader_running}
                       className="px-6 py-3 bg-red-600 hover:bg-red-500 disabled:bg-gray-700 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
                     >

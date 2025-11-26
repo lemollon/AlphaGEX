@@ -294,6 +294,9 @@ export const apiClient = {
 
   // Backtesting & Smart Recommendations
   getSmartRecommendations: () => api.get('/api/backtests/smart-recommendations'),
+  getBacktestResults: () => api.get('/api/backtests/results'),
+  runBacktests: (config?: { lookback_days?: number, strategies?: string[] }) =>
+    api.post('/api/backtests/run', config || {}),
 
   // SPX Institutional Trader
   getSPXStatus: () => api.get('/api/spx/status'),
