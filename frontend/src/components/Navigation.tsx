@@ -51,6 +51,7 @@ const navItems = [
   { href: '/trader', label: 'SPY Autonomous Trader', icon: Bot, category: 'Automation' },
   { href: '/spx', label: 'SPX Autonomous Trader', icon: TrendingUp, category: 'Automation' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Automation' },
+  { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Automation' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Automation' },
   { href: '/settings/system', label: 'System Settings', icon: Settings, category: 'System' },
   { href: '/settings/notifications', label: 'Notification Settings', icon: Bell, category: 'System' },
