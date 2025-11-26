@@ -17,6 +17,8 @@ CRITICAL DIFFERENCES FROM SPY:
 - Multiplier: $100 per point (same as SPY)
 - Wider bid/ask spreads
 - Better tax treatment
+
+CRITICAL: Uses SPX-specific GEX data from Trading Volatility API
 """
 
 import pandas as pd
@@ -32,6 +34,33 @@ from trading_costs import (
 import os
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# CRITICAL: Import UNIFIED Market Regime Classifier
+# This is the SINGLE source of truth - SPX uses SPX data, NOT SPY data
+try:
+    from market_regime_classifier import (
+        MarketRegimeClassifier,
+        RegimeClassification,
+        MarketAction,
+        VolatilityRegime,
+        GammaRegime,
+        TrendRegime,
+        get_classifier
+    )
+    UNIFIED_CLASSIFIER_AVAILABLE = True
+    print("✅ SPX Trader: Unified Market Regime Classifier integrated")
+except ImportError as e:
+    UNIFIED_CLASSIFIER_AVAILABLE = False
+    print(f"⚠️ SPX Trader: Unified Classifier not available: {e}")
+
+# Import Trading Volatility API for SPX GEX data
+try:
+    from core_classes_and_engines import TradingVolatilityAPI
+    TV_API_AVAILABLE = True
+    print("✅ SPX Trader: Trading Volatility API available for SPX GEX data")
+except ImportError as e:
+    TV_API_AVAILABLE = False
+    print(f"⚠️ SPX Trader: Trading Volatility API not available: {e}")
 
 
 class SPXInstitutionalTrader:
@@ -73,10 +102,28 @@ class SPXInstitutionalTrader:
         self.daily_loss_limit_pct = 2.0  # 2% daily loss limit
         self.vega_limit_pct = 0.5  # Max 0.5% portfolio in vega exposure
 
+        # CRITICAL: Initialize Trading Volatility API for SPX GEX data
+        if TV_API_AVAILABLE:
+            self.api_client = TradingVolatilityAPI()
+            print("✅ SPX Trader: API client ready for SPX GEX data")
+        else:
+            self.api_client = None
+
+        # CRITICAL: Initialize UNIFIED Market Regime Classifier for SPX
+        # This uses SPX-specific data, NOT SPY data
+        if UNIFIED_CLASSIFIER_AVAILABLE:
+            self.regime_classifier = get_classifier('SPX')  # SPX, not SPY!
+            self.iv_history = []
+            print("✅ SPX Trader: Unified classifier initialized with SPX symbol")
+        else:
+            self.regime_classifier = None
+            self.iv_history = []
+
         print(f"✅ SPX Institutional Trader initialized")
         print(f"   Capital: ${self.starting_capital:,.0f}")
         print(f"   Max position: ${self.starting_capital * self.max_position_pct:,.0f}")
         print(f"   Max contracts/trade: {self.max_contracts_per_trade}")
+        print(f"   Data Source: SPX GEX from Trading Volatility API")
 
     def _ensure_tables(self):
         """Create database tables for SPX trading"""
@@ -671,6 +718,346 @@ class SPXInstitutionalTrader:
             'return_pct': ((total_realized + total_unrealized) / self.starting_capital) * 100,
             'max_drawdown': self._get_max_drawdown()
         }
+
+    # ================================================================
+    # SPX GEX DATA FETCHING - Uses SPX data, NOT SPY
+    # ================================================================
+
+    def get_spx_gex_data(self) -> Optional[Dict]:
+        """
+        Fetch SPX-specific GEX data from Trading Volatility API.
+
+        CRITICAL: This uses 'SPX' symbol, NOT 'SPY'.
+        SPX has its own gamma exposure profile that differs from SPY.
+        """
+        if not self.api_client:
+            print("❌ SPX Trader: API client not available for GEX data")
+            return None
+
+        try:
+            # Fetch SPX GEX data - NOT SPY!
+            gex_data = self.api_client.get_net_gamma('SPX')
+
+            if gex_data and not gex_data.get('error'):
+                print(f"✅ SPX GEX Data: Net GEX ${gex_data.get('net_gex', 0)/1e9:.2f}B, Flip ${gex_data.get('flip_point', 0):.0f}")
+                return gex_data
+            else:
+                print(f"⚠️ SPX GEX fetch returned error: {gex_data.get('error') if gex_data else 'No data'}")
+                return None
+
+        except Exception as e:
+            print(f"❌ SPX GEX fetch error: {e}")
+            return None
+
+    def get_spx_skew_data(self) -> Optional[Dict]:
+        """Fetch SPX-specific skew data"""
+        if not self.api_client:
+            return None
+
+        try:
+            skew_data = self.api_client.get_skew_data('SPX')
+            return skew_data
+        except Exception as e:
+            print(f"⚠️ SPX skew fetch error: {e}")
+            return None
+
+    def _get_vix(self) -> float:
+        """Get current VIX level"""
+        try:
+            vix_price = polygon_fetcher.get_current_price('^VIX')
+            if vix_price and vix_price > 0:
+                return vix_price
+            return 17.0  # Default
+        except Exception as e:
+            print(f"⚠️ VIX fetch error: {e}")
+            return 17.0
+
+    def _get_spx_momentum(self) -> Dict:
+        """Calculate SPX momentum from recent price action"""
+        try:
+            # Get SPX hourly data
+            data = polygon_fetcher.get_price_history('^SPX', days=5, timeframe='hour', multiplier=1)
+
+            if data is None or len(data) < 5:
+                # Fallback: Use SPY * 10
+                data = polygon_fetcher.get_price_history('SPY', days=5, timeframe='hour', multiplier=1)
+                if data is not None:
+                    data['Close'] = data['Close'] * 10
+
+            if data is None or len(data) < 5:
+                return {'1h': 0, '4h': 0, 'trend': 'neutral'}
+
+            current_price = float(data['Close'].iloc[-1])
+            price_1h_ago = float(data['Close'].iloc[-2]) if len(data) >= 2 else current_price
+            price_4h_ago = float(data['Close'].iloc[-5]) if len(data) >= 5 else current_price
+
+            change_1h = ((current_price - price_1h_ago) / price_1h_ago * 100)
+            change_4h = ((current_price - price_4h_ago) / price_4h_ago * 100)
+
+            if change_4h > 0.5:
+                trend = 'strong_bullish'
+            elif change_4h > 0.2:
+                trend = 'bullish'
+            elif change_4h < -0.5:
+                trend = 'strong_bearish'
+            elif change_4h < -0.2:
+                trend = 'bearish'
+            else:
+                trend = 'neutral'
+
+            return {'1h': round(change_1h, 2), '4h': round(change_4h, 2), 'trend': trend}
+
+        except Exception as e:
+            print(f"⚠️ SPX momentum calc error: {e}")
+            return {'1h': 0, '4h': 0, 'trend': 'neutral'}
+
+    # ================================================================
+    # UNIFIED REGIME CLASSIFICATION - SPX-SPECIFIC
+    # ================================================================
+
+    def get_unified_regime_decision(self) -> Optional[Dict]:
+        """
+        Use the UNIFIED Market Regime Classifier with SPX data.
+
+        This method:
+        1. Fetches SPX GEX data (NOT SPY)
+        2. Runs the unified classifier
+        3. Returns trade recommendation
+
+        ANTI-WHIPLASH: Classifier tracks regime persistence.
+        """
+        if not UNIFIED_CLASSIFIER_AVAILABLE or self.regime_classifier is None:
+            print("⚠️ SPX: Unified classifier not available")
+            return None
+
+        if not self.api_client:
+            print("⚠️ SPX: API client not available for GEX data")
+            return None
+
+        try:
+            # Step 1: Fetch SPX-specific data
+            gex_data = self.get_spx_gex_data()
+            if not gex_data:
+                print("❌ SPX: Could not fetch SPX GEX data")
+                return None
+
+            spot_price = gex_data.get('spot_price', 0) or self.get_current_spot()
+            net_gex = gex_data.get('net_gex', 0)
+            flip_point = gex_data.get('flip_point', spot_price * 0.98)
+
+            # Get VIX and momentum
+            vix = self._get_vix()
+            momentum = self._get_spx_momentum()
+
+            # Estimate IV from VIX (SPX IV typically tracks VIX closely)
+            current_iv = vix / 100 * 0.9  # SPX IV ~ 90% of VIX
+
+            # Track IV history
+            self.iv_history.append(current_iv)
+            if len(self.iv_history) > 252:
+                self.iv_history = self.iv_history[-252:]
+
+            historical_vol = current_iv * 0.85
+
+            # Get MA status
+            try:
+                data = polygon_fetcher.get_price_history('^SPX', days=60, timeframe='day', multiplier=1)
+                if data is None or len(data) < 50:
+                    data = polygon_fetcher.get_price_history('SPY', days=60, timeframe='day', multiplier=1)
+                    if data is not None:
+                        data['Close'] = data['Close'] * 10
+
+                if data is not None and len(data) >= 50:
+                    ma_20 = float(data['Close'].tail(20).mean())
+                    ma_50 = float(data['Close'].tail(50).mean())
+                    above_20ma = spot_price > ma_20
+                    above_50ma = spot_price > ma_50
+                else:
+                    above_20ma = True
+                    above_50ma = True
+            except:
+                above_20ma = True
+                above_50ma = True
+
+            # ============================================================
+            # RUN THE UNIFIED CLASSIFIER FOR SPX
+            # ============================================================
+            regime = self.regime_classifier.classify(
+                spot_price=spot_price,
+                net_gex=net_gex,
+                flip_point=flip_point,
+                current_iv=current_iv,
+                iv_history=self.iv_history,
+                historical_vol=historical_vol,
+                vix=vix,
+                vix_term_structure="contango",
+                momentum_1h=momentum.get('1h', 0),
+                momentum_4h=momentum.get('4h', 0),
+                above_20ma=above_20ma,
+                above_50ma=above_50ma
+            )
+
+            # Log the classification
+            print(f"""
+{'='*60}
+SPX UNIFIED REGIME CLASSIFICATION
+{'='*60}
+VOLATILITY: {regime.volatility_regime.value} (IV Rank: {regime.iv_rank:.0f}%)
+GAMMA: {regime.gamma_regime.value} (GEX: ${regime.net_gex/1e9:.2f}B)
+TREND: {regime.trend_regime.value}
+
+>>> RECOMMENDED ACTION: {regime.recommended_action.value}
+>>> CONFIDENCE: {regime.confidence:.0f}%
+>>> BARS IN REGIME: {regime.bars_in_regime}
+
+REASONING:
+{regime.reasoning}
+{'='*60}
+""")
+
+            # If STAY_FLAT, return None
+            if regime.recommended_action == MarketAction.STAY_FLAT:
+                return None
+
+            # Get strategy params
+            strategy_params = self.regime_classifier.get_strategy_for_action(
+                regime.recommended_action, regime
+            )
+
+            # Map to trade format
+            if regime.recommended_action == MarketAction.BUY_CALLS:
+                action = 'BUY'
+                option_type = 'call'
+                strike = round(max(spot_price, flip_point) / 5) * 5
+            elif regime.recommended_action == MarketAction.BUY_PUTS:
+                action = 'BUY'
+                option_type = 'put'
+                strike = round(min(spot_price, flip_point) / 5) * 5
+            elif regime.recommended_action == MarketAction.SELL_PREMIUM:
+                # For SPX, use put credit spread for premium selling
+                return {
+                    'symbol': 'SPX',
+                    'strategy': f"SPX Unified: SELL_PREMIUM",
+                    'action': 'SELL',
+                    'option_type': 'put_spread',
+                    'strike': round(spot_price * 0.95 / 5) * 5,  # 5% OTM put
+                    'confidence': int(regime.confidence),
+                    'reasoning': regime.reasoning,
+                    'regime': regime,
+                    'spot_price': spot_price,
+                    'is_unified': True
+                }
+            else:
+                return None
+
+            return {
+                'symbol': 'SPX',
+                'strategy': f"SPX Unified: {strategy_params.get('strategy_name', regime.recommended_action.value)}",
+                'action': action,
+                'option_type': option_type,
+                'strike': strike,
+                'dte': strategy_params.get('dte_range', (7, 14))[0],
+                'confidence': int(regime.confidence),
+                'reasoning': regime.reasoning,
+                'regime': regime,
+                'spot_price': spot_price,
+                'is_unified': True
+            }
+
+        except Exception as e:
+            print(f"❌ SPX regime decision error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def find_and_execute_daily_trade(self) -> Optional[int]:
+        """
+        Find and execute today's SPX trade using UNIFIED classifier.
+
+        Uses SPX-specific GEX data from Trading Volatility API.
+
+        Returns:
+            Position ID if trade executed, None otherwise
+        """
+        print("\n" + "="*60)
+        print("SPX INSTITUTIONAL TRADER - DAILY TRADE SEARCH")
+        print("="*60)
+
+        # Check if we've already traded today
+        conn = get_connection()
+        c = conn.cursor()
+        today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+
+        c.execute("""
+            SELECT COUNT(*) FROM spx_institutional_positions
+            WHERE entry_date = %s
+        """, (today,))
+        trades_today = c.fetchone()[0] or 0
+        conn.close()
+
+        if trades_today >= self.max_daily_trades:
+            print(f"⚠️ Already at max daily trades ({trades_today}/{self.max_daily_trades})")
+            return None
+
+        # Get unified regime decision
+        trade = self.get_unified_regime_decision()
+
+        if not trade:
+            print("❌ No trade opportunity found by unified classifier")
+            return None
+
+        if trade.get('confidence', 0) < 60:
+            print(f"⚠️ Confidence too low: {trade.get('confidence', 0)}%")
+            return None
+
+        # Calculate position size
+        spot = trade.get('spot_price', self.get_current_spot())
+
+        # Estimate entry price (simplified - would need real options data)
+        if trade['option_type'] in ['call', 'put']:
+            entry_price = spot * 0.02  # ~2% of spot as rough estimate
+        else:
+            entry_price = spot * 0.01  # Credit spread
+
+        contracts, sizing = self.calculate_position_size(
+            entry_price=entry_price,
+            confidence=trade['confidence'],
+            volatility_regime='normal' if trade.get('regime') and trade['regime'].volatility_regime == VolatilityRegime.NORMAL else 'high'
+        )
+
+        if contracts == 0:
+            print("❌ Position sizing returned 0 contracts")
+            return None
+
+        # Get expiration
+        exp_date = datetime.now(CENTRAL_TZ) + timedelta(days=7)
+        while exp_date.weekday() != 4:  # Friday
+            exp_date += timedelta(days=1)
+        expiration = exp_date.strftime('%Y-%m-%d')
+
+        # Execute trade
+        position_id = self.execute_trade(
+            action=trade['action'],
+            option_type=trade['option_type'],
+            strike=trade['strike'],
+            expiration=expiration,
+            contracts=contracts,
+            entry_price=entry_price,
+            bid=entry_price * 0.95,
+            ask=entry_price * 1.05,
+            spot_price=spot,
+            strategy=trade['strategy'],
+            confidence=trade['confidence'],
+            reasoning=trade['reasoning']
+        )
+
+        if position_id:
+            print(f"\n✅ SPX TRADE EXECUTED - Position ID: {position_id}")
+            print(f"   Strategy: {trade['strategy']}")
+            print(f"   {trade['action']} {contracts} x {trade['option_type'].upper()} @ ${trade['strike']}")
+            print(f"   Confidence: {trade['confidence']}%")
+
+        return position_id
 
 
 # Factory function
