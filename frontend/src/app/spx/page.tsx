@@ -117,37 +117,47 @@ export default function SPXInstitutionalTrader() {
     fetchEquityCurve()
   }, [chartPeriod])
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        const [statusRes, perfRes, tradeLogRes, equityCurveRes] = await Promise.all([
-          apiClient.getSPXStatus().catch(() => ({ data: { success: false } })),
-          apiClient.getSPXPerformance().catch(() => ({ data: { success: false } })),
-          apiClient.getSPXTradeLog().catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getSPXEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
-        ])
+  // Fetch all SPX data
+  const fetchData = async (showLoading = true) => {
+    try {
+      if (showLoading) setLoading(true)
+      const [statusRes, perfRes, tradeLogRes, equityCurveRes] = await Promise.all([
+        apiClient.getSPXStatus().catch(() => ({ data: { success: false } })),
+        apiClient.getSPXPerformance().catch(() => ({ data: { success: false } })),
+        apiClient.getSPXTradeLog().catch(() => ({ data: { success: false, data: [] } })),
+        apiClient.getSPXEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
+      ])
 
-        if (statusRes.data.success) {
-          setStatus(statusRes.data.data)
-        }
-        if (perfRes.data.success) {
-          setPerformance(perfRes.data.data)
-        }
-        if (tradeLogRes.data.success) {
-          setTradeLog(tradeLogRes.data.data || [])
-        }
-        if (equityCurveRes.data.success && equityCurveRes.data.data) {
-          setEquityCurve(equityCurveRes.data.data)
-        }
-      } catch (err: any) {
-        setError(err.message || 'Failed to load SPX trader data')
-      } finally {
-        setLoading(false)
+      if (statusRes.data.success) {
+        setStatus(statusRes.data.data)
       }
+      if (perfRes.data.success) {
+        setPerformance(perfRes.data.data)
+      }
+      if (tradeLogRes.data.success) {
+        setTradeLog(tradeLogRes.data.data || [])
+      }
+      if (equityCurveRes.data.success && equityCurveRes.data.data) {
+        setEquityCurve(equityCurveRes.data.data)
+      }
+      setError(null)
+    } catch (err: any) {
+      setError(err.message || 'Failed to load SPX trader data')
+    } finally {
+      setLoading(false)
     }
+  }
 
+  // Initial fetch and auto-refresh every 30 seconds
+  useEffect(() => {
     fetchData()
+
+    // Auto-refresh every 30 seconds for live trading data
+    const interval = setInterval(() => {
+      fetchData(false) // Don't show loading spinner for auto-refresh
+    }, 30 * 1000)
+
+    return () => clearInterval(interval)
   }, [])
 
   const formatCurrency = (value: number) => {
