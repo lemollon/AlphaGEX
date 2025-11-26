@@ -26,11 +26,24 @@ from typing import Dict, List, Optional, Tuple
 from enum import Enum
 from zoneinfo import ZoneInfo
 from database_adapter import get_connection
-from polygon_data_fetcher import polygon_fetcher
 import numpy as np
 import pandas as pd
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# UNIFIED Data Provider (Tradier primary, Polygon fallback)
+try:
+    from unified_data_provider import get_data_provider, get_vix
+    UNIFIED_DATA_AVAILABLE = True
+except ImportError:
+    UNIFIED_DATA_AVAILABLE = False
+
+# Legacy Polygon fallback
+try:
+    from polygon_data_fetcher import polygon_fetcher
+    POLYGON_AVAILABLE = True
+except ImportError:
+    POLYGON_AVAILABLE = False
 
 
 class HedgeSignalType(Enum):
@@ -154,8 +167,15 @@ class VIXHedgeManager:
             Dict with VIX spot, futures, term structure, etc.
         """
         try:
-            # VIX spot
-            vix_spot = polygon_fetcher.get_current_price('^VIX')
+            # VIX spot - Try unified provider (Tradier) first
+            vix_spot = None
+            if UNIFIED_DATA_AVAILABLE:
+                vix_spot = get_vix()
+
+            # Fallback to Polygon
+            if (not vix_spot or vix_spot <= 0) and POLYGON_AVAILABLE:
+                vix_spot = polygon_fetcher.get_current_price('^VIX')
+
             if not vix_spot or vix_spot <= 0:
                 vix_spot = 18.0  # Reasonable default
 
