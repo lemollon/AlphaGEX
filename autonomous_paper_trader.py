@@ -1046,9 +1046,11 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
 
             # If unified classifier returned None or low confidence, fall back to legacy
             if not trade or trade.get('confidence', 0) < 60:
+                confidence_val = trade.get('confidence', 0) if trade else 0
+                reason = 'STAY_FLAT' if not trade else f'low confidence ({confidence_val}%)'
                 self.log_action(
                     'FALLBACK_TO_LEGACY',
-                    f"Unified classifier returned {'STAY_FLAT' if not trade else f'low confidence ({trade.get(\"confidence\", 0)}%)'}, trying legacy analysis",
+                    f"Unified classifier returned {reason}, trying legacy analysis",
                     success=True
                 )
                 # Fall back to legacy psychology trap analysis
