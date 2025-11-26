@@ -58,8 +58,82 @@ def ensure_all_tables_exist(conn):
         )
     """)
 
+    # Create regime_classifications table for unified classifier
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS regime_classifications (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            regime_data JSONB NOT NULL,
+            recommended_action TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """)
+
+    # Create index for regime lookups
+    c.execute("""
+        CREATE INDEX IF NOT EXISTS idx_regime_symbol_time
+        ON regime_classifications(symbol, created_at)
+    """)
+
+    # Create unified_positions table (for both live and backtest)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS unified_positions (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            strategy TEXT NOT NULL,
+            action TEXT NOT NULL,
+            option_type TEXT,
+            strike REAL,
+            expiration DATE,
+            entry_price REAL NOT NULL,
+            entry_time TIMESTAMP NOT NULL,
+            contracts INTEGER NOT NULL,
+            stop_loss_pct REAL,
+            profit_target_pct REAL,
+            entry_regime JSONB,
+            is_backtest BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    # Create unified_trades table (closed trades for both live and backtest)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS unified_trades (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            strategy TEXT NOT NULL,
+            action TEXT NOT NULL,
+            option_type TEXT,
+            strike REAL,
+            expiration DATE,
+            entry_price REAL NOT NULL,
+            entry_time TIMESTAMP NOT NULL,
+            exit_price REAL NOT NULL,
+            exit_time TIMESTAMP NOT NULL,
+            exit_reason TEXT,
+            contracts INTEGER NOT NULL,
+            realized_pnl REAL,
+            realized_pnl_pct REAL,
+            duration_minutes INTEGER,
+            is_backtest BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    # Create indexes for trade lookups
+    c.execute("""
+        CREATE INDEX IF NOT EXISTS idx_trades_symbol_time
+        ON unified_trades(symbol, exit_time)
+    """)
+
+    c.execute("""
+        CREATE INDEX IF NOT EXISTS idx_trades_action
+        ON unified_trades(action)
+    """)
+
     conn.commit()
-    print("✅ All required tables exist")
+    print("✅ All required tables exist (including unified trading tables)")
 
 def check_needs_initialization() -> bool:
     """Check if database needs initialization"""

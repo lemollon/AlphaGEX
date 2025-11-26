@@ -28,6 +28,24 @@ import os
 # Central Time timezone for all timestamps
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
+# CRITICAL: Import UNIFIED Market Regime Classifier
+# This is the SINGLE source of truth for ALL trading decisions
+try:
+    from market_regime_classifier import (
+        MarketRegimeClassifier,
+        RegimeClassification,
+        MarketAction,
+        VolatilityRegime,
+        GammaRegime,
+        TrendRegime,
+        get_classifier
+    )
+    UNIFIED_CLASSIFIER_AVAILABLE = True
+    print("✅ Unified Market Regime Classifier integrated")
+except ImportError as e:
+    UNIFIED_CLASSIFIER_AVAILABLE = False
+    print(f"⚠️ Unified Classifier not available: {e}")
+
 # CRITICAL: Import Psychology Trap Detector
 try:
     from psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
@@ -266,6 +284,16 @@ class AutonomousPaperTrader:
         # Initialize trading costs calculator for realistic P&L
         self.costs_calculator = get_costs_calculator('SPY', 'paper')
         print("✅ Trading costs calculator initialized (slippage + commission modeling)")
+
+        # CRITICAL: Initialize UNIFIED Market Regime Classifier
+        # This is the SINGLE source of truth - NO more whiplash decisions
+        if UNIFIED_CLASSIFIER_AVAILABLE:
+            self.regime_classifier = get_classifier('SPY')
+            self.iv_history = []  # Track IV history for rank calculation
+            print("✅ Unified Market Regime Classifier initialized (anti-whiplash enabled)")
+        else:
+            self.regime_classifier = None
+            self.iv_history = []
 
         # Initialize if first run
         conn = get_connection()
@@ -951,8 +979,28 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 analysis=market_summary
             )
 
-            # Step 2: Try to find high-confidence directional trade (with enhanced data)
-            trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
+            # ============================================================
+            # STEP 2: USE UNIFIED CLASSIFIER FIRST (Single Source of Truth)
+            # ============================================================
+            # The unified classifier provides anti-whiplash protection and
+            # uses the same logic as the backtester for consistency.
+            trade = self._get_unified_regime_decision(
+                spot_price=spot_price,
+                net_gex=net_gex,
+                flip_point=flip_point,
+                vix=vix,
+                momentum=momentum
+            )
+
+            # If unified classifier returned None or low confidence, fall back to legacy
+            if not trade or trade.get('confidence', 0) < 60:
+                self.log_action(
+                    'FALLBACK_TO_LEGACY',
+                    f"Unified classifier returned {'STAY_FLAT' if not trade else f'low confidence ({trade.get(\"confidence\", 0)}%)'}, trying legacy analysis",
+                    success=True
+                )
+                # Fall back to legacy psychology trap analysis
+                trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
 
             # CRITICAL LOGGING: Log what strategy analysis returned
             if trade:
@@ -1429,6 +1477,177 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             'volatility_factor': volatility_factor,
             'day_of_week': now.strftime('%A')
         }
+
+    def _get_unified_regime_decision(
+        self,
+        spot_price: float,
+        net_gex: float,
+        flip_point: float,
+        vix: float,
+        momentum: Dict,
+        current_iv: float = None
+    ) -> Optional[Dict]:
+        """
+        Use the UNIFIED Market Regime Classifier for trading decisions.
+
+        This is the SINGLE SOURCE OF TRUTH - both backtester and live trader use
+        the exact same logic through this classifier.
+
+        ANTI-WHIPLASH: The classifier tracks regime persistence and won't
+        flip-flop decisions every 5 minutes.
+
+        Returns:
+            Dict with trade recommendation or None if STAY_FLAT
+        """
+        if not UNIFIED_CLASSIFIER_AVAILABLE or self.regime_classifier is None:
+            self.log_action(
+                'CLASSIFIER_UNAVAILABLE',
+                'Unified classifier not available, falling back to legacy analysis',
+                success=False
+            )
+            return None
+
+        try:
+            # Get IV if not provided (estimate from VIX)
+            if current_iv is None:
+                current_iv = vix / 100 * 0.8  # Rough estimate: SPY IV ~ 80% of VIX
+
+            # Track IV history for rank calculation
+            self.iv_history.append(current_iv)
+            if len(self.iv_history) > 252:
+                self.iv_history = self.iv_history[-252:]
+
+            # Calculate historical volatility (simplified)
+            historical_vol = current_iv * 0.9  # Typically IV > HV
+
+            # Get moving average status
+            try:
+                data = polygon_fetcher.get_price_history('SPY', days=60, timeframe='day', multiplier=1)
+                if data is not None and len(data) >= 50:
+                    ma_20 = float(data['Close'].tail(20).mean())
+                    ma_50 = float(data['Close'].tail(50).mean())
+                    above_20ma = spot_price > ma_20
+                    above_50ma = spot_price > ma_50
+                else:
+                    above_20ma = True
+                    above_50ma = True
+            except:
+                above_20ma = True
+                above_50ma = True
+
+            # ============================================================
+            # RUN THE UNIFIED CLASSIFIER
+            # ============================================================
+            regime = self.regime_classifier.classify(
+                spot_price=spot_price,
+                net_gex=net_gex,
+                flip_point=flip_point,
+                current_iv=current_iv,
+                iv_history=self.iv_history,
+                historical_vol=historical_vol,
+                vix=vix,
+                vix_term_structure="contango",  # Default assumption
+                momentum_1h=momentum.get('1h', 0),
+                momentum_4h=momentum.get('4h', 0),
+                above_20ma=above_20ma,
+                above_50ma=above_50ma
+            )
+
+            # Log the regime classification
+            self.log_action(
+                'UNIFIED_REGIME',
+                f"""
+UNIFIED REGIME CLASSIFICATION:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VOLATILITY: {regime.volatility_regime.value} (IV Rank: {regime.iv_rank:.0f}%)
+GAMMA: {regime.gamma_regime.value} (GEX: ${regime.net_gex/1e9:.2f}B)
+TREND: {regime.trend_regime.value}
+
+>>> RECOMMENDED ACTION: {regime.recommended_action.value}
+>>> CONFIDENCE: {regime.confidence:.0f}%
+>>> BARS IN REGIME: {regime.bars_in_regime}
+
+REASONING:
+{regime.reasoning}
+
+RISK PARAMS:
+• Max Position: {regime.max_position_size_pct*100:.0f}%
+• Stop Loss: {regime.stop_loss_pct*100:.0f}%
+• Profit Target: {regime.profit_target_pct*100:.0f}%
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+""",
+                success=True
+            )
+
+            # If STAY_FLAT, return None (will trigger fallback in main logic)
+            if regime.recommended_action == MarketAction.STAY_FLAT:
+                self.log_action(
+                    'STAY_FLAT',
+                    f"Classifier says STAY_FLAT: {regime.reasoning}",
+                    success=True
+                )
+                return None
+
+            # Convert regime to trade dict format expected by rest of system
+            strategy_params = self.regime_classifier.get_strategy_for_action(
+                regime.recommended_action, regime
+            )
+
+            # Map action to legacy format
+            if regime.recommended_action == MarketAction.BUY_CALLS:
+                action = 'BUY_CALL'
+                option_type = 'call'
+            elif regime.recommended_action == MarketAction.BUY_PUTS:
+                action = 'BUY_PUT'
+                option_type = 'put'
+            elif regime.recommended_action == MarketAction.SELL_PREMIUM:
+                # Use Iron Condor for premium selling
+                return {
+                    'symbol': 'SPY',
+                    'strategy': 'Unified Regime: SELL_PREMIUM',
+                    'action': 'IRON_CONDOR',
+                    'option_type': 'iron_condor',
+                    'confidence': int(regime.confidence),
+                    'target': spot_price,  # Stay near current price
+                    'stop': regime.stop_loss_pct * 100,
+                    'reasoning': f"UNIFIED CLASSIFIER: {regime.reasoning}",
+                    'regime': regime,
+                    'is_unified': True
+                }
+            else:
+                return None
+
+            # Calculate strike based on strategy
+            if regime.recommended_action == MarketAction.BUY_CALLS:
+                # Strike at or slightly OTM
+                strike = round(max(spot_price, flip_point) / 5) * 5
+            else:  # BUY_PUTS
+                strike = round(min(spot_price, flip_point) / 5) * 5
+
+            return {
+                'symbol': 'SPY',
+                'strategy': f"Unified Regime: {strategy_params.get('strategy_name', regime.recommended_action.value)}",
+                'action': action,
+                'option_type': option_type,
+                'strike': strike,
+                'dte': strategy_params.get('dte_range', (7, 14))[0],
+                'confidence': int(regime.confidence),
+                'target': flip_point if regime.recommended_action == MarketAction.BUY_CALLS else spot_price * 0.98,
+                'stop': spot_price * (1 - regime.stop_loss_pct) if action == 'BUY_CALL' else spot_price * (1 + regime.stop_loss_pct),
+                'reasoning': f"UNIFIED CLASSIFIER: {regime.reasoning}",
+                'regime': regime,
+                'is_unified': True
+            }
+
+        except Exception as e:
+            self.log_action(
+                'CLASSIFIER_ERROR',
+                f"Unified classifier error: {str(e)}",
+                success=False
+            )
+            import traceback
+            traceback.print_exc()
+            return None
 
     def _analyze_and_find_trade(self, gex_data: Dict, skew_data: Dict, spot: float,
                                   vix: float = 20, momentum: Dict = None,
