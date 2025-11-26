@@ -743,3 +743,272 @@ async def autonomous_health_check():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# SPX INSTITUTIONAL TRADER LOGS
+# ============================================================================
+
+@router.get("/spx/activity")
+async def get_spx_trade_activity(
+    limit: int = Query(50, ge=1, le=500),
+    action_type: Optional[str] = None,
+    date: Optional[str] = None
+):
+    """
+    Get SPX institutional trader activity logs with AI thought process
+
+    Shows:
+    - Regime classifications
+    - STAY_FLAT decisions with VIX/GEX context
+    - Position sizing decisions
+    - Trade executions
+    - Risk rejections
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        query = "SELECT * FROM spx_trade_activity WHERE 1=1"
+        params = []
+
+        if action_type:
+            query += " AND action_type = %s"
+            params.append(action_type)
+
+        if date:
+            query += " AND activity_date = %s"
+            params.append(date)
+
+        query += " ORDER BY activity_timestamp DESC LIMIT %s"
+        params.append(limit)
+
+        c.execute(query, params)
+        logs = c.fetchall()
+        conn.close()
+
+        return {
+            'success': True,
+            'count': len(logs),
+            'logs': [dict(log) for log in logs]
+        }
+
+    except Exception as e:
+        # Table might not exist yet
+        if 'does not exist' in str(e):
+            return {
+                'success': True,
+                'count': 0,
+                'logs': [],
+                'message': 'SPX trade activity table not yet initialized'
+            }
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/spx/performance")
+async def get_spx_performance():
+    """Get SPX institutional trader performance summary"""
+    try:
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get open positions
+        c.execute("""
+            SELECT COUNT(*) as count, COALESCE(SUM(unrealized_pnl), 0) as unrealized
+            FROM spx_institutional_positions WHERE status = 'OPEN'
+        """)
+        open_result = c.fetchone()
+
+        # Get closed trades
+        c.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN net_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                   COALESCE(SUM(net_pnl), 0) as total_pnl,
+                   COALESCE(AVG(CASE WHEN net_pnl > 0 THEN net_pnl END), 0) as avg_win,
+                   COALESCE(AVG(CASE WHEN net_pnl <= 0 THEN net_pnl END), 0) as avg_loss
+            FROM spx_institutional_closed_trades
+        """)
+        closed_result = c.fetchone()
+
+        conn.close()
+
+        total_trades = closed_result['total'] or 0
+        wins = closed_result['wins'] or 0
+        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+
+        return {
+            'success': True,
+            'open_positions': open_result['count'] or 0,
+            'unrealized_pnl': float(open_result['unrealized'] or 0),
+            'total_closed_trades': total_trades,
+            'winning_trades': wins,
+            'win_rate': round(win_rate, 1),
+            'total_realized_pnl': float(closed_result['total_pnl'] or 0),
+            'avg_win': float(closed_result['avg_win'] or 0),
+            'avg_loss': float(closed_result['avg_loss'] or 0)
+        }
+
+    except Exception as e:
+        if 'does not exist' in str(e):
+            return {
+                'success': True,
+                'message': 'SPX tables not yet initialized',
+                'open_positions': 0,
+                'total_closed_trades': 0
+            }
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# LOG EXPORT ENDPOINTS
+# ============================================================================
+
+@router.get("/export/spy-activity")
+async def export_spy_activity(
+    format: str = Query("json", enum=["json", "csv"]),
+    days: int = Query(7, ge=1, le=90)
+):
+    """Export SPY autonomous trader activity logs"""
+    try:
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        c.execute("""
+            SELECT * FROM autonomous_trade_activity
+            WHERE activity_date >= CURRENT_DATE - INTERVAL '%s days'
+            ORDER BY activity_timestamp DESC
+        """, (days,))
+
+        logs = c.fetchall()
+        conn.close()
+
+        if format == "csv":
+            if not logs:
+                return {"success": True, "csv": "No data"}
+
+            headers = list(logs[0].keys())
+            csv_lines = [",".join(headers)]
+            for log in logs:
+                csv_lines.append(",".join([str(log.get(h, '')) for h in headers]))
+
+            return {
+                "success": True,
+                "format": "csv",
+                "count": len(logs),
+                "csv": "\n".join(csv_lines)
+            }
+
+        return {
+            "success": True,
+            "format": "json",
+            "count": len(logs),
+            "data": [dict(log) for log in logs]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/export/spx-activity")
+async def export_spx_activity(
+    format: str = Query("json", enum=["json", "csv"]),
+    days: int = Query(7, ge=1, le=90)
+):
+    """Export SPX institutional trader activity logs"""
+    try:
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        c.execute("""
+            SELECT * FROM spx_trade_activity
+            WHERE activity_date >= CURRENT_DATE - INTERVAL '%s days'
+            ORDER BY activity_timestamp DESC
+        """, (days,))
+
+        logs = c.fetchall()
+        conn.close()
+
+        if format == "csv":
+            if not logs:
+                return {"success": True, "csv": "No data"}
+
+            headers = list(logs[0].keys())
+            csv_lines = [",".join(headers)]
+            for log in logs:
+                csv_lines.append(",".join([str(log.get(h, '')) for h in headers]))
+
+            return {
+                "success": True,
+                "format": "csv",
+                "count": len(logs),
+                "csv": "\n".join(csv_lines)
+            }
+
+        return {
+            "success": True,
+            "format": "json",
+            "count": len(logs),
+            "data": [dict(log) for log in logs]
+        }
+
+    except Exception as e:
+        if 'does not exist' in str(e):
+            return {"success": True, "count": 0, "data": [], "message": "Table not initialized"}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# BACKTESTER-TRADER SYNC STATUS
+# ============================================================================
+
+@router.get("/strategy-stats")
+async def get_strategy_stats():
+    """
+    Get strategy statistics that backtester feeds to traders.
+    Shows how backtest results inform live trading decisions.
+    """
+    try:
+        from strategy_stats import get_strategy_stats
+        stats = get_strategy_stats()
+
+        return {
+            "success": True,
+            "source": "strategy_stats.json",
+            "description": "Backtester updates these stats, traders read them for position sizing",
+            "stats": stats
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "stats": {}
+        }
+
+
+@router.get("/backtest-results")
+async def get_recent_backtest_results(limit: int = Query(10, ge=1, le=50)):
+    """Get recent backtest results that inform trader decisions"""
+    try:
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        c.execute("""
+            SELECT * FROM backtest_results
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, (limit,))
+
+        results = c.fetchall()
+        conn.close()
+
+        return {
+            "success": True,
+            "count": len(results),
+            "results": [dict(r) for r in results]
+        }
+
+    except Exception as e:
+        if 'does not exist' in str(e):
+            return {"success": True, "count": 0, "results": [], "message": "No backtest results yet"}
+        raise HTTPException(status_code=500, detail=str(e))

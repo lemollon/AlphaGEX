@@ -23,7 +23,7 @@ CRITICAL: Uses SPX-specific GEX data from Trading Volatility API
 
 import pandas as pd
 from datetime import datetime, timedelta, time as dt_time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from zoneinfo import ZoneInfo
 from database_adapter import get_connection
 from trading_costs import (
@@ -83,6 +83,33 @@ except ImportError as e:
     TV_API_AVAILABLE = False
     print(f"⚠️ SPX Trader: Trading Volatility API not available: {e}")
 
+# CRITICAL: Import Database Logger for AI Thought Process logging
+try:
+    from autonomous_database_logger import AutonomousDatabaseLogger
+    DB_LOGGER_AVAILABLE = True
+    print("✅ SPX Trader: Database Logger available for AI thought process")
+except ImportError as e:
+    DB_LOGGER_AVAILABLE = False
+    print(f"⚠️ SPX Trader: Database Logger not available: {e}")
+
+# Import AI Reasoning for enhanced thought process
+try:
+    from autonomous_ai_reasoning import get_ai_reasoning
+    AI_REASONING_AVAILABLE = True
+    print("✅ SPX Trader: AI Reasoning Engine available")
+except ImportError as e:
+    AI_REASONING_AVAILABLE = False
+    print(f"⚠️ SPX Trader: AI Reasoning not available: {e}")
+
+# CRITICAL: Import Strategy Stats for backtester integration
+try:
+    from strategy_stats import get_strategy_stats, get_recent_changes
+    STRATEGY_STATS_AVAILABLE = True
+    print("✅ SPX Trader: Strategy Stats (Backtester Integration) available")
+except ImportError as e:
+    STRATEGY_STATS_AVAILABLE = False
+    print(f"⚠️ SPX Trader: Strategy Stats not available: {e}")
+
 
 class SPXInstitutionalTrader:
     """
@@ -141,11 +168,164 @@ class SPXInstitutionalTrader:
             self.regime_classifier = None
             self.iv_history = []
 
+        # CRITICAL: Initialize Database Logger for AI Thought Process
+        if DB_LOGGER_AVAILABLE:
+            self.db_logger = AutonomousDatabaseLogger()
+            self.db_logger.session_id = f"SPX-{self.db_logger.session_id}"
+            print("✅ SPX Trader: Database Logger initialized for AI thought process")
+        else:
+            self.db_logger = None
+
+        # Initialize AI Reasoning Engine
+        if AI_REASONING_AVAILABLE:
+            self.ai_reasoning = get_ai_reasoning()
+            print("✅ SPX Trader: AI Reasoning Engine ready")
+        else:
+            self.ai_reasoning = None
+
+        # Load backtest-informed parameters
+        self.strategy_stats = self._load_strategy_stats()
+
         print(f"✅ SPX Institutional Trader initialized")
         print(f"   Capital: ${self.starting_capital:,.0f}")
         print(f"   Max position: ${self.starting_capital * self.max_position_pct:,.0f}")
         print(f"   Max contracts/trade: {self.max_contracts_per_trade}")
         print(f"   Data Source: SPX GEX from Trading Volatility API")
+        print(f"   AI Logging: {'ENABLED' if self.db_logger else 'DISABLED'}")
+        print(f"   Backtester Integration: {'ENABLED' if self.strategy_stats else 'DISABLED'}")
+
+    # ============================================================================
+    # BACKTESTER INTEGRATION - Use backtest results for informed trading
+    # ============================================================================
+
+    def _load_strategy_stats(self) -> Optional[Dict]:
+        """Load strategy statistics from backtest results"""
+        if not STRATEGY_STATS_AVAILABLE:
+            return None
+
+        try:
+            stats = get_strategy_stats()
+            if stats:
+                proven_strategies = [k for k, v in stats.items()
+                                   if v.get('total_trades', 0) >= 10]
+                print(f"   📊 Loaded {len(proven_strategies)} proven strategies from backtest")
+            return stats
+        except Exception as e:
+            print(f"⚠️ Could not load strategy stats: {e}")
+            return None
+
+    def get_backtest_params_for_strategy(self, strategy_name: str) -> Dict:
+        """
+        Get backtest-informed parameters for a specific strategy.
+
+        Returns:
+            Dict with win_rate, expectancy, sharpe, max_drawdown, etc.
+        """
+        if not self.strategy_stats:
+            return {
+                'win_rate': 0.60,  # Default 60% win rate
+                'expectancy': 0.0,
+                'sharpe_ratio': 0.0,
+                'is_proven': False,
+                'total_trades': 0,
+                'source': 'default'
+            }
+
+        # Try exact match first
+        if strategy_name in self.strategy_stats:
+            stats = self.strategy_stats[strategy_name]
+            return {
+                'win_rate': stats.get('win_rate', 0.60),
+                'expectancy': stats.get('expectancy', 0.0),
+                'sharpe_ratio': stats.get('sharpe_ratio', 0.0),
+                'avg_win': stats.get('avg_win', 0.0),
+                'avg_loss': stats.get('avg_loss', 0.0),
+                'is_proven': stats.get('total_trades', 0) >= 10,
+                'total_trades': stats.get('total_trades', 0),
+                'source': 'backtest'
+            }
+
+        # Try fuzzy matching for similar strategies
+        for key in self.strategy_stats:
+            if key.upper() in strategy_name.upper() or strategy_name.upper() in key.upper():
+                stats = self.strategy_stats[key]
+                return {
+                    'win_rate': stats.get('win_rate', 0.60),
+                    'expectancy': stats.get('expectancy', 0.0),
+                    'sharpe_ratio': stats.get('sharpe_ratio', 0.0),
+                    'avg_win': stats.get('avg_win', 0.0),
+                    'avg_loss': stats.get('avg_loss', 0.0),
+                    'is_proven': stats.get('total_trades', 0) >= 10,
+                    'total_trades': stats.get('total_trades', 0),
+                    'source': f'backtest_match:{key}'
+                }
+
+        return {
+            'win_rate': 0.60,
+            'expectancy': 0.0,
+            'sharpe_ratio': 0.0,
+            'is_proven': False,
+            'total_trades': 0,
+            'source': 'default'
+        }
+
+    def should_trade_strategy(self, strategy_name: str, min_trades: int = 10,
+                             min_expectancy: float = -5.0) -> Tuple[bool, str]:
+        """
+        Check if a strategy should be traded based on backtest performance.
+
+        Args:
+            strategy_name: Name of the strategy
+            min_trades: Minimum trades required to consider "proven"
+            min_expectancy: Minimum expectancy % to allow trading
+
+        Returns:
+            (should_trade, reason)
+        """
+        params = self.get_backtest_params_for_strategy(strategy_name)
+
+        # Check if proven
+        if not params['is_proven']:
+            return True, "Unproven strategy - using conservative sizing"
+
+        # Check expectancy
+        if params['expectancy'] < min_expectancy:
+            return False, f"Strategy has negative expectancy ({params['expectancy']:.1f}%)"
+
+        # Check if recently updated
+        if params.get('source') == 'backtest':
+            return True, f"Proven strategy: {params['total_trades']} trades, {params['win_rate']*100:.0f}% win rate"
+
+        return True, "Default parameters"
+
+    def calculate_kelly_from_backtest(self, strategy_name: str) -> float:
+        """
+        Calculate Kelly criterion position size from backtest results.
+
+        Kelly % = W - [(1-W)/R]
+        Where: W = win rate, R = risk/reward ratio
+
+        Returns Kelly % (0.0 to 0.25 for institutional)
+        """
+        params = self.get_backtest_params_for_strategy(strategy_name)
+
+        win_rate = params['win_rate']
+        avg_win = abs(params.get('avg_win', 20.0))  # Default 20%
+        avg_loss = abs(params.get('avg_loss', 15.0))  # Default 15%
+
+        if avg_loss == 0:
+            avg_loss = 15.0  # Prevent division by zero
+
+        risk_reward = avg_win / avg_loss
+
+        # Kelly formula
+        kelly = win_rate - ((1 - win_rate) / risk_reward)
+
+        # Institutional half-Kelly (more conservative)
+        half_kelly = kelly * 0.5
+
+        # Cap at 25% for institutional
+        return max(0.01, min(0.25, half_kelly))
 
     def _ensure_tables(self):
         """Create database tables for SPX trading"""
@@ -243,8 +423,87 @@ class SPXInstitutionalTrader:
             ON CONFLICT (key) DO NOTHING
         """)
 
+        # SPX Trade Activity table - ALL decisions and actions
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS spx_trade_activity (
+                id SERIAL PRIMARY KEY,
+                activity_date DATE NOT NULL,
+                activity_time TIME NOT NULL,
+                activity_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                action_type VARCHAR(50) NOT NULL,
+                symbol VARCHAR(10) DEFAULT 'SPX',
+                details TEXT,
+                spot_price DECIMAL(10,2),
+                vix_level DECIMAL(8,2),
+                net_gex DECIMAL(20,2),
+                flip_point DECIMAL(10,2),
+                ai_thought_process TEXT,
+                ai_confidence INTEGER,
+                position_id INTEGER,
+                pnl_impact DECIMAL(15,2),
+                success BOOLEAN DEFAULT TRUE,
+                error_message TEXT
+            )
+        """)
+
+        # Create index for efficient queries
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_spx_activity_date
+            ON spx_trade_activity(activity_date DESC)
+        """)
+
         conn.commit()
         conn.close()
+
+    def _log_trade_activity(
+        self,
+        action_type: str,
+        details: str,
+        spot_price: float = None,
+        vix: float = None,
+        net_gex: float = None,
+        flip_point: float = None,
+        ai_thought_process: str = None,
+        ai_confidence: int = None,
+        position_id: int = None,
+        pnl_impact: float = None,
+        success: bool = True,
+        error_message: str = None
+    ):
+        """Log activity to spx_trade_activity table with AI thought process"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            now = datetime.now(CENTRAL_TZ)
+
+            c.execute("""
+                INSERT INTO spx_trade_activity (
+                    activity_date, activity_time, action_type, symbol,
+                    details, spot_price, vix_level, net_gex, flip_point,
+                    ai_thought_process, ai_confidence,
+                    position_id, pnl_impact, success, error_message
+                ) VALUES (%s, %s, %s, 'SPX', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                action_type,
+                details,
+                spot_price,
+                vix,
+                net_gex,
+                flip_point,
+                ai_thought_process,
+                ai_confidence,
+                position_id,
+                pnl_impact,
+                success,
+                error_message
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Failed to log SPX trade activity: {e}")
 
     def get_current_spot(self) -> float:
         """Get current SPX spot price"""
@@ -268,17 +527,20 @@ class SPXInstitutionalTrader:
         self,
         entry_price: float,
         confidence: float,
-        volatility_regime: str = 'normal'
+        volatility_regime: str = 'normal',
+        strategy_name: str = None
     ) -> Tuple[int, Dict]:
         """
         Calculate optimal position size for institutional capital.
 
         Uses modified Kelly criterion with institutional constraints.
+        INTEGRATES BACKTESTER RESULTS for proven win rates.
 
         Args:
             entry_price: Option premium price
             confidence: Trade confidence (0-100)
             volatility_regime: 'low', 'normal', 'high', 'extreme'
+            strategy_name: Strategy name for backtest lookup
 
         Returns:
             (contracts, sizing_details)
@@ -286,8 +548,31 @@ class SPXInstitutionalTrader:
         # Get current available capital
         available = self.get_available_capital()
 
-        # Base position size: Max 5% of capital per trade
-        max_position_value = available * self.max_position_pct
+        # BACKTESTER INTEGRATION: Get historical performance
+        backtest_params = {}
+        kelly_pct = 0.05  # Default 5%
+
+        if strategy_name:
+            # Check if strategy should be traded
+            should_trade, reason = self.should_trade_strategy(strategy_name)
+            if not should_trade:
+                print(f"⚠️ Strategy blocked: {reason}")
+                return 0, {'error': reason, 'blocked': True}
+
+            # Get backtest-informed parameters
+            backtest_params = self.get_backtest_params_for_strategy(strategy_name)
+
+            # Calculate Kelly from backtest
+            kelly_pct = self.calculate_kelly_from_backtest(strategy_name)
+
+            if backtest_params.get('is_proven'):
+                print(f"📊 Backtest-informed sizing: Kelly={kelly_pct*100:.1f}%, "
+                      f"WinRate={backtest_params['win_rate']*100:.0f}%, "
+                      f"Expectancy={backtest_params['expectancy']:.1f}%")
+
+        # Base position size: Use Kelly % or max 5% of capital
+        base_pct = min(kelly_pct, self.max_position_pct)
+        max_position_value = available * base_pct
 
         # Adjust for confidence (Kelly-inspired)
         # Higher confidence = closer to max position
@@ -302,8 +587,14 @@ class SPXInstitutionalTrader:
         }
         vol_factor = vol_adjustments.get(volatility_regime, 1.0)
 
+        # BACKTEST ADJUSTMENT: Reduce size for unproven strategies
+        backtest_factor = 1.0
+        if backtest_params and not backtest_params.get('is_proven'):
+            backtest_factor = 0.5  # Half size for unproven strategies
+            print(f"⚠️ Unproven strategy - reducing size by 50%")
+
         # Adjusted position value
-        position_value = max_position_value * confidence_factor * vol_factor
+        position_value = max_position_value * confidence_factor * vol_factor * backtest_factor
 
         # Calculate contracts
         cost_per_contract = entry_price * self.multiplier
@@ -321,17 +612,21 @@ class SPXInstitutionalTrader:
             market_impact_warning = f"Large order ({contracts} contracts) may incur significant market impact"
 
         sizing_details = {
+            'methodology': 'Kelly-Backtest Hybrid',
             'available_capital': available,
+            'kelly_pct': kelly_pct * 100,
             'max_position_value': max_position_value,
             'confidence_factor': confidence_factor,
             'vol_factor': vol_factor,
+            'backtest_factor': backtest_factor,
             'adjusted_position_value': position_value,
             'cost_per_contract': cost_per_contract,
             'raw_contracts': raw_contracts,
             'final_contracts': contracts,
             'liquidity_constraint_applied': contracts < raw_contracts,
             'market_impact_warning': market_impact_warning,
-            'total_premium': contracts * cost_per_contract
+            'total_premium': contracts * cost_per_contract,
+            'backtest_params': backtest_params
         }
 
         return contracts, sizing_details
@@ -937,8 +1232,65 @@ REASONING:
 {'='*60}
 """)
 
-            # If STAY_FLAT, return None
+            # Log regime classification to trade activity
+            self._log_trade_activity(
+                action_type='REGIME_CLASSIFICATION',
+                details=f"Action: {regime.recommended_action.value}, "
+                        f"Vol: {regime.volatility_regime.value}, "
+                        f"Gamma: {regime.gamma_regime.value}, "
+                        f"Trend: {regime.trend_regime.value}",
+                spot_price=spot_price,
+                vix=vix,
+                net_gex=net_gex,
+                flip_point=flip_point,
+                ai_thought_process=regime.reasoning,
+                ai_confidence=int(regime.confidence)
+            )
+
+            # If STAY_FLAT, log detailed VIX/GEX context for why no action
             if regime.recommended_action == MarketAction.STAY_FLAT:
+                # Build comprehensive no-action explanation
+                vix_context = []
+                if vix > 25:
+                    vix_context.append(f"VIX elevated at {vix:.1f} (>25) - market stressed")
+                elif vix < 15:
+                    vix_context.append(f"VIX low at {vix:.1f} (<15) - complacency risk")
+                else:
+                    vix_context.append(f"VIX normal at {vix:.1f}")
+
+                gex_context = []
+                if net_gex > 0:
+                    gex_context.append(f"Positive GEX (${net_gex/1e9:.2f}B) - dealers long gamma, dampened moves")
+                else:
+                    gex_context.append(f"Negative GEX (${net_gex/1e9:.2f}B) - dealers short gamma, amplified moves")
+
+                if spot_price > flip_point:
+                    gex_context.append(f"Price ${spot_price:.0f} ABOVE flip ${flip_point:.0f} - call gamma dominates")
+                else:
+                    gex_context.append(f"Price ${spot_price:.0f} BELOW flip ${flip_point:.0f} - put gamma dominates")
+
+                no_action_reason = (
+                    f"STAY_FLAT Decision Explained:\n"
+                    f"VIX Analysis: {' | '.join(vix_context)}\n"
+                    f"GEX Analysis: {' | '.join(gex_context)}\n"
+                    f"Regime: Vol={regime.volatility_regime.value}, Gamma={regime.gamma_regime.value}, "
+                    f"Trend={regime.trend_regime.value}\n"
+                    f"Bars in regime: {regime.bars_in_regime} (waiting for confirmation)\n"
+                    f"Classifier reasoning: {regime.reasoning}"
+                )
+
+                self._log_trade_activity(
+                    action_type='STAY_FLAT',
+                    details=no_action_reason[:500],  # Truncate for details field
+                    spot_price=spot_price,
+                    vix=vix,
+                    net_gex=net_gex,
+                    flip_point=flip_point,
+                    ai_thought_process=no_action_reason,
+                    ai_confidence=int(regime.confidence)
+                )
+
+                print(f"\n📊 VIX/GEX Context for STAY_FLAT:\n{no_action_reason}")
                 return None
 
             # Get strategy params
@@ -1018,6 +1370,11 @@ REASONING:
         conn.close()
 
         if trades_today >= self.max_daily_trades:
+            self._log_trade_activity(
+                action_type='MAX_TRADES_REACHED',
+                details=f"Already at max daily trades ({trades_today}/{self.max_daily_trades})",
+                success=False
+            )
             print(f"⚠️ Already at max daily trades ({trades_today}/{self.max_daily_trades})")
             return None
 
@@ -1025,10 +1382,19 @@ REASONING:
         trade = self.get_unified_regime_decision()
 
         if not trade:
+            # Note: VIX context already logged in get_unified_regime_decision if STAY_FLAT
             print("❌ No trade opportunity found by unified classifier")
             return None
 
         if trade.get('confidence', 0) < 60:
+            self._log_trade_activity(
+                action_type='LOW_CONFIDENCE',
+                details=f"Trade rejected - confidence {trade.get('confidence', 0)}% below 60% threshold",
+                spot_price=trade.get('spot_price'),
+                ai_thought_process=trade.get('reasoning'),
+                ai_confidence=trade.get('confidence', 0),
+                success=False
+            )
             print(f"⚠️ Confidence too low: {trade.get('confidence', 0)}%")
             return None
 
@@ -1041,15 +1407,38 @@ REASONING:
         else:
             entry_price = spot * 0.01  # Credit spread
 
+        # BACKTESTER INTEGRATION: Pass strategy name for backtest-informed sizing
         contracts, sizing = self.calculate_position_size(
             entry_price=entry_price,
             confidence=trade['confidence'],
-            volatility_regime='normal' if trade.get('regime') and trade['regime'].volatility_regime == VolatilityRegime.NORMAL else 'high'
+            volatility_regime='normal' if trade.get('regime') and trade['regime'].volatility_regime == VolatilityRegime.NORMAL else 'high',
+            strategy_name=trade.get('strategy', '')
         )
 
         if contracts == 0:
+            self._log_trade_activity(
+                action_type='ZERO_CONTRACTS',
+                details=f"Position sizing returned 0 contracts for {trade['strategy']}",
+                spot_price=spot,
+                ai_thought_process=f"Sizing: {sizing}",
+                ai_confidence=trade.get('confidence', 0),
+                success=False
+            )
             print("❌ Position sizing returned 0 contracts")
             return None
+
+        # Log position sizing decision with backtest info
+        backtest_info = sizing.get('backtest_params', {})
+        self._log_trade_activity(
+            action_type='POSITION_SIZING',
+            details=f"Sized {contracts} contracts for {trade['strategy']} @ ${trade['strike']}",
+            spot_price=spot,
+            ai_thought_process=f"Position sizing: {sizing.get('methodology', 'Kelly')} - "
+                              f"Kelly: {sizing.get('kelly_pct', 0):.1f}%, "
+                              f"Max capital: ${sizing.get('max_position_value', 0):,.0f}, "
+                              f"Backtest WinRate: {backtest_info.get('win_rate', 0)*100:.0f}%",
+            ai_confidence=trade.get('confidence', 0)
+        )
 
         # Get expiration
         exp_date = datetime.now(CENTRAL_TZ) + timedelta(days=7)
@@ -1074,12 +1463,270 @@ REASONING:
         )
 
         if position_id:
+            # Log successful trade execution
+            self._log_trade_activity(
+                action_type='TRADE_EXECUTED',
+                details=f"✅ {trade['action']} {contracts} {trade['option_type'].upper()} @ ${trade['strike']} exp {expiration}",
+                spot_price=spot,
+                ai_thought_process=trade.get('reasoning'),
+                ai_confidence=trade.get('confidence', 0),
+                position_id=position_id
+            )
             print(f"\n✅ SPX TRADE EXECUTED - Position ID: {position_id}")
             print(f"   Strategy: {trade['strategy']}")
             print(f"   {trade['action']} {contracts} x {trade['option_type'].upper()} @ ${trade['strike']}")
             print(f"   Confidence: {trade['confidence']}%")
+        else:
+            self._log_trade_activity(
+                action_type='TRADE_FAILED',
+                details=f"Trade execution failed for {trade['strategy']}",
+                spot_price=spot,
+                ai_thought_process=trade.get('reasoning'),
+                ai_confidence=trade.get('confidence', 0),
+                success=False,
+                error_message="execute_trade returned None"
+            )
 
         return position_id
+
+    # ============================================================================
+    # EXIT LOGIC - CRITICAL FOR POSITION MANAGEMENT
+    # ============================================================================
+
+    def auto_manage_positions(self) -> List[Dict]:
+        """
+        AUTONOMOUS: Manage all open SPX positions
+        Checks exit conditions and closes positions when criteria are met
+
+        Returns list of actions taken
+        """
+        conn = get_connection()
+        positions = pd.read_sql_query("""
+            SELECT * FROM spx_institutional_positions WHERE status = 'OPEN'
+        """, conn.raw_connection)
+        conn.close()
+
+        if positions.empty:
+            return []
+
+        actions_taken = []
+
+        # Get current market data
+        gex_data = self.get_spx_gex_data()
+        current_spot = gex_data.get('spot_price', 0) if gex_data else self.get_current_spot()
+        vix = self._get_vix()
+
+        for _, pos in positions.iterrows():
+            try:
+                # Calculate current P&L (simplified - would need real options prices)
+                entry_value = float(pos['entry_price']) * int(pos['contracts']) * self.multiplier
+
+                # Estimate current price based on spot movement
+                spot_move_pct = (current_spot - float(pos['entry_spot_price'])) / float(pos['entry_spot_price'])
+                delta = float(pos.get('entry_delta', 0.5))
+
+                # Simple estimation: price change = delta * spot move * spot price
+                estimated_price_change = delta * spot_move_pct * float(pos['entry_price'])
+                current_price = max(0.01, float(pos['entry_price']) + estimated_price_change)
+
+                current_value = current_price * int(pos['contracts']) * self.multiplier
+                unrealized_pnl = current_value - entry_value
+                pnl_pct = (unrealized_pnl / entry_value * 100) if entry_value > 0 else 0
+
+                # Update position
+                self._update_position(int(pos['id']), current_price, current_spot, unrealized_pnl, pnl_pct)
+
+                # Check exit conditions
+                should_exit, reason = self._check_exit_conditions(
+                    pos, pnl_pct, current_price, current_spot, gex_data or {}, vix
+                )
+
+                if should_exit:
+                    self._close_position(int(pos['id']), current_price, unrealized_pnl, reason)
+
+                    actions_taken.append({
+                        'position_id': int(pos['id']),
+                        'strategy': pos['strategy'],
+                        'action': 'CLOSE',
+                        'reason': reason,
+                        'pnl': unrealized_pnl,
+                        'pnl_pct': pnl_pct
+                    })
+
+                    self._log_trade_activity(
+                        action_type='POSITION_CLOSED',
+                        details=f"Closed {pos['strategy']}: P&L ${unrealized_pnl:+,.2f} ({pnl_pct:+.1f}%) - {reason}",
+                        spot_price=current_spot,
+                        vix=vix,
+                        ai_thought_process=reason,
+                        position_id=int(pos['id']),
+                        pnl_impact=unrealized_pnl
+                    )
+
+            except Exception as e:
+                print(f"Error managing SPX position {pos['id']}: {e}")
+                continue
+
+        return actions_taken
+
+    def _update_position(self, position_id: int, current_price: float, current_spot: float,
+                         unrealized_pnl: float, pnl_pct: float):
+        """Update position with current values"""
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute("""
+            UPDATE spx_institutional_positions
+            SET current_price = %s, current_spot_price = %s,
+                unrealized_pnl = %s, unrealized_pnl_pct = %s
+            WHERE id = %s
+        """, (current_price, current_spot, unrealized_pnl, pnl_pct, position_id))
+
+        conn.commit()
+        conn.close()
+
+    def _check_exit_conditions(self, pos: Dict, pnl_pct: float, current_price: float,
+                               current_spot: float, gex_data: Dict, vix: float) -> Tuple[bool, str]:
+        """
+        SPX EXIT STRATEGY - Institutional risk management
+        More conservative than retail due to larger position sizes
+        """
+        # HARD STOP: -30% loss for institutional (tighter than retail)
+        if pnl_pct <= -30:
+            return True, f"🚨 HARD STOP: {pnl_pct:.1f}% loss - institutional risk limit"
+
+        # EXPIRATION SAFETY: Close 1 day before for SPX (European style but be safe)
+        try:
+            exp_date = datetime.strptime(str(pos['expiration_date']), '%Y-%m-%d').replace(tzinfo=CENTRAL_TZ)
+            dte = (exp_date - datetime.now(CENTRAL_TZ)).days
+        except:
+            dte = 7  # Default to 7 if parsing fails
+
+        if dte <= 1:
+            return True, f"⏰ EXPIRATION: {dte} DTE - closing before expiry"
+
+        # VIX SPIKE: Exit if VIX spikes significantly (risk-off)
+        entry_iv = float(pos.get('entry_iv', 0.15))
+        current_iv = vix / 100 * 0.9  # SPX IV ~ 90% of VIX
+        if current_iv > entry_iv * 1.5 and pnl_pct < 0:
+            return True, f"📈 VIX SPIKE: IV up {((current_iv/entry_iv)-1)*100:.0f}% with losing position"
+
+        # PROFIT TARGET: Take profits at +25% for institutional (lower than retail)
+        if pnl_pct >= 25:
+            return True, f"💰 PROFIT TARGET: +{pnl_pct:.1f}% (institutional target)"
+
+        # GEX REGIME CHANGE: Exit if gamma regime flips
+        entry_gex = float(pos.get('entry_net_gex', 0)) if pos.get('entry_net_gex') else 0
+        current_gex = gex_data.get('net_gex', 0)
+        if entry_gex != 0 and current_gex != 0:
+            if (entry_gex > 0 and current_gex < 0) or (entry_gex < 0 and current_gex > 0):
+                return True, f"📊 GEX FLIP: Regime changed from {'positive' if entry_gex > 0 else 'negative'} to {'positive' if current_gex > 0 else 'negative'}"
+
+        # TIME DECAY: Exit credit spreads at 50% profit (theta decay captured)
+        if pos.get('action') == 'SELL' and pnl_pct >= 50:
+            return True, f"⏱️ THETA DECAY: Captured {pnl_pct:.0f}% of credit"
+
+        return False, ""
+
+    def _close_position(self, position_id: int, exit_price: float, realized_pnl: float, reason: str):
+        """Close position - move from open positions to closed trades"""
+        conn = get_connection()
+        c = conn.cursor()
+        now = datetime.now(CENTRAL_TZ)
+
+        # Get position data
+        c.execute("""
+            SELECT symbol, strategy, action, strike, option_type, expiration_date,
+                   contracts, entry_date, entry_time, entry_price,
+                   entry_bid, entry_ask, entry_spot_price, confidence,
+                   gex_regime, trade_reasoning, current_spot_price,
+                   entry_commission, entry_slippage
+            FROM spx_institutional_positions
+            WHERE id = %s
+        """, (position_id,))
+
+        pos = c.fetchone()
+        if not pos:
+            print(f"⚠️ SPX Position {position_id} not found")
+            conn.close()
+            return
+
+        (symbol, strategy, action, strike, option_type, expiration_date,
+         contracts, entry_date, entry_time, entry_price,
+         entry_bid, entry_ask, entry_spot_price, confidence,
+         gex_regime, trade_reasoning, exit_spot_price,
+         entry_commission, entry_slippage) = pos
+
+        # Calculate exit costs
+        exit_commission = self.costs_calculator.calculate_commission(contracts)
+        total_commission = float(entry_commission or 0) + exit_commission['total_commission']
+        total_slippage = float(entry_slippage or 0)  # Exit slippage included in realized_pnl estimate
+
+        # Calculate hold duration
+        try:
+            entry_dt = datetime.strptime(f"{entry_date} {entry_time}", '%Y-%m-%d %H:%M:%S')
+            hold_minutes = int((now.replace(tzinfo=None) - entry_dt).total_seconds() / 60)
+        except:
+            hold_minutes = 0
+
+        # Calculate net P&L
+        gross_pnl = realized_pnl
+        net_pnl = gross_pnl - exit_commission['total_commission']
+        entry_value = float(entry_price) * contracts * self.multiplier
+        net_pnl_pct = (net_pnl / entry_value * 100) if entry_value > 0 else 0
+
+        # Insert into closed trades
+        c.execute("""
+            INSERT INTO spx_institutional_closed_trades (
+                symbol, strategy, action, strike, option_type, expiration_date,
+                contracts, entry_date, entry_time, entry_price, entry_spot_price,
+                exit_date, exit_time, exit_price, exit_spot_price, exit_reason,
+                gross_pnl, total_commission, total_slippage, net_pnl, net_pnl_pct,
+                hold_duration_minutes
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s
+            )
+        """, (
+            symbol, strategy, action, strike, option_type, expiration_date,
+            contracts, entry_date, entry_time, entry_price, entry_spot_price,
+            now.strftime('%Y-%m-%d'), now.strftime('%H:%M:%S'),
+            exit_price, exit_spot_price, reason,
+            gross_pnl, total_commission, total_slippage, net_pnl, net_pnl_pct,
+            hold_minutes
+        ))
+
+        # Update position status to CLOSED
+        c.execute("""
+            UPDATE spx_institutional_positions SET status = 'CLOSED' WHERE id = %s
+        """, (position_id,))
+
+        conn.commit()
+        conn.close()
+
+        print(f"✅ SPX Position {position_id} CLOSED: {reason}")
+        print(f"   Net P&L: ${net_pnl:+,.2f} ({net_pnl_pct:+.1f}%)")
+        print(f"   Hold time: {hold_minutes} minutes")
+
+    def get_open_positions_summary(self) -> Dict:
+        """Get summary of all open SPX positions"""
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute("""
+            SELECT COUNT(*) as count,
+                   COALESCE(SUM(unrealized_pnl), 0) as total_unrealized,
+                   COALESCE(SUM(delta_exposure), 0) as total_delta
+            FROM spx_institutional_positions WHERE status = 'OPEN'
+        """)
+        result = c.fetchone()
+        conn.close()
+
+        return {
+            'open_positions': result[0] or 0,
+            'total_unrealized_pnl': float(result[1] or 0),
+            'total_delta_exposure': float(result[2] or 0)
+        }
 
 
 # Factory function
