@@ -136,9 +136,9 @@ export default function AutonomousTrader() {
   // WebSocket connection for real-time updates
   const { data: wsData, isConnected: wsConnected, error: wsError } = useTraderWebSocket()
 
-  // Update state from WebSocket data
+  // Update state from WebSocket or REST API data
   useEffect(() => {
-    if (wsData && wsData.type === 'trader_update') {
+    if (wsData && (wsData.type === 'trader_update' || wsData.type === 'rest_update' || wsData.type === 'connected')) {
       // Update performance from WebSocket
       if (wsData.performance) {
         const perf = wsData.performance
@@ -183,6 +183,11 @@ export default function AutonomousTrader() {
           strategy: trade.strategy,
         }))
         setRecentTrades(mappedTrades)
+      }
+
+      // Update AI logs from WebSocket/REST data
+      if (wsData.ai_logs && wsData.ai_logs.length > 0) {
+        setAutonomousLogs(wsData.ai_logs)
       }
     }
   }, [wsData])
