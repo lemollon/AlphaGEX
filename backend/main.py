@@ -2954,6 +2954,189 @@ async def check_spx_risk_limits(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/spx/trades")
+async def get_spx_trades(limit: int = 20):
+    """Get SPX institutional positions/trades"""
+    try:
+        import math
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        c.execute(f'''
+            SELECT
+                id,
+                entry_date,
+                entry_time,
+                exit_date,
+                exit_time,
+                option_type,
+                strike,
+                expiration_date,
+                contracts,
+                entry_price,
+                exit_price,
+                realized_pnl,
+                unrealized_pnl,
+                status,
+                strategy,
+                trade_reasoning
+            FROM spx_institutional_positions
+            ORDER BY entry_date DESC, entry_time DESC
+            LIMIT {int(limit)}
+        ''')
+
+        trades = []
+        for row in c.fetchall():
+            # Clean values for JSON serialization
+            trade = {}
+            for key, value in dict(row).items():
+                if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+                    trade[key] = 0
+                else:
+                    trade[key] = value
+            trades.append(trade)
+
+        conn.close()
+
+        return {
+            "success": True,
+            "count": len(trades),
+            "data": trades
+        }
+    except Exception as e:
+        return {
+            "success": True,
+            "count": 0,
+            "data": [],
+            "message": f"No SPX trades available: {str(e)}"
+        }
+
+
+@app.get("/api/spx/equity-curve")
+async def get_spx_equity_curve(days: int = 30):
+    """Get SPX institutional equity curve from position history"""
+    try:
+        import math
+        from datetime import datetime, timedelta
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        starting_capital = 100_000_000  # $100M
+
+        # Get closed positions to build equity curve
+        c.execute('''
+            SELECT
+                exit_date as date,
+                SUM(realized_pnl) as daily_pnl
+            FROM spx_institutional_positions
+            WHERE status = 'CLOSED'
+            AND exit_date >= %s
+            GROUP BY exit_date
+            ORDER BY exit_date ASC
+        ''', (start_date,))
+
+        results = c.fetchall()
+        conn.close()
+
+        # Build cumulative equity curve
+        equity_data = []
+        cumulative_pnl = 0
+
+        if results:
+            for row in results:
+                pnl = float(row['daily_pnl'] or 0)
+                if math.isnan(pnl) or math.isinf(pnl):
+                    pnl = 0
+                cumulative_pnl += pnl
+                equity_data.append({
+                    "date": str(row['date']),
+                    "timestamp": int(datetime.strptime(str(row['date']), '%Y-%m-%d').timestamp()),
+                    "pnl": round(cumulative_pnl, 2),
+                    "equity": round(starting_capital + cumulative_pnl, 2),
+                    "daily_pnl": round(pnl, 2)
+                })
+        else:
+            # Return starting point if no data
+            today = datetime.now().strftime('%Y-%m-%d')
+            equity_data.append({
+                "date": today,
+                "timestamp": int(datetime.now().timestamp()),
+                "pnl": 0,
+                "equity": starting_capital,
+                "daily_pnl": 0
+            })
+
+        return {
+            "success": True,
+            "data": equity_data
+        }
+    except Exception as e:
+        # Return empty data on error
+        from datetime import datetime as dt
+        return {
+            "success": True,
+            "data": [{
+                "date": dt.now().strftime('%Y-%m-%d'),
+                "timestamp": int(dt.now().timestamp()),
+                "pnl": 0,
+                "equity": 100_000_000,
+                "daily_pnl": 0
+            }],
+            "message": str(e)
+        }
+
+
+@app.get("/api/spx/trade-log")
+async def get_spx_trade_log():
+    """Get SPX trade activity log"""
+    try:
+        import math
+        from datetime import datetime
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get recent trade activity
+        c.execute('''
+            SELECT
+                id,
+                entry_date as date,
+                entry_time as time,
+                CASE
+                    WHEN status = 'OPEN' THEN 'OPEN ' || option_type
+                    ELSE 'CLOSE ' || option_type
+                END as action,
+                'SPX ' || strike || ' ' || option_type || ' ' || expiration_date as details,
+                COALESCE(realized_pnl, unrealized_pnl, 0) as pnl
+            FROM spx_institutional_positions
+            ORDER BY entry_date DESC, entry_time DESC
+            LIMIT 50
+        ''')
+
+        trades = []
+        for row in c.fetchall():
+            trade = {}
+            for key, value in dict(row).items():
+                if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+                    trade[key] = 0
+                else:
+                    trade[key] = value
+            trades.append(trade)
+
+        conn.close()
+
+        return {
+            "success": True,
+            "data": trades
+        }
+    except Exception as e:
+        return {
+            "success": True,
+            "data": [],
+            "message": str(e)
+        }
+
+
 # ============================================================================
 # Error Handlers
 # ============================================================================

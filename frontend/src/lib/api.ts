@@ -283,6 +283,9 @@ export const apiClient = {
     api.post('/api/spx/check-risk', {}, {
       params: { contracts, entry_price: entryPrice, delta: delta || 0.5 }
     }),
+  getSPXTrades: (limit?: number) => api.get('/api/spx/trades', { params: { limit: limit || 20 } }),
+  getSPXEquityCurve: (days?: number) => api.get('/api/spx/equity-curve', { params: { days: days || 30 } }),
+  getSPXTradeLog: () => api.get('/api/spx/trade-log'),
 }
 
 // WebSocket connection

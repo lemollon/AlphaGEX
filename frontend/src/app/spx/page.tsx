@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Building2, DollarSign, TrendingUp, TrendingDown, Activity, Shield, AlertTriangle, Target, BarChart3, PieChart, Briefcase, Clock } from 'lucide-react'
+import { Building2, DollarSign, TrendingUp, TrendingDown, Activity, Shield, AlertTriangle, Target, BarChart3, PieChart, Briefcase, Clock, History } from 'lucide-react'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 
@@ -40,12 +41,35 @@ interface SPXPerformance {
   }
 }
 
+interface TradeLogEntry {
+  date: string
+  time: string
+  action: string
+  details: string
+  pnl: number
+}
+
+interface EquityPoint {
+  date: string
+  timestamp: number
+  pnl: number
+  equity: number
+  daily_pnl: number
+}
+
 export default function SPXInstitutionalTrader() {
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<SPXStatus | null>(null)
   const [performance, setPerformance] = useState<SPXPerformance | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [countdown, setCountdown] = useState<string>('--:--')
+
+  // P&L Chart state
+  const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([])
+  const [chartPeriod, setChartPeriod] = useState<7 | 30 | 90>(30)
+
+  // Trade Activity state
+  const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
 
   // Live countdown timer - updates every second (5-minute scan intervals)
   useEffect(() => {
@@ -78,13 +102,30 @@ export default function SPXInstitutionalTrader() {
     return () => clearInterval(interval)
   }, [])
 
+  // Fetch equity curve when period changes
+  useEffect(() => {
+    const fetchEquityCurve = async () => {
+      try {
+        const res = await apiClient.getSPXEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
+        if (res.data.success && res.data.data) {
+          setEquityCurve(res.data.data)
+        }
+      } catch (err) {
+        console.error('Failed to fetch equity curve:', err)
+      }
+    }
+    fetchEquityCurve()
+  }, [chartPeriod])
+
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true)
-        const [statusRes, perfRes] = await Promise.all([
+        const [statusRes, perfRes, tradeLogRes, equityCurveRes] = await Promise.all([
           apiClient.getSPXStatus().catch(() => ({ data: { success: false } })),
-          apiClient.getSPXPerformance().catch(() => ({ data: { success: false } }))
+          apiClient.getSPXPerformance().catch(() => ({ data: { success: false } })),
+          apiClient.getSPXTradeLog().catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getSPXEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
         ])
 
         if (statusRes.data.success) {
@@ -92,6 +133,12 @@ export default function SPXInstitutionalTrader() {
         }
         if (perfRes.data.success) {
           setPerformance(perfRes.data.data)
+        }
+        if (tradeLogRes.data.success) {
+          setTradeLog(tradeLogRes.data.data || [])
+        }
+        if (equityCurveRes.data.success && equityCurveRes.data.data) {
+          setEquityCurve(equityCurveRes.data.data)
         }
       } catch (err: any) {
         setError(err.message || 'Failed to load SPX trader data')
@@ -117,6 +164,23 @@ export default function SPXInstitutionalTrader() {
   const formatPercent = (value: number) => {
     return `${(value * 100).toFixed(2)}%`
   }
+
+  const formatTradeTime = (date: string, time: string) => {
+    if (!date) return 'N/A'
+    try {
+      return `${date} ${time || ''}`
+    } catch {
+      return date
+    }
+  }
+
+  // Calculate best and worst trades
+  const bestTrade = tradeLog.length > 0
+    ? Math.max(...tradeLog.map(t => t.pnl || 0))
+    : 0
+  const worstTrade = tradeLog.length > 0
+    ? Math.min(...tradeLog.map(t => t.pnl || 0))
+    : 0
 
   return (
     <div className="min-h-screen">
@@ -238,6 +302,125 @@ export default function SPXInstitutionalTrader() {
                       <Target className="text-primary w-8 h-8" />
                     </div>
                   </div>
+                </div>
+
+                {/* P&L Chart */}
+                <div className="card">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <TrendingUp className="w-6 h-6 text-primary" />
+                      <h2 className="text-xl font-semibold text-text-primary">P&L Over Time</h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* Time Period Selector */}
+                      <div className="flex bg-background-hover rounded-lg p-1">
+                        {[7, 30, 90].map((days) => (
+                          <button
+                            key={days}
+                            onClick={() => setChartPeriod(days as 7 | 30 | 90)}
+                            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                              chartPeriod === days
+                                ? 'bg-primary text-white'
+                                : 'text-text-secondary hover:text-text-primary'
+                            }`}
+                          >
+                            {days}D
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {equityCurve.length > 0 ? (
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={equityCurve} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="colorPnlSpx" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                          <XAxis
+                            dataKey="date"
+                            stroke="#9ca3af"
+                            tick={{ fontSize: 12 }}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            stroke="#9ca3af"
+                            tick={{ fontSize: 12 }}
+                            tickLine={false}
+                            tickFormatter={(value) => `$${value >= 0 ? '+' : ''}${(value / 1000000).toFixed(1)}M`}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: '#1f2937',
+                              border: '1px solid #374151',
+                              borderRadius: '8px',
+                              padding: '12px'
+                            }}
+                            labelStyle={{ color: '#9ca3af' }}
+                            formatter={(value: number) => [
+                              <span key="value" style={{ color: value >= 0 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>
+                                ${value >= 0 ? '+' : ''}{(value / 1000000).toFixed(2)}M
+                              </span>,
+                              'P&L'
+                            ]}
+                          />
+                          <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="3 3" />
+                          <Area
+                            type="monotone"
+                            dataKey="pnl"
+                            stroke={equityCurve[equityCurve.length - 1]?.pnl >= 0 ? "#10b981" : "#ef4444"}
+                            strokeWidth={2}
+                            fillOpacity={1}
+                            fill="url(#colorPnlSpx)"
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-80 flex items-center justify-center">
+                      <div className="text-center">
+                        <BarChart3 className="w-12 h-12 text-text-muted mx-auto mb-3" />
+                        <p className="text-text-secondary">No trading data available yet</p>
+                        <p className="text-text-muted text-sm mt-1">P&L chart will appear as trades are executed</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Chart Summary Stats */}
+                  {equityCurve.length > 0 && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-border">
+                      <div className="text-center">
+                        <p className="text-text-muted text-xs mb-1">Period Start</p>
+                        <p className="text-text-primary font-semibold">
+                          {equityCurve[0]?.date || 'N/A'}
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-text-muted text-xs mb-1">Period End</p>
+                        <p className="text-text-primary font-semibold">
+                          {equityCurve[equityCurve.length - 1]?.date || 'N/A'}
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-text-muted text-xs mb-1">Total P&L</p>
+                        <p className={`font-bold ${equityCurve[equityCurve.length - 1]?.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                          {equityCurve[equityCurve.length - 1]?.pnl >= 0 ? '+' : ''}
+                          {formatCurrency(equityCurve[equityCurve.length - 1]?.pnl || 0)}
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-text-muted text-xs mb-1">Current Equity</p>
+                        <p className="text-text-primary font-bold">
+                          {formatCurrency(equityCurve[equityCurve.length - 1]?.equity || 0)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Risk Limits & Greeks */}
@@ -410,6 +593,99 @@ export default function SPXInstitutionalTrader() {
                     </div>
                   </div>
                 )}
+
+                {/* Trade Activity */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Trade Log */}
+                  <div className="lg:col-span-2 card">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <History className="w-6 h-6 text-primary" />
+                        <h2 className="text-xl font-semibold text-text-primary">Trade Activity</h2>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto max-h-96">
+                      <table className="w-full">
+                        <thead className="sticky top-0 bg-background-primary">
+                          <tr className="border-b border-border">
+                            <th className="text-left py-3 px-4 text-text-secondary font-medium">Time</th>
+                            <th className="text-left py-3 px-4 text-text-secondary font-medium">Action</th>
+                            <th className="text-left py-3 px-4 text-text-secondary font-medium">Details</th>
+                            <th className="text-right py-3 px-4 text-text-secondary font-medium">P&L</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tradeLog.length > 0 ? (
+                            tradeLog.map((entry, idx) => (
+                              <tr key={idx} className="border-b border-border/50 hover:bg-background-hover transition-colors">
+                                <td className="py-3 px-4 text-text-secondary text-sm">
+                                  {formatTradeTime(entry.date, entry.time)}
+                                </td>
+                                <td className="py-3 px-4">
+                                  <span className={`text-sm font-semibold ${
+                                    entry.action?.includes('OPEN')
+                                      ? 'text-success'
+                                      : entry.action?.includes('CLOSE')
+                                      ? 'text-danger'
+                                      : 'text-warning'
+                                  }`}>
+                                    {entry.action}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 text-text-primary text-sm">{entry.details}</td>
+                                <td className="py-3 px-4 text-right">
+                                  <span className={`font-semibold ${
+                                    (entry.pnl || 0) >= 0 ? 'text-success' : 'text-danger'
+                                  }`}>
+                                    {(entry.pnl || 0) >= 0 ? '+' : ''}{formatCurrency(entry.pnl || 0)}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="py-8 text-center text-text-secondary">
+                                No trade activity yet. Trades will appear here as the SPX trader executes.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Best/Worst Trades */}
+                  <div className="space-y-4">
+                    <div className="card">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-text-secondary text-sm">Best Trade</h3>
+                        <TrendingUp className="w-5 h-5 text-success" />
+                      </div>
+                      <p className="text-2xl font-bold text-success">
+                        {bestTrade >= 0 ? '+' : ''}{formatCurrency(bestTrade)}
+                      </p>
+                    </div>
+
+                    <div className="card">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-text-secondary text-sm">Worst Trade</h3>
+                        <TrendingDown className="w-5 h-5 text-danger" />
+                      </div>
+                      <p className="text-2xl font-bold text-danger">
+                        {worstTrade >= 0 ? '+' : ''}{formatCurrency(worstTrade)}
+                      </p>
+                    </div>
+
+                    <div className="card">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-text-secondary text-sm">Total Trades</h3>
+                        <Activity className="w-5 h-5 text-primary" />
+                      </div>
+                      <p className="text-2xl font-bold text-text-primary">{tradeLog.length}</p>
+                    </div>
+                  </div>
+                </div>
 
                 {/* Tax Treatment */}
                 <div className="card">
