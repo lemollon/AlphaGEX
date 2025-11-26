@@ -267,12 +267,23 @@ export default function GammaIntelligence() {
     }
   }
 
-  // Update from WebSocket
+  // Update from WebSocket - backend sends 'market_update' type
   useEffect(() => {
-    if (wsData?.type === 'gamma_update' && wsData.data) {
-      setIntelligence(wsData.data)
+    if (wsData?.type === 'market_update' && wsData.data) {
+      // Map market_update data to intelligence format
+      const data = wsData.data
+      if (data.symbol === symbol) {
+        setIntelligence(prev => prev ? {
+          ...prev,
+          spot_price: data.spot_price || prev.spot_price,
+          net_gex: data.net_gex,
+          flip_point: data.flip_point || prev.flip_point,
+          call_wall: data.call_wall || prev.call_wall,
+          put_wall: data.put_wall || prev.put_wall
+        } : prev)
+      }
     }
-  }, [wsData])
+  }, [wsData, symbol])
 
   const formatNumber = (value: number) => {
     const absValue = Math.abs(value)
