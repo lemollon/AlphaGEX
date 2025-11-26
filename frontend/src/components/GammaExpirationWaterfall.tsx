@@ -374,7 +374,7 @@ export default function GammaExpirationWaterfall({ symbol = 'SPY' }: { symbol?: 
 
       {/* Footer */}
       <div className="mt-4 text-xs text-gray-500 text-center">
-        Current Price: ${data.current_price?.toFixed(2)} | Net GEX: ${(data.net_gex / 1e9).toFixed(2)}B
+        Current Price: ${data.current_price?.toFixed(2) || '--'} | Net GEX: ${data.net_gex ? (data.net_gex / 1e9).toFixed(2) : '--'}B
       </div>
     </div>
   )
