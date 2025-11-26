@@ -20,6 +20,16 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from database_adapter import get_connection
+
+# UNIFIED Data Provider (Tradier primary, Polygon fallback)
+try:
+    from unified_data_provider import get_data_provider, UnifiedDataProvider
+    UNIFIED_DATA_AVAILABLE = True
+    print("✅ Backtester: Unified Data Provider (Tradier) integrated")
+except ImportError:
+    UNIFIED_DATA_AVAILABLE = False
+
+# Legacy Polygon fallback
 try:
     from polygon_data_fetcher import polygon_fetcher
     POLYGON_AVAILABLE = True
