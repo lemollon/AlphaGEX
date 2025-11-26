@@ -6734,6 +6734,16 @@ async def get_backtest_results(strategy_name: str = None, limit: int = 50):
     Returns:
         List of backtest results with full metrics
     """
+    import math
+
+    def safe_round(value, decimals=2, default=0):
+        """Round a value, returning default if inf/nan"""
+        if value is None:
+            return default
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return default
+        return round(value, decimals)
+
     try:
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -6767,16 +6777,16 @@ async def get_backtest_results(strategy_name: str = None, limit: int = 50):
                 'total_trades': row['total_trades'],
                 'winning_trades': row['winning_trades'],
                 'losing_trades': row['losing_trades'],
-                'win_rate': round(row['win_rate'], 1),
-                'avg_win_pct': round(row['avg_win_pct'], 2),
-                'avg_loss_pct': round(row['avg_loss_pct'], 2),
-                'largest_win_pct': round(row['largest_win_pct'], 2),
-                'largest_loss_pct': round(row['largest_loss_pct'], 2),
-                'expectancy_pct': round(row['expectancy_pct'], 2),
-                'total_return_pct': round(row['total_return_pct'], 2),
-                'max_drawdown_pct': round(row['max_drawdown_pct'], 2),
-                'sharpe_ratio': round(row['sharpe_ratio'], 2),
-                'avg_trade_duration_days': round(row['avg_trade_duration_days'], 1)
+                'win_rate': safe_round(row['win_rate'], 1),
+                'avg_win_pct': safe_round(row['avg_win_pct'], 2),
+                'avg_loss_pct': safe_round(row['avg_loss_pct'], 2),
+                'largest_win_pct': safe_round(row['largest_win_pct'], 2),
+                'largest_loss_pct': safe_round(row['largest_loss_pct'], 2),
+                'expectancy_pct': safe_round(row['expectancy_pct'], 2),
+                'total_return_pct': safe_round(row['total_return_pct'], 2),
+                'max_drawdown_pct': safe_round(row['max_drawdown_pct'], 2),
+                'sharpe_ratio': safe_round(row['sharpe_ratio'], 2),
+                'avg_trade_duration_days': safe_round(row['avg_trade_duration_days'], 1)
             })
 
         conn.close()
