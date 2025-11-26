@@ -152,7 +152,29 @@ export default function GammaExpirationTracker() {
     )
   }
 
-  if (!data) return null
+  if (error || !data) {
+    return (
+      <div className="min-h-screen">
+        <Navigation />
+        <main className="pt-16 transition-all duration-300">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="bg-danger/10 border border-danger/30 rounded-lg p-6 text-center">
+              <AlertTriangle className="w-12 h-12 text-danger mx-auto mb-4" />
+              <h2 className="text-xl font-bold text-danger mb-2">Failed to Load Data</h2>
+              <p className="text-text-secondary mb-4">{error || 'No data available'}</p>
+              <button
+                onClick={() => fetchData()}
+                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/80"
+              >
+                <RefreshCw className="w-4 h-4 inline mr-2" />
+                Retry
+              </button>
+            </div>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen">
