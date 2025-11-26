@@ -183,10 +183,10 @@ export default function PsychologyTrapDetection() {
       setHistoricalComparison(data.historical_comparison || null)
       setBacktestStats(data.backtest_stats || null)
 
-      // REMOVED: Auto-fetch supporting data to reduce API calls on page load
-      // Only fetch these when user explicitly refreshes
-      // fetchLiberationSetups()
-      // fetchFalseFloors()
+      // Fetch liberation setups and false floors after main analysis
+      // These are important trading signals that should be visible on page load
+      fetchLiberationSetups()
+      fetchFalseFloors()
 
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to fetch analysis'

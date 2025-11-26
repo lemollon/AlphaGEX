@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { TrendingUp, Target, Activity, Zap, LineChart, Brain, Trophy, AlertCircle, CheckCircle, BarChart3, PieChart } from 'lucide-react'
 import Navigation from '@/components/Navigation'
-import { api } from '@/lib/api'
+import { apiClient } from '@/lib/api'
 
 interface StrikePerformanceData {
   strategy_name: string
@@ -94,13 +94,14 @@ export default function StrategyOptimizer() {
       try {
         setLoading(true)
 
-        // Fetch all data in parallel
+        // Fetch all data in parallel using apiClient
+        const strategyParam = selectedStrategy === 'all' ? undefined : selectedStrategy
         const results = await Promise.allSettled([
-          api.get('/api/optimizer/strikes', { params: { strategy: selectedStrategy === 'all' ? null : selectedStrategy } }),
-          api.get('/api/optimizer/dte', { params: { strategy: selectedStrategy === 'all' ? null : selectedStrategy } }),
-          api.get('/api/optimizer/regime-specific', { params: { strategy: selectedStrategy === 'all' ? null : selectedStrategy } }),
-          api.get('/api/optimizer/greeks', { params: { strategy: selectedStrategy === 'all' ? null : selectedStrategy } }),
-          api.get('/api/optimizer/best-combinations', { params: { strategy: selectedStrategy === 'all' ? null : selectedStrategy } }),
+          apiClient.getStrikePerformance(strategyParam),
+          apiClient.getDTEPerformance(strategyParam),
+          apiClient.getRegimePerformance(strategyParam),
+          apiClient.getGreeksPerformance(strategyParam),
+          apiClient.getBestCombinations(strategyParam),
         ])
 
         // Extract successful results
@@ -140,7 +141,7 @@ export default function StrategyOptimizer() {
   // Fetch live recommendations
   const fetchLiveRecommendations = async () => {
     try {
-      const response = await api.post('/api/optimizer/live-recommendations', {
+      const response = await apiClient.getLiveStrikeRecommendations({
         spot_price: currentSpot,
         vix_current: currentVIX,
         pattern_type: currentPattern
