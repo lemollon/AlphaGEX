@@ -59,48 +59,57 @@ export default function Dashboard() {
   const [performance, setPerformance] = useState<any>(null)
   const { data: wsData, isConnected } = useWebSocket('SPY')
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
+  // Fetch all dashboard data
+  const fetchData = async (showLoading = true) => {
+    try {
+      if (showLoading) setLoading(true)
 
-        const [gexRes, perfRes, positionsRes, equityCurveRes] = await Promise.all([
-          apiClient.getGEX('SPY'),
-          apiClient.getTraderPerformance(),
-          apiClient.getOpenPositions(),
-          apiClient.getEquityCurve(30)
-        ])
+      const [gexRes, perfRes, positionsRes, equityCurveRes] = await Promise.all([
+        apiClient.getGEX('SPY').catch(() => ({ data: { success: false } })),
+        apiClient.getTraderPerformance().catch(() => ({ data: { success: false } })),
+        apiClient.getOpenPositions().catch(() => ({ data: { success: false, data: [] } })),
+        apiClient.getEquityCurve(30).catch(() => ({ data: { success: false, data: [] } }))
+      ])
 
-        if (gexRes.data.success) {
-          setGexData(gexRes.data.data)
-        }
-
-        if (perfRes.data.success) {
-          setPerformance(perfRes.data.data)
-        }
-
-        if (equityCurveRes.data.success && equityCurveRes.data.data.length > 0) {
-          const perfData: LineData[] = equityCurveRes.data.data.map((point: any) => ({
-            time: point.timestamp as any,
-            value: point.equity
-          }))
-          setPerformanceData(perfData)
-        } else {
-          setPerformanceData([])
-        }
-
-        if (positionsRes.data.success) {
-          setPositions(positionsRes.data.data)
-        }
-
-        setLoading(false)
-      } catch (error) {
-        console.error('Failed to fetch dashboard data:', error)
-        setLoading(false)
+      if (gexRes.data.success) {
+        setGexData(gexRes.data.data)
       }
-    }
 
+      if (perfRes.data.success) {
+        setPerformance(perfRes.data.data)
+      }
+
+      if (equityCurveRes.data.success && equityCurveRes.data.data.length > 0) {
+        const perfData: LineData[] = equityCurveRes.data.data.map((point: any) => ({
+          time: point.timestamp as any,
+          value: point.equity
+        }))
+        setPerformanceData(perfData)
+      } else {
+        setPerformanceData([])
+      }
+
+      if (positionsRes.data.success) {
+        setPositions(positionsRes.data.data)
+      }
+
+      setLoading(false)
+    } catch (error) {
+      console.error('Failed to fetch dashboard data:', error)
+      setLoading(false)
+    }
+  }
+
+  // Initial fetch and auto-refresh every 30 seconds
+  useEffect(() => {
     fetchData()
+
+    // Auto-refresh positions, performance, and equity curve every 30 seconds
+    const interval = setInterval(() => {
+      fetchData(false) // Don't show loading spinner for auto-refresh
+    }, 30 * 1000)
+
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
