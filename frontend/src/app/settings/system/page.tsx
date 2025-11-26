@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
-import { Power, PowerOff, PlayCircle, StopCircle, RefreshCw, AlertCircle, CheckCircle, Activity } from 'lucide-react'
+import { Power, PowerOff, PlayCircle, StopCircle, RefreshCw, AlertCircle, CheckCircle, Activity, Database, Wifi, WifiOff, Clock, Zap } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -17,11 +17,32 @@ interface TraderStatus {
   autostart_type?: string
 }
 
+interface DataSourceStatus {
+  tradier: {
+    connected: boolean
+    response_time_ms: number
+    last_price?: number
+    symbol?: string
+    error?: string
+  }
+  polygon: {
+    connected: boolean
+    response_time_ms: number
+    vix_value?: number
+    error?: string
+  }
+  vix_source: string
+  options_source: string
+  timestamp: string
+}
+
 export default function SystemSettings() {
   const [status, setStatus] = useState<TraderStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [dataSourceStatus, setDataSourceStatus] = useState<DataSourceStatus | null>(null)
+  const [dataSourceLoading, setDataSourceLoading] = useState(false)
 
   const fetchStatus = async () => {
     try {
@@ -38,10 +59,45 @@ export default function SystemSettings() {
     }
   }
 
+  const fetchDataSources = async () => {
+    setDataSourceLoading(true)
+    try {
+      const response = await fetch(`${API_URL}/api/test-connections`)
+      const data = await response.json()
+
+      if (data.results) {
+        setDataSourceStatus({
+          tradier: {
+            connected: data.results.trading_volatility?.status === 'connected',
+            response_time_ms: data.results.trading_volatility?.response_time_ms || 0,
+            last_price: data.results.trading_volatility?.sample_data?.spot_price,
+            symbol: data.results.trading_volatility?.test_symbol,
+            error: data.results.trading_volatility?.error
+          },
+          polygon: {
+            connected: data.results.polygon?.status === 'connected',
+            response_time_ms: data.results.polygon?.response_time_ms || 0,
+            vix_value: data.results.polygon?.vix_value,
+            error: data.results.polygon?.error
+          },
+          vix_source: data.results.trading_volatility?.status === 'connected' ? 'Tradier (Real-time)' :
+                      data.results.polygon?.status === 'connected' ? 'Polygon (Fallback)' : 'Default (18.0)',
+          options_source: data.results.trading_volatility?.status === 'connected' ? 'Tradier (Real-time)' : 'Trading Volatility API',
+          timestamp: data.results.timestamp || new Date().toISOString()
+        })
+      }
+    } catch (error) {
+      console.error('Error fetching data sources:', error)
+    } finally {
+      setDataSourceLoading(false)
+    }
+  }
+
   useEffect(() => {
     fetchStatus()
+    fetchDataSources()
 
-    // Auto-refresh every 10 seconds
+    // Auto-refresh every 10 seconds for trader status
     const interval = setInterval(fetchStatus, 10000)
     return () => clearInterval(interval)
   }, [])
@@ -356,6 +412,138 @@ export default function SystemSettings() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Data Sources Section */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <Database className="w-6 h-6 text-purple-500" />
+                  <h2 className="text-2xl font-bold">Data Sources</h2>
+                </div>
+                <button
+                  onClick={fetchDataSources}
+                  disabled={dataSourceLoading}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${dataSourceLoading ? 'animate-spin' : ''}`} />
+                  Test Connections
+                </button>
+              </div>
+
+              {dataSourceStatus ? (
+                <div className="space-y-4">
+                  {/* Active Data Sources */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Zap className="w-4 h-4 text-yellow-400" />
+                        <span className="text-sm text-gray-400">VIX Data Source</span>
+                      </div>
+                      <div className="text-lg font-semibold text-white">{dataSourceStatus.vix_source}</div>
+                    </div>
+                    <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Activity className="w-4 h-4 text-blue-400" />
+                        <span className="text-sm text-gray-400">Options Data Source</span>
+                      </div>
+                      <div className="text-lg font-semibold text-white">{dataSourceStatus.options_source}</div>
+                    </div>
+                  </div>
+
+                  {/* API Status Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Tradier/Trading Volatility API */}
+                    <div className={`border rounded-lg p-4 ${
+                      dataSourceStatus.tradier.connected
+                        ? 'border-green-500/30 bg-green-900/10'
+                        : 'border-red-500/30 bg-red-900/10'
+                    }`}>
+                      <div className="flex items-center gap-2 mb-3">
+                        {dataSourceStatus.tradier.connected ? (
+                          <Wifi className="w-5 h-5 text-green-400" />
+                        ) : (
+                          <WifiOff className="w-5 h-5 text-red-400" />
+                        )}
+                        <span className="font-semibold">Trading Volatility API</span>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Status:</span>
+                          <span className={dataSourceStatus.tradier.connected ? 'text-green-400' : 'text-red-400'}>
+                            {dataSourceStatus.tradier.connected ? 'Connected' : 'Disconnected'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Response Time:</span>
+                          <span>{dataSourceStatus.tradier.response_time_ms}ms</span>
+                        </div>
+                        {dataSourceStatus.tradier.last_price && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">SPY Price:</span>
+                            <span className="text-green-400">${dataSourceStatus.tradier.last_price.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {dataSourceStatus.tradier.error && (
+                          <div className="mt-2 p-2 bg-red-900/20 border border-red-500/30 rounded text-xs text-red-400">
+                            {dataSourceStatus.tradier.error}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Polygon API */}
+                    <div className={`border rounded-lg p-4 ${
+                      dataSourceStatus.polygon.connected
+                        ? 'border-green-500/30 bg-green-900/10'
+                        : 'border-yellow-500/30 bg-yellow-900/10'
+                    }`}>
+                      <div className="flex items-center gap-2 mb-3">
+                        {dataSourceStatus.polygon.connected ? (
+                          <Wifi className="w-5 h-5 text-green-400" />
+                        ) : (
+                          <WifiOff className="w-5 h-5 text-yellow-400" />
+                        )}
+                        <span className="font-semibold">Polygon API (Fallback)</span>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Status:</span>
+                          <span className={dataSourceStatus.polygon.connected ? 'text-green-400' : 'text-yellow-400'}>
+                            {dataSourceStatus.polygon.connected ? 'Connected' : 'Not Configured'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Response Time:</span>
+                          <span>{dataSourceStatus.polygon.response_time_ms}ms</span>
+                        </div>
+                        {dataSourceStatus.polygon.vix_value && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">VIX Value:</span>
+                            <span>{dataSourceStatus.polygon.vix_value.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {dataSourceStatus.polygon.error && (
+                          <div className="mt-2 p-2 bg-yellow-900/20 border border-yellow-500/30 rounded text-xs text-yellow-400">
+                            {dataSourceStatus.polygon.error}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Last Updated */}
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-4">
+                    <Clock className="w-3 h-3" />
+                    <span>Last tested: {new Date(dataSourceStatus.timestamp).toLocaleString()}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-400">
+                  <Database className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>Click "Test Connections" to check data source status</p>
+                </div>
+              )}
             </div>
 
             {/* Info Section */}

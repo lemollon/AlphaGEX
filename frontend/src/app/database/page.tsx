@@ -538,12 +538,70 @@ export default function DatabaseAdminPage() {
           </div>
         )}
 
-        {/* Help Section */}
-        <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-6">
+        {/* Data Collection Guide */}
+        <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/20 border border-purple-500/30 rounded-lg p-6">
           <div className="flex items-start gap-3">
-            <Info className="w-5 h-5 text-blue-400 mt-1 flex-shrink-0" />
-            <div>
-              <h3 className="text-lg font-semibold text-blue-400 mb-2">Database Data Collection</h3>
+            <Info className="w-5 h-5 text-purple-400 mt-1 flex-shrink-0" />
+            <div className="w-full">
+              <h3 className="text-lg font-semibold text-purple-400 mb-4">Data Collection Guide</h3>
+
+              {/* Data Collection Status Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
+                  <h4 className="font-semibold text-white mb-2">Market Data</h4>
+                  <ul className="text-sm text-gray-300 space-y-1">
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                      GEX/Gamma data (real-time)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                      VIX data (Tradier/Polygon)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                      Price data (auto-fetched)
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
+                  <h4 className="font-semibold text-white mb-2">Trading Data</h4>
+                  <ul className="text-sm text-gray-300 space-y-1">
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+                      Autonomous trades (on execution)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+                      Position tracking (auto-updated)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+                      Trade logs (every 5 min scan)
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
+                  <h4 className="font-semibold text-white mb-2">Analytics Data</h4>
+                  <ul className="text-sm text-gray-300 space-y-1">
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-yellow-500 rounded-full"></span>
+                      Psychology patterns (on page visit)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-yellow-500 rounded-full"></span>
+                      Backtest results (on run)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-yellow-500 rounded-full"></span>
+                      AI recommendations (on request)
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
               <div className="text-sm text-gray-300 space-y-2">
                 <p><strong>Empty Tables:</strong> These tables exist but have no data yet. Data collection happens when you use features:</p>
                 <ul className="list-disc list-inside ml-4 space-y-1">
