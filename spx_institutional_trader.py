@@ -103,6 +103,7 @@ class SPXInstitutionalTrader:
             capital: Starting capital (default $100M)
         """
         self.starting_capital = capital
+        self.capital = capital  # Alias for compatibility with test harness
         self.symbol = 'SPX'
         self.multiplier = 100  # $100 per index point
 
