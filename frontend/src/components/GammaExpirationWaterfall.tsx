@@ -3,8 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Calendar, TrendingDown, AlertTriangle, Info, RefreshCw, Target } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine } from 'recharts'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { apiClient } from '@/lib/api'
 
 interface ExpirationData {
   expiration_date: string
@@ -58,14 +57,15 @@ export default function GammaExpirationWaterfall({ symbol = 'SPY' }: { symbol?: 
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`${API_URL}/api/gamma/${symbol}/expiration-waterfall`)
+      const response = await apiClient.getGammaExpirationWaterfall(symbol)
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
+      // Handle both success:true pattern and direct data response
+      if (response.data.success !== false) {
+        const result = response.data.data || response.data
+        setData(result)
+      } else {
+        throw new Error('Failed to load gamma expiration data')
       }
-
-      const result = await response.json()
-      setData(result)
     } catch (err: any) {
       console.error('Error fetching waterfall data:', err)
       setError(err.message || 'Failed to load gamma expiration data')
