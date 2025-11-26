@@ -83,6 +83,24 @@ except ImportError as e:
     TV_API_AVAILABLE = False
     print(f"⚠️ SPX Trader: Trading Volatility API not available: {e}")
 
+# CRITICAL: Import Database Logger for AI Thought Process logging
+try:
+    from autonomous_database_logger import AutonomousDatabaseLogger
+    DB_LOGGER_AVAILABLE = True
+    print("✅ SPX Trader: Database Logger available for AI thought process")
+except ImportError as e:
+    DB_LOGGER_AVAILABLE = False
+    print(f"⚠️ SPX Trader: Database Logger not available: {e}")
+
+# Import AI Reasoning for enhanced thought process
+try:
+    from autonomous_ai_reasoning import get_ai_reasoning
+    AI_REASONING_AVAILABLE = True
+    print("✅ SPX Trader: AI Reasoning Engine available")
+except ImportError as e:
+    AI_REASONING_AVAILABLE = False
+    print(f"⚠️ SPX Trader: AI Reasoning not available: {e}")
+
 
 class SPXInstitutionalTrader:
     """
@@ -141,11 +159,27 @@ class SPXInstitutionalTrader:
             self.regime_classifier = None
             self.iv_history = []
 
+        # CRITICAL: Initialize Database Logger for AI Thought Process
+        if DB_LOGGER_AVAILABLE:
+            self.db_logger = AutonomousDatabaseLogger()
+            self.db_logger.session_id = f"SPX-{self.db_logger.session_id}"
+            print("✅ SPX Trader: Database Logger initialized for AI thought process")
+        else:
+            self.db_logger = None
+
+        # Initialize AI Reasoning Engine
+        if AI_REASONING_AVAILABLE:
+            self.ai_reasoning = get_ai_reasoning()
+            print("✅ SPX Trader: AI Reasoning Engine ready")
+        else:
+            self.ai_reasoning = None
+
         print(f"✅ SPX Institutional Trader initialized")
         print(f"   Capital: ${self.starting_capital:,.0f}")
         print(f"   Max position: ${self.starting_capital * self.max_position_pct:,.0f}")
         print(f"   Max contracts/trade: {self.max_contracts_per_trade}")
         print(f"   Data Source: SPX GEX from Trading Volatility API")
+        print(f"   AI Logging: {'ENABLED' if self.db_logger else 'DISABLED'}")
 
     def _ensure_tables(self):
         """Create database tables for SPX trading"""
@@ -243,8 +277,87 @@ class SPXInstitutionalTrader:
             ON CONFLICT (key) DO NOTHING
         """)
 
+        # SPX Trade Activity table - ALL decisions and actions
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS spx_trade_activity (
+                id SERIAL PRIMARY KEY,
+                activity_date DATE NOT NULL,
+                activity_time TIME NOT NULL,
+                activity_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                action_type VARCHAR(50) NOT NULL,
+                symbol VARCHAR(10) DEFAULT 'SPX',
+                details TEXT,
+                spot_price DECIMAL(10,2),
+                vix_level DECIMAL(8,2),
+                net_gex DECIMAL(20,2),
+                flip_point DECIMAL(10,2),
+                ai_thought_process TEXT,
+                ai_confidence INTEGER,
+                position_id INTEGER,
+                pnl_impact DECIMAL(15,2),
+                success BOOLEAN DEFAULT TRUE,
+                error_message TEXT
+            )
+        """)
+
+        # Create index for efficient queries
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_spx_activity_date
+            ON spx_trade_activity(activity_date DESC)
+        """)
+
         conn.commit()
         conn.close()
+
+    def _log_trade_activity(
+        self,
+        action_type: str,
+        details: str,
+        spot_price: float = None,
+        vix: float = None,
+        net_gex: float = None,
+        flip_point: float = None,
+        ai_thought_process: str = None,
+        ai_confidence: int = None,
+        position_id: int = None,
+        pnl_impact: float = None,
+        success: bool = True,
+        error_message: str = None
+    ):
+        """Log activity to spx_trade_activity table with AI thought process"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            now = datetime.now(CENTRAL_TZ)
+
+            c.execute("""
+                INSERT INTO spx_trade_activity (
+                    activity_date, activity_time, action_type, symbol,
+                    details, spot_price, vix_level, net_gex, flip_point,
+                    ai_thought_process, ai_confidence,
+                    position_id, pnl_impact, success, error_message
+                ) VALUES (%s, %s, %s, 'SPX', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                action_type,
+                details,
+                spot_price,
+                vix,
+                net_gex,
+                flip_point,
+                ai_thought_process,
+                ai_confidence,
+                position_id,
+                pnl_impact,
+                success,
+                error_message
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Failed to log SPX trade activity: {e}")
 
     def get_current_spot(self) -> float:
         """Get current SPX spot price"""
@@ -937,8 +1050,65 @@ REASONING:
 {'='*60}
 """)
 
-            # If STAY_FLAT, return None
+            # Log regime classification to trade activity
+            self._log_trade_activity(
+                action_type='REGIME_CLASSIFICATION',
+                details=f"Action: {regime.recommended_action.value}, "
+                        f"Vol: {regime.volatility_regime.value}, "
+                        f"Gamma: {regime.gamma_regime.value}, "
+                        f"Trend: {regime.trend_regime.value}",
+                spot_price=spot_price,
+                vix=vix,
+                net_gex=net_gex,
+                flip_point=flip_point,
+                ai_thought_process=regime.reasoning,
+                ai_confidence=int(regime.confidence)
+            )
+
+            # If STAY_FLAT, log detailed VIX/GEX context for why no action
             if regime.recommended_action == MarketAction.STAY_FLAT:
+                # Build comprehensive no-action explanation
+                vix_context = []
+                if vix > 25:
+                    vix_context.append(f"VIX elevated at {vix:.1f} (>25) - market stressed")
+                elif vix < 15:
+                    vix_context.append(f"VIX low at {vix:.1f} (<15) - complacency risk")
+                else:
+                    vix_context.append(f"VIX normal at {vix:.1f}")
+
+                gex_context = []
+                if net_gex > 0:
+                    gex_context.append(f"Positive GEX (${net_gex/1e9:.2f}B) - dealers long gamma, dampened moves")
+                else:
+                    gex_context.append(f"Negative GEX (${net_gex/1e9:.2f}B) - dealers short gamma, amplified moves")
+
+                if spot_price > flip_point:
+                    gex_context.append(f"Price ${spot_price:.0f} ABOVE flip ${flip_point:.0f} - call gamma dominates")
+                else:
+                    gex_context.append(f"Price ${spot_price:.0f} BELOW flip ${flip_point:.0f} - put gamma dominates")
+
+                no_action_reason = (
+                    f"STAY_FLAT Decision Explained:\n"
+                    f"VIX Analysis: {' | '.join(vix_context)}\n"
+                    f"GEX Analysis: {' | '.join(gex_context)}\n"
+                    f"Regime: Vol={regime.volatility_regime.value}, Gamma={regime.gamma_regime.value}, "
+                    f"Trend={regime.trend_regime.value}\n"
+                    f"Bars in regime: {regime.bars_in_regime} (waiting for confirmation)\n"
+                    f"Classifier reasoning: {regime.reasoning}"
+                )
+
+                self._log_trade_activity(
+                    action_type='STAY_FLAT',
+                    details=no_action_reason[:500],  # Truncate for details field
+                    spot_price=spot_price,
+                    vix=vix,
+                    net_gex=net_gex,
+                    flip_point=flip_point,
+                    ai_thought_process=no_action_reason,
+                    ai_confidence=int(regime.confidence)
+                )
+
+                print(f"\n📊 VIX/GEX Context for STAY_FLAT:\n{no_action_reason}")
                 return None
 
             # Get strategy params
@@ -1018,6 +1188,11 @@ REASONING:
         conn.close()
 
         if trades_today >= self.max_daily_trades:
+            self._log_trade_activity(
+                action_type='MAX_TRADES_REACHED',
+                details=f"Already at max daily trades ({trades_today}/{self.max_daily_trades})",
+                success=False
+            )
             print(f"⚠️ Already at max daily trades ({trades_today}/{self.max_daily_trades})")
             return None
 
@@ -1025,10 +1200,19 @@ REASONING:
         trade = self.get_unified_regime_decision()
 
         if not trade:
+            # Note: VIX context already logged in get_unified_regime_decision if STAY_FLAT
             print("❌ No trade opportunity found by unified classifier")
             return None
 
         if trade.get('confidence', 0) < 60:
+            self._log_trade_activity(
+                action_type='LOW_CONFIDENCE',
+                details=f"Trade rejected - confidence {trade.get('confidence', 0)}% below 60% threshold",
+                spot_price=trade.get('spot_price'),
+                ai_thought_process=trade.get('reasoning'),
+                ai_confidence=trade.get('confidence', 0),
+                success=False
+            )
             print(f"⚠️ Confidence too low: {trade.get('confidence', 0)}%")
             return None
 
@@ -1048,8 +1232,27 @@ REASONING:
         )
 
         if contracts == 0:
+            self._log_trade_activity(
+                action_type='ZERO_CONTRACTS',
+                details=f"Position sizing returned 0 contracts for {trade['strategy']}",
+                spot_price=spot,
+                ai_thought_process=f"Sizing: {sizing}",
+                ai_confidence=trade.get('confidence', 0),
+                success=False
+            )
             print("❌ Position sizing returned 0 contracts")
             return None
+
+        # Log position sizing decision
+        self._log_trade_activity(
+            action_type='POSITION_SIZING',
+            details=f"Sized {contracts} contracts for {trade['strategy']} @ ${trade['strike']}",
+            spot_price=spot,
+            ai_thought_process=f"Position sizing: {sizing.get('methodology', 'Kelly')} - "
+                              f"Risk: {sizing.get('risk_pct', 'N/A')}%, "
+                              f"Max capital: ${sizing.get('max_position_value', 0):,.0f}",
+            ai_confidence=trade.get('confidence', 0)
+        )
 
         # Get expiration
         exp_date = datetime.now(CENTRAL_TZ) + timedelta(days=7)
@@ -1074,10 +1277,29 @@ REASONING:
         )
 
         if position_id:
+            # Log successful trade execution
+            self._log_trade_activity(
+                action_type='TRADE_EXECUTED',
+                details=f"✅ {trade['action']} {contracts} {trade['option_type'].upper()} @ ${trade['strike']} exp {expiration}",
+                spot_price=spot,
+                ai_thought_process=trade.get('reasoning'),
+                ai_confidence=trade.get('confidence', 0),
+                position_id=position_id
+            )
             print(f"\n✅ SPX TRADE EXECUTED - Position ID: {position_id}")
             print(f"   Strategy: {trade['strategy']}")
             print(f"   {trade['action']} {contracts} x {trade['option_type'].upper()} @ ${trade['strike']}")
             print(f"   Confidence: {trade['confidence']}%")
+        else:
+            self._log_trade_activity(
+                action_type='TRADE_FAILED',
+                details=f"Trade execution failed for {trade['strategy']}",
+                spot_price=spot,
+                ai_thought_process=trade.get('reasoning'),
+                ai_confidence=trade.get('confidence', 0),
+                success=False,
+                error_message="execute_trade returned None"
+            )
 
         return position_id
 
