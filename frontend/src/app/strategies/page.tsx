@@ -77,9 +77,10 @@ export default function StrategyComparisonPage() {
 
   const popularSymbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'TSLA', 'NVDA', 'META', 'AMZN']
 
+  // Fetch data on mount and when symbol changes
   useEffect(() => {
     fetchComparison()
-  }, [])
+  }, [symbol])
 
   const fetchComparison = async () => {
     setLoading(true)

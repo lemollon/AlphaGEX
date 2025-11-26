@@ -69,15 +69,20 @@ export default function AICopilot() {
         gamma_intel: {}
       })
 
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: response.data.data.analysis,
-        timestamp: new Date(),
-        analysis: response.data.data.insights
+      // Safely access response data
+      if (response.data?.success && response.data?.data) {
+        const aiMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: response.data.data.analysis || 'Analysis completed but no detailed response available.',
+          timestamp: new Date(),
+          analysis: response.data.data.insights
+        }
+        setMessages(prev => [...prev, aiMessage])
+      } else {
+        // Handle case where API returns but success is false
+        throw new Error('Analysis service returned no data')
       }
-
-      setMessages(prev => [...prev, aiMessage])
     } catch (error) {
       console.error('Error getting AI response:', error)
 
