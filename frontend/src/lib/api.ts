@@ -115,6 +115,8 @@ export const apiClient = {
     api.get(`/api/gamma/${symbol}/expiration`),
   getGammaProbabilities: (symbol: string, vix?: number, accountSize?: number) =>
     api.get(`/api/gamma/${symbol}/probabilities`, { params: { vix, account_size: accountSize } }),
+  getGammaExpirationWaterfall: (symbol: string) =>
+    api.get(`/api/gamma/${symbol}/expiration-waterfall`),
 
   // AI Copilot
   analyzeMarket: (data: {
@@ -276,6 +278,22 @@ export const apiClient = {
   getVIXSignalHistory: (days?: number) =>
     api.get('/api/vix/signal-history', { params: { days: days || 30 } }),
   getVIXCurrent: () => api.get('/api/vix/current'),
+
+  // Psychology Traps & Analysis
+  getPsychologyCurrentRegime: (symbol: string = 'SPY') =>
+    api.get('/api/psychology/current-regime', { params: { symbol } }),
+  getPsychologyStatistics: () => api.get('/api/psychology/statistics'),
+  getLiberationSetups: () => api.get('/api/psychology/liberation-setups'),
+  getFalseFloors: () => api.get('/api/psychology/false-floors'),
+  getPsychologyNotificationStats: () => api.get('/api/psychology/notifications/stats'),
+  getPsychologyNotificationHistory: (limit: number = 20) =>
+    api.get('/api/psychology/notifications/history', { params: { limit } }),
+  getPsychologyPerformanceOverview: () => api.get('/api/psychology/performance/overview'),
+  getPsychologyPerformancePatterns: () => api.get('/api/psychology/performance/patterns'),
+  getPsychologyPerformanceSignals: () => api.get('/api/psychology/performance/signals'),
+
+  // Backtesting & Smart Recommendations
+  getSmartRecommendations: () => api.get('/api/backtests/smart-recommendations'),
 
   // SPX Institutional Trader
   getSPXStatus: () => api.get('/api/spx/status'),

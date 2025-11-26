@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Target, TrendingUp, AlertCircle, CheckCircle, PlayCircle, ExternalLink } from 'lucide-react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { apiClient } from '@/lib/api'
 
 interface StrategyRecommendation {
   strategy_name: string
@@ -41,10 +40,11 @@ export default function SmartStrategyPicker() {
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`${API_URL}/api/backtests/smart-recommendations`)
+      const response = await apiClient.getSmartRecommendations()
 
-      if (response.ok) {
-        const data = await response.json()
+      if (response.data.success !== false) {
+        // Handle both success:true pattern and direct data response
+        const data = response.data.data || response.data
         setRecommendations(data.recommendations || [])
         setMarketConditions(data.market_conditions || null)
       } else {

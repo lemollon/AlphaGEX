@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { AlertTriangle, TrendingDown, Target, Percent, BarChart3, RefreshCw, Info } from 'lucide-react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { apiClient } from '@/lib/api'
 
 interface SuckerStat {
   scenario_type: string
@@ -36,14 +35,15 @@ export default function SuckerStatsDashboard() {
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`${API_URL}/api/psychology/statistics`)
+      const response = await apiClient.getPsychologyStatistics()
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
+      // Handle both success:true pattern and direct data response
+      if (response.data.success !== false) {
+        const data = response.data.data || response.data
+        setStats(data)
+      } else {
+        throw new Error('Failed to load statistics')
       }
-
-      const data = await response.json()
-      setStats(data)
     } catch (err: any) {
       console.error('Error fetching sucker stats:', err)
       setError(err.message || 'Failed to load statistics')
