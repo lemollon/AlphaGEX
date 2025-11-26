@@ -29,6 +29,8 @@ from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, Bla
 from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
 from config_and_database import STRATEGIES, init_database, MM_STATES
 from database_adapter import get_connection
+import psycopg2
+import psycopg2.extras
 
 # Import probability calculator (NEW - Phase 2 Self-Learning)
 from probability_calculator import ProbabilityCalculator
