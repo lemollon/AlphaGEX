@@ -27,6 +27,9 @@ try:
     TRADIER_AVAILABLE = True
 except ImportError:
     logger.warning("Tradier not available - install tradier_data_fetcher")
+    # Define fallback types for type hints
+    OptionContract = None
+    OptionChain = None
 
 try:
     from polygon_helper import PolygonHelper

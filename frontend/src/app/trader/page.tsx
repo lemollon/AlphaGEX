@@ -46,8 +46,8 @@ interface Trade {
   id: string
   timestamp: string
   symbol: string
-  action: 'BUY' | 'SELL' | 'LONG_STRADDLE' | 'IRON_CONDOR' | string
-  type: 'CALL' | 'PUT' | 'straddle' | 'iron_condor' | string
+  action: 'BUY' | 'SELL' | 'LONG_STRADDLE' | 'IRON_CONDOR' | 'BULL_PUT_SPREAD' | 'BEAR_CALL_SPREAD' | 'CASH_SECURED_PUT' | string
+  type: 'CALL' | 'PUT' | 'straddle' | 'iron_condor' | 'bull_put_spread' | 'bear_call_spread' | 'csp' | string
   strike: number
   quantity: number
   price: number
