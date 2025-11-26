@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { Bell, BellOff, AlertCircle, Zap, Target, TrendingDown, X, Settings, History } from 'lucide-react'
+import { apiClient } from '@/lib/api'
 
 interface Notification {
   id: number
@@ -67,10 +68,9 @@ export default function PsychologyNotifications() {
 
   const fetchStats = async () => {
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const response = await fetch(`${backendUrl}/api/psychology/notifications/stats`)
-      const data = await response.json()
-      if (data.success) {
+      const response = await apiClient.getPsychologyNotificationStats()
+      const data = response.data.data || response.data
+      if (data.success !== false) {
         setStats(data.stats)
       }
     } catch (error) {
@@ -80,11 +80,10 @@ export default function PsychologyNotifications() {
 
   const fetchHistory = async () => {
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const response = await fetch(`${backendUrl}/api/psychology/notifications/history?limit=20`)
-      const data = await response.json()
-      if (data.success) {
-        setNotifications(data.notifications.reverse()) // Newest first
+      const response = await apiClient.getPsychologyNotificationHistory(20)
+      const data = response.data.data || response.data
+      if (data.success !== false) {
+        setNotifications((data.notifications || []).reverse()) // Newest first
       }
     } catch (error) {
       console.error('Failed to fetch notification history:', error)

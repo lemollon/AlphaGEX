@@ -16,8 +16,7 @@ import RedFlagsSection from '@/components/RedFlagsSection'
 import DealerMechanicsDeepDive from '@/components/DealerMechanicsDeepDive'
 import { apiClient } from '@/lib/api'
 
-// Get API URL from environment variable (same as rest of the app)
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// API_URL kept for potential direct fetch fallback only
 
 interface RSIAnalysis {
   score: number
@@ -161,35 +160,28 @@ export default function PsychologyTrapDetection() {
       forceRefresh ? setIsRefreshing(true) : setLoading(true)
       setError(null)
 
-      const response = await fetch(`${API_URL}/api/psychology/current-regime?symbol=${symbol}`)
+      const response = await apiClient.getPsychologyCurrentRegime(symbol)
 
-      if (!response.ok) {
-        // Get detailed error from API
-        let errorDetail = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorData = await response.json()
-          errorDetail = errorData.detail?.message || errorData.detail || errorData.message || errorDetail
-        } catch {
-          // Response not JSON, use status text
-        }
-        throw new Error(errorDetail)
+      // Handle response - apiClient returns axios response
+      if (response.data) {
+        const data = response.data.data || response.data
+        setAnalysis(data.analysis)
+        setTradingGuide(data.trading_guide || null)
+        setAiRecommendation(data.ai_recommendation || null)
+        setMarketStatus(data.market_status || null)
+        setHistoricalComparison(data.historical_comparison || null)
+        setBacktestStats(data.backtest_stats || null)
+
+        // Fetch liberation setups and false floors after main analysis
+        // These are important trading signals that should be visible on page load
+        fetchLiberationSetups()
+        fetchFalseFloors()
+      } else {
+        throw new Error('No data received from API')
       }
 
-      const data = await response.json()
-      setAnalysis(data.analysis)
-      setTradingGuide(data.trading_guide || null)
-      setAiRecommendation(data.ai_recommendation || null)
-      setMarketStatus(data.market_status || null)
-      setHistoricalComparison(data.historical_comparison || null)
-      setBacktestStats(data.backtest_stats || null)
-
-      // Fetch liberation setups and false floors after main analysis
-      // These are important trading signals that should be visible on page load
-      fetchLiberationSetups()
-      fetchFalseFloors()
-
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to fetch analysis'
+    } catch (err: any) {
+      const errorMsg = err.message || 'Failed to fetch analysis'
       console.error('Psychology API Error:', errorMsg, err)
       setError(errorMsg)
     } finally {
@@ -201,9 +193,9 @@ export default function PsychologyTrapDetection() {
   // Fetch liberation setups
   const fetchLiberationSetups = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/api/psychology/liberation-setups`)
-      if (response.ok) {
-        const data = await response.json()
+      const response = await apiClient.getLiberationSetups()
+      if (response.data) {
+        const data = response.data.data || response.data
         setLiberationSetups(data.liberation_setups || [])
       }
     } catch (err) {
@@ -214,9 +206,9 @@ export default function PsychologyTrapDetection() {
   // Fetch false floors
   const fetchFalseFloors = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/api/psychology/false-floors`)
-      if (response.ok) {
-        const data = await response.json()
+      const response = await apiClient.getFalseFloors()
+      if (response.data) {
+        const data = response.data.data || response.data
         setFalseFloors(data.false_floors || [])
       }
     } catch (err) {

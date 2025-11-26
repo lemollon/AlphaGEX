@@ -4,8 +4,7 @@ import { useState, useEffect } from 'react'
 import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle, Calendar, Clock } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import SmartStrategyPicker from '@/components/SmartStrategyPicker'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { apiClient } from '@/lib/api'
 
 interface BacktestResult {
   id: number
@@ -49,10 +48,10 @@ export default function BacktestingPage() {
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`${API_URL}/api/backtests/results`)
+      const response = await apiClient.getBacktestResults()
 
-      if (response.ok) {
-        const data = await response.json()
+      if (response.data) {
+        const data = response.data.data || response.data
         setResults(data.results || [])
       } else {
         setError('Failed to load backtest results')
@@ -65,33 +64,22 @@ export default function BacktestingPage() {
     }
   }
 
-  const runBacktests = async () => {
+  const runBacktestsHandler = async () => {
     setRunning(true)
     setRunError(null)
 
     try {
-      const response = await fetch(`${API_URL}/api/backtests/run`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          symbol: 'SPY',
-          start_date: '2023-01-01',
-          end_date: new Date().toISOString().split('T')[0]
-        }),
-      })
+      const response = await apiClient.runBacktests({})
 
-      const data = await response.json()
-
-      if (response.ok) {
+      if (response.data.success !== false) {
         await fetchResults()
       } else {
+        const data = response.data
         setRunError(data.error || data.message || 'Failed to run backtests')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to run backtests:', err)
-      setRunError('Failed to connect to API')
+      setRunError(err.message || 'Failed to connect to API')
     } finally {
       setRunning(false)
     }
@@ -159,7 +147,7 @@ export default function BacktestingPage() {
               </p>
             </div>
             <button
-              onClick={runBacktests}
+              onClick={runBacktestsHandler}
               disabled={running}
               className="px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
