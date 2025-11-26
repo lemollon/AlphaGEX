@@ -454,21 +454,32 @@ class UnifiedDataProvider:
     # ==================== VIX ====================
 
     def get_vix(self) -> float:
-        """Get current VIX value"""
-        quote = self.get_quote('VIX')
-        if quote:
-            return quote.price
-
-        # VIX might need special handling
+        """Get current VIX value from Tradier or Polygon"""
+        # Try multiple VIX symbol formats for Tradier
         if self._tradier:
+            vix_symbols = ['VIX', '$VIX.X', 'VIXW', '$VIX']
+            for symbol in vix_symbols:
+                try:
+                    data = self._tradier.get_quote(symbol)
+                    if data:
+                        price = float(data.get('last', 0) or data.get('close', 0) or 0)
+                        if price > 0:
+                            logger.info(f"VIX from Tradier ({symbol}): {price}")
+                            return price
+                except Exception as e:
+                    continue
+
+        # Fallback to Polygon
+        if self._polygon:
             try:
-                # Try $VIX.X format for Tradier
-                data = self._tradier.get_quote('$VIX.X')
-                if data:
-                    return float(data.get('last', 0) or 0)
+                price = self._polygon.get_current_price('^VIX')
+                if price and price > 0:
+                    logger.info(f"VIX from Polygon: {price}")
+                    return price
             except:
                 pass
 
+        logger.warning("VIX unavailable from all sources")
         return 0.0
 
     # ==================== ACCOUNT (Tradier only) ====================

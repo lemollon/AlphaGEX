@@ -35,6 +35,15 @@ import psycopg2.extras
 # Import probability calculator (NEW - Phase 2 Self-Learning)
 from probability_calculator import ProbabilityCalculator
 
+# UNIFIED Data Provider (Tradier primary, Polygon fallback)
+try:
+    from unified_data_provider import get_data_provider, get_quote, get_price, get_vix
+    UNIFIED_DATA_AVAILABLE = True
+    print("✅ Backend: Unified Data Provider (Tradier) integrated")
+except ImportError as e:
+    UNIFIED_DATA_AVAILABLE = False
+    print(f"⚠️ Backend: Unified Data Provider not available: {e}")
+
 # Initialize database schema on startup
 print("Initializing database schema...")
 init_database()
@@ -107,11 +116,11 @@ _rsi_cache_ttl = 300  # 5 minutes in seconds
 
 def fetch_vix_with_metadata(polygon_key: str = None) -> dict:
     """
-    Fetch VIX from Polygon.io with metadata about data source and quality.
+    Fetch VIX with metadata - Tradier (live) or Polygon (fallback).
 
     Returns dict with:
     - value: VIX value (float)
-    - source: 'polygon' | 'default'
+    - source: 'tradier' | 'polygon' | 'default'
     - is_live: True if from real API, False if default
     - timestamp: ISO timestamp of data
     - error: Error message if fetch failed (optional)
@@ -123,6 +132,19 @@ def fetch_vix_with_metadata(polygon_key: str = None) -> dict:
         'timestamp': datetime.now().isoformat()
     }
 
+    # Try Tradier first (real-time)
+    if UNIFIED_DATA_AVAILABLE:
+        try:
+            vix_value = get_vix()
+            if vix_value and vix_value > 0:
+                vix_data['value'] = float(vix_value)
+                vix_data['source'] = 'tradier'
+                vix_data['is_live'] = True
+                return vix_data
+        except Exception as e:
+            print(f"Tradier VIX fetch failed: {e}")
+
+    # Fallback to Polygon
     if not polygon_key:
         vix_data['error'] = 'No Polygon.io API key configured'
         return vix_data
@@ -142,7 +164,6 @@ def fetch_vix_with_metadata(polygon_key: str = None) -> dict:
                 vix_data['value'] = float(data['results'][0]['c'])
                 vix_data['source'] = 'polygon'
                 vix_data['is_live'] = True
-                # No error field when successful
                 if 'error' in vix_data:
                     del vix_data['error']
             else:
