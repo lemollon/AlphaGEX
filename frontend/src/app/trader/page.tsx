@@ -174,19 +174,19 @@ export default function AutonomousTrader() {
     if (wsData && (wsData.type === 'trader_update' || wsData.type === 'rest_update' || wsData.type === 'connected')) {
       // Update performance from WebSocket
       if (wsData.performance) {
-        const perf = wsData.performance
+        const perf = wsData.performance as any  // Allow flexible property access
         setPerformance(prev => ({
           ...prev,
-          total_pnl: perf.net_pnl || perf.total_pnl || 0,
+          total_pnl: perf.net_pnl || 0,
           today_pnl: perf.today_pnl || 0,
           win_rate: perf.win_rate || 0,
           total_trades: perf.total_trades || 0,
           winning_trades: perf.winning_trades || 0,
           losing_trades: perf.losing_trades || 0,
           starting_capital: perf.starting_capital || 1000000,
-          current_value: perf.current_equity || perf.current_value || (perf.starting_capital || 1000000) + (perf.net_pnl || 0),
-          realized_pnl: perf.total_realized_pnl || perf.realized_pnl || 0,
-          unrealized_pnl: perf.total_unrealized_pnl || perf.unrealized_pnl || 0,
+          current_value: perf.current_equity || (perf.starting_capital || 1000000) + (perf.net_pnl || 0),
+          realized_pnl: perf.total_realized_pnl || 0,
+          unrealized_pnl: perf.total_unrealized_pnl || 0,
           return_pct: perf.return_pct || 0,
         }))
       }
@@ -1192,6 +1192,69 @@ export default function AutonomousTrader() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
+        ) : closedTrades.length > 0 ? (
+          // Build chart from closed trades if equity curve is empty
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={(() => {
+                  // Sort trades by exit date and build cumulative P&L
+                  const sortedTrades = [...closedTrades].sort((a, b) =>
+                    new Date(a.exit_date || 0).getTime() - new Date(b.exit_date || 0).getTime()
+                  )
+                  let cumPnl = 0
+                  return sortedTrades.map((trade, idx) => {
+                    cumPnl += (trade.realized_pnl || 0)
+                    return {
+                      date: trade.exit_date || `Trade ${idx + 1}`,
+                      pnl: cumPnl,
+                      equity: 1000000 + cumPnl,
+                      dailyPnl: trade.realized_pnl || 0
+                    }
+                  })
+                })()}
+                margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient id="colorPnlAlt" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor={closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  stroke="#6b7280"
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  stroke="#6b7280"
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) => `$${(value / 1000).toFixed(0)}K`}
+                />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number, name: string) => [
+                    `$${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
+                    name === 'pnl' ? 'Cumulative P&L' : 'Daily P&L'
+                  ]}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="pnl"
+                  stroke={closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? "#10b981" : "#ef4444"}
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorPnlAlt)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         ) : (
           <div className="h-80 flex items-center justify-center">
             <div className="text-center">
@@ -1203,31 +1266,48 @@ export default function AutonomousTrader() {
         )}
 
         {/* Chart Summary Stats */}
-        {equityCurve.length > 0 && (
+        {(equityCurve.length > 0 || closedTrades.length > 0) && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-border">
             <div className="text-center">
-              <p className="text-text-muted text-xs mb-1">Period Start</p>
+              <p className="text-text-muted text-xs mb-1">First Trade</p>
               <p className="text-text-primary font-semibold">
-                {equityCurve[0]?.date || 'N/A'}
+                {equityCurve.length > 0
+                  ? equityCurve[0]?.date
+                  : closedTrades.length > 0
+                    ? [...closedTrades].sort((a, b) => new Date(a.exit_date || 0).getTime() - new Date(b.exit_date || 0).getTime())[0]?.exit_date
+                    : 'N/A'
+                }
               </p>
             </div>
             <div className="text-center">
-              <p className="text-text-muted text-xs mb-1">Period End</p>
+              <p className="text-text-muted text-xs mb-1">Last Trade</p>
               <p className="text-text-primary font-semibold">
-                {equityCurve[equityCurve.length - 1]?.date || 'N/A'}
+                {equityCurve.length > 0
+                  ? equityCurve[equityCurve.length - 1]?.date
+                  : closedTrades.length > 0
+                    ? [...closedTrades].sort((a, b) => new Date(b.exit_date || 0).getTime() - new Date(a.exit_date || 0).getTime())[0]?.exit_date
+                    : 'N/A'
+                }
               </p>
             </div>
             <div className="text-center">
               <p className="text-text-muted text-xs mb-1">Total P&L</p>
-              <p className={`font-bold ${equityCurve[equityCurve.length - 1]?.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
-                {equityCurve[equityCurve.length - 1]?.pnl >= 0 ? '+' : ''}
-                {formatCurrency(equityCurve[equityCurve.length - 1]?.pnl || 0)}
+              <p className={`font-bold ${
+                (equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl : closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0)) >= 0
+                  ? 'text-success' : 'text-danger'
+              }`}>
+                {(equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl : closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0)) >= 0 ? '+' : ''}
+                {formatCurrency(equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl || 0 : closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0))}
               </p>
             </div>
             <div className="text-center">
               <p className="text-text-muted text-xs mb-1">Current Equity</p>
               <p className="text-text-primary font-bold">
-                {formatCurrency(equityCurve[equityCurve.length - 1]?.equity || 0)}
+                {formatCurrency(
+                  equityCurve.length > 0
+                    ? equityCurve[equityCurve.length - 1]?.equity || 0
+                    : 1000000 + closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0)
+                )}
               </p>
             </div>
           </div>
@@ -1370,7 +1450,7 @@ export default function AutonomousTrader() {
         </div>
       </div>
 
-      {/* Closed Trades Section */}
+      {/* Complete Trade History - Full Transparency */}
       <div className="card">
         <div
           className="flex items-center justify-between cursor-pointer"
@@ -1378,67 +1458,175 @@ export default function AutonomousTrader() {
         >
           <div className="flex items-center gap-3">
             <History className="w-6 h-6 text-primary" />
-            <h2 className="text-xl font-semibold text-text-primary">Closed Trades</h2>
+            <h2 className="text-xl font-semibold text-text-primary">Complete Trade History</h2>
             <span className="px-2 py-1 bg-primary/20 text-primary text-xs font-semibold rounded-full">
-              {closedTrades.length} trades
+              {closedTrades.length} closed trades
             </span>
+            {closedTrades.length > 0 && (
+              <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0
+                  ? 'bg-success/20 text-success'
+                  : 'bg-danger/20 text-danger'
+              }`}>
+                Total: {closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? '+' : ''}
+                {formatCurrency(closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0))}
+              </span>
+            )}
           </div>
-          <button className="p-2 hover:bg-background-hover rounded-lg transition-colors">
-            {showClosedTrades ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-          </button>
+          <div className="flex items-center gap-2">
+            {closedTrades.length > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // Export trade history to CSV
+                  const headers = ['Exit Date', 'Exit Time', 'Entry Date', 'Strategy', 'Symbol', 'Strike', 'Type', 'Contracts', 'Entry Price', 'Exit Price', 'P&L $', 'P&L %', 'Exit Reason', 'Hold Duration (min)']
+                  const rows = closedTrades.map(t => [
+                    t.exit_date || '',
+                    t.exit_time || '',
+                    t.entry_date || '',
+                    t.strategy || '',
+                    t.symbol || 'SPY',
+                    t.strike || '',
+                    t.option_type || '',
+                    t.contracts || 1,
+                    t.entry_price || 0,
+                    t.exit_price || 0,
+                    t.realized_pnl || 0,
+                    t.realized_pnl_pct || 0,
+                    t.exit_reason || '',
+                    t.hold_duration_minutes || ''
+                  ])
+                  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+                  const blob = new Blob([csv], { type: 'text/csv' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `trade_history_${new Date().toISOString().split('T')[0]}.csv`
+                  a.click()
+                }}
+                className="px-3 py-1 bg-primary/20 text-primary hover:bg-primary/30 text-sm rounded-lg transition-colors"
+              >
+                Export CSV
+              </button>
+            )}
+            <button className="p-2 hover:bg-background-hover rounded-lg transition-colors">
+              {showClosedTrades ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
 
         {showClosedTrades && (
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4">
             {closedTrades.length > 0 ? (
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-3 px-4 text-text-secondary font-medium">Date</th>
-                    <th className="text-left py-3 px-4 text-text-secondary font-medium">Strategy</th>
-                    <th className="text-left py-3 px-4 text-text-secondary font-medium">Contract</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Entry</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">Exit</th>
-                    <th className="text-right py-3 px-4 text-text-secondary font-medium">P&L</th>
-                    <th className="text-center py-3 px-4 text-text-secondary font-medium">Result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {closedTrades.map((trade, idx) => {
-                    const pnl = trade.realized_pnl || trade.pnl || 0
-                    const isWin = pnl > 0
-                    return (
-                      <tr key={idx} className="border-b border-border/50 hover:bg-background-hover transition-colors">
-                        <td className="py-3 px-4 text-text-secondary text-sm">
-                          {trade.closed_date || trade.exit_date || 'N/A'}
-                        </td>
-                        <td className="py-3 px-4 text-text-primary font-semibold text-sm">
-                          {trade.strategy || 'Unknown'}
-                        </td>
-                        <td className="py-3 px-4 text-text-primary text-sm">
-                          {trade.symbol} ${trade.strike}{trade.option_type?.charAt(0) || 'C'}
-                        </td>
-                        <td className="py-3 px-4 text-right text-text-primary">
-                          {formatCurrency(Math.abs(trade.entry_price || 0))}
-                        </td>
-                        <td className="py-3 px-4 text-right text-text-primary">
-                          {formatCurrency(Math.abs(trade.exit_price || 0))}
-                        </td>
-                        <td className={`py-3 px-4 text-right font-bold ${isWin ? 'text-success' : 'text-danger'}`}>
-                          {isWin ? '+' : ''}{formatCurrency(pnl)}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                            isWin ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
-                          }`}>
-                            {isWin ? 'WIN' : 'LOSS'}
-                          </span>
-                        </td>
+              <>
+                {/* Summary Stats */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4 p-4 bg-background-hover rounded-lg">
+                  <div>
+                    <p className="text-text-muted text-xs">Total Trades</p>
+                    <p className="text-text-primary font-bold text-lg">{closedTrades.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-text-muted text-xs">Winning Trades</p>
+                    <p className="text-success font-bold text-lg">
+                      {closedTrades.filter(t => (t.realized_pnl || 0) > 0).length}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-text-muted text-xs">Losing Trades</p>
+                    <p className="text-danger font-bold text-lg">
+                      {closedTrades.filter(t => (t.realized_pnl || 0) <= 0).length}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-text-muted text-xs">Win Rate</p>
+                    <p className="text-text-primary font-bold text-lg">
+                      {((closedTrades.filter(t => (t.realized_pnl || 0) > 0).length / closedTrades.length) * 100).toFixed(1)}%
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-text-muted text-xs">Total P&L</p>
+                    <p className={`font-bold text-lg ${
+                      closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? 'text-success' : 'text-danger'
+                    }`}>
+                      {closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? '+' : ''}
+                      {formatCurrency(closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0))}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Scrollable Trade Table */}
+                <div className="overflow-x-auto max-h-96 overflow-y-auto border border-border rounded-lg">
+                  <table className="w-full">
+                    <thead className="sticky top-0 bg-background-card z-10">
+                      <tr className="border-b border-border">
+                        <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs">Exit Date</th>
+                        <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs">Entry Date</th>
+                        <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs">Strategy</th>
+                        <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs">Contract</th>
+                        <th className="text-center py-3 px-3 text-text-secondary font-medium text-xs">Qty</th>
+                        <th className="text-right py-3 px-3 text-text-secondary font-medium text-xs">Entry $</th>
+                        <th className="text-right py-3 px-3 text-text-secondary font-medium text-xs">Exit $</th>
+                        <th className="text-right py-3 px-3 text-text-secondary font-medium text-xs">P&L $</th>
+                        <th className="text-right py-3 px-3 text-text-secondary font-medium text-xs">P&L %</th>
+                        <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs">Exit Reason</th>
+                        <th className="text-center py-3 px-3 text-text-secondary font-medium text-xs">Result</th>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {closedTrades.map((trade, idx) => {
+                        const pnl = trade.realized_pnl || 0
+                        const pnlPct = trade.realized_pnl_pct || 0
+                        const isWin = pnl > 0
+                        return (
+                          <tr key={idx} className="border-b border-border/50 hover:bg-background-hover transition-colors">
+                            <td className="py-2 px-3 text-text-secondary text-xs">
+                              {trade.exit_date || 'N/A'}
+                              {trade.exit_time && <span className="text-text-muted ml-1">{trade.exit_time}</span>}
+                            </td>
+                            <td className="py-2 px-3 text-text-muted text-xs">
+                              {trade.entry_date || 'N/A'}
+                            </td>
+                            <td className="py-2 px-3 text-text-primary font-semibold text-xs">
+                              {trade.strategy || 'Unknown'}
+                            </td>
+                            <td className="py-2 px-3 text-text-primary text-xs">
+                              {trade.symbol || 'SPY'} ${trade.strike}{trade.option_type?.charAt(0) || 'C'}
+                            </td>
+                            <td className="py-2 px-3 text-center text-text-primary text-xs">
+                              {trade.contracts || 1}
+                            </td>
+                            <td className="py-2 px-3 text-right text-text-primary text-xs">
+                              ${Math.abs(trade.entry_price || 0).toFixed(2)}
+                            </td>
+                            <td className="py-2 px-3 text-right text-text-primary text-xs">
+                              ${Math.abs(trade.exit_price || 0).toFixed(2)}
+                            </td>
+                            <td className={`py-2 px-3 text-right font-bold text-xs ${isWin ? 'text-success' : 'text-danger'}`}>
+                              {isWin ? '+' : ''}${pnl.toFixed(2)}
+                            </td>
+                            <td className={`py-2 px-3 text-right text-xs ${isWin ? 'text-success' : 'text-danger'}`}>
+                              {isWin ? '+' : ''}{pnlPct.toFixed(1)}%
+                            </td>
+                            <td className="py-2 px-3 text-text-muted text-xs max-w-32 truncate" title={trade.exit_reason || ''}>
+                              {trade.exit_reason || '-'}
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                isWin ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
+                              }`}>
+                                {isWin ? 'WIN' : 'LOSS'}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-text-muted mt-2 text-center">
+                  Scroll to see all trades • Export CSV for full data analysis
+                </p>
+              </>
             ) : (
               <div className="text-center py-8 text-text-secondary">
                 <History className="w-10 h-10 text-text-muted mx-auto mb-2" />
