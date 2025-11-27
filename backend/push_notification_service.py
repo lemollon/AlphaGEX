@@ -189,7 +189,7 @@ class PushNotificationService:
             conn = get_connection()
             c = conn.cursor()
 
-            c.execute('DELETE FROM push_subscriptions WHERE endpoint = ?', (endpoint,))
+            c.execute('DELETE FROM push_subscriptions WHERE endpoint = %s', (endpoint,))
 
             conn.commit()
             rows_affected = c.rowcount
