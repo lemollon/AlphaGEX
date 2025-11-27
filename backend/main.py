@@ -3395,6 +3395,37 @@ async def get_trader_status():
         live_status = trader.get_live_status()
         mode = trader.get_config('mode') if trader else 'paper'
 
+        # Get actual strategy count and today's trades from database
+        strategies_active = 0
+        total_trades_today = 0
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Count active strategies (those with enabled=true or not in config)
+            cursor.execute("""
+                SELECT COUNT(DISTINCT strategy) FROM (
+                    SELECT strategy FROM autonomous_open_positions
+                    UNION
+                    SELECT strategy FROM autonomous_closed_trades
+                ) s
+            """)
+            strategies_active = cursor.fetchone()[0] or 0
+
+            # Count today's trades
+            today = datetime.now().strftime('%Y-%m-%d')
+            cursor.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM autonomous_open_positions WHERE entry_date = %s) +
+                    (SELECT COUNT(*) FROM autonomous_closed_trades WHERE entry_date = %s)
+            """, (today, today))
+            total_trades_today = cursor.fetchone()[0] or 0
+
+            conn.close()
+        except Exception as db_error:
+            print(f"Error getting trader metrics: {db_error}")
+
         return {
             "success": True,
             "data": {
@@ -3406,8 +3437,8 @@ async def get_trader_status():
                 "last_decision": live_status.get('last_decision'),
                 "last_check": live_status.get('timestamp', datetime.now().isoformat()),
                 "next_check": live_status.get('next_check_time'),
-                "strategies_active": 2,  # TODO: Get from trader config
-                "total_trades_today": 0  # TODO: Calculate from database
+                "strategies_active": strategies_active,
+                "total_trades_today": total_trades_today
             }
         }
     except Exception as e:
@@ -3681,6 +3712,9 @@ async def get_trader_trades(limit: int = 10):
             "message": "Trader not configured",
             "data": []
         }
+
+    # Validate and cap limit to prevent abuse
+    limit = max(1, min(limit, 100))
 
     try:
         import pandas as pd
@@ -4383,6 +4417,298 @@ async def get_strategy_configs():
     except Exception as e:
         print(f"Error getting strategy configs: {e}")
         return {"success": False, "data": {}}
+
+# ============== AUTONOMOUS TRADER ADVANCED ENDPOINTS ==============
+
+@app.get("/api/autonomous/logs")
+async def get_autonomous_logs(limit: int = 50, log_type: str = None):
+    """Get autonomous trader decision logs"""
+    if not trader_available:
+        return {"success": False, "message": "Trader not configured", "data": []}
+
+    try:
+        import pandas as pd
+        conn = get_connection()
+
+        query = """
+            SELECT id, activity_date, activity_time, action_type, symbol, details,
+                   position_id, pnl_impact, success, error_message, created_at
+            FROM autonomous_trade_activity
+            ORDER BY activity_date DESC, activity_time DESC
+            LIMIT %s
+        """
+        logs = pd.read_sql_query(query, conn, params=(limit,))
+        conn.close()
+
+        log_list = []
+        for _, log in logs.iterrows():
+            log_list.append({
+                "id": int(log['id']) if log['id'] else None,
+                "log_type": log['action_type'],
+                "timestamp": f"{log['activity_date']}T{log['activity_time']}",
+                "symbol": log['symbol'],
+                "details": log['details'],
+                "position_id": log['position_id'],
+                "pnl_impact": float(log['pnl_impact']) if log['pnl_impact'] else 0,
+                "success": bool(log['success']),
+                "error_message": log['error_message']
+            })
+
+        return {"success": True, "data": log_list}
+    except Exception as e:
+        print(f"Error getting autonomous logs: {e}")
+        return {"success": False, "data": [], "error": str(e)}
+
+@app.get("/api/autonomous/competition/leaderboard")
+async def get_competition_leaderboard():
+    """Get strategy competition leaderboard"""
+    if not trader_available:
+        return {"success": False, "message": "Trader not configured", "data": []}
+
+    try:
+        import pandas as pd
+        conn = get_connection()
+
+        # Get strategy performance aggregated from trades
+        query = """
+            WITH strategy_stats AS (
+                SELECT
+                    strategy as strategy_name,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(realized_pnl) as avg_pnl,
+                    MIN(exit_date) as first_trade,
+                    MAX(exit_date) as last_trade
+                FROM autonomous_closed_trades
+                GROUP BY strategy
+            )
+            SELECT
+                strategy_name,
+                total_trades,
+                winning_trades,
+                CASE WHEN total_trades > 0 THEN winning_trades::float / total_trades ELSE 0 END as win_rate,
+                COALESCE(total_pnl, 0) as total_pnl,
+                COALESCE(avg_pnl, 0) as avg_pnl,
+                5000 as starting_capital,
+                5000 + COALESCE(total_pnl, 0) as current_capital,
+                0 as sharpe_ratio,
+                first_trade,
+                last_trade
+            FROM strategy_stats
+            ORDER BY total_pnl DESC
+        """
+        strategies = pd.read_sql_query(query, conn)
+        conn.close()
+
+        leaderboard = []
+        for idx, row in strategies.iterrows():
+            leaderboard.append({
+                "rank": idx + 1,
+                "strategy_id": row['strategy_name'].lower().replace(' ', '_'),
+                "strategy_name": row['strategy_name'],
+                "total_trades": int(row['total_trades']),
+                "winning_trades": int(row['winning_trades']),
+                "win_rate": float(row['win_rate']),
+                "total_pnl": float(row['total_pnl']),
+                "avg_pnl": float(row['avg_pnl']),
+                "starting_capital": float(row['starting_capital']),
+                "current_capital": float(row['current_capital']),
+                "sharpe_ratio": float(row['sharpe_ratio'])
+            })
+
+        return {"success": True, "data": leaderboard}
+    except Exception as e:
+        print(f"Error getting competition leaderboard: {e}")
+        return {"success": False, "data": [], "error": str(e)}
+
+@app.get("/api/autonomous/backtests/all-patterns")
+async def get_all_pattern_backtests(lookback_days: int = 90):
+    """Get backtest results for all patterns"""
+    if not trader_available:
+        return {"success": False, "message": "Trader not configured", "data": []}
+
+    try:
+        import pandas as pd
+        from datetime import datetime, timedelta
+        conn = get_connection()
+
+        start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+
+        # Get pattern performance from closed trades
+        query = """
+            SELECT
+                strategy as pattern,
+                COUNT(*) as total_signals,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_signals,
+                CASE WHEN COUNT(*) > 0 THEN
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*) * 100
+                ELSE 0 END as win_rate,
+                AVG(realized_pnl_pct) as expectancy,
+                SUM(realized_pnl) as total_pnl
+            FROM autonomous_closed_trades
+            WHERE exit_date >= %s
+            GROUP BY strategy
+            ORDER BY win_rate DESC
+        """
+        patterns = pd.read_sql_query(query, conn, params=(start_date,))
+        conn.close()
+
+        results = []
+        for _, row in patterns.iterrows():
+            results.append({
+                "pattern": row['pattern'],
+                "total_signals": int(row['total_signals']),
+                "winning_signals": int(row['winning_signals']),
+                "win_rate": float(row['win_rate']) if row['win_rate'] else 0,
+                "expectancy": float(row['expectancy']) if row['expectancy'] else 0,
+                "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0
+            })
+
+        return {"success": True, "data": results}
+    except Exception as e:
+        print(f"Error getting pattern backtests: {e}")
+        return {"success": False, "data": [], "error": str(e)}
+
+@app.get("/api/autonomous/risk/status")
+async def get_risk_status():
+    """Get current risk management status"""
+    if not trader_available:
+        return {"success": False, "message": "Trader not configured", "data": None}
+
+    try:
+        import pandas as pd
+        from datetime import datetime
+        conn = get_connection()
+
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # Get today's P&L
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0) as today_pnl
+            FROM autonomous_closed_trades
+            WHERE exit_date = %s
+        """, (today,))
+        today_pnl = cursor.fetchone()[0] or 0
+
+        # Get open position exposure
+        cursor.execute("""
+            SELECT
+                COUNT(*) as open_positions,
+                COALESCE(SUM(entry_price * contracts * 100), 0) as total_exposure,
+                COALESCE(SUM(unrealized_pnl), 0) as unrealized_pnl
+            FROM autonomous_open_positions
+        """)
+        pos_data = cursor.fetchone()
+        open_positions = pos_data[0] or 0
+        total_exposure = pos_data[1] or 0
+        unrealized_pnl = pos_data[2] or 0
+
+        # Get max drawdown from equity snapshots
+        cursor.execute("""
+            SELECT COALESCE(MAX(max_drawdown_pct), 0) as max_dd
+            FROM autonomous_equity_snapshots
+        """)
+        max_dd = cursor.fetchone()[0] or 0
+
+        conn.close()
+
+        # Calculate risk metrics
+        starting_capital = 5000
+        daily_loss_limit = -500  # $500 daily loss limit
+        position_limit = 5000  # Max position size
+
+        return {
+            "success": True,
+            "data": {
+                "daily_pnl": float(today_pnl),
+                "daily_loss_limit": daily_loss_limit,
+                "daily_loss_pct": (today_pnl / starting_capital * 100) if starting_capital > 0 else 0,
+                "is_daily_limit_hit": today_pnl <= daily_loss_limit,
+                "open_positions": open_positions,
+                "total_exposure": float(total_exposure),
+                "max_position_size": position_limit,
+                "exposure_pct": (total_exposure / starting_capital * 100) if starting_capital > 0 else 0,
+                "unrealized_pnl": float(unrealized_pnl),
+                "max_drawdown_pct": float(max_dd),
+                "risk_score": min(100, max(0, 100 - abs(max_dd) * 2))  # Simple risk score
+            }
+        }
+    except Exception as e:
+        print(f"Error getting risk status: {e}")
+        return {"success": False, "data": None, "error": str(e)}
+
+@app.get("/api/autonomous/risk/metrics")
+async def get_risk_metrics(days: int = 30):
+    """Get historical risk metrics"""
+    if not trader_available:
+        return {"success": False, "message": "Trader not configured", "data": []}
+
+    try:
+        import pandas as pd
+        from datetime import datetime, timedelta
+        conn = get_connection()
+
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+
+        query = """
+            SELECT
+                snapshot_date as date,
+                max_drawdown_pct,
+                daily_pnl,
+                total_return_pct,
+                sharpe_ratio,
+                win_rate
+            FROM autonomous_equity_snapshots
+            WHERE snapshot_date >= %s
+            ORDER BY snapshot_date ASC
+        """
+        metrics = pd.read_sql_query(query, conn, params=(start_date,))
+        conn.close()
+
+        result = []
+        for _, row in metrics.iterrows():
+            result.append({
+                "date": str(row['date']),
+                "max_drawdown_pct": float(row['max_drawdown_pct']) if row['max_drawdown_pct'] else 0,
+                "daily_pnl": float(row['daily_pnl']) if row['daily_pnl'] else 0,
+                "total_return_pct": float(row['total_return_pct']) if row['total_return_pct'] else 0,
+                "sharpe_ratio": float(row['sharpe_ratio']) if row['sharpe_ratio'] else 0,
+                "win_rate": float(row['win_rate']) if row['win_rate'] else 0
+            })
+
+        return {"success": True, "data": result}
+    except Exception as e:
+        print(f"Error getting risk metrics: {e}")
+        return {"success": False, "data": [], "error": str(e)}
+
+@app.get("/api/autonomous/ml/model-status")
+async def get_ml_model_status():
+    """Get ML model training status"""
+    # ML model is not yet implemented - return placeholder data
+    return {
+        "success": True,
+        "data": {
+            "is_trained": False,
+            "accuracy": 0,
+            "training_samples": 0,
+            "last_trained": None,
+            "features_used": [],
+            "model_version": "0.0.0",
+            "status": "Not implemented - ML features coming soon"
+        }
+    }
+
+@app.get("/api/autonomous/ml/predictions/recent")
+async def get_recent_ml_predictions(limit: int = 10):
+    """Get recent ML predictions"""
+    # ML predictions not yet implemented - return empty list
+    return {
+        "success": True,
+        "data": [],
+        "message": "ML predictions not yet implemented"
+    }
 
 @app.get("/api/strategies/compare")
 async def compare_all_strategies(symbol: str = "SPY"):

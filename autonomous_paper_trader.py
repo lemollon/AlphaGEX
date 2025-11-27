@@ -3020,7 +3020,7 @@ This trade ensures we're always active in the market"""
         now = datetime.now(CENTRAL_TZ)
 
         # Insert into NEW autonomous_open_positions table with RETURNING for PostgreSQL
-        # Include theoretical pricing columns (Black-Scholes)
+        # Include theoretical pricing columns (Black-Scholes) and Greeks
         c.execute("""
             INSERT INTO autonomous_open_positions (
                 symbol, strategy, action, entry_date, entry_time, strike, option_type,
@@ -3029,9 +3029,10 @@ This trade ensures we're always active in the market"""
                 unrealized_pnl_pct, confidence, gex_regime, entry_net_gex, entry_flip_point,
                 trade_reasoning, contract_symbol,
                 theoretical_price, theoretical_bid, theoretical_ask, recommended_entry,
-                price_adjustment, price_adjustment_pct, is_delayed, data_confidence
+                price_adjustment, price_adjustment_pct, is_delayed, data_confidence,
+                entry_iv, entry_delta, current_iv, current_delta
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
         """, (
             trade['symbol'],
@@ -3065,7 +3066,12 @@ This trade ensures we're always active in the market"""
             option_data.get('price_adjustment'),
             option_data.get('price_adjustment_pct'),
             option_data.get('is_delayed', False),
-            option_data.get('confidence', 'unknown')
+            option_data.get('confidence', 'unknown'),
+            # Greeks - capture at entry
+            option_data.get('iv') or option_data.get('implied_volatility'),
+            option_data.get('delta'),
+            option_data.get('iv') or option_data.get('implied_volatility'),  # Current starts same as entry
+            option_data.get('delta')  # Current starts same as entry
         ))
 
         # Get the inserted position ID (PostgreSQL RETURNING)

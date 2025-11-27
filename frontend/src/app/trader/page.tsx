@@ -537,23 +537,73 @@ export default function AutonomousTrader() {
   }
 
   const downloadTradeHistory = () => {
-    if (tradeLog.length === 0) {
+    // Export comprehensive trade data from recentTrades (includes all fields)
+    const exportData = recentTrades.length > 0 ? recentTrades : []
+
+    if (exportData.length === 0 && tradeLog.length === 0) {
       alert('No trade history to export')
       return
     }
 
+    // If we have recentTrades, export comprehensive data
+    if (exportData.length > 0) {
+      const csvContent = [
+        ['Date/Time', 'Symbol', 'Strategy', 'Action', 'Strike', 'Type', 'Contracts', 'Entry Price', 'Current Price', 'P&L ($)', 'P&L (%)', 'Status', 'Entry IV', 'Entry Delta', 'GEX Regime', 'Entry Net GEX', 'Expiration'],
+        ...exportData.map(trade => {
+          const formattedDateTime = trade.timestamp
+            ? new Date(trade.timestamp).toLocaleString('en-US', { timeZone: 'America/Chicago' })
+            : 'N/A'
+          const pnlPct = trade.price > 0 ? ((trade.pnl || 0) / (trade.price * (trade.quantity || 1) * 100) * 100) : 0
+
+          return [
+            formattedDateTime,
+            trade.symbol || 'SPY',
+            trade.strategy || 'N/A',
+            trade.action || 'N/A',
+            trade.strike || 0,
+            trade.type || 'N/A',
+            trade.quantity || 1,
+            (trade.price || 0).toFixed(2),
+            (trade.current_price || trade.price || 0).toFixed(2),
+            (trade.pnl || 0).toFixed(2),
+            pnlPct.toFixed(2),
+            trade.status || 'N/A',
+            trade.entry_iv ? (trade.entry_iv * 100).toFixed(2) + '%' : 'N/A',
+            trade.entry_delta ? trade.entry_delta.toFixed(4) : 'N/A',
+            trade.gex_regime || 'N/A',
+            trade.entry_net_gex ? `$${(trade.entry_net_gex / 1e9).toFixed(2)}B` : 'N/A',
+            trade.expiration_date || 'N/A'
+          ].map(val => `"${val}"`)  // Quote all values to handle commas
+        })
+      ]
+        .map(row => row.join(','))
+        .join('\n')
+
+      const blob = new Blob([csvContent], { type: 'text/csv' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `trades-export-${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      return
+    }
+
+    // Fallback to trade activity log if no recentTrades
     const csvContent = [
       ['Date/Time (Central)', 'Action', 'Details', 'P&L'],
       ...tradeLog.map(trade => {
         const datetime = trade.date && trade.time ? `${trade.date}T${trade.time}` : null
         const formattedDateTime = datetime
           ? new Date(datetime).toLocaleString('en-US', { timeZone: 'America/Chicago' })
-          : 'Invalid Date'
+          : 'N/A'
 
         return [
-          formattedDateTime,
-          trade.action,
-          trade.details,
+          `"${formattedDateTime}"`,
+          `"${trade.action}"`,
+          `"${trade.details}"`,
           trade.pnl.toFixed(2)
         ]
       })
@@ -565,7 +615,7 @@ export default function AutonomousTrader() {
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `trade-history-${new Date().toISOString().split('T')[0]}.csv`
+    a.download = `trade-activity-${new Date().toISOString().split('T')[0]}.csv`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
