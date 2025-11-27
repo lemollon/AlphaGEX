@@ -1091,6 +1091,16 @@ class AutonomousPaperTrader:
 
         # VIX STRESS FACTOR: Real-time VIX-based position reduction
         # CRITICAL: This matches SPX trader logic for consistency
+        #
+        # NOTE: Trader VIX thresholds (22/28/35) are MORE CONSERVATIVE than
+        # unified_config.py thresholds (20/30/40). This is INTENTIONAL.
+        # Traders trigger position reduction EARLIER for safety.
+        #
+        # Threshold Comparison:
+        #   Trader: 22 (elevated), 28 (high), 35 (extreme)
+        #   Config: 20 (elevated), 30 (high), 40 (extreme)
+        #
+        # See tests/test_vix_configuration.py for validation of this design.
         current_vix = self._get_vix()
         vix_stress_factor = 1.0
         vix_stress_level = 'normal'
