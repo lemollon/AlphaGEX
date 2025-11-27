@@ -24,7 +24,7 @@ class RiskManager:
     """Enterprise-grade risk management for autonomous trading"""
 
     # Default starting capital for fallback when DB unavailable
-    DEFAULT_STARTING_CAPITAL = 5000.0
+    DEFAULT_STARTING_CAPITAL = 1000000.0
 
     def __init__(self):
         self.max_drawdown_pct = 15.0  # 15% max drawdown
