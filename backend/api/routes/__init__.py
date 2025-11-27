@@ -12,6 +12,9 @@ from . import backtest_routes
 from . import database_routes
 from . import gex_routes
 from . import gamma_routes
+from . import optimizer_routes
+from . import ai_routes
+from . import probability_routes
 
 __all__ = [
     'vix_routes',
@@ -23,4 +26,7 @@ __all__ = [
     'database_routes',
     'gex_routes',
     'gamma_routes',
+    'optimizer_routes',
+    'ai_routes',
+    'probability_routes',
 ]
