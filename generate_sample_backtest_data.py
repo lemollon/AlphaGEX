@@ -11,9 +11,8 @@ Run this once to populate the database with sample data.
 Replace with real backtests when Polygon API is available.
 """
 
-import sqlite3
 from datetime import datetime, timedelta
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 # Sample backtest data - realistic performance metrics
 sample_strategies = [
@@ -258,7 +257,7 @@ sample_strategies = [
 def generate_sample_data():
     """Generate and insert sample backtest data"""
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     c = conn.cursor()
 
     # Clear existing data
@@ -303,7 +302,7 @@ def generate_sample_data():
                 expectancy_pct, total_return_pct,
                 max_drawdown_pct, sharpe_ratio,
                 avg_trade_duration_days
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
             timestamp,
             strategy['strategy_name'],
@@ -346,7 +345,7 @@ def generate_sample_data():
         LIMIT 3
     ''')
 
-    print(f"\n🏆 Top 3 Strategies by Expectancy:")
+    print(f"\n Top 3 Strategies by Expectancy:")
     for row in c.fetchall():
         print(f"  {row[0]}: {row[1]:.1f}% WR, {row[2]:.2f}% Exp, {row[3]:.2f}% Return")
 

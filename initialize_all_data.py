@@ -16,26 +16,20 @@ Usage:
     python initialize_all_data.py --days 30 # Initialize with 30 days of history
 """
 
-import sqlite3
 import argparse
 from datetime import datetime, timedelta
 from typing import Dict, List
 import random
 import sys
 
-from config_and_database import DB_PATH
+from database_adapter import get_connection
+
 
 class DataInitializer:
     """Initializes all database tables with data"""
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
-        self.conn = sqlite3.connect(db_path, timeout=30.0)
-
-        # Enable WAL mode for concurrent access
-        self.conn.execute('PRAGMA journal_mode=WAL')
-        self.conn.execute('PRAGMA synchronous=NORMAL')
-
+    def __init__(self):
+        self.conn = get_connection()
         self._ensure_schema_fixes()
 
     def _ensure_schema_fixes(self):
@@ -45,13 +39,13 @@ class DataInitializer:
         # Check and fix forward_magnets table
         try:
             c.execute("SELECT timestamp FROM forward_magnets LIMIT 1")
-        except sqlite3.OperationalError:
+        except Exception:
             # Table exists but timestamp column is missing
             print("Fixing forward_magnets schema...")
             c.execute("DROP TABLE IF EXISTS forward_magnets")
             c.execute('''
                 CREATE TABLE forward_magnets (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     timestamp TEXT NOT NULL,
                     symbol TEXT NOT NULL,
                     strike REAL NOT NULL,
@@ -66,12 +60,12 @@ class DataInitializer:
         # Check and fix gamma_expiration_timeline table
         try:
             c.execute("SELECT timestamp FROM gamma_expiration_timeline LIMIT 1")
-        except sqlite3.OperationalError:
+        except Exception:
             print("Fixing gamma_expiration_timeline schema...")
             c.execute("DROP TABLE IF EXISTS gamma_expiration_timeline")
             c.execute('''
                 CREATE TABLE gamma_expiration_timeline (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     timestamp TEXT NOT NULL,
                     symbol TEXT NOT NULL,
                     expiration TEXT NOT NULL,
@@ -86,7 +80,7 @@ class DataInitializer:
 
     def populate_recommendations(self, days: int = 7):
         """Generate AI-style recommendations"""
-        print(f"\n📋 Generating {days} days of recommendations...")
+        print(f"\n Generating {days} days of recommendations...")
 
         c = self.conn.cursor()
 
@@ -138,7 +132,7 @@ class DataInitializer:
                         entry_price, target_price, stop_price,
                         option_strike, option_type, dte,
                         reasoning, mm_behavior, outcome, pnl
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''', (
                     timestamp.strftime('%Y-%m-%d %H:%M:%S'),
                     'SPY',
@@ -163,7 +157,7 @@ class DataInitializer:
 
     def populate_oi_snapshots(self, days: int = 30):
         """Generate historical OI snapshots"""
-        print(f"\n📸 Generating {days} days of OI snapshots...")
+        print(f"\n Generating {days} days of OI snapshots...")
 
         c = self.conn.cursor()
 
@@ -188,7 +182,7 @@ class DataInitializer:
                         INSERT INTO historical_open_interest (
                             date, symbol, strike, expiration_date,
                             call_oi, put_oi
-                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
                     ''', (
                         snapshot_date.strftime('%Y-%m-%d'),
                         symbol,
@@ -205,7 +199,7 @@ class DataInitializer:
 
     def populate_forward_magnets(self):
         """Generate forward magnet data"""
-        print(f"\n🧲 Generating forward magnets...")
+        print(f"\n Generating forward magnets...")
 
         c = self.conn.cursor()
 
@@ -230,7 +224,7 @@ class DataInitializer:
                     INSERT INTO forward_magnets (
                         timestamp, symbol, strike, expiration,
                         magnet_strength, distance_pct, oi_total, direction
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ''', (
                     timestamp,
                     symbol,
@@ -249,7 +243,7 @@ class DataInitializer:
 
     def populate_gamma_expiration_timeline(self):
         """Generate gamma expiration timeline"""
-        print(f"\n📅 Generating gamma expiration timeline...")
+        print(f"\n Generating gamma expiration timeline...")
 
         c = self.conn.cursor()
 
@@ -282,7 +276,7 @@ class DataInitializer:
                     INSERT INTO gamma_expiration_timeline (
                         timestamp, symbol, expiration, dte,
                         gamma_amount, percentage_of_total
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
                 ''', (
                     timestamp,
                     symbol,
@@ -299,7 +293,7 @@ class DataInitializer:
 
     def populate_performance_metrics(self):
         """Generate performance metrics"""
-        print(f"\n📈 Generating performance metrics...")
+        print(f"\n Generating performance metrics...")
 
         c = self.conn.cursor()
 
@@ -329,7 +323,7 @@ class DataInitializer:
                     date, total_trades, winning_trades, losing_trades,
                     total_pnl, win_rate, avg_winner, avg_loser,
                     sharpe_ratio, max_drawdown
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ''', (
                 datetime.now().date().strftime('%Y-%m-%d'),
                 total,
@@ -354,9 +348,9 @@ class DataInitializer:
     def run_full_initialization(self, days: int = 30):
         """Run complete data initialization"""
         print("="*70)
-        print("🚀 COMPREHENSIVE DATA INITIALIZATION")
+        print(" COMPREHENSIVE DATA INITIALIZATION")
         print("="*70)
-        print(f"Database: {self.db_path}")
+        print("Database: PostgreSQL via DATABASE_URL")
         print(f"History Days: {days}")
         print("="*70)
 
@@ -407,7 +401,7 @@ class DataInitializer:
             'gex_history'
         ]
 
-        print("\n📊 Final Database State:")
+        print("\n Final Database State:")
         for table in tables:
             try:
                 c.execute(f'SELECT COUNT(*) FROM {table}')

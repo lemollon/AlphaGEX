@@ -104,7 +104,7 @@ class StrategyOptimizerAgent:
                         start_date,
                         end_date
                     FROM backtest_results
-                    WHERE strategy_name LIKE ?
+                    WHERE strategy_name LIKE %s
                     ORDER BY timestamp DESC
                     LIMIT 5
                 """, (f'%{query}%',))
@@ -153,7 +153,7 @@ class StrategyOptimizerAgent:
                     price_change_5d
                 FROM regime_signals
                 WHERE signal_correct = 1
-                  AND primary_regime_type LIKE ?
+                  AND primary_regime_type LIKE %s
                 ORDER BY price_change_1d DESC
                 LIMIT 20
             """, (f'%{strategy_name}%',))
@@ -201,7 +201,7 @@ class StrategyOptimizerAgent:
                     price_change_5d
                 FROM regime_signals
                 WHERE signal_correct = 0
-                  AND primary_regime_type LIKE ?
+                  AND primary_regime_type LIKE %s
                 ORDER BY price_change_1d ASC
                 LIMIT 20
             """, (f'%{strategy_name}%',))
@@ -259,7 +259,7 @@ class StrategyOptimizerAgent:
                         AVG(confidence_score) as avg_confidence
                     FROM regime_signals
                     WHERE signal_correct IS NOT NULL
-                      AND primary_regime_type LIKE ?
+                      AND primary_regime_type LIKE %s
                     GROUP BY primary_regime_type
                 """, (f'%{pattern}%',))
 
@@ -326,14 +326,14 @@ class StrategyOptimizerAgent:
         try:
             recommendation = json.loads(recommendation_json)
 
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             cursor = conn.cursor()
 
-            # Create recommendations table if not exists
+            # Create recommendations table if not exists (PostgreSQL syntax)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS ai_recommendations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     strategy_name TEXT,
                     recommendation TEXT,
                     reasoning TEXT,
@@ -347,7 +347,7 @@ class StrategyOptimizerAgent:
             cursor.execute("""
                 INSERT INTO ai_recommendations (
                     strategy_name, recommendation, reasoning, expected_improvement
-                ) VALUES (?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s)
             """, (
                 recommendation.get('strategy'),
                 recommendation.get('recommendation'),
@@ -397,7 +397,7 @@ class StrategyOptimizerAgent:
                         AVG(delta) as avg_delta,
                         AVG(dte) as avg_dte
                     FROM strike_performance
-                    WHERE strategy_name LIKE ?
+                    WHERE strategy_name LIKE %s
                     GROUP BY strategy_name, moneyness, strike_distance, vix_regime
                     HAVING total_trades >= 3
                     ORDER BY win_rate DESC, avg_pnl_pct DESC
@@ -476,7 +476,7 @@ class StrategyOptimizerAgent:
                         AVG(theta_at_entry) as avg_theta,
                         SUM(CASE WHEN held_to_expiration = 1 THEN 1 ELSE 0 END) as held_to_exp
                     FROM dte_performance
-                    WHERE strategy_name LIKE ?
+                    WHERE strategy_name LIKE %s
                     GROUP BY strategy_name, dte_bucket, pattern_type
                     HAVING total_trades >= 3
                     ORDER BY win_rate DESC, avg_pnl_pct DESC
@@ -551,7 +551,7 @@ class StrategyOptimizerAgent:
                         AVG(entry_credit) as avg_credit,
                         AVG(pnl_dollars) as avg_profit_dollars
                     FROM spread_width_performance
-                    WHERE strategy_name LIKE ?
+                    WHERE strategy_name LIKE %s
                     GROUP BY strategy_name, spread_type, call_width, put_width
                     HAVING total_trades >= 3
                     ORDER BY win_rate DESC, avg_pnl_pct DESC
@@ -627,7 +627,7 @@ class StrategyOptimizerAgent:
                         AVG(entry_delta) as avg_delta,
                         AVG(entry_theta) as avg_theta
                     FROM greeks_performance
-                    WHERE strategy_name LIKE ?
+                    WHERE strategy_name LIKE %s
                     GROUP BY strategy_name, delta_target, theta_strategy, position_type
                     HAVING total_trades >= 3
                     ORDER BY win_rate DESC, avg_pnl_pct DESC
@@ -704,7 +704,7 @@ class StrategyOptimizerAgent:
                         MIN(pnl_pct) as worst_trade,
                         AVG(vix_current) as avg_vix
                     FROM strike_performance
-                    WHERE strategy_name LIKE ?
+                    WHERE strategy_name LIKE %s
                     GROUP BY strategy_name, vix_regime, gamma_regime, pattern_type, moneyness
                     HAVING total_trades >= 3
                     ORDER BY win_rate DESC, avg_pnl_pct DESC
@@ -783,7 +783,7 @@ class StrategyOptimizerAgent:
                     FROM strike_performance sp
                     LEFT JOIN dte_performance dp ON sp.strategy_name = dp.strategy_name
                         AND sp.timestamp = dp.timestamp
-                    WHERE sp.strategy_name LIKE ?
+                    WHERE sp.strategy_name LIKE %s
                     GROUP BY sp.strategy_name, sp.vix_regime, sp.pattern_type, dp.dte_bucket, sp.moneyness
                     HAVING total_trades >= 5 AND win_rate >= 60
                     ORDER BY win_rate DESC, total_trades DESC, avg_pnl_pct DESC

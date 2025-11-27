@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Quick script to check backtest data availability"""
 
-import sqlite3
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 from datetime import datetime, timedelta
 
-conn = sqlite3.connect(DB_PATH)
+conn = get_connection()
 c = conn.cursor()
 
 print("=" * 60)
@@ -34,11 +33,11 @@ else:
 
 # Check recent autonomous trader activity
 print("\n2. AUTONOMOUS TRADER ACTIVITY:")
-c.execute("SELECT COUNT(*) FROM autonomous_trader_logs WHERE timestamp >= datetime('now', '-7 days')")
+c.execute("SELECT COUNT(*) FROM autonomous_trader_logs WHERE timestamp >= NOW() - INTERVAL '7 days'")
 recent_actions = c.fetchone()[0]
 print(f"   Actions in last 7 days: {recent_actions}")
 
-c.execute("SELECT COUNT(*) FROM positions WHERE opened_at >= datetime('now', '-7 days')")
+c.execute("SELECT COUNT(*) FROM positions WHERE opened_at >= NOW() - INTERVAL '7 days'")
 recent_trades = c.fetchone()[0]
 print(f"   Trades in last 7 days: {recent_trades}")
 
@@ -47,7 +46,7 @@ print("\n3. CHECKING REGIME LOGGING:")
 c.execute("""
     SELECT log_type, COUNT(*)
     FROM autonomous_trader_logs
-    WHERE timestamp >= datetime('now', '-7 days')
+    WHERE timestamp >= NOW() - INTERVAL '7 days'
     GROUP BY log_type
     ORDER BY COUNT(*) DESC
     LIMIT 5

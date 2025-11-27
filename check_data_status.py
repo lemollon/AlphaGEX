@@ -3,7 +3,6 @@
 Quick script to check real data collection status
 """
 
-import sqlite3
 import os
 import sys
 from datetime import datetime, timedelta
@@ -12,8 +11,7 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Database path - always in backend directory
-DB_PATH = Path(__file__).parent / 'backend' / 'gex_copilot.db'
+from database_adapter import get_connection
 
 def check_status():
     """Check if real data is being collected"""
@@ -39,11 +37,12 @@ def check_status():
     print()
 
     # Check database
-    if not os.path.exists(DB_PATH):
-        print(f"❌ Database not found at {DB_PATH}")
+    try:
+        conn = get_connection()
+    except Exception as e:
+        print(f"❌ Database connection failed: {e}")
         return
 
-    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     # Tables to check
@@ -69,16 +68,23 @@ def check_status():
             total_rows += count
 
             # Get most recent entry
-            c.execute(f'SELECT MAX(timestamp) FROM {table} WHERE timestamp IS NOT NULL LIMIT 1')
-            latest = c.fetchone()[0]
+            try:
+                c.execute(f'SELECT MAX(timestamp) FROM {table}')
+                latest = c.fetchone()[0]
+            except:
+                latest = None
 
             if count > 0:
                 has_any_data = True
                 age = ""
                 if latest:
                     try:
-                        latest_dt = datetime.fromisoformat(latest.replace('Z', '+00:00'))
-                        diff = datetime.now() - latest_dt
+                        if hasattr(latest, 'isoformat'):
+                            latest_dt = latest
+                        else:
+                            latest_dt = datetime.fromisoformat(str(latest).replace('Z', '+00:00'))
+
+                        diff = datetime.now() - latest_dt.replace(tzinfo=None) if latest_dt.tzinfo else datetime.now() - latest_dt
 
                         if diff.total_seconds() < 3600:
                             age = f"(latest: {int(diff.total_seconds()/60)} min ago)"

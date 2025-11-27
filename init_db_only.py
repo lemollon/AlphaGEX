@@ -3,13 +3,13 @@
 Initialize main database schema only
 """
 import sys
-import sqlite3
-from config_and_database import init_database, DB_PATH
+from config_and_database import init_database
+from database_adapter import get_connection
 
 print("=" * 80)
 print("INITIALIZING ALPHAGEX DATABASE")
 print("=" * 80)
-print(f"Database: {DB_PATH}")
+print("Database: PostgreSQL via DATABASE_URL")
 print()
 
 # Initialize main database schema
@@ -25,14 +25,14 @@ except Exception as e:
 
 # Now create autonomous trader tables manually
 print("\nCreating autonomous trader tables...")
-conn = sqlite3.connect(DB_PATH)
+conn = get_connection()
 c = conn.cursor()
 
 try:
-    # Positions table
+    # Positions table (PostgreSQL syntax)
     c.execute("""
         CREATE TABLE IF NOT EXISTS autonomous_positions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             symbol TEXT NOT NULL,
             strategy TEXT NOT NULL,
             action TEXT NOT NULL,
@@ -67,7 +67,7 @@ try:
     # Trade log
     c.execute("""
         CREATE TABLE IF NOT EXISTS autonomous_trade_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             date TEXT NOT NULL,
             time TEXT NOT NULL,
             action TEXT NOT NULL,
@@ -105,7 +105,7 @@ try:
         from datetime import datetime
         c.execute("""
             INSERT INTO autonomous_live_status (id, timestamp, status, current_action, is_working)
-            VALUES (1, ?, 'INITIALIZED', 'System ready', 1)
+            VALUES (1, %s, 'INITIALIZED', 'System ready', 1)
         """, (datetime.now().isoformat(),))
 
     # Initialize config if first run
@@ -114,7 +114,7 @@ try:
 
     if not result:
         starting_capital = 1000000
-        c.execute("INSERT INTO autonomous_config (key, value) VALUES ('capital', ?)", (str(starting_capital),))
+        c.execute("INSERT INTO autonomous_config (key, value) VALUES ('capital', %s)", (str(starting_capital),))
         c.execute("INSERT INTO autonomous_config (key, value) VALUES ('initialized', 'true')")
         c.execute("INSERT INTO autonomous_config (key, value) VALUES ('auto_execute', 'true')")
         c.execute("INSERT INTO autonomous_config (key, value) VALUES ('last_trade_date', '')")
@@ -133,13 +133,18 @@ except Exception as e:
 
 # Verify tables
 cursor = conn.cursor()
-cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
+cursor.execute("""
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+    ORDER BY table_name
+""")
 tables = cursor.fetchall()
 conn.close()
 
 print(f"\n✅ Database has {len(tables)} tables:")
 for table in tables:
-    print(f"   • {table[0]}")
+    print(f"   - {table[0]}")
 
 print("\n" + "=" * 80)
 print("✅ DATABASE INITIALIZATION COMPLETE!")

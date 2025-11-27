@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database Query Helper for AlphaGEX SQLite Database
+Database Query Helper for AlphaGEX PostgreSQL Database
 
 Usage:
     python query_database.py                    # Show all tables and counts
@@ -9,21 +9,10 @@ Usage:
     python query_database.py --query "SELECT * FROM regime_signals LIMIT 5"  # Custom query
 """
 
-import sqlite3
 import sys
 import argparse
-from pathlib import Path
 import json
-
-DB_PATH = Path(__file__).parent / 'gex_copilot.db'
-
-
-def get_connection():
-    """Get database connection"""
-    if not DB_PATH.exists():
-        print(f"❌ Database not found at {DB_PATH}")
-        sys.exit(1)
-    return sqlite3.connect(DB_PATH)
+from database_adapter import get_connection
 
 
 def show_all_tables():
@@ -31,11 +20,16 @@ def show_all_tables():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    cursor.execute("""
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+        ORDER BY table_name
+    """)
     tables = cursor.fetchall()
 
     print("=" * 100)
-    print(f"DATABASE: {DB_PATH}")
+    print("DATABASE: PostgreSQL via DATABASE_URL")
     print(f"TOTAL TABLES: {len(tables)}")
     print("=" * 100)
     print(f"{'STATUS':<15} {'TABLE NAME':<40} {'ROWS':<15}")
@@ -51,10 +45,10 @@ def show_all_tables():
         total_rows += count
 
         if count > 0:
-            status = "✓ POPULATED"
+            status = "O POPULATED"
             populated_count += 1
         else:
-            status = "✗ EMPTY"
+            status = "X EMPTY"
 
         print(f"{status:<15} {table_name:<40} {count:>10,}")
 
@@ -71,25 +65,35 @@ def show_table_schema(table_name):
     cursor = conn.cursor()
 
     try:
-        cursor.execute(f"PRAGMA table_info({table_name})")
+        cursor.execute("""
+            SELECT ordinal_position, column_name, data_type, is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_name = %s
+            ORDER BY ordinal_position
+        """, (table_name,))
         columns = cursor.fetchall()
+
+        if not columns:
+            print(f"❌ Table '{table_name}' not found")
+            conn.close()
+            return
 
         print("=" * 100)
         print(f"TABLE: {table_name}")
         print(f"COLUMNS: {len(columns)}")
         print("=" * 100)
-        print(f"{'#':<5} {'COLUMN NAME':<30} {'TYPE':<15} {'NOT NULL':<10} {'DEFAULT':<15}")
+        print(f"{'#':<5} {'COLUMN NAME':<30} {'TYPE':<20} {'NULLABLE':<10} {'DEFAULT':<15}")
         print("-" * 100)
 
         for col in columns:
-            col_id, name, col_type, not_null, default_val, pk = col
-            not_null_str = "YES" if not_null else "NO"
-            default_str = str(default_val) if default_val else ""
-            print(f"{col_id:<5} {name:<30} {col_type:<15} {not_null_str:<10} {default_str:<15}")
+            col_id, name, col_type, nullable, default_val = col
+            nullable_str = "YES" if nullable == 'YES' else "NO"
+            default_str = str(default_val)[:15] if default_val else ""
+            print(f"{col_id:<5} {name:<30} {col_type:<20} {nullable_str:<10} {default_str:<15}")
 
         print("=" * 100)
 
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"❌ Error: {e}")
     finally:
         conn.close()
@@ -110,8 +114,13 @@ def show_table_data(table_name, limit=10):
             return
 
         # Get column names
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        columns = [col[1] for col in cursor.fetchall()]
+        cursor.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = %s
+            ORDER BY ordinal_position
+        """, (table_name,))
+        columns = [col[0] for col in cursor.fetchall()]
 
         # Get data
         cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
@@ -134,7 +143,7 @@ def show_table_data(table_name, limit=10):
 
         print("=" * 100)
 
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"❌ Error: {e}")
     finally:
         conn.close()
@@ -177,7 +186,7 @@ def run_custom_query(query):
             conn.commit()
             print(f"✅ Query executed successfully (affected {cursor.rowcount} rows)")
 
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"❌ SQL Error: {e}")
     finally:
         conn.close()

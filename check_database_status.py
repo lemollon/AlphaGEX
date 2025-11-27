@@ -2,11 +2,8 @@
 """
 Database Status Check - Verify all tables populated and show data freshness
 """
-import sqlite3
 from datetime import datetime, timedelta
-import os
-
-DB_PATH = os.path.join(os.path.dirname(__file__), 'backend', 'gex_copilot.db')
+from database_adapter import get_connection
 
 def check_database_status():
     """Comprehensive database status check"""
@@ -15,7 +12,7 @@ def check_database_status():
     print("DATABASE STATUS CHECK")
     print("="*80)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     c = conn.cursor()
 
     # Define all expected tables
@@ -69,7 +66,7 @@ def check_database_status():
         'economic_calendar': 'Economic events',
     }
 
-    print(f"\n📊 TABLE POPULATION STATUS\n")
+    print(f"\n TABLE POPULATION STATUS\n")
     print(f"{'Table':<35} {'Records':>10} {'Latest Data':>25} {'Status'}")
     print("-" * 80)
 
@@ -92,8 +89,11 @@ def check_database_status():
                     ts = result[0]
                     # Try parsing different timestamp formats
                     try:
-                        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                        latest = dt.strftime('%Y-%m-%d %H:%M')
+                        if hasattr(ts, 'strftime'):
+                            latest = ts.strftime('%Y-%m-%d %H:%M')
+                        else:
+                            dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+                            latest = dt.strftime('%Y-%m-%d %H:%M')
                     except:
                         latest = str(ts)[:19]
             except:
@@ -107,11 +107,11 @@ def check_database_status():
 
             print(f"{table:<35} {count:>10,} {latest:>25} {status}")
 
-        except sqlite3.OperationalError:
+        except Exception:
             print(f"{table:<35} {'N/A':>10} {'N/A':>25} ❌ MISSING")
 
     print("-" * 80)
-    print(f"\n📈 SUMMARY: {populated_tables}/{total_tables} tables populated ({populated_tables/total_tables*100:.1f}%)\n")
+    print(f"\n SUMMARY: {populated_tables}/{total_tables} tables populated ({populated_tables/total_tables*100:.1f}%)\n")
 
     # Show data freshness for key tables
     print("\n⏰ DATA FRESHNESS CHECK\n")
@@ -128,8 +128,12 @@ def check_database_status():
             if result:
                 ts = result[0]
                 try:
-                    dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                    age = datetime.now(dt.tzinfo) - dt if dt.tzinfo else datetime.now() - dt
+                    if hasattr(ts, 'strftime'):
+                        dt = ts
+                    else:
+                        dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+
+                    age = datetime.now() - dt.replace(tzinfo=None) if hasattr(dt, 'tzinfo') and dt.tzinfo else datetime.now() - dt
                     age_str = f"{age.days}d {age.seconds//3600}h" if age.days > 0 else f"{age.seconds//3600}h {(age.seconds%3600)//60}m"
                     latest_str = dt.strftime('%Y-%m-%d %H:%M')
                 except:
@@ -143,7 +147,7 @@ def check_database_status():
             print(f"{table:<35} {'Error':>25} {'-':>15}")
 
     # Show date range for historical data
-    print("\n📅 HISTORICAL DATA COVERAGE\n")
+    print("\n DATE RANGE FOR HISTORICAL DATA\n")
 
     try:
         c.execute("""
@@ -157,16 +161,24 @@ def check_database_status():
         """)
         result = c.fetchone()
         if result and result[0]:
-            earliest = datetime.fromisoformat(result[0].replace('Z', '+00:00'))
-            latest = datetime.fromisoformat(result[1].replace('Z', '+00:00'))
+            earliest = result[0]
+            latest = result[1]
             total_records = result[2]
             unique_days = result[3]
 
+            if hasattr(earliest, 'strftime'):
+                earliest_str = earliest.strftime('%Y-%m-%d')
+                latest_str = latest.strftime('%Y-%m-%d')
+            else:
+                earliest_str = str(earliest)[:10]
+                latest_str = str(latest)[:10]
+
             print(f"  Symbol: SPY")
-            print(f"  Date Range: {earliest.strftime('%Y-%m-%d')} to {latest.strftime('%Y-%m-%d')}")
+            print(f"  Date Range: {earliest_str} to {latest_str}")
             print(f"  Total Days: {unique_days}")
             print(f"  Total Records: {total_records:,}")
-            print(f"  Avg Records/Day: {total_records/unique_days:.1f}")
+            if unique_days > 0:
+                print(f"  Avg Records/Day: {total_records/unique_days:.1f}")
     except Exception as e:
         print(f"  Error checking historical coverage: {e}")
 
@@ -174,9 +186,10 @@ def check_database_status():
     if empty_tables:
         print(f"\n⚠️  EMPTY TABLES ({len(empty_tables)}):\n")
         for table in empty_tables:
-            print(f"  - {table}: {tables[table]}")
+            if table in tables:
+                print(f"  - {table}: {tables[table]}")
 
-        print("\n💡 Note: Some tables populate during operation:")
+        print("\n Note: Some tables populate during operation:")
         print("   - positions/autonomous_positions: When trades are made")
         print("   - backtest_results: When backtests run")
         print("   - performance: As trades complete")
