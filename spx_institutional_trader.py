@@ -339,9 +339,13 @@ class SPXInstitutionalTrader:
         """
         params = self.get_backtest_params_for_strategy(strategy_name)
 
-        # Check if proven
+        # BUG FIX: Unproven strategies should STILL check for basic sanity
+        # Previously they bypassed all checks, which could allow negative EV trades
         if not params['is_proven']:
-            # Unproven strategies can trade but with very conservative sizing
+            # Even unproven strategies must have non-negative expectancy estimate
+            if params['expectancy'] < 0:
+                return False, f"❌ BLOCKED: Unproven strategy with negative expectancy ({params['expectancy']:.2f}%)"
+            # Allow unproven with warning
             return True, f"Unproven strategy ({params['total_trades']} trades) - using quarter-Kelly sizing"
 
         # INSTITUTIONAL GATE 1: Check expectancy (must be positive)
@@ -391,6 +395,7 @@ class SPXInstitutionalTrader:
         risk_reward = avg_win / avg_loss
 
         # Kelly formula: W - (1-W)/R
+        # CRITICAL: Negative Kelly means negative expected value - DO NOT TRADE
         kelly = win_rate - ((1 - win_rate) / risk_reward)
 
         # Log the Kelly calculation for transparency
@@ -398,6 +403,23 @@ class SPXInstitutionalTrader:
         source = params.get('source', 'unknown')
         print(f"📊 Kelly Calc: W={win_rate:.1%}, AvgWin={avg_win:.1f}%, AvgLoss={avg_loss:.1f}%, "
               f"R/R={risk_reward:.2f}, RawKelly={kelly:.1%}, Source={source}, Proven={is_proven}")
+
+        # CRITICAL BUG FIX: If Kelly is negative, expected value is negative
+        # We should return 0 to block the trade, not use a 1% minimum
+        if kelly <= 0:
+            print(f"⛔ Kelly criterion NEGATIVE ({kelly:.1%}) for {strategy_name} - "
+                  f"BLOCKING TRADE (negative expected value)")
+            if self.debug_logger:
+                self.debug_logger.log_kelly_calculation(
+                    strategy_name=strategy_name,
+                    win_rate=win_rate,
+                    avg_win=avg_win,
+                    avg_loss=avg_loss,
+                    raw_kelly=kelly,
+                    adjusted_kelly=0.0,
+                    adjustment_type='BLOCKED_NEGATIVE_EV'
+                )
+            return 0.0  # Return 0 to block trade
 
         # Institutional quarter-Kelly for unproven strategies, half-Kelly for proven
         if is_proven:
@@ -407,8 +429,8 @@ class SPXInstitutionalTrader:
             adjusted_kelly = kelly * 0.25  # Quarter-Kelly for unproven (extra conservative)
             adjustment_type = 'quarter-kelly'
 
-        # Cap at 25% for institutional, minimum 1%
-        final_kelly = max(0.01, min(0.25, adjusted_kelly))
+        # Cap at 25% for institutional, minimum 0.5% (not 1%)
+        final_kelly = max(0.005, min(0.25, adjusted_kelly))
 
         print(f"   Final Kelly: {final_kelly:.1%} ({'Half' if is_proven else 'Quarter'}-Kelly applied)")
 
