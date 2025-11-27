@@ -283,6 +283,7 @@ export const apiClient = {
   getVIXSignalHistory: (days?: number) =>
     api.get('/api/vix/signal-history', { params: { days: days || 30 } }),
   getVIXCurrent: () => api.get('/api/vix/current'),
+  getVIXDebug: () => api.get('/api/vix/debug'),
 
   // Psychology Traps & Analysis
   getPsychologyCurrentRegime: (symbol: string = 'SPY') =>
