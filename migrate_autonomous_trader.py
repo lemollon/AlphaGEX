@@ -185,7 +185,7 @@ def run_migration():
                 snapshot_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
 
                 -- Account values
-                starting_capital DECIMAL(12,2) NOT NULL DEFAULT 5000,
+                starting_capital DECIMAL(12,2) NOT NULL DEFAULT 1000000,
                 total_realized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
                 total_unrealized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
                 account_value DECIMAL(12,2) NOT NULL,
@@ -274,8 +274,8 @@ def run_migration():
         # Initialize config with starting values
         c.execute("""
             INSERT INTO autonomous_config (key, value) VALUES
-            ('capital', '5000'),
-            ('starting_capital', '5000'),
+            ('capital', '1000000'),
+            ('starting_capital', '1000000'),
             ('initialized', 'true'),
             ('mode', 'paper'),
             ('auto_execute', 'true'),
@@ -319,8 +319,8 @@ def run_migration():
                 open_positions_count, total_trades, win_rate
             ) VALUES (
                 CURRENT_DATE, CURRENT_TIME, NOW(),
-                5000, 0, 0,
-                5000, 0, 0,
+                1000000, 0, 0,
+                1000000, 0, 0,
                 0, 0, 0
             )
         """)

@@ -113,13 +113,13 @@ try:
     result = c.fetchone()
 
     if not result:
-        starting_capital = 5000
+        starting_capital = 1000000
         c.execute("INSERT INTO autonomous_config (key, value) VALUES ('capital', ?)", (str(starting_capital),))
         c.execute("INSERT INTO autonomous_config (key, value) VALUES ('initialized', 'true')")
         c.execute("INSERT INTO autonomous_config (key, value) VALUES ('auto_execute', 'true')")
         c.execute("INSERT INTO autonomous_config (key, value) VALUES ('last_trade_date', '')")
         c.execute("INSERT INTO autonomous_config (key, value) VALUES ('mode', 'paper')")
-        print(f"   ✅ Initialized with $5,000 starting capital")
+        print(f"   ✅ Initialized with $1,000,000 starting capital")
 
     conn.commit()
     print("✅ Autonomous trader tables created successfully")
