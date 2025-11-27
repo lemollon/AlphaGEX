@@ -22,14 +22,14 @@ export default function LiveMonitoringSection({
   daysInTrade
 }: LiveMonitoringSectionProps) {
 
-  // Calculate metrics
-  const distanceToWall = ((wallStrike - currentPrice) / currentPrice * 100)
+  // Calculate metrics (with zero-division guards)
+  const distanceToWall = currentPrice > 0 ? ((wallStrike - currentPrice) / currentPrice * 100) : 0
   const isPriceAboveWall = currentPrice > wallStrike
   const priceBouncedOffWall = Math.abs(distanceToWall) < 0.5 && currentPrice < wallStrike
   const priceBrokeWall = currentPrice > wallStrike
 
   const premiumChange = entryPremium - premiumValue
-  const premiumChangePct = (premiumChange / entryPremium) * 100
+  const premiumChangePct = entryPremium > 0 ? (premiumChange / entryPremium) * 100 : 0
   const isWinning = premiumChange > 0
 
   const volumeConfirmed = volumeRatio >= 2.0

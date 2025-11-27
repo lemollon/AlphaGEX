@@ -110,10 +110,59 @@ probability_calc = ProbabilityCalculator()
 # Cache RSI data for 5 minutes to avoid repeated API calls
 _rsi_cache = {}
 _rsi_cache_ttl = 300  # 5 minutes in seconds
+_rsi_cache_max_size = 100  # Maximum number of cached symbols to prevent unbounded growth
+
+def _cleanup_rsi_cache():
+    """Remove expired entries and enforce max size limit"""
+    now = datetime.now()
+    # Remove expired entries
+    expired_keys = [
+        key for key, entry in _rsi_cache.items()
+        if (now - entry['timestamp']).total_seconds() > _rsi_cache_ttl
+    ]
+    for key in expired_keys:
+        del _rsi_cache[key]
+
+    # If still over max size, remove oldest entries
+    if len(_rsi_cache) > _rsi_cache_max_size:
+        # Sort by timestamp, oldest first
+        sorted_entries = sorted(_rsi_cache.items(), key=lambda x: x[1]['timestamp'])
+        # Remove oldest entries to get back under limit
+        for key, _ in sorted_entries[:len(_rsi_cache) - _rsi_cache_max_size]:
+            del _rsi_cache[key]
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
+def validate_symbol(symbol: str) -> tuple[bool, str]:
+    """
+    Validate stock symbol parameter to prevent injection attacks and API errors.
+
+    Returns:
+        (is_valid, cleaned_symbol or error_message)
+    """
+    if not symbol:
+        return False, "Symbol cannot be empty"
+
+    # Clean and normalize
+    symbol = symbol.strip().upper()
+
+    # Check length (stock symbols are typically 1-5 characters)
+    if len(symbol) > 5:
+        return False, f"Symbol too long: {len(symbol)} characters (max 5)"
+
+    # Check for valid characters (alphanumeric only)
+    if not symbol.isalnum():
+        return False, "Symbol must contain only alphanumeric characters"
+
+    # Block obvious injection attempts
+    blocked_patterns = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'UNION', '--', ';', '/*']
+    for pattern in blocked_patterns:
+        if pattern in symbol:
+            return False, f"Invalid symbol: contains blocked pattern"
+
+    return True, symbol
 
 def fetch_vix_with_metadata(polygon_key: str = None) -> dict:
     """
@@ -391,8 +440,13 @@ async def get_gex_data(symbol: str):
     Returns:
         GEX data including net_gex, spot_price, flip_point, levels, etc.
     """
+    # Validate symbol parameter
+    is_valid, result = validate_symbol(symbol)
+    if not is_valid:
+        return {"success": False, "error": result}
+    symbol = result  # Use cleaned symbol
+
     try:
-        symbol = symbol.upper()
 
         # Use existing TradingVolatilityAPI (UNCHANGED)
         gex_data = api_client.get_net_gamma(symbol)
@@ -500,6 +554,7 @@ async def get_gex_data(symbol: str):
         polygon_key = os.getenv('POLYGON_API_KEY')
 
         # Separate try block for RSI fetching to prevent psychology errors from wiping RSI data
+        use_cached_rsi = False
         try:
             # Check RSI cache first to avoid rate limits
             cache_key = f"rsi_{symbol}"
@@ -509,13 +564,14 @@ async def get_gex_data(symbol: str):
                 if cache_age < _rsi_cache_ttl:
                     print(f"✅ Using cached RSI data for {symbol} (age: {cache_age:.0f}s, TTL: {_rsi_cache_ttl}s)")
                     rsi_data = cached_entry['data']
-                    # Skip to psychology calculation
-                    raise StopIteration("using_cache")
+                    use_cached_rsi = True
 
-            if polygon_key:
-                print(f"✅ Polygon.io API key configured")
-            else:
-                print(f"⚠️ No Polygon.io API key - RSI calculation will fail")
+            # Only fetch RSI data if not using cache
+            if not use_cached_rsi:
+                if not polygon_key:
+                    print(f"⚠️ No Polygon.io API key - RSI calculation will fail")
+                else:
+                    print(f"✅ Polygon.io API key configured")
 
             # Calculate RSI for multiple timeframes
             def calculate_rsi(df, period=14):
@@ -525,8 +581,12 @@ async def get_gex_data(symbol: str):
                 delta = df['Close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
                 loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-                rs = gain / loss
+                # Prevent division by zero - when loss is 0, RSI is 100 (all gains)
+                # Use replace to handle the Series, not simple division
+                rs = gain / loss.replace(0, float('nan'))
                 rsi = 100 - (100 / (1 + rs))
+                # Fill NaN values (from division by zero) with 100 (all gains scenario)
+                rsi = rsi.fillna(100)
                 return rsi.iloc[-1] if not rsi.empty else None
 
             # Helper function to fetch from Polygon.io
@@ -571,124 +631,129 @@ async def get_gex_data(symbol: str):
                     print(f"    ⚠️ Polygon.io error: {e}")
                     return None
 
-            # Fetch data for different timeframes
-            print(f"📊 Fetching multi-timeframe RSI for {symbol}...")
+            # Fetch data for different timeframes (only if not using cache)
+            if not use_cached_rsi:
+                print(f"📊 Fetching multi-timeframe RSI for {symbol}...")
 
             # 1D RSI (already working)
-            try:
-                print(f"  🔄 Fetching 1D data from Polygon.io...")
-                df_1d = fetch_polygon_data(symbol, 1, 'day', 90)
+            if not use_cached_rsi:
+                try:
+                    print(f"  🔄 Fetching 1D data from Polygon.io...")
+                    df_1d = fetch_polygon_data(symbol, 1, 'day', 90)
 
-                if df_1d is not None and not df_1d.empty:
-                    print(f"  📥 1d: Fetched {len(df_1d)} bars from Polygon.io")
-                    print(f"      Date range: {df_1d.index[0]} to {df_1d.index[-1]}")
-                    rsi_1d = calculate_rsi(df_1d)
-                    if rsi_1d is not None:
-                        rsi_data['1d'] = round(float(rsi_1d), 1)
-                        print(f"  ✅ 1d RSI: {rsi_data['1d']}")
+                    if df_1d is not None and not df_1d.empty:
+                        print(f"  📥 1d: Fetched {len(df_1d)} bars from Polygon.io")
+                        print(f"      Date range: {df_1d.index[0]} to {df_1d.index[-1]}")
+                        rsi_1d = calculate_rsi(df_1d)
+                        if rsi_1d is not None:
+                            rsi_data['1d'] = round(float(rsi_1d), 1)
+                            print(f"  ✅ 1d RSI: {rsi_data['1d']}")
+                        else:
+                            rsi_data['1d'] = None
+                            print(f"  ⚠️ 1d RSI: insufficient data (need 14+ bars, got {len(df_1d)})")
                     else:
                         rsi_data['1d'] = None
-                        print(f"  ⚠️ 1d RSI: insufficient data (need 14+ bars, got {len(df_1d)})")
-                else:
+                        print(f"  ⚠️ 1d RSI: no data available")
+                except Exception as e:
                     rsi_data['1d'] = None
-                    print(f"  ⚠️ 1d RSI: no data available")
-            except Exception as e:
-                rsi_data['1d'] = None
-                print(f"  ❌ 1d RSI failed: {e}")
+                    print(f"  ❌ 1d RSI failed: {e}")
 
             # 4H RSI
-            try:
-                print(f"  🔄 Fetching 4H data from Polygon.io...")
-                df_4h = fetch_polygon_data(symbol, 4, 'hour', 30)
+            if not use_cached_rsi:
+                try:
+                    print(f"  🔄 Fetching 4H data from Polygon.io...")
+                    df_4h = fetch_polygon_data(symbol, 4, 'hour', 30)
 
-                if df_4h is not None and not df_4h.empty:
-                    print(f"  📥 4h: Fetched {len(df_4h)} bars from Polygon.io")
-                    rsi_4h = calculate_rsi(df_4h)
-                    if rsi_4h is not None:
-                        rsi_data['4h'] = round(float(rsi_4h), 1)
-                        print(f"  ✅ 4h RSI: {rsi_data['4h']}")
+                    if df_4h is not None and not df_4h.empty:
+                        print(f"  📥 4h: Fetched {len(df_4h)} bars from Polygon.io")
+                        rsi_4h = calculate_rsi(df_4h)
+                        if rsi_4h is not None:
+                            rsi_data['4h'] = round(float(rsi_4h), 1)
+                            print(f"  ✅ 4h RSI: {rsi_data['4h']}")
+                        else:
+                            rsi_data['4h'] = None
+                            print(f"  ⚠️ 4h RSI: insufficient data")
                     else:
                         rsi_data['4h'] = None
-                        print(f"  ⚠️ 4h RSI: insufficient data")
-                else:
+                except Exception as e:
                     rsi_data['4h'] = None
-            except Exception as e:
-                rsi_data['4h'] = None
-                print(f"  ❌ 4h RSI failed: {e}")
+                    print(f"  ❌ 4h RSI failed: {e}")
 
             # 1H RSI
-            try:
-                print(f"  🔄 Fetching 1H data from Polygon.io...")
-                df_1h = fetch_polygon_data(symbol, 1, 'hour', 14)
+            if not use_cached_rsi:
+                try:
+                    print(f"  🔄 Fetching 1H data from Polygon.io...")
+                    df_1h = fetch_polygon_data(symbol, 1, 'hour', 14)
 
-                if df_1h is not None and not df_1h.empty:
-                    print(f"  📥 1h: Fetched {len(df_1h)} bars from Polygon.io")
-                    rsi_1h = calculate_rsi(df_1h)
-                    if rsi_1h is not None:
-                        rsi_data['1h'] = round(float(rsi_1h), 1)
-                        print(f"  ✅ 1h RSI: {rsi_data['1h']}")
+                    if df_1h is not None and not df_1h.empty:
+                        print(f"  📥 1h: Fetched {len(df_1h)} bars from Polygon.io")
+                        rsi_1h = calculate_rsi(df_1h)
+                        if rsi_1h is not None:
+                            rsi_data['1h'] = round(float(rsi_1h), 1)
+                            print(f"  ✅ 1h RSI: {rsi_data['1h']}")
+                        else:
+                            rsi_data['1h'] = None
+                            print(f"  ⚠️ 1h RSI: insufficient data")
                     else:
                         rsi_data['1h'] = None
-                        print(f"  ⚠️ 1h RSI: insufficient data")
-                else:
+                except Exception as e:
                     rsi_data['1h'] = None
-            except Exception as e:
-                rsi_data['1h'] = None
-                print(f"  ❌ 1h RSI failed: {e}")
+                    print(f"  ❌ 1h RSI failed: {e}")
 
             # 15M RSI
-            try:
-                print(f"  🔄 Fetching 15M data from Polygon.io...")
-                df_15m = fetch_polygon_data(symbol, 15, 'minute', 7)
+            if not use_cached_rsi:
+                try:
+                    print(f"  🔄 Fetching 15M data from Polygon.io...")
+                    df_15m = fetch_polygon_data(symbol, 15, 'minute', 7)
 
-                if df_15m is not None and not df_15m.empty:
-                    print(f"  📥 15m: Fetched {len(df_15m)} bars from Polygon.io")
-                    rsi_15m = calculate_rsi(df_15m)
-                    if rsi_15m is not None:
-                        rsi_data['15m'] = round(float(rsi_15m), 1)
-                        print(f"  ✅ 15m RSI: {rsi_data['15m']}")
+                    if df_15m is not None and not df_15m.empty:
+                        print(f"  📥 15m: Fetched {len(df_15m)} bars from Polygon.io")
+                        rsi_15m = calculate_rsi(df_15m)
+                        if rsi_15m is not None:
+                            rsi_data['15m'] = round(float(rsi_15m), 1)
+                            print(f"  ✅ 15m RSI: {rsi_data['15m']}")
+                        else:
+                            rsi_data['15m'] = None
+                            print(f"  ⚠️ 15m RSI: insufficient data")
                     else:
                         rsi_data['15m'] = None
-                        print(f"  ⚠️ 15m RSI: insufficient data")
-                else:
+                except Exception as e:
                     rsi_data['15m'] = None
-            except Exception as e:
-                rsi_data['15m'] = None
-                print(f"  ❌ 15m RSI failed: {e}")
+                    print(f"  ❌ 15m RSI failed: {e}")
 
             # 5M RSI
-            try:
-                print(f"  🔄 Fetching 5M data from Polygon.io...")
-                df_5m = fetch_polygon_data(symbol, 5, 'minute', 3)
+            if not use_cached_rsi:
+                try:
+                    print(f"  🔄 Fetching 5M data from Polygon.io...")
+                    df_5m = fetch_polygon_data(symbol, 5, 'minute', 3)
 
-                if df_5m is not None and not df_5m.empty:
-                    print(f"  📥 5m: Fetched {len(df_5m)} bars from Polygon.io")
-                    rsi_5m = calculate_rsi(df_5m)
-                    if rsi_5m is not None:
-                        rsi_data['5m'] = round(float(rsi_5m), 1)
-                        print(f"  ✅ 5m RSI: {rsi_data['5m']}")
+                    if df_5m is not None and not df_5m.empty:
+                        print(f"  📥 5m: Fetched {len(df_5m)} bars from Polygon.io")
+                        rsi_5m = calculate_rsi(df_5m)
+                        if rsi_5m is not None:
+                            rsi_data['5m'] = round(float(rsi_5m), 1)
+                            print(f"  ✅ 5m RSI: {rsi_data['5m']}")
+                        else:
+                            rsi_data['5m'] = None
+                            print(f"  ⚠️ 5m RSI: insufficient data")
                     else:
                         rsi_data['5m'] = None
-                        print(f"  ⚠️ 5m RSI: insufficient data")
-                else:
+                except Exception as e:
                     rsi_data['5m'] = None
-            except Exception as e:
-                rsi_data['5m'] = None
-                print(f"  ❌ 5m RSI failed: {e}")
+                    print(f"  ❌ 5m RSI failed: {e}")
 
-            print(f"📊 RSI Summary: {sum(1 for v in rsi_data.values() if v is not None)}/5 timeframes successful")
+                print(f"📊 RSI Summary: {sum(1 for v in rsi_data.values() if v is not None)}/5 timeframes successful")
 
-            # Cache the RSI data if we got any valid values
-            if rsi_data and any(v is not None for v in rsi_data.values()):
-                _rsi_cache[cache_key] = {
-                    'data': rsi_data.copy(),
-                    'timestamp': datetime.now()
-                }
-                print(f"💾 Cached RSI data for {symbol} (TTL: {_rsi_cache_ttl}s)")
+                # Cache the RSI data if we got any valid values
+                if rsi_data and any(v is not None for v in rsi_data.values()):
+                    # Cleanup old cache entries to prevent unbounded growth
+                    _cleanup_rsi_cache()
+                    _rsi_cache[cache_key] = {
+                        'data': rsi_data.copy(),
+                        'timestamp': datetime.now()
+                    }
+                    print(f"💾 Cached RSI data for {symbol} (TTL: {_rsi_cache_ttl}s, cache size: {len(_rsi_cache)})")
 
-        except StopIteration:
-            # Using cached data - this is normal, not an error
-            pass
         except Exception as e:
             # Only reset RSI if the RSI fetch itself failed
             error_msg = str(e)
@@ -2579,7 +2644,13 @@ async def websocket_trader(websocket: WebSocket):
                     # Handle subscription changes
                     if message.get('type') == 'subscribe':
                         symbols = message.get('symbols', ['SPY'])
-                        _connection_subscriptions[connection_id]['symbols'] = [s.upper() for s in symbols]
+                        # Validate symbols: only alphanumeric, max 5 chars each
+                        validated_symbols = []
+                        for s in symbols[:10]:  # Max 10 symbols
+                            if isinstance(s, str) and s.isalnum() and len(s) <= 5:
+                                validated_symbols.append(s.upper())
+                        if validated_symbols:
+                            _connection_subscriptions[connection_id]['symbols'] = validated_symbols
                         await websocket.send_json({
                             "type": "subscribed",
                             "symbols": _connection_subscriptions[connection_id]['symbols'],
@@ -2597,22 +2668,28 @@ async def websocket_trader(websocket: WebSocket):
 
             except Exception as e:
                 # Send error but continue
-                await websocket.send_json({
-                    "type": "error",
-                    "message": str(e),
-                    "timestamp": datetime.now().isoformat()
-                })
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": str(e)[:200],  # Truncate error message
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except:
+                    pass  # If sending error fails, just continue
                 await asyncio.sleep(10)
 
     except WebSocketDisconnect:
-        if connection_id in _connection_subscriptions:
-            del _connection_subscriptions[connection_id]
-        manager.disconnect(websocket)
+        pass  # Normal disconnect, cleanup in finally
     except Exception as e:
+        print(f"Trader WebSocket error: {e}")
+    finally:
+        # Guaranteed cleanup - prevents memory leak
         if connection_id in _connection_subscriptions:
             del _connection_subscriptions[connection_id]
-        manager.disconnect(websocket)
-        print(f"Trader WebSocket error: {e}")
+        try:
+            manager.disconnect(websocket)
+        except:
+            pass  # Ignore disconnect errors
 
 
 async def _get_trader_update_data() -> dict:

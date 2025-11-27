@@ -750,11 +750,20 @@ class AutonomousPaperTrader:
             FROM autonomous_open_positions
         """)
         today_unrealized = c.fetchone()[0] or 0
-        today_pnl = float(today_realized) + float(today_unrealized)
         conn.close()
 
-        # Get starting capital
-        capital = float(self.get_config('capital'))
+        # Safe float conversion with fallback to 0
+        try:
+            today_pnl = float(today_realized or 0) + float(today_unrealized or 0)
+        except (ValueError, TypeError):
+            today_pnl = 0
+
+        # Get starting capital with safe conversion
+        capital_str = self.get_config('capital')
+        try:
+            capital = float(capital_str) if capital_str else 10000.0
+        except (ValueError, TypeError):
+            capital = 10000.0  # Default capital
         daily_loss_limit_pct = 5.0  # 5% daily loss limit
         daily_loss_limit = capital * (daily_loss_limit_pct / 100)
 

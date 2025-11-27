@@ -39,7 +39,11 @@ class ProbabilityWeights:
 class ProbabilityCalculator:
     def __init__(self, db_path: str = "gex_copilot.db", tradingvol_api_key: str = None):
         self.db_path = db_path
-        self.tradingvol_api_key = tradingvol_api_key or os.getenv('TRADINGVOL_API_KEY', 'I-RWFNBLR2S1DP')
+        # SECURITY: API key must be set via environment variable - never hardcode
+        self.tradingvol_api_key = tradingvol_api_key or os.getenv('TRADINGVOL_API_KEY')
+        if not self.tradingvol_api_key:
+            import logging
+            logging.warning("TRADINGVOL_API_KEY not set - Trading Volatility API features disabled")
         self.tradingvol_endpoint = 'https://stocks.tradingvolatility.net/api'
         self.weights = self._load_weights()
         self._init_database()

@@ -200,8 +200,8 @@ class RateLimiter:
                 'total_calls': self.total_calls,
                 'total_blocked': self.total_blocked,
                 'total_delayed': self.total_delayed,
-                'utilization_minute': calls_last_minute / self.max_calls_per_minute * 100,
-                'utilization_hour': calls_last_hour / self.max_calls_per_hour * 100
+                'utilization_minute': (calls_last_minute / self.max_calls_per_minute * 100) if self.max_calls_per_minute > 0 else 0,
+                'utilization_hour': (calls_last_hour / self.max_calls_per_hour * 100) if self.max_calls_per_hour > 0 else 0
             }
 
     def reset(self):
