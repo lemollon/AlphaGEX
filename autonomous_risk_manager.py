@@ -14,16 +14,30 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 import psycopg2.extras
+import logging
+
+# Configure logger for risk manager
+logger = logging.getLogger('autonomous_risk_manager')
 
 
 class RiskManager:
     """Enterprise-grade risk management for autonomous trading"""
+
+    # Default starting capital for fallback when DB unavailable
+    DEFAULT_STARTING_CAPITAL = 5000.0
 
     def __init__(self):
         self.max_drawdown_pct = 15.0  # 15% max drawdown
         self.daily_loss_limit_pct = 5.0  # 5% daily loss limit
         self.position_size_limit_pct = 20.0  # 20% per position
         self.correlation_limit = 0.5  # Max 50% portfolio in correlated symbols
+
+        # In-memory cache for when database is unavailable
+        self._cached_peak_equity = None
+        self._cached_current_equity = None
+        self._cached_start_of_day_equity = None
+        self._cache_timestamp = None
+        self._cache_ttl_seconds = 60  # Cache valid for 60 seconds
 
     def check_all_limits(self, account_value: float, proposed_trade: Dict) -> Tuple[bool, str]:
         """
@@ -205,76 +219,162 @@ class RiskManager:
             'expectancy': ((win_rate / 100) * avg_winner) + ((1 - win_rate / 100) * avg_loser)
         }
 
+    def _is_cache_valid(self) -> bool:
+        """Check if cached values are still valid"""
+        if self._cache_timestamp is None:
+            return False
+        elapsed = (datetime.now() - self._cache_timestamp).total_seconds()
+        return elapsed < self._cache_ttl_seconds
+
+    def _update_cache(self, peak: float = None, current: float = None, start_of_day: float = None):
+        """Update in-memory cache values"""
+        if peak is not None:
+            self._cached_peak_equity = peak
+        if current is not None:
+            self._cached_current_equity = current
+        if start_of_day is not None:
+            self._cached_start_of_day_equity = start_of_day
+        self._cache_timestamp = datetime.now()
+
     # Helper methods
     def _get_peak_equity(self) -> float:
-        """Get peak equity value"""
-        conn = get_connection()
-        c = conn.cursor()
+        """Get peak equity value with in-memory fallback"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
 
-        # Get max equity from equity_snapshots or calculate from positions
-        c.execute("""
-            SELECT value FROM autonomous_config WHERE key = 'capital'
-        """)
-        result = c.fetchone()
-        starting_capital = float(result[0]) if result else 5000.0
+            # Get max equity from equity_snapshots or calculate from positions
+            c.execute("""
+                SELECT value FROM autonomous_config WHERE key = 'capital'
+            """)
+            result = c.fetchone()
+            starting_capital = float(result[0]) if result else self.DEFAULT_STARTING_CAPITAL
 
-        c.execute("""
-            SELECT SUM(realized_pnl) FROM autonomous_closed_trades
-        """)
-        result = c.fetchone()
-        total_realized = result[0] if result[0] else 0
+            c.execute("""
+                SELECT SUM(realized_pnl) FROM autonomous_closed_trades
+            """)
+            result = c.fetchone()
+            total_realized = result[0] if result[0] else 0
 
-        conn.close()
+            conn.close()
 
-        peak = starting_capital + total_realized
-        return peak
+            peak = starting_capital + total_realized
+            # Update cache on successful DB read
+            self._update_cache(peak=peak)
+            return peak
+
+        except Exception as e:
+            logger.warning(f"Database unavailable for peak equity, using cache: {e}")
+            # Return cached value or default
+            if self._cached_peak_equity is not None:
+                return self._cached_peak_equity
+            return self.DEFAULT_STARTING_CAPITAL
 
     def _get_current_equity(self) -> float:
-        """Get current equity value"""
-        conn = get_connection()
-        c = conn.cursor()
+        """Get current equity value with in-memory fallback"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
 
-        c.execute("""
-            SELECT value FROM autonomous_config WHERE key = 'capital'
-        """)
-        result = c.fetchone()
-        starting_capital = float(result[0]) if result else 5000.0
+            c.execute("""
+                SELECT value FROM autonomous_config WHERE key = 'capital'
+            """)
+            result = c.fetchone()
+            starting_capital = float(result[0]) if result else self.DEFAULT_STARTING_CAPITAL
 
-        c.execute("""
-            SELECT SUM(realized_pnl) FROM autonomous_closed_trades
-        """)
-        result = c.fetchone()
-        total_realized = result[0] if result[0] else 0
+            c.execute("""
+                SELECT SUM(realized_pnl) FROM autonomous_closed_trades
+            """)
+            result = c.fetchone()
+            total_realized = result[0] if result[0] else 0
 
-        c.execute("""
-            SELECT SUM(unrealized_pnl) FROM autonomous_open_positions
-        """)
-        result = c.fetchone()
-        total_unrealized = result[0] if result[0] else 0
+            c.execute("""
+                SELECT SUM(unrealized_pnl) FROM autonomous_open_positions
+            """)
+            result = c.fetchone()
+            total_unrealized = result[0] if result[0] else 0
 
-        conn.close()
+            conn.close()
 
-        return starting_capital + total_realized + total_unrealized
+            current = starting_capital + total_realized + total_unrealized
+            # Update cache on successful DB read
+            self._update_cache(current=current)
+            return current
+
+        except Exception as e:
+            logger.warning(f"Database unavailable for current equity, using cache: {e}")
+            # Return cached value or default
+            if self._cached_current_equity is not None:
+                return self._cached_current_equity
+            return self.DEFAULT_STARTING_CAPITAL
 
     def _get_start_of_day_equity(self) -> float:
-        """Get equity value at start of trading day"""
-        # For now, use yesterday's closing equity
-        # TODO: Implement daily equity snapshots
-        return self._get_current_equity()
+        """Get equity value at start of trading day from equity snapshots with in-memory fallback"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            # Try to get today's earliest snapshot (start of day equity)
+            c.execute("""
+                SELECT account_value FROM autonomous_equity_snapshots
+                WHERE snapshot_date = %s
+                ORDER BY snapshot_time ASC
+                LIMIT 1
+            """, (today,))
+            result = c.fetchone()
+
+            if result:
+                conn.close()
+                start_of_day = float(result[0])
+                self._update_cache(start_of_day=start_of_day)
+                return start_of_day
+
+            # If no snapshot today, get yesterday's last snapshot
+            c.execute("""
+                SELECT account_value FROM autonomous_equity_snapshots
+                WHERE snapshot_date < %s
+                ORDER BY snapshot_date DESC, snapshot_time DESC
+                LIMIT 1
+            """, (today,))
+            result = c.fetchone()
+
+            if result:
+                conn.close()
+                start_of_day = float(result[0])
+                self._update_cache(start_of_day=start_of_day)
+                return start_of_day
+
+            # Fallback to current equity if no snapshots exist
+            conn.close()
+            return self._get_current_equity()
+
+        except Exception as e:
+            logger.warning(f"Error getting start of day equity: {e}")
+            # Return cached value or fallback to current equity
+            if self._cached_start_of_day_equity is not None:
+                return self._cached_start_of_day_equity
+            return self._get_current_equity()
 
     def _get_open_positions(self) -> List[Dict]:
-        """Get all open positions"""
-        conn = get_connection()
-        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        """Get all open positions with error handling"""
+        try:
+            conn = get_connection()
+            c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        c.execute("""
-            SELECT * FROM autonomous_open_positions
-        """)
+            c.execute("""
+                SELECT * FROM autonomous_open_positions
+            """)
 
-        positions = [dict(row) for row in c.fetchall()]
-        conn.close()
+            positions = [dict(row) for row in c.fetchall()]
+            conn.close()
 
-        return positions
+            return positions
+
+        except Exception as e:
+            logger.warning(f"Error getting open positions: {e}")
+            return []  # Return empty list on error to fail safe
 
     def _get_correlated_symbols(self, symbol: str) -> List[str]:
         """Get list of symbols correlated with given symbol"""
@@ -292,30 +392,35 @@ class RiskManager:
         return correlations.get(symbol, [symbol])
 
     def _get_daily_returns(self, days: int) -> List[float]:
-        """Get daily returns for Sharpe calculation"""
-        conn = get_connection()
-        c = conn.cursor()
+        """Get daily returns for Sharpe calculation with error handling"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
 
-        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
-        c.execute("""
-            SELECT
-                exit_date,
-                SUM(realized_pnl) as daily_pnl
-            FROM autonomous_closed_trades
-            WHERE exit_date >= %s
-            GROUP BY exit_date
-            ORDER BY exit_date
-        """, (start_date,))
+            c.execute("""
+                SELECT
+                    exit_date,
+                    SUM(realized_pnl) as daily_pnl
+                FROM autonomous_closed_trades
+                WHERE exit_date >= %s
+                GROUP BY exit_date
+                ORDER BY exit_date
+            """, (start_date,))
 
-        rows = c.fetchall()
-        conn.close()
+            rows = c.fetchall()
+            conn.close()
 
-        # Convert to returns (pnl / account_value)
-        account_value = self._get_current_equity()
-        returns = [(row[1] / account_value) for row in rows if account_value > 0]
+            # Convert to returns (pnl / account_value)
+            account_value = self._get_current_equity()
+            returns = [(row[1] / account_value) for row in rows if account_value > 0]
 
-        return returns
+            return returns
+
+        except Exception as e:
+            logger.warning(f"Error getting daily returns: {e}")
+            return []  # Return empty list on error
 
 
 # Singleton instance

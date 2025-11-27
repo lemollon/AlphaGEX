@@ -84,13 +84,14 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
 # Add custom CORS middleware FIRST
 app.add_middleware(CORSHeaderMiddleware)
 
-# CORS Configuration - Allow all origins for development
-# IMPORTANT: In production, restrict this to specific domains
+# CORS Configuration - Restrict to specific origins for security
+# In production, this limits which domains can access the API
+ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=False,  # Cannot use credentials with wildcard origins
-    allow_methods=["*"],  # Allow all methods including OPTIONS
+    allow_origins=ALLOWED_ORIGINS,  # Restricted to specific frontend origins
+    allow_credentials=True,  # Allow credentials with specific origins
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods
     allow_headers=["*"],  # Allow all headers
     expose_headers=["*"],
 )
@@ -1175,7 +1176,8 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
             profile = api_client.get_gex_profile(symbol)
             if profile and profile.get('error'):
                 profile = None
-        except:
+        except (KeyError, TypeError, AttributeError, Exception) as e:
+            # Failed to fetch GEX profile, continue without it
             profile = None
 
         # Extract key metrics with validation
@@ -2105,7 +2107,7 @@ async def get_strike_performance(strategy: str = None):
         import json
         try:
             strike_data = json.loads(strike_data_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             # If not valid JSON, return as string
             strike_data = {"raw_data": strike_data_json}
 
@@ -2162,7 +2164,7 @@ async def get_dte_optimization(strategy: str = None):
         import json
         try:
             dte_data = json.loads(dte_data_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             dte_data = {"raw_data": dte_data_json}
 
         return {
@@ -2217,7 +2219,7 @@ async def get_regime_optimization(strategy: str = None):
         import json
         try:
             regime_data = json.loads(regime_data_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             regime_data = {"raw_data": regime_data_json}
 
         return {
@@ -2330,7 +2332,7 @@ async def get_greeks_optimization(strategy: str = None):
         import json
         try:
             greeks_data = json.loads(greeks_data_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             greeks_data = {"raw_data": greeks_data_json}
 
         return {
@@ -2382,7 +2384,7 @@ async def get_best_combinations(strategy: str = None):
         import json
         try:
             combinations_data = json.loads(combinations_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             combinations_data = {"raw_data": combinations_json}
 
         return {
@@ -2479,7 +2481,8 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except:
+            except (RuntimeError, ConnectionError, Exception) as e:
+                # Connection likely closed, will be cleaned up on next disconnect
                 pass
 
 manager = ConnectionManager()
@@ -2754,7 +2757,7 @@ async def _get_trader_update_data() -> dict:
                     'call_wall': gex_data.get('call_wall', 0),
                     'put_wall': gex_data.get('put_wall', 0)
                 }
-        except:
+        except (KeyError, TypeError, AttributeError, Exception) as e:
             update['market'] = None
 
         conn.close()
@@ -3508,7 +3511,8 @@ async def get_trader_diagnostics():
                     if age_minutes > 10:
                         diagnostics["checks"]["live_status"]["stale"] = True
                         diagnostics["recommendations"].append(f"Status is {age_minutes:.0f} minutes old - scheduler thread may have crashed")
-                except:
+                except (ValueError, TypeError, AttributeError) as e:
+                    # Failed to parse timestamp, skip age check
                     pass
         except Exception as e:
             diagnostics["checks"]["live_status"] = {"error": str(e)}
@@ -9364,7 +9368,7 @@ async def get_trader_status():
                 try:
                     result = subprocess.run(['ps', '-p', pid], capture_output=True, text=True)
                     status["trader_running"] = result.returncode == 0
-                except:
+                except (OSError, subprocess.SubprocessError, FileNotFoundError) as e:
                     status["trader_running"] = False
 
         # Handle auto-start detection based on platform
@@ -9381,7 +9385,7 @@ async def get_trader_status():
                 status["autostart_enabled"] = "auto_start_trader.sh" in crontab_content
                 status["watchdog_enabled"] = "trader_watchdog.sh" in crontab_content
                 status["autostart_type"] = "crontab" if status["autostart_enabled"] else None
-            except:
+            except (OSError, subprocess.SubprocessError, FileNotFoundError) as e:
                 status["autostart_enabled"] = False
                 status["watchdog_enabled"] = False
 
@@ -9393,7 +9397,8 @@ async def get_trader_status():
                     lines = f.readlines()
                     if lines:
                         status["last_log_entry"] = lines[-1].strip()
-            except:
+            except (IOError, OSError, PermissionError) as e:
+                # Unable to read log file
                 pass
 
         return {
@@ -9489,7 +9494,7 @@ async def disable_autostart():
         try:
             result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
             current_crontab = result.stdout
-        except:
+        except (OSError, subprocess.SubprocessError, FileNotFoundError) as e:
             return {
                 "success": True,
                 "message": "Auto-start already disabled (no crontab found)"
@@ -9534,8 +9539,26 @@ async def start_trader_manually():
                 "error": f"Start script not found at {start_script}"
             }
 
-        # Run the start script
-        result = subprocess.run([start_script], capture_output=True, text=True, cwd=alphagex_dir)
+        # Run the start script with timeout to prevent hanging
+        try:
+            result = subprocess.run(
+                [start_script],
+                capture_output=True,
+                text=True,
+                cwd=alphagex_dir,
+                timeout=30  # 30 second timeout
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": "Start script timed out after 30 seconds"
+            }
+
+        if result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Start script failed: {result.stderr or result.stdout}"
+            }
 
         return {
             "success": True,
@@ -9563,20 +9586,77 @@ async def stop_trader_manually():
                 "error": "Trader is not running (no PID file found)"
             }
 
-        with open(pid_file, 'r') as f:
-            pid = int(f.read().strip())
-
-        # Kill the process
+        # Read and validate PID file
         try:
+            with open(pid_file, 'r') as f:
+                pid_content = f.read().strip()
+                if not pid_content:
+                    return {
+                        "success": False,
+                        "error": "PID file is empty"
+                    }
+                pid = int(pid_content)
+        except ValueError:
+            return {
+                "success": False,
+                "error": f"Invalid PID file contents: '{pid_content[:50]}'"
+            }
+
+        # Validate PID is reasonable (not system processes)
+        if pid <= 0 or pid > 4194304:  # Max PID on Linux
+            return {
+                "success": False,
+                "error": f"Invalid PID value: {pid}"
+            }
+
+        # Verify the process exists and is actually a trader process
+        try:
+            # Check if process exists first
+            os.kill(pid, 0)  # Signal 0 doesn't kill, just checks existence
+
+            # Try to verify it's actually a Python/trader process (optional safety check)
+            try:
+                cmdline_path = f"/proc/{pid}/cmdline"
+                if os.path.exists(cmdline_path):
+                    with open(cmdline_path, 'r') as f:
+                        cmdline = f.read()
+                        # Basic sanity check - should contain python or trader
+                        if 'python' not in cmdline.lower() and 'trader' not in cmdline.lower():
+                            return {
+                                "success": False,
+                                "error": f"PID {pid} does not appear to be the trader process"
+                            }
+            except (IOError, PermissionError):
+                # Can't read cmdline, proceed anyway
+                pass
+
+            # Kill the process
             os.kill(pid, signal.SIGTERM)
+
+            # Clean up the PID file
+            try:
+                os.remove(pid_file)
+            except:
+                pass
+
             return {
                 "success": True,
                 "message": f"Trader stopped (PID: {pid})"
             }
         except ProcessLookupError:
+            # Process doesn't exist, clean up stale PID file
+            try:
+                os.remove(pid_file)
+            except:
+                pass
             return {
                 "success": False,
-                "error": "Trader process not found (may have already stopped)"
+                "error": "Trader process not found (may have already stopped). Cleaned up stale PID file."
+            }
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"Permission denied when trying to stop PID {pid}"
             }
     except Exception as e:
         return {"success": False, "error": str(e)}

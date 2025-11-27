@@ -23,6 +23,19 @@ from trading_costs import (
 )
 import time
 import os
+import logging
+
+# Configure structured logging for autonomous trader
+logger = logging.getLogger('autonomous_paper_trader')
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 # Central Time timezone for all timestamps
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -38,10 +51,10 @@ try:
         get_vix
     )
     UNIFIED_DATA_AVAILABLE = True
-    print("✅ Unified Data Provider (Tradier) integrated")
+    logger.info("Unified Data Provider (Tradier) integrated")
 except ImportError as e:
     UNIFIED_DATA_AVAILABLE = False
-    print(f"⚠️ Unified Data Provider not available: {e}")
+    logger.warning(f"Unified Data Provider not available: {e}")
     # Fallback imports
     from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 
@@ -62,10 +75,10 @@ try:
         get_classifier
     )
     UNIFIED_CLASSIFIER_AVAILABLE = True
-    print("✅ Unified Market Regime Classifier integrated")
+    logger.info("Unified Market Regime Classifier integrated")
 except ImportError as e:
     UNIFIED_CLASSIFIER_AVAILABLE = False
-    print(f"⚠️ Unified Classifier not available: {e}")
+    logger.warning(f"Unified Classifier not available: {e}")
 
 # CRITICAL: Import Psychology Trap Detector
 try:
@@ -73,11 +86,11 @@ try:
     from gamma_expiration_builder import build_gamma_with_expirations
     from polygon_helper import PolygonDataFetcher as PolygonHelper
     PSYCHOLOGY_AVAILABLE = True
-    print("✅ Psychology Trap Detector integrated with Autonomous Trader")
+    logger.info("Psychology Trap Detector integrated with Autonomous Trader")
 except ImportError as e:
     PSYCHOLOGY_AVAILABLE = False
-    print(f"⚠️ Psychology Trap Detector not available: {e}")
-    print("   Falling back to basic GEX analysis")
+    logger.warning(f"Psychology Trap Detector not available: {e}")
+    logger.warning("Falling back to basic GEX analysis")
 
 # CRITICAL: Import AI Reasoning Engine (LangChain + Claude)
 try:
@@ -85,20 +98,20 @@ try:
     ai_reasoning = get_ai_reasoning()
     AI_REASONING_AVAILABLE = ai_reasoning.llm is not None
     if AI_REASONING_AVAILABLE:
-        print("✅ AI Reasoning Engine (LangChain + Claude) ready")
+        logger.info("AI Reasoning Engine (LangChain + Claude) ready")
 except ImportError as e:
     AI_REASONING_AVAILABLE = False
     ai_reasoning = None
-    print(f"⚠️ AI Reasoning not available: {e}")
+    logger.warning(f"AI Reasoning not available: {e}")
 
 # CRITICAL: Import Database Logger
 try:
     from autonomous_database_logger import get_database_logger
     DATABASE_LOGGER_AVAILABLE = True
-    print("✅ Database Logger ready for comprehensive logging")
+    logger.info("Database Logger ready for comprehensive logging")
 except ImportError as e:
     DATABASE_LOGGER_AVAILABLE = False
-    print(f"⚠️ Database Logger not available: {e}")
+    logger.warning(f"Database Logger not available: {e}")
 
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
@@ -173,13 +186,13 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
                 theo_price = enhanced_quote.get('theoretical_price', 0)
                 delayed_mid = quote.get('mid', 0)
                 adjustment = enhanced_quote.get('price_adjustment_pct', 0)
-                print(f"   📊 Black-Scholes: Delayed mid=${delayed_mid:.2f} → Theoretical=${theo_price:.2f} ({adjustment:+.1f}%)")
+                logger.debug(f"Black-Scholes: Delayed mid=${delayed_mid:.2f} → Theoretical=${theo_price:.2f} ({adjustment:+.1f}%)")
                 return enhanced_quote
 
         return quote
 
     except Exception as e:
-        print(f"Error fetching option price: {e}")
+        logger.error(f"Error fetching option price: {e}")
         return {'error': str(e)}
 
 
@@ -546,14 +559,28 @@ class AutonomousPaperTrader:
             ('data_confidence', 'VARCHAR(20)'),
         ]
 
+        # Whitelist of allowed column names and types for security
+        ALLOWED_COLUMNS = {
+            'theoretical_price', 'theoretical_bid', 'theoretical_ask', 'recommended_entry',
+            'price_adjustment', 'price_adjustment_pct', 'is_delayed', 'data_confidence'
+        }
+        ALLOWED_TYPES = {'DECIMAL(10,4)', 'DECIMAL(8,4)', 'BOOLEAN', 'VARCHAR(20)'}
+
         for col_name, col_type in theoretical_columns:
+            # Validate column name and type to prevent SQL injection
+            if col_name not in ALLOWED_COLUMNS or col_type not in ALLOWED_TYPES:
+                print(f"⚠️ Skipping invalid column: {col_name} {col_type}")
+                continue
+
             try:
+                # Safe to use string formatting since values are validated against whitelist
                 c.execute(f"ALTER TABLE autonomous_open_positions ADD COLUMN {col_name} {col_type}")
-            except:
+            except Exception as e:
                 pass  # Column already exists
+
             try:
                 c.execute(f"ALTER TABLE autonomous_closed_trades ADD COLUMN {col_name} {col_type}")
-            except:
+            except Exception as e:
                 pass  # Column already exists
 
         conn.commit()
@@ -562,22 +589,26 @@ class AutonomousPaperTrader:
     def get_config(self, key: str) -> str:
         """Get configuration value"""
         conn = get_connection()
-        c = conn.cursor()
-        c.execute("SELECT value FROM autonomous_config WHERE key = %s", (key,))
-        result = c.fetchone()
-        conn.close()
-        return result[0] if result else "0"
+        try:
+            c = conn.cursor()
+            c.execute("SELECT value FROM autonomous_config WHERE key = %s", (key,))
+            result = c.fetchone()
+            return result[0] if result else "0"
+        finally:
+            conn.close()
 
     def set_config(self, key: str, value: str):
         """Set configuration value"""
         conn = get_connection()
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO autonomous_config (key, value) VALUES (%s, %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-        """, (key, value))
-        conn.commit()
-        conn.close()
+        try:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO autonomous_config (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+            """, (key, value))
+            conn.commit()
+        finally:
+            conn.close()
 
     def update_live_status(self, status: str, action: str, analysis: str = None, decision: str = None):
         """
@@ -585,25 +616,29 @@ class AutonomousPaperTrader:
         This is what lets you see what the trader is doing in real-time
         """
         conn = get_connection()
-        c = conn.cursor()
+        try:
+            c = conn.cursor()
 
-        now_ct = datetime.now(CENTRAL_TZ)
-        next_check = (now_ct + timedelta(minutes=5)).isoformat()
+            now_ct = datetime.now(CENTRAL_TZ)
+            next_check = (now_ct + timedelta(minutes=5)).isoformat()
 
-        c.execute("""
-            UPDATE autonomous_live_status
-            SET timestamp = %s,
-                status = %s,
-                current_action = %s,
-                market_analysis = %s,
-                next_check_time = %s,
-                last_decision = %s,
-                is_working = 1
-            WHERE id = 1
-        """, (now_ct.isoformat(), status, action, analysis, next_check, decision))
+            c.execute("""
+                UPDATE autonomous_live_status
+                SET timestamp = %s,
+                    status = %s,
+                    current_action = %s,
+                    market_analysis = %s,
+                    next_check_time = %s,
+                    last_decision = %s,
+                    is_working = 1
+                WHERE id = 1
+            """, (now_ct.isoformat(), status, action, analysis, next_check, decision))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to update live status: {e}")
+        finally:
+            conn.close()
 
         # Also print to console for logs
         print(f"\n{'='*80}")
@@ -618,48 +653,59 @@ class AutonomousPaperTrader:
     def get_live_status(self) -> Dict:
         """Get current live status"""
         conn = get_connection()
-        c = conn.cursor()
-        c.execute("SELECT * FROM autonomous_live_status WHERE id = 1")
-        row = c.fetchone()
-        conn.close()
+        try:
+            c = conn.cursor()
+            c.execute("SELECT * FROM autonomous_live_status WHERE id = 1")
+            row = c.fetchone()
 
-        if not row:
+            if not row:
+                return {
+                    'status': 'UNKNOWN',
+                    'current_action': 'System not initialized',
+                    'is_working': False
+                }
+
             return {
-                'status': 'UNKNOWN',
-                'current_action': 'System not initialized',
+                'timestamp': row[1],
+                'status': row[2],
+                'current_action': row[3],
+                'market_analysis': row[4],
+                'next_check_time': row[5],
+                'last_decision': row[6],
+                'is_working': bool(row[7])
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get live status: {e}")
+            return {
+                'status': 'ERROR',
+                'current_action': f'Database error: {str(e)[:100]}',
                 'is_working': False
             }
-
-        return {
-            'timestamp': row[1],
-            'status': row[2],
-            'current_action': row[3],
-            'market_analysis': row[4],
-            'next_check_time': row[5],
-            'last_decision': row[6],
-            'is_working': bool(row[7])
-        }
+        finally:
+            conn.close()
 
     def log_action(self, action: str, details: str, position_id: int = None, success: bool = True):
         """Log trading actions"""
         conn = get_connection()
-        c = conn.cursor()
+        try:
+            c = conn.cursor()
 
-        now = datetime.now(CENTRAL_TZ)
-        c.execute("""
-            INSERT INTO autonomous_trade_log (date, time, action, details, position_id, success)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (
-            now.strftime('%Y-%m-%d'),
-            now.strftime('%H:%M:%S'),
-            action,
-            details,
-            position_id,
-            1 if success else 0
-        ))
+            now = datetime.now(CENTRAL_TZ)
+            c.execute("""
+                INSERT INTO autonomous_trade_log (date, time, action, details, position_id, success)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                action,
+                details,
+                position_id,
+                1 if success else 0
+            ))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
     def should_trade_today(self) -> bool:
         """Check if we should find a new trade - allows multiple trades per day within risk limits"""
@@ -959,7 +1005,8 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             try:
                 gex_preview = api_client.get_net_gamma('SPY')
                 spot_price = gex_preview.get('spot_price', 0) if gex_preview else 0
-            except:
+            except (KeyError, TypeError, AttributeError, Exception) as e:
+                # Failed to get spot price for logging, continue with 0
                 pass
 
             self.db_logger.log_scan_start(
@@ -1631,7 +1678,8 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 else:
                     above_20ma = True
                     above_50ma = True
-            except:
+            except (KeyError, ValueError, TypeError, AttributeError) as e:
+                # Failed to calculate MAs, default to bullish bias
                 above_20ma = True
                 above_50ma = True
 
@@ -3212,7 +3260,8 @@ This trade ensures we're always active in the market"""
             try:
                 exp_datetime = datetime.strptime(exp_date, '%Y-%m-%d').replace(tzinfo=CENTRAL_TZ)
                 dte = (exp_datetime - now).days
-            except:
+            except (ValueError, TypeError) as e:
+                # Failed to parse expiration date
                 dte = 0
 
             # Determine VIX regime
@@ -3361,12 +3410,18 @@ This trade ensures we're always active in the market"""
         AUTONOMOUS: Automatically manage and close positions based on conditions
         Runs every time the system checks
         """
-
         conn = get_connection()
-        positions = pd.read_sql_query("""
-            SELECT * FROM autonomous_open_positions
-        """, conn)
-        conn.close()
+        try:
+            positions = pd.read_sql_query("""
+                SELECT * FROM autonomous_open_positions
+                LIMIT 100
+            """, conn)
+        except Exception as e:
+            logger.warning(f"Failed to fetch open positions: {e}")
+            conn.close()
+            return []
+        finally:
+            conn.close()
 
         if positions.empty:
             return []
@@ -3378,6 +3433,7 @@ This trade ensures we're always active in the market"""
                 # Get current SPY price
                 gex_data = api_client.get_net_gamma('SPY')
                 if not gex_data or gex_data.get('error'):
+                    logger.warning(f"Failed to get GEX data for position {pos['id']}, skipping")
                     continue
 
                 current_spot = gex_data.get('spot_price', 0)
@@ -3395,9 +3451,9 @@ This trade ensures we're always active in the market"""
 
                 current_bid = option_data.get('bid', 0) or 0
                 current_ask = option_data.get('ask', 0) or 0
-                current_mid = option_data['mid']
-                if current_mid == 0:
-                    current_mid = option_data.get('last', pos['entry_price'])
+                current_mid = option_data.get('mid', 0)
+                if current_mid == 0 or current_mid is None:
+                    current_mid = option_data.get('last', pos['entry_price']) or pos['entry_price']
 
                 # CRITICAL: Apply exit slippage for realistic P&L
                 # When selling to close a long position, we receive below mid
@@ -3459,18 +3515,25 @@ This trade ensures we're always active in the market"""
     def _update_position(self, position_id: int, current_price: float, current_spot: float,
                          unrealized_pnl: float, pnl_pct: float = 0):
         """Update position with current values in autonomous_open_positions"""
+        # Validate inputs
+        if current_price is None or current_price < 0:
+            logger.warning(f"Invalid current_price {current_price} for position {position_id}, skipping update")
+            return
+
         conn = get_connection()
-        c = conn.cursor()
-
-        c.execute("""
-            UPDATE autonomous_open_positions
-            SET current_price = %s, current_spot_price = %s, unrealized_pnl = %s,
-                unrealized_pnl_pct = %s, last_updated = NOW()
-            WHERE id = %s
-        """, (current_price, current_spot, unrealized_pnl, pnl_pct, position_id))
-
-        conn.commit()
-        conn.close()
+        try:
+            c = conn.cursor()
+            c.execute("""
+                UPDATE autonomous_open_positions
+                SET current_price = %s, current_spot_price = %s, unrealized_pnl = %s,
+                    unrealized_pnl_pct = %s, last_updated = NOW()
+                WHERE id = %s
+            """, (current_price, current_spot, unrealized_pnl, pnl_pct, position_id))
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to update position {position_id}: {e}")
+        finally:
+            conn.close()
 
     def _check_exit_conditions(self, pos: Dict, pnl_pct: float, current_price: float,
                                 current_spot: float, gex_data: Dict) -> Tuple[bool, str]:
@@ -3501,7 +3564,7 @@ This trade ensures we're always active in the market"""
 
         except Exception as e:
             # If AI fails, fall back to simple rules
-            print(f"AI decision failed: {e}, using fallback rules")
+            logger.warning(f"AI decision failed: {e}, using fallback rules")
             return self._fallback_exit_rules(pos, pnl_pct, dte, gex_data)
 
     def _ai_should_close_position(self, pos: Dict, pnl_pct: float, current_price: float,
@@ -3627,6 +3690,7 @@ Now analyze this position:"""
         Log spread width performance for iron condors and other multi-leg strategies
         Called when a spread position is closed to track effectiveness of different wing widths
         """
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -3651,7 +3715,6 @@ Now analyze this position:"""
 
             # Only log for iron condors
             if action != 'IRON_CONDOR':
-                conn.close()
                 return
 
             # Calculate iron condor strikes based on standard parameters
@@ -3672,10 +3735,10 @@ Now analyze this position:"""
             short_put_distance_pct = ((put_sell_strike - spot) / spot) * 100
             long_put_distance_pct = ((put_buy_strike - spot) / spot) * 100
 
-            # Calculate hold time
+            # Calculate hold time - FIX: use exit_date/exit_time instead of undefined closed_date/closed_time
             entry_dt = datetime.strptime(f"{entry_date} {entry_time}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=CENTRAL_TZ)
-            closed_dt = datetime.strptime(f"{closed_date} {closed_time}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=CENTRAL_TZ)
-            hold_time_hours = int((closed_dt - entry_dt).total_seconds() / 3600)
+            exit_dt = datetime.strptime(f"{exit_date} {exit_time}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=CENTRAL_TZ)
+            hold_time_hours = int((exit_dt - entry_dt).total_seconds() / 3600)
 
             # Calculate DTE
             exp_dt = datetime.strptime(expiration_date, "%Y-%m-%d").replace(tzinfo=CENTRAL_TZ)
@@ -3732,7 +3795,6 @@ Now analyze this position:"""
             ))
 
             conn.commit()
-            conn.close()
 
             print(f"✅ Logged spread width performance for position {position_id}: "
                   f"Wing Width=${wing_width}, P&L=${pnl_dollars:.2f}, Win={bool(win)}")
@@ -3741,94 +3803,124 @@ Now analyze this position:"""
             print(f"⚠️ Failed to log spread width performance: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            if conn:
+                conn.close()
 
     def _close_position(self, position_id: int, exit_price: float, realized_pnl: float, reason: str):
         """Close a position - move from open_positions to closed_trades"""
         conn = get_connection()
-        c = conn.cursor()
+        position_data = None  # For logging after commit
 
-        now = datetime.now(CENTRAL_TZ)
-
-        # First, get the full position data from open_positions
-        c.execute("""
-            SELECT symbol, strategy, action, strike, option_type, expiration_date,
-                   contracts, contract_symbol, entry_date, entry_time, entry_price,
-                   entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
-                   entry_net_gex, entry_flip_point, trade_reasoning, current_spot_price
-            FROM autonomous_open_positions
-            WHERE id = %s
-        """, (position_id,))
-
-        pos = c.fetchone()
-        if not pos:
-            print(f"⚠️ Position {position_id} not found in open_positions")
-            conn.close()
-            return
-
-        (symbol, strategy, action, strike, option_type, expiration_date,
-         contracts, contract_symbol, entry_date, entry_time, entry_price,
-         entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
-         entry_net_gex, entry_flip_point, trade_reasoning, exit_spot_price) = pos
-
-        # Calculate proper P&L percentage
-        entry_value = float(entry_price) * contracts * 100 if entry_price else 0
-        realized_pnl_pct = (realized_pnl / entry_value * 100) if entry_value > 0 else 0
-
-        # Calculate hold duration
         try:
-            entry_dt = datetime.strptime(f"{entry_date} {entry_time}", '%Y-%m-%d %H:%M:%S')
-            hold_minutes = int((now.replace(tzinfo=None) - entry_dt).total_seconds() / 60)
-        except:
-            hold_minutes = 0
+            c = conn.cursor()
+            now = datetime.now(CENTRAL_TZ)
 
-        # Insert into closed_trades table
-        c.execute("""
-            INSERT INTO autonomous_closed_trades (
+            # First, get the full position data from open_positions
+            c.execute("""
+                SELECT symbol, strategy, action, strike, option_type, expiration_date,
+                       contracts, contract_symbol, entry_date, entry_time, entry_price,
+                       entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
+                       entry_net_gex, entry_flip_point, trade_reasoning, current_spot_price
+                FROM autonomous_open_positions
+                WHERE id = %s
+            """, (position_id,))
+
+            pos = c.fetchone()
+            if not pos:
+                print(f"⚠️ Position {position_id} not found in open_positions")
+                return
+
+            (symbol, strategy, action, strike, option_type, expiration_date,
+             contracts, contract_symbol, entry_date, entry_time, entry_price,
+             entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
+             entry_net_gex, entry_flip_point, trade_reasoning, exit_spot_price) = pos
+
+            # Calculate proper P&L percentage
+            entry_value = float(entry_price) * contracts * 100 if entry_price else 0
+            realized_pnl_pct = (realized_pnl / entry_value * 100) if entry_value > 0 else 0
+
+            # Calculate hold duration
+            try:
+                entry_dt = datetime.strptime(f"{entry_date} {entry_time}", '%Y-%m-%d %H:%M:%S')
+                hold_minutes = int((now.replace(tzinfo=None) - entry_dt).total_seconds() / 60)
+            except (ValueError, TypeError, AttributeError):
+                # Failed to calculate hold duration - log but continue
+                logger.warning(f"Could not calculate hold duration for position {position_id}")
+                hold_minutes = 0
+
+            # Insert into closed_trades table
+            c.execute("""
+                INSERT INTO autonomous_closed_trades (
+                    symbol, strategy, action, strike, option_type, expiration_date,
+                    contracts, contract_symbol, entry_date, entry_time, entry_price,
+                    entry_bid, entry_ask, entry_spot_price, exit_date, exit_time,
+                    exit_price, exit_spot_price, exit_reason, realized_pnl,
+                    realized_pnl_pct, confidence, gex_regime, entry_net_gex,
+                    entry_flip_point, trade_reasoning, hold_duration_minutes
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
                 symbol, strategy, action, strike, option_type, expiration_date,
                 contracts, contract_symbol, entry_date, entry_time, entry_price,
-                entry_bid, entry_ask, entry_spot_price, exit_date, exit_time,
-                exit_price, exit_spot_price, exit_reason, realized_pnl,
-                realized_pnl_pct, confidence, gex_regime, entry_net_gex,
-                entry_flip_point, trade_reasoning, hold_duration_minutes
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            symbol, strategy, action, strike, option_type, expiration_date,
-            contracts, contract_symbol, entry_date, entry_time, entry_price,
-            entry_bid, entry_ask, entry_spot_price,
-            now.strftime('%Y-%m-%d'),
-            now.strftime('%H:%M:%S'),
-            exit_price,
-            exit_spot_price,
-            reason,
-            realized_pnl,
-            realized_pnl_pct,
-            confidence, gex_regime, entry_net_gex, entry_flip_point,
-            trade_reasoning, hold_minutes
-        ))
+                entry_bid, entry_ask, entry_spot_price,
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                exit_price,
+                exit_spot_price,
+                reason,
+                realized_pnl,
+                realized_pnl_pct,
+                confidence, gex_regime, entry_net_gex, entry_flip_point,
+                trade_reasoning, hold_minutes
+            ))
 
-        # Delete from open_positions
-        c.execute("DELETE FROM autonomous_open_positions WHERE id = %s", (position_id,))
+            # Delete from open_positions
+            c.execute("DELETE FROM autonomous_open_positions WHERE id = %s", (position_id,))
 
-        conn.commit()
+            # Commit both operations atomically
+            conn.commit()
 
-        # Log to trade activity
-        self._log_trade_activity(
-            'EXIT',
-            symbol,
-            f"Closed {strategy}: {action} ${strike} x{contracts} @ ${exit_price:.2f} | P&L: ${realized_pnl:+.2f} ({realized_pnl_pct:+.1f}%) | Reason: {reason}",
-            position_id,
-            realized_pnl,
-            True,
-            None
-        )
+            # Store data for logging after successful commit
+            position_data = {
+                'symbol': symbol,
+                'strategy': strategy,
+                'action': action,
+                'strike': strike,
+                'contracts': contracts,
+                'exit_price': exit_price,
+                'realized_pnl': realized_pnl,
+                'realized_pnl_pct': realized_pnl_pct,
+                'reason': reason
+            }
 
-        # Create equity snapshot after closing
-        self._create_equity_snapshot()
+        except Exception as e:
+            logger.error(f"Failed to close position {position_id}: {e}")
+            try:
+                conn.rollback()
+            except:
+                pass
+            return
+        finally:
+            conn.close()
 
-        conn.close()
+        # Post-commit logging (uses separate connections, so safe to do after main conn closed)
+        if position_data:
+            # Log to trade activity
+            self._log_trade_activity(
+                'EXIT',
+                position_data['symbol'],
+                f"Closed {position_data['strategy']}: {position_data['action']} ${position_data['strike']} x{position_data['contracts']} @ ${position_data['exit_price']:.2f} | P&L: ${position_data['realized_pnl']:+.2f} ({position_data['realized_pnl_pct']:+.1f}%) | Reason: {position_data['reason']}",
+                position_id,
+                position_data['realized_pnl'],
+                True,
+                None
+            )
 
-        # Log spread width performance if this is an iron condor
-        self._log_spread_width_performance(position_id)
+            # Create equity snapshot after closing
+            self._create_equity_snapshot()
+
+            # Log spread width performance if this is an iron condor
+            self._log_spread_width_performance(position_id)
 
     def _log_trade_activity(self, action_type: str, symbol: str, details: str,
                             position_id: int = None, pnl_impact: float = None,
