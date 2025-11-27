@@ -101,6 +101,15 @@ except ImportError as e:
     AI_REASONING_AVAILABLE = False
     print(f"⚠️ SPX Trader: AI Reasoning not available: {e}")
 
+# CRITICAL: Import SPX Debug Logger for comprehensive debugging
+try:
+    from spx_debug_logger import SPXDebugLogger, get_spx_debug_logger
+    SPX_DEBUG_AVAILABLE = True
+    print("✅ SPX Trader: Debug Logger available")
+except ImportError as e:
+    SPX_DEBUG_AVAILABLE = False
+    print(f"⚠️ SPX Trader: Debug Logger not available: {e}")
+
 # CRITICAL: Import Strategy Stats for backtester integration
 try:
     from strategy_stats import get_strategy_stats, get_recent_changes
@@ -182,6 +191,19 @@ class SPXInstitutionalTrader:
             print("✅ SPX Trader: AI Reasoning Engine ready")
         else:
             self.ai_reasoning = None
+
+        # CRITICAL: Initialize SPX Debug Logger for comprehensive debugging
+        if SPX_DEBUG_AVAILABLE:
+            self.debug_logger = get_spx_debug_logger()
+            self.debug_logger.log_info("SPX Institutional Trader initializing", {
+                'capital': capital,
+                'max_position_pct': self.max_position_pct,
+                'max_delta_exposure': self.max_delta_exposure,
+                'max_daily_trades': self.max_daily_trades
+            })
+            print("✅ SPX Trader: Debug Logger ready")
+        else:
+            self.debug_logger = None
 
         # Load backtest-informed parameters
         self.strategy_stats = self._load_strategy_stats()
@@ -380,13 +402,27 @@ class SPXInstitutionalTrader:
         # Institutional quarter-Kelly for unproven strategies, half-Kelly for proven
         if is_proven:
             adjusted_kelly = kelly * 0.5  # Half-Kelly for proven
+            adjustment_type = 'half-kelly'
         else:
             adjusted_kelly = kelly * 0.25  # Quarter-Kelly for unproven (extra conservative)
+            adjustment_type = 'quarter-kelly'
 
         # Cap at 25% for institutional, minimum 1%
         final_kelly = max(0.01, min(0.25, adjusted_kelly))
 
         print(f"   Final Kelly: {final_kelly:.1%} ({'Half' if is_proven else 'Quarter'}-Kelly applied)")
+
+        # DEBUG: Log detailed Kelly calculation
+        if self.debug_logger:
+            self.debug_logger.log_kelly_calculation(
+                strategy_name=strategy_name,
+                win_rate=win_rate,
+                avg_win=avg_win,
+                avg_loss=avg_loss,
+                raw_kelly=kelly,
+                adjusted_kelly=final_kelly,
+                adjustment_type=adjustment_type
+            )
 
         return final_kelly
 
@@ -738,6 +774,11 @@ class SPXInstitutionalTrader:
             'total_premium': contracts * cost_per_contract,
             'backtest_params': backtest_params
         }
+
+        # DEBUG: Log position sizing result
+        if self.debug_logger:
+            self.debug_logger.log_backtest_lookup(strategy_name or 'UNKNOWN', backtest_params)
+            self.debug_logger.log_position_sizing_result(sizing_details, contracts)
 
         # AUDIT TRAIL: Log all sizing decisions for compliance
         self._log_position_sizing_audit(
@@ -1248,8 +1289,16 @@ class SPXInstitutionalTrader:
         CRITICAL: This uses 'SPX' symbol, NOT 'SPY'.
         SPX has its own gamma exposure profile that differs from SPY.
         """
+        # DEBUG: Log fetch start
+        start_time = None
+        if self.debug_logger:
+            start_time = self.debug_logger.log_data_fetch_start('GEX', 'SPX')
+
         if not self.api_client:
-            print("❌ SPX Trader: API client not available for GEX data")
+            error_msg = "API client not available for GEX data"
+            print(f"❌ SPX Trader: {error_msg}")
+            if self.debug_logger:
+                self.debug_logger.log_data_fetch_result('GEX', None, start_time, success=False, error=error_msg)
             return None
 
         try:
@@ -1258,13 +1307,22 @@ class SPXInstitutionalTrader:
 
             if gex_data and not gex_data.get('error'):
                 print(f"✅ SPX GEX Data: Net GEX ${gex_data.get('net_gex', 0)/1e9:.2f}B, Flip ${gex_data.get('flip_point', 0):.0f}")
+                # DEBUG: Log successful fetch
+                if self.debug_logger:
+                    self.debug_logger.log_data_fetch_result('GEX', gex_data, start_time, success=True)
                 return gex_data
             else:
-                print(f"⚠️ SPX GEX fetch returned error: {gex_data.get('error') if gex_data else 'No data'}")
+                error_msg = gex_data.get('error') if gex_data else 'No data returned'
+                print(f"⚠️ SPX GEX fetch returned error: {error_msg}")
+                if self.debug_logger:
+                    self.debug_logger.log_data_fetch_result('GEX', gex_data, start_time, success=False, error=error_msg)
                 return None
 
         except Exception as e:
             print(f"❌ SPX GEX fetch error: {e}")
+            if self.debug_logger:
+                self.debug_logger.log_error(f"GEX fetch exception", error=e)
+                self.debug_logger.log_data_fetch_result('GEX', None, start_time, success=False, error=str(e))
             return None
 
     def get_spx_skew_data(self) -> Optional[Dict]:
@@ -1344,12 +1402,22 @@ class SPXInstitutionalTrader:
 
         ANTI-WHIPLASH: Classifier tracks regime persistence.
         """
+        # DEBUG: Start regime classification
+        if self.debug_logger:
+            self.debug_logger.log_debug("Starting unified regime classification")
+
         if not UNIFIED_CLASSIFIER_AVAILABLE or self.regime_classifier is None:
-            print("⚠️ SPX: Unified classifier not available")
+            error_msg = "Unified classifier not available"
+            print(f"⚠️ SPX: {error_msg}")
+            if self.debug_logger:
+                self.debug_logger.log_warning(error_msg)
             return None
 
         if not self.api_client:
-            print("⚠️ SPX: API client not available for GEX data")
+            error_msg = "API client not available for GEX data"
+            print(f"⚠️ SPX: {error_msg}")
+            if self.debug_logger:
+                self.debug_logger.log_warning(error_msg)
             return None
 
         try:
@@ -1400,6 +1468,24 @@ class SPXInstitutionalTrader:
             # ============================================================
             # RUN THE UNIFIED CLASSIFIER FOR SPX
             # ============================================================
+            # DEBUG: Log all inputs to classifier
+            classifier_inputs = {
+                'spot_price': spot_price,
+                'net_gex': net_gex,
+                'flip_point': flip_point,
+                'current_iv': current_iv,
+                'iv_history_len': len(self.iv_history),
+                'historical_vol': historical_vol,
+                'vix': vix,
+                'vix_term_structure': "contango",
+                'momentum_1h': momentum.get('1h', 0),
+                'momentum_4h': momentum.get('4h', 0),
+                'above_20ma': above_20ma,
+                'above_50ma': above_50ma
+            }
+            if self.debug_logger:
+                self.debug_logger.log_regime_input(classifier_inputs)
+
             regime = self.regime_classifier.classify(
                 spot_price=spot_price,
                 net_gex=net_gex,
@@ -1414,6 +1500,10 @@ class SPXInstitutionalTrader:
                 above_20ma=above_20ma,
                 above_50ma=above_50ma
             )
+
+            # DEBUG: Log regime classification result
+            if self.debug_logger:
+                self.debug_logger.log_regime_classification(regime)
 
             # Log the classification
             print(f"""
@@ -1492,6 +1582,18 @@ REASONING:
                 )
 
                 print(f"\n📊 VIX/GEX Context for STAY_FLAT:\n{no_action_reason}")
+
+                # DEBUG: Log detailed STAY_FLAT reason
+                if self.debug_logger:
+                    self.debug_logger.log_stay_flat_reason(no_action_reason, {
+                        'spot_price': spot_price,
+                        'vix': vix,
+                        'net_gex': net_gex,
+                        'flip_point': flip_point,
+                        'volatility_regime': regime.volatility_regime.value if regime else 'N/A',
+                        'gamma_regime': regime.gamma_regime.value if regime else 'N/A',
+                        'bars_in_regime': regime.bars_in_regime if regime else 0
+                    })
                 return None
 
             # Get strategy params
@@ -1554,6 +1656,11 @@ REASONING:
         Returns:
             Position ID if trade executed, None otherwise
         """
+        # DEBUG: Start new scan cycle
+        scan_start_time = datetime.now(CENTRAL_TZ)
+        if self.debug_logger:
+            scan_cycle = self.debug_logger.start_scan_cycle()
+
         print("\n" + "="*60)
         print("SPX INSTITUTIONAL TRADER - DAILY TRADE SEARCH")
         print("="*60)
@@ -1577,6 +1684,10 @@ REASONING:
                 success=False
             )
             print(f"⚠️ Already at max daily trades ({trades_today}/{self.max_daily_trades})")
+            # DEBUG: End scan cycle
+            if self.debug_logger:
+                duration = (datetime.now(CENTRAL_TZ) - scan_start_time).total_seconds()
+                self.debug_logger.end_scan_cycle(f"MAX_TRADES_REACHED ({trades_today}/{self.max_daily_trades})", duration)
             return None
 
         # Get unified regime decision
@@ -1585,6 +1696,10 @@ REASONING:
         if not trade:
             # Note: VIX context already logged in get_unified_regime_decision if STAY_FLAT
             print("❌ No trade opportunity found by unified classifier")
+            # DEBUG: End scan cycle
+            if self.debug_logger:
+                duration = (datetime.now(CENTRAL_TZ) - scan_start_time).total_seconds()
+                self.debug_logger.end_scan_cycle("NO_TRADE_OPPORTUNITY (STAY_FLAT or no signal)", duration)
             return None
 
         if trade.get('confidence', 0) < 60:
@@ -1597,6 +1712,11 @@ REASONING:
                 success=False
             )
             print(f"⚠️ Confidence too low: {trade.get('confidence', 0)}%")
+            # DEBUG: End scan cycle
+            if self.debug_logger:
+                duration = (datetime.now(CENTRAL_TZ) - scan_start_time).total_seconds()
+                self.debug_logger.log_trade_rejected(f"Confidence {trade.get('confidence', 0)}% < 60% threshold", trade)
+                self.debug_logger.end_scan_cycle(f"LOW_CONFIDENCE ({trade.get('confidence', 0)}%)", duration)
             return None
 
         # Calculate position size
@@ -1626,6 +1746,15 @@ REASONING:
                 success=False
             )
             print("❌ Position sizing returned 0 contracts")
+            # DEBUG: End scan cycle
+            if self.debug_logger:
+                duration = (datetime.now(CENTRAL_TZ) - scan_start_time).total_seconds()
+                self.debug_logger.log_trade_rejected(f"Position sizing returned 0 contracts", {
+                    'strategy': trade.get('strategy'),
+                    'sizing_error': sizing.get('error'),
+                    'sizing_blocked': sizing.get('blocked')
+                })
+                self.debug_logger.end_scan_cycle("ZERO_CONTRACTS (sizing returned 0)", duration)
             return None
 
         # Log position sizing decision with backtest info
@@ -1677,6 +1806,23 @@ REASONING:
             print(f"   Strategy: {trade['strategy']}")
             print(f"   {trade['action']} {contracts} x {trade['option_type'].upper()} @ ${trade['strike']}")
             print(f"   Confidence: {trade['confidence']}%")
+
+            # DEBUG: Log successful trade execution and end scan cycle
+            if self.debug_logger:
+                duration = (datetime.now(CENTRAL_TZ) - scan_start_time).total_seconds()
+                self.debug_logger.log_trade_execution(
+                    position_id=position_id,
+                    action=trade['action'],
+                    symbol='SPX',
+                    strike=trade['strike'],
+                    option_type=trade['option_type'],
+                    contracts=contracts,
+                    entry_price=entry_price,
+                    commission=0,  # Calculated in execute_trade
+                    slippage=0,    # Calculated in execute_trade
+                    total_cost=contracts * entry_price * 100
+                )
+                self.debug_logger.end_scan_cycle(f"TRADE_EXECUTED (Position #{position_id})", duration)
         else:
             self._log_trade_activity(
                 action_type='TRADE_FAILED',
@@ -1687,6 +1833,11 @@ REASONING:
                 success=False,
                 error_message="execute_trade returned None"
             )
+            # DEBUG: Log failed trade and end scan cycle
+            if self.debug_logger:
+                duration = (datetime.now(CENTRAL_TZ) - scan_start_time).total_seconds()
+                self.debug_logger.log_trade_rejected("execute_trade returned None", trade)
+                self.debug_logger.end_scan_cycle("TRADE_EXECUTION_FAILED", duration)
 
         return position_id
 

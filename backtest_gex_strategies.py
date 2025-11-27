@@ -8,6 +8,9 @@ Backtests GEX-based trading signals:
 - Dealer positioning shifts
 
 Uses REAL GEX data from Trading Volatility API
+
+INTEGRATION: Results are automatically saved to strategy_stats.json
+for use by SPX and SPY traders via Kelly-based position sizing.
 """
 
 import pandas as pd
@@ -15,6 +18,14 @@ import numpy as np
 from datetime import datetime, timedelta
 from backtest_framework import BacktestBase, BacktestResults, Trade
 from typing import Dict, List
+
+# CRITICAL: Import strategy_stats for explicit updates with standardized names
+try:
+    from strategy_stats import update_strategy_stats, log_change
+    STRATEGY_STATS_AVAILABLE = True
+except ImportError:
+    STRATEGY_STATS_AVAILABLE = False
+    print("⚠️ strategy_stats not available")
 
 
 class GEXBacktester(BacktestBase):
@@ -370,16 +381,18 @@ class GEXBacktester(BacktestBase):
         print("Fetching REAL historical GEX data from Trading Volatility API...")
         self.gex_data = self.fetch_real_gex_data(self.price_data)
 
-        # Strategy configurations
+        # Strategy configurations with STANDARDIZED names for strategy_stats integration
+        # These names match the format expected by SPX/SPY traders
         strategies = {
-            'Flip Point Breakout': self.detect_flip_point_breakout,
-            'Flip Point Breakdown': self.detect_flip_point_breakdown,
-            'Call Wall Rejection': self.detect_call_wall_rejection,
-            'Put Wall Bounce': self.detect_put_wall_bounce,
-            'Negative GEX Squeeze': self.detect_negative_gex_squeeze
+            'GEX_FLIP_POINT_BREAKOUT': self.detect_flip_point_breakout,
+            'GEX_FLIP_POINT_BREAKDOWN': self.detect_flip_point_breakdown,
+            'GEX_CALL_WALL_REJECTION': self.detect_call_wall_rejection,
+            'GEX_PUT_WALL_BOUNCE': self.detect_put_wall_bounce,
+            'NEGATIVE_GEX_SQUEEZE': self.detect_negative_gex_squeeze
         }
 
         all_trades = []
+        strategy_results = {}  # Store results for explicit strategy_stats update
 
         # Run each strategy
         for strategy_name, detector_func in strategies.items():
@@ -387,17 +400,49 @@ class GEXBacktester(BacktestBase):
             strategy_trades = self.test_strategy(detector_func, strategy_name)
             all_trades.extend(strategy_trades)
 
-            # Print individual strategy results
+            # Print individual strategy results and store for strategy_stats
             if strategy_trades:
                 results = self.calculate_metrics(strategy_trades, strategy_name)
+                strategy_results[strategy_name] = results
                 print(f"  Trades: {results.total_trades}, Win Rate: {results.win_rate:.1f}%, Expectancy: {results.expectancy_pct:+.2f}%")
 
         # Calculate combined results
-        results = self.calculate_metrics(all_trades, "GEX Strategies (Combined)")
+        results = self.calculate_metrics(all_trades, "GEX_STRATEGIES_COMBINED")
         self.print_summary(results)
         self.save_results_to_db(results)
 
+        # CRITICAL: Explicitly update strategy_stats with standardized names
+        # This ensures SPX/SPY traders can find these strategies by name
+        if STRATEGY_STATS_AVAILABLE:
+            self._update_all_strategy_stats(strategy_results)
+
         return results
+
+    def _update_all_strategy_stats(self, strategy_results: Dict[str, BacktestResults]):
+        """
+        Explicitly update strategy_stats.json with GEX strategy results.
+
+        Uses standardized names that match what SPX/SPY traders look for:
+        - GEX_FLIP_POINT_BREAKOUT
+        - GEX_FLIP_POINT_BREAKDOWN
+        - GEX_CALL_WALL_REJECTION
+        - GEX_PUT_WALL_BOUNCE
+        - NEGATIVE_GEX_SQUEEZE
+        """
+        print("\n📊 Updating centralized strategy stats with GEX strategies...")
+
+        for strategy_name, results in strategy_results.items():
+            if results.total_trades < 5:
+                print(f"   Skipping {strategy_name} - only {results.total_trades} trades (need 5+)")
+                continue
+
+            try:
+                # Convert to dict format expected by update_strategy_stats
+                results_dict = results.to_dict()
+                update_strategy_stats(strategy_name, results_dict)
+                print(f"   ✅ Updated {strategy_name}: {results.win_rate:.1f}% win rate, {results.total_trades} trades")
+            except Exception as e:
+                print(f"   ⚠️ Failed to update {strategy_name}: {e}")
 
     def test_strategy(self, detector_func, strategy_name: str) -> List[Trade]:
         """Test a single strategy and return trades"""
