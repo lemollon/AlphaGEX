@@ -4633,17 +4633,25 @@ async def get_all_pattern_backtests(lookback_days: int = 90):
 
         start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
 
-        # Get pattern performance from closed trades
+        # Get pattern performance from closed trades with full metrics
         query = """
             SELECT
                 strategy as pattern,
                 COUNT(*) as total_signals,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_signals,
+                SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losing_signals,
                 CASE WHEN COUNT(*) > 0 THEN
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*) * 100
                 ELSE 0 END as win_rate,
                 AVG(realized_pnl_pct) as expectancy,
-                SUM(realized_pnl) as total_pnl
+                SUM(realized_pnl) as total_pnl,
+                AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl_pct ELSE NULL END) as avg_profit_pct,
+                AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl_pct ELSE NULL END) as avg_loss_pct,
+                STDDEV(realized_pnl_pct) as std_dev,
+                CASE WHEN SUM(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl) ELSE 0 END) > 0 THEN
+                    SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END) /
+                    NULLIF(SUM(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl) ELSE 0 END), 0)
+                ELSE 0 END as profit_factor
             FROM autonomous_closed_trades
             WHERE exit_date >= %s
             GROUP BY strategy
@@ -4654,13 +4662,23 @@ async def get_all_pattern_backtests(lookback_days: int = 90):
 
         results = []
         for _, row in patterns.iterrows():
+            # Calculate Sharpe ratio approximation: (expectancy / std_dev) * sqrt(252)
+            std_dev = float(row['std_dev']) if row['std_dev'] and not pd.isna(row['std_dev']) else 1
+            expectancy = float(row['expectancy']) if row['expectancy'] else 0
+            sharpe_ratio = (expectancy / std_dev) * (252 ** 0.5) if std_dev > 0 else 0
+
             results.append({
                 "pattern": row['pattern'],
                 "total_signals": int(row['total_signals']),
                 "winning_signals": int(row['winning_signals']),
+                "losing_signals": int(row['losing_signals']),
                 "win_rate": float(row['win_rate']) if row['win_rate'] else 0,
-                "expectancy": float(row['expectancy']) if row['expectancy'] else 0,
-                "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0
+                "expectancy": expectancy,
+                "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0,
+                "avg_profit_pct": float(row['avg_profit_pct']) if row['avg_profit_pct'] and not pd.isna(row['avg_profit_pct']) else 0,
+                "avg_loss_pct": float(row['avg_loss_pct']) if row['avg_loss_pct'] and not pd.isna(row['avg_loss_pct']) else 0,
+                "profit_factor": float(row['profit_factor']) if row['profit_factor'] and not pd.isna(row['profit_factor']) else 0,
+                "sharpe_ratio": round(sharpe_ratio, 2)
             })
 
         return {"success": True, "data": results}

@@ -254,10 +254,10 @@ export default function Dashboard() {
                   ${currentEquity.toFixed(2)}
                 </div>
                 <div className="flex items-center gap-4 text-sm text-text-secondary">
-                  <span>Start: $5,000.00</span>
+                  <span>Start: ${((performance?.starting_capital || 1000000)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   <span>•</span>
                   <span className={performance && performance.total_pnl >= 0 ? 'text-success font-semibold' : 'text-danger font-semibold'}>
-                    {performance && performance.total_pnl >= 0 ? '+' : ''}{performance?.total_pnl?.toFixed(2) || '0.00'}
+                    {performance && performance.total_pnl >= 0 ? '+' : ''}${performance?.total_pnl?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                   </span>
                 </div>
               </div>
