@@ -24,6 +24,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
+# Import route modules (refactored from monolithic main.py)
+from api.routes import vix_routes, spx_routes, system_routes
+
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
 from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
@@ -95,6 +98,12 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
     expose_headers=["*"],
 )
+
+# Include route modules (modular API structure)
+app.include_router(vix_routes.router)
+app.include_router(spx_routes.router)
+app.include_router(system_routes.router)
+print("✅ Route modules loaded: vix, spx, system")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()
