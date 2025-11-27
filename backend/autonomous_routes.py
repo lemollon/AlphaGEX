@@ -41,6 +41,7 @@ async def get_autonomous_logs(
     - Risk manager decisions
     - Trade executions
     """
+    conn = None
     try:
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -65,7 +66,6 @@ async def get_autonomous_logs(
 
         c.execute(query, params)
         logs = [dict(row) for row in c.fetchall()]
-        conn.close()
 
         return {
             'success': True,
@@ -75,11 +75,15 @@ async def get_autonomous_logs(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
 
 
 @router.get("/logs/sessions")
 async def get_log_sessions(limit: int = Query(10, ge=1, le=50)):
     """Get list of recent autonomous trader sessions"""
+    conn = None
     try:
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -100,7 +104,6 @@ async def get_log_sessions(limit: int = Query(10, ge=1, le=50)):
         """)
 
         sessions = [dict(row) for row in c.fetchall()]
-        conn.close()
 
         return {
             'success': True,
@@ -109,6 +112,9 @@ async def get_log_sessions(limit: int = Query(10, ge=1, le=50)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
 
 
 # ============================================================================

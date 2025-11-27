@@ -157,6 +157,7 @@ export function useTraderWebSocket() {
   const pollingIntervalRef = useRef<NodeJS.Timeout>()
   const wsFailCountRef = useRef(0)
   const mountedRef = useRef(true) // Track if component is mounted to prevent state updates after unmount
+  const fetchInProgressRef = useRef(false) // Prevent request stacking
 
   // REST API polling fallback
   const startPolling = useCallback(() => {
@@ -167,21 +168,37 @@ export function useTraderWebSocket() {
     setUsingRestFallback(true)
 
     // Immediate fetch
-    fetchTraderData().then(d => {
-      if (d && mountedRef.current) {
-        setData(d)
-        setIsConnected(true)
-        setError(null)
-      }
-    })
+    if (!fetchInProgressRef.current) {
+      fetchInProgressRef.current = true
+      fetchTraderData().then(d => {
+        fetchInProgressRef.current = false
+        if (d && mountedRef.current) {
+          setData(d)
+          setIsConnected(true)
+          setError(null)
+        }
+      }).catch(() => {
+        fetchInProgressRef.current = false
+      })
+    }
 
-    // Poll every 10 seconds
+    // Poll every 10 seconds with request deduplication
     pollingIntervalRef.current = setInterval(async () => {
       if (!mountedRef.current) return
-      const d = await fetchTraderData()
-      if (d && mountedRef.current) {
-        setData(d)
-        setIsConnected(true)
+      // Skip if a fetch is already in progress (prevents request stacking)
+      if (fetchInProgressRef.current) {
+        console.log('Skipping poll - previous request still in progress')
+        return
+      }
+      fetchInProgressRef.current = true
+      try {
+        const d = await fetchTraderData()
+        if (d && mountedRef.current) {
+          setData(d)
+          setIsConnected(true)
+        }
+      } finally {
+        fetchInProgressRef.current = false
       }
     }, 10000)
   }, [])

@@ -622,6 +622,65 @@ export default function AutonomousTrader() {
     window.URL.revokeObjectURL(url)
   }
 
+  // Refresh all page data without full reload
+  const refreshPageData = async () => {
+    try {
+      // Fetch key data in parallel for quick refresh
+      const results = await Promise.allSettled([
+        apiClient.getTraderStatus(),
+        apiClient.getTraderPerformance(),
+        apiClient.getTraderTrades(10),
+        apiClient.getAutonomousLogs({ limit: 20 }).catch(() => ({ data: { success: false, data: [] } })),
+        apiClient.getTradeLog(),
+        apiClient.getEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } })),
+        apiClient.getClosedTrades(20).catch(() => ({ data: { success: false, data: [] } }))
+      ])
+
+      const [statusRes, perfRes, tradesRes, logsRes, tradeLogRes, equityCurveRes, closedTradesRes] = results.map(result =>
+        result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
+      )
+
+      if (statusRes.data?.success) setTraderStatus(statusRes.data.data)
+      if (perfRes.data?.success) setPerformance(perfRes.data.data)
+
+      if (tradesRes.data?.success && Array.isArray(tradesRes.data?.data)) {
+        const mappedTrades = tradesRes.data.data.map((trade: any) => ({
+          id: trade.id?.toString() || trade.timestamp,
+          timestamp: `${trade.entry_date}T${trade.entry_time}`,
+          symbol: trade.symbol || 'SPY',
+          action: trade.action || 'BUY',
+          type: trade.option_type || 'CALL',
+          strike: trade.strike || 0,
+          quantity: trade.contracts || 0,
+          price: Math.abs(trade.entry_price) || 0,
+          status: trade.status || 'OPEN',
+          pnl: trade.realized_pnl || trade.unrealized_pnl || 0,
+          strategy: trade.strategy,
+          trade_reasoning: trade.trade_reasoning,
+          expiration_date: trade.expiration_date,
+        }))
+        setRecentTrades(mappedTrades)
+      }
+
+      if (logsRes.data?.success && logsRes.data.data) setAutonomousLogs(logsRes.data.data)
+      if (tradeLogRes.data?.success && tradeLogRes.data.data) setTradeLog(tradeLogRes.data.data)
+      if (closedTradesRes.data?.success && closedTradesRes.data.data) setClosedTrades(closedTradesRes.data.data)
+
+      if (equityCurveRes.data?.success && equityCurveRes.data.data && Array.isArray(equityCurveRes.data.data)) {
+        const startingEquity = equityCurveRes.data.data.length > 0 ? equityCurveRes.data.data[0].equity : 10000
+        const curveData = equityCurveRes.data.data.map((point: any) => ({
+          timestamp: point.timestamp,
+          equity: point.equity,
+          pnl: point.equity - startingEquity,
+          date: new Date(point.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        }))
+        setEquityCurve(curveData)
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error)
+    }
+  }
+
   // Execute a single trader cycle manually
   const handleExecuteTraderCycle = async () => {
     setExecuting(true)
@@ -629,8 +688,8 @@ export default function AutonomousTrader() {
       const res = await apiClient.executeTraderCycle()
       if (res.data.success) {
         alert('Trader cycle executed successfully! Check AI Thought Process for results.')
-        // Refresh data after execution
-        window.location.reload()
+        // Refresh data after execution (targeted refresh, not full page reload)
+        await refreshPageData()
       } else {
         alert(`Execution failed: ${res.data.error || 'Unknown error'}`)
       }

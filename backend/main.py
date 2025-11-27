@@ -9539,8 +9539,26 @@ async def start_trader_manually():
                 "error": f"Start script not found at {start_script}"
             }
 
-        # Run the start script
-        result = subprocess.run([start_script], capture_output=True, text=True, cwd=alphagex_dir)
+        # Run the start script with timeout to prevent hanging
+        try:
+            result = subprocess.run(
+                [start_script],
+                capture_output=True,
+                text=True,
+                cwd=alphagex_dir,
+                timeout=30  # 30 second timeout
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": "Start script timed out after 30 seconds"
+            }
+
+        if result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Start script failed: {result.stderr or result.stdout}"
+            }
 
         return {
             "success": True,
@@ -9568,20 +9586,77 @@ async def stop_trader_manually():
                 "error": "Trader is not running (no PID file found)"
             }
 
-        with open(pid_file, 'r') as f:
-            pid = int(f.read().strip())
-
-        # Kill the process
+        # Read and validate PID file
         try:
+            with open(pid_file, 'r') as f:
+                pid_content = f.read().strip()
+                if not pid_content:
+                    return {
+                        "success": False,
+                        "error": "PID file is empty"
+                    }
+                pid = int(pid_content)
+        except ValueError:
+            return {
+                "success": False,
+                "error": f"Invalid PID file contents: '{pid_content[:50]}'"
+            }
+
+        # Validate PID is reasonable (not system processes)
+        if pid <= 0 or pid > 4194304:  # Max PID on Linux
+            return {
+                "success": False,
+                "error": f"Invalid PID value: {pid}"
+            }
+
+        # Verify the process exists and is actually a trader process
+        try:
+            # Check if process exists first
+            os.kill(pid, 0)  # Signal 0 doesn't kill, just checks existence
+
+            # Try to verify it's actually a Python/trader process (optional safety check)
+            try:
+                cmdline_path = f"/proc/{pid}/cmdline"
+                if os.path.exists(cmdline_path):
+                    with open(cmdline_path, 'r') as f:
+                        cmdline = f.read()
+                        # Basic sanity check - should contain python or trader
+                        if 'python' not in cmdline.lower() and 'trader' not in cmdline.lower():
+                            return {
+                                "success": False,
+                                "error": f"PID {pid} does not appear to be the trader process"
+                            }
+            except (IOError, PermissionError):
+                # Can't read cmdline, proceed anyway
+                pass
+
+            # Kill the process
             os.kill(pid, signal.SIGTERM)
+
+            # Clean up the PID file
+            try:
+                os.remove(pid_file)
+            except:
+                pass
+
             return {
                 "success": True,
                 "message": f"Trader stopped (PID: {pid})"
             }
         except ProcessLookupError:
+            # Process doesn't exist, clean up stale PID file
+            try:
+                os.remove(pid_file)
+            except:
+                pass
             return {
                 "success": False,
-                "error": "Trader process not found (may have already stopped)"
+                "error": "Trader process not found (may have already stopped). Cleaned up stale PID file."
+            }
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"Permission denied when trying to stop PID {pid}"
             }
     except Exception as e:
         return {"success": False, "error": str(e)}
