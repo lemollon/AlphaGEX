@@ -11,6 +11,9 @@ Tests:
 3. Strategy validation gates (expectancy, win rate, risk/reward)
 4. Backtest parameter extraction and fuzzy matching
 5. Feedback loop from closed trades to strategy stats
+
+NOTE: These tests require psycopg2 for database integration.
+They will be skipped if psycopg2 is not installed.
 """
 
 import pytest
@@ -21,6 +24,19 @@ from datetime import datetime
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Check if psycopg2 is available
+try:
+    import psycopg2
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
+
+# Skip all tests in this module if psycopg2 is not available
+pytestmark = pytest.mark.skipif(
+    not PSYCOPG2_AVAILABLE,
+    reason="psycopg2 required for SPX trader integration tests"
+)
 
 
 class TestKellyCalculation:

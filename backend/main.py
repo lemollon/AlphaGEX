@@ -25,7 +25,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 # Import route modules (refactored from monolithic main.py)
-from api.routes import vix_routes, spx_routes, system_routes
+from api.routes import (
+    vix_routes,
+    spx_routes,
+    system_routes,
+    trader_routes,
+    backtest_routes,
+    database_routes,
+    gex_routes,
+)
 
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
@@ -103,7 +111,11 @@ app.add_middleware(
 app.include_router(vix_routes.router)
 app.include_router(spx_routes.router)
 app.include_router(system_routes.router)
-print("✅ Route modules loaded: vix, spx, system")
+app.include_router(trader_routes.router)
+app.include_router(backtest_routes.router)
+app.include_router(database_routes.router)
+app.include_router(gex_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()
