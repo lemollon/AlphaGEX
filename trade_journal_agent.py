@@ -5,7 +5,6 @@ This agent analyzes your trading history to identify patterns, calculate perform
 and generate personalized recommendations for improving profitability.
 """
 
-import sqlite3
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -13,19 +12,20 @@ from typing import Dict, List, Tuple
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 
 class TradeJournalAgent:
     """AI agent that analyzes trading patterns and generates insights"""
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
+        pass
 
     def get_closed_trades(self, days_back: int = 30) -> pd.DataFrame:
-        """Get all closed trades from the database"""
-        conn = sqlite3.connect(self.db_path)
+        """Get all closed trades from the database (PostgreSQL)"""
+        conn = get_connection()
 
+        # PostgreSQL uses INTERVAL for date math
         query = """
             SELECT
                 symbol,
@@ -40,11 +40,11 @@ class TradeJournalAgent:
                 notes
             FROM positions
             WHERE status = 'CLOSED'
-            AND closed_at >= datetime('now', ?)
+            AND closed_at >= NOW() - INTERVAL '%s days'
             ORDER BY closed_at DESC
         """
 
-        df = pd.read_sql_query(query, conn, params=(f'-{days_back} days',))
+        df = pd.read_sql_query(query % days_back, conn.raw_connection)
         conn.close()
 
         if not df.empty:

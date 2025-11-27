@@ -4,34 +4,32 @@ Stores and analyzes historical gamma movements for correlation analysis
 Tracks daily expirations (SPY, QQQ, IWM, etc.) throughout the week
 """
 
-import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import streamlit as st
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 import numpy as np
 
 
 class GammaTrackingDB:
-    """Database for historical gamma tracking and correlation analysis"""
+    """Database for historical gamma tracking and correlation analysis (PostgreSQL)"""
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
         self._ensure_gamma_tables()
 
     def _ensure_gamma_tables(self):
-        """Create gamma tracking tables"""
-        conn = sqlite3.connect(self.db_path)
+        """Create gamma tracking tables (PostgreSQL)"""
+        conn = get_connection()
         c = conn.cursor()
 
         # Historical gamma snapshots (multi-day storage)
         c.execute("""
             CREATE TABLE IF NOT EXISTS gamma_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 symbol TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                date TEXT NOT NULL,
+                timestamp TIMESTAMP NOT NULL,
+                date DATE NOT NULL,
                 time_of_day TEXT,
                 spot_price REAL NOT NULL,
                 net_gex REAL NOT NULL,
@@ -49,9 +47,9 @@ class GammaTrackingDB:
         # Daily gamma summaries
         c.execute("""
             CREATE TABLE IF NOT EXISTS gamma_daily_summary (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 symbol TEXT NOT NULL,
-                date TEXT NOT NULL,
+                date DATE NOT NULL,
                 open_gex REAL,
                 close_gex REAL,
                 high_gex REAL,
@@ -74,8 +72,8 @@ class GammaTrackingDB:
         # SPY correlation tracking
         c.execute("""
             CREATE TABLE IF NOT EXISTS spy_correlation (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
+                id SERIAL PRIMARY KEY,
+                date DATE NOT NULL,
                 symbol TEXT NOT NULL,
                 spy_gex_change_pct REAL,
                 symbol_gex_change_pct REAL,
@@ -98,7 +96,7 @@ class GammaTrackingDB:
 
     def store_gamma_snapshot(self, symbol: str, gex_data: Dict, skew_data: Dict = None):
         """
-        Store a gamma snapshot for historical tracking
+        Store a gamma snapshot for historical tracking (PostgreSQL)
 
         Args:
             symbol: Ticker symbol
@@ -131,16 +129,27 @@ class GammaTrackingDB:
             implied_vol = float(skew_data.get('implied_volatility', 0))
             put_call_ratio = float(skew_data.get('pcr_oi', 0))
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         try:
+            # PostgreSQL ON CONFLICT for upsert
             c.execute("""
-                INSERT OR REPLACE INTO gamma_history (
+                INSERT INTO gamma_history (
                     symbol, timestamp, date, time_of_day, spot_price, net_gex, flip_point,
                     call_wall, put_wall, implied_volatility, put_call_ratio,
                     distance_to_flip_pct, regime
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (symbol, timestamp) DO UPDATE SET
+                    spot_price = EXCLUDED.spot_price,
+                    net_gex = EXCLUDED.net_gex,
+                    flip_point = EXCLUDED.flip_point,
+                    call_wall = EXCLUDED.call_wall,
+                    put_wall = EXCLUDED.put_wall,
+                    implied_volatility = EXCLUDED.implied_volatility,
+                    put_call_ratio = EXCLUDED.put_call_ratio,
+                    distance_to_flip_pct = EXCLUDED.distance_to_flip_pct,
+                    regime = EXCLUDED.regime
             """, (
                 symbol, timestamp, date, time_of_day, spot_price, net_gex, flip_point,
                 call_wall, put_wall, implied_vol, put_call_ratio,
@@ -149,12 +158,13 @@ class GammaTrackingDB:
             conn.commit()
         except Exception as e:
             print(f"Error storing gamma snapshot: {e}")
+            conn.rollback()
         finally:
             conn.close()
 
     def get_snapshots_for_date_range(self, symbol: str, days_back: int = 7) -> pd.DataFrame:
         """
-        Get gamma snapshots for a date range
+        Get gamma snapshots for a date range (PostgreSQL)
 
         Args:
             symbol: Ticker symbol
@@ -165,13 +175,13 @@ class GammaTrackingDB:
         """
         start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         query = """
             SELECT * FROM gamma_history
-            WHERE symbol = ? AND date >= ?
+            WHERE symbol = %s AND date >= %s
             ORDER BY timestamp ASC
         """
-        df = pd.read_sql_query(query, conn, params=(symbol, start_date))
+        df = pd.read_sql_query(query, conn.raw_connection, params=(symbol, start_date))
         conn.close()
 
         if not df.empty:
@@ -182,21 +192,21 @@ class GammaTrackingDB:
 
     def calculate_daily_summary(self, symbol: str, date: str):
         """
-        Calculate and store daily summary for a symbol
+        Calculate and store daily summary for a symbol (PostgreSQL)
 
         Args:
             symbol: Ticker symbol
             date: Date string (YYYY-MM-DD)
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
 
         # Get all snapshots for the date
         query = """
             SELECT * FROM gamma_history
-            WHERE symbol = ? AND date = ?
+            WHERE symbol = %s AND date = %s
             ORDER BY timestamp ASC
         """
-        df = pd.read_sql_query(query, conn, params=(symbol, date))
+        df = pd.read_sql_query(query, conn.raw_connection, params=(symbol, date))
 
         if df.empty:
             conn.close()
@@ -222,14 +232,30 @@ class GammaTrackingDB:
         avg_iv = df['implied_volatility'].mean()
         snapshots_count = len(df)
 
-        # Store summary
+        # Store summary with PostgreSQL ON CONFLICT
         c = conn.cursor()
         c.execute("""
-            INSERT OR REPLACE INTO gamma_daily_summary (
+            INSERT INTO gamma_daily_summary (
                 symbol, date, open_gex, close_gex, high_gex, low_gex, gex_change,
                 gex_change_pct, open_flip, close_flip, flip_change, flip_change_pct,
                 open_price, close_price, price_change_pct, avg_iv, snapshots_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, date) DO UPDATE SET
+                open_gex = EXCLUDED.open_gex,
+                close_gex = EXCLUDED.close_gex,
+                high_gex = EXCLUDED.high_gex,
+                low_gex = EXCLUDED.low_gex,
+                gex_change = EXCLUDED.gex_change,
+                gex_change_pct = EXCLUDED.gex_change_pct,
+                open_flip = EXCLUDED.open_flip,
+                close_flip = EXCLUDED.close_flip,
+                flip_change = EXCLUDED.flip_change,
+                flip_change_pct = EXCLUDED.flip_change_pct,
+                open_price = EXCLUDED.open_price,
+                close_price = EXCLUDED.close_price,
+                price_change_pct = EXCLUDED.price_change_pct,
+                avg_iv = EXCLUDED.avg_iv,
+                snapshots_count = EXCLUDED.snapshots_count
         """, (
             symbol, date, open_gex, close_gex, high_gex, low_gex, gex_change,
             gex_change_pct, open_flip, close_flip, flip_change, flip_change_pct,
@@ -241,7 +267,7 @@ class GammaTrackingDB:
 
     def get_weekly_summary(self, symbol: str) -> pd.DataFrame:
         """
-        Get weekly summary for a symbol
+        Get weekly summary for a symbol (PostgreSQL)
 
         Args:
             symbol: Ticker symbol
@@ -251,13 +277,13 @@ class GammaTrackingDB:
         """
         start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         query = """
             SELECT * FROM gamma_daily_summary
-            WHERE symbol = ? AND date >= ?
+            WHERE symbol = %s AND date >= %s
             ORDER BY date DESC
         """
-        df = pd.read_sql_query(query, conn, params=(symbol, start_date))
+        df = pd.read_sql_query(query, conn.raw_connection, params=(symbol, start_date))
         conn.close()
 
         if not df.empty:
@@ -267,7 +293,7 @@ class GammaTrackingDB:
 
     def calculate_spy_correlation(self, symbol: str, date: str):
         """
-        Calculate correlation between symbol and SPY for a specific date
+        Calculate correlation between symbol and SPY for a specific date (PostgreSQL)
 
         Args:
             symbol: Ticker symbol (not SPY)
@@ -276,19 +302,19 @@ class GammaTrackingDB:
         if symbol == 'SPY':
             return  # Don't correlate SPY with itself
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
 
         # Get SPY daily summary
         spy_summary = pd.read_sql_query("""
             SELECT * FROM gamma_daily_summary
-            WHERE symbol = 'SPY' AND date = ?
-        """, conn, params=(date,))
+            WHERE symbol = 'SPY' AND date = %s
+        """, conn.raw_connection, params=(date,))
 
         # Get symbol daily summary
         symbol_summary = pd.read_sql_query("""
             SELECT * FROM gamma_daily_summary
-            WHERE symbol = ? AND date = ?
-        """, conn, params=(symbol, date))
+            WHERE symbol = %s AND date = %s
+        """, conn.raw_connection, params=(symbol, date))
 
         if spy_summary.empty or symbol_summary.empty:
             conn.close()
@@ -311,13 +337,19 @@ class GammaTrackingDB:
         else:
             correlation_score = -0.5
 
-        # Store correlation
+        # Store correlation with PostgreSQL ON CONFLICT
         c = conn.cursor()
         c.execute("""
-            INSERT OR REPLACE INTO spy_correlation (
+            INSERT INTO spy_correlation (
                 date, symbol, spy_gex_change_pct, symbol_gex_change_pct,
                 spy_price_change_pct, symbol_price_change_pct, correlation_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, date) DO UPDATE SET
+                spy_gex_change_pct = EXCLUDED.spy_gex_change_pct,
+                symbol_gex_change_pct = EXCLUDED.symbol_gex_change_pct,
+                spy_price_change_pct = EXCLUDED.spy_price_change_pct,
+                symbol_price_change_pct = EXCLUDED.symbol_price_change_pct,
+                correlation_score = EXCLUDED.correlation_score
         """, (
             date, symbol, spy_gex_change_pct, symbol_gex_change_pct,
             spy_price_change_pct, symbol_price_change_pct, correlation_score
@@ -328,7 +360,7 @@ class GammaTrackingDB:
 
     def get_correlation_history(self, symbol: str, days_back: int = 30) -> pd.DataFrame:
         """
-        Get SPY correlation history for a symbol
+        Get SPY correlation history for a symbol (PostgreSQL)
 
         Args:
             symbol: Ticker symbol
@@ -339,13 +371,13 @@ class GammaTrackingDB:
         """
         start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         query = """
             SELECT * FROM spy_correlation
-            WHERE symbol = ? AND date >= ?
+            WHERE symbol = %s AND date >= %s
             ORDER BY date DESC
         """
-        df = pd.read_sql_query(query, conn, params=(symbol, start_date))
+        df = pd.read_sql_query(query, conn.raw_connection, params=(symbol, start_date))
         conn.close()
 
         if not df.empty:
@@ -403,19 +435,19 @@ class GammaTrackingDB:
 
     def cleanup_old_data(self, days_to_keep: int = 90):
         """
-        Clean up old gamma tracking data
+        Clean up old gamma tracking data (PostgreSQL)
 
         Args:
             days_to_keep: Number of days of data to retain
         """
         cutoff_date = (datetime.now() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d')
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
-        c.execute("DELETE FROM gamma_history WHERE date < ?", (cutoff_date,))
-        c.execute("DELETE FROM gamma_daily_summary WHERE date < ?", (cutoff_date,))
-        c.execute("DELETE FROM spy_correlation WHERE date < ?", (cutoff_date,))
+        c.execute("DELETE FROM gamma_history WHERE date < %s", (cutoff_date,))
+        c.execute("DELETE FROM gamma_daily_summary WHERE date < %s", (cutoff_date,))
+        c.execute("DELETE FROM spy_correlation WHERE date < %s", (cutoff_date,))
 
         deleted_count = c.rowcount
         conn.commit()

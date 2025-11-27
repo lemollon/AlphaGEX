@@ -17,14 +17,13 @@ except ImportError:
 
 from autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 from datetime import datetime
 import pytz
 import logging
 import traceback
 from pathlib import Path
 import json
-import sqlite3
 
 # Setup logging
 LOG_DIR = Path("logs")
@@ -67,9 +66,9 @@ class AutonomousTraderScheduler:
         self._load_state()
 
     def _load_state(self):
-        """Load scheduler state from database"""
+        """Load scheduler state from database (PostgreSQL)"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
 
             c.execute('''
@@ -92,6 +91,7 @@ class AutonomousTraderScheduler:
                 # Auto-restart if it was running before
                 if should_restart and was_running:
                     logger.info(f"Previous session detected as running. Reason: {reason or 'App restart'}")
+                    conn.close()
                     return True  # Signal that auto-restart is needed
 
             conn.close()
@@ -102,17 +102,17 @@ class AutonomousTraderScheduler:
             return False
 
     def _save_state(self):
-        """Save current scheduler state to database"""
+        """Save current scheduler state to database (PostgreSQL)"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
 
             c.execute('''
                 UPDATE scheduler_state
-                SET is_running = ?,
-                    last_trade_check = ?,
-                    last_position_check = ?,
-                    execution_count = ?,
+                SET is_running = %s,
+                    last_trade_check = %s,
+                    last_position_check = %s,
+                    execution_count = %s,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = 1
             ''', (
@@ -130,15 +130,15 @@ class AutonomousTraderScheduler:
             logger.error(f"Error saving scheduler state: {str(e)}")
 
     def _mark_auto_restart(self, reason="App restart"):
-        """Mark that scheduler should auto-restart on next launch"""
+        """Mark that scheduler should auto-restart on next launch (PostgreSQL)"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
 
             c.execute('''
                 UPDATE scheduler_state
                 SET should_auto_restart = 1,
-                    restart_reason = ?,
+                    restart_reason = %s,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = 1
             ''', (reason,))
@@ -150,9 +150,9 @@ class AutonomousTraderScheduler:
             logger.error(f"Error marking auto-restart: {str(e)}")
 
     def _clear_auto_restart(self):
-        """Clear auto-restart flag after successful restart"""
+        """Clear auto-restart flag after successful restart (PostgreSQL)"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_connection()
             c = conn.cursor()
 
             c.execute('''

@@ -3,11 +3,10 @@ Forward Magnets Detector
 Identifies gamma strikes that act as price magnets and tracks their effectiveness
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
@@ -69,7 +68,7 @@ def detect_forward_magnets():
             (df['gamma_pct'] >= 5)          # At least 5% of total gamma
         ].sort_values('gamma_pct', ascending=False).head(3)
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         magnet_count = 0
@@ -130,7 +129,7 @@ def log_forward_magnet(cursor, strike: float, magnet_type: str,
                        spot_price: float, gamma_dollars: float,
                        gamma_pct: float, distance_pct: float,
                        gex_data: Dict):
-    """Log a detected forward magnet to database"""
+    """Log a detected forward magnet to database (PostgreSQL)"""
 
     now = datetime.now(CENTRAL_TZ)
 
@@ -140,7 +139,7 @@ def log_forward_magnet(cursor, strike: float, magnet_type: str,
             gamma_dollars, gamma_pct_of_total, distance_from_spot_pct,
             net_gex, call_wall, put_wall, detection_confidence,
             price_reached, hours_to_reach
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         now.strftime('%Y-%m-%d %H:%M:%S'),
         strike,
@@ -168,8 +167,8 @@ def check_magnet_effectiveness(cursor, current_spot: float):
     cursor.execute("""
         SELECT id, strike, magnet_type, spot_price_at_detection, timestamp
         FROM forward_magnets
-        WHERE timestamp >= datetime('now', '-24 hours')
-          AND price_reached = 0
+        WHERE timestamp >= NOW() - INTERVAL '24 hours'
+          AND price_reached = FALSE
     """)
 
     magnets = cursor.fetchall()
@@ -185,16 +184,19 @@ def check_magnet_effectiveness(cursor, current_spot: float):
 
         if reached:
             # Calculate time to reach
-            magnet_dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+            if isinstance(timestamp, str):
+                magnet_dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+            else:
+                magnet_dt = timestamp.replace(tzinfo=None) if timestamp.tzinfo else timestamp
             now = datetime.now(CENTRAL_TZ).replace(tzinfo=None)
             hours_to_reach = (now - magnet_dt).total_seconds() / 3600
 
             cursor.execute("""
                 UPDATE forward_magnets
-                SET price_reached = 1,
-                    hours_to_reach = ?,
-                    spot_price_at_reach = ?
-                WHERE id = ?
+                SET price_reached = TRUE,
+                    hours_to_reach = %s,
+                    spot_price_at_reach = %s
+                WHERE id = %s
             """, (hours_to_reach, current_spot, magnet_id))
 
             print(f"✅ Magnet reached! ${strike:.0f} hit in {hours_to_reach:.1f} hours")
@@ -204,10 +206,10 @@ def check_magnet_effectiveness(cursor, current_spot: float):
         SELECT
             magnet_type,
             COUNT(*) as total,
-            SUM(CASE WHEN price_reached = 1 THEN 1 ELSE 0 END) as reached,
-            AVG(CASE WHEN price_reached = 1 THEN hours_to_reach END) as avg_hours
+            SUM(CASE WHEN price_reached = TRUE THEN 1 ELSE 0 END) as reached,
+            AVG(CASE WHEN price_reached = TRUE THEN hours_to_reach END) as avg_hours
         FROM forward_magnets
-        WHERE timestamp >= datetime('now', '-7 days')
+        WHERE timestamp >= NOW() - INTERVAL '7 days'
         GROUP BY magnet_type
     """)
 
@@ -222,11 +224,9 @@ def check_magnet_effectiveness(cursor, current_spot: float):
 
 
 def log_mock_magnets():
-    """Log mock forward magnets when API is unavailable"""
+    """Log mock forward magnets when API is unavailable (PostgreSQL)"""
     try:
-        import random
-
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Mock SPY at 580
@@ -242,7 +242,7 @@ def log_mock_magnets():
                 timestamp, strike, magnet_type, spot_price_at_detection,
                 gamma_dollars, gamma_pct_of_total, distance_from_spot_pct,
                 net_gex, detection_confidence, price_reached
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             now.strftime('%Y-%m-%d %H:%M:%S'),
             call_strike,
@@ -261,7 +261,7 @@ def log_mock_magnets():
                 timestamp, strike, magnet_type, spot_price_at_detection,
                 gamma_dollars, gamma_pct_of_total, distance_from_spot_pct,
                 net_gex, detection_confidence, price_reached
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             now.strftime('%Y-%m-%d %H:%M:%S'),
             put_strike,
