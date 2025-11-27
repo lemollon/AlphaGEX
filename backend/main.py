@@ -33,6 +33,7 @@ from api.routes import (
     backtest_routes,
     database_routes,
     gex_routes,
+    gamma_routes,
 )
 
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
@@ -115,7 +116,8 @@ app.include_router(trader_routes.router)
 app.include_router(backtest_routes.router)
 app.include_router(database_routes.router)
 app.include_router(gex_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex")
+app.include_router(gamma_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()
