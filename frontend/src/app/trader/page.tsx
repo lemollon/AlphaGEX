@@ -198,9 +198,27 @@ export default function AutonomousTrader() {
           strike: trade.strike || 0,
           quantity: trade.contracts || 0,
           price: Math.abs(trade.entry_price) || 0,
-          status: 'filled' as const,
+          status: 'OPEN' as const,
           pnl: trade.unrealized_pnl || 0,
           strategy: trade.strategy,
+          entry_bid: trade.entry_bid,
+          entry_ask: trade.entry_ask,
+          entry_spot_price: trade.entry_spot_price,
+          current_price: trade.current_price,
+          current_spot_price: trade.current_spot_price,
+          trade_reasoning: trade.trade_reasoning,
+          expiration_date: trade.expiration_date,
+          // Greeks
+          entry_iv: trade.entry_iv,
+          entry_delta: trade.entry_delta,
+          current_iv: trade.current_iv,
+          current_delta: trade.current_delta,
+          theta: trade.theta,
+          gamma: trade.gamma,
+          vega: trade.vega,
+          // GEX context
+          gex_regime: trade.gex_regime,
+          entry_net_gex: trade.entry_net_gex,
         }))
         setRecentTrades(mappedTrades)
       }
@@ -264,6 +282,7 @@ export default function AutonomousTrader() {
           apiClient.getTraderPerformance(),
           apiClient.getTraderTrades(10),
           apiClient.getStrategies(),
+          apiClient.getStrategyConfigs().catch(() => ({ data: { success: false, data: {} } })),
           apiClient.getAutonomousLogs({ limit: 20 }).catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getCompetitionLeaderboard().catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getAllPatternBacktests(90).catch(() => ({ data: { success: false, data: [] } })),
@@ -278,7 +297,7 @@ export default function AutonomousTrader() {
         ])
 
         // Extract results (fulfilled promises only)
-        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = results.map(result =>
+        const [statusRes, perfRes, tradesRes, strategiesRes, strategyConfigsRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = results.map(result =>
           result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
         )
 
@@ -290,17 +309,29 @@ export default function AutonomousTrader() {
           setPerformance(perfRes.data.data)
         }
 
+        // Load strategy configs first
+        const configs = strategyConfigsRes.data.success ? strategyConfigsRes.data.data : {}
+        if (Object.keys(configs).length > 0) {
+          setStrategyConfigs(configs)
+        }
+
         // Set REAL strategies from database
         if (strategiesRes.data.success && strategiesRes.data.data.length > 0) {
-          const mappedStrategies = strategiesRes.data.data.map((strat: any, idx: number) => ({
-            id: idx.toString(),
-            name: strat.name,
-            status: strat.status || 'active',
-            win_rate: strat.win_rate || 0,
-            total_trades: strat.total_trades || 0,
-            pnl: strat.total_pnl || 0,
-            last_trade_date: strat.last_trade_date || 'Never'
-          }))
+          const mappedStrategies = strategiesRes.data.data.map((strat: any) => {
+            // Use ID from backend or generate from name
+            const strategyId = strat.id || strat.name.toLowerCase().replace(/\s+/g, '_').replace(/[()]/g, '')
+            // Check if strategy is enabled in config
+            const isEnabled = configs[strat.name] !== false // Default to enabled
+            return {
+              id: strategyId,
+              name: strat.name,
+              status: isEnabled ? (strat.status || 'active') : 'paused',
+              win_rate: strat.win_rate || 0,
+              total_trades: strat.total_trades || 0,
+              pnl: strat.total_pnl || 0,
+              last_trade_date: strat.last_trade_date || 'Never'
+            }
+          })
           setStrategies(mappedStrategies)
         }
 
@@ -315,7 +346,7 @@ export default function AutonomousTrader() {
             strike: trade.strike || 0,
             quantity: trade.contracts || 0,
             price: Math.abs(trade.entry_price) || 0,
-            status: trade.status === 'OPEN' ? 'filled' : 'filled',
+            status: trade.status || 'OPEN',
             pnl: trade.realized_pnl || trade.unrealized_pnl || 0,
             strategy: trade.strategy,
             entry_bid: trade.entry_bid,
@@ -324,7 +355,18 @@ export default function AutonomousTrader() {
             current_price: trade.current_price,
             current_spot_price: trade.current_spot_price,
             trade_reasoning: trade.trade_reasoning,
-            expiration_date: trade.expiration_date
+            expiration_date: trade.expiration_date,
+            // Greeks
+            entry_iv: trade.entry_iv,
+            entry_delta: trade.entry_delta,
+            current_iv: trade.current_iv,
+            current_delta: trade.current_delta,
+            theta: trade.theta,
+            gamma: trade.gamma,
+            vega: trade.vega,
+            // GEX context
+            gex_regime: trade.gex_regime,
+            entry_net_gex: trade.entry_net_gex,
           }))
           setRecentTrades(mappedTrades)
         }
@@ -425,12 +467,8 @@ export default function AutonomousTrader() {
   // GUARANTEED: MINIMUM one trade per day (multi-level fallback system)
   // State is persisted in database, so it remembers everything across restarts
 
-  const handleToggleMode = () => {
-    setTraderStatus(prev => ({
-      ...prev,
-      mode: prev.mode === 'paper' ? 'live' : 'paper'
-    }))
-  }
+  // Note: Mode toggle removed - requires backend implementation for safe paper/live switching
+  // Mode is controlled via autonomous_config table in the database
 
   const handleToggleStrategy = async (strategyId: string) => {
     setStrategyTogglingId(strategyId)
@@ -1849,7 +1887,10 @@ export default function AutonomousTrader() {
         </div>
 
         <div className="mt-4 p-3 bg-primary/10 rounded-lg text-center">
-          <button className="text-primary text-sm font-medium hover:underline">
+          <button
+            onClick={() => alert('Full thought process archive feature coming soon. All logs are stored in the database for historical analysis.')}
+            className="text-primary text-sm font-medium hover:underline"
+          >
             View Full Thought Process Archive →
           </button>
         </div>
@@ -2019,7 +2060,10 @@ export default function AutonomousTrader() {
         </div>
 
         <div className="mt-4 text-center">
-          <button className="text-primary text-sm font-medium hover:underline">
+          <button
+            onClick={() => alert('Full strategy competition leaderboard with detailed analytics coming soon. Track performance over time and compare strategies head-to-head.')}
+            className="text-primary text-sm font-medium hover:underline"
+          >
             View Full Leaderboard & Strategy Details →
           </button>
         </div>
@@ -2076,7 +2120,10 @@ export default function AutonomousTrader() {
         </div>
 
         <div className="text-center">
-          <button className="text-primary text-sm font-medium hover:underline">
+          <button
+            onClick={() => alert('Complete backtest analysis with detailed pattern breakdowns coming soon. Analyze win rates, expectancy, and optimal entry conditions.')}
+            className="text-primary text-sm font-medium hover:underline"
+          >
             View Complete Backtest Analysis →
           </button>
         </div>

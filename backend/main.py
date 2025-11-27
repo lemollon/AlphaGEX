@@ -3687,13 +3687,15 @@ async def get_trader_trades(limit: int = 10):
 
         conn = get_connection()
 
-        # Get open positions
+        # Get open positions with Greeks
         open_trades = pd.read_sql_query(f"""
             SELECT id, symbol, strategy, action, strike, option_type, expiration_date,
                    contracts, contract_symbol, entry_date, entry_time, entry_price,
                    entry_bid, entry_ask, entry_spot_price, current_price,
                    current_spot_price, unrealized_pnl, unrealized_pnl_pct,
-                   confidence, gex_regime, trade_reasoning, 'OPEN' as status,
+                   confidence, gex_regime, entry_net_gex, entry_flip_point,
+                   entry_iv, entry_delta, current_iv, current_delta,
+                   trade_reasoning, 'OPEN' as status,
                    NULL as exit_date, NULL as exit_time, NULL as exit_price,
                    NULL as realized_pnl, NULL as exit_reason
             FROM autonomous_open_positions
@@ -3701,13 +3703,15 @@ async def get_trader_trades(limit: int = 10):
             LIMIT {limit}
         """, conn)
 
-        # Get closed trades
+        # Get closed trades with Greeks
         closed_trades = pd.read_sql_query(f"""
             SELECT id, symbol, strategy, action, strike, option_type, expiration_date,
                    contracts, contract_symbol, entry_date, entry_time, entry_price,
                    entry_bid, entry_ask, entry_spot_price, exit_price as current_price,
                    exit_spot_price as current_spot_price, realized_pnl as unrealized_pnl,
                    realized_pnl_pct as unrealized_pnl_pct, confidence, gex_regime,
+                   entry_net_gex, entry_flip_point, entry_iv, entry_delta,
+                   NULL as current_iv, NULL as current_delta,
                    trade_reasoning, 'CLOSED' as status, exit_date, exit_time,
                    exit_price, realized_pnl, exit_reason
             FROM autonomous_closed_trades
