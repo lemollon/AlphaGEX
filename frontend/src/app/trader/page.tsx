@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment, useMemo } from 'react'
 import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3, Calendar, Zap, Brain, RefreshCw, Power, PowerOff, History, Cpu, ChevronDown, ChevronUp } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
@@ -294,6 +294,30 @@ export default function AutonomousTrader() {
     ? Math.min(...tradeLog.map(t => t.pnl))
     : 0
 
+  // Memoize chart data to avoid recalculation on every render
+  const closedTradesChartData = useMemo(() => {
+    if (closedTrades.length === 0) return []
+    // Sort trades by exit date and build cumulative P&L
+    const sortedTrades = [...closedTrades].sort((a, b) =>
+      new Date(a.exit_date || 0).getTime() - new Date(b.exit_date || 0).getTime()
+    )
+    let cumPnl = 0
+    return sortedTrades.map((trade, idx) => {
+      cumPnl += (trade.realized_pnl || 0)
+      return {
+        date: trade.exit_date || `Trade ${idx + 1}`,
+        pnl: cumPnl,
+        equity: 1000000 + cumPnl,
+        dailyPnl: trade.realized_pnl || 0
+      }
+    })
+  }, [closedTrades])
+
+  // Memoize total P&L from closed trades
+  const closedTradesTotalPnl = useMemo(() =>
+    closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0)
+  , [closedTrades])
+
   // Fetch data from API
   useEffect(() => {
     const fetchData = async () => {
@@ -537,25 +561,38 @@ export default function AutonomousTrader() {
   }
 
   const formatTime = (isoString: string) => {
-    return new Intl.DateTimeFormat('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-      timeZone: 'America/Chicago'
-    }).format(new Date(isoString))
-  }
-
-  const formatTradeTime = (dateStr?: string, timeStr?: string) => {
-    if (dateStr && timeStr) {
-      const datetime = `${dateStr}T${timeStr}`
+    try {
+      if (!isoString) return 'N/A'
+      const date = new Date(isoString)
+      if (isNaN(date.getTime())) return 'Invalid'
       return new Intl.DateTimeFormat('en-US', {
         hour: 'numeric',
         minute: '2-digit',
         hour12: true,
         timeZone: 'America/Chicago'
-      }).format(new Date(datetime))
+      }).format(date)
+    } catch {
+      return 'N/A'
     }
-    return timeStr || dateStr || 'N/A'
+  }
+
+  const formatTradeTime = (dateStr?: string, timeStr?: string) => {
+    try {
+      if (dateStr && timeStr) {
+        const datetime = `${dateStr}T${timeStr}`
+        const date = new Date(datetime)
+        if (isNaN(date.getTime())) return timeStr || dateStr || 'N/A'
+        return new Intl.DateTimeFormat('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: 'America/Chicago'
+        }).format(date)
+      }
+      return timeStr || dateStr || 'N/A'
+    } catch {
+      return timeStr || dateStr || 'N/A'
+    }
   }
 
   const formatUptime = (seconds: number) => {
@@ -1198,33 +1235,18 @@ export default function AutonomousTrader() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        ) : closedTrades.length > 0 ? (
-          // Build chart from closed trades if equity curve is empty
+        ) : closedTradesChartData.length > 0 ? (
+          // Build chart from closed trades if equity curve is empty (using memoized data)
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
-                data={(() => {
-                  // Sort trades by exit date and build cumulative P&L
-                  const sortedTrades = [...closedTrades].sort((a, b) =>
-                    new Date(a.exit_date || 0).getTime() - new Date(b.exit_date || 0).getTime()
-                  )
-                  let cumPnl = 0
-                  return sortedTrades.map((trade, idx) => {
-                    cumPnl += (trade.realized_pnl || 0)
-                    return {
-                      date: trade.exit_date || `Trade ${idx + 1}`,
-                      pnl: cumPnl,
-                      equity: 1000000 + cumPnl,
-                      dailyPnl: trade.realized_pnl || 0
-                    }
-                  })
-                })()}
+                data={closedTradesChartData}
                 margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
               >
                 <defs>
                   <linearGradient id="colorPnlAlt" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor={closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0}/>
+                    <stop offset="5%" stopColor={closedTradesTotalPnl >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor={closedTradesTotalPnl >= 0 ? "#10b981" : "#ef4444"} stopOpacity={0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
@@ -1253,7 +1275,7 @@ export default function AutonomousTrader() {
                 <Area
                   type="monotone"
                   dataKey="pnl"
-                  stroke={closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? "#10b981" : "#ef4444"}
+                  stroke={closedTradesTotalPnl >= 0 ? "#10b981" : "#ef4444"}
                   strokeWidth={2}
                   fillOpacity={1}
                   fill="url(#colorPnlAlt)"
@@ -1272,15 +1294,15 @@ export default function AutonomousTrader() {
         )}
 
         {/* Chart Summary Stats */}
-        {(equityCurve.length > 0 || closedTrades.length > 0) && (
+        {(equityCurve.length > 0 || closedTradesChartData.length > 0) && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-border">
             <div className="text-center">
               <p className="text-text-muted text-xs mb-1">First Trade</p>
               <p className="text-text-primary font-semibold">
                 {equityCurve.length > 0
                   ? equityCurve[0]?.date
-                  : closedTrades.length > 0
-                    ? [...closedTrades].sort((a, b) => new Date(a.exit_date || 0).getTime() - new Date(b.exit_date || 0).getTime())[0]?.exit_date
+                  : closedTradesChartData.length > 0
+                    ? closedTradesChartData[0]?.date
                     : 'N/A'
                 }
               </p>
@@ -1290,8 +1312,8 @@ export default function AutonomousTrader() {
               <p className="text-text-primary font-semibold">
                 {equityCurve.length > 0
                   ? equityCurve[equityCurve.length - 1]?.date
-                  : closedTrades.length > 0
-                    ? [...closedTrades].sort((a, b) => new Date(b.exit_date || 0).getTime() - new Date(a.exit_date || 0).getTime())[0]?.exit_date
+                  : closedTradesChartData.length > 0
+                    ? closedTradesChartData[closedTradesChartData.length - 1]?.date
                     : 'N/A'
                 }
               </p>
@@ -1299,11 +1321,11 @@ export default function AutonomousTrader() {
             <div className="text-center">
               <p className="text-text-muted text-xs mb-1">Total P&L</p>
               <p className={`font-bold ${
-                (equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl : closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0)) >= 0
+                (equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl : closedTradesTotalPnl) >= 0
                   ? 'text-success' : 'text-danger'
               }`}>
-                {(equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl : closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0)) >= 0 ? '+' : ''}
-                {formatCurrency(equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl || 0 : closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0))}
+                {(equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl : closedTradesTotalPnl) >= 0 ? '+' : ''}
+                {formatCurrency(equityCurve.length > 0 ? equityCurve[equityCurve.length - 1]?.pnl || 0 : closedTradesTotalPnl)}
               </p>
             </div>
             <div className="text-center">
@@ -1312,7 +1334,7 @@ export default function AutonomousTrader() {
                 {formatCurrency(
                   equityCurve.length > 0
                     ? equityCurve[equityCurve.length - 1]?.equity || 0
-                    : 1000000 + closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0)
+                    : 1000000 + closedTradesTotalPnl
                 )}
               </p>
             </div>
@@ -1470,12 +1492,12 @@ export default function AutonomousTrader() {
             </span>
             {closedTrades.length > 0 && (
               <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0
+                closedTradesTotalPnl >= 0
                   ? 'bg-success/20 text-success'
                   : 'bg-danger/20 text-danger'
               }`}>
-                Total: {closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? '+' : ''}
-                {formatCurrency(closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0))}
+                Total: {closedTradesTotalPnl >= 0 ? '+' : ''}
+                {formatCurrency(closedTradesTotalPnl)}
               </span>
             )}
           </div>
@@ -1552,10 +1574,10 @@ export default function AutonomousTrader() {
                   <div>
                     <p className="text-text-muted text-xs">Total P&L</p>
                     <p className={`font-bold text-lg ${
-                      closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? 'text-success' : 'text-danger'
+                      closedTradesTotalPnl >= 0 ? 'text-success' : 'text-danger'
                     }`}>
-                      {closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0) >= 0 ? '+' : ''}
-                      {formatCurrency(closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0))}
+                      {closedTradesTotalPnl >= 0 ? '+' : ''}
+                      {formatCurrency(closedTradesTotalPnl)}
                     </p>
                   </div>
                 </div>
@@ -1935,9 +1957,8 @@ export default function AutonomousTrader() {
                 const expDate = trade.expiration_date ? new Date(trade.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
 
                 return (
-                <>
+                <Fragment key={trade.id}>
                   <tr
-                    key={trade.id}
                     className="border-b border-border/50 hover:bg-background-hover transition-colors cursor-pointer"
                     onClick={() => setExpandedTradeId(expandedTradeId === trade.id ? null : trade.id)}
                   >
@@ -2133,7 +2154,7 @@ export default function AutonomousTrader() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
                 );
               })}
             </tbody>
