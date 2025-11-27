@@ -132,6 +132,7 @@ export default function AutonomousTrader() {
   const [autonomousLogs, setAutonomousLogs] = useState<any[]>([])
   const [competitionLeaderboard, setCompetitionLeaderboard] = useState<any[]>([])
   const [backtestResults, setBacktestResults] = useState<any[]>([])
+  const [backtestDataSource, setBacktestDataSource] = useState<string>('none')
   const [riskStatus, setRiskStatus] = useState<any>(null)
 
   // VIX Hedge Signal state
@@ -431,6 +432,7 @@ export default function AutonomousTrader() {
 
         if (backtestsRes.data.success) {
           setBacktestResults(backtestsRes.data.data || [])
+          setBacktestDataSource(backtestsRes.data.data_source || 'none')
         }
 
         if (riskRes.data.success) {
@@ -2493,7 +2495,18 @@ export default function AutonomousTrader() {
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-text-primary">📊 Pattern Backtest Results</h2>
-          <span className="text-xs text-text-secondary">Last 90 days validation</span>
+          <div className="flex items-center gap-2">
+            <span className={`text-xs px-2 py-1 rounded ${
+              backtestDataSource === 'backtest' ? 'bg-success/20 text-success' :
+              backtestDataSource === 'live_trades' ? 'bg-primary/20 text-primary' :
+              'bg-background-hover text-text-secondary'
+            }`}>
+              {backtestDataSource === 'backtest' ? '✓ Historical Backtest Data' :
+               backtestDataSource === 'live_trades' ? '📈 Live Trading Results' :
+               'No Data'}
+            </span>
+            <span className="text-xs text-text-secondary">Last 90 days</span>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
