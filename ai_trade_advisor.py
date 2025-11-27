@@ -23,6 +23,8 @@ from langchain.schema import HumanMessage, SystemMessage
 
 from database_adapter import get_connection
 
+# Note: Using PostgreSQL via database_adapter - no SQLite needed
+
 
 class SmartTradeAdvisor:
     """
@@ -54,15 +56,15 @@ class SmartTradeAdvisor:
         self._init_learning_database()
 
     def _init_learning_database(self):
-        """Create tables for learning system"""
-        conn = sqlite3.connect(DB_PATH)
+        """Create tables for learning system (PostgreSQL)"""
+        conn = get_connection()
         cursor = conn.cursor()
 
         # AI predictions table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS ai_predictions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 pattern_type TEXT,
                 trade_direction TEXT,
                 predicted_outcome TEXT,
@@ -74,19 +76,19 @@ class SmartTradeAdvisor:
                 actual_outcome TEXT,
                 outcome_pnl REAL,
                 prediction_correct INTEGER,
-                feedback_timestamp DATETIME
+                feedback_timestamp TIMESTAMP
             )
         """)
 
         # Pattern learning table (what conditions favor which patterns)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS pattern_learning (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 pattern_type TEXT,
                 market_condition TEXT,
                 historical_win_rate REAL,
                 sample_size INTEGER,
-                last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(pattern_type, market_condition)
             )
         """)
@@ -94,15 +96,16 @@ class SmartTradeAdvisor:
         # AI performance tracking
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS ai_performance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date DATE DEFAULT (DATE('now')),
+                id SERIAL PRIMARY KEY,
+                date DATE DEFAULT CURRENT_DATE,
                 total_predictions INTEGER,
                 correct_predictions INTEGER,
                 accuracy_rate REAL,
                 avg_confidence REAL,
                 profitable_trades INTEGER,
                 losing_trades INTEGER,
-                net_pnl REAL
+                net_pnl REAL,
+                UNIQUE(date)
             )
         """)
 
@@ -129,9 +132,9 @@ class SmartTradeAdvisor:
                 price_change_1d,
                 price_change_5d
             FROM regime_signals
-            WHERE primary_regime_type = ?
-              AND vix_current BETWEEN ? AND ?
-              AND volatility_regime = ?
+            WHERE primary_regime_type = %s
+              AND vix_current BETWEEN %s AND %s
+              AND volatility_regime = %s
               AND signal_correct IS NOT NULL
             ORDER BY timestamp DESC
             LIMIT 20
@@ -168,7 +171,7 @@ class SmartTradeAdvisor:
                 AVG(CASE WHEN prediction_correct = 1 THEN confidence_score END) as avg_confidence_correct,
                 AVG(CASE WHEN prediction_correct = 0 THEN confidence_score END) as avg_confidence_wrong
             FROM ai_predictions
-            WHERE timestamp > ?
+            WHERE timestamp > %s
               AND prediction_correct IS NOT NULL
         """, (cutoff_date,))
 
@@ -345,19 +348,21 @@ Your confidence should reflect:
     def _save_prediction(self, pattern_type: str, trade_direction: str, predicted_outcome: str,
                         confidence: float, reasoning: str, market_context: str,
                         vix_level: float, volatility_regime: str) -> int:
-        """Save prediction for future learning"""
-        conn = sqlite3.connect(DB_PATH)
+        """Save prediction for future learning (PostgreSQL)"""
+        conn = get_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
             INSERT INTO ai_predictions (
                 pattern_type, trade_direction, predicted_outcome, confidence_score,
                 reasoning, market_context, vix_level, volatility_regime
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         """, (pattern_type, trade_direction, predicted_outcome, confidence,
               reasoning, market_context, vix_level, volatility_regime))
 
-        prediction_id = cursor.lastrowid
+        result = cursor.fetchone()
+        prediction_id = result[0] if result else 0
         conn.commit()
         conn.close()
 
@@ -376,14 +381,14 @@ Your confidence should reflect:
         Returns:
             Dict with learning stats
         """
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         cursor = conn.cursor()
 
         # Get original prediction
         cursor.execute("""
             SELECT predicted_outcome, confidence_score, pattern_type
             FROM ai_predictions
-            WHERE id = ?
+            WHERE id = %s
         """, (prediction_id,))
 
         row = cursor.fetchone()
@@ -402,25 +407,25 @@ Your confidence should reflect:
         # Update prediction with actual outcome
         cursor.execute("""
             UPDATE ai_predictions
-            SET actual_outcome = ?,
-                outcome_pnl = ?,
-                prediction_correct = ?,
+            SET actual_outcome = %s,
+                outcome_pnl = %s,
+                prediction_correct = %s,
                 feedback_timestamp = CURRENT_TIMESTAMP
-            WHERE id = ?
+            WHERE id = %s
         """, (actual_outcome, outcome_pnl, 1 if was_correct else 0, prediction_id))
 
         # Update daily performance stats
         today = datetime.now().date().isoformat()
         cursor.execute("""
             INSERT INTO ai_performance (date, total_predictions, correct_predictions, profitable_trades, losing_trades, net_pnl)
-            VALUES (?, 1, ?, ?, ?, ?)
+            VALUES (%s, 1, %s, %s, %s, %s)
             ON CONFLICT(date) DO UPDATE SET
-                total_predictions = total_predictions + 1,
-                correct_predictions = correct_predictions + excluded.correct_predictions,
-                profitable_trades = profitable_trades + excluded.profitable_trades,
-                losing_trades = losing_trades + excluded.losing_trades,
-                net_pnl = net_pnl + excluded.net_pnl,
-                accuracy_rate = (CAST(correct_predictions AS REAL) / total_predictions * 100)
+                total_predictions = ai_performance.total_predictions + 1,
+                correct_predictions = ai_performance.correct_predictions + EXCLUDED.correct_predictions,
+                profitable_trades = ai_performance.profitable_trades + EXCLUDED.profitable_trades,
+                losing_trades = ai_performance.losing_trades + EXCLUDED.losing_trades,
+                net_pnl = ai_performance.net_pnl + EXCLUDED.net_pnl,
+                accuracy_rate = (CAST(ai_performance.correct_predictions AS REAL) / ai_performance.total_predictions * 100)
         """, (today, 1 if was_correct else 0,
               1 if actual_outcome == 'WIN' else 0,
               1 if actual_outcome == 'LOSS' else 0,
