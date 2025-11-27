@@ -1054,7 +1054,31 @@ class AutonomousPaperTrader:
 
         # Apply confidence adjustment (higher confidence = larger position)
         confidence_factor = (confidence / 100) * 0.5 + 0.5  # 0.5-1.0 range
-        position_value = max_position_value * confidence_factor
+
+        # VIX STRESS FACTOR: Real-time VIX-based position reduction
+        # CRITICAL: This matches SPX trader logic for consistency
+        current_vix = self._get_vix()
+        vix_stress_factor = 1.0
+        vix_stress_level = 'normal'
+
+        if current_vix >= 35:
+            vix_stress_factor = 0.25  # 75% reduction - extreme fear
+            vix_stress_level = 'extreme'
+            logger.warning(f"VIX EXTREME ({current_vix:.1f}): Position size reduced by 75%")
+        elif current_vix >= 28:
+            vix_stress_factor = 0.50  # 50% reduction - high stress
+            vix_stress_level = 'high'
+            logger.warning(f"VIX HIGH ({current_vix:.1f}): Position size reduced by 50%")
+        elif current_vix >= 22:
+            vix_stress_factor = 0.75  # 25% reduction - elevated
+            vix_stress_level = 'elevated'
+            logger.info(f"VIX ELEVATED ({current_vix:.1f}): Position size reduced by 25%")
+        else:
+            vix_stress_level = 'normal'
+            logger.info(f"VIX NORMAL ({current_vix:.1f}): Standard position sizing")
+
+        # Apply all adjustments including VIX stress
+        position_value = max_position_value * confidence_factor * vix_stress_factor
 
         # Cap at 25% of capital per position (SPY risk limit)
         position_value = min(position_value, total_capital * 0.25)
@@ -1069,13 +1093,16 @@ class AutonomousPaperTrader:
             contracts = min(raw_contracts, 10)
 
         sizing_details = {
-            'methodology': 'Kelly-Backtest (SPY)',
+            'methodology': 'Kelly-Backtest-VIX (SPY)',
             'available_capital': available,
             'kelly_pct': final_kelly * 100,
             'raw_kelly': kelly,
             'adjusted_kelly': adjusted_kelly,
             'adjustment_type': adjustment_type,
             'confidence_factor': confidence_factor,
+            'vix_stress_factor': vix_stress_factor,
+            'vix_stress_level': vix_stress_level,
+            'current_vix': current_vix,
             'max_position_value': max_position_value,
             'final_position_value': position_value,
             'cost_per_contract': cost_per_contract,

@@ -755,6 +755,14 @@ class SPXInstitutionalTrader:
             vix_stress_level = 'normal'
             print(f"✅ VIX NORMAL ({current_vix:.1f}): Standard position sizing")
 
+        # Log VIX stress to debug logger
+        if self.debug_logger:
+            self.debug_logger.log_vix_stress(
+                current_vix=current_vix,
+                stress_level=vix_stress_level,
+                stress_factor=vix_stress_factor
+            )
+
         # BACKTEST ADJUSTMENT: Reduce size for unproven strategies
         backtest_factor = 1.0
         if backtest_params and not backtest_params.get('is_proven'):
