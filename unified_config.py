@@ -51,7 +51,15 @@ except ImportError:
         'PANICKING': {'threshold': -3e9, 'behavior': 'Capitulation', 'confidence': 90, 'action': 'RIDE'},
         'NEUTRAL': {'threshold': 0, 'behavior': 'Balanced positioning', 'confidence': 50, 'action': 'RANGE'},
     }
-    STRATEGIES = {}
+    # Core strategies with profitability stats
+    STRATEGIES = {
+        'IRON_CONDOR': {'win_rate': 0.72, 'risk_reward': 0.3, 'dte_range': [5, 14]},
+        'BULL_PUT_SPREAD': {'win_rate': 0.70, 'risk_reward': 0.4, 'dte_range': [5, 21]},
+        'BEAR_CALL_SPREAD': {'win_rate': 0.68, 'risk_reward': 0.4, 'dte_range': [5, 21]},
+        'BULLISH_CALL_SPREAD': {'win_rate': 0.65, 'risk_reward': 2.0, 'dte_range': [3, 14]},
+        'BEARISH_PUT_SPREAD': {'win_rate': 0.62, 'risk_reward': 2.0, 'dte_range': [3, 14]},
+        'NEGATIVE_GEX_SQUEEZE': {'win_rate': 0.68, 'risk_reward': 3.0, 'dte_range': [0, 5]},
+    }
 
 
 # ============================================================================
