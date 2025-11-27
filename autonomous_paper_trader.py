@@ -59,12 +59,9 @@ try:
 except ImportError as e:
     UNIFIED_DATA_AVAILABLE = False
     logger.warning(f"Unified Data Provider not available: {e}")
-    # Fallback imports
-    from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 
-# Legacy Polygon imports (fallback only)
-if not UNIFIED_DATA_AVAILABLE:
-    from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
+# Always import Polygon as fallback (used when Unified provider fails)
+from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 
 # CRITICAL: Import UNIFIED Market Regime Classifier
 # This is the SINGLE source of truth for ALL trading decisions
