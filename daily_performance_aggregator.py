@@ -63,7 +63,7 @@ def aggregate_daily_performance():
         c = conn.cursor()
         c.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
         result = c.fetchone()
-        starting_capital = float(result[0]) if result else 5000.0
+        starting_capital = float(result[0]) if result else 1000000.0
 
         # Group by date and calculate daily metrics
         daily_groups = closed_positions.groupby('date')

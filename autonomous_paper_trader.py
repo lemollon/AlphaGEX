@@ -4056,7 +4056,7 @@ Now analyze this position:"""
             # Calculate max drawdown
             max_drawdown_pct = 0.0
             if snapshots:
-                peak = float(perf.get('starting_capital', 5000))
+                peak = float(perf.get('starting_capital', 1000000))
                 for s in reversed(snapshots):
                     val = float(s[1]) if s[1] else peak
                     if val > peak:
@@ -4082,7 +4082,7 @@ Now analyze this position:"""
             daily_pnl = float(daily_realized) + float(daily_unrealized)
 
             # Calculate daily return %
-            starting = float(perf.get('starting_capital', 5000))
+            starting = float(perf.get('starting_capital', 1000000))
             daily_return_pct = (daily_pnl / starting * 100) if starting > 0 else 0
 
             # Insert snapshot
@@ -4098,10 +4098,10 @@ Now analyze this position:"""
                 now.strftime('%Y-%m-%d'),
                 now.strftime('%H:%M:%S'),
                 now.strftime('%Y-%m-%d %H:%M:%S'),
-                perf.get('starting_capital', 5000),
+                perf.get('starting_capital', 1000000),
                 perf.get('realized_pnl', 0),
                 perf.get('unrealized_pnl', 0),
-                perf.get('current_value', 5000),
+                perf.get('current_value', 1000000),
                 daily_pnl,
                 daily_return_pct,
                 perf.get('return_pct', 0),

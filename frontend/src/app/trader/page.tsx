@@ -2676,12 +2676,12 @@ export default function AutonomousTrader() {
           <h2 className="text-lg font-semibold text-text-primary mb-4">Risk Parameters</h2>
           <div className="space-y-3">
             <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-              <span className="text-text-secondary">Max Position Size</span>
-              <span className="text-text-primary font-semibold">$5,000</span>
+              <span className="text-text-secondary">Max Position Size (20%)</span>
+              <span className="text-text-primary font-semibold">{formatCurrency((performance.starting_capital || 1000000) * 0.20)}</span>
             </div>
             <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-              <span className="text-text-secondary">Daily Loss Limit</span>
-              <span className="text-danger font-semibold">-$500</span>
+              <span className="text-text-secondary">Daily Loss Limit (5%)</span>
+              <span className="text-danger font-semibold">-{formatCurrency((performance.starting_capital || 1000000) * 0.05)}</span>
             </div>
             <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
               <span className="text-text-secondary">Max Open Positions</span>

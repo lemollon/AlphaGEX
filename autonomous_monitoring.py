@@ -135,7 +135,7 @@ class TraderMonitor:
             # Get current capital
             cursor.execute("SELECT current_capital FROM strategy_competition LIMIT 1")
             capital_row = cursor.fetchone()
-            current_capital = capital_row[0] if capital_row else 5000
+            current_capital = capital_row[0] if capital_row else 1000000
 
             conn.close()
 
