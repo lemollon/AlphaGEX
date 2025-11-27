@@ -238,7 +238,8 @@ Format as JSON."""
                     "verdict": "APPROVED" if position_size_pct < 20 and daily_loss_pct < 5 else "REJECTED",
                     "analysis": checklist_text
                 }
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError, IndexError) as e:
+            # JSON parsing failed, use fallback structure
             checklist_data = {
                 "verdict": "APPROVED" if position_size_pct < 20 and daily_loss_pct < 5 else "REJECTED",
                 "analysis": checklist_text

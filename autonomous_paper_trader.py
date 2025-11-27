@@ -23,6 +23,19 @@ from trading_costs import (
 )
 import time
 import os
+import logging
+
+# Configure structured logging for autonomous trader
+logger = logging.getLogger('autonomous_paper_trader')
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 # Central Time timezone for all timestamps
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -38,10 +51,10 @@ try:
         get_vix
     )
     UNIFIED_DATA_AVAILABLE = True
-    print("✅ Unified Data Provider (Tradier) integrated")
+    logger.info("Unified Data Provider (Tradier) integrated")
 except ImportError as e:
     UNIFIED_DATA_AVAILABLE = False
-    print(f"⚠️ Unified Data Provider not available: {e}")
+    logger.warning(f"Unified Data Provider not available: {e}")
     # Fallback imports
     from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 
@@ -62,10 +75,10 @@ try:
         get_classifier
     )
     UNIFIED_CLASSIFIER_AVAILABLE = True
-    print("✅ Unified Market Regime Classifier integrated")
+    logger.info("Unified Market Regime Classifier integrated")
 except ImportError as e:
     UNIFIED_CLASSIFIER_AVAILABLE = False
-    print(f"⚠️ Unified Classifier not available: {e}")
+    logger.warning(f"Unified Classifier not available: {e}")
 
 # CRITICAL: Import Psychology Trap Detector
 try:
@@ -73,11 +86,11 @@ try:
     from gamma_expiration_builder import build_gamma_with_expirations
     from polygon_helper import PolygonDataFetcher as PolygonHelper
     PSYCHOLOGY_AVAILABLE = True
-    print("✅ Psychology Trap Detector integrated with Autonomous Trader")
+    logger.info("Psychology Trap Detector integrated with Autonomous Trader")
 except ImportError as e:
     PSYCHOLOGY_AVAILABLE = False
-    print(f"⚠️ Psychology Trap Detector not available: {e}")
-    print("   Falling back to basic GEX analysis")
+    logger.warning(f"Psychology Trap Detector not available: {e}")
+    logger.warning("Falling back to basic GEX analysis")
 
 # CRITICAL: Import AI Reasoning Engine (LangChain + Claude)
 try:
@@ -85,20 +98,20 @@ try:
     ai_reasoning = get_ai_reasoning()
     AI_REASONING_AVAILABLE = ai_reasoning.llm is not None
     if AI_REASONING_AVAILABLE:
-        print("✅ AI Reasoning Engine (LangChain + Claude) ready")
+        logger.info("AI Reasoning Engine (LangChain + Claude) ready")
 except ImportError as e:
     AI_REASONING_AVAILABLE = False
     ai_reasoning = None
-    print(f"⚠️ AI Reasoning not available: {e}")
+    logger.warning(f"AI Reasoning not available: {e}")
 
 # CRITICAL: Import Database Logger
 try:
     from autonomous_database_logger import get_database_logger
     DATABASE_LOGGER_AVAILABLE = True
-    print("✅ Database Logger ready for comprehensive logging")
+    logger.info("Database Logger ready for comprehensive logging")
 except ImportError as e:
     DATABASE_LOGGER_AVAILABLE = False
-    print(f"⚠️ Database Logger not available: {e}")
+    logger.warning(f"Database Logger not available: {e}")
 
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
@@ -173,13 +186,13 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
                 theo_price = enhanced_quote.get('theoretical_price', 0)
                 delayed_mid = quote.get('mid', 0)
                 adjustment = enhanced_quote.get('price_adjustment_pct', 0)
-                print(f"   📊 Black-Scholes: Delayed mid=${delayed_mid:.2f} → Theoretical=${theo_price:.2f} ({adjustment:+.1f}%)")
+                logger.debug(f"Black-Scholes: Delayed mid=${delayed_mid:.2f} → Theoretical=${theo_price:.2f} ({adjustment:+.1f}%)")
                 return enhanced_quote
 
         return quote
 
     except Exception as e:
-        print(f"Error fetching option price: {e}")
+        logger.error(f"Error fetching option price: {e}")
         return {'error': str(e)}
 
 
@@ -979,7 +992,8 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             try:
                 gex_preview = api_client.get_net_gamma('SPY')
                 spot_price = gex_preview.get('spot_price', 0) if gex_preview else 0
-            except:
+            except (KeyError, TypeError, AttributeError, Exception) as e:
+                # Failed to get spot price for logging, continue with 0
                 pass
 
             self.db_logger.log_scan_start(
@@ -1651,7 +1665,8 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 else:
                     above_20ma = True
                     above_50ma = True
-            except:
+            except (KeyError, ValueError, TypeError, AttributeError) as e:
+                # Failed to calculate MAs, default to bullish bias
                 above_20ma = True
                 above_50ma = True
 
@@ -3232,7 +3247,8 @@ This trade ensures we're always active in the market"""
             try:
                 exp_datetime = datetime.strptime(exp_date, '%Y-%m-%d').replace(tzinfo=CENTRAL_TZ)
                 dte = (exp_datetime - now).days
-            except:
+            except (ValueError, TypeError) as e:
+                # Failed to parse expiration date
                 dte = 0
 
             # Determine VIX regime
@@ -3521,7 +3537,7 @@ This trade ensures we're always active in the market"""
 
         except Exception as e:
             # If AI fails, fall back to simple rules
-            print(f"AI decision failed: {e}, using fallback rules")
+            logger.warning(f"AI decision failed: {e}, using fallback rules")
             return self._fallback_exit_rules(pos, pnl_pct, dte, gex_data)
 
     def _ai_should_close_position(self, pos: Dict, pnl_pct: float, current_price: float,
@@ -3798,7 +3814,8 @@ Now analyze this position:"""
         try:
             entry_dt = datetime.strptime(f"{entry_date} {entry_time}", '%Y-%m-%d %H:%M:%S')
             hold_minutes = int((now.replace(tzinfo=None) - entry_dt).total_seconds() / 60)
-        except:
+        except (ValueError, TypeError, AttributeError) as e:
+            # Failed to calculate hold duration
             hold_minutes = 0
 
         # Insert into closed_trades table

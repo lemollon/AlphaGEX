@@ -1176,7 +1176,8 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
             profile = api_client.get_gex_profile(symbol)
             if profile and profile.get('error'):
                 profile = None
-        except:
+        except (KeyError, TypeError, AttributeError, Exception) as e:
+            # Failed to fetch GEX profile, continue without it
             profile = None
 
         # Extract key metrics with validation
@@ -2106,7 +2107,7 @@ async def get_strike_performance(strategy: str = None):
         import json
         try:
             strike_data = json.loads(strike_data_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             # If not valid JSON, return as string
             strike_data = {"raw_data": strike_data_json}
 
@@ -2163,7 +2164,7 @@ async def get_dte_optimization(strategy: str = None):
         import json
         try:
             dte_data = json.loads(dte_data_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             dte_data = {"raw_data": dte_data_json}
 
         return {
@@ -2218,7 +2219,7 @@ async def get_regime_optimization(strategy: str = None):
         import json
         try:
             regime_data = json.loads(regime_data_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             regime_data = {"raw_data": regime_data_json}
 
         return {
@@ -2331,7 +2332,7 @@ async def get_greeks_optimization(strategy: str = None):
         import json
         try:
             greeks_data = json.loads(greeks_data_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             greeks_data = {"raw_data": greeks_data_json}
 
         return {
@@ -2383,7 +2384,7 @@ async def get_best_combinations(strategy: str = None):
         import json
         try:
             combinations_data = json.loads(combinations_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             combinations_data = {"raw_data": combinations_json}
 
         return {
@@ -2480,7 +2481,8 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except:
+            except (RuntimeError, ConnectionError, Exception) as e:
+                # Connection likely closed, will be cleaned up on next disconnect
                 pass
 
 manager = ConnectionManager()
@@ -2755,7 +2757,7 @@ async def _get_trader_update_data() -> dict:
                     'call_wall': gex_data.get('call_wall', 0),
                     'put_wall': gex_data.get('put_wall', 0)
                 }
-        except:
+        except (KeyError, TypeError, AttributeError, Exception) as e:
             update['market'] = None
 
         conn.close()
@@ -3509,7 +3511,8 @@ async def get_trader_diagnostics():
                     if age_minutes > 10:
                         diagnostics["checks"]["live_status"]["stale"] = True
                         diagnostics["recommendations"].append(f"Status is {age_minutes:.0f} minutes old - scheduler thread may have crashed")
-                except:
+                except (ValueError, TypeError, AttributeError) as e:
+                    # Failed to parse timestamp, skip age check
                     pass
         except Exception as e:
             diagnostics["checks"]["live_status"] = {"error": str(e)}
@@ -9365,7 +9368,7 @@ async def get_trader_status():
                 try:
                     result = subprocess.run(['ps', '-p', pid], capture_output=True, text=True)
                     status["trader_running"] = result.returncode == 0
-                except:
+                except (OSError, subprocess.SubprocessError, FileNotFoundError) as e:
                     status["trader_running"] = False
 
         # Handle auto-start detection based on platform
@@ -9382,7 +9385,7 @@ async def get_trader_status():
                 status["autostart_enabled"] = "auto_start_trader.sh" in crontab_content
                 status["watchdog_enabled"] = "trader_watchdog.sh" in crontab_content
                 status["autostart_type"] = "crontab" if status["autostart_enabled"] else None
-            except:
+            except (OSError, subprocess.SubprocessError, FileNotFoundError) as e:
                 status["autostart_enabled"] = False
                 status["watchdog_enabled"] = False
 
@@ -9394,7 +9397,8 @@ async def get_trader_status():
                     lines = f.readlines()
                     if lines:
                         status["last_log_entry"] = lines[-1].strip()
-            except:
+            except (IOError, OSError, PermissionError) as e:
+                # Unable to read log file
                 pass
 
         return {
@@ -9490,7 +9494,7 @@ async def disable_autostart():
         try:
             result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
             current_crontab = result.stdout
-        except:
+        except (OSError, subprocess.SubprocessError, FileNotFoundError) as e:
             return {
                 "success": True,
                 "message": "Auto-start already disabled (no crontab found)"

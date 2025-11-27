@@ -49,15 +49,15 @@ async def get_autonomous_logs(
         params = []
 
         if log_type:
-            query += " AND log_type = ?"
+            query += " AND log_type = %s"
             params.append(log_type)
 
         if session_id:
-            query += " AND session_id = ?"
+            query += " AND session_id = %s"
             params.append(session_id)
 
         if symbol:
-            query += " AND symbol = ?"
+            query += " AND symbol = %s"
             params.append(symbol)
 
         # PostgreSQL doesn't support parameterized LIMIT - use validated int literal
@@ -691,47 +691,47 @@ async def autonomous_health_check():
             from autonomous_database_logger import get_database_logger
             logger = get_database_logger('health_check')
             health['database_logger'] = True
-        except:
-            pass
+        except (ImportError, Exception):
+            health['database_logger'] = False
 
         # Check AI reasoning
         try:
             from autonomous_ai_reasoning import get_ai_reasoning
             ai = get_ai_reasoning()
             health['ai_reasoning'] = ai is not None
-        except:
-            pass
+        except (ImportError, Exception):
+            health['ai_reasoning'] = False
 
         # Check risk manager
         try:
             from autonomous_risk_manager import get_risk_manager
             risk_mgr = get_risk_manager()
             health['risk_manager'] = risk_mgr is not None
-        except:
-            pass
+        except (ImportError, Exception):
+            health['risk_manager'] = False
 
         # Check ML learner
         try:
             from autonomous_ml_pattern_learner import get_pattern_learner, ML_AVAILABLE
             health['ml_learner'] = ML_AVAILABLE
-        except:
-            pass
+        except (ImportError, Exception):
+            health['ml_learner'] = False
 
         # Check competition
         try:
             from autonomous_strategy_competition import get_competition
             comp = get_competition()
             health['competition'] = comp is not None
-        except:
-            pass
+        except (ImportError, Exception):
+            health['competition'] = False
 
         # Check backtester
         try:
             from autonomous_backtest_engine import get_backtester
             bt = get_backtester()
             health['backtester'] = bt is not None
-        except:
-            pass
+        except (ImportError, Exception):
+            health['backtester'] = False
 
         all_healthy = all(health.values())
 
