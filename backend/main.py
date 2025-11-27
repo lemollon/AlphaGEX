@@ -84,13 +84,14 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
 # Add custom CORS middleware FIRST
 app.add_middleware(CORSHeaderMiddleware)
 
-# CORS Configuration - Allow all origins for development
-# IMPORTANT: In production, restrict this to specific domains
+# CORS Configuration - Restrict to specific origins for security
+# In production, this limits which domains can access the API
+ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=False,  # Cannot use credentials with wildcard origins
-    allow_methods=["*"],  # Allow all methods including OPTIONS
+    allow_origins=ALLOWED_ORIGINS,  # Restricted to specific frontend origins
+    allow_credentials=True,  # Allow credentials with specific origins
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods
     allow_headers=["*"],  # Allow all headers
     expose_headers=["*"],
 )

@@ -156,17 +156,19 @@ export function useTraderWebSocket() {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>()
   const pollingIntervalRef = useRef<NodeJS.Timeout>()
   const wsFailCountRef = useRef(0)
+  const mountedRef = useRef(true) // Track if component is mounted to prevent state updates after unmount
 
   // REST API polling fallback
   const startPolling = useCallback(() => {
     if (pollingIntervalRef.current) return // Already polling
+    if (!mountedRef.current) return // Don't start if unmounted
 
     console.log('Starting REST API polling fallback...')
     setUsingRestFallback(true)
 
     // Immediate fetch
     fetchTraderData().then(d => {
-      if (d) {
+      if (d && mountedRef.current) {
         setData(d)
         setIsConnected(true)
         setError(null)
@@ -175,8 +177,9 @@ export function useTraderWebSocket() {
 
     // Poll every 10 seconds
     pollingIntervalRef.current = setInterval(async () => {
+      if (!mountedRef.current) return
       const d = await fetchTraderData()
-      if (d) {
+      if (d && mountedRef.current) {
         setData(d)
         setIsConnected(true)
       }
@@ -197,6 +200,7 @@ export function useTraderWebSocket() {
       const ws = new WebSocket(`${wsUrl}/ws/trader`)
 
       ws.onopen = () => {
+        if (!mountedRef.current) return
         console.log('Trader WebSocket connected')
         setIsConnected(true)
         setError(null)
@@ -205,6 +209,7 @@ export function useTraderWebSocket() {
       }
 
       ws.onmessage = (event) => {
+        if (!mountedRef.current) return
         try {
           const message = JSON.parse(event.data)
           if (message.type === 'trader_update' || message.type === 'connected') {
@@ -216,6 +221,7 @@ export function useTraderWebSocket() {
       }
 
       ws.onerror = (event) => {
+        if (!mountedRef.current) return
         console.error('WebSocket error:', event)
         wsFailCountRef.current++
         setError('WebSocket connection error')
@@ -228,6 +234,7 @@ export function useTraderWebSocket() {
       }
 
       ws.onclose = () => {
+        if (!mountedRef.current) return
         console.log('Trader WebSocket disconnected')
         setIsConnected(false)
 
@@ -238,6 +245,7 @@ export function useTraderWebSocket() {
 
         // Still try to reconnect WebSocket in background
         reconnectTimeoutRef.current = setTimeout(() => {
+          if (!mountedRef.current) return
           console.log('Attempting WebSocket reconnect...')
           connect()
         }, 30000) // Try WS reconnect every 30s
@@ -277,8 +285,12 @@ export function useTraderWebSocket() {
   }, [])
 
   useEffect(() => {
+    mountedRef.current = true
     connect()
-    return () => disconnect()
+    return () => {
+      mountedRef.current = false
+      disconnect()
+    }
   }, [connect, disconnect])
 
   return {

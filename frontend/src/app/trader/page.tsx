@@ -316,7 +316,7 @@ export default function AutonomousTrader() {
         }
 
         // Set REAL strategies from database
-        if (strategiesRes.data.success && strategiesRes.data.data.length > 0) {
+        if (strategiesRes.data?.success && Array.isArray(strategiesRes.data?.data) && strategiesRes.data.data.length > 0) {
           const mappedStrategies = strategiesRes.data.data.map((strat: any) => {
             // Use ID from backend or generate from name
             const strategyId = strat.id || strat.name.toLowerCase().replace(/\s+/g, '_').replace(/[()]/g, '')
@@ -335,7 +335,7 @@ export default function AutonomousTrader() {
           setStrategies(mappedStrategies)
         }
 
-        if (tradesRes.data.success && tradesRes.data.data.length > 0) {
+        if (tradesRes.data?.success && Array.isArray(tradesRes.data?.data) && tradesRes.data.data.length > 0) {
           // Map database trades to UI format with full transparency
           const mappedTrades = tradesRes.data.data.map((trade: any) => ({
             id: trade.id?.toString() || trade.timestamp,

@@ -546,14 +546,28 @@ class AutonomousPaperTrader:
             ('data_confidence', 'VARCHAR(20)'),
         ]
 
+        # Whitelist of allowed column names and types for security
+        ALLOWED_COLUMNS = {
+            'theoretical_price', 'theoretical_bid', 'theoretical_ask', 'recommended_entry',
+            'price_adjustment', 'price_adjustment_pct', 'is_delayed', 'data_confidence'
+        }
+        ALLOWED_TYPES = {'DECIMAL(10,4)', 'DECIMAL(8,4)', 'BOOLEAN', 'VARCHAR(20)'}
+
         for col_name, col_type in theoretical_columns:
+            # Validate column name and type to prevent SQL injection
+            if col_name not in ALLOWED_COLUMNS or col_type not in ALLOWED_TYPES:
+                print(f"⚠️ Skipping invalid column: {col_name} {col_type}")
+                continue
+
             try:
+                # Safe to use string formatting since values are validated against whitelist
                 c.execute(f"ALTER TABLE autonomous_open_positions ADD COLUMN {col_name} {col_type}")
-            except:
+            except Exception as e:
                 pass  # Column already exists
+
             try:
                 c.execute(f"ALTER TABLE autonomous_closed_trades ADD COLUMN {col_name} {col_type}")
-            except:
+            except Exception as e:
                 pass  # Column already exists
 
         conn.commit()
@@ -562,22 +576,26 @@ class AutonomousPaperTrader:
     def get_config(self, key: str) -> str:
         """Get configuration value"""
         conn = get_connection()
-        c = conn.cursor()
-        c.execute("SELECT value FROM autonomous_config WHERE key = %s", (key,))
-        result = c.fetchone()
-        conn.close()
-        return result[0] if result else "0"
+        try:
+            c = conn.cursor()
+            c.execute("SELECT value FROM autonomous_config WHERE key = %s", (key,))
+            result = c.fetchone()
+            return result[0] if result else "0"
+        finally:
+            conn.close()
 
     def set_config(self, key: str, value: str):
         """Set configuration value"""
         conn = get_connection()
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO autonomous_config (key, value) VALUES (%s, %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-        """, (key, value))
-        conn.commit()
-        conn.close()
+        try:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO autonomous_config (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+            """, (key, value))
+            conn.commit()
+        finally:
+            conn.close()
 
     def update_live_status(self, status: str, action: str, analysis: str = None, decision: str = None):
         """
@@ -643,23 +661,25 @@ class AutonomousPaperTrader:
     def log_action(self, action: str, details: str, position_id: int = None, success: bool = True):
         """Log trading actions"""
         conn = get_connection()
-        c = conn.cursor()
+        try:
+            c = conn.cursor()
 
-        now = datetime.now(CENTRAL_TZ)
-        c.execute("""
-            INSERT INTO autonomous_trade_log (date, time, action, details, position_id, success)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (
-            now.strftime('%Y-%m-%d'),
-            now.strftime('%H:%M:%S'),
-            action,
-            details,
-            position_id,
-            1 if success else 0
-        ))
+            now = datetime.now(CENTRAL_TZ)
+            c.execute("""
+                INSERT INTO autonomous_trade_log (date, time, action, details, position_id, success)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                action,
+                details,
+                position_id,
+                1 if success else 0
+            ))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
     def should_trade_today(self) -> bool:
         """Check if we should find a new trade - allows multiple trades per day within risk limits"""

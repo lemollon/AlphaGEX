@@ -257,10 +257,46 @@ class RiskManager:
         return starting_capital + total_realized + total_unrealized
 
     def _get_start_of_day_equity(self) -> float:
-        """Get equity value at start of trading day"""
-        # For now, use yesterday's closing equity
-        # TODO: Implement daily equity snapshots
-        return self._get_current_equity()
+        """Get equity value at start of trading day from equity snapshots"""
+        conn = get_connection()
+        c = conn.cursor()
+
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        try:
+            # Try to get today's earliest snapshot (start of day equity)
+            c.execute("""
+                SELECT account_value FROM autonomous_equity_snapshots
+                WHERE snapshot_date = %s
+                ORDER BY snapshot_time ASC
+                LIMIT 1
+            """, (today,))
+            result = c.fetchone()
+
+            if result:
+                conn.close()
+                return float(result[0])
+
+            # If no snapshot today, get yesterday's last snapshot
+            c.execute("""
+                SELECT account_value FROM autonomous_equity_snapshots
+                WHERE snapshot_date < %s
+                ORDER BY snapshot_date DESC, snapshot_time DESC
+                LIMIT 1
+            """, (today,))
+            result = c.fetchone()
+
+            if result:
+                conn.close()
+                return float(result[0])
+
+            # Fallback to current equity if no snapshots exist
+            conn.close()
+            return self._get_current_equity()
+        except Exception as e:
+            conn.close()
+            print(f"⚠️ Error getting start of day equity: {e}")
+            return self._get_current_equity()
 
     def _get_open_positions(self) -> List[Dict]:
         """Get all open positions"""
