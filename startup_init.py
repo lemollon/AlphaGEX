@@ -145,6 +145,22 @@ def ensure_all_tables_exist(conn):
         ON unified_trades(action)
     """)
 
+    # Add profit_target_pct and stop_loss_pct columns to autonomous_open_positions if missing
+    # These columns store regime-based exit targets calculated at entry time
+    try:
+        c.execute("""
+            ALTER TABLE autonomous_open_positions
+            ADD COLUMN IF NOT EXISTS profit_target_pct DECIMAL(6,2)
+        """)
+        c.execute("""
+            ALTER TABLE autonomous_open_positions
+            ADD COLUMN IF NOT EXISTS stop_loss_pct DECIMAL(6,2)
+        """)
+        print("   ✓ Added profit_target_pct and stop_loss_pct columns to autonomous_open_positions")
+    except Exception as e:
+        # Columns may already exist or table doesn't exist yet
+        logger.debug(f"Could not add profit/stop columns: {e}")
+
     conn.commit()
     print("✅ All required tables exist (including unified trading tables)")
 

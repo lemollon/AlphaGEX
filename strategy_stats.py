@@ -10,6 +10,7 @@ Changes are logged with timestamps and reasons.
 
 import json
 import os
+import time
 from datetime import datetime
 from typing import Dict, Optional
 from pathlib import Path
@@ -23,6 +24,12 @@ CHANGE_LOG_FILE = STATS_DIR / 'change_log.jsonl'
 
 # Ensure directory exists
 STATS_DIR.mkdir(exist_ok=True)
+
+# CACHE: To avoid reading the file on every call while still staying fresh
+# Cache TTL is 60 seconds - stats will be re-read from file after this period
+_stats_cache: Dict = None
+_stats_cache_time: float = 0
+STATS_CACHE_TTL_SECONDS = 60  # Refresh stats from file every 60 seconds
 
 
 def log_change(category: str, item: str, old_value, new_value, reason: str):
@@ -47,66 +54,84 @@ def log_change(category: str, item: str, old_value, new_value, reason: str):
     print(f"   Logged: {change_entry['timestamp']}\n")
 
 
+def invalidate_stats_cache():
+    """Force refresh of stats cache on next get_strategy_stats() call"""
+    global _stats_cache, _stats_cache_time
+    _stats_cache = None
+    _stats_cache_time = 0
+
+
 def get_strategy_stats() -> Dict:
     """
     Get current strategy statistics.
     Returns hardcoded defaults if no backtest data exists yet.
+
+    Uses a 60-second cache to balance performance and freshness.
+    Call invalidate_stats_cache() to force a refresh.
     """
+    global _stats_cache, _stats_cache_time
+
+    # Check if cache is still valid
+    if _stats_cache is not None and (time.time() - _stats_cache_time) < STATS_CACHE_TTL_SECONDS:
+        return _stats_cache
+
     if not STRATEGY_STATS_FILE.exists():
         # Return initial defaults (will be updated by first backtest)
+        # CRITICAL: avg_win and avg_loss must be non-zero for Kelly calculation
+        # These estimates are based on typical options trading performance
         return {
             'BULLISH_CALL_SPREAD': {
                 'win_rate': 0.65,
-                'avg_win': 0.0,
-                'avg_loss': 0.0,
+                'avg_win': 15.0,   # Typical directional spread winner
+                'avg_loss': 25.0,  # Directional spreads lose more when wrong
                 'total_trades': 0,
                 'last_updated': None,
                 'source': 'initial_estimate'
             },
             'BEARISH_PUT_SPREAD': {
                 'win_rate': 0.62,
-                'avg_win': 0.0,
-                'avg_loss': 0.0,
+                'avg_win': 15.0,
+                'avg_loss': 25.0,
                 'total_trades': 0,
                 'last_updated': None,
                 'source': 'initial_estimate'
             },
             'IRON_CONDOR': {
                 'win_rate': 0.72,
-                'avg_win': 0.0,
-                'avg_loss': 0.0,
+                'avg_win': 8.0,    # Credit spreads have lower wins
+                'avg_loss': 20.0,  # But larger losses when wrong
                 'total_trades': 0,
                 'last_updated': None,
                 'source': 'initial_estimate'
             },
             'SHORT_CALL_CREDIT_SPREAD': {
                 'win_rate': 0.70,
-                'avg_win': 0.0,
-                'avg_loss': 0.0,
+                'avg_win': 10.0,
+                'avg_loss': 18.0,
                 'total_trades': 0,
                 'last_updated': None,
                 'source': 'initial_estimate'
             },
             'SHORT_PUT_CREDIT_SPREAD': {
                 'win_rate': 0.68,
-                'avg_win': 0.0,
-                'avg_loss': 0.0,
+                'avg_win': 10.0,
+                'avg_loss': 18.0,
                 'total_trades': 0,
                 'last_updated': None,
                 'source': 'initial_estimate'
             },
             'NEGATIVE_GEX_SQUEEZE': {
                 'win_rate': 0.75,
-                'avg_win': 0.0,
-                'avg_loss': 0.0,
+                'avg_win': 20.0,   # Squeeze trades can be very profitable
+                'avg_loss': 15.0,  # But managed losses when thesis is wrong
                 'total_trades': 0,
                 'last_updated': None,
                 'source': 'initial_estimate'
             },
             'LONG_STRADDLE': {
                 'win_rate': 0.55,
-                'avg_win': 0.0,
-                'avg_loss': 0.0,
+                'avg_win': 25.0,   # Straddles need big moves
+                'avg_loss': 20.0,  # Theta decay hurts
                 'total_trades': 0,
                 'last_updated': None,
                 'source': 'initial_estimate'
@@ -114,7 +139,9 @@ def get_strategy_stats() -> Dict:
         }
 
     with open(STRATEGY_STATS_FILE, 'r') as f:
-        return json.load(f)
+        _stats_cache = json.load(f)
+        _stats_cache_time = time.time()
+        return _stats_cache
 
 
 def update_strategy_stats(strategy_name: str, backtest_results: Dict):
@@ -160,6 +187,9 @@ def update_strategy_stats(strategy_name: str, backtest_results: Dict):
     # Save to file
     with open(STRATEGY_STATS_FILE, 'w') as f:
         json.dump(current_stats, f, indent=2)
+
+    # Invalidate cache so next read gets fresh data
+    invalidate_stats_cache()
 
     # Log the change
     reason = f"Updated from backtest ({total_trades} trades, {backtest_results['start_date']} to {backtest_results['end_date']})"

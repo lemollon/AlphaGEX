@@ -1040,20 +1040,38 @@ class AutonomousPaperTrader:
 
         # Apply Kelly fraction based on proven status
         if is_proven:
-            adjusted_kelly = kelly * 0.5  # Half-Kelly for proven
+            base_kelly_fraction = 0.5  # Half-Kelly for proven
             adjustment_type = 'half-kelly'
         else:
-            adjusted_kelly = kelly * 0.25  # Quarter-Kelly for unproven
+            base_kelly_fraction = 0.25  # Quarter-Kelly for unproven
             adjustment_type = 'quarter-kelly'
+
+        # REGIME CONFIDENCE ADJUSTMENT: This is the key integration point
+        # Confidence from regime classifier directly scales Kelly fraction
+        # High confidence (≥80%): Full Kelly fraction (1.0x)
+        # Medium confidence (60-80%): 75% of Kelly fraction
+        # Low confidence (<60%): 50% of Kelly fraction
+        if confidence >= 80:
+            confidence_factor = 1.0  # Full Kelly fraction
+            confidence_level = 'high'
+        elif confidence >= 60:
+            confidence_factor = 0.75  # 75% of Kelly
+            confidence_level = 'medium'
+        else:
+            confidence_factor = 0.5  # 50% of Kelly - very conservative
+            confidence_level = 'low'
+
+        # Apply confidence to base Kelly fraction
+        adjusted_kelly = kelly * base_kelly_fraction * confidence_factor
+
+        logger.info(f"Kelly confidence scaling: {confidence}% confidence ({confidence_level}) -> "
+                   f"{adjustment_type} * {confidence_factor} = {adjusted_kelly:.2%}")
 
         # Cap Kelly at 20% for SPY (more conservative than SPX)
         final_kelly = max(0.01, min(0.20, adjusted_kelly))
 
         # Calculate position value
         max_position_value = available * final_kelly
-
-        # Apply confidence adjustment (higher confidence = larger position)
-        confidence_factor = (confidence / 100) * 0.5 + 0.5  # 0.5-1.0 range
 
         # VIX STRESS FACTOR: Real-time VIX-based position reduction
         # CRITICAL: This matches SPX trader logic for consistency
@@ -1077,8 +1095,8 @@ class AutonomousPaperTrader:
             vix_stress_level = 'normal'
             logger.info(f"VIX NORMAL ({current_vix:.1f}): Standard position sizing")
 
-        # Apply all adjustments including VIX stress
-        position_value = max_position_value * confidence_factor * vix_stress_factor
+        # Apply VIX stress (confidence already in adjusted_kelly)
+        position_value = max_position_value * vix_stress_factor
 
         # Cap at 25% of capital per position (SPY risk limit)
         position_value = min(position_value, total_capital * 0.25)
@@ -1093,13 +1111,15 @@ class AutonomousPaperTrader:
             contracts = min(raw_contracts, 10)
 
         sizing_details = {
-            'methodology': 'Kelly-Backtest-VIX (SPY)',
+            'methodology': 'Kelly-Backtest-Confidence-VIX (SPY)',
             'available_capital': available,
             'kelly_pct': final_kelly * 100,
             'raw_kelly': kelly,
             'adjusted_kelly': adjusted_kelly,
             'adjustment_type': adjustment_type,
-            'confidence_factor': confidence_factor,
+            'confidence': confidence,
+            'confidence_level': confidence_level,
+            'confidence_factor': confidence_factor,  # 1.0, 0.75, or 0.5
             'vix_stress_factor': vix_stress_factor,
             'vix_stress_level': vix_stress_level,
             'current_vix': current_vix,
@@ -2017,24 +2037,33 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             if len(self.iv_history) > 252:
                 self.iv_history = self.iv_history[-252:]
 
-            # Calculate historical volatility (simplified)
-            historical_vol = current_iv * 0.9  # Typically IV > HV
+            # Get price history for HV calculation and MAs
+            historical_vol = current_iv * 0.9  # Fallback estimate
+            above_20ma = True
+            above_50ma = True
 
-            # Get moving average status
             try:
                 data = polygon_fetcher.get_price_history('SPY', days=60, timeframe='day', multiplier=1)
+                if data is not None and len(data) >= 20:
+                    # CALCULATE ACTUAL HISTORICAL VOLATILITY from price data
+                    # Using 20-day realized volatility, annualized
+                    import numpy as np
+                    closes = data['Close'].tail(21).values  # Need 21 for 20 returns
+                    if len(closes) >= 21:
+                        log_returns = np.diff(np.log(closes))
+                        historical_vol = float(np.std(log_returns) * np.sqrt(252))
+                        logger.info(f"SPY Historical Vol calculated from prices: {historical_vol:.2%}")
+                    else:
+                        logger.warning(f"Not enough data for HV calc ({len(closes)} points), using IV estimate")
+
                 if data is not None and len(data) >= 50:
                     ma_20 = float(data['Close'].tail(20).mean())
                     ma_50 = float(data['Close'].tail(50).mean())
                     above_20ma = spot_price > ma_20
                     above_50ma = spot_price > ma_50
-                else:
-                    above_20ma = True
-                    above_50ma = True
             except (KeyError, ValueError, TypeError, AttributeError) as e:
-                # Failed to calculate MAs, default to bullish bias
-                above_20ma = True
-                above_50ma = True
+                # Failed to calculate, use fallback
+                logger.warning(f"Error getting price history for HV/MA: {e}")
 
             # ============================================================
             # RUN THE UNIFIED CLASSIFIER
@@ -3479,6 +3508,21 @@ This trade ensures we're always active in the market"""
 
         # now was already defined above for duplicate check - reuse it for consistency
 
+        # REGIME-BASED EXIT TARGETS: Calculate profit/stop targets at entry time
+        # These are stored in the position and used by _fallback_exit_rules
+        confidence = trade.get('confidence', 50)
+        if confidence >= 80:
+            profit_target_pct = 50.0  # High confidence = wider profit target
+            stop_loss_pct = 20.0      # High confidence = tighter stop
+        elif confidence >= 60:
+            profit_target_pct = 40.0  # Medium confidence = standard targets
+            stop_loss_pct = 25.0
+        else:
+            profit_target_pct = 30.0  # Low confidence = conservative targets
+            stop_loss_pct = 30.0
+        logger.info(f"Entry targets for {trade['strategy']}: confidence={confidence}% -> "
+                   f"profit_target={profit_target_pct}%, stop_loss={stop_loss_pct}%")
+
         # Insert into NEW autonomous_open_positions table with RETURNING for PostgreSQL
         # Include theoretical pricing columns (Black-Scholes) and Greeks
         c.execute("""
@@ -3490,9 +3534,10 @@ This trade ensures we're always active in the market"""
                 trade_reasoning, contract_symbol,
                 theoretical_price, theoretical_bid, theoretical_ask, recommended_entry,
                 price_adjustment, price_adjustment_pct, is_delayed, data_confidence,
-                entry_iv, entry_delta, current_iv, current_delta
+                entry_iv, entry_delta, current_iv, current_delta,
+                profit_target_pct, stop_loss_pct
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             trade['symbol'],
@@ -3531,7 +3576,10 @@ This trade ensures we're always active in the market"""
             option_data.get('iv') or option_data.get('implied_volatility'),
             option_data.get('delta'),
             option_data.get('iv') or option_data.get('implied_volatility'),  # Current starts same as entry
-            option_data.get('delta')  # Current starts same as entry
+            option_data.get('delta'),  # Current starts same as entry
+            # Regime-based exit targets
+            profit_target_pct,
+            stop_loss_pct
         ))
 
         # Get the inserted position ID (PostgreSQL RETURNING)
@@ -4073,25 +4121,63 @@ Now analyze this position:"""
             return {'should_close': False, 'reason': f'AI error: {str(e)}'}
 
     def _fallback_exit_rules(self, pos: Dict, pnl_pct: float, dte: int, gex_data: Dict) -> Tuple[bool, str]:
-        """Fallback rules if AI is unavailable"""
+        """
+        Fallback rules if AI is unavailable.
 
-        # Big profit
-        if pnl_pct >= 40:
-            return True, f"💰 PROFIT: +{pnl_pct:.1f}% (fallback rule)"
+        CRITICAL: Uses regime-based profit/stop targets when available,
+        falls back to confidence-based defaults otherwise.
 
-        # Stop loss
-        if pnl_pct <= -30:
-            return True, f"🛑 STOP: {pnl_pct:.1f}% (fallback rule)"
+        Regime-Based Targets (from market_regime_classifier):
+        - High confidence (≥80%): 20% stop, 50% profit
+        - Medium confidence (60-80%): 25% stop, 40% profit
+        - Low confidence (<60%): 30% stop, 30% profit
+        """
+        # Get regime-based targets from position, or calculate from confidence
+        profit_target_pct = pos.get('profit_target_pct')
+        stop_loss_pct = pos.get('stop_loss_pct')
 
-        # Expiration
+        if profit_target_pct is None or stop_loss_pct is None:
+            # Calculate from confidence if not stored
+            confidence = pos.get('confidence', 50)
+            if confidence >= 80:
+                profit_target_pct = 50
+                stop_loss_pct = 20
+            elif confidence >= 60:
+                profit_target_pct = 40
+                stop_loss_pct = 25
+            else:
+                profit_target_pct = 30
+                stop_loss_pct = 30
+
+            logger.debug(f"Exit rules: Calculated from confidence {confidence}% -> "
+                        f"profit={profit_target_pct}%, stop={stop_loss_pct}%")
+        else:
+            # Convert from decimal to percentage if stored as decimal
+            if profit_target_pct < 1:
+                profit_target_pct = profit_target_pct * 100
+            if stop_loss_pct < 1:
+                stop_loss_pct = stop_loss_pct * 100
+            logger.debug(f"Exit rules: Using stored targets -> "
+                        f"profit={profit_target_pct}%, stop={stop_loss_pct}%")
+
+        # Profit target hit
+        if pnl_pct >= profit_target_pct:
+            return True, f"💰 PROFIT TARGET: +{pnl_pct:.1f}% (target: {profit_target_pct}%)"
+
+        # Stop loss hit
+        if pnl_pct <= -stop_loss_pct:
+            return True, f"🛑 STOP LOSS: {pnl_pct:.1f}% (limit: -{stop_loss_pct}%)"
+
+        # Expiration safety
         if dte <= 1:
-            return True, f"⏰ EXPIRING: {dte} DTE (fallback rule)"
+            return True, f"⏰ EXPIRING: {dte} DTE (safety rule)"
 
-        # GEX flip
-        entry_gex = pos['entry_net_gex']
+        # GEX flip - regime change indicator
+        entry_gex = pos.get('entry_net_gex', 0)
         current_gex = gex_data.get('net_gex', 0)
-        if (entry_gex > 0 and current_gex < 0) or (entry_gex < 0 and current_gex > 0):
-            return True, "📊 GEX FLIP: Thesis changed (fallback rule)"
+        if entry_gex and current_gex:
+            if (entry_gex > 0 and current_gex < 0) or (entry_gex < 0 and current_gex > 0):
+                return True, "📊 GEX FLIP: Thesis changed (regime reversal)"
 
         return False, ""
 
