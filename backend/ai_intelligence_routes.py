@@ -595,7 +595,7 @@ async def get_position_guidance(trade_id: str):
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get trade
-        c.execute("SELECT * FROM trades WHERE (id = ? OR timestamp = ?) AND status = 'OPEN'", (trade_id, trade_id))
+        c.execute("SELECT * FROM trades WHERE (id = %s OR timestamp = %s) AND status = 'OPEN'", (trade_id, trade_id))
         trade_row = c.fetchone()
 
         if not trade_row:

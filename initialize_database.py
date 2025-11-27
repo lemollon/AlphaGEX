@@ -4,13 +4,14 @@ Initialize AlphaGEX Database
 Creates all required tables for the system
 """
 import sys
-from config_and_database import init_database, DB_PATH
+from config_and_database import init_database
 from autonomous_paper_trader import AutonomousPaperTrader
+from database_adapter import get_connection
 
 print("=" * 80)
 print("INITIALIZING ALPHAGEX DATABASE")
 print("=" * 80)
-print(f"Database: {DB_PATH}")
+print("Database: PostgreSQL via DATABASE_URL")
 print()
 
 # Step 1: Initialize main database schema
@@ -34,16 +35,20 @@ except Exception as e:
 
 # Step 3: Verify tables exist
 print("\nStep 3: Verifying tables...")
-import sqlite3
-conn = sqlite3.connect(DB_PATH)
+conn = get_connection()
 cursor = conn.cursor()
-cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
+cursor.execute("""
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+    ORDER BY table_name
+""")
 tables = cursor.fetchall()
 conn.close()
 
 print(f"✅ Found {len(tables)} tables:")
 for table in tables:
-    print(f"   • {table[0]}")
+    print(f"   - {table[0]}")
 
 print("\n" + "=" * 80)
 print("✅ DATABASE INITIALIZATION COMPLETE!")

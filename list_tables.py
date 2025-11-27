@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-import sqlite3
-from config_and_database import DB_PATH
+"""
+List all tables in the PostgreSQL database
+"""
+from database_adapter import get_connection
 
-conn = sqlite3.connect(DB_PATH)
+conn = get_connection()
 c = conn.cursor()
 
-c.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+# Get all tables from PostgreSQL
+c.execute("""
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+    ORDER BY table_name
+""")
 tables = [row[0] for row in c.fetchall()]
 
 print("EXISTING TABLES:")

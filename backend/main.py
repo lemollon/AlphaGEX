@@ -6196,7 +6196,7 @@ async def delete_alert(alert_id: int):
         conn = get_connection()
         c = conn.cursor()
 
-        c.execute('DELETE FROM alerts WHERE id = ?', (alert_id,))
+        c.execute('DELETE FROM alerts WHERE id = %s', (alert_id,))
 
         conn.commit()
         conn.close()

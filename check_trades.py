@@ -2,18 +2,17 @@
 """
 Check autonomous trader database for trades
 """
-import sqlite3
 import pandas as pd
 from datetime import datetime
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 print("=" * 80)
 print("AUTONOMOUS TRADER DATABASE CHECK")
 print("=" * 80)
-print(f"Database path: {DB_PATH}")
+print("Database: PostgreSQL via DATABASE_URL")
 print()
 
-conn = sqlite3.connect(DB_PATH)
+conn = get_connection()
 
 # Check positions
 print("\n1. AUTONOMOUS POSITIONS (Last 10 trades)")
@@ -51,8 +50,11 @@ else:
 # Check config
 print("\n\n3. CONFIGURATION")
 print("-" * 80)
-config = pd.read_sql_query("SELECT * FROM autonomous_config", conn)
-print(config.to_string())
+try:
+    config = pd.read_sql_query("SELECT * FROM autonomous_config", conn)
+    print(config.to_string())
+except Exception as e:
+    print(f"❌ Error reading config: {e}")
 
 # Check live status
 print("\n\n4. LIVE STATUS")
