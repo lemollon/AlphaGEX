@@ -720,9 +720,22 @@ class SPXInstitutionalTrader:
         base_pct = min(kelly_pct, self.max_position_pct)
         max_position_value = available * base_pct
 
-        # Adjust for confidence (Kelly-inspired)
-        # Higher confidence = closer to max position
-        confidence_factor = (confidence / 100) * 0.5 + 0.5  # Range: 0.5-1.0
+        # REGIME CONFIDENCE ADJUSTMENT: This is the key integration point
+        # Confidence from regime classifier directly scales position size
+        # High confidence (≥80%): Full position (1.0x)
+        # Medium confidence (60-80%): 75% of position
+        # Low confidence (<60%): 50% of position
+        if confidence >= 80:
+            confidence_factor = 1.0  # Full position
+            confidence_level = 'high'
+        elif confidence >= 60:
+            confidence_factor = 0.75  # 75% position
+            confidence_level = 'medium'
+        else:
+            confidence_factor = 0.5  # 50% position - very conservative
+            confidence_level = 'low'
+
+        print(f"📊 Confidence scaling: {confidence}% ({confidence_level}) -> {confidence_factor*100:.0f}% position")
 
         # Volatility adjustment
         vol_adjustments = {
@@ -788,11 +801,13 @@ class SPXInstitutionalTrader:
             market_impact_warning = f"Large order ({contracts} contracts) may incur significant market impact"
 
         sizing_details = {
-            'methodology': 'Kelly-Backtest-VIX Hybrid',
+            'methodology': 'Kelly-Backtest-Confidence-VIX Hybrid',
             'available_capital': available,
             'kelly_pct': kelly_pct * 100,
             'max_position_value': max_position_value,
-            'confidence_factor': confidence_factor,
+            'confidence': confidence,
+            'confidence_level': confidence_level,
+            'confidence_factor': confidence_factor,  # 1.0, 0.75, or 0.5
             'vol_factor': vol_factor,
             'vix_stress_factor': vix_stress_factor,
             'vix_stress_level': vix_stress_level,
@@ -1503,9 +1518,11 @@ class SPXInstitutionalTrader:
             if len(self.iv_history) > 252:
                 self.iv_history = self.iv_history[-252:]
 
-            historical_vol = current_iv * 0.85
+            # Get price history for HV calculation and MAs
+            historical_vol = current_iv * 0.85  # Fallback estimate
+            above_20ma = True
+            above_50ma = True
 
-            # Get MA status
             try:
                 data = polygon_fetcher.get_price_history('^SPX', days=60, timeframe='day', multiplier=1)
                 if data is None or len(data) < 50:
@@ -1513,17 +1530,25 @@ class SPXInstitutionalTrader:
                     if data is not None:
                         data['Close'] = data['Close'] * 10
 
+                if data is not None and len(data) >= 20:
+                    # CALCULATE ACTUAL HISTORICAL VOLATILITY from price data
+                    # Using 20-day realized volatility, annualized
+                    import numpy as np
+                    closes = data['Close'].tail(21).values  # Need 21 for 20 returns
+                    if len(closes) >= 21:
+                        log_returns = np.diff(np.log(closes))
+                        historical_vol = float(np.std(log_returns) * np.sqrt(252))
+                        logger.info(f"SPX Historical Vol calculated from prices: {historical_vol:.2%}")
+                    else:
+                        logger.warning(f"Not enough data for HV calc ({len(closes)} points), using IV estimate")
+
                 if data is not None and len(data) >= 50:
                     ma_20 = float(data['Close'].tail(20).mean())
                     ma_50 = float(data['Close'].tail(50).mean())
                     above_20ma = spot_price > ma_20
                     above_50ma = spot_price > ma_50
-                else:
-                    above_20ma = True
-                    above_50ma = True
-            except:
-                above_20ma = True
-                above_50ma = True
+            except Exception as e:
+                logger.warning(f"Error getting price history for HV/MA: {e}")
 
             # ============================================================
             # RUN THE UNIFIED CLASSIFIER FOR SPX

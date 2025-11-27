@@ -109,6 +109,10 @@ def run_migration():
                 entry_flip_point DECIMAL(10,2),
                 trade_reasoning TEXT,
 
+                -- Regime-based exit targets (calculated at entry)
+                profit_target_pct DECIMAL(6,2),
+                stop_loss_pct DECIMAL(6,2),
+
                 -- Timestamps
                 created_at TIMESTAMP DEFAULT NOW()
             )
