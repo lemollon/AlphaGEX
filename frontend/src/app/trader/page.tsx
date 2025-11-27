@@ -61,6 +61,16 @@ interface Trade {
   current_spot_price?: number
   trade_reasoning?: string
   expiration_date?: string
+  // Greeks
+  entry_iv?: number
+  entry_delta?: number
+  current_iv?: number
+  current_delta?: number
+  theta?: number
+  gamma?: number
+  vega?: number
+  gex_regime?: string
+  entry_net_gex?: number
 }
 
 interface TradeLogEntry {
@@ -94,9 +104,16 @@ export default function AutonomousTrader() {
   })
 
   const [strategies, setStrategies] = useState<Strategy[]>([])
+  const [strategyConfigs, setStrategyConfigs] = useState<Record<string, boolean>>({})
+  const [strategyTogglingId, setStrategyTogglingId] = useState<string | null>(null)
 
   const [recentTrades, setRecentTrades] = useState<Trade[]>([])
   const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null)
+
+  // Trade filters
+  const [tradeFilter, setTradeFilter] = useState<'all' | 'open' | 'closed'>('all')
+  const [strategyFilter, setStrategyFilter] = useState<string>('all')
+  const [searchQuery, setSearchQuery] = useState<string>('')
 
   // Trade Activity Log
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
@@ -181,9 +198,27 @@ export default function AutonomousTrader() {
           strike: trade.strike || 0,
           quantity: trade.contracts || 0,
           price: Math.abs(trade.entry_price) || 0,
-          status: 'filled' as const,
+          status: 'OPEN' as const,
           pnl: trade.unrealized_pnl || 0,
           strategy: trade.strategy,
+          entry_bid: trade.entry_bid,
+          entry_ask: trade.entry_ask,
+          entry_spot_price: trade.entry_spot_price,
+          current_price: trade.current_price,
+          current_spot_price: trade.current_spot_price,
+          trade_reasoning: trade.trade_reasoning,
+          expiration_date: trade.expiration_date,
+          // Greeks
+          entry_iv: trade.entry_iv,
+          entry_delta: trade.entry_delta,
+          current_iv: trade.current_iv,
+          current_delta: trade.current_delta,
+          theta: trade.theta,
+          gamma: trade.gamma,
+          vega: trade.vega,
+          // GEX context
+          gex_regime: trade.gex_regime,
+          entry_net_gex: trade.entry_net_gex,
         }))
         setRecentTrades(mappedTrades)
       }
@@ -247,6 +282,7 @@ export default function AutonomousTrader() {
           apiClient.getTraderPerformance(),
           apiClient.getTraderTrades(10),
           apiClient.getStrategies(),
+          apiClient.getStrategyConfigs().catch(() => ({ data: { success: false, data: {} } })),
           apiClient.getAutonomousLogs({ limit: 20 }).catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getCompetitionLeaderboard().catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getAllPatternBacktests(90).catch(() => ({ data: { success: false, data: [] } })),
@@ -261,7 +297,7 @@ export default function AutonomousTrader() {
         ])
 
         // Extract results (fulfilled promises only)
-        const [statusRes, perfRes, tradesRes, strategiesRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = results.map(result =>
+        const [statusRes, perfRes, tradesRes, strategiesRes, strategyConfigsRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = results.map(result =>
           result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
         )
 
@@ -273,17 +309,29 @@ export default function AutonomousTrader() {
           setPerformance(perfRes.data.data)
         }
 
+        // Load strategy configs first
+        const configs = strategyConfigsRes.data.success ? strategyConfigsRes.data.data : {}
+        if (Object.keys(configs).length > 0) {
+          setStrategyConfigs(configs)
+        }
+
         // Set REAL strategies from database
         if (strategiesRes.data.success && strategiesRes.data.data.length > 0) {
-          const mappedStrategies = strategiesRes.data.data.map((strat: any, idx: number) => ({
-            id: idx.toString(),
-            name: strat.name,
-            status: strat.status || 'active',
-            win_rate: strat.win_rate || 0,
-            total_trades: strat.total_trades || 0,
-            pnl: strat.total_pnl || 0,
-            last_trade_date: strat.last_trade_date || 'Never'
-          }))
+          const mappedStrategies = strategiesRes.data.data.map((strat: any) => {
+            // Use ID from backend or generate from name
+            const strategyId = strat.id || strat.name.toLowerCase().replace(/\s+/g, '_').replace(/[()]/g, '')
+            // Check if strategy is enabled in config
+            const isEnabled = configs[strat.name] !== false // Default to enabled
+            return {
+              id: strategyId,
+              name: strat.name,
+              status: isEnabled ? (strat.status || 'active') : 'paused',
+              win_rate: strat.win_rate || 0,
+              total_trades: strat.total_trades || 0,
+              pnl: strat.total_pnl || 0,
+              last_trade_date: strat.last_trade_date || 'Never'
+            }
+          })
           setStrategies(mappedStrategies)
         }
 
@@ -298,7 +346,7 @@ export default function AutonomousTrader() {
             strike: trade.strike || 0,
             quantity: trade.contracts || 0,
             price: Math.abs(trade.entry_price) || 0,
-            status: trade.status === 'OPEN' ? 'filled' : 'filled',
+            status: trade.status || 'OPEN',
             pnl: trade.realized_pnl || trade.unrealized_pnl || 0,
             strategy: trade.strategy,
             entry_bid: trade.entry_bid,
@@ -307,7 +355,18 @@ export default function AutonomousTrader() {
             current_price: trade.current_price,
             current_spot_price: trade.current_spot_price,
             trade_reasoning: trade.trade_reasoning,
-            expiration_date: trade.expiration_date
+            expiration_date: trade.expiration_date,
+            // Greeks
+            entry_iv: trade.entry_iv,
+            entry_delta: trade.entry_delta,
+            current_iv: trade.current_iv,
+            current_delta: trade.current_delta,
+            theta: trade.theta,
+            gamma: trade.gamma,
+            vega: trade.vega,
+            // GEX context
+            gex_regime: trade.gex_regime,
+            entry_net_gex: trade.entry_net_gex,
           }))
           setRecentTrades(mappedTrades)
         }
@@ -374,20 +433,20 @@ export default function AutonomousTrader() {
           setDiagnostics(diagnosticsRes.data.data)
         }
 
-        // Fetch VIX hedge signal data
-        try {
-          const [vixSignalRes, vixDataRes] = await Promise.all([
-            apiClient.getVIXHedgeSignal(),
-            apiClient.getVIXCurrent()
-          ])
-          if (vixSignalRes.data.success) {
-            setVixSignal(vixSignalRes.data.data)
-          }
-          if (vixDataRes.data.success) {
-            setVixData(vixDataRes.data.data)
-          }
-        } catch (vixError) {
-          console.log('VIX data not available:', vixError)
+        // Fetch VIX hedge signal data using Promise.allSettled for graceful failure handling
+        const vixResults = await Promise.allSettled([
+          apiClient.getVIXHedgeSignal(),
+          apiClient.getVIXCurrent()
+        ])
+
+        const vixSignalRes = vixResults[0]
+        const vixDataRes = vixResults[1]
+
+        if (vixSignalRes.status === 'fulfilled' && vixSignalRes.value?.data?.success) {
+          setVixSignal(vixSignalRes.value.data.data)
+        }
+        if (vixDataRes.status === 'fulfilled' && vixDataRes.value?.data?.success) {
+          setVixData(vixDataRes.value.data.data)
         }
       } catch (error) {
         console.error('Error fetching trader data:', error)
@@ -408,21 +467,37 @@ export default function AutonomousTrader() {
   // GUARANTEED: MINIMUM one trade per day (multi-level fallback system)
   // State is persisted in database, so it remembers everything across restarts
 
-  const handleToggleMode = () => {
-    setTraderStatus(prev => ({
-      ...prev,
-      mode: prev.mode === 'paper' ? 'live' : 'paper'
-    }))
-  }
+  // Note: Mode toggle removed - requires backend implementation for safe paper/live switching
+  // Mode is controlled via autonomous_config table in the database
 
-  const handleToggleStrategy = (strategyId: string) => {
-    setStrategies(prev =>
-      prev.map(s =>
-        s.id === strategyId
-          ? { ...s, status: s.status === 'active' ? 'paused' : 'active' }
-          : s
-      )
-    )
+  const handleToggleStrategy = async (strategyId: string) => {
+    setStrategyTogglingId(strategyId)
+    try {
+      const strategy = strategies.find(s => s.id === strategyId)
+      if (!strategy) return
+
+      const newEnabled = strategy.status !== 'active'
+      const res = await apiClient.toggleStrategy(strategyId, newEnabled)
+
+      if (res.data.success) {
+        // Update local state
+        setStrategies(prev =>
+          prev.map(s =>
+            s.id === strategyId
+              ? { ...s, status: newEnabled ? 'active' : 'paused' }
+              : s
+          )
+        )
+        setStrategyConfigs(prev => ({
+          ...prev,
+          [strategy.name]: newEnabled
+        }))
+      }
+    } catch (error) {
+      console.error('Failed to toggle strategy:', error)
+    } finally {
+      setStrategyTogglingId(null)
+    }
   }
 
   const formatCurrency = (value: number) => {
@@ -462,23 +537,73 @@ export default function AutonomousTrader() {
   }
 
   const downloadTradeHistory = () => {
-    if (tradeLog.length === 0) {
+    // Export comprehensive trade data from recentTrades (includes all fields)
+    const exportData = recentTrades.length > 0 ? recentTrades : []
+
+    if (exportData.length === 0 && tradeLog.length === 0) {
       alert('No trade history to export')
       return
     }
 
+    // If we have recentTrades, export comprehensive data
+    if (exportData.length > 0) {
+      const csvContent = [
+        ['Date/Time', 'Symbol', 'Strategy', 'Action', 'Strike', 'Type', 'Contracts', 'Entry Price', 'Current Price', 'P&L ($)', 'P&L (%)', 'Status', 'Entry IV', 'Entry Delta', 'GEX Regime', 'Entry Net GEX', 'Expiration'],
+        ...exportData.map(trade => {
+          const formattedDateTime = trade.timestamp
+            ? new Date(trade.timestamp).toLocaleString('en-US', { timeZone: 'America/Chicago' })
+            : 'N/A'
+          const pnlPct = trade.price > 0 ? ((trade.pnl || 0) / (trade.price * (trade.quantity || 1) * 100) * 100) : 0
+
+          return [
+            formattedDateTime,
+            trade.symbol || 'SPY',
+            trade.strategy || 'N/A',
+            trade.action || 'N/A',
+            trade.strike || 0,
+            trade.type || 'N/A',
+            trade.quantity || 1,
+            (trade.price || 0).toFixed(2),
+            (trade.current_price || trade.price || 0).toFixed(2),
+            (trade.pnl || 0).toFixed(2),
+            pnlPct.toFixed(2),
+            trade.status || 'N/A',
+            trade.entry_iv ? (trade.entry_iv * 100).toFixed(2) + '%' : 'N/A',
+            trade.entry_delta ? trade.entry_delta.toFixed(4) : 'N/A',
+            trade.gex_regime || 'N/A',
+            trade.entry_net_gex ? `$${(trade.entry_net_gex / 1e9).toFixed(2)}B` : 'N/A',
+            trade.expiration_date || 'N/A'
+          ].map(val => `"${val}"`)  // Quote all values to handle commas
+        })
+      ]
+        .map(row => row.join(','))
+        .join('\n')
+
+      const blob = new Blob([csvContent], { type: 'text/csv' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `trades-export-${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      return
+    }
+
+    // Fallback to trade activity log if no recentTrades
     const csvContent = [
       ['Date/Time (Central)', 'Action', 'Details', 'P&L'],
       ...tradeLog.map(trade => {
         const datetime = trade.date && trade.time ? `${trade.date}T${trade.time}` : null
         const formattedDateTime = datetime
           ? new Date(datetime).toLocaleString('en-US', { timeZone: 'America/Chicago' })
-          : 'Invalid Date'
+          : 'N/A'
 
         return [
-          formattedDateTime,
-          trade.action,
-          trade.details,
+          `"${formattedDateTime}"`,
+          `"${trade.action}"`,
+          `"${trade.details}"`,
           trade.pnl.toFixed(2)
         ]
       })
@@ -490,7 +615,7 @@ export default function AutonomousTrader() {
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `trade-history-${new Date().toISOString().split('T')[0]}.csv`
+    a.download = `trade-activity-${new Date().toISOString().split('T')[0]}.csv`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -1264,7 +1389,11 @@ export default function AutonomousTrader() {
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-text-primary">Active Strategies</h2>
-          <span className="text-xs text-text-muted">From trade database</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-text-muted">Click toggle to enable/disable</span>
+            <span className="text-xs text-text-muted">|</span>
+            <span className="text-xs text-text-muted">From trade database</span>
+          </div>
         </div>
         {strategies.length > 0 ? (
           <div className="overflow-x-auto">
@@ -1272,6 +1401,7 @@ export default function AutonomousTrader() {
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-3 px-4 text-text-secondary font-medium">Strategy</th>
+                  <th className="text-center py-3 px-4 text-text-secondary font-medium">Enabled</th>
                   <th className="text-center py-3 px-4 text-text-secondary font-medium">Total Trades</th>
                   <th className="text-center py-3 px-4 text-text-secondary font-medium">Win Rate</th>
                   <th className="text-right py-3 px-4 text-text-secondary font-medium">Total P&L</th>
@@ -1288,6 +1418,21 @@ export default function AutonomousTrader() {
                         }`} />
                         <span className="text-text-primary font-semibold">{strategy.name}</span>
                       </div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <button
+                        onClick={() => handleToggleStrategy(strategy.id)}
+                        disabled={strategyTogglingId === strategy.id}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          strategy.status === 'active' ? 'bg-success' : 'bg-text-muted/30'
+                        } ${strategyTogglingId === strategy.id ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            strategy.status === 'active' ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
                     </td>
                     <td className="py-3 px-4 text-center">
                       <span className="text-text-primary font-semibold">{strategy.total_trades}</span>
@@ -1336,7 +1481,54 @@ export default function AutonomousTrader() {
 
       {/* Recent Trades */}
       <div className="card">
-        <h2 className="text-xl font-semibold text-text-primary mb-4">Recent Trades</h2>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <h2 className="text-xl font-semibold text-text-primary">Recent Trades</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Search */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search trades..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 pr-4 py-2 bg-background-hover border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-primary w-40"
+              />
+              <svg className="absolute left-2.5 top-2.5 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+
+            {/* Status Filter */}
+            <div className="flex items-center gap-1 bg-background-hover rounded-lg p-1">
+              {(['all', 'open', 'closed'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setTradeFilter(filter)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    tradeFilter === filter
+                      ? 'bg-primary text-white'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            {/* Strategy Filter */}
+            <select
+              value={strategyFilter}
+              onChange={(e) => setStrategyFilter(e.target.value)}
+              className="px-3 py-2 bg-background-hover border border-border rounded-lg text-sm text-text-primary focus:outline-none focus:border-primary"
+            >
+              <option value="all">All Strategies</option>
+              {strategies.map((s) => (
+                <option key={s.id} value={s.name}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -1353,7 +1545,29 @@ export default function AutonomousTrader() {
               </tr>
             </thead>
             <tbody>
-              {recentTrades.map((trade) => {
+              {recentTrades
+                .filter((trade) => {
+                  // Status filter
+                  if (tradeFilter === 'open' && trade.status !== 'OPEN' && trade.status !== 'filled') return false
+                  if (tradeFilter === 'closed' && trade.status !== 'CLOSED') return false
+
+                  // Strategy filter
+                  if (strategyFilter !== 'all' && trade.strategy !== strategyFilter) return false
+
+                  // Search filter
+                  if (searchQuery) {
+                    const query = searchQuery.toLowerCase()
+                    const matchesSearch =
+                      trade.symbol?.toLowerCase().includes(query) ||
+                      trade.strategy?.toLowerCase().includes(query) ||
+                      trade.action?.toLowerCase().includes(query) ||
+                      String(trade.strike).includes(query)
+                    if (!matchesSearch) return false
+                  }
+
+                  return true
+                })
+                .map((trade) => {
                 // Calculate real P&L from entry and current prices
                 const entryPrice = Math.abs(trade.price || 0);
                 const currentPrice = Math.abs(trade.current_price || trade.price || 0);
@@ -1437,46 +1651,136 @@ export default function AutonomousTrader() {
                       </button>
                     </td>
                   </tr>
-                  {expandedTradeId === trade.id && trade.trade_reasoning && (
+                  {expandedTradeId === trade.id && (
                     <tr className="bg-background-hover">
                       <td colSpan={9} className="py-4 px-6">
-                        <div className="space-y-3">
-                          <h4 className="font-semibold text-primary flex items-center gap-2">
-                            <Target className="w-4 h-4" />
-                            Multi-Leg Position Details
+                        <div className="space-y-4">
+                          {/* Trade Reasoning */}
+                          {trade.trade_reasoning && (
+                            <>
+                              <h4 className="font-semibold text-primary flex items-center gap-2">
+                                <Target className="w-4 h-4" />
+                                Trade Reasoning
+                              </h4>
+                              <div className="bg-background-primary p-4 rounded-lg font-mono text-sm whitespace-pre-wrap text-text-secondary">
+                                {trade.trade_reasoning}
+                              </div>
+                            </>
+                          )}
+
+                          {/* Position Details Grid */}
+                          <h4 className="font-semibold text-text-primary flex items-center gap-2 mt-4">
+                            <DollarSign className="w-4 h-4" />
+                            Position Details
                           </h4>
-                          <div className="bg-background-primary p-4 rounded-lg font-mono text-sm whitespace-pre-wrap text-text-secondary">
-                            {trade.trade_reasoning}
-                          </div>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div className="p-3 bg-background-primary rounded-lg">
                               <div className="text-xs text-text-secondary mb-1">Entry Price</div>
-                              <div className="text-text-primary font-semibold text-lg">{formatCurrency(trade.price)}</div>
-                              <div className="text-xs text-text-secondary mt-1">@ Spot: {formatCurrency(trade.entry_spot_price || 0)}</div>
-                            </div>
-                            <div className="p-3 bg-background-primary rounded-lg">
-                              <div className="text-xs text-text-secondary mb-1">Entry Bid/Ask</div>
-                              <div className="text-text-primary font-semibold">${trade.entry_bid?.toFixed(2) || '0.00'} / ${trade.entry_ask?.toFixed(2) || '0.00'}</div>
-                              <div className="text-xs text-text-secondary mt-1">Spread: ${Math.abs((trade.entry_ask || 0) - (trade.entry_bid || 0)).toFixed(2)}</div>
+                              <div className="text-text-primary font-semibold">{formatCurrency(trade.price)}</div>
+                              <div className="text-xs text-text-muted mt-1">@ {formatCurrency(trade.entry_spot_price || 0)} spot</div>
                             </div>
                             <div className="p-3 bg-background-primary rounded-lg">
                               <div className="text-xs text-text-secondary mb-1">Current Price</div>
-                              <div className="text-text-primary font-semibold text-lg">{formatCurrency(trade.current_price || trade.price)}</div>
-                              <div className="text-xs text-text-secondary mt-1">@ Spot: {formatCurrency(trade.current_spot_price || trade.entry_spot_price || 0)}</div>
+                              <div className="text-text-primary font-semibold">{formatCurrency(trade.current_price || trade.price)}</div>
+                              <div className="text-xs text-text-muted mt-1">@ {formatCurrency(trade.current_spot_price || 0)} spot</div>
                             </div>
                             <div className="p-3 bg-background-primary rounded-lg">
-                              <div className="text-xs text-text-secondary mb-1">Strike(s)</div>
-                              <div className="text-text-primary font-semibold">{formatCurrency(trade.strike)}</div>
+                              <div className="text-xs text-text-secondary mb-1">Bid / Ask Spread</div>
+                              <div className="text-text-primary font-semibold">${trade.entry_bid?.toFixed(2) || '0.00'} / ${trade.entry_ask?.toFixed(2) || '0.00'}</div>
+                              <div className="text-xs text-text-muted mt-1">Spread: ${Math.abs((trade.entry_ask || 0) - (trade.entry_bid || 0)).toFixed(2)}</div>
                             </div>
                             <div className="p-3 bg-background-primary rounded-lg">
-                              <div className="text-xs text-text-secondary mb-1">Contracts</div>
-                              <div className="text-text-primary font-semibold">{trade.quantity}</div>
-                            </div>
-                            <div className="p-3 bg-background-primary rounded-lg">
-                              <div className="text-xs text-text-secondary mb-1">Expiration</div>
-                              <div className="text-text-primary font-semibold">{trade.expiration_date || 'N/A'}</div>
+                              <div className="text-xs text-text-secondary mb-1">Contracts × Strike</div>
+                              <div className="text-text-primary font-semibold">{trade.quantity}x @ ${trade.strike}</div>
+                              <div className="text-xs text-text-muted mt-1">Exp: {trade.expiration_date || 'N/A'}</div>
                             </div>
                           </div>
+
+                          {/* Greeks Section */}
+                          <h4 className="font-semibold text-text-primary flex items-center gap-2 mt-4">
+                            <Activity className="w-4 h-4" />
+                            Greeks & Risk Metrics
+                          </h4>
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                            <div className="p-3 bg-gradient-to-br from-primary/10 to-transparent rounded-lg border border-primary/20">
+                              <div className="text-xs text-text-secondary mb-1">Delta (Δ)</div>
+                              <div className="text-text-primary font-bold text-lg">
+                                {trade.entry_delta ? trade.entry_delta.toFixed(3) : trade.current_delta?.toFixed(3) || '—'}
+                              </div>
+                              <div className="text-xs text-text-muted mt-1">
+                                {trade.current_delta && trade.entry_delta
+                                  ? `Change: ${(trade.current_delta - trade.entry_delta).toFixed(3)}`
+                                  : 'Price sensitivity'
+                                }
+                              </div>
+                            </div>
+                            <div className="p-3 bg-gradient-to-br from-success/10 to-transparent rounded-lg border border-success/20">
+                              <div className="text-xs text-text-secondary mb-1">Gamma (Γ)</div>
+                              <div className="text-text-primary font-bold text-lg">
+                                {trade.gamma?.toFixed(4) || '—'}
+                              </div>
+                              <div className="text-xs text-text-muted mt-1">Delta acceleration</div>
+                            </div>
+                            <div className="p-3 bg-gradient-to-br from-danger/10 to-transparent rounded-lg border border-danger/20">
+                              <div className="text-xs text-text-secondary mb-1">Theta (Θ)</div>
+                              <div className="text-text-primary font-bold text-lg">
+                                {trade.theta ? `$${trade.theta.toFixed(2)}` : '—'}
+                              </div>
+                              <div className="text-xs text-text-muted mt-1">Daily decay</div>
+                            </div>
+                            <div className="p-3 bg-gradient-to-br from-warning/10 to-transparent rounded-lg border border-warning/20">
+                              <div className="text-xs text-text-secondary mb-1">Vega (ν)</div>
+                              <div className="text-text-primary font-bold text-lg">
+                                {trade.vega?.toFixed(3) || '—'}
+                              </div>
+                              <div className="text-xs text-text-muted mt-1">IV sensitivity</div>
+                            </div>
+                            <div className="p-3 bg-gradient-to-br from-purple-500/10 to-transparent rounded-lg border border-purple-500/20">
+                              <div className="text-xs text-text-secondary mb-1">IV (Entry → Current)</div>
+                              <div className="text-text-primary font-bold text-lg">
+                                {trade.entry_iv ? `${(trade.entry_iv * 100).toFixed(1)}%` : '—'}
+                                {trade.current_iv && trade.entry_iv && (
+                                  <span className={`text-sm ml-1 ${trade.current_iv > trade.entry_iv ? 'text-success' : 'text-danger'}`}>
+                                    → {(trade.current_iv * 100).toFixed(1)}%
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-text-muted mt-1">Implied volatility</div>
+                            </div>
+                          </div>
+
+                          {/* GEX Context */}
+                          {(trade.gex_regime || trade.entry_net_gex) && (
+                            <>
+                              <h4 className="font-semibold text-text-primary flex items-center gap-2 mt-4">
+                                <BarChart3 className="w-4 h-4" />
+                                GEX Context at Entry
+                              </h4>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="p-3 bg-background-primary rounded-lg">
+                                  <div className="text-xs text-text-secondary mb-1">GEX Regime</div>
+                                  <div className={`font-semibold ${
+                                    trade.gex_regime?.includes('Negative') ? 'text-danger' :
+                                    trade.gex_regime?.includes('Positive') ? 'text-success' :
+                                    'text-warning'
+                                  }`}>
+                                    {trade.gex_regime || 'Unknown'}
+                                  </div>
+                                </div>
+                                <div className="p-3 bg-background-primary rounded-lg">
+                                  <div className="text-xs text-text-secondary mb-1">Net GEX at Entry</div>
+                                  <div className={`font-semibold ${
+                                    (trade.entry_net_gex || 0) < 0 ? 'text-danger' : 'text-success'
+                                  }`}>
+                                    {trade.entry_net_gex
+                                      ? `$${(trade.entry_net_gex / 1e9).toFixed(2)}B`
+                                      : '—'
+                                    }
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1633,11 +1937,123 @@ export default function AutonomousTrader() {
         </div>
 
         <div className="mt-4 p-3 bg-primary/10 rounded-lg text-center">
-          <button className="text-primary text-sm font-medium hover:underline">
+          <button
+            onClick={() => alert('Full thought process archive feature coming soon. All logs are stored in the database for historical analysis.')}
+            className="text-primary text-sm font-medium hover:underline"
+          >
             View Full Thought Process Archive →
           </button>
         </div>
       </div>
+
+      {/* Strategy Performance Comparison Chart */}
+      {strategies.length > 0 && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-text-primary">📈 Strategy Performance Comparison</h2>
+            <span className="text-xs text-text-secondary">P&L and Win Rate by Strategy</span>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* P&L Bar Chart */}
+            <div className="bg-background-hover rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-text-secondary mb-4">Total P&L by Strategy</h3>
+              <div className="space-y-3">
+                {strategies
+                  .sort((a, b) => b.pnl - a.pnl)
+                  .slice(0, 8)
+                  .map((strategy) => {
+                    const maxPnl = Math.max(...strategies.map(s => Math.abs(s.pnl)), 1)
+                    const widthPct = Math.min(Math.abs(strategy.pnl) / maxPnl * 100, 100)
+
+                    return (
+                      <div key={strategy.id} className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-text-secondary truncate max-w-[150px]" title={strategy.name}>
+                            {strategy.name}
+                          </span>
+                          <span className={`font-semibold ${strategy.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                            {strategy.pnl >= 0 ? '+' : ''}{formatCurrency(strategy.pnl)}
+                          </span>
+                        </div>
+                        <div className="h-4 bg-background-primary rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              strategy.pnl >= 0 ? 'bg-success' : 'bg-danger'
+                            }`}
+                            style={{ width: `${widthPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+              </div>
+            </div>
+
+            {/* Win Rate Comparison */}
+            <div className="bg-background-hover rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-text-secondary mb-4">Win Rate by Strategy</h3>
+              <div className="space-y-3">
+                {strategies
+                  .sort((a, b) => b.win_rate - a.win_rate)
+                  .slice(0, 8)
+                  .map((strategy) => (
+                    <div key={strategy.id} className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-text-secondary truncate max-w-[150px]" title={strategy.name}>
+                          {strategy.name}
+                        </span>
+                        <span className={`font-semibold ${
+                          strategy.win_rate >= 60 ? 'text-success' :
+                          strategy.win_rate >= 40 ? 'text-warning' :
+                          'text-danger'
+                        }`}>
+                          {strategy.win_rate.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="h-4 bg-background-primary rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            strategy.win_rate >= 60 ? 'bg-success' :
+                            strategy.win_rate >= 40 ? 'bg-warning' :
+                            'bg-danger'
+                          }`}
+                          style={{ width: `${strategy.win_rate}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Strategy Summary Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+            <div className="p-3 bg-background-primary rounded-lg text-center">
+              <div className="text-xs text-text-secondary mb-1">Total Strategies</div>
+              <div className="text-2xl font-bold text-text-primary">{strategies.length}</div>
+            </div>
+            <div className="p-3 bg-background-primary rounded-lg text-center">
+              <div className="text-xs text-text-secondary mb-1">Profitable</div>
+              <div className="text-2xl font-bold text-success">
+                {strategies.filter(s => s.pnl > 0).length}
+              </div>
+            </div>
+            <div className="p-3 bg-background-primary rounded-lg text-center">
+              <div className="text-xs text-text-secondary mb-1">Avg Win Rate</div>
+              <div className="text-2xl font-bold text-primary">
+                {strategies.length > 0 ? (strategies.reduce((acc, s) => acc + s.win_rate, 0) / strategies.length).toFixed(1) : 0}%
+              </div>
+            </div>
+            <div className="p-3 bg-background-primary rounded-lg text-center">
+              <div className="text-xs text-text-secondary mb-1">Total P&L</div>
+              <div className={`text-2xl font-bold ${strategies.reduce((acc, s) => acc + s.pnl, 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                {formatCurrency(strategies.reduce((acc, s) => acc + s.pnl, 0))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Strategy Competition Leaderboard */}
       <div className="card">
@@ -1694,7 +2110,10 @@ export default function AutonomousTrader() {
         </div>
 
         <div className="mt-4 text-center">
-          <button className="text-primary text-sm font-medium hover:underline">
+          <button
+            onClick={() => alert('Full strategy competition leaderboard with detailed analytics coming soon. Track performance over time and compare strategies head-to-head.')}
+            className="text-primary text-sm font-medium hover:underline"
+          >
             View Full Leaderboard & Strategy Details →
           </button>
         </div>
@@ -1751,7 +2170,10 @@ export default function AutonomousTrader() {
         </div>
 
         <div className="text-center">
-          <button className="text-primary text-sm font-medium hover:underline">
+          <button
+            onClick={() => alert('Complete backtest analysis with detailed pattern breakdowns coming soon. Analyze win rates, expectancy, and optimal entry conditions.')}
+            className="text-primary text-sm font-medium hover:underline"
+          >
             View Complete Backtest Analysis →
           </button>
         </div>

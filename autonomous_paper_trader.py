@@ -355,7 +355,7 @@ class AutonomousPaperTrader:
 
         if not result:
             # First time setup
-            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('capital', ?)", (str(self.starting_capital),))
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('capital', %s)", (str(self.starting_capital),))
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('initialized', 'true')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('auto_execute', 'true')")
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('last_trade_date', '')")
@@ -531,7 +531,7 @@ class AutonomousPaperTrader:
         if c.fetchone()[0] == 0:
             c.execute("""
                 INSERT INTO autonomous_live_status (id, timestamp, status, current_action, is_working)
-                VALUES (1, ?, 'INITIALIZING', 'System starting up...', 1)
+                VALUES (1, %s, 'INITIALIZING', 'System starting up...', 1)
             """, (datetime.now(CENTRAL_TZ).isoformat(),))
 
         # Add theoretical pricing columns (Black-Scholes) if they don't exist
@@ -563,7 +563,7 @@ class AutonomousPaperTrader:
         """Get configuration value"""
         conn = get_connection()
         c = conn.cursor()
-        c.execute("SELECT value FROM autonomous_config WHERE key = ?", (key,))
+        c.execute("SELECT value FROM autonomous_config WHERE key = %s", (key,))
         result = c.fetchone()
         conn.close()
         return result[0] if result else "0"
@@ -572,7 +572,10 @@ class AutonomousPaperTrader:
         """Set configuration value"""
         conn = get_connection()
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO autonomous_config (key, value) VALUES (?, ?)", (key, value))
+        c.execute("""
+            INSERT INTO autonomous_config (key, value) VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+        """, (key, value))
         conn.commit()
         conn.close()
 
@@ -589,12 +592,12 @@ class AutonomousPaperTrader:
 
         c.execute("""
             UPDATE autonomous_live_status
-            SET timestamp = ?,
-                status = ?,
-                current_action = ?,
-                market_analysis = ?,
-                next_check_time = ?,
-                last_decision = ?,
+            SET timestamp = %s,
+                status = %s,
+                current_action = %s,
+                market_analysis = %s,
+                next_check_time = %s,
+                last_decision = %s,
                 is_working = 1
             WHERE id = 1
         """, (now_ct.isoformat(), status, action, analysis, next_check, decision))
@@ -645,7 +648,7 @@ class AutonomousPaperTrader:
         now = datetime.now(CENTRAL_TZ)
         c.execute("""
             INSERT INTO autonomous_trade_log (date, time, action, details, position_id, success)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (
             now.strftime('%Y-%m-%d'),
             now.strftime('%H:%M:%S'),
@@ -692,7 +695,7 @@ class AutonomousPaperTrader:
         c.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM autonomous_closed_trades
-            WHERE exit_date = ?
+            WHERE exit_date = %s
         """, (today,))
         today_realized = c.fetchone()[0] or 0
 
@@ -723,8 +726,7 @@ class AutonomousPaperTrader:
         conn = get_connection()
         query = """
             SELECT SUM(ABS(entry_price * contracts * 100)) as used
-            FROM autonomous_positions
-            WHERE status = 'OPEN'
+            FROM autonomous_open_positions
         """
         result = pd.read_sql_query(query, conn)
         conn.close()
@@ -740,7 +742,7 @@ class AutonomousPaperTrader:
         """Enable or disable signal-only mode"""
         conn = get_connection()
         c = conn.cursor()
-        c.execute("UPDATE autonomous_config SET value = ? WHERE key = 'signal_only'",
+        c.execute("UPDATE autonomous_config SET value = %s WHERE key = 'signal_only'",
                   ('true' if enabled else 'false',))
         conn.commit()
         conn.close()
@@ -757,10 +759,10 @@ class AutonomousPaperTrader:
         # Ensure the key exists first
         c.execute("SELECT value FROM autonomous_config WHERE key = 'use_theoretical_pricing'")
         if not c.fetchone():
-            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('use_theoretical_pricing', ?)",
+            c.execute("INSERT INTO autonomous_config (key, value) VALUES ('use_theoretical_pricing', %s)",
                       ('true' if enabled else 'false',))
         else:
-            c.execute("UPDATE autonomous_config SET value = ? WHERE key = 'use_theoretical_pricing'",
+            c.execute("UPDATE autonomous_config SET value = %s WHERE key = 'use_theoretical_pricing'",
                       ('true' if enabled else 'false',))
         conn.commit()
         conn.close()
@@ -3020,7 +3022,7 @@ This trade ensures we're always active in the market"""
         now = datetime.now(CENTRAL_TZ)
 
         # Insert into NEW autonomous_open_positions table with RETURNING for PostgreSQL
-        # Include theoretical pricing columns (Black-Scholes)
+        # Include theoretical pricing columns (Black-Scholes) and Greeks
         c.execute("""
             INSERT INTO autonomous_open_positions (
                 symbol, strategy, action, entry_date, entry_time, strike, option_type,
@@ -3029,9 +3031,10 @@ This trade ensures we're always active in the market"""
                 unrealized_pnl_pct, confidence, gex_regime, entry_net_gex, entry_flip_point,
                 trade_reasoning, contract_symbol,
                 theoretical_price, theoretical_bid, theoretical_ask, recommended_entry,
-                price_adjustment, price_adjustment_pct, is_delayed, data_confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?, ?)
+                price_adjustment, price_adjustment_pct, is_delayed, data_confidence,
+                entry_iv, entry_delta, current_iv, current_delta
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             trade['symbol'],
@@ -3065,7 +3068,12 @@ This trade ensures we're always active in the market"""
             option_data.get('price_adjustment'),
             option_data.get('price_adjustment_pct'),
             option_data.get('is_delayed', False),
-            option_data.get('confidence', 'unknown')
+            option_data.get('confidence', 'unknown'),
+            # Greeks - capture at entry
+            option_data.get('iv') or option_data.get('implied_volatility'),
+            option_data.get('delta'),
+            option_data.get('iv') or option_data.get('implied_volatility'),  # Current starts same as entry
+            option_data.get('delta')  # Current starts same as entry
         ))
 
         # Get the inserted position ID (PostgreSQL RETURNING)
@@ -3246,7 +3254,7 @@ This trade ensures we're always active in the market"""
                     spot_price, strike_type, moneyness, delta, gamma, theta, vega,
                     dte, vix_current, vix_regime, net_gex, gamma_regime,
                     pnl_pct, win, pattern_type, confidence_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 now.strftime('%Y-%m-%d %H:%M:%S'),
                 trade['strategy'],
@@ -3278,7 +3286,7 @@ This trade ensures we're always active in the market"""
                     exit_delta, exit_gamma, exit_theta, exit_vega,
                     delta_pnl, gamma_pnl, theta_pnl, vega_pnl,
                     total_pnl_pct, win, dte, net_gex
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 now.strftime('%Y-%m-%d %H:%M:%S'),
                 trade['strategy'],
@@ -3320,7 +3328,7 @@ This trade ensures we're always active in the market"""
                     vix_regime, entry_price, exit_price, pnl_pct, win,
                     entry_theta, exit_theta, theta_decay_efficiency,
                     entry_time, exit_time, holding_hours
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 now.strftime('%Y-%m-%d %H:%M:%S'),
                 trade['strategy'],
@@ -3456,9 +3464,9 @@ This trade ensures we're always active in the market"""
 
         c.execute("""
             UPDATE autonomous_open_positions
-            SET current_price = ?, current_spot_price = ?, unrealized_pnl = ?,
-                unrealized_pnl_pct = ?, last_updated = NOW()
-            WHERE id = ?
+            SET current_price = %s, current_spot_price = %s, unrealized_pnl = %s,
+                unrealized_pnl_pct = %s, last_updated = NOW()
+            WHERE id = %s
         """, (current_price, current_spot, unrealized_pnl, pnl_pct, position_id))
 
         conn.commit()
@@ -3623,14 +3631,14 @@ Now analyze this position:"""
             conn = get_connection()
             c = conn.cursor()
 
-            # Get position details
+            # Get position details from closed trades
             c.execute("""
                 SELECT action, strategy, entry_date, entry_time, entry_price,
-                       entry_spot_price, closed_date, closed_time, exit_price,
+                       entry_spot_price, exit_date, exit_time, exit_price,
                        realized_pnl, strike, expiration_date, contracts,
                        entry_net_gex, gex_regime
-                FROM autonomous_positions
-                WHERE id = ?
+                FROM autonomous_closed_trades
+                WHERE id = %s
             """, (position_id,))
 
             pos = c.fetchone()
@@ -3638,7 +3646,7 @@ Now analyze this position:"""
                 return
 
             (action, strategy, entry_date, entry_time, entry_price, entry_spot,
-             closed_date, closed_time, exit_price, realized_pnl, strike,
+             exit_date, exit_time, exit_price, realized_pnl, strike,
              expiration_date, contracts, entry_net_gex, gex_regime) = pos
 
             # Only log for iron condors
@@ -3696,7 +3704,7 @@ Now analyze this position:"""
                     spot_price, dte, vix_current, net_gex,
                     entry_credit, exit_cost, pnl_pct, pnl_dollars,
                     win, hold_time_hours
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S'),
                 strategy,
@@ -3748,7 +3756,7 @@ Now analyze this position:"""
                    entry_bid, entry_ask, entry_spot_price, confidence, gex_regime,
                    entry_net_gex, entry_flip_point, trade_reasoning, current_spot_price
             FROM autonomous_open_positions
-            WHERE id = ?
+            WHERE id = %s
         """, (position_id,))
 
         pos = c.fetchone()
@@ -3782,7 +3790,7 @@ Now analyze this position:"""
                 exit_price, exit_spot_price, exit_reason, realized_pnl,
                 realized_pnl_pct, confidence, gex_regime, entry_net_gex,
                 entry_flip_point, trade_reasoning, hold_duration_minutes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             symbol, strategy, action, strike, option_type, expiration_date,
             contracts, contract_symbol, entry_date, entry_time, entry_price,
@@ -3799,7 +3807,7 @@ Now analyze this position:"""
         ))
 
         # Delete from open_positions
-        c.execute("DELETE FROM autonomous_open_positions WHERE id = ?", (position_id,))
+        c.execute("DELETE FROM autonomous_open_positions WHERE id = %s", (position_id,))
 
         conn.commit()
 
@@ -3836,7 +3844,7 @@ Now analyze this position:"""
                     activity_date, activity_time, activity_timestamp,
                     action_type, symbol, details, position_id,
                     pnl_impact, success, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 now.strftime('%Y-%m-%d'),
                 now.strftime('%H:%M:%S'),
@@ -3907,7 +3915,7 @@ Now analyze this position:"""
             c.execute("""
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM autonomous_closed_trades
-                WHERE exit_date = ?
+                WHERE exit_date = %s
             """, (today_str,))
             daily_realized = c.fetchone()[0] or 0
 
@@ -3930,7 +3938,7 @@ Now analyze this position:"""
                     account_value, daily_pnl, daily_return_pct, total_return_pct,
                     max_drawdown_pct, sharpe_ratio, open_positions_count,
                     total_trades, winning_trades, losing_trades, win_rate
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 now.strftime('%Y-%m-%d'),
                 now.strftime('%H:%M:%S'),

@@ -163,9 +163,8 @@ class RiskManager:
                 AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END) as avg_loser,
                 MAX(realized_pnl) as largest_winner,
                 MIN(realized_pnl) as largest_loser
-            FROM autonomous_positions
-            WHERE status = 'CLOSED'
-            AND closed_date >= ?
+            FROM autonomous_closed_trades
+            WHERE exit_date >= %s
         """, (start_date,))
 
         row = c.fetchone()
@@ -220,7 +219,7 @@ class RiskManager:
         starting_capital = float(result[0]) if result else 5000.0
 
         c.execute("""
-            SELECT SUM(realized_pnl) FROM autonomous_positions WHERE status = 'CLOSED'
+            SELECT SUM(realized_pnl) FROM autonomous_closed_trades
         """)
         result = c.fetchone()
         total_realized = result[0] if result[0] else 0
@@ -242,13 +241,13 @@ class RiskManager:
         starting_capital = float(result[0]) if result else 5000.0
 
         c.execute("""
-            SELECT SUM(realized_pnl) FROM autonomous_positions WHERE status = 'CLOSED'
+            SELECT SUM(realized_pnl) FROM autonomous_closed_trades
         """)
         result = c.fetchone()
         total_realized = result[0] if result[0] else 0
 
         c.execute("""
-            SELECT SUM(unrealized_pnl) FROM autonomous_positions WHERE status = 'OPEN'
+            SELECT SUM(unrealized_pnl) FROM autonomous_open_positions
         """)
         result = c.fetchone()
         total_unrealized = result[0] if result[0] else 0
@@ -269,7 +268,7 @@ class RiskManager:
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         c.execute("""
-            SELECT * FROM autonomous_positions WHERE status = 'OPEN'
+            SELECT * FROM autonomous_open_positions
         """)
 
         positions = [dict(row) for row in c.fetchall()]
@@ -301,13 +300,12 @@ class RiskManager:
 
         c.execute("""
             SELECT
-                closed_date,
+                exit_date,
                 SUM(realized_pnl) as daily_pnl
-            FROM autonomous_positions
-            WHERE status = 'CLOSED'
-            AND closed_date >= ?
-            GROUP BY closed_date
-            ORDER BY closed_date
+            FROM autonomous_closed_trades
+            WHERE exit_date >= %s
+            GROUP BY exit_date
+            ORDER BY exit_date
         """, (start_date,))
 
         rows = c.fetchall()
