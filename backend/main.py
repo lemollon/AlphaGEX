@@ -2660,12 +2660,15 @@ async def _get_trader_update_data() -> dict:
                 'next_check_time': status_row[5] if status_row[5] else None
             }
 
-        # Get open positions with current P&L
+        # Get open positions with current P&L (including Greeks and GEX context)
         positions_df = pd.read_sql_query("""
             SELECT id, symbol, strategy, action, strike, option_type,
                    expiration_date, contracts, entry_price, entry_spot_price,
                    current_price, current_spot_price, unrealized_pnl,
-                   unrealized_pnl_pct, confidence, entry_date, entry_time
+                   unrealized_pnl_pct, confidence, entry_date, entry_time,
+                   entry_iv, entry_delta, current_iv, current_delta,
+                   entry_bid, entry_ask, gex_regime, entry_net_gex,
+                   entry_flip_point, trade_reasoning, contract_symbol
             FROM autonomous_open_positions
             ORDER BY entry_date DESC, entry_time DESC
         """, conn)

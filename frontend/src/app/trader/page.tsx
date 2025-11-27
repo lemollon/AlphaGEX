@@ -433,20 +433,20 @@ export default function AutonomousTrader() {
           setDiagnostics(diagnosticsRes.data.data)
         }
 
-        // Fetch VIX hedge signal data
-        try {
-          const [vixSignalRes, vixDataRes] = await Promise.all([
-            apiClient.getVIXHedgeSignal(),
-            apiClient.getVIXCurrent()
-          ])
-          if (vixSignalRes.data.success) {
-            setVixSignal(vixSignalRes.data.data)
-          }
-          if (vixDataRes.data.success) {
-            setVixData(vixDataRes.data.data)
-          }
-        } catch (vixError) {
-          console.log('VIX data not available:', vixError)
+        // Fetch VIX hedge signal data using Promise.allSettled for graceful failure handling
+        const vixResults = await Promise.allSettled([
+          apiClient.getVIXHedgeSignal(),
+          apiClient.getVIXCurrent()
+        ])
+
+        const vixSignalRes = vixResults[0]
+        const vixDataRes = vixResults[1]
+
+        if (vixSignalRes.status === 'fulfilled' && vixSignalRes.value?.data?.success) {
+          setVixSignal(vixSignalRes.value.data.data)
+        }
+        if (vixDataRes.status === 'fulfilled' && vixDataRes.value?.data?.success) {
+          setVixData(vixDataRes.value.data.data)
         }
       } catch (error) {
         console.error('Error fetching trader data:', error)
