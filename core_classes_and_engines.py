@@ -124,12 +124,13 @@ class OptionsDataFetcher:
         try:
             # Get intraday data for more recent price
             data = self.ticker.history(period="1d", interval="1m")
-            if not data.empty:
+            if not data.empty and len(data) > 0:
                 self.spot_price = float(data['Close'].iloc[-1])
             else:
                 # Fallback to daily data
                 data = self.ticker.history(period="5d")
-                self.spot_price = float(data['Close'].iloc[-1])
+                if not data.empty and len(data) > 0:
+                    self.spot_price = float(data['Close'].iloc[-1])
             return self.spot_price
         except Exception as e:
             print(f"Error fetching spot price: {e}")
@@ -436,19 +437,32 @@ class GEXAnalyzer:
             # Interpolate between strikes
             if last_negative > 0 and first_positive > 0:
                 # Linear interpolation
-                neg_gex = strike_gex[strike_gex['strike'] == last_negative]['cumulative_gex'].iloc[0]
-                pos_gex = strike_gex[strike_gex['strike'] == first_positive]['cumulative_gex'].iloc[0]
-                
+                neg_gex_df = strike_gex[strike_gex['strike'] == last_negative]['cumulative_gex']
+                pos_gex_df = strike_gex[strike_gex['strike'] == first_positive]['cumulative_gex']
+
+                if neg_gex_df.empty or pos_gex_df.empty:
+                    self.gamma_flip = self.spot_price
+                    return self.gamma_flip
+
+                neg_gex = neg_gex_df.iloc[0]
+                pos_gex = pos_gex_df.iloc[0]
+
                 # Weighted average based on distance from zero
-                weight_neg = abs(pos_gex) / (abs(neg_gex) + abs(pos_gex))
-                weight_pos = abs(neg_gex) / (abs(neg_gex) + abs(pos_gex))
+                denom = abs(neg_gex) + abs(pos_gex)
+                if denom == 0:
+                    weight_neg = weight_pos = 0.5
+                else:
+                    weight_neg = abs(pos_gex) / denom
+                    weight_pos = abs(neg_gex) / denom
                 
                 self.gamma_flip = last_negative * weight_neg + first_positive * weight_pos
             else:
                 self.gamma_flip = self.spot_price
         else:
             # If all GEX is one-sided, flip is at the extreme
-            if strike_gex['cumulative_gex'].iloc[-1] > 0:
+            if strike_gex.empty or len(strike_gex) == 0:
+                self.gamma_flip = self.spot_price
+            elif strike_gex['cumulative_gex'].iloc[-1] > 0:
                 self.gamma_flip = strike_gex['strike'].min()
             else:
                 self.gamma_flip = strike_gex['strike'].max()

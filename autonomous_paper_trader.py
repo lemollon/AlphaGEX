@@ -24,6 +24,7 @@ from trading_costs import (
 import time
 import os
 import logging
+import threading
 
 # Configure structured logging for autonomous trader
 logger = logging.getLogger('autonomous_paper_trader')
@@ -39,6 +40,9 @@ if not logger.handlers:
 
 # Central Time timezone for all timestamps
 CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# Thread lock to prevent duplicate trades from race conditions
+_trade_execution_lock = threading.Lock()
 
 # CRITICAL: Import UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
@@ -541,7 +545,8 @@ class AutonomousPaperTrader:
 
         # Initialize live status if not exists
         c.execute("SELECT COUNT(*) FROM autonomous_live_status WHERE id = 1")
-        if c.fetchone()[0] == 0:
+        result = c.fetchone()
+        if result is None or result[0] == 0:
             c.execute("""
                 INSERT INTO autonomous_live_status (id, timestamp, status, current_action, is_working)
                 VALUES (1, %s, 'INITIALIZING', 'System starting up...', 1)
@@ -729,7 +734,8 @@ class AutonomousPaperTrader:
 
         # Count open positions - respect max open positions limit
         c.execute("SELECT COUNT(*) FROM autonomous_open_positions")
-        open_positions = c.fetchone()[0]
+        result = c.fetchone()
+        open_positions = result[0] if result else 0
         max_positions = 10  # Configurable limit
 
         if open_positions >= max_positions:
@@ -3046,6 +3052,17 @@ This trade ensures we're always active in the market"""
                        vix_current: float = 18.0, regime_result: Dict = None) -> Optional[int]:
         """Execute the trade and send push notification"""
 
+        # CRITICAL: Acquire lock to prevent duplicate trades from race conditions
+        with _trade_execution_lock:
+            return self._execute_trade_locked(trade, option_data, contracts,
+                                              entry_price, exp_date, gex_data,
+                                              vix_current, regime_result)
+
+    def _execute_trade_locked(self, trade: Dict, option_data: Dict, contracts: int,
+                              entry_price: float, exp_date: str, gex_data: Dict,
+                              vix_current: float = 18.0, regime_result: Dict = None) -> Optional[int]:
+        """Execute the trade - MUST be called with _trade_execution_lock held"""
+
         # CRITICAL VALIDATION: Entry price must be > 0
         # This prevents fake P&L calculations
         abs_entry_price = abs(entry_price) if entry_price else 0
@@ -3057,6 +3074,29 @@ This trade ensures we're always active in the market"""
             )
             self._log_trade_activity('ERROR', 'SPY', f"Trade rejected - entry price is $0 for {trade['strategy']}", None, None, False, "Entry price validation failed")
             return None
+
+        # CRITICAL: Check for duplicate trades to prevent race condition
+        # Check if we already have a position with same symbol, strike, option_type, expiration today
+        now = datetime.now(CENTRAL_TZ)
+        today = now.strftime('%Y-%m-%d')
+        conn = get_connection()
+        c = conn.cursor()
+        try:
+            c.execute("""
+                SELECT id FROM autonomous_open_positions
+                WHERE symbol = %s AND strike = %s AND option_type = %s
+                AND expiration_date = %s AND entry_date = %s
+                LIMIT 1
+            """, (trade['symbol'], trade['strike'], trade['option_type'], exp_date, today))
+            existing = c.fetchone()
+            if existing:
+                conn.close()
+                logger.warning(f"Duplicate trade prevented: {trade['symbol']} ${trade['strike']} {trade['option_type']} exp {exp_date} - already exists as position #{existing[0]}")
+                return None
+        except Exception as e:
+            logger.error(f"Error checking for duplicate trade: {e}")
+        finally:
+            conn.close()
 
         # CRITICAL: Log trade decision to database
         if self.db_logger:
@@ -3076,7 +3116,7 @@ This trade ensures we're always active in the market"""
         conn = get_connection()
         c = conn.cursor()
 
-        now = datetime.now(CENTRAL_TZ)
+        # now was already defined above for duplicate check - reuse it for consistency
 
         # Insert into NEW autonomous_open_positions table with RETURNING for PostgreSQL
         # Include theoretical pricing columns (Black-Scholes) and Greeks

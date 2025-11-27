@@ -108,12 +108,14 @@ probability_calc = ProbabilityCalculator()
 
 # RSI Data Cache - Prevent Polygon.io rate limit (5 calls/min on free tier)
 # Cache RSI data for 5 minutes to avoid repeated API calls
+import threading
 _rsi_cache = {}
 _rsi_cache_ttl = 300  # 5 minutes in seconds
 _rsi_cache_max_size = 100  # Maximum number of cached symbols to prevent unbounded growth
+_rsi_cache_lock = threading.Lock()  # Thread safety for concurrent requests
 
 def _cleanup_rsi_cache():
-    """Remove expired entries and enforce max size limit"""
+    """Remove expired entries and enforce max size limit. Must be called with lock held."""
     now = datetime.now()
     # Remove expired entries
     expired_keys = [
@@ -130,6 +132,25 @@ def _cleanup_rsi_cache():
         # Remove oldest entries to get back under limit
         for key, _ in sorted_entries[:len(_rsi_cache) - _rsi_cache_max_size]:
             del _rsi_cache[key]
+
+def _get_cached_rsi(cache_key: str) -> dict | None:
+    """Thread-safe cache read"""
+    with _rsi_cache_lock:
+        if cache_key in _rsi_cache:
+            cached_entry = _rsi_cache[cache_key]
+            cache_age = (datetime.now() - cached_entry['timestamp']).total_seconds()
+            if cache_age < _rsi_cache_ttl:
+                return cached_entry['data'].copy()
+    return None
+
+def _set_cached_rsi(cache_key: str, data: dict):
+    """Thread-safe cache write with cleanup"""
+    with _rsi_cache_lock:
+        _cleanup_rsi_cache()
+        _rsi_cache[cache_key] = {
+            'data': data.copy(),
+            'timestamp': datetime.now()
+        }
 
 # ============================================================================
 # Helper Functions
@@ -556,15 +577,13 @@ async def get_gex_data(symbol: str):
         # Separate try block for RSI fetching to prevent psychology errors from wiping RSI data
         use_cached_rsi = False
         try:
-            # Check RSI cache first to avoid rate limits
+            # Check RSI cache first to avoid rate limits (thread-safe)
             cache_key = f"rsi_{symbol}"
-            if cache_key in _rsi_cache:
-                cached_entry = _rsi_cache[cache_key]
-                cache_age = (datetime.now() - cached_entry['timestamp']).total_seconds()
-                if cache_age < _rsi_cache_ttl:
-                    print(f"✅ Using cached RSI data for {symbol} (age: {cache_age:.0f}s, TTL: {_rsi_cache_ttl}s)")
-                    rsi_data = cached_entry['data']
-                    use_cached_rsi = True
+            cached_data = _get_cached_rsi(cache_key)
+            if cached_data:
+                print(f"✅ Using cached RSI data for {symbol}")
+                rsi_data = cached_data
+                use_cached_rsi = True
 
             # Only fetch RSI data if not using cache
             if not use_cached_rsi:
@@ -744,15 +763,10 @@ async def get_gex_data(symbol: str):
 
                 print(f"📊 RSI Summary: {sum(1 for v in rsi_data.values() if v is not None)}/5 timeframes successful")
 
-                # Cache the RSI data if we got any valid values
+                # Cache the RSI data if we got any valid values (thread-safe)
                 if rsi_data and any(v is not None for v in rsi_data.values()):
-                    # Cleanup old cache entries to prevent unbounded growth
-                    _cleanup_rsi_cache()
-                    _rsi_cache[cache_key] = {
-                        'data': rsi_data.copy(),
-                        'timestamp': datetime.now()
-                    }
-                    print(f"💾 Cached RSI data for {symbol} (TTL: {_rsi_cache_ttl}s, cache size: {len(_rsi_cache)})")
+                    _set_cached_rsi(cache_key, rsi_data)
+                    print(f"💾 Cached RSI data for {symbol} (TTL: {_rsi_cache_ttl}s)")
 
         except Exception as e:
             # Only reset RSI if the RSI fetch itself failed
