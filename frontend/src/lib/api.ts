@@ -137,6 +137,9 @@ export const apiClient = {
   getTradeLog: () => api.get('/api/trader/trade-log'),
   getEquityCurve: (days: number = 30) => api.get('/api/trader/equity-curve', { params: { days } }),
   getStrategies: () => api.get('/api/trader/strategies'),
+  getStrategyConfigs: () => api.get('/api/trader/strategies/config'),
+  toggleStrategy: (strategyId: string, enabled: boolean) =>
+    api.post(`/api/trader/strategies/${strategyId}/toggle`, null, { params: { enabled } }),
   compareStrategies: (symbol: string = 'SPY') => api.get('/api/strategies/compare', { params: { symbol } }),
   executeTraderCycle: () => api.post('/api/trader/execute'),
 

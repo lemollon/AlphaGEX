@@ -3863,7 +3863,7 @@ async def get_trade_log():
 
 @app.get("/api/trader/equity-curve")
 async def get_equity_curve(days: int = 30):
-    """Get historical equity curve from equity_snapshots table"""
+    """Get historical equity curve from equity_snapshots table or calculate from trades"""
     if not trader_available:
         return {
             "success": False,
@@ -3880,6 +3880,7 @@ async def get_equity_curve(days: int = 30):
         # Get trade history for specified days
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
+        starting_equity = 5000
 
         # Fetch equity snapshots from new table
         snapshots = pd.read_sql_query(f"""
@@ -3901,30 +3902,99 @@ async def get_equity_curve(days: int = 30):
             WHERE snapshot_date >= '{start_date.strftime('%Y-%m-%d')}'
             ORDER BY snapshot_date ASC, snapshot_time ASC
         """, conn)
-        conn.close()
-
-        starting_equity = 5000
 
         if snapshots.empty:
-            # Return starting point if no snapshots
+            # Try to build equity curve from closed trades
+            trades = pd.read_sql_query(f"""
+                SELECT
+                    exit_date as trade_date,
+                    exit_time as trade_time,
+                    realized_pnl,
+                    strategy
+                FROM autonomous_closed_trades
+                WHERE exit_date >= '{start_date.strftime('%Y-%m-%d')}'
+                ORDER BY exit_date ASC, exit_time ASC
+            """, conn)
+
+            conn.close()
+
+            if trades.empty:
+                # Return starting point if no trades either
+                return {
+                    "success": True,
+                    "data": [{
+                        "timestamp": int(start_date.timestamp()),
+                        "date": start_date.strftime('%Y-%m-%d'),
+                        "equity": starting_equity,
+                        "pnl": 0,
+                        "daily_pnl": 0,
+                        "total_return_pct": 0,
+                        "max_drawdown_pct": 0,
+                        "sharpe_ratio": 0,
+                        "win_rate": 0
+                    }],
+                    "total_pnl": 0,
+                    "starting_equity": starting_equity,
+                    "sharpe_ratio": 0,
+                    "max_drawdown_pct": 0,
+                    "win_rate": 0,
+                    "message": "No trades yet - data will appear after first trade"
+                }
+
+            # Calculate cumulative P&L from trades
+            equity_data = []
+            cumulative_pnl = 0
+            peak_equity = starting_equity
+            max_drawdown = 0
+            winners = 0
+            total_trades = 0
+
+            # Group by date for daily aggregation
+            trades['trade_date'] = pd.to_datetime(trades['trade_date'])
+            daily_trades = trades.groupby('trade_date').agg({
+                'realized_pnl': 'sum',
+                'strategy': 'count'
+            }).reset_index()
+            daily_trades.columns = ['trade_date', 'daily_pnl', 'trades_count']
+
+            for _, row in daily_trades.iterrows():
+                cumulative_pnl += float(row['daily_pnl'])
+                current_equity = starting_equity + cumulative_pnl
+                total_trades += int(row['trades_count'])
+
+                # Track peak and drawdown
+                if current_equity > peak_equity:
+                    peak_equity = current_equity
+                current_drawdown = (peak_equity - current_equity) / peak_equity * 100
+                max_drawdown = max(max_drawdown, current_drawdown)
+
+                equity_data.append({
+                    "timestamp": int(row['trade_date'].timestamp()),
+                    "date": row['trade_date'].strftime('%Y-%m-%d'),
+                    "equity": current_equity,
+                    "pnl": cumulative_pnl,
+                    "daily_pnl": float(row['daily_pnl']),
+                    "total_return_pct": (current_equity - starting_equity) / starting_equity * 100,
+                    "max_drawdown_pct": max_drawdown
+                })
+
+            # Calculate win rate from all trades
+            trades_wins = trades[trades['realized_pnl'] > 0].shape[0]
+            win_rate = (trades_wins / len(trades) * 100) if len(trades) > 0 else 0
+
             return {
                 "success": True,
-                "data": [{
-                    "timestamp": int(start_date.timestamp()),
-                    "equity": starting_equity,
-                    "daily_pnl": 0,
-                    "total_return_pct": 0,
-                    "max_drawdown_pct": 0,
-                    "sharpe_ratio": 0,
-                    "win_rate": 0
-                }],
-                "total_pnl": 0,
+                "data": equity_data,
+                "total_pnl": cumulative_pnl,
                 "starting_equity": starting_equity,
-                "sharpe_ratio": 0,
-                "max_drawdown_pct": 0,
-                "win_rate": 0,
-                "message": "No equity snapshots yet - data will appear after first trade"
+                "sharpe_ratio": 0,  # Would need more data to calculate properly
+                "max_drawdown_pct": max_drawdown,
+                "win_rate": win_rate,
+                "total_trades": total_trades,
+                "message": "Equity curve calculated from closed trades"
             }
+
+        conn.close()
 
         # Convert snapshots to equity curve data
         equity_data = []
@@ -4154,7 +4224,7 @@ async def get_price_history(symbol: str, days: int = 90):
 
 @app.get("/api/trader/strategies")
 async def get_strategy_stats():
-    """Get real strategy statistics from trade database"""
+    """Get real strategy statistics from trade database (open + closed positions)"""
     if not trader_available:
         return {
             "success": False,
@@ -4167,16 +4237,40 @@ async def get_strategy_stats():
 
         conn = get_connection()
 
-        # Get all positions grouped by strategy
+        # Get all positions from BOTH open and closed tables using UNION
         query = """
+            WITH all_trades AS (
+                -- Open positions (unrealized P&L)
+                SELECT
+                    strategy,
+                    unrealized_pnl as pnl,
+                    CASE WHEN unrealized_pnl > 0 THEN 1 ELSE 0 END as is_winner,
+                    entry_date as trade_date,
+                    'OPEN' as status
+                FROM autonomous_open_positions
+
+                UNION ALL
+
+                -- Closed trades (realized P&L)
+                SELECT
+                    strategy,
+                    realized_pnl as pnl,
+                    CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END as is_winner,
+                    exit_date as trade_date,
+                    'CLOSED' as status
+                FROM autonomous_closed_trades
+            )
             SELECT
                 strategy,
                 COUNT(*) as total_trades,
-                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN status = 'CLOSED' THEN realized_pnl ELSE unrealized_pnl END) as total_pnl,
-                MAX(entry_date) as last_trade_date
-            FROM autonomous_positions
+                SUM(is_winner) as wins,
+                SUM(pnl) as total_pnl,
+                MAX(trade_date) as last_trade_date,
+                SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_count
+            FROM all_trades
+            WHERE strategy IS NOT NULL
             GROUP BY strategy
+            ORDER BY total_pnl DESC
         """
 
         strategies = pd.read_sql_query(query, conn)
@@ -4185,13 +4279,18 @@ async def get_strategy_stats():
         strategy_list = []
         for _, row in strategies.iterrows():
             win_rate = (row['wins'] / row['total_trades'] * 100) if row['total_trades'] > 0 else 0
+            # Determine status based on whether there are open positions
+            status = "active" if row['open_count'] > 0 else "inactive"
+
             strategy_list.append({
+                "id": row['strategy'].lower().replace(' ', '_').replace('(', '').replace(')', ''),
                 "name": row['strategy'],
                 "total_trades": int(row['total_trades']),
                 "win_rate": float(win_rate),
                 "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0,
-                "last_trade_date": row['last_trade_date'],
-                "status": "active"  # TODO: Determine from config or recent activity
+                "last_trade_date": str(row['last_trade_date']) if row['last_trade_date'] else None,
+                "status": status,
+                "open_positions": int(row['open_count'])
             })
 
         return {
@@ -4199,7 +4298,87 @@ async def get_strategy_stats():
             "data": strategy_list
         }
     except Exception as e:
+        print(f"Error in get_strategy_stats: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/trader/strategies/{strategy_id}/toggle")
+async def toggle_strategy(strategy_id: str, enabled: bool = True):
+    """Toggle a strategy on/off"""
+    if not trader_available:
+        return {"success": False, "message": "Trader not configured"}
+
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Create strategy_config table if it doesn't exist
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS strategy_config (
+                strategy_name VARCHAR(100) PRIMARY KEY,
+                enabled BOOLEAN DEFAULT TRUE,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+
+        # Convert strategy_id back to name (reverse of the id generation)
+        strategy_name = strategy_id.replace('_', ' ').title()
+
+        # Upsert the strategy config
+        c.execute("""
+            INSERT INTO strategy_config (strategy_name, enabled, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (strategy_name) DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                updated_at = NOW()
+        """, (strategy_name, enabled))
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": f"Strategy '{strategy_name}' {'enabled' if enabled else 'disabled'}",
+            "strategy": strategy_name,
+            "enabled": enabled
+        }
+    except Exception as e:
+        print(f"Error toggling strategy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trader/strategies/config")
+async def get_strategy_configs():
+    """Get all strategy configurations (enabled/disabled status)"""
+    if not trader_available:
+        return {"success": False, "data": {}}
+
+    try:
+        conn = get_connection()
+
+        # Check if table exists
+        c = conn.cursor()
+        c.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'strategy_config'
+            )
+        """)
+        table_exists = c.fetchone()[0]
+
+        if not table_exists:
+            conn.close()
+            return {"success": True, "data": {}}
+
+        import pandas as pd
+        df = pd.read_sql_query("SELECT strategy_name, enabled FROM strategy_config", conn)
+        conn.close()
+
+        config = {row['strategy_name']: row['enabled'] for _, row in df.iterrows()}
+        return {"success": True, "data": config}
+    except Exception as e:
+        print(f"Error getting strategy configs: {e}")
+        return {"success": False, "data": {}}
 
 @app.get("/api/strategies/compare")
 async def compare_all_strategies(symbol: str = "SPY"):
