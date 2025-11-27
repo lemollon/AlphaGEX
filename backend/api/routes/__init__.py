@@ -11,6 +11,7 @@ from . import trader_routes
 from . import backtest_routes
 from . import database_routes
 from . import gex_routes
+from . import gamma_routes
 
 __all__ = [
     'vix_routes',
@@ -21,4 +22,5 @@ __all__ = [
     'backtest_routes',
     'database_routes',
     'gex_routes',
+    'gamma_routes',
 ]
