@@ -3,6 +3,7 @@ Autonomous Trader Scheduler - Continuous Market Hours Operation
 Runs AUTOMATICALLY during stock market hours: 8:30 AM - 3:00 PM Central Texas Time (Mon-Fri)
 Checks every 5 minutes for trading opportunities
 Auto-restarts on errors, guaranteed minimum 1 trade per day
+Automatically refreshes backtests weekly to keep performance data fresh
 """
 
 import time
@@ -12,6 +13,9 @@ from datetime import datetime, time as dt_time, timedelta
 from zoneinfo import ZoneInfo
 from autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
+
+# Backtest refresh interval (in days)
+BACKTEST_REFRESH_INTERVAL_DAYS = 7
 
 # Market hours in Central Time (Texas)
 MARKET_OPEN_CT = dt_time(8, 30)   # 8:30 AM CT = 9:30 AM ET
@@ -102,6 +106,61 @@ def format_time_until(seconds: int) -> str:
         days = seconds // 86400
         hours = (seconds % 86400) // 3600
         return f"{days}d {hours}h"
+
+
+def check_and_refresh_backtests():
+    """
+    Check if backtests need to be refreshed and run them if necessary.
+    Backtests are refreshed weekly to keep performance data current.
+
+    Returns:
+        bool: True if backtests were refreshed, False otherwise
+    """
+    try:
+        from database_adapter import get_connection
+
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Check the most recent backtest timestamp
+        c.execute('''
+            SELECT MAX(timestamp) as latest
+            FROM backtest_results
+        ''')
+        row = c.fetchone()
+        conn.close()
+
+        if row and row[0]:
+            latest_timestamp = row[0]
+            if isinstance(latest_timestamp, str):
+                latest_timestamp = datetime.fromisoformat(latest_timestamp.replace('Z', '+00:00'))
+
+            days_since_last = (datetime.now(tz=latest_timestamp.tzinfo if latest_timestamp.tzinfo else None) - latest_timestamp).days
+
+            if days_since_last < BACKTEST_REFRESH_INTERVAL_DAYS:
+                print(f"📊 Backtests are fresh ({days_since_last}d old, refresh at {BACKTEST_REFRESH_INTERVAL_DAYS}d)")
+                return False
+
+            print(f"📊 Backtests are stale ({days_since_last}d old). Refreshing...")
+        else:
+            print("📊 No backtest results found. Running initial backtests...")
+
+        # Run backtests
+        from autonomous_backtest_engine import get_backtester
+
+        backtester = get_backtester()
+        print("🔄 Running pattern backtests (90 days)...")
+        results = backtester.backtest_all_patterns_and_save(lookback_days=90, save_to_db=True)
+
+        patterns_with_data = sum(1 for r in results if r.get('total_signals', 0) > 0)
+        print(f"✅ Backtest refresh complete - {patterns_with_data} patterns saved")
+
+        return True
+
+    except Exception as e:
+        print(f"⚠️ Backtest refresh failed: {e}")
+        traceback.print_exc()
+        return False
 
 
 def run_autonomous_trader_cycle():
@@ -256,6 +315,7 @@ def run_continuous_scheduler(check_interval_minutes: int = 5):
     """
     Run the autonomous trader continuously during market hours
     Automatically waits until market opens, then checks at specified interval
+    Refreshes backtests weekly to keep performance data fresh
 
     Args:
         check_interval_minutes: How often to check for trades (default: 5 minutes)
@@ -271,16 +331,25 @@ def run_continuous_scheduler(check_interval_minutes: int = 5):
     print(f"⏰ Runs AUTOMATICALLY during market hours: 8:30 AM - 3:00 PM CT")
     print(f"📅 Active days: Monday - Friday")
     print(f"🔄 Check interval: Every {check_interval_minutes} minutes")
+    print(f"📊 Backtest refresh: Every {BACKTEST_REFRESH_INTERVAL_DAYS} days")
     print(f"✅ GUARANTEE: MINIMUM ONE trade per day (multi-level fallback)")
     print(f"🛡️ Auto-restarts on errors")
     print("=" * 70)
     print()
 
     cycle_count = 0
+    last_backtest_check_date = None
 
     while True:
         try:
             ct_now = get_central_time()
+            current_date = ct_now.date()
+
+            # Check backtests once per day before market opens
+            if last_backtest_check_date != current_date:
+                print(f"\n📊 Daily backtest check ({current_date})...")
+                check_and_refresh_backtests()
+                last_backtest_check_date = current_date
 
             # Check if market is open
             if is_market_hours():
