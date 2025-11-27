@@ -8,11 +8,10 @@ Calculates and logs daily performance metrics:
 - Risk-adjusted returns
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 import pandas as pd
 import numpy as np
 
@@ -21,7 +20,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 def aggregate_daily_performance():
     """
-    Calculate and log daily performance metrics from autonomous trader
+    Calculate and log daily performance metrics from autonomous trader (PostgreSQL)
 
     Metrics calculated:
     - Daily P&L
@@ -35,7 +34,7 @@ def aggregate_daily_performance():
     try:
         print("📈 Daily Performance Aggregator - Calculating Trading Metrics\n")
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
 
         # Get all closed positions
         closed_positions = pd.read_sql_query("""
@@ -52,7 +51,7 @@ def aggregate_daily_performance():
             WHERE status = 'CLOSED'
               AND closed_date IS NOT NULL
             ORDER BY closed_date, closed_time
-        """, conn)
+        """, conn.raw_connection)
 
         if closed_positions.empty:
             print("⚠️ No closed positions yet - nothing to aggregate")
@@ -113,16 +112,34 @@ def aggregate_daily_performance():
             gross_loss = abs(day_positions[day_positions['realized_pnl'] < 0]['realized_pnl'].sum())
             profit_factor = gross_profit / gross_loss if gross_loss > 0 else 999.0
 
-            # Log to database
+            # Log to database with PostgreSQL ON CONFLICT
             c.execute("""
-                INSERT OR REPLACE INTO performance (
+                INSERT INTO performance (
                     date, daily_pnl, cumulative_pnl, account_value,
                     trades_count, winners, losers, win_rate_pct,
                     avg_winner, avg_loser, expectancy,
                     sharpe_ratio, max_drawdown, max_drawdown_pct,
                     daily_return_pct, profit_factor, avg_hold_hours,
                     starting_capital
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (date) DO UPDATE SET
+                    daily_pnl = EXCLUDED.daily_pnl,
+                    cumulative_pnl = EXCLUDED.cumulative_pnl,
+                    account_value = EXCLUDED.account_value,
+                    trades_count = EXCLUDED.trades_count,
+                    winners = EXCLUDED.winners,
+                    losers = EXCLUDED.losers,
+                    win_rate_pct = EXCLUDED.win_rate_pct,
+                    avg_winner = EXCLUDED.avg_winner,
+                    avg_loser = EXCLUDED.avg_loser,
+                    expectancy = EXCLUDED.expectancy,
+                    sharpe_ratio = EXCLUDED.sharpe_ratio,
+                    max_drawdown = EXCLUDED.max_drawdown,
+                    max_drawdown_pct = EXCLUDED.max_drawdown_pct,
+                    daily_return_pct = EXCLUDED.daily_return_pct,
+                    profit_factor = EXCLUDED.profit_factor,
+                    avg_hold_hours = EXCLUDED.avg_hold_hours,
+                    starting_capital = EXCLUDED.starting_capital
             """, (
                 date,
                 daily_pnl,

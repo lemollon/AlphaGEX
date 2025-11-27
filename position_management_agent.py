@@ -5,54 +5,46 @@ This agent monitors your active positions and alerts when market conditions chan
 from entry, helping you make better exit and adjustment decisions.
 """
 
-import sqlite3
 import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 import streamlit as st
-from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 
 class PositionManagementAgent:
     """AI agent that monitors positions and detects condition changes"""
 
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
         self._ensure_entry_columns()
 
     def _ensure_entry_columns(self):
-        """Ensure positions table has entry condition columns"""
-        conn = sqlite3.connect(self.db_path)
+        """Ensure positions table has entry condition columns (PostgreSQL)"""
+        conn = get_connection()
         c = conn.cursor()
 
-        # Add entry condition columns if they don't exist
-        try:
-            c.execute("ALTER TABLE positions ADD COLUMN entry_net_gex REAL")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        # Add entry condition columns if they don't exist (PostgreSQL syntax)
+        columns_to_add = [
+            ("entry_net_gex", "REAL"),
+            ("entry_flip_point", "REAL"),
+            ("entry_spot_price", "REAL"),
+            ("entry_regime", "TEXT")
+        ]
 
-        try:
-            c.execute("ALTER TABLE positions ADD COLUMN entry_flip_point REAL")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            c.execute("ALTER TABLE positions ADD COLUMN entry_spot_price REAL")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            c.execute("ALTER TABLE positions ADD COLUMN entry_regime TEXT")
-        except sqlite3.OperationalError:
-            pass
+        for col_name, col_type in columns_to_add:
+            try:
+                c.execute(f"ALTER TABLE positions ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                # Column likely already exists
+                conn.rollback()
 
         conn.commit()
         conn.close()
 
     def store_entry_conditions(self, position_id: int, gex_data: Dict):
-        """Store entry conditions when position is opened"""
+        """Store entry conditions when position is opened (PostgreSQL)"""
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         net_gex = gex_data.get('net_gex', 0)
@@ -64,11 +56,11 @@ class PositionManagementAgent:
 
         c.execute("""
             UPDATE positions
-            SET entry_net_gex = ?,
-                entry_flip_point = ?,
-                entry_spot_price = ?,
-                entry_regime = ?
-            WHERE id = ?
+            SET entry_net_gex = %s,
+                entry_flip_point = %s,
+                entry_spot_price = %s,
+                entry_regime = %s
+            WHERE id = %s
         """, (net_gex, flip_point, spot_price, regime, position_id))
 
         conn.commit()
@@ -91,9 +83,9 @@ class PositionManagementAgent:
         return f"{gex_regime}, {position_regime}"
 
     def get_active_positions_with_conditions(self) -> pd.DataFrame:
-        """Get all active positions with entry conditions"""
+        """Get all active positions with entry conditions (PostgreSQL)"""
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
 
         query = """
             SELECT
@@ -113,7 +105,7 @@ class PositionManagementAgent:
             ORDER BY opened_at DESC
         """
 
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query, conn.raw_connection)
         conn.close()
 
         if not df.empty:
