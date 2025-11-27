@@ -430,7 +430,22 @@ class MarketRegimeClassifier:
                 return MarketAction.BUY_PUTS, min(90, confidence), "\n".join(reasons)
 
         # ================================================================
-        # SCENARIO 4: LOW IV = BUY PREMIUM (it's cheap)
+        # SCENARIO 4: EXTREME HIGH IV + RANGE = SELL PREMIUM (even neutral gamma)
+        # When VIX is very high and market is range-bound, premium is expensive
+        # ================================================================
+        if vol_regime == VolatilityRegime.EXTREME_HIGH:
+            if trend_regime == TrendRegime.RANGE_BOUND:
+                confidence = 70.0
+                reasons.append(f"EXTREME HIGH IV ({vol_regime.value}) = very expensive premiums")
+                reasons.append("RANGE-BOUND market = lower risk of directional breakout")
+                if iv_hv_ratio > 1.3:
+                    confidence += 10
+                    reasons.append(f"IV/HV ratio {iv_hv_ratio:.2f} = IV significantly overpriced")
+                reasons.append("Use smaller size due to neutral gamma (no dealer support)")
+                return MarketAction.SELL_PREMIUM, confidence, "\n".join(reasons)
+
+        # ================================================================
+        # SCENARIO 5: LOW IV = BUY PREMIUM (it's cheap)
         # ================================================================
         if vol_regime == VolatilityRegime.EXTREME_LOW:
             confidence = 60.0
@@ -447,7 +462,7 @@ class MarketRegimeClassifier:
                 return MarketAction.STAY_FLAT, 40.0, "\n".join(reasons)
 
         # ================================================================
-        # SCENARIO 5: NEUTRAL/UNCLEAR = STAY FLAT
+        # SCENARIO 6: NEUTRAL/UNCLEAR = STAY FLAT
         # ================================================================
         reasons.append(f"Vol regime: {vol_regime.value}")
         reasons.append(f"Gamma regime: {gamma_regime.value}")
