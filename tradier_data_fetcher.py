@@ -180,32 +180,64 @@ class TradierDataFetcher:
         method: str,
         endpoint: str,
         params: Optional[Dict] = None,
-        data: Optional[Dict] = None
+        data: Optional[Dict] = None,
+        max_retries: int = 3
     ) -> Dict:
-        """Make API request with error handling"""
+        """Make API request with retry logic and exponential backoff"""
+        import time
         self._rate_limit()
 
         url = f"{self.base_url}/{endpoint}"
+        last_exception = None
 
-        try:
-            if method.upper() == 'GET':
-                response = requests.get(url, headers=self.headers, params=params, timeout=30)
-            elif method.upper() == 'POST':
-                response = requests.post(url, headers=self.headers, params=params, data=data, timeout=30)
-            elif method.upper() == 'DELETE':
-                response = requests.delete(url, headers=self.headers, params=params, timeout=30)
-            else:
-                raise ValueError(f"Unsupported method: {method}")
+        for attempt in range(max_retries + 1):
+            try:
+                if method.upper() == 'GET':
+                    response = requests.get(url, headers=self.headers, params=params, timeout=30)
+                elif method.upper() == 'POST':
+                    response = requests.post(url, headers=self.headers, params=params, data=data, timeout=30)
+                elif method.upper() == 'DELETE':
+                    response = requests.delete(url, headers=self.headers, params=params, timeout=30)
+                else:
+                    raise ValueError(f"Unsupported method: {method}")
 
-            response.raise_for_status()
-            return response.json()
+                response.raise_for_status()
+                try:
+                    return response.json()
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON response from {endpoint}: {e}")
+                    logger.debug(f"Response text: {response.text[:500]}")
+                    raise ValueError(f"Tradier API returned invalid JSON: {e}")
 
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error: {e.response.status_code} - {e.response.text}")
-            raise
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed: {e}")
-            raise
+            except requests.exceptions.HTTPError as e:
+                # Don't retry client errors (4xx), only server errors (5xx)
+                if e.response.status_code < 500:
+                    logger.error(f"HTTP error: {e.response.status_code} - {e.response.text}")
+                    raise
+                last_exception = e
+                logger.warning(f"Server error (attempt {attempt + 1}/{max_retries + 1}): {e.response.status_code}")
+
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                    requests.exceptions.ChunkedEncodingError) as e:
+                last_exception = e
+                logger.warning(f"Network error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request failed: {e}")
+                raise
+
+            # Exponential backoff: 1s, 2s, 4s
+            if attempt < max_retries:
+                backoff_time = 2 ** attempt
+                logger.info(f"Retrying in {backoff_time}s...")
+                time.sleep(backoff_time)
+
+        # All retries exhausted
+        logger.error(f"All {max_retries + 1} attempts failed for {endpoint}")
+        if last_exception:
+            raise last_exception
+        raise requests.exceptions.RequestException(f"Request to {endpoint} failed after {max_retries + 1} attempts")
 
     # ==================== MARKET DATA ====================
 

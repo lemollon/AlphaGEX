@@ -4,9 +4,22 @@ Startup Initialization Script
 Runs once when the application starts to ensure ALL database tables are populated
 """
 import random
+import logging
 from datetime import datetime, timedelta
 from config_and_database import init_database
 from database_adapter import get_connection
+
+# Configure logging for startup initialization
+logger = logging.getLogger('startup_init')
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 def ensure_all_tables_exist(conn):
     """Explicitly create all tables that might be missing"""
@@ -143,12 +156,14 @@ def check_needs_initialization() -> bool:
 
         # Check if gex_history has any data
         c.execute("SELECT COUNT(*) FROM gex_history")
-        count = c.fetchone()[0]
+        result = c.fetchone()
+        count = result[0] if result else 0
         conn.close()
 
         return count == 0
-    except:
+    except Exception as e:
         # Table doesn't exist or other error - needs init
+        logger.warning(f"check_needs_initialization error (proceeding with init): {e}")
         return True
 
 def populate_all_tables(conn, bars):
@@ -173,7 +188,8 @@ def populate_all_tables(conn, bars):
                            random.uniform(0.5e9, 2e9), bar['close']*0.99,
                            bar['close']*1.02, bar['close']*0.98, bar['close']))
                 gex_inserted += 1
-            except: pass
+            except Exception as e:
+                logger.debug(f"gex_history insert skipped: {e}")
 
     # 2. Gamma History (4 snapshots per day)
     print("  - gamma_history...")
@@ -194,7 +210,8 @@ def populate_all_tables(conn, bars):
                            bar['close']*1.02, bar['close']*0.98, random.uniform(0.15, 0.35),
                            random.uniform(0.8, 1.2), random.uniform(-3, 3), 'NEUTRAL'))
                 gamma_inserted += 1
-            except: pass
+            except Exception as e:
+                logger.debug(f"gamma_history insert skipped: {e}")
 
     # 3. Gamma Daily Summary
     print("  - gamma_daily_summary...")
@@ -214,7 +231,8 @@ def populate_all_tables(conn, bars):
                        0.1e9, 10, bar['close']*0.99, bar['close']*0.99,
                        0, 0, bar['open'], bar['close'], price_change, 0.25, 4))
             summary_inserted += 1
-        except: pass
+        except Exception as e:
+            logger.debug(f"gamma_daily_summary insert skipped: {e}")
         prev_close = bar['close']
 
     # 4. Regime Signals (20-30 signals over the period)
@@ -245,7 +263,8 @@ def populate_all_tables(conn, bars):
                        random.uniform(-2, 2), random.uniform(-3, 3), random.uniform(-4, 4),
                        random.choice([0, 1])))
             signals_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
 
     # 5. Recommendations (40+ trade recommendations)
     print("  - recommendations...")
@@ -273,7 +292,8 @@ def populate_all_tables(conn, bars):
                        random.randint(3, 14), f"GEX regime favorable for {strategy}",
                        "Market makers neutral", outcome, pnl))
             recs_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
 
     # 6. Historical Open Interest (1000+ records)
     print("  - historical_open_interest...")
@@ -295,7 +315,8 @@ def populate_all_tables(conn, bars):
                            random.randint(100, 5000), random.randint(100, 5000),
                            random.uniform(1e6, 1e8), random.uniform(1e6, 1e8)))
                 oi_inserted += 1
-            except: pass
+            except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
 
     # 7. Forward Magnets (10-15 key strikes)
     print("  - forward_magnets...")
@@ -318,7 +339,8 @@ def populate_all_tables(conn, bars):
                            random.uniform(60, 95), random.uniform(1e8, 5e8),
                            random.randint(10000, 100000), (mult-1)*100, direction))
                 magnets_inserted += 1
-            except: pass
+            except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
 
     # 8. Gamma Expiration Timeline (15+ expirations)
     print("  - gamma_expiration_timeline...")
@@ -342,7 +364,8 @@ def populate_all_tables(conn, bars):
                            (strike_offset / bars[-1]['close']) * 100,
                            now.strftime('%Y-%m-%d %H:%M:%S')))
                 timeline_inserted += 1
-            except: pass
+            except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
 
     conn.commit()
 
@@ -387,7 +410,8 @@ def populate_additional_tables(conn, bars):
                        random.uniform(1, 5), random.uniform(10, 50), random.uniform(-10, -3),
                        random.uniform(0.8, 2.5), random.uniform(2, 10)))
             bt_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {bt_inserted} backtest results")
 
     # 2. Backtest Summary
@@ -404,7 +428,8 @@ def populate_additional_tables(conn, bars):
                    now.strftime('%Y-%m-%d'),
                    45, 0.68, 3.2, 60, 0.62, 2.8, 80, 0.58, 2.1))
         print("    ✅ 1 backtest summary")
-    except: pass
+    except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
 
     # 3. Performance
     print("  - performance...")
@@ -422,7 +447,8 @@ def populate_additional_tables(conn, bars):
                        random.uniform(100, 400), random.uniform(-200, -50),
                        random.uniform(0.5, 2.0), random.uniform(-5, -1)))
             perf_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {perf_inserted} performance records")
 
     # 4. Sucker Statistics
@@ -444,7 +470,8 @@ def populate_additional_tables(conn, bars):
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                       (*scenario, now.strftime('%Y-%m-%d %H:%M:%S')))
             ss_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {ss_inserted} sucker statistics")
 
     # 5. Probability Predictions
@@ -473,7 +500,8 @@ def populate_additional_tables(conn, bars):
                        random.uniform(0, 100), random.uniform(0, 100),
                        random.choice(['LONG_GAMMA', 'SHORT_GAMMA', 'NEUTRAL'])))
             pp_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {pp_inserted} probability predictions")
 
     # 6. Probability Outcomes
@@ -488,7 +516,8 @@ def populate_additional_tables(conn, bars):
                        random.choice([0, 1]), random.uniform(-5, 5),
                        now.strftime('%Y-%m-%d %H:%M:%S')))
             po_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {po_inserted} probability outcomes")
 
     # 7. Probability Weights
@@ -502,7 +531,8 @@ def populate_additional_tables(conn, bars):
                    random.uniform(0.15, 0.35), random.uniform(0.15, 0.35), random.uniform(0.10, 0.25),
                    random.uniform(0.10, 0.20), random.uniform(0.05, 0.15), random.uniform(0.60, 0.75), 1))
         print(f"    ✅ 1 probability weights")
-    except: pass
+    except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
 
     # 8. Strike Performance
     print("  - strike_performance...")
@@ -533,7 +563,8 @@ def populate_additional_tables(conn, bars):
                        random.choice(['LIBERATION', 'FALSE_FLOOR', 'GAMMA_SQUEEZE']),
                        random.uniform(0.60, 0.90), now.strftime('%Y-%m-%d %H:%M:%S')))
             sp_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {sp_inserted} strike performance records")
 
     # 9. DTE Performance
@@ -561,7 +592,8 @@ def populate_additional_tables(conn, bars):
                        random.choice([0, 1]), random.randint(0, dte),
                        now.strftime('%Y-%m-%d %H:%M:%S')))
             dp_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {dp_inserted} DTE performance records")
 
     # 10. Greeks Performance
@@ -587,7 +619,8 @@ def populate_additional_tables(conn, bars):
                        random.uniform(1, 5), random.uniform(1, 5),
                        now.strftime('%Y-%m-%d %H:%M:%S')))
             gp_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {gp_inserted} Greeks performance records")
 
     # 11. Spread Width Performance
@@ -624,7 +657,8 @@ def populate_additional_tables(conn, bars):
                        random.uniform(-0.2, 0.2), random.uniform(0.01, 0.05), random.uniform(-0.2, -0.05),
                        now.strftime('%Y-%m-%d %H:%M:%S')))
             sw_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {sw_inserted} spread width records")
 
     # 12. Liberation Outcomes
@@ -647,7 +681,8 @@ def populate_additional_tables(conn, bars):
                        random.choice([0, 1]), random.uniform(1, 5),
                        now.strftime('%Y-%m-%d %H:%M:%S')))
             lo_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {lo_inserted} liberation outcomes")
 
     # 13. Calibration History
@@ -664,7 +699,8 @@ def populate_additional_tables(conn, bars):
                        random.uniform(0.58, 0.72), random.uniform(0.70, 0.85), random.uniform(0.60, 0.72),
                        random.uniform(0.50, 0.65), "Adjusted weights based on recent performance"))
             ch_inserted += 1
-        except: pass
+        except Exception:
+            pass  # Duplicate or constraint violation - expected during bulk insert
     print(f"    ✅ {ch_inserted} calibration records")
 
     conn.commit()
@@ -676,10 +712,12 @@ def check_gamma_tables_need_population():
         conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM gamma_history")
-        count = c.fetchone()[0]
+        result = c.fetchone()
+        count = result[0] if result else 0
         conn.close()
         return count == 0
-    except:
+    except Exception as e:
+        logger.warning(f"check_gamma_tables_need_population error: {e}")
         return True  # Table doesn't exist or error
 
 def check_additional_tables_need_population():
@@ -688,10 +726,12 @@ def check_additional_tables_need_population():
         conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM backtest_results")
-        count = c.fetchone()[0]
+        result = c.fetchone()
+        count = result[0] if result else 0
         conn.close()
         return count == 0
-    except:
+    except Exception as e:
+        logger.warning(f"check_additional_tables_need_population error: {e}")
         return True  # Table doesn't exist or error
 
 def initialize_on_startup():
