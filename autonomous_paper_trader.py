@@ -488,7 +488,7 @@ class AutonomousPaperTrader:
                 snapshot_date DATE NOT NULL,
                 snapshot_time TIME NOT NULL,
                 snapshot_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
-                starting_capital DECIMAL(12,2) NOT NULL DEFAULT 5000,
+                starting_capital DECIMAL(12,2) NOT NULL DEFAULT 1000000,
                 total_realized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
                 total_unrealized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
                 account_value DECIMAL(12,2) NOT NULL,
