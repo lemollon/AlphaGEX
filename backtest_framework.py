@@ -385,36 +385,36 @@ class BacktestBase:
         return results
 
     def save_results_to_db(self, results: BacktestResults):
-        """Save backtest results to database"""
+        """Save backtest results to database (PostgreSQL compatible)"""
         conn = get_connection()
         c = conn.cursor()
 
-        # Create backtest_results table if not exists
+        # Create backtest_results table if not exists (PostgreSQL syntax)
         c.execute('''
             CREATE TABLE IF NOT EXISTS backtest_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                strategy_name TEXT,
-                symbol TEXT,
-                start_date TEXT,
-                end_date TEXT,
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP DEFAULT NOW(),
+                strategy_name VARCHAR(200),
+                symbol VARCHAR(20),
+                start_date VARCHAR(20),
+                end_date VARCHAR(20),
                 total_trades INTEGER,
                 winning_trades INTEGER,
                 losing_trades INTEGER,
-                win_rate REAL,
-                avg_win_pct REAL,
-                avg_loss_pct REAL,
-                largest_win_pct REAL,
-                largest_loss_pct REAL,
-                expectancy_pct REAL,
-                total_return_pct REAL,
-                max_drawdown_pct REAL,
-                sharpe_ratio REAL,
-                avg_trade_duration_days REAL
+                win_rate DECIMAL(8,4),
+                avg_win_pct DECIMAL(8,4),
+                avg_loss_pct DECIMAL(8,4),
+                largest_win_pct DECIMAL(8,4),
+                largest_loss_pct DECIMAL(8,4),
+                expectancy_pct DECIMAL(8,4),
+                total_return_pct DECIMAL(10,4),
+                max_drawdown_pct DECIMAL(8,4),
+                sharpe_ratio DECIMAL(8,4),
+                avg_trade_duration_days DECIMAL(8,2)
             )
         ''')
 
-        # Insert results
+        # Insert results (PostgreSQL %s placeholders)
         c.execute('''
             INSERT INTO backtest_results (
                 strategy_name, symbol, start_date, end_date,
@@ -422,7 +422,7 @@ class BacktestBase:
                 avg_win_pct, avg_loss_pct, largest_win_pct, largest_loss_pct,
                 expectancy_pct, total_return_pct, max_drawdown_pct, sharpe_ratio,
                 avg_trade_duration_days
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
             results.strategy_name, self.symbol, results.start_date, results.end_date,
             results.total_trades, results.winning_trades, results.losing_trades,
