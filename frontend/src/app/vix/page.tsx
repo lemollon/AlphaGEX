@@ -8,14 +8,21 @@ import { apiClient } from '@/lib/api'
 
 interface VIXData {
   vix_spot: number
+  vix_source: string
   vix_m1: number
   vix_m2: number
+  is_estimated: boolean
   term_structure_pct: number
+  term_structure_m2_pct: number
   structure_type: string
+  vvix: number | null
+  vvix_source: string
   iv_percentile: number
   realized_vol_20d: number
   iv_rv_spread: number
   vol_regime: string
+  vix_stress_level: string
+  position_size_multiplier: number
   timestamp: string
 }
 
@@ -179,11 +186,37 @@ export default function VIXDashboard() {
                         <p className="text-3xl font-bold text-text-primary mt-1">
                           {vixData?.vix_spot?.toFixed(2) || '--'}
                         </p>
+                        <p className="text-xs text-text-muted mt-1">
+                          Source: {vixData?.vix_source || 'unknown'}
+                        </p>
                       </div>
                       <div className={`px-3 py-1 rounded-lg font-semibold text-sm ${getVolRegimeColor(vixData?.vol_regime || '')}`}>
                         {vixData?.vol_regime?.toUpperCase().replace('_', ' ') || 'UNKNOWN'}
                       </div>
                     </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-text-secondary text-sm">VVIX (Vol of VIX)</p>
+                        <p className={`text-3xl font-bold mt-1 ${
+                          (vixData?.vvix || 0) > 120 ? 'text-danger' :
+                          (vixData?.vvix || 0) > 90 ? 'text-warning' :
+                          'text-success'
+                        }`}>
+                          {vixData?.vvix?.toFixed(1) || '--'}
+                        </p>
+                      </div>
+                      <Activity className="text-primary w-8 h-8" />
+                    </div>
+                    <p className="text-xs text-text-muted mt-2">
+                      {vixData?.vvix ? (
+                        (vixData.vvix > 120) ? 'High VIX volatility - timing uncertain' :
+                        (vixData.vvix > 90) ? 'Elevated VIX volatility' :
+                        'Normal VVIX - good timing window'
+                      ) : 'VVIX data unavailable'}
+                    </p>
                   </div>
 
                   <div className="card">
@@ -210,18 +243,6 @@ export default function VIXDashboard() {
                   <div className="card">
                     <div className="flex items-start justify-between">
                       <div>
-                        <p className="text-text-secondary text-sm">Realized Vol (20d)</p>
-                        <p className="text-3xl font-bold text-text-primary mt-1">
-                          {vixData?.realized_vol_20d?.toFixed(1) || '--'}%
-                        </p>
-                      </div>
-                      <TrendingUp className="text-primary w-8 h-8" />
-                    </div>
-                  </div>
-
-                  <div className="card">
-                    <div className="flex items-start justify-between">
-                      <div>
                         <p className="text-text-secondary text-sm">IV-RV Spread</p>
                         <p className={`text-3xl font-bold mt-1 ${
                           (vixData?.iv_rv_spread || 0) > 5 ? 'text-warning' :
@@ -241,10 +262,64 @@ export default function VIXDashboard() {
                   </div>
                 </div>
 
+                {/* Trading Stress Indicator */}
+                <div className={`card border-2 ${
+                  vixData?.vix_stress_level === 'extreme' ? 'border-danger bg-danger/10' :
+                  vixData?.vix_stress_level === 'high' ? 'border-warning bg-warning/10' :
+                  vixData?.vix_stress_level === 'elevated' ? 'border-warning/50 bg-warning/5' :
+                  'border-success/50 bg-success/5'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <AlertTriangle className={`w-6 h-6 ${
+                        vixData?.vix_stress_level === 'extreme' ? 'text-danger' :
+                        vixData?.vix_stress_level === 'high' ? 'text-warning' :
+                        vixData?.vix_stress_level === 'elevated' ? 'text-warning' :
+                        'text-success'
+                      }`} />
+                      <div>
+                        <p className="font-semibold text-text-primary">
+                          VIX Stress Level: {vixData?.vix_stress_level?.toUpperCase() || 'UNKNOWN'}
+                        </p>
+                        <p className="text-sm text-text-secondary">
+                          Position Size Multiplier: {((vixData?.position_size_multiplier || 1) * 100).toFixed(0)}%
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold text-text-primary">
+                        {vixData?.realized_vol_20d?.toFixed(1) || '--'}%
+                      </p>
+                      <p className="text-xs text-text-muted">20d Realized Vol</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 text-sm">
+                    {vixData?.vix_stress_level === 'extreme' && (
+                      <p className="text-danger">⚠️ EXTREME STRESS: Reduce position sizes by 75%. Avoid new trades.</p>
+                    )}
+                    {vixData?.vix_stress_level === 'high' && (
+                      <p className="text-warning">⚠️ HIGH STRESS: Reduce position sizes by 50%. Use caution.</p>
+                    )}
+                    {vixData?.vix_stress_level === 'elevated' && (
+                      <p className="text-warning">⚠️ ELEVATED: Reduce position sizes by 25%. Monitor closely.</p>
+                    )}
+                    {vixData?.vix_stress_level === 'normal' && (
+                      <p className="text-success">✅ Normal conditions. Standard position sizing applies.</p>
+                    )}
+                  </div>
+                </div>
+
                 {/* Term Structure */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="card">
-                    <h2 className="text-xl font-semibold text-text-primary mb-4">VIX Term Structure</h2>
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-xl font-semibold text-text-primary">VIX Term Structure</h2>
+                      {vixData?.is_estimated && (
+                        <span className="px-2 py-1 rounded text-xs bg-warning/20 text-warning font-semibold">
+                          ESTIMATED
+                        </span>
+                      )}
+                    </div>
                     <div className="space-y-4">
                       <div className="flex items-center justify-between p-4 bg-background-hover rounded-lg">
                         <div>
@@ -271,6 +346,11 @@ export default function VIXDashboard() {
                           <p className="text-text-muted text-sm">VIX Second Month (M2)</p>
                           <p className="text-2xl font-bold text-text-primary">{vixData?.vix_m2?.toFixed(2) || '--'}</p>
                         </div>
+                        <div className={`px-3 py-1 rounded-lg font-semibold ${
+                          (vixData?.term_structure_m2_pct || 0) > 0 ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
+                        }`}>
+                          {(vixData?.term_structure_m2_pct || 0) > 0 ? '+' : ''}{vixData?.term_structure_m2_pct?.toFixed(1) || '0'}%
+                        </div>
                       </div>
 
                       <div className={`p-4 rounded-lg border ${
@@ -289,6 +369,8 @@ export default function VIXDashboard() {
                             ? 'Normal market conditions - futures above spot'
                             : vixData?.structure_type === 'backwardation'
                             ? 'Stress signal - spot above futures (fear)'
+                            : vixData?.structure_type === 'flat'
+                            ? 'Flat structure - transition period'
                             : 'Analyzing term structure...'}
                         </p>
                       </div>

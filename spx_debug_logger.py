@@ -315,6 +315,52 @@ class SPXDebugLogger:
     # POSITION SIZING DEBUG
     # ================================================================
 
+    def log_vix_stress(
+        self,
+        current_vix: float,
+        stress_level: str,
+        stress_factor: float,
+        impact: str = None
+    ):
+        """Log VIX stress level and its impact on trading."""
+        msg = f"VIX STRESS: {current_vix:.1f} -> {stress_level.upper()} (factor: {stress_factor:.0%})"
+
+        if stress_level in ['extreme', 'high']:
+            self.logger.warning(f"[{self.session_id}] {msg}")
+            log_level = 'WARNING'
+        else:
+            self.logger.info(f"[{self.session_id}] {msg}")
+            log_level = 'INFO'
+
+        self._log_to_db(log_level, 'VIX', 'stress', msg, {
+            'current_vix': current_vix,
+            'stress_level': stress_level,
+            'stress_factor': stress_factor,
+            'position_reduction_pct': (1 - stress_factor) * 100,
+            'impact': impact or f"Position sizes reduced by {(1-stress_factor)*100:.0f}%"
+        })
+
+    def log_vix_fetch(
+        self,
+        vix_value: float,
+        source: str,
+        success: bool = True,
+        error: str = None
+    ):
+        """Log VIX data fetch result."""
+        if success:
+            msg = f"VIX FETCH: {vix_value:.2f} from {source}"
+            self.logger.debug(f"[{self.session_id}] {msg}")
+            self._log_to_db('DEBUG', 'DATA_FETCH', 'VIX', msg, {
+                'vix_value': vix_value,
+                'source': source
+            })
+        else:
+            msg = f"VIX FETCH FAILED: {error}"
+            self.logger.error(f"[{self.session_id}] {msg}")
+            self._log_to_db('ERROR', 'DATA_FETCH', 'VIX', msg,
+                           success=False, error_message=error)
+
     def log_backtest_lookup(self, strategy_name: str, params: Dict):
         """Log backtest parameter lookup."""
         msg = f"BACKTEST LOOKUP: {strategy_name}"

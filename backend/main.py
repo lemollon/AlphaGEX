@@ -2994,7 +2994,7 @@ async def get_vix_signal_history(days: int = 30):
 
 @app.get("/api/vix/current")
 async def get_vix_current():
-    """Get current VIX data and analysis"""
+    """Get current VIX data and analysis with VVIX and stress indicators"""
     try:
         from vix_hedge_manager import get_vix_hedge_manager
 
@@ -3009,15 +3009,94 @@ async def get_vix_current():
         return {
             "success": True,
             "data": {
+                # Core VIX data
                 "vix_spot": vix_spot,
+                "vix_source": vix_data.get('vix_source', 'unknown'),
                 "vix_m1": vix_data.get('vix_m1', 0),
                 "vix_m2": vix_data.get('vix_m2', 0),
+                "is_estimated": vix_data.get('is_estimated', True),
+
+                # Term structure
                 "term_structure_pct": vix_data.get('term_structure_m1_pct', 0),
+                "term_structure_m2_pct": vix_data.get('term_structure_m2_pct', 0),
                 "structure_type": vix_data.get('structure_type', 'unknown'),
+
+                # VVIX (volatility of VIX) - NEW
+                "vvix": vix_data.get('vvix'),
+                "vvix_source": vix_data.get('vvix_source', 'none'),
+
+                # Volatility analysis
                 "iv_percentile": iv_percentile,
                 "realized_vol_20d": realized_vol,
                 "iv_rv_spread": vix_spot - realized_vol,
                 "vol_regime": vol_regime.value,
+
+                # Trading stress indicators - NEW
+                "vix_stress_level": vix_data.get('vix_stress_level', 'unknown'),
+                "position_size_multiplier": vix_data.get('position_size_multiplier', 1.0),
+
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/vix/debug")
+async def get_vix_debug():
+    """
+    VIX debugging endpoint - shows all VIX-related data and sources.
+
+    Use this to understand:
+    - Where VIX data is coming from
+    - Whether estimates are being used
+    - Current stress levels for trading
+    """
+    try:
+        from vix_hedge_manager import get_vix_hedge_manager
+
+        manager = get_vix_hedge_manager()
+        vix_data = manager.get_vix_data()
+        vix_spot = vix_data.get('vix_spot', 18.0)
+
+        iv_percentile = manager.calculate_iv_percentile(vix_spot)
+        realized_vol = manager.calculate_realized_vol('SPY')
+        vol_regime = manager.get_vol_regime(vix_spot)
+
+        # Try to get raw VIX from different sources for comparison
+        raw_sources = {}
+
+        # Try unified provider
+        try:
+            from unified_data_provider import get_vix as unified_get_vix
+            raw_sources['unified_provider'] = unified_get_vix()
+        except Exception as e:
+            raw_sources['unified_provider'] = f"Error: {e}"
+
+        # Try polygon
+        try:
+            from polygon_data_fetcher import polygon_fetcher
+            raw_sources['polygon'] = polygon_fetcher.get_current_price('^VIX')
+        except Exception as e:
+            raw_sources['polygon'] = f"Error: {e}"
+
+        return {
+            "success": True,
+            "data": {
+                "vix_data": vix_data,
+                "raw_sources": raw_sources,
+                "calculated_metrics": {
+                    "iv_percentile": iv_percentile,
+                    "realized_vol_20d": realized_vol,
+                    "iv_rv_spread": vix_spot - realized_vol,
+                    "vol_regime": vol_regime.value
+                },
+                "trading_impact": {
+                    "stress_level": vix_data.get('vix_stress_level', 'unknown'),
+                    "position_size_multiplier": vix_data.get('position_size_multiplier', 1.0),
+                    "should_reduce_risk": vix_data.get('vix_stress_level') in ['high', 'extreme'],
+                    "vvix_available": vix_data.get('vvix') is not None
+                },
                 "timestamp": datetime.now().isoformat()
             }
         }

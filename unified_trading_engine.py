@@ -438,11 +438,31 @@ class UnifiedTradingEngine:
         if strategy['option_type'] is None:
             return  # No trade to make
 
-        # Calculate position size
-        position_value = self.current_capital * min(
-            regime.max_position_size_pct,
-            self.max_position_pct
-        )
+        # Calculate base position size
+        base_position_pct = min(regime.max_position_size_pct, self.max_position_pct)
+
+        # VIX STRESS FACTOR: Real-time VIX-based position reduction
+        # This matches SPX/SPY trader logic for consistency across all engines
+        vix_stress_factor = 1.0
+        vix_stress_level = 'normal'
+        current_vix = bar.vix if bar.vix > 0 else 18.0
+
+        if current_vix >= 35:
+            vix_stress_factor = 0.25  # 75% reduction - extreme fear
+            vix_stress_level = 'extreme'
+        elif current_vix >= 28:
+            vix_stress_factor = 0.50  # 50% reduction - high stress
+            vix_stress_level = 'high'
+        elif current_vix >= 22:
+            vix_stress_factor = 0.75  # 25% reduction - elevated
+            vix_stress_level = 'elevated'
+
+        # Apply VIX stress factor to position size
+        adjusted_position_pct = base_position_pct * vix_stress_factor
+        position_value = self.current_capital * adjusted_position_pct
+
+        if vix_stress_level != 'normal':
+            print(f"⚠️ VIX {vix_stress_level.upper()} ({current_vix:.1f}): Position reduced by {(1-vix_stress_factor)*100:.0f}%")
 
         # Determine strike and expiration
         strike = self._select_strike(bar, regime, strategy)

@@ -733,14 +733,44 @@ class SPXInstitutionalTrader:
         }
         vol_factor = vol_adjustments.get(volatility_regime, 1.0)
 
+        # VIX STRESS FACTOR: Real-time VIX-based position reduction
+        # This is CRITICAL for risk management during market stress
+        vix_stress_factor = 1.0
+        current_vix = self._get_vix()
+        vix_stress_level = 'normal'
+
+        if current_vix >= 35:
+            vix_stress_factor = 0.25  # 75% reduction - extreme fear
+            vix_stress_level = 'extreme'
+            print(f"🚨 VIX EXTREME ({current_vix:.1f}): Position size reduced by 75%")
+        elif current_vix >= 28:
+            vix_stress_factor = 0.50  # 50% reduction - high stress
+            vix_stress_level = 'high'
+            print(f"⚠️ VIX HIGH ({current_vix:.1f}): Position size reduced by 50%")
+        elif current_vix >= 22:
+            vix_stress_factor = 0.75  # 25% reduction - elevated
+            vix_stress_level = 'elevated'
+            print(f"⚠️ VIX ELEVATED ({current_vix:.1f}): Position size reduced by 25%")
+        else:
+            vix_stress_level = 'normal'
+            print(f"✅ VIX NORMAL ({current_vix:.1f}): Standard position sizing")
+
+        # Log VIX stress to debug logger
+        if self.debug_logger:
+            self.debug_logger.log_vix_stress(
+                current_vix=current_vix,
+                stress_level=vix_stress_level,
+                stress_factor=vix_stress_factor
+            )
+
         # BACKTEST ADJUSTMENT: Reduce size for unproven strategies
         backtest_factor = 1.0
         if backtest_params and not backtest_params.get('is_proven'):
             backtest_factor = 0.5  # Half size for unproven strategies
             print(f"⚠️ Unproven strategy - reducing size by 50%")
 
-        # Adjusted position value
-        position_value = max_position_value * confidence_factor * vol_factor * backtest_factor
+        # Adjusted position value - now includes VIX stress factor
+        position_value = max_position_value * confidence_factor * vol_factor * backtest_factor * vix_stress_factor
 
         # Calculate contracts
         cost_per_contract = entry_price * self.multiplier
@@ -758,12 +788,15 @@ class SPXInstitutionalTrader:
             market_impact_warning = f"Large order ({contracts} contracts) may incur significant market impact"
 
         sizing_details = {
-            'methodology': 'Kelly-Backtest Hybrid',
+            'methodology': 'Kelly-Backtest-VIX Hybrid',
             'available_capital': available,
             'kelly_pct': kelly_pct * 100,
             'max_position_value': max_position_value,
             'confidence_factor': confidence_factor,
             'vol_factor': vol_factor,
+            'vix_stress_factor': vix_stress_factor,
+            'vix_stress_level': vix_stress_level,
+            'current_vix': current_vix,
             'backtest_factor': backtest_factor,
             'adjusted_position_value': position_value,
             'cost_per_contract': cost_per_contract,
@@ -1338,15 +1371,42 @@ class SPXInstitutionalTrader:
             return None
 
     def _get_vix(self) -> float:
-        """Get current VIX level"""
+        """
+        Get current VIX level using unified data provider.
+
+        Priority: Unified Provider (Tradier) > Polygon Fallback > Default
+
+        CRITICAL: VIX is used for:
+        - Regime classification (volatility regime)
+        - Position sizing stress factor
+        - Risk management decisions
+        """
         try:
+            # CRITICAL: Use unified data provider first (Tradier primary)
+            if UNIFIED_DATA_AVAILABLE:
+                vix_price = get_vix()
+                if vix_price and vix_price > 0:
+                    if self.debug_logger:
+                        self.debug_logger.log_debug(f"VIX from unified provider: {vix_price:.2f}")
+                    return vix_price
+
+            # Fallback to Polygon
             vix_price = polygon_fetcher.get_current_price('^VIX')
             if vix_price and vix_price > 0:
+                if self.debug_logger:
+                    self.debug_logger.log_debug(f"VIX from Polygon fallback: {vix_price:.2f}")
                 return vix_price
-            return 17.0  # Default
+
+            # Use conservative default if all sources fail
+            if self.debug_logger:
+                self.debug_logger.log_warning("VIX unavailable - using default 18.0")
+            return 18.0
+
         except Exception as e:
             print(f"⚠️ VIX fetch error: {e}")
-            return 17.0
+            if self.debug_logger:
+                self.debug_logger.log_error(f"VIX fetch error: {e}")
+            return 18.0
 
     def _get_spx_momentum(self) -> Dict:
         """Calculate SPX momentum from recent price action"""

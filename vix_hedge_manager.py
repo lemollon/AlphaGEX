@@ -165,44 +165,120 @@ class VIXHedgeManager:
 
         Returns:
             Dict with VIX spot, futures, term structure, etc.
+
+        NOTE ON VIX FUTURES:
+        - VIX M1/M2 futures require direct futures data feed
+        - If unavailable, we estimate using historical contango patterns:
+          - M1 typically trades ~5% above spot in normal markets
+          - M2 typically trades ~8% above spot
+          - During stress, VIX can go into backwardation (spot > futures)
+        - The 'is_estimated' flag indicates when estimates are used
         """
         try:
             # VIX spot - Try unified provider (Tradier) first
             vix_spot = None
+            vix_source = 'default'
+
             if UNIFIED_DATA_AVAILABLE:
                 vix_spot = get_vix()
+                if vix_spot and vix_spot > 0:
+                    vix_source = 'unified_provider'
 
             # Fallback to Polygon
             if (not vix_spot or vix_spot <= 0) and POLYGON_AVAILABLE:
                 vix_spot = polygon_fetcher.get_current_price('^VIX')
+                if vix_spot and vix_spot > 0:
+                    vix_source = 'polygon'
 
             if not vix_spot or vix_spot <= 0:
                 vix_spot = 18.0  # Reasonable default
+                vix_source = 'default'
 
-            # For VIX futures, we'd need futures data
-            # Using VIX9D (9-day) and VIX3M (3-month) as proxies if available
-            # For now, estimate from spot
-            vix_m1 = vix_spot * 1.05  # Typical contango ~5%
-            vix_m2 = vix_spot * 1.08  # ~8% for M2
+            # Try to get VVIX (volatility of VIX) for timing signals
+            vvix = None
+            vvix_source = 'none'
+            if POLYGON_AVAILABLE:
+                try:
+                    vvix = polygon_fetcher.get_current_price('^VVIX')
+                    if vvix and vvix > 0:
+                        vvix_source = 'polygon'
+                except:
+                    pass
+
+            # VIX FUTURES ESTIMATION
+            # CRITICAL: This is an estimate - real futures data would be better
+            # In normal markets: M1 ~5% contango, M2 ~8% contango
+            # During stress (VIX > 30): Often flat or backwardation
+            # During complacency (VIX < 15): Steep contango (7-10%)
+
+            is_estimated = True  # Flag for frontend to show "estimated" label
+            vix_m1 = None
+            vix_m2 = None
+
+            # Dynamic contango estimation based on VIX level
+            if vix_spot >= 35:
+                # Panic/crisis - often backwardation or flat
+                contango_m1 = -0.02  # -2% (backwardation)
+                contango_m2 = -0.01  # Slight backwardation
+            elif vix_spot >= 25:
+                # High stress - reduced contango
+                contango_m1 = 0.02  # 2%
+                contango_m2 = 0.04  # 4%
+            elif vix_spot >= 20:
+                # Elevated - normal contango
+                contango_m1 = 0.05  # 5%
+                contango_m2 = 0.08  # 8%
+            elif vix_spot >= 15:
+                # Normal - typical contango
+                contango_m1 = 0.05  # 5%
+                contango_m2 = 0.08  # 8%
+            else:
+                # Low/complacent - steep contango
+                contango_m1 = 0.07  # 7%
+                contango_m2 = 0.12  # 12%
+
+            vix_m1 = vix_spot * (1 + contango_m1)
+            vix_m2 = vix_spot * (1 + contango_m2)
 
             # Calculate term structure
-            if vix_spot > 0:
-                term_structure_m1 = ((vix_m1 - vix_spot) / vix_spot) * 100
-                term_structure_m2 = ((vix_m2 - vix_spot) / vix_spot) * 100
-            else:
-                term_structure_m1 = 5.0
-                term_structure_m2 = 8.0
+            term_structure_m1 = contango_m1 * 100  # As percentage
+            term_structure_m2 = contango_m2 * 100
 
-            # Determine if contango or backwardation
-            structure_type = "contango" if term_structure_m1 > 0 else "backwardation"
+            # Determine structure type
+            if term_structure_m1 > 1:
+                structure_type = "contango"
+            elif term_structure_m1 < -1:
+                structure_type = "backwardation"
+            else:
+                structure_type = "flat"
+
+            # VIX stress classification for trading decisions
+            if vix_spot >= 35:
+                vix_stress_level = "extreme"
+                position_size_multiplier = 0.25  # 75% reduction
+            elif vix_spot >= 28:
+                vix_stress_level = "high"
+                position_size_multiplier = 0.50  # 50% reduction
+            elif vix_spot >= 22:
+                vix_stress_level = "elevated"
+                position_size_multiplier = 0.75  # 25% reduction
+            else:
+                vix_stress_level = "normal"
+                position_size_multiplier = 1.0  # No reduction
 
             return {
                 'vix_spot': vix_spot,
+                'vix_source': vix_source,
                 'vix_m1': vix_m1,
                 'vix_m2': vix_m2,
+                'is_estimated': is_estimated,
                 'term_structure_m1_pct': term_structure_m1,
                 'term_structure_m2_pct': term_structure_m2,
                 'structure_type': structure_type,
+                'vvix': vvix,
+                'vvix_source': vvix_source,
+                'vix_stress_level': vix_stress_level,
+                'position_size_multiplier': position_size_multiplier,
                 'timestamp': datetime.now(CENTRAL_TZ).isoformat()
             }
 
@@ -210,6 +286,10 @@ class VIXHedgeManager:
             print(f"Error getting VIX data: {e}")
             return {
                 'vix_spot': 18.0,
+                'vix_source': 'default',
+                'is_estimated': True,
+                'vix_stress_level': 'unknown',
+                'position_size_multiplier': 0.5,  # Conservative on error
                 'error': str(e)
             }
 
