@@ -5,10 +5,10 @@ AlphaGEX Configuration File
 All tunable parameters, thresholds, and constants in one place.
 Modify these values to adjust system behavior without changing core code.
 
-Last updated: 2025-11-12
+Last updated: 2025-11-27
 """
 
-from typing import Dict
+from typing import Dict, List, Optional, Any
 import os
 
 
@@ -248,7 +248,7 @@ class SystemConfig:
 
 # ===== HELPER FUNCTIONS =====
 
-def get_gex_thresholds(symbol: str = 'SPY', avg_gex: float = None) -> Dict[str, float]:
+def get_gex_thresholds(symbol: str = 'SPY', avg_gex: Optional[float] = None) -> Dict[str, float]:
     """
     Get GEX thresholds - adaptive or fixed based on configuration
 
@@ -270,7 +270,7 @@ def get_gex_thresholds(symbol: str = 'SPY', avg_gex: float = None) -> Dict[str, 
         return GEXThresholdConfig.FIXED_THRESHOLDS.copy()
 
 
-def get_gamma_decay_pattern(vix: float = None, net_gex: float = None) -> Dict[int, float]:
+def get_gamma_decay_pattern(vix: Optional[float] = None, net_gex: Optional[float] = None) -> Dict[int, float]:
     """
     Get gamma decay pattern - adaptive or fixed based on configuration
 
@@ -301,7 +301,7 @@ def get_gamma_decay_pattern(vix: float = None, net_gex: float = None) -> Dict[in
     return GammaDecayConfig.BALANCED_PATTERN.copy()
 
 
-def get_vix_fallback(last_known_vix: float = None) -> float:
+def get_vix_fallback(last_known_vix: Optional[float] = None) -> float:
     """
     Get VIX fallback value when API fetch fails
 
@@ -325,9 +325,9 @@ def get_vix_fallback(last_known_vix: float = None) -> float:
 
 # ===== CONFIGURATION VALIDATION =====
 
-def validate_config():
-    """Validate configuration values"""
-    errors = []
+def validate_config() -> bool:
+    """Validate configuration values. Raises ValueError if invalid."""
+    errors: List[str] = []
 
     # Check that directional prediction weights sum to 100%
     total_weight = sum(DirectionalPredictionConfig.FACTOR_WEIGHTS.values())
