@@ -4,12 +4,12 @@ Uses REAL market data from yfinance for option pricing
 Finds at least 1 profitable SPY trade daily with detailed reasoning
 """
 
-import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import streamlit as st
 from config_and_database import DB_PATH
+from database_adapter import get_connection
 import yfinance as yf
 import numpy as np
 
@@ -388,13 +388,13 @@ class PaperTradingEngineV2:
 
     def _ensure_paper_trading_tables(self):
         """Create paper trading tables with enhanced fields for reasoning"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Enhanced positions table
         c.execute("""
             CREATE TABLE IF NOT EXISTS paper_positions_v2 (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 symbol TEXT NOT NULL,
                 strategy TEXT NOT NULL,
                 action TEXT NOT NULL,
@@ -437,15 +437,15 @@ class PaperTradingEngineV2:
         """)
 
         # Initialize config
-        c.execute("INSERT OR IGNORE INTO paper_config_v2 (key, value) VALUES (?, ?)",
+        c.execute("INSERT INTO paper_config_v2 (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                  ('enabled', 'true'))
-        c.execute("INSERT OR IGNORE INTO paper_config_v2 (key, value) VALUES (?, ?)",
-                 ('capital', str(initial_capital)))
-        c.execute("INSERT OR IGNORE INTO paper_config_v2 (key, value) VALUES (?, ?)",
+        c.execute("INSERT INTO paper_config_v2 (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+                 ('capital', str(self.initial_capital)))
+        c.execute("INSERT INTO paper_config_v2 (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                  ('max_exposure', '0.20'))  # Max 20% of capital at risk
-        c.execute("INSERT OR IGNORE INTO paper_config_v2 (key, value) VALUES (?, ?)",
+        c.execute("INSERT INTO paper_config_v2 (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                  ('max_position_size', '0.05'))  # Max 5% per position
-        c.execute("INSERT OR IGNORE INTO paper_config_v2 (key, value) VALUES (?, ?)",
+        c.execute("INSERT INTO paper_config_v2 (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                  ('auto_find_trades', 'true'))
 
         conn.commit()
@@ -552,7 +552,7 @@ class PaperTradingEngineV2:
         quantity = max(1, min(quantity, 50))  # Between 1 and 50 contracts
 
         # Store position with full reasoning
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -563,7 +563,8 @@ class PaperTradingEngineV2:
                 current_value, unrealized_pnl, status, opened_at, confidence_score,
                 entry_net_gex, entry_flip_point, trade_reasoning, contract_symbol,
                 entry_iv, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         """, (
             trade['symbol'],
             trade['strategy'],
@@ -593,7 +594,8 @@ class PaperTradingEngineV2:
             f"Auto-executed by trade finder. Target: ${trade.get('target_price', 0):.2f}"
         ))
 
-        position_id = c.lastrowid
+        result = c.fetchone()
+        position_id = result[0] if result else None
         conn.commit()
         conn.close()
 
@@ -601,17 +603,17 @@ class PaperTradingEngineV2:
 
     def get_config(self, key: str) -> str:
         """Get configuration value"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
-        c.execute("SELECT value FROM paper_config_v2 WHERE key = ?", (key,))
+        c.execute("SELECT value FROM paper_config_v2 WHERE key = %s", (key,))
         result = c.fetchone()
         conn.close()
         return result[0] if result else "0"
 
     def set_config(self, key: str, value: str):
         """Set configuration value"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO paper_config_v2 (key, value) VALUES (?, ?)", (key, value))
+        c.execute("INSERT INTO paper_config_v2 (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, value))
         conn.commit()
         conn.close()

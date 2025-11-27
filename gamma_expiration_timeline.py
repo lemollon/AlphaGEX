@@ -4,11 +4,11 @@ Tracks how gamma exposure changes as expiration approaches
 Helps understand dealer hedging behavior at different DTEs
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
@@ -68,7 +68,7 @@ def track_gamma_expiration_timeline():
             (46, 365, '45+ DTE')
         ]
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         timeline_count = 0
@@ -107,7 +107,7 @@ def track_gamma_expiration_timeline():
                     net_gamma, call_gamma, put_gamma, total_gamma_absolute,
                     spot_price, max_gamma_strike, max_gamma_value,
                     atm_gamma, gamma_pct_of_total
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 now.strftime('%Y-%m-%d %H:%M:%S'),
                 bucket_name,
@@ -151,7 +151,7 @@ def track_gamma_expiration_timeline():
 def log_simplified_gamma_timeline(gex_data: Dict):
     """Log simplified gamma timeline when detailed expiration data isn't available"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
         now = datetime.now(CENTRAL_TZ)
 
@@ -160,7 +160,7 @@ def log_simplified_gamma_timeline(gex_data: Dict):
             INSERT INTO gamma_expiration_timeline (
                 timestamp, dte_bucket, avg_dte, net_gamma, total_gamma_absolute,
                 spot_price
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s)
         """, (
             now.strftime('%Y-%m-%d %H:%M:%S'),
             'TOTAL',
@@ -188,7 +188,7 @@ def print_gamma_concentration_analysis(cursor):
             AVG(gamma_pct_of_total) as avg_pct,
             AVG(net_gamma) as avg_net_gamma
         FROM gamma_expiration_timeline
-        WHERE timestamp >= datetime('now', '-7 days')
+        WHERE timestamp >= NOW() - INTERVAL '7 days'
           AND dte_bucket != 'TOTAL'
         GROUP BY dte_bucket
         ORDER BY avg_pct DESC
@@ -208,7 +208,7 @@ def log_mock_gamma_timeline():
     try:
         import random
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
         now = datetime.now(CENTRAL_TZ)
 
@@ -227,7 +227,7 @@ def log_mock_gamma_timeline():
                 INSERT INTO gamma_expiration_timeline (
                     timestamp, dte_bucket, avg_dte, net_gamma,
                     total_gamma_absolute, spot_price, gamma_pct_of_total
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
                 now.strftime('%Y-%m-%d %H:%M:%S'),
                 bucket_name,

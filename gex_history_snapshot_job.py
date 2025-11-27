@@ -6,9 +6,9 @@ Saves hourly/daily GEX snapshots for historical analysis and backtesting
 Run this as a cron job or background task to accumulate GEX history over time.
 """
 
-import sqlite3
 from datetime import datetime
 from config_and_database import DB_PATH
+from database_adapter import get_connection
 from typing import Dict, Optional
 
 # Try to import GEX data source
@@ -114,14 +114,15 @@ def save_gex_snapshot(symbol: str = 'SPY') -> bool:
             return False
 
         # Save to database
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
             INSERT INTO gex_history (
                 timestamp, symbol, net_gex, flip_point, call_wall, put_wall,
                 spot_price, mm_state, regime, data_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         ''', (
             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             symbol,
@@ -135,8 +136,9 @@ def save_gex_snapshot(symbol: str = 'SPY') -> bool:
             gex_data['data_source']
         ))
 
+        result = c.fetchone()
+        snapshot_id = result[0] if result else None
         conn.commit()
-        snapshot_id = c.lastrowid
         conn.close()
 
         print(f"✅ GEX snapshot saved (ID: {snapshot_id})")
@@ -166,7 +168,7 @@ def get_gex_history(symbol: str = 'SPY', days: int = 30) -> list:
         List of GEX snapshots
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute('''
@@ -174,8 +176,8 @@ def get_gex_history(symbol: str = 'SPY', days: int = 30) -> list:
                 timestamp, net_gex, flip_point, call_wall, put_wall,
                 spot_price, mm_state, regime, data_source
             FROM gex_history
-            WHERE symbol = ?
-            AND timestamp >= datetime('now', '-' || ? || ' days')
+            WHERE symbol = %s
+            AND timestamp >= NOW() - INTERVAL '%s days'
             ORDER BY timestamp DESC
         ''', (symbol, days))
 

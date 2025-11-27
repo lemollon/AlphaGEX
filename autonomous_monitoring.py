@@ -4,12 +4,12 @@ Sends notifications when trades execute or errors occur
 """
 
 import smtplib
-import sqlite3
-from email.mime.text import EIMEText
+from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import json
+from database_adapter import get_connection
 
 
 class TraderMonitor:
@@ -41,7 +41,7 @@ class TraderMonitor:
     def check_for_new_trades(self) -> List[Dict]:
         """Check for trades executed in last 5 minutes"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_connection()
             cursor = conn.cursor()
 
             # Get trades from last 5 minutes
@@ -52,7 +52,7 @@ class TraderMonitor:
                     id, timestamp, symbol, action, option_type,
                     strike, quantity, entry_price, strategy_name
                 FROM trades
-                WHERE timestamp > ? AND status = 'OPEN'
+                WHERE timestamp > %s AND status = 'OPEN'
                 ORDER BY timestamp DESC
             """, (five_mins_ago,))
 
@@ -80,7 +80,7 @@ class TraderMonitor:
     def check_for_errors(self) -> List[Dict]:
         """Check for recent errors in logs"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_connection()
             cursor = conn.cursor()
 
             # Get errors from last hour
@@ -89,8 +89,8 @@ class TraderMonitor:
             cursor.execute("""
                 SELECT timestamp, log_type, reasoning_summary
                 FROM autonomous_trader_logs
-                WHERE timestamp > ?
-                AND (log_type LIKE '%ERROR%' OR log_type LIKE '%FAILURE%')
+                WHERE timestamp > %s
+                AND (log_type LIKE '%%ERROR%%' OR log_type LIKE '%%FAILURE%%')
                 ORDER BY timestamp DESC
                 LIMIT 10
             """, (one_hour_ago,))
@@ -113,7 +113,7 @@ class TraderMonitor:
     def get_daily_summary(self) -> Dict:
         """Get summary of today's trading activity"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_connection()
             cursor = conn.cursor()
 
             today = datetime.now().date().isoformat()
@@ -124,7 +124,7 @@ class TraderMonitor:
                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                        SUM(realized_pnl) as total_pnl
                 FROM trades
-                WHERE DATE(timestamp) = ?
+                WHERE DATE(timestamp) = %s
             """, (today,))
 
             row = cursor.fetchone()

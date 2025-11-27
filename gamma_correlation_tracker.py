@@ -3,27 +3,27 @@ Gamma Correlation Tracker - Log gamma decay vs actual price moves
 Enables backtesting and threshold refinement
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 import pytz
 from typing import Dict, Optional
 import pandas as pd
+from database_adapter import get_connection
 
 class GammaCorrelationTracker:
     """Track correlation between gamma decay and actual market moves"""
 
-    def __init__(self, db_path='gamma_correlation.db'):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        # db_path is ignored, using PostgreSQL via get_connection()
         self._init_database()
 
     def _init_database(self):
         """Create correlation tracking table"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS gamma_correlation (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             timestamp TEXT NOT NULL,
             symbol TEXT NOT NULL,
             day_of_week TEXT,
@@ -52,7 +52,7 @@ class GammaCorrelationTracker:
             pnl_pct REAL,
 
             -- Status
-            filled BOOLEAN DEFAULT 0,
+            filled BOOLEAN DEFAULT FALSE,
             notes TEXT,
 
             UNIQUE(symbol, timestamp)
@@ -85,16 +85,18 @@ class GammaCorrelationTracker:
         timestamp = datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d')
         day_of_week = datetime.now(pytz.timezone('America/New_York')).strftime('%A')
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         try:
             cursor.execute('''
-            INSERT OR REPLACE INTO gamma_correlation
+            INSERT INTO gamma_correlation
             (timestamp, symbol, day_of_week, gamma_decay_pct, weekly_decay_pct, risk_level,
              vix, today_total_gamma, tomorrow_total_gamma, expiring_gamma,
              next_day_open, filled)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+            ON CONFLICT (symbol, timestamp) DO NOTHING
+            RETURNING id
             ''', (
                 timestamp,
                 symbol,
@@ -109,11 +111,12 @@ class GammaCorrelationTracker:
                 current_price  # Use as baseline for next day calculation
             ))
 
+            result = cursor.fetchone()
             conn.commit()
-            return cursor.lastrowid
+            return result[0] if result else None
 
-        except sqlite3.IntegrityError:
-            # Already logged today
+        except Exception:
+            # Already logged today or other error
             pass
         finally:
             conn.close()
@@ -132,13 +135,13 @@ class GammaCorrelationTracker:
                 'low': float
             }
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         # Get original entry
         cursor.execute('''
         SELECT id, next_day_open FROM gamma_correlation
-        WHERE symbol = ? AND timestamp = ? AND filled = 0
+        WHERE symbol = %s AND timestamp = %s AND filled = FALSE
         ''', (symbol, date))
 
         result = cursor.fetchone()
@@ -162,15 +165,15 @@ class GammaCorrelationTracker:
 
         cursor.execute('''
         UPDATE gamma_correlation
-        SET next_day_open = ?,
-            next_day_close = ?,
-            next_day_high = ?,
-            next_day_low = ?,
-            actual_price_move_pct = ?,
-            actual_intraday_range_pct = ?,
-            actual_realized_vol = ?,
-            filled = 1
-        WHERE id = ?
+        SET next_day_open = %s,
+            next_day_close = %s,
+            next_day_high = %s,
+            next_day_low = %s,
+            actual_price_move_pct = %s,
+            actual_intraday_range_pct = %s,
+            actual_realized_vol = %s,
+            filled = TRUE
+        WHERE id = %s
         ''', (
             open_price,
             close_price,
@@ -187,15 +190,15 @@ class GammaCorrelationTracker:
 
     def log_trade_outcome(self, symbol: str, date: str, strategy: str, pnl: float, pnl_pct: float):
         """Log if we actually traded this setup"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
         UPDATE gamma_correlation
-        SET strategy_taken = ?,
-            pnl = ?,
-            pnl_pct = ?
-        WHERE symbol = ? AND timestamp = ?
+        SET strategy_taken = %s,
+            pnl = %s,
+            pnl_pct = %s
+        WHERE symbol = %s AND timestamp = %s
         ''', (strategy, pnl, pnl_pct, symbol, date))
 
         conn.commit()
@@ -207,7 +210,7 @@ class GammaCorrelationTracker:
 
         Returns DataFrame with correlations, averages, etc.
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
 
         query = '''
         SELECT
@@ -221,16 +224,16 @@ class GammaCorrelationTracker:
             strategy_taken,
             pnl_pct
         FROM gamma_correlation
-        WHERE filled = 1
+        WHERE filled = TRUE
         '''
 
         if symbol:
             query += f" AND symbol = '{symbol}'"
 
-        query += f" AND timestamp >= date('now', '-{days} days')"
+        query += f" AND timestamp >= NOW() - INTERVAL '{days} days'"
         query += " ORDER BY timestamp DESC"
 
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query, conn.raw_connection)
         conn.close()
 
         if df.empty:
@@ -286,17 +289,17 @@ class GammaCorrelationTracker:
 
         Returns recommended threshold adjustments based on actual data
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
 
         query = f'''
         SELECT gamma_decay_pct, actual_intraday_range_pct, actual_realized_vol
         FROM gamma_correlation
-        WHERE symbol = '{symbol}' AND filled = 1
-        AND timestamp >= date('now', '-{days} days')
+        WHERE symbol = '{symbol}' AND filled = TRUE
+        AND timestamp >= NOW() - INTERVAL '{days} days'
         ORDER BY gamma_decay_pct
         '''
 
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query, conn.raw_connection)
         conn.close()
 
         if len(df) < 10:

@@ -3,12 +3,12 @@ Paper Trading Engine with Auto-Execution
 Automatically trades SPY based on AlphaGEX strategies for performance testing
 """
 
-import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import streamlit as st
 from config_and_database import DB_PATH
+from database_adapter import get_connection
 from core_classes_and_engines import BlackScholesPricer
 import numpy as np
 
@@ -102,13 +102,13 @@ class PaperTradingEngine:
 
     def _ensure_paper_trading_tables(self):
         """Create or update paper trading tables"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Paper positions table with expiration dates
         c.execute("""
             CREATE TABLE IF NOT EXISTS paper_positions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 symbol TEXT NOT NULL,
                 strategy TEXT NOT NULL,
                 action TEXT NOT NULL,
@@ -138,7 +138,7 @@ class PaperTradingEngine:
         # Paper trading performance table
         c.execute("""
             CREATE TABLE IF NOT EXISTS paper_performance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 date TEXT NOT NULL,
                 total_capital REAL NOT NULL,
                 open_positions INTEGER,
@@ -163,15 +163,15 @@ class PaperTradingEngine:
         """)
 
         # Initialize config if not exists
-        c.execute("INSERT OR IGNORE INTO paper_config (key, value) VALUES (?, ?)",
+        c.execute("INSERT INTO paper_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                  ('enabled', 'false'))
-        c.execute("INSERT OR IGNORE INTO paper_config (key, value) VALUES (?, ?)",
-                 ('capital', str(initial_capital)))
-        c.execute("INSERT OR IGNORE INTO paper_config (key, value) VALUES (?, ?)",
+        c.execute("INSERT INTO paper_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+                 ('capital', str(self.initial_capital)))
+        c.execute("INSERT INTO paper_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                  ('min_confidence', '70'))
-        c.execute("INSERT OR IGNORE INTO paper_config (key, value) VALUES (?, ?)",
+        c.execute("INSERT INTO paper_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                  ('max_position_size', '0.10'))  # 10% max per position
-        c.execute("INSERT OR IGNORE INTO paper_config (key, value) VALUES (?, ?)",
+        c.execute("INSERT INTO paper_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                  ('auto_execute', 'false'))
 
         conn.commit()
@@ -179,18 +179,18 @@ class PaperTradingEngine:
 
     def get_config(self, key: str) -> str:
         """Get configuration value"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
-        c.execute("SELECT value FROM paper_config WHERE key = ?", (key,))
+        c.execute("SELECT value FROM paper_config WHERE key = %s", (key,))
         result = c.fetchone()
         conn.close()
         return result[0] if result else None
 
     def set_config(self, key: str, value: str):
         """Set configuration value"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO paper_config (key, value) VALUES (?, ?)", (key, value))
+        c.execute("INSERT INTO paper_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, value))
         conn.commit()
         conn.close()
 
@@ -207,13 +207,13 @@ class PaperTradingEngine:
         total_capital = float(self.get_config('capital'))
 
         # Get current open positions value
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         query = """
             SELECT SUM(ABS(entry_premium * quantity))
             FROM paper_positions
             WHERE status = 'OPEN'
         """
-        result = pd.read_sql_query(query, conn)
+        result = pd.read_sql_query(query, conn.raw_connection)
         conn.close()
 
         used_capital = result.iloc[0, 0] if not result.iloc[0, 0] is None else 0
@@ -335,7 +335,7 @@ class PaperTradingEngine:
         elif 'SPREAD' in action.upper() or 'CONDOR' in action.upper():
             option_type = 'spread'
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         c.execute("""
@@ -344,7 +344,8 @@ class PaperTradingEngine:
                 expiration_date, dte, entry_spot_price, entry_premium, current_value,
                 unrealized_pnl, status, opened_at, confidence_score, entry_net_gex,
                 entry_flip_point, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         """, (
             symbol,
             setup.get('strategy', 'Unknown'),
@@ -367,7 +368,8 @@ class PaperTradingEngine:
             setup.get('reasoning', '')
         ))
 
-        position_id = c.lastrowid
+        result = c.fetchone()
+        position_id = result[0] if result else None
         conn.commit()
         conn.close()
 
@@ -375,13 +377,13 @@ class PaperTradingEngine:
 
     def update_position_value(self, position_id: int, current_spot_price: float):
         """Update the current value and P&L of a position"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get position details
         c.execute("""
             SELECT strike, option_type, expiration_date, entry_premium, quantity, entry_spot_price
-            FROM paper_positions WHERE id = ? AND status = 'OPEN'
+            FROM paper_positions WHERE id = %s AND status = 'OPEN'
         """, (position_id,))
 
         result = c.fetchone()
@@ -426,8 +428,8 @@ class PaperTradingEngine:
         # Update database
         c.execute("""
             UPDATE paper_positions
-            SET current_value = ?, unrealized_pnl = ?
-            WHERE id = ?
+            SET current_value = %s, unrealized_pnl = %s
+            WHERE id = %s
         """, (current_value, unrealized_pnl, position_id))
 
         conn.commit()
@@ -482,13 +484,13 @@ class PaperTradingEngine:
 
     def close_position(self, position_id: int, exit_reason: str = "Manual close"):
         """Close a paper trading position"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get current position value
         c.execute("""
             SELECT current_value, entry_premium, quantity, unrealized_pnl
-            FROM paper_positions WHERE id = ? AND status = 'OPEN'
+            FROM paper_positions WHERE id = %s AND status = 'OPEN'
         """, (position_id,))
 
         result = c.fetchone()
@@ -505,11 +507,11 @@ class PaperTradingEngine:
         c.execute("""
             UPDATE paper_positions
             SET status = 'CLOSED',
-                closed_at = ?,
-                exit_price = ?,
-                realized_pnl = ?,
-                exit_reason = ?
-            WHERE id = ?
+                closed_at = %s,
+                exit_price = %s,
+                realized_pnl = %s,
+                exit_reason = %s
+            WHERE id = %s
         """, (
             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             exit_price,
@@ -526,10 +528,10 @@ class PaperTradingEngine:
         if not self.is_auto_execute_enabled():
             return []
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         positions = pd.read_sql_query("""
             SELECT * FROM paper_positions WHERE status = 'OPEN'
-        """, conn)
+        """, conn.raw_connection)
         conn.close()
 
         actions_taken = []
@@ -547,10 +549,10 @@ class PaperTradingEngine:
                     self.update_position_value(position['id'], current_spot)
 
                     # Re-fetch position with updated values
-                    conn = sqlite3.connect(self.db_path)
+                    conn = get_connection()
                     updated_position = pd.read_sql_query(
-                        "SELECT * FROM paper_positions WHERE id = ?",
-                        conn, params=(position['id'],)
+                        "SELECT * FROM paper_positions WHERE id = %s",
+                        conn.raw_connection, params=(position['id'],)
                     ).iloc[0]
                     conn.close()
 
@@ -602,11 +604,11 @@ class PaperTradingEngine:
             return False
 
         # Check if we already have a similar open position
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
         similar_positions = pd.read_sql_query("""
             SELECT COUNT(*) as count FROM paper_positions
-            WHERE status = 'OPEN' AND symbol = ? AND strategy = ?
-        """, conn, params=(setup.get('symbol', 'SPY'), setup.get('strategy', '')))
+            WHERE status = 'OPEN' AND symbol = %s AND strategy = %s
+        """, conn.raw_connection, params=(setup.get('symbol', 'SPY'), setup.get('strategy', '')))
         conn.close()
 
         if similar_positions.iloc[0]['count'] > 0:
@@ -616,17 +618,17 @@ class PaperTradingEngine:
 
     def get_performance_summary(self) -> Dict:
         """Get overall paper trading performance"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_connection()
 
         # Get all closed positions
         closed_positions = pd.read_sql_query("""
             SELECT * FROM paper_positions WHERE status = 'CLOSED'
-        """, conn)
+        """, conn.raw_connection)
 
         # Get open positions
         open_positions = pd.read_sql_query("""
             SELECT * FROM paper_positions WHERE status = 'OPEN'
-        """, conn)
+        """, conn.raw_connection)
 
         conn.close()
 

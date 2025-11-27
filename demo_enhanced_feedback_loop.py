@@ -20,7 +20,7 @@ from psychology_trap_detector import (
     calculate_breakout_rejection_probability
 )
 from config_and_database import DB_PATH
-import sqlite3
+from database_adapter import get_connection
 
 
 def demo_enhanced_feedback_loop():
@@ -33,11 +33,11 @@ def demo_enhanced_feedback_loop():
 
     # Step 1: Load latest options data
     print("📊 Step 1: Loading latest options data...")
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
 
     # Get most recent data date
     query = "SELECT MAX(timestamp) as latest FROM option_chain"
-    latest_timestamp = pd.read_sql(query, conn)['latest'].iloc[0]
+    latest_timestamp = pd.read_sql(query, conn.raw_connection)['latest'].iloc[0]
 
     # Load options data for latest timestamp
     query = f"""
@@ -46,7 +46,7 @@ def demo_enhanced_feedback_loop():
         FROM option_chain
         WHERE timestamp = '{latest_timestamp}'
     """
-    options_df = pd.read_sql(query, conn)
+    options_df = pd.read_sql(query, conn.raw_connection)
     conn.close()
 
     if options_df.empty:
