@@ -146,6 +146,9 @@ export default function AutonomousTrader() {
   const [closedTrades, setClosedTrades] = useState<any[]>([])
   const [showClosedTrades, setShowClosedTrades] = useState(true)
 
+  // Data verification timestamps
+  const [lastDataFetch, setLastDataFetch] = useState<Date | null>(null)
+
   // ML Model state
   const [mlModelStatus, setMlModelStatus] = useState<any>(null)
   const [mlPredictions, setMlPredictions] = useState<any[]>([])
@@ -471,6 +474,7 @@ export default function AutonomousTrader() {
         // Keep default/empty state on error
       } finally {
         setLoading(false)
+        setLastDataFetch(new Date())
       }
     }
 
@@ -698,6 +702,7 @@ export default function AutonomousTrader() {
         })
         setEquityCurve(curveData)
       }
+      setLastDataFetch(new Date())
     } catch (error) {
       console.error('Error refreshing data:', error)
     }
@@ -767,6 +772,11 @@ export default function AutonomousTrader() {
         <div>
           <h1 className="text-3xl font-bold text-text-primary">SPY Autonomous Trader</h1>
           <p className="text-text-secondary mt-1">$1M capital management for autonomous trading strategies</p>
+          {lastDataFetch && (
+            <p className="text-xs text-text-muted mt-1">
+              Data last updated: {lastDataFetch.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {/* WebSocket Connection Indicator */}
@@ -1536,7 +1546,7 @@ export default function AutonomousTrader() {
           <div className="flex items-center gap-3">
             <span className="text-xs text-text-muted">Click toggle to enable/disable</span>
             <span className="text-xs text-text-muted">|</span>
-            <span className="text-xs text-text-muted">From trade database</span>
+            <span className="text-xs text-success">✓ Live from database ({strategies.reduce((sum, s) => sum + s.total_trades, 0)} total trades)</span>
           </div>
         </div>
         {strategies.length > 0 ? (

@@ -4588,8 +4588,8 @@ async def get_competition_leaderboard():
                 CASE WHEN total_trades > 0 THEN winning_trades::float / total_trades ELSE 0 END as win_rate,
                 COALESCE(total_pnl, 0) as total_pnl,
                 COALESCE(avg_pnl, 0) as avg_pnl,
-                5000 as starting_capital,
-                5000 + COALESCE(total_pnl, 0) as current_capital,
+                1000000 as starting_capital,
+                1000000 + COALESCE(total_pnl, 0) as current_capital,
                 0 as sharpe_ratio,
                 first_trade,
                 last_trade
