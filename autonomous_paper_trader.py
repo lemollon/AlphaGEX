@@ -793,6 +793,118 @@ class AutonomousPaperTrader:
         # All risk checks passed - can trade
         return True
 
+    def get_backtest_validation_for_pattern(self, pattern: str, min_trades: int = 5) -> Dict:
+        """
+        Get backtest validation for a pattern from historical backtest results.
+
+        Similar to SPX institutional trader - uses backtest data to validate pattern.
+
+        Args:
+            pattern: The strategy/pattern name
+            min_trades: Minimum trades required to consider "validated"
+
+        Returns:
+            {
+                'is_validated': bool,
+                'win_rate': float,
+                'expectancy': float,
+                'total_trades': int,
+                'should_trade': bool,
+                'reason': str,
+                'source': str  # 'backtest' or 'live_trades' or 'none'
+            }
+        """
+        conn = get_connection()
+        c = conn.cursor()
+
+        result = {
+            'is_validated': False,
+            'win_rate': 0.0,
+            'expectancy': 0.0,
+            'total_trades': 0,
+            'should_trade': True,  # Default to allowing trade
+            'reason': 'No historical data',
+            'source': 'none'
+        }
+
+        try:
+            # FIRST: Check backtest_results table for historical validation
+            c.execute("""
+                SELECT
+                    strategy_name, total_trades, winning_trades,
+                    win_rate, expectancy_pct, sharpe_ratio
+                FROM backtest_results
+                WHERE LOWER(strategy_name) LIKE LOWER(%s)
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (f'%{pattern}%',))
+
+            row = c.fetchone()
+
+            if row:
+                result['source'] = 'backtest'
+                result['total_trades'] = row[1] or 0
+                result['win_rate'] = float(row[3]) if row[3] else 0.0
+                result['expectancy'] = float(row[4]) if row[4] else 0.0
+
+                if result['total_trades'] >= min_trades:
+                    result['is_validated'] = True
+
+                    # Check if pattern has positive expectancy
+                    if result['expectancy'] < -5.0:  # Negative expectancy threshold
+                        result['should_trade'] = False
+                        result['reason'] = f"Pattern has negative expectancy ({result['expectancy']:.1f}%)"
+                    elif result['win_rate'] < 35.0:  # Win rate threshold
+                        result['should_trade'] = False
+                        result['reason'] = f"Pattern has low win rate ({result['win_rate']:.0f}%)"
+                    else:
+                        result['reason'] = f"Validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate"
+                else:
+                    result['reason'] = f"Insufficient data: only {result['total_trades']} trades (need {min_trades})"
+
+                conn.close()
+                return result
+
+            # SECOND: Fall back to live trading results
+            c.execute("""
+                SELECT
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+                    AVG(realized_pnl_pct) as expectancy
+                FROM autonomous_closed_trades
+                WHERE LOWER(strategy) LIKE LOWER(%s)
+            """, (f'%{pattern}%',))
+
+            row = c.fetchone()
+
+            if row and row[0] and row[0] > 0:
+                result['source'] = 'live_trades'
+                result['total_trades'] = row[0]
+                result['win_rate'] = (row[1] / row[0] * 100) if row[0] > 0 else 0
+                result['expectancy'] = float(row[2]) if row[2] else 0.0
+
+                if result['total_trades'] >= min_trades:
+                    result['is_validated'] = True
+
+                    if result['expectancy'] < -5.0:
+                        result['should_trade'] = False
+                        result['reason'] = f"Live results show negative expectancy ({result['expectancy']:.1f}%)"
+                    elif result['win_rate'] < 35.0:
+                        result['should_trade'] = False
+                        result['reason'] = f"Live results show low win rate ({result['win_rate']:.0f}%)"
+                    else:
+                        result['reason'] = f"Live validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate"
+                else:
+                    result['reason'] = f"Limited live data: {result['total_trades']} trades"
+
+        except Exception as e:
+            logger.warning(f"Error getting backtest validation for {pattern}: {e}")
+            result['reason'] = f"Error querying history: {str(e)}"
+        finally:
+            conn.close()
+
+        return result
+
     def get_available_capital(self) -> float:
         """Calculate available capital"""
         total_capital = float(self.get_config('capital'))
@@ -3088,6 +3200,29 @@ This trade ensures we're always active in the market"""
             )
             self._log_trade_activity('ERROR', 'SPY', f"Trade rejected - entry price is $0 for {trade['strategy']}", None, None, False, "Entry price validation failed")
             return None
+
+        # BACKTEST VALIDATION: Check historical performance before trading
+        # Similar to SPX institutional trader - don't trade patterns with negative expectancy
+        strategy_name = trade.get('strategy', '')
+        backtest_validation = self.get_backtest_validation_for_pattern(strategy_name)
+
+        if not backtest_validation['should_trade']:
+            self.log_action(
+                'SKIP',
+                f"Pattern '{strategy_name}' blocked by backtest validation: {backtest_validation['reason']}",
+                success=True  # Successful risk management decision
+            )
+            self._log_trade_activity(
+                'RISK_CHECK', 'SPY',
+                f"Trade blocked - {backtest_validation['reason']} (Source: {backtest_validation['source']})",
+                None, None, True, None
+            )
+            logger.info(f"Trade blocked by backtest validation: {strategy_name} - {backtest_validation['reason']}")
+            return None
+
+        # Log if pattern is validated (for transparency)
+        if backtest_validation['is_validated']:
+            logger.info(f"Pattern validated: {strategy_name} - {backtest_validation['reason']} (win_rate: {backtest_validation['win_rate']:.1f}%, expectancy: {backtest_validation['expectancy']:.2f}%)")
 
         # CRITICAL: Check for duplicate trades to prevent race condition
         # Check if we already have a position with same symbol, strike, option_type, expiration today

@@ -4622,7 +4622,7 @@ async def get_competition_leaderboard():
 
 @app.get("/api/autonomous/backtests/all-patterns")
 async def get_all_pattern_backtests(lookback_days: int = 90):
-    """Get backtest results for all patterns"""
+    """Get backtest results for all patterns - combines actual backtest data with live trading results"""
     if not trader_available:
         return {"success": False, "message": "Trader not configured", "data": []}
 
@@ -4632,56 +4632,102 @@ async def get_all_pattern_backtests(lookback_days: int = 90):
         conn = get_connection()
 
         start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
-
-        # Get pattern performance from closed trades with full metrics
-        query = """
-            SELECT
-                strategy as pattern,
-                COUNT(*) as total_signals,
-                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_signals,
-                SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losing_signals,
-                CASE WHEN COUNT(*) > 0 THEN
-                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*) * 100
-                ELSE 0 END as win_rate,
-                AVG(realized_pnl_pct) as expectancy,
-                SUM(realized_pnl) as total_pnl,
-                AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl_pct ELSE NULL END) as avg_profit_pct,
-                AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl_pct ELSE NULL END) as avg_loss_pct,
-                STDDEV(realized_pnl_pct) as std_dev,
-                CASE WHEN SUM(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl) ELSE 0 END) > 0 THEN
-                    SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END) /
-                    NULLIF(SUM(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl) ELSE 0 END), 0)
-                ELSE 0 END as profit_factor
-            FROM autonomous_closed_trades
-            WHERE exit_date >= %s
-            GROUP BY strategy
-            ORDER BY win_rate DESC
-        """
-        patterns = pd.read_sql_query(query, conn, params=(start_date,))
-        conn.close()
-
         results = []
-        for _, row in patterns.iterrows():
-            # Calculate Sharpe ratio approximation: (expectancy / std_dev) * sqrt(252)
-            std_dev = float(row['std_dev']) if row['std_dev'] and not pd.isna(row['std_dev']) else 1
-            expectancy = float(row['expectancy']) if row['expectancy'] else 0
-            sharpe_ratio = (expectancy / std_dev) * (252 ** 0.5) if std_dev > 0 else 0
+        data_source = "none"
 
-            results.append({
-                "pattern": row['pattern'],
-                "total_signals": int(row['total_signals']),
-                "winning_signals": int(row['winning_signals']),
-                "losing_signals": int(row['losing_signals']),
-                "win_rate": float(row['win_rate']) if row['win_rate'] else 0,
-                "expectancy": expectancy,
-                "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0,
-                "avg_profit_pct": float(row['avg_profit_pct']) if row['avg_profit_pct'] and not pd.isna(row['avg_profit_pct']) else 0,
-                "avg_loss_pct": float(row['avg_loss_pct']) if row['avg_loss_pct'] and not pd.isna(row['avg_loss_pct']) else 0,
-                "profit_factor": float(row['profit_factor']) if row['profit_factor'] and not pd.isna(row['profit_factor']) else 0,
-                "sharpe_ratio": round(sharpe_ratio, 2)
-            })
+        # FIRST: Try to get data from actual backtest_results table (validated historical backtests)
+        try:
+            backtest_query = """
+                SELECT
+                    strategy_name as pattern,
+                    total_trades as total_signals,
+                    winning_trades as winning_signals,
+                    losing_trades as losing_signals,
+                    win_rate,
+                    expectancy_pct as expectancy,
+                    total_return_pct as total_pnl,
+                    avg_win_pct as avg_profit_pct,
+                    avg_loss_pct,
+                    sharpe_ratio,
+                    max_drawdown_pct,
+                    timestamp
+                FROM backtest_results
+                WHERE timestamp >= %s
+                ORDER BY win_rate DESC
+            """
+            backtest_data = pd.read_sql_query(backtest_query, conn, params=(start_date,))
 
-        return {"success": True, "data": results}
+            if not backtest_data.empty:
+                data_source = "backtest"
+                for _, row in backtest_data.iterrows():
+                    results.append({
+                        "pattern": row['pattern'],
+                        "total_signals": int(row['total_signals']) if row['total_signals'] else 0,
+                        "winning_signals": int(row['winning_signals']) if row['winning_signals'] else 0,
+                        "losing_signals": int(row['losing_signals']) if row['losing_signals'] else 0,
+                        "win_rate": float(row['win_rate']) if row['win_rate'] else 0,
+                        "expectancy": float(row['expectancy']) if row['expectancy'] else 0,
+                        "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0,
+                        "avg_profit_pct": float(row['avg_profit_pct']) if row['avg_profit_pct'] and not pd.isna(row['avg_profit_pct']) else 0,
+                        "avg_loss_pct": float(row['avg_loss_pct']) if row['avg_loss_pct'] and not pd.isna(row['avg_loss_pct']) else 0,
+                        "profit_factor": 0,  # Not in backtest_results, calculate if needed
+                        "sharpe_ratio": float(row['sharpe_ratio']) if row['sharpe_ratio'] and not pd.isna(row['sharpe_ratio']) else 0,
+                        "source": "backtest"
+                    })
+        except Exception as e:
+            print(f"Backtest results query failed: {e}")
+
+        # SECOND: If no backtest data, fall back to live trading results from autonomous_closed_trades
+        if not results:
+            live_query = """
+                SELECT
+                    strategy as pattern,
+                    COUNT(*) as total_signals,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_signals,
+                    SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losing_signals,
+                    CASE WHEN COUNT(*) > 0 THEN
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*) * 100
+                    ELSE 0 END as win_rate,
+                    AVG(realized_pnl_pct) as expectancy,
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl_pct ELSE NULL END) as avg_profit_pct,
+                    AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl_pct ELSE NULL END) as avg_loss_pct,
+                    STDDEV(realized_pnl_pct) as std_dev,
+                    CASE WHEN SUM(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl) ELSE 0 END) > 0 THEN
+                        SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END) /
+                        NULLIF(SUM(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl) ELSE 0 END), 0)
+                    ELSE 0 END as profit_factor
+                FROM autonomous_closed_trades
+                WHERE exit_date >= %s
+                GROUP BY strategy
+                ORDER BY win_rate DESC
+            """
+            patterns = pd.read_sql_query(live_query, conn, params=(start_date,))
+
+            if not patterns.empty:
+                data_source = "live_trades"
+                for _, row in patterns.iterrows():
+                    std_dev = float(row['std_dev']) if row['std_dev'] and not pd.isna(row['std_dev']) else 1
+                    expectancy = float(row['expectancy']) if row['expectancy'] else 0
+                    sharpe_ratio = (expectancy / std_dev) * (252 ** 0.5) if std_dev > 0 else 0
+
+                    results.append({
+                        "pattern": row['pattern'],
+                        "total_signals": int(row['total_signals']),
+                        "winning_signals": int(row['winning_signals']),
+                        "losing_signals": int(row['losing_signals']),
+                        "win_rate": float(row['win_rate']) if row['win_rate'] else 0,
+                        "expectancy": expectancy,
+                        "total_pnl": float(row['total_pnl']) if row['total_pnl'] else 0,
+                        "avg_profit_pct": float(row['avg_profit_pct']) if row['avg_profit_pct'] and not pd.isna(row['avg_profit_pct']) else 0,
+                        "avg_loss_pct": float(row['avg_loss_pct']) if row['avg_loss_pct'] and not pd.isna(row['avg_loss_pct']) else 0,
+                        "profit_factor": float(row['profit_factor']) if row['profit_factor'] and not pd.isna(row['profit_factor']) else 0,
+                        "sharpe_ratio": round(sharpe_ratio, 2),
+                        "source": "live_trades"
+                    })
+
+        conn.close()
+        return {"success": True, "data": results, "data_source": data_source}
     except Exception as e:
         print(f"Error getting pattern backtests: {e}")
         return {"success": False, "data": [], "error": str(e)}
