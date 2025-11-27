@@ -157,8 +157,10 @@ export const apiClient = {
   getCompetitionLeaderboard: () => api.get('/api/autonomous/competition/leaderboard'),
   getStrategyPerformance: (strategyId: string) => api.get(`/api/autonomous/competition/strategy/${strategyId}`),
   getCompetitionSummary: () => api.get('/api/autonomous/competition/summary'),
-  getAllPatternBacktests: (lookbackDays: number = 90) =>
-    api.get('/api/autonomous/backtests/all-patterns', { params: { lookback_days: lookbackDays } }),
+  getAllPatternBacktests: (lookbackDays: number = 90, save: boolean = false) =>
+    api.get('/api/autonomous/backtests/all-patterns', { params: { lookback_days: lookbackDays, save } }),
+  runAndSaveBacktests: (lookbackDays: number = 90) =>
+    api.post('/api/autonomous/backtests/run-and-save', {}, { params: { lookback_days: lookbackDays } }),
   getPatternBacktest: (patternName: string, lookbackDays: number = 90) =>
     api.get(`/api/autonomous/backtests/pattern/${patternName}`, { params: { lookback_days: lookbackDays } }),
   getLiberationAccuracy: (lookbackDays: number = 90) =>

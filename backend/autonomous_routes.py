@@ -321,9 +321,13 @@ async def get_data_status():
 # ============================================================================
 
 @router.get("/backtests/all-patterns")
-async def get_all_pattern_backtests(lookback_days: int = Query(90, ge=7, le=365)):
+async def get_all_pattern_backtests(lookback_days: int = Query(90, ge=7, le=365), save: bool = Query(False)):
     """
     Run backtest on all psychology trap patterns
+
+    Args:
+        lookback_days: Number of days to analyze (default 90)
+        save: If True, saves results to backtest_results table (default False)
 
     Returns ranked results by expectancy
     """
@@ -331,12 +335,54 @@ async def get_all_pattern_backtests(lookback_days: int = Query(90, ge=7, le=365)
         from autonomous_backtest_engine import get_backtester
 
         backtester = get_backtester()
-        results = backtester.backtest_all_patterns(lookback_days=lookback_days)
+
+        if save:
+            # Use the new method that saves to database
+            results = backtester.backtest_all_patterns_and_save(lookback_days=lookback_days, save_to_db=True)
+            message = f"Backtest complete and saved to database"
+        else:
+            results = backtester.backtest_all_patterns(lookback_days=lookback_days)
+            message = f"Backtest complete (not saved to database - add ?save=true to persist)"
 
         return {
             'success': True,
             'data': results,
-            'count': len(results)
+            'count': len(results),
+            'saved': save,
+            'message': message
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/backtests/run-and-save")
+async def run_and_save_backtests(lookback_days: int = Query(90, ge=7, le=365)):
+    """
+    Run all pattern backtests AND save results to backtest_results table.
+
+    This endpoint populates the backtest_results table which is used by:
+    - Trader page for pattern validation
+    - get_backtest_validation_for_pattern() in autonomous_paper_trader
+    - Pattern selection and confidence adjustments
+
+    Call this endpoint periodically (daily) to keep backtest data fresh.
+    """
+    try:
+        from autonomous_backtest_engine import get_backtester
+
+        backtester = get_backtester()
+        results = backtester.backtest_all_patterns_and_save(lookback_days=lookback_days, save_to_db=True)
+
+        # Count patterns with data
+        patterns_with_data = sum(1 for r in results if r.get('total_signals', 0) > 0)
+
+        return {
+            'success': True,
+            'message': f"Backtest complete - {patterns_with_data} patterns saved to database",
+            'total_patterns': len(results),
+            'patterns_with_data': patterns_with_data,
+            'data': results
         }
 
     except Exception as e:

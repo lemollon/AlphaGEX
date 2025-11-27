@@ -133,6 +133,7 @@ export default function AutonomousTrader() {
   const [competitionLeaderboard, setCompetitionLeaderboard] = useState<any[]>([])
   const [backtestResults, setBacktestResults] = useState<any[]>([])
   const [backtestDataSource, setBacktestDataSource] = useState<string>('none')
+  const [backtestRefreshing, setBacktestRefreshing] = useState(false)
   const [riskStatus, setRiskStatus] = useState<any>(null)
 
   // VIX Hedge Signal state
@@ -2552,12 +2553,42 @@ export default function AutonomousTrader() {
           )}
         </div>
 
-        <div className="text-center">
+        <div className="flex items-center justify-center gap-4">
+          <button
+            onClick={async () => {
+              setBacktestRefreshing(true)
+              try {
+                const res = await apiClient.runAndSaveBacktests(90)
+                if (res.data.success) {
+                  // Refresh the backtest data
+                  const backtestsRes = await apiClient.getAllPatternBacktests(90)
+                  if (backtestsRes.data.success) {
+                    setBacktestResults(backtestsRes.data.data || [])
+                    setBacktestDataSource(backtestsRes.data.data_source || 'backtest')
+                  }
+                  alert(`Backtest complete! ${res.data.patterns_with_data} patterns saved to database.`)
+                }
+              } catch (error) {
+                console.error('Error running backtest:', error)
+                alert('Error running backtest. Check console for details.')
+              } finally {
+                setBacktestRefreshing(false)
+              }
+            }}
+            disabled={backtestRefreshing}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              backtestRefreshing
+                ? 'bg-background-hover text-text-secondary cursor-not-allowed'
+                : 'bg-primary text-white hover:bg-primary/80'
+            }`}
+          >
+            {backtestRefreshing ? '🔄 Running Backtest...' : '🔄 Run & Save Backtests'}
+          </button>
           <button
             onClick={() => alert('Complete backtest analysis with detailed pattern breakdowns coming soon. Analyze win rates, expectancy, and optimal entry conditions.')}
             className="text-primary text-sm font-medium hover:underline"
           >
-            View Complete Backtest Analysis →
+            View Complete Analysis →
           </button>
         </div>
       </div>

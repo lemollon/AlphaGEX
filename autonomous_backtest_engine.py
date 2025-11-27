@@ -60,8 +60,8 @@ class PatternBacktester:
                 price_change_1d, price_change_5d, signal_correct,
                 target_price_near, target_timeline_days
             FROM regime_signals
-            WHERE primary_regime_type = ?
-            AND timestamp >= ?
+            WHERE primary_regime_type = %s
+            AND timestamp >= %s
             ORDER BY timestamp DESC
         """, (pattern_name, start_date))
 
@@ -159,7 +159,7 @@ class PatternBacktester:
                 AVG(confidence_score) as avg_confidence
             FROM regime_signals
             WHERE liberation_setup_detected = 1
-            AND timestamp >= ?
+            AND timestamp >= %s
         """, (start_date,))
 
         row = c.fetchone()
@@ -195,7 +195,7 @@ class PatternBacktester:
             FROM regime_signals
             WHERE false_floor_detected = 1
             AND trade_direction = 'BEARISH'
-            AND timestamp >= ?
+            AND timestamp >= %s
         """, (start_date,))
 
         row = c.fetchone()
@@ -215,41 +215,93 @@ class PatternBacktester:
         }
 
     def save_backtest_results(self, results: Dict):
-        """Save backtest results to database"""
+        """Save backtest results to database (PostgreSQL)"""
         conn = get_connection()
         c = conn.cursor()
 
-        c.execute("""
-            INSERT INTO backtest_results (
-                timestamp, strategy_name, symbol, start_date, end_date,
-                total_trades, winning_trades, losing_trades, win_rate,
-                avg_win_pct, avg_loss_pct, largest_win_pct, largest_loss_pct,
-                expectancy_pct, total_return_pct, max_drawdown_pct, sharpe_ratio,
-                avg_trade_duration_days
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            datetime.now().isoformat(),
-            results['pattern'],
-            'SPY',
-            results.get('start_date', ''),
-            results.get('end_date', ''),
-            results['total_signals'],
-            results['winning_signals'],
-            results['losing_signals'],
-            results['win_rate'],
-            results['avg_profit_pct'],
-            results['avg_loss_pct'],
-            results['max_win_pct'],
-            results['max_loss_pct'],
-            results['expectancy'],
-            0,  # total_return_pct (calculate if needed)
-            0,  # max_drawdown_pct (calculate if needed)
-            results['sharpe_ratio'],
-            results.get('avg_duration', 5)
-        ))
+        try:
+            # Use PostgreSQL %s placeholders and ON CONFLICT to update existing
+            c.execute("""
+                INSERT INTO backtest_results (
+                    timestamp, strategy_name, symbol, start_date, end_date,
+                    total_trades, winning_trades, losing_trades, win_rate,
+                    avg_win_pct, avg_loss_pct, largest_win_pct, largest_loss_pct,
+                    expectancy_pct, total_return_pct, max_drawdown_pct, sharpe_ratio,
+                    avg_trade_duration_days
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                datetime.now().isoformat(),
+                results['pattern'],
+                'SPY',
+                results.get('start_date', ''),
+                results.get('end_date', ''),
+                results['total_signals'],
+                results['winning_signals'],
+                results['losing_signals'],
+                results['win_rate'],
+                results['avg_profit_pct'],
+                results['avg_loss_pct'],
+                results['max_win_pct'],
+                results['max_loss_pct'],
+                results['expectancy'],
+                0,  # total_return_pct (calculate if needed)
+                0,  # max_drawdown_pct (calculate if needed)
+                results['sharpe_ratio'],
+                results.get('avg_duration', 5)
+            ))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        except Exception as e:
+            print(f"Error saving backtest result for {results.get('pattern', 'unknown')}: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
+
+    def backtest_all_patterns_and_save(self, lookback_days: int = 90, save_to_db: bool = True) -> List[Dict]:
+        """
+        Backtest all patterns and optionally save results to database.
+
+        This is the method that should be called to populate backtest_results table.
+
+        Args:
+            lookback_days: Number of days to look back for signals
+            save_to_db: Whether to save results to backtest_results table
+
+        Returns:
+            List of backtest results for all patterns
+        """
+        from datetime import timedelta
+
+        # Get list of all patterns
+        patterns = self._get_all_patterns()
+
+        results = []
+        saved_count = 0
+
+        start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+        end_date = datetime.now().strftime('%Y-%m-%d')
+
+        for pattern in patterns:
+            result = self.backtest_pattern(pattern, lookback_days)
+
+            # Add date range info
+            result['start_date'] = start_date
+            result['end_date'] = end_date
+
+            results.append(result)
+
+            # Save to database if enabled and has signals
+            if save_to_db and result['total_signals'] > 0:
+                self.save_backtest_results(result)
+                saved_count += 1
+
+        # Sort by expectancy (best to worst)
+        results.sort(key=lambda x: x['expectancy'], reverse=True)
+
+        if save_to_db:
+            print(f"✅ Saved {saved_count} backtest results to database")
+
+        return results
 
     # Helper methods
     def _calculate_sharpe(self, returns: List[float]) -> float:

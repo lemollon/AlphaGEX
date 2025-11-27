@@ -7901,109 +7901,77 @@ async def get_best_strategies(min_expectancy: float = 0.5, min_win_rate: float =
 @app.post("/api/backtests/run")
 async def run_backtests(request: dict = None):
     """
-    Run all backtests for specified symbol and date range
+    Run autonomous pattern backtests and save to backtest_results table
 
     Request body (optional):
         {
-            "symbol": "SPY",
-            "start_date": "2022-01-01",
-            "end_date": "2024-12-31"
+            "lookback_days": 90
         }
 
     Returns:
         Backtest execution status and results
     """
     try:
-        import subprocess
         from datetime import datetime, timedelta
+        import sys
+        from pathlib import Path
 
         # Parse request parameters with defaults
         if request is None:
             request = {}
 
-        symbol = request.get('symbol', 'SPY')
+        lookback_days = request.get('lookback_days', 90)
+        # Clamp to reasonable range
+        lookback_days = max(7, min(365, lookback_days))
 
-        # Default to last 2 years if not specified
-        if 'end_date' not in request:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-        else:
-            end_date = request.get('end_date')
+        print(f"\n🚀 Running autonomous pattern backtests ({lookback_days} days lookback)")
 
-        if 'start_date' not in request:
-            start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-        else:
-            start_date = request.get('start_date')
+        # Import and run the autonomous backtest engine directly
+        parent_dir = Path(__file__).parent.parent
+        sys.path.insert(0, str(parent_dir))
+        from autonomous_backtest_engine import get_backtester
 
-        print(f"\n🚀 Running backtests for {symbol} from {start_date} to {end_date}")
+        backtester = get_backtester()
+        results = backtester.backtest_all_patterns_and_save(lookback_days=lookback_days, save_to_db=True)
 
-        # Run the backtest script with environment variables
-        result = subprocess.run(
-            ['python', 'run_all_backtests.py',
-             '--symbol', symbol,
-             '--start', start_date,
-             '--end', end_date],
-            capture_output=True,
-            text=True,
-            timeout=300,  # 5 minute timeout
-            env=os.environ.copy()  # Pass environment variables to subprocess
-        )
+        # Count patterns with data
+        patterns_with_data = sum(1 for r in results if r.get('total_signals', 0) > 0)
+        total_signals = sum(r.get('total_signals', 0) for r in results)
 
-        if result.returncode == 0:
-            print("✅ Backtests completed successfully")
+        # Get count from database to confirm save
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM backtest_results')
+        count_row = c.fetchone()
+        result_count = count_row[0] if count_row else 0
+        conn.close()
 
-            # Fetch the results
-            
+        print(f"✅ Backtests completed - {patterns_with_data} patterns saved")
 
-            conn = get_connection()
-            
-            c = conn.cursor()
-
-            # Get latest results
-            c.execute('''
-                SELECT COUNT(*) as count
-                FROM backtest_results
-                WHERE symbol = ?
-            ''', (symbol,))
-
-            count_row = c.fetchone()
-            result_count = count_row['count'] if count_row else 0
-
-            conn.close()
-
-            return {
-                "success": True,
-                "message": f"Backtests completed successfully for {symbol}",
-                "symbol": symbol,
-                "start_date": start_date,
-                "end_date": end_date,
-                "results_count": result_count,
-                "output": result.stdout
-            }
-        else:
-            print(f"❌ Backtests failed: {result.stderr}")
-
-            # Check for specific errors
-            error_message = result.stderr
-            if "ModuleNotFoundError: No module named 'pandas'" in error_message:
-                error_detail = "Missing required dependencies: pandas and numpy. Install with: pip install pandas numpy scipy"
-            elif "ModuleNotFoundError" in error_message:
-                module_name = error_message.split("'")[1] if "'" in error_message else "unknown"
-                error_detail = f"Missing required dependency: {module_name}. Install with: pip install {module_name}"
-            else:
-                error_detail = "Backtest execution failed. Check backend logs for details."
-
-            raise HTTPException(
-                status_code=500,
-                detail=error_detail + f"\n\nFull error:\n{result.stderr}"
-            )
-
-    except subprocess.TimeoutExpired:
         return {
-            "success": False,
-            "error": "Backtest execution timed out (>5 minutes)"
+            "success": True,
+            "message": f"Autonomous backtests completed - {patterns_with_data} patterns analyzed",
+            "lookback_days": lookback_days,
+            "patterns_tested": len(results),
+            "patterns_with_data": patterns_with_data,
+            "total_signals": total_signals,
+            "results_in_db": result_count,
+            "top_strategies": [
+                {
+                    "pattern": r['pattern'],
+                    "win_rate": r.get('win_rate', 0),
+                    "expectancy": r.get('expectancy', 0),
+                    "signals": r.get('total_signals', 0)
+                }
+                for r in sorted(results, key=lambda x: x.get('expectancy', 0), reverse=True)[:5]
+                if r.get('total_signals', 0) > 0
+            ]
         }
+
     except Exception as e:
         print(f"❌ Error running backtests: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "success": False,
             "error": str(e)
@@ -8785,7 +8753,7 @@ async def startup_event():
         print(f"⚠️  Initialization check failed: {e}")
         print("📊 App will create tables as needed during operation")
 
-    # Auto-run backtests on startup IF database is empty
+    # Auto-run AUTONOMOUS backtests on startup IF database is empty
     print("\n🔄 Checking backtest results...")
     try:
         conn = get_connection()
@@ -8795,35 +8763,34 @@ async def startup_event():
         conn.close()
 
         if count == 0:
-            print("⚠️  No backtest results found. Auto-running backtests in background...")
-            import subprocess
+            print("⚠️  No backtest results found. Auto-running AUTONOMOUS backtests in background...")
             import threading
 
-            def run_backtests_async():
+            def run_autonomous_backtests_async():
+                """Run autonomous backtest engine and save to backtest_results table"""
                 try:
-                    # Calculate date range for last 365 days
-                    from datetime import datetime, timedelta
-                    end_date = datetime.now().strftime('%Y-%m-%d')
-                    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+                    import sys
+                    sys.path.insert(0, str(parent_dir))
+                    from autonomous_backtest_engine import get_backtester
 
-                    result = subprocess.run(
-                        ['python3', 'run_all_backtests.py', '--symbol', 'SPY', '--start', start_date, '--end', end_date],
-                        cwd=str(parent_dir),
-                        capture_output=True,
-                        text=True,
-                        timeout=600  # 10 minute timeout
-                    )
-                    if result.returncode == 0:
-                        print("✅ Backtests completed successfully on startup")
-                    else:
-                        print(f"❌ Backtests failed: {result.stderr[:200]}")
+                    print("🔄 Initializing autonomous backtest engine...")
+                    backtester = get_backtester()
+
+                    # Run backtests and save to database (90 days default)
+                    print("🚀 Running pattern backtests (90 days)...")
+                    results = backtester.backtest_all_patterns_and_save(lookback_days=90, save_to_db=True)
+
+                    patterns_with_data = sum(1 for r in results if r.get('total_signals', 0) > 0)
+                    print(f"✅ Autonomous backtests completed - {patterns_with_data} patterns saved to backtest_results")
                 except Exception as e:
-                    print(f"❌ Error running backtests: {e}")
+                    print(f"❌ Error running autonomous backtests: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             # Run in background thread so startup doesn't block
-            thread = threading.Thread(target=run_backtests_async, daemon=True)
+            thread = threading.Thread(target=run_autonomous_backtests_async, daemon=True)
             thread.start()
-            print("✅ Backtests started in background thread")
+            print("✅ Autonomous backtests started in background thread")
         else:
             print(f"✅ Found {count} existing backtest results")
     except Exception as e:

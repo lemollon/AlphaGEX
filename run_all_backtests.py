@@ -193,8 +193,8 @@ class MasterBacktestRunner:
 
         c.execute('''
             CREATE TABLE IF NOT EXISTS backtest_summary (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 symbol TEXT,
                 start_date TEXT,
                 end_date TEXT,
@@ -216,7 +216,7 @@ class MasterBacktestRunner:
                 psychology_trades, psychology_win_rate, psychology_expectancy,
                 gex_trades, gex_win_rate, gex_expectancy,
                 options_trades, options_win_rate, options_expectancy
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
             self.symbol, self.start_date, self.end_date,
             self.results.get('psychology').total_trades if self.results.get('psychology') else 0,
