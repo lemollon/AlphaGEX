@@ -114,6 +114,16 @@ except ImportError as e:
     DATABASE_LOGGER_AVAILABLE = False
     logger.warning(f"Database Logger not available: {e}")
 
+# CRITICAL: Import Strategy Stats for unified backtester integration
+# This enables Kelly-based position sizing using backtest-informed win rates
+try:
+    from strategy_stats import get_strategy_stats, update_strategy_stats, log_change
+    STRATEGY_STATS_AVAILABLE = True
+    logger.info("Strategy Stats integrated - Kelly position sizing available")
+except ImportError as e:
+    STRATEGY_STATS_AVAILABLE = False
+    logger.warning(f"Strategy Stats not available: {e}")
+
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
                           current_spot: float = None, use_theoretical: bool = True) -> Dict:
@@ -901,6 +911,184 @@ class AutonomousPaperTrader:
             conn.close()
 
         return result
+
+    def get_strategy_stats_for_pattern(self, pattern: str) -> Dict:
+        """
+        Get strategy stats from centralized strategy_stats.json for Kelly position sizing.
+
+        This connects SPY trader to the unified backtester system:
+        1. Reads from strategy_stats.json (updated by backtests)
+        2. Provides win rate, avg win/loss for Kelly calculation
+        3. Enables backtest-informed position sizing
+
+        Args:
+            pattern: Strategy/pattern name to look up
+
+        Returns:
+            Dict with win_rate, avg_win, avg_loss, is_proven, source
+        """
+        if not STRATEGY_STATS_AVAILABLE:
+            logger.debug(f"Strategy stats not available, using defaults for {pattern}")
+            return {
+                'win_rate': 0.55,
+                'avg_win': 8.0,
+                'avg_loss': 12.0,
+                'expectancy': 0.0,
+                'total_trades': 0,
+                'is_proven': False,
+                'source': 'default'
+            }
+
+        try:
+            all_stats = get_strategy_stats()
+
+            # Try exact match first
+            pattern_upper = pattern.upper().replace(' ', '_')
+            if pattern_upper in all_stats:
+                stats = all_stats[pattern_upper]
+                return {
+                    'win_rate': stats.get('win_rate', 0.55),
+                    'avg_win': abs(stats.get('avg_win', 8.0)),
+                    'avg_loss': abs(stats.get('avg_loss', 12.0)),
+                    'expectancy': stats.get('expectancy', 0.0),
+                    'total_trades': stats.get('total_trades', 0),
+                    'is_proven': stats.get('total_trades', 0) >= 10,
+                    'source': stats.get('source', 'backtest')
+                }
+
+            # Try fuzzy match
+            for name, stats in all_stats.items():
+                if pattern_upper in name or name in pattern_upper:
+                    return {
+                        'win_rate': stats.get('win_rate', 0.55),
+                        'avg_win': abs(stats.get('avg_win', 8.0)),
+                        'avg_loss': abs(stats.get('avg_loss', 12.0)),
+                        'expectancy': stats.get('expectancy', 0.0),
+                        'total_trades': stats.get('total_trades', 0),
+                        'is_proven': stats.get('total_trades', 0) >= 10,
+                        'source': stats.get('source', 'backtest')
+                    }
+
+            # No match - return conservative defaults
+            logger.debug(f"No strategy_stats match for {pattern}, using defaults")
+            return {
+                'win_rate': 0.55,
+                'avg_win': 8.0,
+                'avg_loss': 12.0,
+                'expectancy': 0.0,
+                'total_trades': 0,
+                'is_proven': False,
+                'source': 'default'
+            }
+
+        except Exception as e:
+            logger.warning(f"Error getting strategy stats for {pattern}: {e}")
+            return {
+                'win_rate': 0.55,
+                'avg_win': 8.0,
+                'avg_loss': 12.0,
+                'expectancy': 0.0,
+                'total_trades': 0,
+                'is_proven': False,
+                'source': 'error'
+            }
+
+    def calculate_kelly_position_size(
+        self,
+        strategy_name: str,
+        entry_price: float,
+        confidence: int = 70
+    ) -> Tuple[int, Dict]:
+        """
+        Calculate position size using Kelly Criterion from backtest data.
+
+        This mirrors the SPX trader's Kelly-based sizing:
+        1. Look up backtest stats for strategy
+        2. Calculate Kelly fraction
+        3. Apply adjustments (half-Kelly for proven, quarter-Kelly for unproven)
+        4. Return contracts and sizing details
+
+        Args:
+            strategy_name: Name of strategy for backtest lookup
+            entry_price: Option entry price
+            confidence: Trade confidence (0-100)
+
+        Returns:
+            (contracts, sizing_details)
+        """
+        # Get available capital
+        available = self.get_available_capital()
+        total_capital = float(self.get_config('capital'))
+
+        # Get backtest params
+        params = self.get_strategy_stats_for_pattern(strategy_name)
+        win_rate = params['win_rate']
+        avg_win = params['avg_win']
+        avg_loss = params['avg_loss']
+        is_proven = params['is_proven']
+
+        # Calculate Kelly
+        if avg_loss <= 0:
+            avg_loss = 12.0  # Conservative default
+        risk_reward = avg_win / avg_loss
+
+        # Kelly formula: W - (1-W)/R
+        if risk_reward <= 0:
+            kelly = 0.01  # Minimum
+        else:
+            kelly = win_rate - ((1 - win_rate) / risk_reward)
+
+        # Apply Kelly fraction based on proven status
+        if is_proven:
+            adjusted_kelly = kelly * 0.5  # Half-Kelly for proven
+            adjustment_type = 'half-kelly'
+        else:
+            adjusted_kelly = kelly * 0.25  # Quarter-Kelly for unproven
+            adjustment_type = 'quarter-kelly'
+
+        # Cap Kelly at 20% for SPY (more conservative than SPX)
+        final_kelly = max(0.01, min(0.20, adjusted_kelly))
+
+        # Calculate position value
+        max_position_value = available * final_kelly
+
+        # Apply confidence adjustment (higher confidence = larger position)
+        confidence_factor = (confidence / 100) * 0.5 + 0.5  # 0.5-1.0 range
+        position_value = max_position_value * confidence_factor
+
+        # Cap at 25% of capital per position (SPY risk limit)
+        position_value = min(position_value, total_capital * 0.25)
+
+        # Calculate contracts
+        cost_per_contract = entry_price * 100
+        if cost_per_contract <= 0:
+            contracts = 0
+        else:
+            raw_contracts = int(position_value / cost_per_contract)
+            # Cap at 10 contracts for SPY (liquidity constraint)
+            contracts = min(raw_contracts, 10)
+
+        sizing_details = {
+            'methodology': 'Kelly-Backtest (SPY)',
+            'available_capital': available,
+            'kelly_pct': final_kelly * 100,
+            'raw_kelly': kelly,
+            'adjusted_kelly': adjusted_kelly,
+            'adjustment_type': adjustment_type,
+            'confidence_factor': confidence_factor,
+            'max_position_value': max_position_value,
+            'final_position_value': position_value,
+            'cost_per_contract': cost_per_contract,
+            'raw_contracts': raw_contracts if cost_per_contract > 0 else 0,
+            'final_contracts': contracts,
+            'backtest_params': params
+        }
+
+        logger.info(f"Kelly sizing for {strategy_name}: {contracts} contracts "
+                   f"(Kelly={final_kelly:.1%}, {adjustment_type}, "
+                   f"WR={win_rate:.0%}, proven={is_proven})")
+
+        return contracts, sizing_details
 
     def get_available_capital(self) -> float:
         """Calculate available capital"""
@@ -4116,6 +4304,117 @@ Now analyze this position:"""
 
             # Log spread width performance if this is an iron condor
             self._log_spread_width_performance(position_id)
+
+            # CRITICAL: Update centralized strategy_stats for feedback loop
+            # This enables backtester integration - SPY live results inform future sizing
+            self._update_strategy_stats_from_trade(
+                strategy_name=position_data['strategy'],
+                pnl_pct=position_data['realized_pnl_pct'],
+                is_win=(position_data['realized_pnl'] > 0)
+            )
+
+    def _update_strategy_stats_from_trade(
+        self,
+        strategy_name: str,
+        pnl_pct: float,
+        is_win: bool
+    ):
+        """
+        Update centralized strategy_stats.json from live trading results.
+
+        This creates a FEEDBACK LOOP:
+        1. Live trade closes → results recorded in autonomous_closed_trades
+        2. This method queries all trades for the strategy
+        3. Calculates updated win rate, expectancy, etc.
+        4. Updates strategy_stats.json
+        5. Future trades use updated stats for Kelly sizing
+
+        Mirrors SPX trader's _update_strategy_stats_from_trade method.
+        """
+        if not STRATEGY_STATS_AVAILABLE:
+            logger.debug("Strategy stats not available, skipping feedback loop")
+            return
+
+        try:
+            # Need at least 5 trades to update stats
+            conn = get_connection()
+            c = conn.cursor()
+
+            # Normalize strategy name for matching
+            core_strategy = strategy_name.upper().replace(' ', '_')
+            if ':' in core_strategy:
+                core_strategy = core_strategy.split(':')[-1].strip()
+
+            # Query all closed trades for this strategy
+            c.execute("""
+                SELECT realized_pnl_pct
+                FROM autonomous_closed_trades
+                WHERE UPPER(REPLACE(strategy, ' ', '_')) LIKE %s
+                ORDER BY exit_date DESC, exit_time DESC
+            """, (f'%{core_strategy}%',))
+
+            results = c.fetchall()
+            conn.close()
+
+            if len(results) < 5:
+                logger.debug(f"SPY strategy stats not updated - only {len(results)} trades (need 5+)")
+                return
+
+            # Calculate stats from closed trades
+            pnl_pcts = [float(r[0] or 0) for r in results]
+            wins = [p for p in pnl_pcts if p > 0]
+            losses = [p for p in pnl_pcts if p <= 0]
+
+            total_trades = len(pnl_pcts)
+            win_rate = len(wins) / total_trades if total_trades > 0 else 0.5
+            avg_win = sum(wins) / len(wins) if wins else 0
+            avg_loss = abs(sum(losses) / len(losses)) if losses else 0
+
+            # Calculate expectancy
+            expectancy = (win_rate * avg_win) + ((1 - win_rate) * -avg_loss)
+
+            # Calculate Sharpe (simplified)
+            if len(pnl_pcts) > 1:
+                avg_return = sum(pnl_pcts) / len(pnl_pcts)
+                variance = sum((p - avg_return) ** 2 for p in pnl_pcts) / len(pnl_pcts)
+                std_dev = variance ** 0.5
+                sharpe = (avg_return / std_dev * (252 ** 0.5)) if std_dev > 0 else 0
+            else:
+                sharpe = 0
+
+            # Create backtest-compatible results dict
+            live_results = {
+                'strategy_name': f"SPY_{core_strategy}",
+                'start_date': 'live_trading',
+                'end_date': datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'),
+                'total_trades': total_trades,
+                'winning_trades': len(wins),
+                'losing_trades': len(losses),
+                'win_rate': win_rate * 100,  # Convert to percentage
+                'avg_win_pct': avg_win,
+                'avg_loss_pct': -avg_loss,  # Negative for losses
+                'expectancy_pct': expectancy,
+                'sharpe_ratio': sharpe,
+                'total_return_pct': sum(pnl_pcts)
+            }
+
+            # Update using strategy_stats system
+            update_strategy_stats(f"SPY_{core_strategy}", live_results)
+
+            # Log the change
+            log_change(
+                category='SPY_LIVE_TRADING_FEEDBACK',
+                item=f"SPY_{core_strategy}",
+                old_value=f"trades={total_trades-1}",
+                new_value=f"trades={total_trades}, WR={win_rate:.1%}, expectancy={expectancy:.2f}%",
+                reason=f"Updated from SPY live trade (P&L: {pnl_pct:+.1f}%)"
+            )
+
+            logger.info(f"📊 SPY strategy stats updated for {core_strategy}: "
+                       f"{total_trades} trades, {win_rate:.1%} WR, {expectancy:.2f}% expectancy")
+
+        except Exception as e:
+            logger.warning(f"Failed to update strategy stats from SPY trade: {e}")
 
     def _log_trade_activity(self, action_type: str, symbol: str, details: str,
                             position_id: int = None, pnl_impact: float = None,

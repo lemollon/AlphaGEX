@@ -30,6 +30,14 @@ from psychology_trap_detector import (
 from config_and_database import DB_PATH
 from database_adapter import get_connection
 
+# CRITICAL: Import strategy_stats for unified backtest integration
+try:
+    from strategy_stats import update_strategy_stats, log_change
+    STRATEGY_STATS_AVAILABLE = True
+except ImportError:
+    STRATEGY_STATS_AVAILABLE = False
+    print("⚠️ strategy_stats not available - backtest results won't update centralized stats")
+
 
 class PsychologyBacktester:
     """Backtest psychology trap detection patterns"""
@@ -499,6 +507,49 @@ class PsychologyBacktester:
         conn.close()
 
         print(f"\n✓ Saved {len(signals)} signals to database")
+
+        # CRITICAL: Update centralized strategy_stats for unified backtester integration
+        # This allows SPX and SPY traders to use psychology pattern win rates for Kelly sizing
+        if STRATEGY_STATS_AVAILABLE:
+            self._update_strategy_stats(stats)
+
+    def _update_strategy_stats(self, stats: Dict):
+        """
+        Update centralized strategy_stats.json with psychology pattern results.
+
+        This creates a FEEDBACK LOOP where:
+        1. Psychology backtest calculates win rates per pattern
+        2. Results are stored in strategy_stats.json
+        3. SPX/SPY traders use these for Kelly-based position sizing
+        """
+        print("\n📊 Updating centralized strategy stats with psychology patterns...")
+
+        for regime_type, data in stats.items():
+            # Skip patterns with too few trades
+            if data['total_signals'] < 5:
+                print(f"   Skipping {regime_type} - only {data['total_signals']} signals (need 5+)")
+                continue
+
+            # Convert to backtest_results format expected by update_strategy_stats
+            backtest_results = {
+                'strategy_name': f"PSYCHOLOGY_{regime_type}",
+                'start_date': 'backtest',
+                'end_date': datetime.now().strftime('%Y-%m-%d'),
+                'total_trades': data['total_signals'],
+                'winning_trades': data['wins'],
+                'losing_trades': data['losses'],
+                'win_rate': data['win_rate'],  # Already a percentage
+                'avg_win_pct': data['avg_gain_pct'],
+                'avg_loss_pct': data['avg_loss_pct'],
+                'expectancy_pct': (data['win_rate']/100 * data['avg_gain_pct']) + ((1 - data['win_rate']/100) * data['avg_loss_pct']),
+                'sharpe_ratio': 0.0  # Not calculated for psychology patterns
+            }
+
+            try:
+                update_strategy_stats(f"PSYCHOLOGY_{regime_type}", backtest_results)
+                print(f"   ✅ Updated PSYCHOLOGY_{regime_type}: {data['win_rate']:.1f}% win rate, {data['total_signals']} trades")
+            except Exception as e:
+                print(f"   ⚠️ Failed to update {regime_type}: {e}")
 
 
 def main():
