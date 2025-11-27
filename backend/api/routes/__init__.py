@@ -15,6 +15,7 @@ from . import gamma_routes
 from . import optimizer_routes
 from . import ai_routes
 from . import probability_routes
+from . import notification_routes
 
 __all__ = [
     'vix_routes',
@@ -29,4 +30,5 @@ __all__ = [
     'optimizer_routes',
     'ai_routes',
     'probability_routes',
+    'notification_routes',
 ]

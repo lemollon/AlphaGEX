@@ -38,6 +38,7 @@ from api.routes import (
     optimizer_routes,
     ai_routes,
     probability_routes,
+    notification_routes,
 )
 
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
@@ -125,7 +126,8 @@ app.include_router(core_routes.router)
 app.include_router(optimizer_routes.router)
 app.include_router(ai_routes.router)
 app.include_router(probability_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability")
+app.include_router(notification_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()
@@ -4380,212 +4382,6 @@ async def get_notification_stats():
 # PUSH NOTIFICATION ENDPOINTS (Browser Push API)
 # ==============================================================================
 
-# Import push notification service
-try:
-    import sys
-    from pathlib import Path
-    backend_dir = Path(__file__).parent
-    sys.path.insert(0, str(backend_dir))
-    from push_notification_service import get_push_service
-    push_service = get_push_service()
-    push_notifications_available = True
-except Exception as e:
-    print(f"⚠️ Push notifications not available: {e}")
-    push_service = None
-    push_notifications_available = False
-
-@app.get("/api/notifications/vapid-public-key")
-async def get_vapid_public_key():
-    """
-    Get VAPID public key for push notification subscriptions
-
-    Returns:
-        {
-            "public_key": "BKq..."  # Base64-encoded public key
-        }
-    """
-    if not push_notifications_available or not push_service:
-        raise HTTPException(status_code=503, detail="Push notifications not configured")
-
-    public_key = push_service.get_vapid_public_key()
-
-    if not public_key:
-        raise HTTPException(status_code=500, detail="VAPID key not available")
-
-    return {
-        "success": True,
-        "public_key": public_key
-    }
-
-@app.post("/api/notifications/subscribe")
-async def subscribe_to_push_notifications(request: dict):
-    """
-    Subscribe to push notifications
-
-    Request body:
-    {
-        "subscription": {
-            "endpoint": "https://...",
-            "keys": {
-                "p256dh": "...",
-                "auth": "..."
-            }
-        },
-        "preferences": {
-            "enabled": true,
-            "criticalAlerts": true,
-            "highAlerts": true,
-            "liberationSetups": true,
-            "falseFloors": true,
-            "regimeChanges": true,
-            "sound": true
-        }
-    }
-
-    Returns:
-        {"success": true}
-    """
-    if not push_notifications_available or not push_service:
-        raise HTTPException(status_code=503, detail="Push notifications not configured")
-
-    try:
-        subscription = request.get('subscription')
-        preferences = request.get('preferences', {})
-
-        if not subscription:
-            raise HTTPException(status_code=400, detail="Subscription object required")
-
-        success = push_service.save_subscription(subscription, preferences)
-
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to save subscription")
-
-        return {
-            "success": True,
-            "message": "Subscription saved successfully"
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Error subscribing: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/notifications/unsubscribe")
-async def unsubscribe_from_push_notifications(request: dict):
-    """
-    Unsubscribe from push notifications
-
-    Request body:
-    {
-        "endpoint": "https://..."
-    }
-
-    Returns:
-        {"success": true}
-    """
-    if not push_notifications_available or not push_service:
-        raise HTTPException(status_code=503, detail="Push notifications not configured")
-
-    try:
-        endpoint = request.get('endpoint')
-
-        if not endpoint:
-            raise HTTPException(status_code=400, detail="Endpoint required")
-
-        success = push_service.remove_subscription(endpoint)
-
-        return {
-            "success": True,
-            "message": "Unsubscribed successfully" if success else "Subscription not found"
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Error unsubscribing: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/api/notifications/preferences")
-async def update_notification_preferences(request: dict):
-    """
-    Update notification preferences
-
-    Request body:
-    {
-        "endpoint": "https://...",  # Optional, use first subscription if not provided
-        "preferences": {
-            "enabled": true,
-            "criticalAlerts": true,
-            ...
-        }
-    }
-
-    Returns:
-        {"success": true}
-    """
-    if not push_notifications_available or not push_service:
-        raise HTTPException(status_code=503, detail="Push notifications not configured")
-
-    try:
-        endpoint = request.get('endpoint')
-        preferences = request.get('preferences', {})
-
-        if not preferences:
-            raise HTTPException(status_code=400, detail="Preferences required")
-
-        # If no endpoint provided, update first subscription (single-user mode)
-        if not endpoint:
-            subscriptions = push_service.get_all_subscriptions()
-            if not subscriptions:
-                raise HTTPException(status_code=404, detail="No subscriptions found")
-            endpoint = subscriptions[0]['endpoint']
-
-        success = push_service.update_preferences(endpoint, preferences)
-
-        if not success:
-            raise HTTPException(status_code=404, detail="Subscription not found")
-
-        return {
-            "success": True,
-            "message": "Preferences updated successfully"
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Error updating preferences: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/notifications/test")
-async def send_test_notification():
-    """
-    Send test push notification to all subscribed users
-
-    Returns:
-        {"success": true, "stats": {...}}
-    """
-    if not push_notifications_available or not push_service:
-        raise HTTPException(status_code=503, detail="Push notifications not configured")
-
-    try:
-        stats = push_service.broadcast_notification(
-            title="Test Alert",
-            body="This is a test notification from AlphaGEX",
-            alert_level="HIGH",
-            data={"type": "test"}
-        )
-
-        return {
-            "success": True,
-            "message": "Test notification sent",
-            "stats": stats
-        }
-
-    except Exception as e:
-        print(f"❌ Error sending test notification: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/api/psychology/rsi-analysis/{symbol}")
 async def get_rsi_analysis(symbol: str = "SPY"):
     """
@@ -5017,73 +4813,6 @@ async def get_recommendation_performance():
         return {
             "success": True,
             "performance_by_confidence": performance
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-# ============================================================================
-# Push Subscription Management APIs
-# ============================================================================
-
-@app.get("/api/notifications/subscriptions")
-async def get_push_subscriptions():
-    """Get all push notification subscriptions"""
-    try:
-        conn = get_connection()
-        c = conn.cursor()
-
-        c.execute('''
-            SELECT
-                id,
-                endpoint,
-                created_at,
-                last_notification,
-                notification_count,
-                active
-            FROM push_subscriptions
-            WHERE active = 1
-            ORDER BY created_at DESC
-        ''')
-
-        subscriptions = []
-        for row in c.fetchall():
-            subscriptions.append({
-                'id': row[0],
-                'endpoint': row[1][:50] + '...',  # Truncate for security
-                'created_at': row[2],
-                'last_notification': row[3],
-                'notification_count': row[4],
-                'active': bool(row[5])
-            })
-
-        conn.close()
-
-        return {
-            "success": True,
-            "subscriptions": subscriptions
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.delete("/api/notifications/subscription/{subscription_id}")
-async def delete_push_subscription(subscription_id: int):
-    """Unsubscribe from push notifications"""
-    try:
-        conn = get_connection()
-        c = conn.cursor()
-
-        c.execute('''
-            UPDATE push_subscriptions
-            SET active = 0
-            WHERE id = ?
-        ''', (subscription_id,))
-
-        conn.commit()
-        conn.close()
-
-        return {
-            "success": True,
-            "message": "Subscription deactivated"
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
