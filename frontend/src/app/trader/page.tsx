@@ -30,6 +30,11 @@ interface Performance {
   losing_trades: number
   sharpe_ratio: number
   max_drawdown: number
+  starting_capital: number
+  current_value: number
+  realized_pnl: number
+  unrealized_pnl: number
+  return_pct: number
 }
 
 interface Strategy {
@@ -100,7 +105,12 @@ export default function AutonomousTrader() {
     winning_trades: 0,
     losing_trades: 0,
     sharpe_ratio: 0,
-    max_drawdown: 0
+    max_drawdown: 0,
+    starting_capital: 1000000,
+    current_value: 1000000,
+    realized_pnl: 0,
+    unrealized_pnl: 0,
+    return_pct: 0
   })
 
   const [strategies, setStrategies] = useState<Strategy[]>([])
@@ -164,11 +174,17 @@ export default function AutonomousTrader() {
         const perf = wsData.performance
         setPerformance(prev => ({
           ...prev,
-          total_pnl: perf.net_pnl || 0,
+          total_pnl: perf.net_pnl || perf.total_pnl || 0,
+          today_pnl: perf.today_pnl || 0,
           win_rate: perf.win_rate || 0,
           total_trades: perf.total_trades || 0,
           winning_trades: perf.winning_trades || 0,
           losing_trades: perf.losing_trades || 0,
+          starting_capital: perf.starting_capital || 1000000,
+          current_value: perf.current_equity || perf.current_value || (perf.starting_capital || 1000000) + (perf.net_pnl || 0),
+          realized_pnl: perf.total_realized_pnl || perf.realized_pnl || 0,
+          unrealized_pnl: perf.total_unrealized_pnl || perf.unrealized_pnl || 0,
+          return_pct: perf.return_pct || 0,
         }))
       }
 
@@ -393,16 +409,18 @@ export default function AutonomousTrader() {
         }
 
         // Set equity curve data for P&L chart
-        if (equityCurveRes.data.success && equityCurveRes.data.data) {
+        if (equityCurveRes.data.success && equityCurveRes.data.data && Array.isArray(equityCurveRes.data.data) && equityCurveRes.data.data.length > 0) {
           const curveData = equityCurveRes.data.data.map((point: any, idx: number, arr: any[]) => {
             // Calculate cumulative P&L from starting equity
-            const startingEquity = arr[0]?.equity || 10000
+            const startingEquity = arr[0]?.equity || 1000000
             const pnl = point.equity - startingEquity
+            // Handle both Unix timestamps (seconds) and JavaScript timestamps (milliseconds)
+            const timestampMs = point.timestamp < 1e12 ? point.timestamp * 1000 : point.timestamp
             return {
-              timestamp: point.timestamp,
+              timestamp: timestampMs,
               equity: point.equity,
               pnl: pnl,
-              date: new Date(point.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              date: point.date || new Date(timestampMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
             }
           })
           setEquityCurve(curveData)
@@ -666,14 +684,18 @@ export default function AutonomousTrader() {
       if (tradeLogRes.data?.success && tradeLogRes.data.data) setTradeLog(tradeLogRes.data.data)
       if (closedTradesRes.data?.success && closedTradesRes.data.data) setClosedTrades(closedTradesRes.data.data)
 
-      if (equityCurveRes.data?.success && equityCurveRes.data.data && Array.isArray(equityCurveRes.data.data)) {
-        const startingEquity = equityCurveRes.data.data.length > 0 ? equityCurveRes.data.data[0].equity : 10000
-        const curveData = equityCurveRes.data.data.map((point: any) => ({
-          timestamp: point.timestamp,
-          equity: point.equity,
-          pnl: point.equity - startingEquity,
-          date: new Date(point.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        }))
+      if (equityCurveRes.data?.success && equityCurveRes.data.data && Array.isArray(equityCurveRes.data.data) && equityCurveRes.data.data.length > 0) {
+        const startingEquity = equityCurveRes.data.data[0].equity || 1000000
+        const curveData = equityCurveRes.data.data.map((point: any) => {
+          // Handle both Unix timestamps (seconds) and JavaScript timestamps (milliseconds)
+          const timestampMs = point.timestamp < 1e12 ? point.timestamp * 1000 : point.timestamp
+          return {
+            timestamp: timestampMs,
+            equity: point.equity,
+            pnl: point.equity - startingEquity,
+            date: point.date || new Date(timestampMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          }
+        })
         setEquityCurve(curveData)
       }
     } catch (error) {
@@ -744,7 +766,7 @@ export default function AutonomousTrader() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-text-primary">SPY Autonomous Trader</h1>
-          <p className="text-text-secondary mt-1">$100M capital management for autonomous trading strategies</p>
+          <p className="text-text-secondary mt-1">$1M capital management for autonomous trading strategies</p>
         </div>
         <div className="flex items-center gap-3">
           {/* WebSocket Connection Indicator */}
@@ -965,16 +987,20 @@ export default function AutonomousTrader() {
         </div>
       </div>
 
-      {/* Performance Metrics */}
+      {/* Trading Account Summary */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card">
+        {/* Account Balance - Most Important */}
+        <div className="card bg-gradient-to-br from-primary/10 to-primary/5 border-primary/30">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-text-secondary text-sm">Total P&L</p>
-              <p className={`text-2xl font-bold mt-1 ${
-                performance.total_pnl >= 0 ? 'text-success' : 'text-danger'
+              <p className="text-text-secondary text-sm">Trading Account</p>
+              <p className="text-2xl font-bold text-text-primary mt-1">
+                {formatCurrency(performance.current_value)}
+              </p>
+              <p className={`text-sm mt-1 ${
+                performance.return_pct >= 0 ? 'text-success' : 'text-danger'
               }`}>
-                {formatCurrency(performance.total_pnl)}
+                {performance.return_pct >= 0 ? '+' : ''}{performance.return_pct.toFixed(2)}% return
               </p>
             </div>
             <DollarSign className="text-primary w-8 h-8" />
@@ -988,7 +1014,7 @@ export default function AutonomousTrader() {
               <p className={`text-2xl font-bold mt-1 ${
                 performance.today_pnl >= 0 ? 'text-success' : 'text-danger'
               }`}>
-                {formatCurrency(performance.today_pnl)}
+                {performance.today_pnl >= 0 ? '+' : ''}{formatCurrency(performance.today_pnl)}
               </p>
             </div>
             <Activity className="text-primary w-8 h-8" />
@@ -1016,6 +1042,65 @@ export default function AutonomousTrader() {
               </p>
             </div>
             <TrendingUp className="text-primary w-8 h-8" />
+          </div>
+        </div>
+      </div>
+
+      {/* P&L Breakdown */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-text-secondary text-sm">Total P&L</p>
+              <p className={`text-2xl font-bold mt-1 ${
+                performance.total_pnl >= 0 ? 'text-success' : 'text-danger'
+              }`}>
+                {performance.total_pnl >= 0 ? '+' : ''}{formatCurrency(performance.total_pnl)}
+              </p>
+            </div>
+            <DollarSign className={`w-8 h-8 ${performance.total_pnl >= 0 ? 'text-success' : 'text-danger'}`} />
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-text-secondary text-sm">Realized P&L</p>
+              <p className={`text-2xl font-bold mt-1 ${
+                performance.realized_pnl >= 0 ? 'text-success' : 'text-danger'
+              }`}>
+                {performance.realized_pnl >= 0 ? '+' : ''}{formatCurrency(performance.realized_pnl)}
+              </p>
+              <p className="text-xs text-text-muted mt-1">Closed trades</p>
+            </div>
+            <CheckCircle className={`w-8 h-8 ${performance.realized_pnl >= 0 ? 'text-success' : 'text-danger'}`} />
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-text-secondary text-sm">Unrealized P&L</p>
+              <p className={`text-2xl font-bold mt-1 ${
+                performance.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'
+              }`}>
+                {performance.unrealized_pnl >= 0 ? '+' : ''}{formatCurrency(performance.unrealized_pnl)}
+              </p>
+              <p className="text-xs text-text-muted mt-1">Open positions</p>
+            </div>
+            <Clock className={`w-8 h-8 ${performance.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'}`} />
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-text-secondary text-sm">Max Drawdown</p>
+              <p className="text-2xl font-bold text-danger mt-1">
+                {performance.max_drawdown.toFixed(1)}%
+              </p>
+            </div>
+            <TrendingDown className="text-danger w-8 h-8" />
           </div>
         </div>
       </div>

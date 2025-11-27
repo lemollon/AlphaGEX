@@ -2797,7 +2797,7 @@ async def _get_trader_update_data() -> dict:
         total_trades = winners + losers
         win_rate = (winners / total_trades * 100) if total_trades > 0 else 0
 
-        starting_capital = float(config.get('capital', 5000))
+        starting_capital = float(config.get('capital', 1000000))
         current_equity = starting_capital + total_realized + total_unrealized
 
         update['performance'] = {
@@ -3793,8 +3793,8 @@ async def get_trader_performance():
                 "max_drawdown": max_drawdown,
                 "realized_pnl": perf.get('realized_pnl', 0),
                 "unrealized_pnl": perf.get('unrealized_pnl', 0),
-                "starting_capital": perf.get('starting_capital', 5000),
-                "current_value": perf.get('current_value', 5000),
+                "starting_capital": perf.get('starting_capital', 1000000),
+                "current_value": perf.get('current_value', 1000000),
                 "return_pct": perf.get('return_pct', 0)
             }
         }
@@ -4016,7 +4016,7 @@ async def get_equity_curve(days: int = 30):
         # Get trade history for specified days
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
-        starting_equity = 5000
+        starting_equity = 1000000  # $1M starting capital
 
         # Fetch equity snapshots from new table
         snapshots = pd.read_sql_query(f"""
@@ -4713,9 +4713,9 @@ async def get_risk_status():
         conn.close()
 
         # Calculate risk metrics
-        starting_capital = 5000
-        daily_loss_limit = -500  # $500 daily loss limit
-        position_limit = 5000  # Max position size
+        starting_capital = 1000000  # $1M starting capital
+        daily_loss_limit = -50000  # $50K daily loss limit (5% of $1M)
+        position_limit = 200000  # $200K max position size (20% of $1M)
 
         return {
             "success": True,

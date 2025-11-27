@@ -119,8 +119,8 @@ async function fetchTraderData(): Promise<TraderUpdate | null> {
       positions: positionsData,
       recent_trades: tradesData,
       performance: perfData ? {
-        starting_capital: perfData.starting_capital || 10000,
-        current_equity: perfData.current_value || perfData.starting_capital || 10000,
+        starting_capital: perfData.starting_capital || 1000000,
+        current_equity: perfData.current_value || perfData.starting_capital || 1000000,
         total_realized_pnl: perfData.realized_pnl || perfData.total_pnl || 0,
         total_unrealized_pnl: perfData.unrealized_pnl || 0,
         net_pnl: perfData.total_pnl || 0,

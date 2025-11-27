@@ -168,12 +168,13 @@ export default function Dashboard() {
   const flipPoint = gexData?.flip_point || 0
   const mmState = getMMState(netGex, spotPrice, flipPoint)
 
+  const startingCapital = performance?.starting_capital || 1000000
   const todayPnL = performance?.today_pnl || 0
-  const todayPnLPercent = performance ? (todayPnL / 5000) * 100 : 0
+  const todayPnLPercent = performance ? (todayPnL / startingCapital) * 100 : 0
   const unrealizedPnL = positions.reduce((sum, pos) => sum + pos.unrealized_pnl, 0)
   const totalPnL = todayPnL + unrealizedPnL
 
-  const currentEquity = 5000 + (performance?.total_pnl || 0)
+  const currentEquity = startingCapital + (performance?.total_pnl || 0)
   const peakEquity = currentEquity
   const currentDrawdown = ((peakEquity - currentEquity) / peakEquity * 100)
   const dailyLossUsed = todayPnL < 0 ? Math.abs((todayPnL / currentEquity) * 100) : 0

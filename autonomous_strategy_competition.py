@@ -31,7 +31,7 @@ import psycopg2.extras
 class StrategyCompetition:
     """Run competitive paper trading across multiple strategies"""
 
-    def __init__(self, starting_capital: float = 5000.0):
+    def __init__(self, starting_capital: float = 1000000.0):
         self.starting_capital = starting_capital
 
         # Define competing strategies

@@ -393,6 +393,20 @@ class AutonomousPaperTrader:
             c.execute("INSERT INTO autonomous_config (key, value) VALUES ('use_theoretical_pricing', 'true')")
             conn.commit()
 
+        # MIGRATION: Update capital from old default $5000 to new default $1M
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
+        capital_result = c.fetchone()
+        if capital_result:
+            try:
+                current_capital = float(capital_result[0])
+                # If capital was set to old defaults, upgrade to $1M
+                if current_capital in [5000.0, 10000.0, 100000.0]:
+                    c.execute("UPDATE autonomous_config SET value = %s WHERE key = 'capital'", (str(self.starting_capital),))
+                    conn.commit()
+                    logger.info(f"Migrated capital from ${current_capital:,.0f} to ${self.starting_capital:,.0f}")
+            except (ValueError, TypeError):
+                pass
+
         conn.close()
 
     def _ensure_tables(self):
@@ -4122,9 +4136,13 @@ Now analyze this position:"""
 
         conn.close()
 
-        capital = float(self.get_config('capital') or 5000)
-        total_realized = closed['realized_pnl'].sum() if not closed.empty else 0
-        total_unrealized = open_pos['unrealized_pnl'].sum() if not open_pos.empty else 0
+        capital = float(self.get_config('capital') or 1000000)
+        # Use fillna(0) to handle NULL values that would cause NaN in sum()
+        total_realized = closed['realized_pnl'].fillna(0).sum() if not closed.empty else 0
+        total_unrealized = open_pos['unrealized_pnl'].fillna(0).sum() if not open_pos.empty else 0
+        # Ensure no NaN values propagate
+        total_realized = float(total_realized) if not pd.isna(total_realized) else 0
+        total_unrealized = float(total_unrealized) if not pd.isna(total_unrealized) else 0
         total_pnl = total_realized + total_unrealized
         current_value = capital + total_pnl
 

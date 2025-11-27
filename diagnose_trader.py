@@ -180,7 +180,7 @@ def check_trader_config():
 
         config_dict = {row[0]: row[1] for row in configs}
 
-        print(f"Capital: ${float(config_dict.get('capital', 5000)):,.2f}")
+        print(f"Capital: ${float(config_dict.get('capital', 1000000)):,.2f}")
         print(f"Mode: {config_dict.get('mode', 'paper')}")
         print(f"Signal Only: {config_dict.get('signal_only', 'false')}")
         print(f"Last Trade Date: {config_dict.get('last_trade_date', 'Never')}")
