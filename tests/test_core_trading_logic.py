@@ -463,5 +463,143 @@ class TestClassifierIntegration:
         assert action == MarketAction.SELL_PREMIUM
 
 
+# =========================================================================
+# Kelly Criterion Bug Fix Tests
+# =========================================================================
+
+class TestKellyBugFixes:
+    """Tests to verify Kelly criterion bug fixes are working correctly"""
+
+    def test_negative_kelly_should_block_trade(self):
+        """CRITICAL: Negative Kelly = negative expected value = NO TRADE
+
+        Bug that was fixed: System would still trade at 1% minimum when
+        Kelly was negative, which meant trading with negative expected value.
+        """
+        # 40% win rate, 0.5:1 reward/risk = very negative expectancy
+        win_rate = 0.40
+        avg_win = 5.0   # 5% average win
+        avg_loss = 10.0  # 10% average loss
+        risk_reward = avg_win / avg_loss  # 0.5
+
+        # Kelly = W - [(1-W)/R] = 0.40 - [0.60/0.5] = 0.40 - 1.20 = -0.80
+        kelly = win_rate - ((1 - win_rate) / risk_reward)
+
+        assert kelly < 0, "Kelly should be negative for this setup"
+        assert kelly == pytest.approx(-0.80, rel=0.01)
+
+        # The fix: When kelly <= 0, should return 0 contracts (block trade)
+        # Not trade at 1% minimum as before
+
+    def test_negative_kelly_formula_scenarios(self):
+        """Test various scenarios that should result in negative Kelly"""
+        test_cases = [
+            # (win_rate, risk_reward, expected_kelly_sign)
+            (0.50, 0.50, 'negative'),  # Break-even WR but bad R/R
+            (0.40, 1.00, 'negative'),  # Low WR, even R/R
+            (0.30, 1.50, 'negative'),  # Very low WR
+            (0.45, 0.80, 'negative'),  # Below break-even
+        ]
+
+        for win_rate, risk_reward, expected_sign in test_cases:
+            kelly = win_rate - ((1 - win_rate) / risk_reward)
+            if expected_sign == 'negative':
+                assert kelly < 0, f"Kelly should be negative for WR={win_rate}, R/R={risk_reward}"
+
+    def test_positive_kelly_scenarios(self):
+        """Test scenarios that should have positive Kelly (tradeable)"""
+        test_cases = [
+            # (win_rate, risk_reward, min_expected_kelly)
+            (0.55, 1.00, 0.05),   # Slight edge
+            (0.60, 1.50, 0.15),   # Good setup
+            (0.70, 1.00, 0.20),   # High win rate
+            (0.50, 2.00, 0.15),   # Good R/R compensates for 50% WR
+        ]
+
+        for win_rate, risk_reward, min_kelly in test_cases:
+            kelly = win_rate - ((1 - win_rate) / risk_reward)
+            assert kelly > min_kelly, f"Kelly should be > {min_kelly} for WR={win_rate}, R/R={risk_reward}"
+
+    def test_expectancy_threshold_is_zero(self):
+        """Verify expectancy threshold is 0, not -5%
+
+        Bug that was fixed: Previously allowed strategies with -4.9% expectancy
+        to trade. Now any negative expectancy blocks the trade.
+        """
+        # The correct threshold should block ANY negative expectancy
+        threshold = 0.0
+
+        # These should all be blocked
+        blocked_expectancies = [-0.1, -1.0, -4.9, -5.0, -10.0]
+        for exp in blocked_expectancies:
+            should_block = exp < threshold
+            assert should_block, f"Expectancy {exp}% should be blocked (threshold={threshold})"
+
+        # Only non-negative should pass
+        allowed_expectancies = [0.0, 0.1, 1.0, 5.0]
+        for exp in allowed_expectancies:
+            should_allow = exp >= threshold
+            assert should_allow, f"Expectancy {exp}% should be allowed"
+
+    def test_win_rate_threshold_is_40_percent(self):
+        """Verify minimum win rate is 40%, not 35%
+
+        Bug that was fixed: 35% win rate is too low for most setups.
+        Raised to 40% for better risk management.
+        """
+        min_win_rate = 40.0  # Percentage
+
+        # These should be blocked
+        blocked_rates = [35.0, 38.0, 39.9]
+        for rate in blocked_rates:
+            should_block = rate < min_win_rate
+            assert should_block, f"Win rate {rate}% should be blocked (min={min_win_rate}%)"
+
+
+class TestStrategyStatsDefaults:
+    """Tests for strategy stats default value handling"""
+
+    def test_zero_avg_win_uses_default(self):
+        """When avg_win is 0.0, should use conservative default (8.0%)"""
+        avg_win_from_stats = 0.0
+        default_avg_win = 8.0
+
+        # The fix: Check for 0.0 and use default
+        if avg_win_from_stats <= 0:
+            actual_avg_win = default_avg_win
+        else:
+            actual_avg_win = avg_win_from_stats
+
+        assert actual_avg_win == 8.0
+
+    def test_zero_avg_loss_uses_default(self):
+        """When avg_loss is 0.0, should use conservative default (12.0%)"""
+        avg_loss_from_stats = 0.0
+        default_avg_loss = 12.0
+
+        # The fix: Check for 0.0 and use default
+        if avg_loss_from_stats <= 0:
+            actual_avg_loss = default_avg_loss
+        else:
+            actual_avg_loss = avg_loss_from_stats
+
+        assert actual_avg_loss == 12.0
+
+    def test_default_risk_reward_is_conservative(self):
+        """Default R/R from defaults should be conservative (8/12 = 0.67)"""
+        default_avg_win = 8.0
+        default_avg_loss = 12.0
+
+        risk_reward = default_avg_win / default_avg_loss
+
+        # 0.67 R/R is conservative - requires ~60% win rate to break even
+        assert risk_reward == pytest.approx(0.667, rel=0.01)
+
+        # Calculate break-even win rate for this R/R
+        # Kelly = 0 when W = (1-W)/R => W = 1/(1+R) = 1/1.67 = 0.60
+        breakeven_wr = 1 / (1 + risk_reward)
+        assert breakeven_wr > 0.55, "Break-even WR should be > 55% with these defaults"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

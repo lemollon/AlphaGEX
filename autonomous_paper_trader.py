@@ -858,14 +858,15 @@ class AutonomousPaperTrader:
                     result['is_validated'] = True
 
                     # Check if pattern has positive expectancy
-                    if result['expectancy'] < -5.0:  # Negative expectancy threshold
+                    # BUG FIX: Changed from -5.0 to 0.0 - ANY negative expectancy should block trading
+                    if result['expectancy'] < 0.0:  # MUST have non-negative expectancy
                         result['should_trade'] = False
-                        result['reason'] = f"Pattern has negative expectancy ({result['expectancy']:.1f}%)"
-                    elif result['win_rate'] < 35.0:  # Win rate threshold
+                        result['reason'] = f"BLOCKED: Negative expectancy ({result['expectancy']:.1f}%)"
+                    elif result['win_rate'] < 40.0:  # Win rate threshold - raised from 35% to 40%
                         result['should_trade'] = False
-                        result['reason'] = f"Pattern has low win rate ({result['win_rate']:.0f}%)"
+                        result['reason'] = f"BLOCKED: Win rate too low ({result['win_rate']:.0f}% < 40%)"
                     else:
-                        result['reason'] = f"Validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate"
+                        result['reason'] = f"Validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate, {result['expectancy']:.1f}% expectancy"
                 else:
                     result['reason'] = f"Insufficient data: only {result['total_trades']} trades (need {min_trades})"
 
@@ -893,14 +894,15 @@ class AutonomousPaperTrader:
                 if result['total_trades'] >= min_trades:
                     result['is_validated'] = True
 
-                    if result['expectancy'] < -5.0:
+                    # BUG FIX: Changed from -5.0 to 0.0 - ANY negative expectancy should block trading
+                    if result['expectancy'] < 0.0:
                         result['should_trade'] = False
-                        result['reason'] = f"Live results show negative expectancy ({result['expectancy']:.1f}%)"
-                    elif result['win_rate'] < 35.0:
+                        result['reason'] = f"BLOCKED: Live trades show negative expectancy ({result['expectancy']:.1f}%)"
+                    elif result['win_rate'] < 40.0:  # Raised from 35% to 40%
                         result['should_trade'] = False
-                        result['reason'] = f"Live results show low win rate ({result['win_rate']:.0f}%)"
+                        result['reason'] = f"BLOCKED: Live win rate too low ({result['win_rate']:.0f}% < 40%)"
                     else:
-                        result['reason'] = f"Live validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate"
+                        result['reason'] = f"Live validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate, {result['expectancy']:.1f}% expectancy"
                 else:
                     result['reason'] = f"Limited live data: {result['total_trades']} trades"
 
@@ -946,10 +948,17 @@ class AutonomousPaperTrader:
             pattern_upper = pattern.upper().replace(' ', '_')
             if pattern_upper in all_stats:
                 stats = all_stats[pattern_upper]
+                # BUG FIX: Check for 0.0 values (stored defaults) and use safe defaults
+                avg_win = stats.get('avg_win', 0.0)
+                avg_loss = stats.get('avg_loss', 0.0)
+                if avg_win <= 0:
+                    avg_win = 8.0  # Conservative default
+                if avg_loss <= 0:
+                    avg_loss = 12.0  # Conservative default
                 return {
                     'win_rate': stats.get('win_rate', 0.55),
-                    'avg_win': abs(stats.get('avg_win', 8.0)),
-                    'avg_loss': abs(stats.get('avg_loss', 12.0)),
+                    'avg_win': abs(avg_win),
+                    'avg_loss': abs(avg_loss),
                     'expectancy': stats.get('expectancy', 0.0),
                     'total_trades': stats.get('total_trades', 0),
                     'is_proven': stats.get('total_trades', 0) >= 10,
@@ -959,10 +968,17 @@ class AutonomousPaperTrader:
             # Try fuzzy match
             for name, stats in all_stats.items():
                 if pattern_upper in name or name in pattern_upper:
+                    # BUG FIX: Check for 0.0 values (stored defaults) and use safe defaults
+                    avg_win = stats.get('avg_win', 0.0)
+                    avg_loss = stats.get('avg_loss', 0.0)
+                    if avg_win <= 0:
+                        avg_win = 8.0  # Conservative default
+                    if avg_loss <= 0:
+                        avg_loss = 12.0  # Conservative default
                     return {
                         'win_rate': stats.get('win_rate', 0.55),
-                        'avg_win': abs(stats.get('avg_win', 8.0)),
-                        'avg_loss': abs(stats.get('avg_loss', 12.0)),
+                        'avg_win': abs(avg_win),
+                        'avg_loss': abs(avg_loss),
                         'expectancy': stats.get('expectancy', 0.0),
                         'total_trades': stats.get('total_trades', 0),
                         'is_proven': stats.get('total_trades', 0) >= 10,
@@ -1033,10 +1049,27 @@ class AutonomousPaperTrader:
         risk_reward = avg_win / avg_loss
 
         # Kelly formula: W - (1-W)/R
+        # CRITICAL: Negative Kelly means negative expected value - DO NOT TRADE
         if risk_reward <= 0:
-            kelly = 0.01  # Minimum
+            kelly = -1.0  # Invalid setup
+            logger.warning(f"Invalid risk/reward ratio ({risk_reward:.2f}) - blocking trade")
         else:
             kelly = win_rate - ((1 - win_rate) / risk_reward)
+
+        # CRITICAL BUG FIX: If Kelly is negative, expected value is negative
+        # We should NOT trade, not trade at 1% minimum
+        if kelly <= 0:
+            logger.warning(f"Kelly criterion negative ({kelly:.2%}) for {strategy_name} - "
+                          f"WR={win_rate:.0%}, R/R={risk_reward:.2f} - BLOCKING TRADE")
+            return 0, {
+                'methodology': 'Kelly-Backtest-VIX (SPY)',
+                'blocked': True,
+                'block_reason': f'Negative Kelly ({kelly:.2%}) indicates negative expected value',
+                'raw_kelly': kelly,
+                'win_rate': win_rate,
+                'risk_reward': risk_reward,
+                'final_contracts': 0
+            }
 
         # Apply Kelly fraction based on proven status
         if is_proven:
@@ -1068,7 +1101,8 @@ class AutonomousPaperTrader:
                    f"{adjustment_type} * {confidence_factor} = {adjusted_kelly:.2%}")
 
         # Cap Kelly at 20% for SPY (more conservative than SPX)
-        final_kelly = max(0.01, min(0.20, adjusted_kelly))
+        # Minimum is now 0.5% (not 1%) for very conservative plays
+        final_kelly = max(0.005, min(0.20, adjusted_kelly))
 
         # Calculate position value
         max_position_value = available * final_kelly
