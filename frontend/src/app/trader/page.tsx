@@ -136,6 +136,21 @@ export default function AutonomousTrader() {
   const [backtestRefreshing, setBacktestRefreshing] = useState(false)
   const [riskStatus, setRiskStatus] = useState<any>(null)
 
+  // Liberation and False Floor accuracy state
+  const [liberationAccuracy, setLiberationAccuracy] = useState<{
+    total_liberation_signals: number
+    successful_liberations: number
+    accuracy_pct: number
+    avg_move_after_liberation_pct: number
+    avg_confidence: number
+  } | null>(null)
+  const [falseFloorEffectiveness, setFalseFloorEffectiveness] = useState<{
+    total_false_floor_detections: number
+    avoided_bad_short_trades: number
+    avg_price_move_pct: number
+    effectiveness: string
+  } | null>(null)
+
   // VIX Hedge Signal state
   const [vixSignal, setVixSignal] = useState<any>(null)
   const [vixData, setVixData] = useState<any>(null)
@@ -337,6 +352,8 @@ export default function AutonomousTrader() {
           apiClient.getAutonomousLogs({ limit: 20 }).catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getCompetitionLeaderboard().catch(() => ({ data: { success: false, data: [] } })),
           apiClient.getAllPatternBacktests(90).catch(() => ({ data: { success: false, data: [] } })),
+          apiClient.getLiberationAccuracy(90).catch(() => ({ data: { success: false, data: null } })),
+          apiClient.getFalseFloorEffectiveness(90).catch(() => ({ data: { success: false, data: null } })),
           apiClient.getRiskStatus().catch(() => ({ data: { success: false, data: null } })),
           apiClient.getTradeLog(),
           apiClient.getEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } })),
@@ -348,7 +365,7 @@ export default function AutonomousTrader() {
         ])
 
         // Extract results (fulfilled promises only)
-        const [statusRes, perfRes, tradesRes, strategiesRes, strategyConfigsRes, logsRes, leaderboardRes, backtestsRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = results.map(result =>
+        const [statusRes, perfRes, tradesRes, strategiesRes, strategyConfigsRes, logsRes, leaderboardRes, backtestsRes, liberationRes, falseFloorRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = results.map(result =>
           result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
         )
 
@@ -434,6 +451,15 @@ export default function AutonomousTrader() {
         if (backtestsRes.data.success) {
           setBacktestResults(backtestsRes.data.data || [])
           setBacktestDataSource(backtestsRes.data.data_source || 'none')
+        }
+
+        // Set liberation accuracy and false floor effectiveness data
+        if (liberationRes.data.success && liberationRes.data.data) {
+          setLiberationAccuracy(liberationRes.data.data)
+        }
+
+        if (falseFloorRes.data.success && falseFloorRes.data.data) {
+          setFalseFloorEffectiveness(falseFloorRes.data.data)
         }
 
         if (riskRes.data.success) {
@@ -2590,6 +2616,90 @@ export default function AutonomousTrader() {
           >
             View Complete Analysis →
           </button>
+        </div>
+      </div>
+
+      {/* Liberation & False Floor Analysis */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Liberation Accuracy */}
+        <div className="card">
+          <h2 className="text-lg font-semibold text-text-primary mb-4">🔓 Liberation Setup Accuracy</h2>
+          {liberationAccuracy ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-success/10 rounded-lg border border-success/20">
+                  <p className="text-text-secondary text-sm">Accuracy Rate</p>
+                  <p className="text-2xl font-bold text-success">{liberationAccuracy.accuracy_pct?.toFixed(1) || 0}%</p>
+                </div>
+                <div className="p-3 bg-primary/10 rounded-lg border border-primary/20">
+                  <p className="text-text-secondary text-sm">Total Signals</p>
+                  <p className="text-2xl font-bold text-primary">{liberationAccuracy.total_liberation_signals || 0}</p>
+                </div>
+              </div>
+              <div className="p-3 bg-background-hover rounded-lg">
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-secondary">Successful Liberations</span>
+                  <span className="text-success font-semibold">{liberationAccuracy.successful_liberations || 0}</span>
+                </div>
+                <div className="flex justify-between text-sm mt-2">
+                  <span className="text-text-secondary">Avg Move After Liberation</span>
+                  <span className={`font-semibold ${(liberationAccuracy.avg_move_after_liberation_pct || 0) > 0 ? 'text-success' : 'text-danger'}`}>
+                    {(liberationAccuracy.avg_move_after_liberation_pct || 0) > 0 ? '+' : ''}{liberationAccuracy.avg_move_after_liberation_pct?.toFixed(2) || 0}%
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm mt-2">
+                  <span className="text-text-secondary">Avg Confidence</span>
+                  <span className="text-text-primary font-semibold">{liberationAccuracy.avg_confidence?.toFixed(0) || 0}%</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-text-secondary text-center py-4">No liberation data available</p>
+          )}
+        </div>
+
+        {/* False Floor Effectiveness */}
+        <div className="card">
+          <h2 className="text-lg font-semibold text-text-primary mb-4">🛡️ False Floor Detection</h2>
+          {falseFloorEffectiveness ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-4">
+                <div className={`p-3 rounded-lg border ${
+                  falseFloorEffectiveness.effectiveness === 'GOOD'
+                    ? 'bg-success/10 border-success/20'
+                    : 'bg-warning/10 border-warning/20'
+                }`}>
+                  <p className="text-text-secondary text-sm">Effectiveness</p>
+                  <p className={`text-2xl font-bold ${
+                    falseFloorEffectiveness.effectiveness === 'GOOD' ? 'text-success' : 'text-warning'
+                  }`}>
+                    {falseFloorEffectiveness.effectiveness || 'N/A'}
+                  </p>
+                </div>
+                <div className="p-3 bg-primary/10 rounded-lg border border-primary/20">
+                  <p className="text-text-secondary text-sm">Detections</p>
+                  <p className="text-2xl font-bold text-primary">{falseFloorEffectiveness.total_false_floor_detections || 0}</p>
+                </div>
+              </div>
+              <div className="p-3 bg-background-hover rounded-lg">
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-secondary">Bad Shorts Avoided</span>
+                  <span className="text-success font-semibold">{falseFloorEffectiveness.avoided_bad_short_trades || 0}</span>
+                </div>
+                <div className="flex justify-between text-sm mt-2">
+                  <span className="text-text-secondary">Avg Price Move After</span>
+                  <span className={`font-semibold ${(falseFloorEffectiveness.avg_price_move_pct || 0) > 0 ? 'text-success' : 'text-danger'}`}>
+                    {(falseFloorEffectiveness.avg_price_move_pct || 0) > 0 ? '+' : ''}{falseFloorEffectiveness.avg_price_move_pct?.toFixed(2) || 0}%
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-text-secondary">
+                False floor detection helps avoid shorting into support levels that look like breakdowns but are actually accumulation zones.
+              </p>
+            </div>
+          ) : (
+            <p className="text-text-secondary text-center py-4">No false floor data available</p>
+          )}
         </div>
       </div>
 
