@@ -172,22 +172,28 @@ export default function AutonomousTrader() {
   // Update state from WebSocket or REST API data
   useEffect(() => {
     if (wsData && (wsData.type === 'trader_update' || wsData.type === 'rest_update' || wsData.type === 'connected')) {
-      // Update performance from WebSocket
+      // Update performance from WebSocket or REST fallback
+      // Handle both field name formats: WebSocket uses net_pnl/total_realized_pnl, REST uses total_pnl/realized_pnl
       if (wsData.performance) {
         const perf = wsData.performance as any  // Allow flexible property access
+        const netPnl = perf.net_pnl ?? perf.total_pnl ?? 0
+        const realizedPnl = perf.total_realized_pnl ?? perf.realized_pnl ?? 0
+        const unrealizedPnl = perf.total_unrealized_pnl ?? perf.unrealized_pnl ?? 0
+        const currentEquity = perf.current_equity ?? perf.current_value ?? ((perf.starting_capital || 1000000) + netPnl)
+
         setPerformance(prev => ({
           ...prev,
-          total_pnl: perf.net_pnl || 0,
-          today_pnl: perf.today_pnl || 0,
-          win_rate: perf.win_rate || 0,
-          total_trades: perf.total_trades || 0,
-          winning_trades: perf.winning_trades || 0,
-          losing_trades: perf.losing_trades || 0,
-          starting_capital: perf.starting_capital || 1000000,
-          current_value: perf.current_equity || (perf.starting_capital || 1000000) + (perf.net_pnl || 0),
-          realized_pnl: perf.total_realized_pnl || 0,
-          unrealized_pnl: perf.total_unrealized_pnl || 0,
-          return_pct: perf.return_pct || 0,
+          total_pnl: netPnl,
+          today_pnl: perf.today_pnl ?? 0,
+          win_rate: perf.win_rate ?? 0,
+          total_trades: perf.total_trades ?? 0,
+          winning_trades: perf.winning_trades ?? 0,
+          losing_trades: perf.losing_trades ?? 0,
+          starting_capital: perf.starting_capital ?? 1000000,
+          current_value: currentEquity,
+          realized_pnl: realizedPnl,
+          unrealized_pnl: unrealizedPnl,
+          return_pct: perf.return_pct ?? 0,
         }))
       }
 
@@ -1008,9 +1014,9 @@ export default function AutonomousTrader() {
                 {formatCurrency(performance.current_value)}
               </p>
               <p className={`text-sm mt-1 ${
-                performance.return_pct >= 0 ? 'text-success' : 'text-danger'
+                (performance.return_pct ?? 0) >= 0 ? 'text-success' : 'text-danger'
               }`}>
-                {performance.return_pct >= 0 ? '+' : ''}{performance.return_pct.toFixed(2)}% return
+                {(performance.return_pct ?? 0) >= 0 ? '+' : ''}{(performance.return_pct ?? 0).toFixed(2)}% return
               </p>
             </div>
             <DollarSign className="text-primary w-8 h-8" />
@@ -1036,7 +1042,7 @@ export default function AutonomousTrader() {
             <div>
               <p className="text-text-secondary text-sm">Win Rate</p>
               <p className="text-2xl font-bold text-text-primary mt-1">
-                {performance.win_rate.toFixed(1)}%
+                {(performance.win_rate ?? 0).toFixed(1)}%
               </p>
             </div>
             <Target className="text-primary w-8 h-8" />
@@ -1048,7 +1054,7 @@ export default function AutonomousTrader() {
             <div>
               <p className="text-text-secondary text-sm">Sharpe Ratio</p>
               <p className="text-2xl font-bold text-text-primary mt-1">
-                {performance.sharpe_ratio.toFixed(2)}
+                {(performance.sharpe_ratio ?? 0).toFixed(2)}
               </p>
             </div>
             <TrendingUp className="text-primary w-8 h-8" />
@@ -1107,7 +1113,7 @@ export default function AutonomousTrader() {
             <div>
               <p className="text-text-secondary text-sm">Max Drawdown</p>
               <p className="text-2xl font-bold text-danger mt-1">
-                {performance.max_drawdown.toFixed(1)}%
+                {(performance.max_drawdown ?? 0).toFixed(1)}%
               </p>
             </div>
             <TrendingDown className="text-danger w-8 h-8" />
@@ -1781,11 +1787,11 @@ export default function AutonomousTrader() {
                     </td>
                     <td className="py-3 px-4 text-center">
                       <span className={`font-semibold ${
-                        strategy.win_rate >= 60 ? 'text-success' :
-                        strategy.win_rate >= 40 ? 'text-warning' :
+                        (strategy.win_rate ?? 0) >= 60 ? 'text-success' :
+                        (strategy.win_rate ?? 0) >= 40 ? 'text-warning' :
                         'text-danger'
                       }`}>
-                        {strategy.win_rate.toFixed(1)}%
+                        {(strategy.win_rate ?? 0).toFixed(1)}%
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
@@ -2242,22 +2248,23 @@ export default function AutonomousTrader() {
         <div className="space-y-3 max-h-96 overflow-y-auto">
           {autonomousLogs.length > 0 ? (
             autonomousLogs.map((log, idx) => {
-              const logTypeConfig = {
-                'PSYCHOLOGY_ANALYSIS': { color: 'primary', icon: '🔍', title: 'Psychology Scan' },
-                'STRIKE_SELECTION': { color: 'warning', icon: '🎯', title: 'AI Strike Selection' },
-                'POSITION_SIZING': { color: 'success', icon: '💰', title: 'Position Sizing' },
-                'AI_EVALUATION': { color: 'blue-500', icon: '🤖', title: 'ML Pattern Prediction' },
-                'RISK_CHECK': { color: 'green-500', icon: '✅', title: 'Risk Manager' },
-                'TRADE_DECISION': { color: 'purple-500', icon: '⚡', title: 'Trade Decision' }
+              // Use complete class names to avoid Tailwind purging dynamic classes
+              const logTypeConfig: Record<string, { bgClass: string, borderClass: string, textClass: string, icon: string, title: string }> = {
+                'PSYCHOLOGY_ANALYSIS': { bgClass: 'from-primary/10', borderClass: 'border-primary', textClass: 'text-primary', icon: '🔍', title: 'Psychology Scan' },
+                'STRIKE_SELECTION': { bgClass: 'from-warning/10', borderClass: 'border-warning', textClass: 'text-warning', icon: '🎯', title: 'AI Strike Selection' },
+                'POSITION_SIZING': { bgClass: 'from-success/10', borderClass: 'border-success', textClass: 'text-success', icon: '💰', title: 'Position Sizing' },
+                'AI_EVALUATION': { bgClass: 'from-blue-500/10', borderClass: 'border-blue-500', textClass: 'text-blue-500', icon: '🤖', title: 'ML Pattern Prediction' },
+                'RISK_CHECK': { bgClass: 'from-green-500/10', borderClass: 'border-green-500', textClass: 'text-green-500', icon: '✅', title: 'Risk Manager' },
+                'TRADE_DECISION': { bgClass: 'from-purple-500/10', borderClass: 'border-purple-500', textClass: 'text-purple-500', icon: '⚡', title: 'Trade Decision' }
               }
-              const config = logTypeConfig[log.log_type as keyof typeof logTypeConfig] || { color: 'primary', icon: '📝', title: log.log_type }
+              const config = logTypeConfig[log.log_type] || { bgClass: 'from-primary/10', borderClass: 'border-primary', textClass: 'text-primary', icon: '📝', title: log.log_type }
 
               return (
-                <div key={idx} className={`p-4 bg-gradient-to-r from-${config.color}/10 to-transparent rounded-lg border-l-4 border-${config.color}`}>
+                <div key={idx} className={`p-4 bg-gradient-to-r ${config.bgClass} to-transparent rounded-lg border-l-4 ${config.borderClass}`}>
                   <div className="flex items-start gap-3">
                     <span className="text-xs text-text-muted">{formatTime(log.timestamp)}</span>
                     <div className="flex-1">
-                      <p className={`text-sm font-semibold text-${config.color} mb-1`}>{config.icon} {config.title}</p>
+                      <p className={`text-sm font-semibold ${config.textClass} mb-1`}>{config.icon} {config.title}</p>
                       <p className="text-text-secondary text-sm">
                         {log.log_type === 'PSYCHOLOGY_ANALYSIS' && `Pattern: ${log.pattern_detected || 'N/A'} | Confidence: ${log.confidence_score || 0}% | Symbol: ${log.symbol || 'SPY'}`}
                         {log.log_type === 'STRIKE_SELECTION' && `Strike: $${log.strike_chosen} | ${log.strike_selection_reason || 'Optimizing delta positioning'}`}
@@ -2346,21 +2353,21 @@ export default function AutonomousTrader() {
                           {strategy.name}
                         </span>
                         <span className={`font-semibold ${
-                          strategy.win_rate >= 60 ? 'text-success' :
-                          strategy.win_rate >= 40 ? 'text-warning' :
+                          (strategy.win_rate ?? 0) >= 60 ? 'text-success' :
+                          (strategy.win_rate ?? 0) >= 40 ? 'text-warning' :
                           'text-danger'
                         }`}>
-                          {strategy.win_rate.toFixed(1)}%
+                          {(strategy.win_rate ?? 0).toFixed(1)}%
                         </span>
                       </div>
                       <div className="h-4 bg-background-primary rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ${
-                            strategy.win_rate >= 60 ? 'bg-success' :
-                            strategy.win_rate >= 40 ? 'bg-warning' :
+                            (strategy.win_rate ?? 0) >= 60 ? 'bg-success' :
+                            (strategy.win_rate ?? 0) >= 40 ? 'bg-warning' :
                             'bg-danger'
                           }`}
-                          style={{ width: `${strategy.win_rate}%` }}
+                          style={{ width: `${strategy.win_rate ?? 0}%` }}
                         />
                       </div>
                     </div>
