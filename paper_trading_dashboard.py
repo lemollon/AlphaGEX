@@ -10,6 +10,7 @@ from typing import Dict, List
 from paper_trader import PaperTradingEngine, get_next_expiration, parse_dte_from_strategy
 from gamma_tracking_database import GammaTrackingDB, display_weekly_gamma_tracking
 from expiration_utils import add_expiration_to_setup, display_expiration_info, format_expiration_display
+from database_adapter import get_connection
 
 
 def display_paper_trading_config():
@@ -190,15 +191,13 @@ def display_open_positions():
 
     engine = PaperTradingEngine()
 
-    conn = engine.db_path
-    import sqlite3
-    conn = sqlite3.connect(engine.db_path)
+    conn = get_connection()
 
     positions = pd.read_sql_query("""
         SELECT * FROM paper_positions
         WHERE status = 'OPEN'
         ORDER BY opened_at DESC
-    """, conn)
+    """, conn.raw_connection)
     conn.close()
 
     if positions.empty:
@@ -224,12 +223,12 @@ def display_open_positions():
                 pass
 
         # Reload positions after update
-        conn = sqlite3.connect(engine.db_path)
+        conn = get_connection()
         positions = pd.read_sql_query("""
             SELECT * FROM paper_positions
             WHERE status = 'OPEN'
             ORDER BY opened_at DESC
-        """, conn)
+        """, conn.raw_connection)
         conn.close()
 
     # Display positions
@@ -306,15 +305,14 @@ def display_closed_positions():
 
     engine = PaperTradingEngine()
 
-    import sqlite3
-    conn = sqlite3.connect(engine.db_path)
+    conn = get_connection()
 
     positions = pd.read_sql_query("""
         SELECT * FROM paper_positions
         WHERE status = 'CLOSED'
         ORDER BY closed_at DESC
         LIMIT 50
-    """, conn)
+    """, conn.raw_connection)
     conn.close()
 
     if positions.empty:

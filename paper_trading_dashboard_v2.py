@@ -5,9 +5,9 @@ Shows real option prices, detailed trade reasoning, and daily trade finder
 
 import streamlit as st
 import pandas as pd
-import sqlite3
 from datetime import datetime
 from paper_trader_v2 import PaperTradingEngineV2, DailyTradeFinder
+from database_adapter import get_connection
 
 
 def display_paper_trader_v2():
@@ -232,17 +232,17 @@ def display_performance_v2(engine: PaperTradingEngineV2):
 
     st.header("📊 Performance Dashboard")
 
-    conn = sqlite3.connect(engine.db_path)
+    conn = get_connection()
 
     # Get all closed positions
     closed = pd.read_sql_query("""
         SELECT * FROM paper_positions_v2 WHERE status = 'CLOSED'
-    """, conn)
+    """, conn.raw_connection)
 
     # Get open positions
     open_pos = pd.read_sql_query("""
         SELECT * FROM paper_positions_v2 WHERE status = 'OPEN'
-    """, conn)
+    """, conn.raw_connection)
 
     conn.close()
 
@@ -338,13 +338,13 @@ def display_open_positions_v2(engine: PaperTradingEngineV2):
 
     st.header("📈 Open Positions")
 
-    conn = sqlite3.connect(engine.db_path)
+    conn = get_connection()
 
     positions = pd.read_sql_query("""
         SELECT * FROM paper_positions_v2
         WHERE status = 'OPEN'
         ORDER BY opened_at DESC
-    """, conn)
+    """, conn.raw_connection)
 
     conn.close()
 
@@ -420,14 +420,14 @@ def display_trade_history_v2(engine: PaperTradingEngineV2):
 
     st.header("📜 Trade History")
 
-    conn = sqlite3.connect(engine.db_path)
+    conn = get_connection()
 
     positions = pd.read_sql_query("""
         SELECT * FROM paper_positions_v2
         WHERE status = 'CLOSED'
         ORDER BY closed_at DESC
         LIMIT 50
-    """, conn)
+    """, conn.raw_connection)
 
     conn.close()
 

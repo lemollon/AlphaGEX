@@ -3,11 +3,11 @@ Liberation Outcomes Tracker
 Validates if psychology trap predictions actually worked by tracking outcomes
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from zoneinfo import ZoneInfo
 from config_and_database import DB_PATH
+from database_adapter import get_connection
 import pandas as pd
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -24,7 +24,7 @@ def check_liberation_outcomes():
     4. Log outcome to liberation_outcomes table
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Get regime signals from last 24 hours that haven't been checked yet
@@ -34,8 +34,8 @@ def check_liberation_outcomes():
                    rs.reasoning, rs.gex_regime
             FROM regime_signals rs
             LEFT JOIN liberation_outcomes lo ON rs.id = lo.regime_signal_id
-            WHERE rs.timestamp >= datetime('now', '-24 hours')
-              AND rs.timestamp <= datetime('now', '-1 hour')
+            WHERE rs.timestamp >= NOW() - INTERVAL '24 hours'
+              AND rs.timestamp <= NOW() - INTERVAL '1 hour'
               AND lo.id IS NULL
               AND rs.signal_type IN ('LIBERATION', 'FALSE_FLOOR', 'GAMMA_SQUEEZE')
             ORDER BY rs.timestamp DESC
@@ -86,7 +86,7 @@ def check_liberation_outcomes():
                     entry_price, target_price, actual_price, hours_elapsed,
                     outcome, price_change_pct, confidence_score,
                     prediction_correct, gex_regime_at_signal
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 now.strftime('%Y-%m-%d %H:%M:%S'),
                 signal_id,
@@ -116,10 +116,10 @@ def check_liberation_outcomes():
             SELECT
                 signal_type,
                 COUNT(*) as total,
-                SUM(CASE WHEN prediction_correct = 1 THEN 1 ELSE 0 END) as correct,
+                SUM(CASE WHEN prediction_correct = TRUE THEN 1 ELSE 0 END) as correct,
                 AVG(price_change_pct) as avg_move
             FROM liberation_outcomes
-            WHERE timestamp >= datetime('now', '-7 days')
+            WHERE timestamp >= NOW() - INTERVAL '7 days'
             GROUP BY signal_type
         """)
 

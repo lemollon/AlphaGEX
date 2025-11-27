@@ -3,22 +3,15 @@ Historical Tracking for Psychology Trap Detection
 Provides daily snapshots, historical comparisons, and backtest statistics
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import os
+from database_adapter import get_connection
 
 
 def get_db_connection():
     """Get database connection"""
-    # Use the same database path as config_and_database.py
-    db_path = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(__file__), 'gex_copilot.db'))
-
-    # Create database if it doesn't exist
-    if not os.path.exists(db_path):
-        print(f"⚠️  Database not found at {db_path}, will be created on first write")
-
-    return sqlite3.connect(db_path)
+    return get_connection()
 
 
 def save_daily_gamma_snapshot(symbol: str, gamma_data: Dict, current_price: float):
@@ -47,13 +40,15 @@ def save_daily_gamma_snapshot(symbol: str, gamma_data: Dict, current_price: floa
                     continue
 
                 c.execute('''
-                    INSERT OR REPLACE INTO historical_open_interest
+                    INSERT INTO historical_open_interest
                     (date, symbol, strike, expiration_date, call_oi, call_gamma, put_oi, put_gamma)
-                    VALUES (?, ?, ?, ?, ?, ?,
+                    VALUES (%s, %s, %s, %s, %s, %s,
                         COALESCE((SELECT put_oi FROM historical_open_interest
-                                  WHERE date=? AND symbol=? AND strike=? AND expiration_date=?), 0),
+                                  WHERE date=%s AND symbol=%s AND strike=%s AND expiration_date=%s), 0),
                         COALESCE((SELECT put_gamma FROM historical_open_interest
-                                  WHERE date=? AND symbol=? AND strike=? AND expiration_date=?), 0))
+                                  WHERE date=%s AND symbol=%s AND strike=%s AND expiration_date=%s), 0))
+                    ON CONFLICT (date, symbol, strike, expiration_date) DO UPDATE SET
+                        call_oi = EXCLUDED.call_oi, call_gamma = EXCLUDED.call_gamma
                 ''', (
                     today, symbol, strike, exp_date,
                     call.get('open_interest', 0),
@@ -69,13 +64,15 @@ def save_daily_gamma_snapshot(symbol: str, gamma_data: Dict, current_price: floa
                     continue
 
                 c.execute('''
-                    INSERT OR REPLACE INTO historical_open_interest
+                    INSERT INTO historical_open_interest
                     (date, symbol, strike, expiration_date, put_oi, put_gamma, call_oi, call_gamma)
-                    VALUES (?, ?, ?, ?, ?, ?,
+                    VALUES (%s, %s, %s, %s, %s, %s,
                         COALESCE((SELECT call_oi FROM historical_open_interest
-                                  WHERE date=? AND symbol=? AND strike=? AND expiration_date=?), 0),
+                                  WHERE date=%s AND symbol=%s AND strike=%s AND expiration_date=%s), 0),
                         COALESCE((SELECT call_gamma FROM historical_open_interest
-                                  WHERE date=? AND symbol=? AND strike=? AND expiration_date=?), 0))
+                                  WHERE date=%s AND symbol=%s AND strike=%s AND expiration_date=%s), 0))
+                    ON CONFLICT (date, symbol, strike, expiration_date) DO UPDATE SET
+                        put_oi = EXCLUDED.put_oi, put_gamma = EXCLUDED.put_gamma
                 ''', (
                     today, symbol, strike, exp_date,
                     put.get('open_interest', 0),
@@ -120,7 +117,7 @@ def get_historical_comparison(symbol: str, current_gamma: float) -> Dict:
         c.execute('''
             SELECT SUM(call_gamma + put_gamma) as total_gamma
             FROM historical_open_interest
-            WHERE symbol = ? AND date = ?
+            WHERE symbol = %s AND date = %s
         ''', (symbol, yesterday))
 
         row = c.fetchone()
@@ -132,9 +129,9 @@ def get_historical_comparison(symbol: str, current_gamma: float) -> Dict:
             FROM (
                 SELECT date, SUM(call_gamma + put_gamma) as daily_gamma
                 FROM historical_open_interest
-                WHERE symbol = ? AND date >= ? AND date < ?
+                WHERE symbol = %s AND date >= %s AND date < %s
                 GROUP BY date
-            )
+            ) subq
         ''', (symbol, week_ago, today))
 
         row = c.fetchone()
@@ -221,7 +218,7 @@ def calculate_regime_backtest_statistics(regime_type: str) -> Dict:
                 spy_price,
                 created_at
             FROM regime_signals
-            WHERE primary_regime_type = ?
+            WHERE primary_regime_type = %s
             AND price_change_1d IS NOT NULL
             ORDER BY created_at DESC
             LIMIT 100
@@ -313,7 +310,7 @@ def update_signal_outcomes():
         c.execute('''
             SELECT id, symbol, spy_price, created_at
             FROM regime_signals
-            WHERE created_at >= ?
+            WHERE created_at >= %s
             AND (price_change_1d IS NULL OR price_change_5d IS NULL OR price_change_10d IS NULL)
             ORDER BY created_at DESC
         ''', (thirty_days_ago,))
@@ -342,8 +339,8 @@ def update_signal_outcomes():
 
                     c.execute('''
                         UPDATE regime_signals
-                        SET price_change_1d = ?
-                        WHERE id = ?
+                        SET price_change_1d = %s
+                        WHERE id = %s
                     ''', (change_1d, signal_id))
 
                 except Exception as e:

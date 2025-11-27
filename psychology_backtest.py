@@ -17,7 +17,6 @@ Usage:
 """
 
 import argparse
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 import pandas as pd
@@ -29,6 +28,7 @@ from psychology_trap_detector import (
     calculate_mtf_rsi_score
 )
 from config_and_database import DB_PATH
+from database_adapter import get_connection
 
 
 class PsychologyBacktester:
@@ -439,15 +439,15 @@ class PsychologyBacktester:
 
     def _save_backtest_results(self, signals: List[Dict], stats: Dict):
         """Save backtest results to database"""
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
         c = conn.cursor()
 
         # Create backtest results table if it doesn't exist
         c.execute('''
             CREATE TABLE IF NOT EXISTS backtest_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 symbol TEXT,
-                backtest_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                backtest_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 signal_date DATE,
                 regime_type TEXT,
                 trade_direction TEXT,
@@ -468,7 +468,7 @@ class PsychologyBacktester:
                     symbol, signal_date, regime_type, trade_direction,
                     confidence, risk_level, signal_price, target_price,
                     price_change_pct, outcome, lookforward_days
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ''', (
                 self.symbol, signal['date'], signal['regime_type'],
                 signal['trade_direction'], signal['confidence'],
@@ -480,10 +480,16 @@ class PsychologyBacktester:
         # Update sucker_statistics table with actual backtest data
         for regime, data in stats.items():
             c.execute('''
-                INSERT OR REPLACE INTO sucker_statistics (
+                INSERT INTO sucker_statistics (
                     scenario_type, total_occurrences, newbie_fade_failed,
                     newbie_fade_succeeded, failure_rate, last_updated
-                ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+                ) VALUES (%s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (scenario_type) DO UPDATE SET
+                    total_occurrences = EXCLUDED.total_occurrences,
+                    newbie_fade_failed = EXCLUDED.newbie_fade_failed,
+                    newbie_fade_succeeded = EXCLUDED.newbie_fade_succeeded,
+                    failure_rate = EXCLUDED.failure_rate,
+                    last_updated = NOW()
             ''', (
                 regime, data['total_signals'], data['wins'],
                 data['losses'], 100 - data['win_rate']
