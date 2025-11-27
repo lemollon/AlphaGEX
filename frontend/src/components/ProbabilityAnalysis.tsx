@@ -236,7 +236,7 @@ export const BestSetupCard: React.FC<{ setup: TradeSetup; symbol: string }> = ({
             </div>
           </div>
           <p className="text-xs text-text-muted mt-3">
-            Risk/Reward Ratio: {(Math.abs(setup.avg_win) / Math.abs(setup.avg_loss)).toFixed(2)}:1
+            Risk/Reward Ratio: {Math.abs(setup.avg_loss) > 0 ? (Math.abs(setup.avg_win) / Math.abs(setup.avg_loss)).toFixed(2) : '∞'}:1
           </p>
         </div>
 

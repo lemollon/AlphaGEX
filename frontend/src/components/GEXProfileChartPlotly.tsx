@@ -41,9 +41,9 @@ export default function GEXProfileChart({
     )
   }
 
-  // Calculate stats
-  const maxCallGamma = Math.max(...data.map(d => Math.abs(d.call_gex))) / 1e6
-  const maxPutGamma = Math.max(...data.map(d => Math.abs(d.put_gex))) / 1e6
+  // Calculate stats (guard against empty arrays returning -Infinity)
+  const maxCallGamma = data.length > 0 ? Math.max(...data.map(d => Math.abs(d.call_gex))) / 1e6 : 0
+  const maxPutGamma = data.length > 0 ? Math.max(...data.map(d => Math.abs(d.put_gex))) / 1e6 : 0
 
   // Prepare chart data - separate Call and Put GEX
   const chartData = useMemo(() => {
