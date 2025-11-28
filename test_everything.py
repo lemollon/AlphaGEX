@@ -100,7 +100,6 @@ organized_imports = [
     ("data.polygon_data_fetcher", "polygon_fetcher"),
     ("data.unified_data_provider", "get_data_provider"),
     ("data.tradier_data_fetcher", "TradierDataFetcher"),
-    ("data.flexible_price_data", "FlexiblePriceDataFetcher"),
 
     # Backtest
     ("backtest.autonomous_backtest_engine", "get_backtester"),

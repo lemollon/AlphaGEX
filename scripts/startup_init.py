@@ -4,7 +4,7 @@ Startup Initialization Script
 Creates database tables on first startup - NO FAKE DATA
 """
 import logging
-from config_and_database import init_database
+from db.config_and_database import init_database
 from database_adapter import get_connection
 
 # Configure logging
