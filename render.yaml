@@ -64,7 +64,7 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: python automated_data_collector.py
+    startCommand: python data/automated_data_collector.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
