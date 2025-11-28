@@ -182,9 +182,39 @@ async def get_gex_history(symbol: str = "SPY", days: int = 30):
 
         conn.close()
 
+        # Calculate regime and other fields expected by frontend
+        gex_history = []
+        for h in history:
+            net_gex = h.get('net_gex', 0) or 0
+            # Determine regime
+            if net_gex <= -3e9:
+                regime = 'NEGATIVE'
+            elif net_gex < 0:
+                regime = 'NEGATIVE'
+            elif net_gex >= 3e9:
+                regime = 'POSITIVE'
+            elif net_gex > 0:
+                regime = 'POSITIVE'
+            else:
+                regime = 'NEUTRAL'
+
+            # Determine MM state
+            flip_point = h.get('gamma_flip', 0) or 0
+            spot_price = h.get('spot_price', 0) or 0
+            mm_state = 'LONG_GAMMA' if spot_price > flip_point else 'SHORT_GAMMA'
+
+            gex_history.append({
+                **h,
+                'regime': regime,
+                'mm_state': mm_state,
+                'flip_point': flip_point,
+                'data_source': 'gex_history'
+            })
+
         return {
             "success": True,
-            "data": history,
+            "data": history,  # Keep original for backward compat
+            "gex_history": gex_history,  # Add formatted data for frontend
             "symbol": symbol,
             "days": days
         }
@@ -225,22 +255,44 @@ async def get_regime_changes(symbol: str = "SPY", days: int = 30):
 
         # Find regime changes
         changes = []
+        regime_changes = []  # Frontend-compatible format
         prev_regime = None
+        prev_timestamp = None
+
         for row in rows:
             current_regime = row['regime']
             if prev_regime and current_regime != prev_regime:
-                changes.append({
+                # Calculate duration in days
+                duration_days = 0
+                if prev_timestamp and row['timestamp']:
+                    duration_days = (row['timestamp'] - prev_timestamp).days
+
+                change_data = {
                     "timestamp": row['timestamp'].isoformat() if row['timestamp'] else None,
                     "from_regime": prev_regime,
                     "to_regime": current_regime,
                     "net_gex": safe_round(row['net_gex']),
                     "spot_price": safe_round(row['spot_price'])
+                }
+                changes.append(change_data)
+
+                # Frontend-compatible format
+                regime_changes.append({
+                    "change_date": row['timestamp'].isoformat() if row['timestamp'] else None,
+                    "previous_regime": prev_regime.replace('_', ' ').title() if prev_regime else None,
+                    "new_regime": current_regime.replace('_', ' ').title() if current_regime else None,
+                    "net_gex_at_change": safe_round(row['net_gex']),
+                    "spot_price_at_change": safe_round(row['spot_price']),
+                    "duration_days": duration_days
                 })
+
             prev_regime = current_regime
+            prev_timestamp = row['timestamp']
 
         return {
             "success": True,
             "data": changes,
+            "regime_changes": regime_changes,  # Frontend-compatible
             "total_changes": len(changes),
             "symbol": symbol,
             "days": days

@@ -21,6 +21,7 @@ from . import alerts_routes
 from . import setups_routes
 from . import scanner_routes
 from . import autonomous_routes
+from . import psychology_routes
 
 __all__ = [
     'vix_routes',
@@ -41,4 +42,5 @@ __all__ = [
     'setups_routes',
     'scanner_routes',
     'autonomous_routes',
+    'psychology_routes',
 ]

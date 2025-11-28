@@ -10,6 +10,16 @@ CRITICAL INTEGRATION: Uses full Psychology Trap Detection System
 - False floor detection
 - Forward GEX magnets
 - All psychology trap patterns
+
+MODULAR STRUCTURE (autonomous_trader/):
+This god class has been decomposed into modular mixins:
+- PositionSizerMixin: Kelly criterion calculations (autonomous_trader/position_sizer.py)
+- TradeExecutorMixin: Strategy execution (autonomous_trader/trade_executor.py)
+- PositionManagerMixin: Exit logic, position updates (autonomous_trader/position_manager.py)
+- PerformanceTrackerMixin: Equity snapshots, stats (autonomous_trader/performance_tracker.py)
+
+The mixins provide the same functionality in a testable, maintainable structure.
+Import with: from autonomous_trader import PositionSizerMixin, TradeExecutorMixin, etc.
 """
 
 import pandas as pd
