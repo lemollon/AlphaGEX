@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch, MagicMock
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from market_regime_classifier import (
+from core.market_regime_classifier import (
     MarketRegimeClassifier,
     MarketAction,
     VolatilityRegime,
@@ -273,7 +273,7 @@ class TestProbabilityWeights:
     def test_probability_weights_sum_to_one(self):
         """Test that default probability weights sum to 1.0"""
         try:
-            from probability_calculator import ProbabilityWeights
+            from core.probability_calculator import ProbabilityWeights
         except ImportError:
             pytest.skip("probability_calculator requires database dependencies")
 
@@ -291,7 +291,7 @@ class TestProbabilityWeights:
     def test_probability_weights_to_dict(self):
         """Test weight serialization to dict"""
         try:
-            from probability_calculator import ProbabilityWeights
+            from core.probability_calculator import ProbabilityWeights
         except ImportError:
             pytest.skip("probability_calculator requires database dependencies")
 

@@ -11,7 +11,7 @@ print("=" * 80)
 
 print("\n1️⃣  Importing backtest engine...")
 try:
-    from autonomous_backtest_engine import PatternBacktester
+    from backtest.autonomous_backtest_engine import PatternBacktester
     print("✅ Import successful")
 except Exception as e:
     print(f"❌ Import failed: {e}")

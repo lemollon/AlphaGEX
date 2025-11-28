@@ -21,7 +21,7 @@ import uvicorn
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from core_classes_and_engines import TradingVolatilityAPI
-from polygon_data_fetcher import PolygonDataFetcher
+from data.polygon_data_fetcher import PolygonDataFetcher
 
 # =============================================================================
 # MCP Protocol Models

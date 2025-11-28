@@ -4,7 +4,7 @@ Test script for Psychology Trap Detection System
 """
 
 import sqlite3
-from config_and_database import DB_PATH, init_database
+from db.config_and_database import DB_PATH, init_database
 
 def test_database_tables():
     """Verify all psychology tables were created"""

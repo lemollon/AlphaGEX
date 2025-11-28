@@ -120,7 +120,7 @@ def test_polygon_data_fetcher_functions():
 
     try:
         # Check if functions exist
-        from polygon_data_fetcher import (
+        from data.polygon_data_fetcher import (
             calculate_black_scholes_price,
             calculate_theoretical_option_price,
             get_best_entry_price
@@ -219,7 +219,7 @@ def test_autonomous_trader_integration():
 
     try:
         # Check imports
-        from autonomous_paper_trader import (
+        from core.autonomous_paper_trader import (
             get_real_option_price,
             calculate_theoretical_option_price,
             get_best_entry_price,

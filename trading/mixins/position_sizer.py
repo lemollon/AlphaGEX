@@ -19,7 +19,7 @@ logger = logging.getLogger('autonomous_paper_trader.position_sizer')
 
 # Import strategy stats if available
 try:
-    from strategy_stats import get_strategy_stats
+    from core.strategy_stats import get_strategy_stats
     STRATEGY_STATS_AVAILABLE = True
 except ImportError:
     STRATEGY_STATS_AVAILABLE = False

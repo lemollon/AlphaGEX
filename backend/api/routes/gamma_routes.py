@@ -148,7 +148,7 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
     """Get actionable probability analysis for gamma-based trading."""
     try:
         from core_classes_and_engines import TradingVolatilityAPI
-        from probability_calculator import ProbabilityCalculator
+        from core.probability_calculator import ProbabilityCalculator
 
         symbol = symbol.upper()
         api_client = TradingVolatilityAPI()

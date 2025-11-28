@@ -9,7 +9,7 @@ the database schema accepts the data structure we expect.
 import sys
 import sqlite3
 from datetime import datetime
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 
 print("=" * 80)
 print("DIRECT DATABASE INSERT TEST")

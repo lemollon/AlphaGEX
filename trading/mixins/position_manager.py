@@ -43,7 +43,7 @@ class PositionManagerMixin:
         Runs every time the system checks
         """
         # Import here to avoid circular imports
-        from autonomous_paper_trader import get_real_option_price
+        from core.autonomous_paper_trader import get_real_option_price
 
         conn = get_connection()
         try:
@@ -253,7 +253,7 @@ REASON: [one concise sentence explaining why]"""
 
         try:
             # Call Claude API using the ClaudeIntelligence class
-            from intelligence_and_strategies import ClaudeIntelligence
+            from core.intelligence_and_strategies import ClaudeIntelligence
             claude = ClaudeIntelligence()
 
             messages = [{"role": "user", "content": prompt}]

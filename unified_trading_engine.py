@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 import json
 
 # Import the unified classifier
-from market_regime_classifier import (
+from core.market_regime_classifier import (
     MarketRegimeClassifier,
     RegimeClassification,
     MarketAction,

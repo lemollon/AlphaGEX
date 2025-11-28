@@ -14,7 +14,7 @@ import json
 
 # Import what we need from other files
 from db.config_and_database import MM_STATES, STRATEGIES
-from intelligence_and_strategies import (
+from core.intelligence_and_strategies import (
     TradingRAG, FREDIntegration, ClaudeIntelligence,
     MultiStrategyOptimizer, DynamicLevelCalculator,
     get_et_time, get_utc_time, is_market_open
@@ -2137,7 +2137,7 @@ class StrategyEngine:
         """
 
         # Import SmartDTECalculator here to avoid circular imports
-        from intelligence_and_strategies import SmartDTECalculator
+        from core.intelligence_and_strategies import SmartDTECalculator
         dte_calculator = SmartDTECalculator()
 
         setups = []

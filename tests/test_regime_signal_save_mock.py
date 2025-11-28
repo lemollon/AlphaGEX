@@ -16,7 +16,7 @@ print("=" * 80)
 print("\n1️⃣  Importing save_regime_signal_to_db...")
 try:
     from psychology_trap_detector import save_regime_signal_to_db
-    from config_and_database import DB_PATH
+    from db.config_and_database import DB_PATH
     print(f"✅ Import successful")
     print(f"   Database: {DB_PATH}")
 except Exception as e:
@@ -180,7 +180,7 @@ except Exception as e:
 # Step 5: Test backtest can query it
 print("\n5️⃣  Testing backtest query on saved signal...")
 try:
-    from autonomous_backtest_engine import PatternBacktester
+    from backtest.autonomous_backtest_engine import PatternBacktester
 
     backtester = PatternBacktester()
     result = backtester.backtest_pattern('LIBERATION', lookback_days=7)
