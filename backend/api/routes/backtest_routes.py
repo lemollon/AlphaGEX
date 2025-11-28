@@ -295,3 +295,32 @@ async def get_smart_recommendations():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/strategy-stats")
+async def get_strategy_stats_endpoint():
+    """
+    Get current strategy statistics from strategy_stats.json.
+    These are updated by backtests and used for Kelly position sizing.
+    """
+    try:
+        from core.strategy_stats import get_strategy_stats
+
+        stats = get_strategy_stats()
+
+        # Count sources
+        backtest_count = sum(1 for s in stats.values() if s.get('source') == 'backtest')
+        initial_count = sum(1 for s in stats.values() if s.get('source') == 'initial_estimate')
+
+        return {
+            "success": True,
+            "data": stats,
+            "summary": {
+                "total_strategies": len(stats),
+                "from_backtest": backtest_count,
+                "initial_estimates": initial_count,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

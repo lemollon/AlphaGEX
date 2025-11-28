@@ -316,15 +316,14 @@ if BASE_URL:
     import urllib.error
 
     endpoints = [
-        ("/api/health", "Health"),
+        ("/health", "Health"),
         ("/api/trader/status", "Trader"),
         ("/api/spx/status", "SPX"),
         ("/api/gex/SPY", "GEX"),
-        ("/api/regime/current", "Regime"),
-        ("/api/strategies/stats", "Strategy Stats"),
         ("/api/backtests/results", "Backtests"),
+        ("/api/backtests/strategy-stats", "Strategy Stats"),
         ("/api/ai-intelligence/market-commentary", "AI Commentary"),
-        ("/api/probability/SPY", "Probability"),
+        ("/api/probability/accuracy", "Probability"),
     ]
 
     for endpoint, name in endpoints:
@@ -374,7 +373,7 @@ if BASE_URL:
     try:
         import time
         time.sleep(2)
-        url = f"{BASE_URL}/api/strategies/stats"
+        url = f"{BASE_URL}/api/backtests/strategy-stats"
         req = urllib.request.Request(url, headers={'User-Agent': 'Test'})
         with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode())
