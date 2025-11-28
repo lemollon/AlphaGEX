@@ -82,13 +82,9 @@ class RiskManagerMixin:
             # Query open positions for this symbol
             table = 'spx_institutional_positions' if self.symbol == 'SPX' else 'autonomous_open_positions'
 
+            # Get basic position info - Greeks may not be stored in all tables
             c.execute(f"""
-                SELECT
-                    option_type, contracts, strike,
-                    COALESCE(delta, 0) as delta,
-                    COALESCE(gamma, 0) as gamma,
-                    COALESCE(theta, 0) as theta,
-                    COALESCE(vega, 0) as vega
+                SELECT option_type, contracts, strike
                 FROM {table}
                 WHERE status = 'OPEN'
             """)
@@ -96,33 +92,17 @@ class RiskManagerMixin:
             positions = c.fetchall()
             conn.close()
 
-            # Aggregate Greeks
-            total_delta = 0.0
-            total_gamma = 0.0
-            total_theta = 0.0
-            total_vega = 0.0
+            # For now, return position count without Greeks calculation
+            # Greeks would need to be calculated from live option prices
             position_count = len(positions)
 
-            for pos in positions:
-                contracts = pos[1] or 0
-                multiplier = 100  # Standard options multiplier
-
-                # Adjust sign for puts vs calls
-                option_type = (pos[0] or '').upper()
-                sign = -1 if 'PUT' in option_type else 1
-
-                total_delta += (pos[3] or 0) * contracts * multiplier * sign
-                total_gamma += (pos[4] or 0) * contracts * multiplier
-                total_theta += (pos[5] or 0) * contracts * multiplier
-                total_vega += (pos[6] or 0) * contracts * multiplier
-
             return {
-                'total_delta': round(total_delta, 2),
-                'total_gamma': round(total_gamma, 4),
-                'total_theta': round(total_theta, 2),
-                'total_vega': round(total_vega, 2),
+                'total_delta': 0,
+                'total_gamma': 0,
+                'total_theta': 0,
+                'total_vega': 0,
                 'position_count': position_count,
-                'delta_exposure_pct': round(abs(total_delta) / self.starting_capital * 100, 2) if self.starting_capital > 0 else 0
+                'delta_exposure_pct': 0
             }
 
         except Exception as e:
