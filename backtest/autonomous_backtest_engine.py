@@ -31,6 +31,33 @@ except ImportError:
     print("⚠️ Strategy stats not available for backtest feedback loop")
 
 
+# Mapping from detected patterns to trading strategies
+# When a pattern is detected, this tells us which strategy to use
+PATTERN_TO_STRATEGY_MAP = {
+    # Bullish patterns → long strategies
+    'DEALER_CAPITULATION': 'BULLISH_CALL_SPREAD',
+    'MM_TRAPPED': 'BULLISH_CALL_SPREAD',
+    'GAMMA_SQUEEZE_UP': 'BULLISH_CALL_SPREAD',
+    'LIBERATION_BREAKOUT': 'BULLISH_CALL_SPREAD',
+
+    # Bearish patterns → short strategies
+    'FALSE_FLOOR': 'BEARISH_PUT_SPREAD',
+    'GAMMA_SQUEEZE_DOWN': 'BEARISH_PUT_SPREAD',
+    'RESISTANCE_REJECTION': 'BEARISH_PUT_SPREAD',
+
+    # High volatility patterns → vol strategies
+    'GAMMA_SQUEEZE_CASCADE': 'NEGATIVE_GEX_SQUEEZE',
+    'VOLATILITY_EXPLOSION': 'LONG_STRADDLE',
+    'VIX_SPIKE': 'LONG_STRADDLE',
+
+    # Range-bound patterns → credit strategies
+    'PINNING': 'IRON_CONDOR',
+    'MM_DEFENDING': 'IRON_CONDOR',
+    'RANGE_BOUND': 'IRON_CONDOR',
+    'NEUTRAL_GAMMA': 'SHORT_PUT_CREDIT_SPREAD',
+}
+
+
 class PatternBacktester:
     """Backtest psychology trap patterns against historical data"""
 
@@ -319,6 +346,10 @@ class PatternBacktester:
         """
         Update strategy_stats.json from backtest results.
         This closes the feedback loop: backtests -> Kelly sizing.
+
+        Updates BOTH:
+        1. The detected pattern itself (for pattern-level tracking)
+        2. The mapped strategy (for Kelly sizing)
         """
         if not STRATEGY_STATS_AVAILABLE:
             return
@@ -342,11 +373,19 @@ class PatternBacktester:
                 'total_return_pct': result.get('total_return_pct', 0)
             }
 
-            # Update the stats file
+            # 1. Update stats for the pattern itself
             update_strategy_stats(pattern_name, backtest_results)
-
-            print(f"📊 Updated strategy_stats.json for {pattern_name}: "
+            print(f"📊 Updated pattern stats for {pattern_name}: "
                   f"WR={result['win_rate']:.1f}%, E={result['expectancy']:.2f}%")
+
+            # 2. Also update the mapped strategy (for Kelly sizing)
+            mapped_strategy = PATTERN_TO_STRATEGY_MAP.get(pattern_name)
+            if mapped_strategy:
+                # Copy results with mapped strategy name
+                strategy_results = backtest_results.copy()
+                strategy_results['strategy_name'] = mapped_strategy
+                update_strategy_stats(mapped_strategy, strategy_results)
+                print(f"📊 Updated strategy stats for {mapped_strategy} (from {pattern_name})")
 
         except Exception as e:
             print(f"⚠️ Failed to update strategy stats for {result.get('pattern')}: {e}")
