@@ -43,7 +43,7 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: python autonomous_scheduler.py --mode continuous --interval 5
+    startCommand: python autonomous_scheduler.py --mode continuous
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
