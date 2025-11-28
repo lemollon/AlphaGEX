@@ -82,6 +82,61 @@ export default function GammaIntelligence() {
   const [simStrike, setSimStrike] = useState(450)
   const [simQuantity, setSimQuantity] = useState(10)
   const [simOptionType, setSimOptionType] = useState<'call' | 'put'>('call')
+  const [simResults, setSimResults] = useState<{
+    positionGamma: number
+    deltaImpact: number
+    thetaDecay: number
+  } | null>(null)
+
+  // Calculate position impact based on inputs
+  const calculatePositionImpact = useCallback(() => {
+    if (!intelligence || !intelligence.strikes || intelligence.strikes.length === 0) {
+      setSimResults(null)
+      return
+    }
+
+    // Find closest strike in the data
+    const closestStrike = intelligence.strikes.reduce((prev, curr) =>
+      Math.abs(curr.strike - simStrike) < Math.abs(prev.strike - simStrike) ? curr : prev
+    )
+
+    // Get gamma for the option type
+    const gammaPerContract = simOptionType === 'call'
+      ? closestStrike.call_gamma
+      : closestStrike.put_gamma
+
+    // Calculate position gamma (gamma * contracts * 100 shares per contract)
+    const positionGamma = gammaPerContract * simQuantity * 100
+
+    // Calculate approximate delta based on moneyness
+    // ATM options have ~0.5 delta, ITM closer to 1, OTM closer to 0
+    const moneyness = (intelligence.spot_price - simStrike) / intelligence.spot_price
+    let baseDelta: number
+    if (simOptionType === 'call') {
+      // Call delta: ITM > 0.5, ATM = 0.5, OTM < 0.5
+      baseDelta = 0.5 + (moneyness * 2) // Rough approximation
+      baseDelta = Math.max(0.05, Math.min(0.95, baseDelta))
+    } else {
+      // Put delta: negative, ITM closer to -1, OTM closer to 0
+      baseDelta = -0.5 + (moneyness * 2)
+      baseDelta = Math.max(-0.95, Math.min(-0.05, baseDelta))
+    }
+    const deltaImpact = baseDelta * simQuantity
+
+    // Calculate approximate theta decay
+    // Theta is typically -0.01 to -0.05 per contract per day for ATM options
+    // Higher for ATM, lower for deep ITM/OTM
+    const atmDistance = Math.abs(simStrike - intelligence.spot_price) / intelligence.spot_price
+    const thetaMultiplier = Math.max(0.3, 1 - atmDistance * 5) // ATM = 1, 20% OTM = 0.3
+    const baseTheta = -0.03 * thetaMultiplier * intelligence.spot_price // Rough theta estimate
+    const thetaDecay = baseTheta * simQuantity
+
+    setSimResults({
+      positionGamma,
+      deltaImpact,
+      thetaDecay
+    })
+  }, [intelligence, simStrike, simQuantity, simOptionType])
 
   // Cache for gamma intelligence - 1 hour (adaptive based on market hours)
   const gammaCache = useDataCache<GammaIntelligence>({
@@ -860,7 +915,7 @@ export default function GammaIntelligence() {
                     />
                   </div>
                   <div className="flex items-end">
-                    <button className="btn-primary w-full">Calculate Impact</button>
+                    <button onClick={calculatePositionImpact} className="btn-primary w-full">Calculate Impact</button>
                   </div>
                 </div>
 
@@ -868,15 +923,21 @@ export default function GammaIntelligence() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-background-hover rounded-lg">
                   <div>
                     <p className="text-text-muted text-xs uppercase mb-1">Position Gamma</p>
-                    <p className="text-xl font-bold text-primary">+$2,450</p>
+                    <p className={`text-xl font-bold ${simResults && simResults.positionGamma >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {simResults ? (simResults.positionGamma >= 0 ? '+' : '') + simResults.positionGamma.toFixed(2) : 'Click Calculate'}
+                    </p>
                   </div>
                   <div>
                     <p className="text-text-muted text-xs uppercase mb-1">Delta Impact</p>
-                    <p className="text-xl font-bold text-success">+0.65</p>
+                    <p className={`text-xl font-bold ${simResults && simResults.deltaImpact >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {simResults ? (simResults.deltaImpact >= 0 ? '+' : '') + simResults.deltaImpact.toFixed(2) : 'Click Calculate'}
+                    </p>
                   </div>
                   <div>
                     <p className="text-text-muted text-xs uppercase mb-1">Theta Decay</p>
-                    <p className="text-xl font-bold text-danger">-$125/day</p>
+                    <p className="text-xl font-bold text-danger">
+                      {simResults ? '$' + simResults.thetaDecay.toFixed(2) + '/day' : 'Click Calculate'}
+                    </p>
                   </div>
                 </div>
               </div>

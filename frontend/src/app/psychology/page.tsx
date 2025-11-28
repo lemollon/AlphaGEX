@@ -450,9 +450,10 @@ export default function PsychologyTrapDetection() {
               openInterestAtStrike={20000} // Should come from strike data
               historicalWinRate={backtestStats?.win_rate || 73}
               historicalAvgGain={backtestStats?.avg_gain || 180}
+              historicalAvgLoss={backtestStats?.avg_loss || 70}
               ivRank={78} // Should come from IV data
               thetaDecay={0.08}
-              expectedValue={180}
+              expectedValue={backtestStats?.expected_value || 180}
             />
 
             {/* Alert Level Banner */}
