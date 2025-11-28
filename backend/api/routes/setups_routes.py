@@ -23,7 +23,7 @@ async def generate_trade_setups(request: dict):
         max_risk = account_size * (risk_pct / 100)
 
         from intelligence_and_strategies import RealOptionsChainFetcher
-        from config_and_database import STRATEGIES
+        from db.config_and_database import STRATEGIES
 
         options_fetcher = RealOptionsChainFetcher()
         setups = []
