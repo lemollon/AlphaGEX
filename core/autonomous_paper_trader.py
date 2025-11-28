@@ -104,7 +104,7 @@ except ImportError as e:
 try:
     from .psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
     from gamma.gamma_expiration_builder import build_gamma_with_expirations
-    from data.polygon_helper import PolygonDataFetcher as PolygonHelper
+    from data.polygon_data_fetcher import PolygonDataFetcher as PolygonHelper
     PSYCHOLOGY_AVAILABLE = True
     logger.info("Psychology Trap Detector integrated with Autonomous Trader")
 except ImportError as e:

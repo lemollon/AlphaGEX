@@ -134,15 +134,22 @@ class TradierDataFetcher:
             account_id: Tradier account ID (falls back to env var)
             sandbox: If True, use sandbox/paper trading. If False, live trading. None = read from env.
         """
-        self.api_key = api_key or os.getenv('TRADIER_API_KEY')
-        self.account_id = account_id or os.getenv('TRADIER_ACCOUNT_ID')
+        # Import from centralized config
+        try:
+            from unified_config import APIConfig
+            self.api_key = api_key or APIConfig.TRADIER_API_KEY
+            self.account_id = account_id or APIConfig.TRADIER_ACCOUNT_ID
+            default_sandbox = APIConfig.TRADIER_SANDBOX
+        except ImportError:
+            self.api_key = api_key or os.getenv('TRADIER_API_KEY')
+            self.account_id = account_id or os.getenv('TRADIER_ACCOUNT_ID')
+            default_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
 
         # Check sandbox setting from env if not explicitly set
         if sandbox is not None:
             self.sandbox = sandbox
         else:
-            sandbox_env = os.getenv('TRADIER_SANDBOX', 'true').lower()
-            self.sandbox = sandbox_env == 'true'
+            self.sandbox = default_sandbox
 
         if not self.api_key:
             raise ValueError("TRADIER_API_KEY is required. Set in .env or pass directly.")
