@@ -149,13 +149,14 @@ def update_strategy_stats(strategy_name: str, backtest_results: Dict):
     Automatically update strategy statistics from backtest results.
 
     Args:
-        strategy_name: Name of strategy (e.g., 'BULLISH_CALL_SPREAD')
+        strategy_name: Name of strategy (e.g., 'BULLISH_CALL_SPREAD') or pattern
         backtest_results: Results from BacktestResults.to_dict()
     """
     current_stats = get_strategy_stats()
 
     old_stats = current_stats.get(strategy_name, {})
     old_win_rate = old_stats.get('win_rate', 0.0)
+    old_source = old_stats.get('source', 'initial_estimate')
 
     # Extract new stats from backtest
     new_win_rate = backtest_results['win_rate'] / 100  # Convert from percentage
@@ -163,11 +164,19 @@ def update_strategy_stats(strategy_name: str, backtest_results: Dict):
     avg_loss = backtest_results.get('avg_loss_pct', 0.0)
     total_trades = backtest_results['total_trades']
 
-    # Only update if we have significant data (at least 10 trades)
-    if total_trades < 10:
-        reason = f"Insufficient data ({total_trades} trades < 10 minimum). Keeping current estimate."
+    # Minimum trades threshold:
+    # - If this is a new entry or still on initial_estimate, accept 3+ trades for bootstrapping
+    # - If already has backtest data, require 5+ trades to update
+    min_trades = 3 if old_source == 'initial_estimate' else 5
+
+    if total_trades < min_trades:
+        reason = f"Insufficient data ({total_trades} trades < {min_trades} minimum). Keeping current."
         print(f"⚠️  {strategy_name}: {reason}")
         return
+
+    # Ensure avg_win is positive and avg_loss is absolute (positive) for Kelly
+    avg_win = abs(avg_win) if avg_win else 10.0  # Default 10% if no data
+    avg_loss = abs(avg_loss) if avg_loss else 10.0  # Default 10% if no data
 
     # Update stats
     new_stats = {
