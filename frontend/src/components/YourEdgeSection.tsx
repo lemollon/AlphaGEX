@@ -10,6 +10,7 @@ interface YourEdgeSectionProps {
   openInterestAtStrike: number
   historicalWinRate?: number
   historicalAvgGain?: number
+  historicalAvgLoss?: number
   ivRank?: number
   thetaDecay?: number
   expectedValue?: number
@@ -23,6 +24,7 @@ export default function YourEdgeSection({
   openInterestAtStrike,
   historicalWinRate = 73,
   historicalAvgGain = 180,
+  historicalAvgLoss = 70,
   ivRank = 78,
   thetaDecay = 0.08,
   expectedValue = 180
@@ -145,7 +147,7 @@ export default function YourEdgeSection({
           </div>
           <div className="text-center">
             <div className="text-sm text-gray-400 mb-1">Avg Loss</div>
-            <div className="text-3xl font-bold text-red-400">-$70</div>
+            <div className="text-3xl font-bold text-red-400">-${historicalAvgLoss}</div>
           </div>
         </div>
 
@@ -156,7 +158,7 @@ export default function YourEdgeSection({
               +${expectedValue}
             </div>
             <div className="text-xs text-gray-300 font-mono">
-              = ({historicalWinRate}% × ${historicalAvgGain}) - ({100 - historicalWinRate}% × $70)
+              = ({historicalWinRate}% × ${historicalAvgGain}) - ({100 - historicalWinRate}% × ${historicalAvgLoss})
             </div>
           </div>
         </div>
