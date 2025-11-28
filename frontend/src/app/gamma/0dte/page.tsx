@@ -117,6 +117,34 @@ export default function GammaExpirationTracker() {
     return 'MODERATE'
   }
 
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  const getCurrentWeekDates = () => {
+    const today = new Date()
+    const dayOfWeek = today.getDay() // 0 = Sunday, 1 = Monday, etc.
+
+    // Calculate Monday of current week
+    const monday = new Date(today)
+    monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
+
+    // Generate dates for each day of the week
+    const weekDates: { [key: string]: string } = {}
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+
+    days.forEach((day, idx) => {
+      const date = new Date(monday)
+      date.setDate(monday.getDate() + idx)
+      weekDates[day] = formatDate(date)
+    })
+
+    return weekDates
+  }
+
   const getCurrentWeekRange = () => {
     const today = new Date()
     const dayOfWeek = today.getDay() // 0 = Sunday, 1 = Monday, etc.
@@ -129,15 +157,11 @@ export default function GammaExpirationTracker() {
     const friday = new Date(monday)
     friday.setDate(monday.getDate() + 4)
 
-    const formatDate = (date: Date) => {
-      const year = date.getFullYear()
-      const month = String(date.getMonth() + 1).padStart(2, '0')
-      const day = String(date.getDate()).padStart(2, '0')
-      return `${year}-${month}-${day}`
-    }
-
     return `${formatDate(monday)} to ${formatDate(friday)}`
   }
+
+  // Get week dates for display
+  const weekDates = getCurrentWeekDates()
 
   if (loading) {
     return (
@@ -409,7 +433,7 @@ export default function GammaExpirationTracker() {
                   <div key={day} className={`flex items-center gap-3 p-3 rounded-lg ${isToday ? 'bg-primary/10 border border-primary' : 'bg-background-hover'}`}>
                     {isToday && <span className="text-primary font-bold">📍</span>}
                     <span className="text-sm font-mono w-32 text-text-secondary">
-                      {dayName} 2025-11-{String(3 + idx).padStart(2, '0')}
+                      {dayName} {weekDates[day]}
                     </span>
                     <div className="flex-1 h-6 bg-background-deep rounded-full overflow-hidden">
                       <div
