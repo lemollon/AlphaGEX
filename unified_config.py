@@ -41,7 +41,7 @@ from config import (
 
 # Import MM_STATES and STRATEGIES with fallback
 try:
-    from config_and_database import MM_STATES, STRATEGIES
+    from db.config_and_database import MM_STATES, STRATEGIES
 except ImportError:
     # Fallback if database dependencies not available
     MM_STATES = {

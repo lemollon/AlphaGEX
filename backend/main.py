@@ -832,7 +832,7 @@ def calculate_risk_of_ruin(win_rate: float, risk_per_trade: float) -> float:
 
 # Initialize trader (if exists)
 try:
-    from autonomous_paper_trader import AutonomousPaperTrader
+    from core.autonomous_paper_trader import AutonomousPaperTrader
     trader = AutonomousPaperTrader()
     trader_available = True
     print("✅ SPY Autonomous Trader initialized successfully")

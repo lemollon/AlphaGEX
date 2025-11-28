@@ -182,7 +182,7 @@ async def run_backtests(lookback_days: int = 90):
     4. Updates strategy_stats.json for Kelly sizing
     """
     try:
-        from autonomous_backtest_engine import get_backtester
+        from backtest.autonomous_backtest_engine import get_backtester
 
         backtester = get_backtester()
         results = backtester.backtest_all_patterns_and_save(

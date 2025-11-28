@@ -23,7 +23,7 @@ POLYGON_AVAILABLE = False
 TRADING_VOL_AVAILABLE = False
 
 try:
-    from tradier_data_fetcher import TradierDataFetcher, OptionContract, OptionChain
+    from data.tradier_data_fetcher import TradierDataFetcher, OptionContract, OptionChain
     TRADIER_AVAILABLE = True
 except ImportError:
     logger.warning("Tradier not available - install tradier_data_fetcher")
@@ -32,7 +32,7 @@ except ImportError:
     OptionChain = None
 
 try:
-    from polygon_helper import PolygonHelper
+    from data.polygon_helper import PolygonHelper
     POLYGON_AVAILABLE = True
 except ImportError:
     logger.warning("Polygon not available - some historical features may be limited")

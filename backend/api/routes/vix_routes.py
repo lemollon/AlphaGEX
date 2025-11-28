@@ -135,13 +135,13 @@ async def get_vix_debug():
         raw_sources = {}
 
         try:
-            from unified_data_provider import get_vix as unified_get_vix
+            from data.unified_data_provider import get_vix as unified_get_vix
             raw_sources['unified_provider'] = unified_get_vix()
         except Exception as e:
             raw_sources['unified_provider'] = f"Error: {e}"
 
         try:
-            from polygon_data_fetcher import polygon_fetcher
+            from data.polygon_data_fetcher import polygon_fetcher
             raw_sources['polygon'] = polygon_fetcher.get_current_price('^VIX')
         except Exception as e:
             raw_sources['polygon'] = f"Error: {e}"

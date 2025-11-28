@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/spx", tags=["SPX Trader"])
 async def get_spx_trader_status():
     """Get SPX institutional trader status"""
     try:
-        from autonomous_paper_trader import AutonomousPaperTrader
+        from core.autonomous_paper_trader import AutonomousPaperTrader
 
         trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
 
@@ -44,7 +44,7 @@ async def get_spx_trader_status():
 async def get_spx_performance():
     """Get SPX institutional trader performance summary"""
     try:
-        from autonomous_paper_trader import AutonomousPaperTrader
+        from core.autonomous_paper_trader import AutonomousPaperTrader
 
         trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
         performance = trader.get_performance_summary()
@@ -58,7 +58,7 @@ async def get_spx_performance():
 async def check_spx_risk_limits(contracts: int, entry_price: float, delta: float = 0.5):
     """Check if a proposed SPX trade passes risk limits"""
     try:
-        from autonomous_paper_trader import AutonomousPaperTrader
+        from core.autonomous_paper_trader import AutonomousPaperTrader
 
         trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
         proposed_trade = {'contracts': contracts, 'entry_price': entry_price, 'delta': delta}
@@ -405,7 +405,7 @@ async def run_spx_diagnostic():
 
     # Check price data
     try:
-        from polygon_data_fetcher import polygon_fetcher
+        from data.polygon_data_fetcher import polygon_fetcher
         spy = polygon_fetcher.get_current_price('SPY')
         results["checks"]["price_data"] = {"status": "OK" if spy else "WARN", "spy_price": spy}
     except Exception as e:
@@ -413,7 +413,7 @@ async def run_spx_diagnostic():
 
     # Check regime classifier
     try:
-        from market_regime_classifier import get_classifier
+        from core.market_regime_classifier import get_classifier
         classifier = get_classifier('SPX')
         results["checks"]["regime_classifier"] = {"status": "OK", "message": "Initialized"}
     except Exception as e:
@@ -421,7 +421,7 @@ async def run_spx_diagnostic():
 
     # Check SPX trader (using unified trader with SPX symbol)
     try:
-        from autonomous_paper_trader import AutonomousPaperTrader
+        from core.autonomous_paper_trader import AutonomousPaperTrader
         trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
         results["checks"]["spx_trader"] = {
             "status": "OK", "capital": trader.starting_capital,

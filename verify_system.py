@@ -98,7 +98,7 @@ except Exception as e:
 
 # Autonomous trader
 try:
-    from autonomous_paper_trader import AutonomousPaperTrader
+    from core.autonomous_paper_trader import AutonomousPaperTrader
     import inspect
     sig = inspect.signature(AutonomousPaperTrader.__init__)
     has_symbol = 'symbol' in sig.parameters
@@ -110,7 +110,7 @@ except Exception as e:
 
 # Market regime classifier
 try:
-    from market_regime_classifier import (
+    from core.market_regime_classifier import (
         MarketRegimeClassifier,
         RegimeClassification,
         MarketAction,
@@ -122,21 +122,21 @@ except Exception as e:
 
 # Strategy stats
 try:
-    from strategy_stats import get_strategy_stats, get_recent_changes
+    from core.strategy_stats import get_strategy_stats, get_recent_changes
     check("strategy_stats imports", True)
 except Exception as e:
     check(f"strategy_stats imports ({e})", False)
 
 # Backtest framework
 try:
-    from backtest_framework import BacktestBase, BacktestResults, Trade
+    from backtest.backtest_framework import BacktestBase, BacktestResults, Trade
     check("backtest_framework imports", True)
 except Exception as e:
     check(f"backtest_framework imports ({e})", False)
 
 # Unified data provider
 try:
-    from unified_data_provider import get_data_provider, get_quote, get_price
+    from data.unified_data_provider import get_data_provider, get_quote, get_price
     check("unified_data_provider imports", True)
 except Exception as e:
     check(f"unified_data_provider imports ({e})", False)
@@ -147,7 +147,7 @@ except Exception as e:
 section("4. TRADER INITIALIZATION")
 
 try:
-    from autonomous_paper_trader import AutonomousPaperTrader
+    from core.autonomous_paper_trader import AutonomousPaperTrader
 
     # Test SPY trader
     spy_trader = AutonomousPaperTrader(symbol='SPY', capital=1_000_000)
@@ -205,7 +205,7 @@ section("6. DATA PROVIDERS")
 
 # Tradier
 try:
-    from unified_data_provider import get_data_provider
+    from data.unified_data_provider import get_data_provider
     provider = get_data_provider()
     quote = provider.get_quote('SPY')
     has_price = quote and quote.last > 0
@@ -215,7 +215,7 @@ except Exception as e:
 
 # Polygon
 try:
-    from polygon_data_fetcher import polygon_fetcher
+    from data.polygon_data_fetcher import polygon_fetcher
     price = polygon_fetcher.get_current_price('SPY')
     check(f"Polygon price: SPY ${price if price else 'N/A'}",
           price and price > 0, critical=False)
@@ -291,7 +291,7 @@ except Exception as e:
 section("9. STRATEGY STATS")
 
 try:
-    from strategy_stats import get_strategy_stats
+    from core.strategy_stats import get_strategy_stats
     stats = get_strategy_stats()
 
     for strategy, data in stats.items():
@@ -329,7 +329,7 @@ try:
     check(f"Change log file exists", os.path.exists(log_file), critical=False)
 
     # Verify update mechanism
-    from strategy_stats import get_strategy_stats, _update_from_backtest
+    from core.strategy_stats import get_strategy_stats, _update_from_backtest
     check("Update mechanism available", callable(_update_from_backtest), critical=False)
 
 except Exception as e:

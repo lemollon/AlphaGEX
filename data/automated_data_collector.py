@@ -65,7 +65,7 @@ def run_gex_history():
     print(f"{'='*70}")
 
     try:
-        from gex_history_snapshot_job import save_gex_snapshot
+        from gamma.gex_history_snapshot_job import save_gex_snapshot
         save_gex_snapshot('SPY')
         print(f"✅ GEX History completed successfully")
     except Exception as e:
@@ -83,7 +83,7 @@ def run_liberation_outcomes():
     print(f"{'='*70}")
 
     try:
-        from liberation_outcomes_tracker import check_liberation_outcomes
+        from gamma.liberation_outcomes_tracker import check_liberation_outcomes
         check_liberation_outcomes()
         print(f"✅ Liberation Outcomes completed successfully")
     except Exception as e:
@@ -101,7 +101,7 @@ def run_forward_magnets():
     print(f"{'='*70}")
 
     try:
-        from forward_magnets_detector import detect_forward_magnets
+        from gamma.forward_magnets_detector import detect_forward_magnets
         detect_forward_magnets()
         print(f"✅ Forward Magnets completed successfully")
     except Exception as e:
@@ -119,7 +119,7 @@ def run_gamma_expiration():
     print(f"{'='*70}")
 
     try:
-        from gamma_expiration_timeline import track_gamma_expiration_timeline
+        from gamma.gamma_expiration_timeline import track_gamma_expiration_timeline
         track_gamma_expiration_timeline()
         print(f"✅ Gamma Expiration completed successfully")
     except Exception as e:

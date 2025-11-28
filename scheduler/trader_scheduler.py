@@ -15,7 +15,7 @@ except ImportError:
     CronTrigger = None
     print("Warning: APScheduler not installed. Autonomous trading scheduler will be disabled.")
 
-from autonomous_paper_trader import AutonomousPaperTrader
+from core.autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
 from database_adapter import get_connection
 from datetime import datetime

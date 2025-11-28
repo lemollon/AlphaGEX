@@ -369,7 +369,7 @@ class BacktestBase:
 
         # AUTO-UPDATE: Save strategy stats for dynamic system
         try:
-            from strategy_stats import update_strategy_stats
+            from core.strategy_stats import update_strategy_stats
             update_strategy_stats(strategy_name, results.to_dict())
         except Exception as e:
             print(f"⚠️  Could not auto-update strategy stats: {e}")

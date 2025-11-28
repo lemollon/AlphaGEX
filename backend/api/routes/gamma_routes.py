@@ -34,7 +34,7 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
     """
     try:
         from core_classes_and_engines import TradingVolatilityAPI
-        from strategy_stats import calculate_mm_confidence, get_mm_states
+        from core.strategy_stats import calculate_mm_confidence, get_mm_states
 
         symbol = symbol.upper()
         api_client = TradingVolatilityAPI()
