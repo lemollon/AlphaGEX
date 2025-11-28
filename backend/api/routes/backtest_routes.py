@@ -171,24 +171,63 @@ async def get_best_strategies(min_expectancy: float = 0.5, limit: int = 10):
 
 
 @router.post("/run")
-async def run_backtests():
-    """Run backtests for all strategies"""
-    try:
-        from multi_strategy_backtester import MultiStrategyBacktester
+async def run_backtests(lookback_days: int = 90):
+    """
+    Run backtests for all pattern strategies.
 
-        backtester = MultiStrategyBacktester()
-        results = backtester.run_all_backtests(lookback_days=90, save_to_db=True)
+    This triggers the autonomous_backtest_engine which:
+    1. Queries historical regime_signals from database
+    2. Calculates win rates, expectancy, etc.
+    3. Saves results to backtest_results table
+    4. Updates strategy_stats.json for Kelly sizing
+    """
+    try:
+        from autonomous_backtest_engine import get_backtester
+
+        backtester = get_backtester()
+        results = backtester.backtest_all_patterns_and_save(
+            lookback_days=lookback_days,
+            save_to_db=True
+        )
+
+        # Count patterns with actual data
+        patterns_with_data = sum(1 for r in results if r.get('total_signals', 0) > 0)
 
         return {
             "success": True,
-            "message": f"Ran {len(results)} strategy backtests",
+            "message": f"Backtest complete - {patterns_with_data} patterns with signals",
             "data": {
-                "strategies_tested": len(results),
-                "timestamp": datetime.now().isoformat()
+                "total_patterns": len(results),
+                "patterns_with_signals": patterns_with_data,
+                "lookback_days": lookback_days,
+                "timestamp": datetime.now().isoformat(),
+                "results_summary": [
+                    {
+                        "pattern": r['pattern'],
+                        "signals": r['total_signals'],
+                        "win_rate": safe_round(r['win_rate']),
+                        "expectancy": safe_round(r['expectancy'])
+                    }
+                    for r in results[:10]  # Top 10
+                ]
             }
         }
-    except ImportError:
-        raise HTTPException(status_code=500, detail="Backtester module not available")
+    except ImportError as e:
+        # Fallback to multi-strategy backtester
+        try:
+            from multi_strategy_backtester import MultiStrategyBacktester
+            backtester = MultiStrategyBacktester()
+            results = backtester.run_all_backtests(lookback_days=lookback_days, save_to_db=True)
+            return {
+                "success": True,
+                "message": f"Ran {len(results)} strategy backtests (fallback mode)",
+                "data": {
+                    "strategies_tested": len(results),
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+        except ImportError:
+            raise HTTPException(status_code=500, detail=f"No backtester available: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

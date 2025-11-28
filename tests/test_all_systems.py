@@ -255,11 +255,11 @@ except Exception as e:
     print(f"  ✗ SPY Trader: FAILED - {e}")
     results['spy_trader'] = False
 
-# SPX Trader
+# SPX Trader (using unified trader with symbol='SPX')
 try:
-    from spx_institutional_trader import SPXInstitutionalTrader
-    spx_trader = SPXInstitutionalTrader()
-    print(f"  ✓ SPX Trader: Initialized (${spx_trader.capital:,.0f} capital)")
+    from autonomous_paper_trader import AutonomousPaperTrader
+    spx_trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
+    print(f"  ✓ SPX Trader (Unified): Initialized (${spx_trader.starting_capital:,.0f} capital)")
     results['spx_trader'] = True
 except Exception as e:
     print(f"  ✗ SPX Trader: FAILED - {e}")

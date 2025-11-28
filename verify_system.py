@@ -89,7 +89,8 @@ try:
         PositionSizerMixin,
         TradeExecutorMixin,
         PositionManagerMixin,
-        PerformanceTrackerMixin
+        PerformanceTrackerMixin,
+        RiskManagerMixin
     )
     check("trading.mixins imports", True)
 except Exception as e:
@@ -159,10 +160,11 @@ try:
           spx_trader.symbol == 'SPX')
 
     # Check MRO (mixins properly inherited)
-    mro = [c.__name__ for c in AutonomousPaperTrader.__mro__[:6]]
+    mro = [c.__name__ for c in AutonomousPaperTrader.__mro__[:7]]
     has_mixins = all(m in mro for m in ['PositionSizerMixin', 'TradeExecutorMixin',
-                                         'PositionManagerMixin', 'PerformanceTrackerMixin'])
-    check(f"Mixins in MRO: {mro[:5]}", has_mixins)
+                                         'PositionManagerMixin', 'PerformanceTrackerMixin',
+                                         'RiskManagerMixin'])
+    check(f"Mixins in MRO: {mro[:6]}", has_mixins)
 
 except Exception as e:
     check(f"Trader initialization failed ({e})", False)

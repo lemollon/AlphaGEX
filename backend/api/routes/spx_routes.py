@@ -1,5 +1,8 @@
 """
-SPX Institutional Trader API routes.
+SPX Trader API routes.
+
+Uses the unified AutonomousPaperTrader with symbol='SPX' and $100M capital.
+This replaces the legacy spx_institutional_trader.py.
 """
 
 import math
@@ -17,9 +20,9 @@ router = APIRouter(prefix="/api/spx", tags=["SPX Trader"])
 async def get_spx_trader_status():
     """Get SPX institutional trader status"""
     try:
-        from spx_institutional_trader import get_spx_trader_100m
+        from autonomous_paper_trader import AutonomousPaperTrader
 
-        trader = get_spx_trader_100m()
+        trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
 
         return {
             "success": True,
@@ -41,9 +44,9 @@ async def get_spx_trader_status():
 async def get_spx_performance():
     """Get SPX institutional trader performance summary"""
     try:
-        from spx_institutional_trader import get_spx_trader_100m
+        from autonomous_paper_trader import AutonomousPaperTrader
 
-        trader = get_spx_trader_100m()
+        trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
         performance = trader.get_performance_summary()
 
         return {"success": True, "data": performance}
@@ -55,9 +58,9 @@ async def get_spx_performance():
 async def check_spx_risk_limits(contracts: int, entry_price: float, delta: float = 0.5):
     """Check if a proposed SPX trade passes risk limits"""
     try:
-        from spx_institutional_trader import get_spx_trader_100m
+        from autonomous_paper_trader import AutonomousPaperTrader
 
-        trader = get_spx_trader_100m()
+        trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
         proposed_trade = {'contracts': contracts, 'entry_price': entry_price, 'delta': delta}
         can_trade, reason = trader.check_risk_limits(proposed_trade)
 
