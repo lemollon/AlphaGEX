@@ -637,7 +637,7 @@ async def get_trade_log():
 
         conn = get_connection()
 
-        from intelligence_and_strategies import get_local_time
+        from core.intelligence_and_strategies import get_local_time
         today = get_local_time('US/Central').strftime('%Y-%m-%d')
 
         log_entries = pd.read_sql_query("""

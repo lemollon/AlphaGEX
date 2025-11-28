@@ -44,7 +44,7 @@ from core.probability_calculator import ProbabilityCalculator
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
-    from unified_data_provider import get_data_provider, get_quote, get_price, get_vix
+    from data.unified_data_provider import get_data_provider, get_quote, get_price, get_vix
     UNIFIED_DATA_AVAILABLE = True
 except ImportError:
     UNIFIED_DATA_AVAILABLE = False

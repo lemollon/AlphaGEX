@@ -12,7 +12,7 @@ This script tests:
 import sys
 import sqlite3
 from datetime import datetime
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 
 print("=" * 80)
 print("BACKTEST INTEGRATION TEST")
@@ -22,8 +22,8 @@ print("=" * 80)
 print("\n1️⃣  Testing imports...")
 try:
     from psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
-    from autonomous_backtest_engine import PatternBacktester
-    from polygon_helper import PolygonDataFetcher as PolygonHelper
+    from backtest.autonomous_backtest_engine import PatternBacktester
+    from data.polygon_helper import PolygonDataFetcher as PolygonHelper
     print("✅ All imports successful")
 except Exception as e:
     print(f"❌ Import failed: {e}")

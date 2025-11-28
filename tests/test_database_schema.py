@@ -4,7 +4,7 @@ Test Database Schema - Verify regime_signals table has all required columns
 """
 
 import sqlite3
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 
 print("=" * 80)
 print("DATABASE SCHEMA TEST")
@@ -19,7 +19,7 @@ if c.fetchone():
     print("✅ regime_signals table exists")
 else:
     print("❌ regime_signals table NOT FOUND")
-    print("\nRun this to fix: python -c 'from config_and_database import init_database; init_database()'")
+    print("\nRun this to fix: python -c 'from db.config_and_database import init_database; init_database()'")
     conn.close()
     exit(1)
 

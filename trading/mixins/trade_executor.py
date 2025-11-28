@@ -291,7 +291,7 @@ class TradeExecutorMixin:
     def _execute_iron_condor(self, spot: float, gex_data: Dict, api_client) -> Optional[int]:
         """Execute Iron Condor - collect premium in range-bound market"""
         # Import here to avoid circular imports
-        from autonomous_paper_trader import get_real_option_price
+        from core.autonomous_paper_trader import get_real_option_price
 
         try:
             dte = 35
@@ -365,7 +365,7 @@ class TradeExecutorMixin:
 
     def _execute_bull_put_spread(self, spot: float, gex_data: Dict, api_client, regime=None) -> Optional[int]:
         """Execute Bull Put Spread - bullish credit spread"""
-        from autonomous_paper_trader import get_real_option_price
+        from core.autonomous_paper_trader import get_real_option_price
 
         try:
             dte = 30
@@ -429,7 +429,7 @@ class TradeExecutorMixin:
 
     def _execute_bear_call_spread(self, spot: float, gex_data: Dict, api_client, regime=None) -> Optional[int]:
         """Execute Bear Call Spread - bearish credit spread"""
-        from autonomous_paper_trader import get_real_option_price
+        from core.autonomous_paper_trader import get_real_option_price
 
         try:
             dte = 30
@@ -493,7 +493,7 @@ class TradeExecutorMixin:
 
     def _execute_cash_secured_put(self, spot: float, gex_data: Dict, api_client, regime=None) -> Optional[int]:
         """Execute Cash Secured Put - sell naked put with cash to cover"""
-        from autonomous_paper_trader import get_real_option_price
+        from core.autonomous_paper_trader import get_real_option_price
 
         try:
             dte = 45

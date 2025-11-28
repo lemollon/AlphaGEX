@@ -31,7 +31,7 @@ def get_trader(symbol: str = 'SPY', capital: float = None):
     Returns:
         AutonomousPaperTrader configured for the symbol
     """
-    from autonomous_paper_trader import AutonomousPaperTrader
+    from core.autonomous_paper_trader import AutonomousPaperTrader
 
     # Default capital based on symbol
     if capital is None:

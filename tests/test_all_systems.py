@@ -153,7 +153,7 @@ print("5. POLYGON API (Historical Data Fallback)")
 print("=" * 60)
 
 try:
-    from polygon_data_fetcher import polygon_fetcher
+    from data.polygon_data_fetcher import polygon_fetcher
 
     # Test current price
     price = polygon_fetcher.get_current_price('SPY')
@@ -186,7 +186,7 @@ print("6. UNIFIED DATA PROVIDER")
 print("=" * 60)
 
 try:
-    from unified_data_provider import get_data_provider
+    from data.unified_data_provider import get_data_provider
     provider = get_data_provider()
 
     # Test quote
@@ -226,7 +226,7 @@ print("7. MARKET REGIME CLASSIFIER")
 print("=" * 60)
 
 try:
-    from market_regime_classifier import get_classifier, MarketAction
+    from core.market_regime_classifier import get_classifier, MarketAction
 
     classifier = get_classifier('SPY')
     print(f"  ✓ SPY Classifier: Initialized")
@@ -247,7 +247,7 @@ print("=" * 60)
 
 # SPY Trader
 try:
-    from autonomous_paper_trader import AutonomousPaperTrader
+    from core.autonomous_paper_trader import AutonomousPaperTrader
     spy_trader = AutonomousPaperTrader()
     print(f"  ✓ SPY Trader: Initialized (${spy_trader.current_capital:,.2f} capital)")
     results['spy_trader'] = True
@@ -257,7 +257,7 @@ except Exception as e:
 
 # SPX Trader (using unified trader with symbol='SPX')
 try:
-    from autonomous_paper_trader import AutonomousPaperTrader
+    from core.autonomous_paper_trader import AutonomousPaperTrader
     spx_trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
     print(f"  ✓ SPX Trader (Unified): Initialized (${spx_trader.starting_capital:,.0f} capital)")
     results['spx_trader'] = True
@@ -271,7 +271,7 @@ print("9. BACKTESTER")
 print("=" * 60)
 
 try:
-    from backtest_framework import BacktestResults, Trade
+    from backtest.backtest_framework import BacktestResults, Trade
     print("  ✓ Backtest Framework: Loaded")
     results['backtest_framework'] = True
 except Exception as e:

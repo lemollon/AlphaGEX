@@ -24,7 +24,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # Import strategy stats if available
 try:
-    from strategy_stats import update_strategy_stats, log_change
+    from core.strategy_stats import update_strategy_stats, log_change
     STRATEGY_STATS_AVAILABLE = True
 except ImportError:
     STRATEGY_STATS_AVAILABLE = False

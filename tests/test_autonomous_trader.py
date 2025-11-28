@@ -17,9 +17,9 @@ print("=" * 80)
 # Test 1: Import and initialize
 print("\n1️⃣  Testing imports...")
 try:
-    from autonomous_paper_trader import AutonomousPaperTrader
+    from core.autonomous_paper_trader import AutonomousPaperTrader
     from core_classes_and_engines import TradingVolatilityAPI
-    from config_and_database import DB_PATH
+    from db.config_and_database import DB_PATH
     print(f"✅ Imports successful")
     print(f"   Database path: {DB_PATH}")
 except Exception as e:

@@ -145,7 +145,7 @@ async def get_trade_advice(signal_data: dict):
         }
     """
     try:
-        from ai_trade_advisor import SmartTradeAdvisor
+        from ai.ai_trade_advisor import SmartTradeAdvisor
 
         api_key = signal_data.pop('api_key', None)
         advisor = SmartTradeAdvisor(anthropic_api_key=api_key)
@@ -173,7 +173,7 @@ async def provide_ai_feedback(feedback: dict):
         }
     """
     try:
-        from ai_trade_advisor import SmartTradeAdvisor
+        from ai.ai_trade_advisor import SmartTradeAdvisor
 
         advisor = SmartTradeAdvisor()
         result = advisor.provide_feedback(
@@ -197,7 +197,7 @@ async def get_learning_insights():
     Get AI learning insights (accuracy by pattern, confidence calibration, etc)
     """
     try:
-        from ai_trade_advisor import SmartTradeAdvisor
+        from ai.ai_trade_advisor import SmartTradeAdvisor
 
         advisor = SmartTradeAdvisor()
         insights = advisor.get_learning_insights()
@@ -217,7 +217,7 @@ async def get_ai_track_record(days: int = 30):
     Get AI's prediction track record over time
     """
     try:
-        from ai_trade_advisor import SmartTradeAdvisor
+        from ai.ai_trade_advisor import SmartTradeAdvisor
 
         advisor = SmartTradeAdvisor()
         track_record = advisor.get_ai_track_record(days=days)

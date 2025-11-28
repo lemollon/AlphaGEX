@@ -6,7 +6,7 @@ Monitor the fully automated paper trader - NO manual intervention needed
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from autonomous_paper_trader import AutonomousPaperTrader
+from core.autonomous_paper_trader import AutonomousPaperTrader
 from database_adapter import get_connection
 
 
