@@ -700,7 +700,7 @@ async def execute_trader_cycle():
         }
 
     try:
-        from api.dependencies import api_client
+        from backend.api.dependencies import api_client
 
         print("\n" + "="*60)
         print(f"🤖 MANUAL TRADER EXECUTION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
