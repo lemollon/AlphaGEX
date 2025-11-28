@@ -4,7 +4,7 @@ Alerts API routes - Price and GEX alerts management.
 
 from fastapi import APIRouter, HTTPException
 
-from api.dependencies import api_client, get_connection
+from backend.api.dependencies import api_client, get_connection
 
 router = APIRouter(prefix="/api/alerts", tags=["Alerts"])
 

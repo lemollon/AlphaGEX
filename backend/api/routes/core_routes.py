@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import requests
 from fastapi import APIRouter, HTTPException
 
-from api.dependencies import (
+from backend.api.dependencies import (
     api_client,
     get_et_time,
     get_local_time,

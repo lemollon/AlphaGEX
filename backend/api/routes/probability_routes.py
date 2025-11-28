@@ -4,7 +4,7 @@ Probability Prediction API routes - Self-learning probability calibration.
 
 from fastapi import APIRouter, HTTPException
 
-from api.dependencies import probability_calc, get_connection
+from backend.api.dependencies import probability_calc, get_connection
 
 router = APIRouter(prefix="/api/probability", tags=["Probability"])
 

@@ -6,7 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 
-from api.dependencies import api_client, claude_ai, get_connection
+from backend.api.dependencies import api_client, claude_ai, get_connection
 
 router = APIRouter(prefix="/api/ai", tags=["AI Copilot"])
 

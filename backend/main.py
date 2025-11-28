@@ -25,7 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 # Import route modules (refactored from monolithic main.py)
-from api.routes import (
+from backend.api.routes import (
     vix_routes,
     spx_routes,
     system_routes,
