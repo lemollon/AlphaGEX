@@ -11,15 +11,15 @@ CRITICAL INTEGRATION: Uses full Psychology Trap Detection System
 - Forward GEX magnets
 - All psychology trap patterns
 
-MODULAR STRUCTURE (autonomous_trader/):
+MODULAR STRUCTURE (trading/mixins/):
 This god class has been decomposed into modular mixins:
-- PositionSizerMixin: Kelly criterion calculations (autonomous_trader/position_sizer.py)
-- TradeExecutorMixin: Strategy execution (autonomous_trader/trade_executor.py)
-- PositionManagerMixin: Exit logic, position updates (autonomous_trader/position_manager.py)
-- PerformanceTrackerMixin: Equity snapshots, stats (autonomous_trader/performance_tracker.py)
+- PositionSizerMixin: Kelly criterion calculations (trading/mixins/position_sizer.py)
+- TradeExecutorMixin: Strategy execution (trading/mixins/trade_executor.py)
+- PositionManagerMixin: Exit logic, position updates (trading/mixins/position_manager.py)
+- PerformanceTrackerMixin: Equity snapshots, stats (trading/mixins/performance_tracker.py)
 
 The mixins provide the same functionality in a testable, maintainable structure.
-Import with: from autonomous_trader import PositionSizerMixin, TradeExecutorMixin, etc.
+Import with: from trading.mixins import PositionSizerMixin, TradeExecutorMixin, etc.
 """
 
 import pandas as pd
@@ -37,7 +37,7 @@ import logging
 import threading
 
 # Import modular mixins for decomposed functionality
-from autonomous_trader import (
+from trading.mixins import (
     PositionSizerMixin,
     TradeExecutorMixin,
     PositionManagerMixin,
@@ -342,8 +342,16 @@ class AutonomousPaperTrader(
     - PerformanceTrackerMixin: Equity snapshots, statistics
     """
 
-    def __init__(self):
-        self.starting_capital = 1000000  # $1,000,000 starting capital
+    def __init__(self, symbol: str = 'SPY', capital: float = 1_000_000):
+        """
+        Initialize the autonomous paper trader.
+
+        Args:
+            symbol: Trading symbol ('SPY', 'SPX', 'QQQ'). Default: 'SPY'
+            capital: Starting capital. Default: $1,000,000
+        """
+        self.symbol = symbol
+        self.starting_capital = capital
         self._ensure_tables()
 
         # CRITICAL: Initialize all components
@@ -387,15 +395,15 @@ class AutonomousPaperTrader(
             print("⚠️ Strategy competition not available")
 
         # Initialize trading costs calculator for realistic P&L
-        self.costs_calculator = get_costs_calculator('SPY', 'paper')
-        print("✅ Trading costs calculator initialized (slippage + commission modeling)")
+        self.costs_calculator = get_costs_calculator(self.symbol, 'paper')
+        print(f"✅ Trading costs calculator initialized for {self.symbol} (slippage + commission modeling)")
 
         # CRITICAL: Initialize UNIFIED Market Regime Classifier
         # This is the SINGLE source of truth - NO more whiplash decisions
         if UNIFIED_CLASSIFIER_AVAILABLE:
-            self.regime_classifier = get_classifier('SPY')
+            self.regime_classifier = get_classifier(self.symbol)
             self.iv_history = []  # Track IV history for rank calculation
-            print("✅ Unified Market Regime Classifier initialized (anti-whiplash enabled)")
+            print(f"✅ Unified Market Regime Classifier initialized for {self.symbol} (anti-whiplash enabled)")
         else:
             self.regime_classifier = None
             self.iv_history = []
@@ -855,8 +863,8 @@ class AutonomousPaperTrader(
 
         try:
             # Step 1: Get market data
-            gex_data = api_client.get_net_gamma('SPY')
-            skew_data = api_client.get_skew_data('SPY')
+            gex_data = api_client.get_net_gamma(self.symbol)
+            skew_data = api_client.get_skew_data(self.symbol)
 
             if not gex_data or gex_data.get('error'):
                 return {'error': 'Failed to get GEX data', 'signal': None}
@@ -888,7 +896,7 @@ class AutonomousPaperTrader(
             # Step 3: Get option pricing with delayed data tracking
             exp_date = self._get_expiration_string(trade['dte'])
             liquid_strike, option_quote = find_liquid_strike(
-                symbol='SPY',
+                symbol=self.symbol,
                 base_strike=trade['strike'],
                 option_type=trade['option_type'],
                 expiration_date=exp_date,
@@ -916,7 +924,7 @@ class AutonomousPaperTrader(
 
             signal = {
                 'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
-                'symbol': 'SPY',
+                'symbol': self.symbol,
                 'spot_price': spot_price,
 
                 # Trade details
@@ -1021,14 +1029,14 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
         if self.db_logger:
             spot_price = 0
             try:
-                gex_preview = api_client.get_net_gamma('SPY')
+                gex_preview = api_client.get_net_gamma(self.symbol)
                 spot_price = gex_preview.get('spot_price', 0) if gex_preview else 0
             except (KeyError, TypeError, AttributeError, Exception) as e:
                 # Failed to get spot price for logging, continue with 0
                 pass
 
             self.db_logger.log_scan_start(
-                symbol='SPY',
+                symbol=self.symbol,
                 spot_price=spot_price,
                 market_context={'scan_type': 'daily_trade_search'}
             )
@@ -1054,13 +1062,13 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
         self.update_live_status(
             status='ANALYZING',
             action='Fetching market data and analyzing GEX regime...',
-            analysis='Connecting to Trading Volatility API for SPY data'
+            analysis=f'Connecting to Trading Volatility API for {self.symbol} data'
         )
 
         try:
-            # Step 1: Get SPY GEX data + Enhanced market data
-            gex_data = api_client.get_net_gamma('SPY')
-            skew_data = api_client.get_skew_data('SPY')
+            # Step 1: Get GEX data + Enhanced market data
+            gex_data = api_client.get_net_gamma(self.symbol)
+            skew_data = api_client.get_skew_data(self.symbol)
 
             if not gex_data or gex_data.get('error'):
                 self.update_live_status(
@@ -1302,7 +1310,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                         # Log AI strike selection reasoning
                         if self.db_logger:
                             self.db_logger.log_strike_selection(
-                                symbol='SPY',
+                                symbol=self.symbol,
                                 strike_analysis=strike_analysis,
                                 spot_price=spot_price
                             )
@@ -1325,7 +1333,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
 
             # Use find_liquid_strike to automatically find a liquid option
             liquid_strike, option_price_data = find_liquid_strike(
-                symbol='SPY',
+                symbol=self.symbol,
                 base_strike=trade['strike'],
                 option_type=trade['option_type'],
                 expiration_date=exp_date,
@@ -1428,7 +1436,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                         # Log AI position sizing
                         if self.db_logger:
                             self.db_logger.log_position_sizing(
-                                symbol='SPY',
+                                symbol=self.symbol,
                                 sizing_analysis=sizing_analysis,
                                 contracts=contracts
                             )
@@ -1468,7 +1476,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 try:
                     current_value = available + total_cost  # Approximate account value
                     proposed_trade = {
-                        'symbol': 'SPY',
+                        'symbol': self.symbol,
                         'cost': total_cost
                     }
 
@@ -1478,7 +1486,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                         self.log_action('RISK_BLOCK', f'Trade blocked by risk manager: {risk_reason}', success=False)
                         if self.db_logger:
                             self.db_logger.log_trade_decision(
-                                symbol='SPY',
+                                symbol=self.symbol,
                                 action='BLOCKED',
                                 strategy=trade.get('strategy', 'Unknown'),
                                 reasoning=risk_reason,
@@ -1555,7 +1563,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             # Try unified data provider first (Tradier)
             if UNIFIED_DATA_AVAILABLE:
                 provider = get_data_provider()
-                bars = provider.get_historical_bars('SPY', days=5, interval='1hour')
+                bars = provider.get_historical_bars(self.symbol, days=5, interval='1hour')
                 if bars and len(bars) >= 5:
                     current_price = bars[-1].close
                     price_1h_ago = bars[-2].close if len(bars) >= 2 else current_price
@@ -1578,7 +1586,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                     return {'1h': round(change_1h, 2), '4h': round(change_4h, 2), 'trend': trend}
 
             # Fallback to Polygon
-            data = polygon_fetcher.get_price_history('SPY', days=5, timeframe='hour', multiplier=1)
+            data = polygon_fetcher.get_price_history(self.symbol, days=5, timeframe='hour', multiplier=1)
 
             if data is None or len(data) < 5:
                 return {'1h': 0, '4h': 0, 'trend': 'neutral'}
@@ -1688,7 +1696,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             above_50ma = True
 
             try:
-                data = polygon_fetcher.get_price_history('SPY', days=60, timeframe='day', multiplier=1)
+                data = polygon_fetcher.get_price_history(self.symbol, days=60, timeframe='day', multiplier=1)
                 if data is not None and len(data) >= 20:
                     # CALCULATE ACTUAL HISTORICAL VOLATILITY from price data
                     # Using 20-day realized volatility, annualized
@@ -1697,7 +1705,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                     if len(closes) >= 21:
                         log_returns = np.diff(np.log(closes))
                         historical_vol = float(np.std(log_returns) * np.sqrt(252))
-                        logger.info(f"SPY Historical Vol calculated from prices: {historical_vol:.2%}")
+                        logger.info(f"{self.symbol} Historical Vol calculated from prices: {historical_vol:.2%}")
                     else:
                         logger.warning(f"Not enough data for HV calc ({len(closes)} points), using IV estimate")
 
@@ -1783,7 +1791,7 @@ RISK PARAMS:
                 # STRONG_UPTREND + High IV = Cash Secured Put (willing to own shares)
                 if trend == TrendRegime.STRONG_UPTREND and iv_rank >= 50:
                     return {
-                        'symbol': 'SPY',
+                        'symbol': self.symbol,
                         'strategy': 'Unified Regime: CASH_SECURED_PUT',
                         'action': 'CASH_SECURED_PUT',
                         'option_type': 'csp',
@@ -1797,7 +1805,7 @@ RISK PARAMS:
                 # UPTREND or mild STRONG_UPTREND = Bull Put Spread (bullish credit)
                 elif trend in [TrendRegime.UPTREND, TrendRegime.STRONG_UPTREND]:
                     return {
-                        'symbol': 'SPY',
+                        'symbol': self.symbol,
                         'strategy': 'Unified Regime: BULL_PUT_SPREAD',
                         'action': 'BULL_PUT_SPREAD',
                         'option_type': 'bull_put_spread',
@@ -1811,7 +1819,7 @@ RISK PARAMS:
                 # DOWNTREND or STRONG_DOWNTREND = Bear Call Spread (bearish credit)
                 elif trend in [TrendRegime.DOWNTREND, TrendRegime.STRONG_DOWNTREND]:
                     return {
-                        'symbol': 'SPY',
+                        'symbol': self.symbol,
                         'strategy': 'Unified Regime: BEAR_CALL_SPREAD',
                         'action': 'BEAR_CALL_SPREAD',
                         'option_type': 'bear_call_spread',
@@ -1825,7 +1833,7 @@ RISK PARAMS:
                 # RANGE_BOUND = Iron Condor (neutral)
                 else:
                     return {
-                        'symbol': 'SPY',
+                        'symbol': self.symbol,
                         'strategy': 'Unified Regime: IRON_CONDOR',
                         'action': 'IRON_CONDOR',
                         'option_type': 'iron_condor',
@@ -1847,7 +1855,7 @@ RISK PARAMS:
                 strike = round(min(spot_price, flip_point) / 5) * 5
 
             return {
-                'symbol': 'SPY',
+                'symbol': self.symbol,
                 'strategy': f"Unified Regime: {strategy_params.get('strategy_name', regime.recommended_action.value)}",
                 'action': action,
                 'option_type': option_type,
@@ -1922,11 +1930,11 @@ RISK PARAMS:
                 self.log_action('PSYCHOLOGY_SCAN', '🧠 Running full psychology trap analysis...')
 
                 # Build gamma data with expiration timeline
-                gamma_data = build_gamma_with_expirations('SPY', use_tv_api=True)
+                gamma_data = build_gamma_with_expirations(self.symbol, use_tv_api=True)
 
                 # Fetch multi-timeframe price data
                 polygon_helper = PolygonHelper()
-                price_data = polygon_helper.get_multi_timeframe_data('SPY', spot)
+                price_data = polygon_helper.get_multi_timeframe_data(self.symbol, spot)
 
                 # Calculate volume ratio from daily data
                 if len(price_data.get('1d', [])) >= 20:
@@ -2010,7 +2018,7 @@ MULTI-TIMEFRAME RSI:
                     if self.db_logger:
                         self.db_logger.log_psychology_analysis(
                             regime=regime,
-                            symbol='SPY',
+                            symbol=self.symbol,
                             spot_price=spot
                         )
 
@@ -2137,7 +2145,7 @@ ENHANCED FACTORS:
 • P/C Ratio: {put_call_ratio:.2f} - {'Bearish sentiment, squeeze likely' if put_call_ratio > 1.2 else 'Neutral'}"""
 
             return {
-                'symbol': 'SPY',
+                'symbol': self.symbol,
                 'strategy': 'Negative GEX Squeeze',
                 'action': 'BUY_CALL',
                 'option_type': 'call',
@@ -2169,7 +2177,7 @@ ENHANCED FACTORS:
             confidence = min(90, int(base_confidence))
 
             return {
-                'symbol': 'SPY',
+                'symbol': self.symbol,
                 'strategy': 'Negative GEX Breakdown',
                 'action': 'BUY_PUT',
                 'option_type': 'put',
@@ -2197,7 +2205,7 @@ ENHANCED FACTORS:
             if spot < flip:
                 strike = round(spot / 5) * 5
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': 'Range-Bound Bullish',
                     'action': 'BUY_CALL',
                     'option_type': 'call',
@@ -2211,7 +2219,7 @@ ENHANCED FACTORS:
             else:
                 strike = round(spot / 5) * 5
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': 'Range-Bound Bearish',
                     'action': 'BUY_PUT',
                     'option_type': 'put',
@@ -2236,7 +2244,7 @@ ENHANCED FACTORS:
             if spot < flip:
                 strike = round(spot / 5) * 5
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': 'Neutral Bullish',
                     'action': 'BUY_CALL',
                     'option_type': 'call',
@@ -2250,7 +2258,7 @@ ENHANCED FACTORS:
             else:
                 strike = round(spot / 5) * 5
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': 'Neutral Bearish',
                     'action': 'BUY_PUT',
                     'option_type': 'put',
@@ -2310,7 +2318,7 @@ THESIS: Dealers currently pinning price at ${liberation_strike:.0f}. When option
 Upside target: {forward_magnet_above:.0f} (monthly OPEX magnet)"""
 
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': 'Liberation Trade - Bullish',
                     'action': 'BUY_CALL',
                     'option_type': 'call',
@@ -2337,7 +2345,7 @@ THESIS: Dealers currently supporting price at ${liberation_strike:.0f}. When opt
 Downside target: {forward_magnet_below:.0f} (monthly OPEX magnet)"""
 
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': 'Liberation Trade - Bearish',
                     'action': 'BUY_PUT',
                     'option_type': 'put',
@@ -2386,7 +2394,7 @@ Psychology Trap: {regime.get('psychology_trap', 'N/A')}
 THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
 
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': f'{pattern} - Psychology Confirmed',
                     'action': 'BUY_CALL',
                     'option_type': 'call',
@@ -2422,7 +2430,7 @@ Psychology Trap: {regime.get('psychology_trap', 'N/A')}
 THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
 
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': f'{pattern} - Psychology Confirmed',
                     'action': 'BUY_PUT',
                     'option_type': 'put',
@@ -2441,7 +2449,7 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
             if polr == 'UPWARD':
                 strike = round(spot / 5) * 5
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': f'Psychology {pattern} - Moderate',
                     'action': 'BUY_CALL',
                     'option_type': 'call',
@@ -2456,7 +2464,7 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
             elif polr == 'DOWNWARD':
                 strike = round(spot / 5) * 5
                 return {
-                    'symbol': 'SPY',
+                    'symbol': self.symbol,
                     'strategy': f'Psychology {pattern} - Moderate',
                     'action': 'BUY_PUT',
                     'option_type': 'put',
@@ -2490,16 +2498,16 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
             exp_date = self._get_expiration_string(dte)
 
             # Get ATM call and put prices
-            call_price = get_real_option_price('SPY', strike, 'call', exp_date)
-            put_price = get_real_option_price('SPY', strike, 'put', exp_date)
+            call_price = get_real_option_price(self.symbol, strike, 'call', exp_date)
+            put_price = get_real_option_price(self.symbol, strike, 'put', exp_date)
 
             # If we can't get prices, use estimated prices based on typical ATM options
             if call_price.get('error') or put_price.get('error'):
                 self.log_action('WARNING', 'Could not fetch real prices - using estimated prices for guaranteed trade')
                 # Typical ATM weekly option is ~1-2% of spot price
                 estimated_premium = spot * 0.015  # 1.5% estimate
-                call_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'SPY{datetime.now(CENTRAL_TZ).strftime("%y%m%d")}C{strike}'}
-                put_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'SPY{datetime.now(CENTRAL_TZ).strftime("%y%m%d")}P{strike}'}
+                call_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'{self.symbol}{datetime.now(CENTRAL_TZ).strftime("%y%m%d")}C{strike}'}
+                put_price = {'mid': estimated_premium, 'bid': estimated_premium * 0.95, 'ask': estimated_premium * 1.05, 'contract_symbol': f'{self.symbol}{datetime.now(CENTRAL_TZ).strftime("%y%m%d")}P{strike}'}
 
             total_cost = (call_price['mid'] + put_price['mid']) * 100  # Cost per straddle
 
@@ -2525,7 +2533,7 @@ THESIS: {regime.get('detailed_explanation', 'See pattern analysis')}"""
             total_debit = (call_price['mid'] + put_price['mid']) * contracts * 100
 
             trade = {
-                'symbol': 'SPY',
+                'symbol': self.symbol,
                 'strategy': f'ATM Straddle (GUARANTEED Daily Trade)',
                 'action': 'LONG_STRADDLE',
                 'option_type': 'straddle',

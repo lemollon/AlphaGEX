@@ -22,6 +22,14 @@ from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
 
+# Import strategy stats for feedback loop
+try:
+    from strategy_stats import update_strategy_stats, log_change
+    STRATEGY_STATS_AVAILABLE = True
+except ImportError:
+    STRATEGY_STATS_AVAILABLE = False
+    print("⚠️ Strategy stats not available for backtest feedback loop")
+
 
 class PatternBacktester:
     """Backtest psychology trap patterns against historical data"""
@@ -295,6 +303,10 @@ class PatternBacktester:
                 self.save_backtest_results(result)
                 saved_count += 1
 
+                # CRITICAL: Also update strategy_stats.json for Kelly sizing!
+                if STRATEGY_STATS_AVAILABLE and result['total_signals'] >= 10:
+                    self._update_strategy_stats_from_backtest(result)
+
         # Sort by expectancy (best to worst)
         results.sort(key=lambda x: x['expectancy'], reverse=True)
 
@@ -302,6 +314,42 @@ class PatternBacktester:
             print(f"✅ Saved {saved_count} backtest results to database")
 
         return results
+
+    def _update_strategy_stats_from_backtest(self, result: Dict):
+        """
+        Update strategy_stats.json from backtest results.
+        This closes the feedback loop: backtests -> Kelly sizing.
+        """
+        if not STRATEGY_STATS_AVAILABLE:
+            return
+
+        try:
+            pattern_name = result['pattern']
+
+            # Convert to format expected by update_strategy_stats
+            backtest_results = {
+                'strategy_name': pattern_name,
+                'start_date': result.get('start_date', ''),
+                'end_date': result.get('end_date', ''),
+                'total_trades': result['total_signals'],
+                'winning_trades': result['winning_signals'],
+                'losing_trades': result['losing_signals'],
+                'win_rate': result['win_rate'],
+                'avg_win_pct': result['avg_profit_pct'],
+                'avg_loss_pct': result['avg_loss_pct'],
+                'expectancy_pct': result['expectancy'],
+                'sharpe_ratio': result['sharpe_ratio'],
+                'total_return_pct': result.get('total_return_pct', 0)
+            }
+
+            # Update the stats file
+            update_strategy_stats(pattern_name, backtest_results)
+
+            print(f"📊 Updated strategy_stats.json for {pattern_name}: "
+                  f"WR={result['win_rate']:.1f}%, E={result['expectancy']:.2f}%")
+
+        except Exception as e:
+            print(f"⚠️ Failed to update strategy stats for {result.get('pattern')}: {e}")
 
     # Helper methods
     def _calculate_sharpe(self, returns: List[float]) -> float:

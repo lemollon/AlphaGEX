@@ -191,17 +191,9 @@ class BacktestBase:
                 print(f"⚠️ yfinance fetch failed: {e}")
                 df = None
 
-        # Final fallback: simple price fetcher (with synthetic data generation)
+        # NO FAKE DATA - fail if real data unavailable
         if df is None or df.empty:
-            try:
-                from simple_price_fetcher import get_price_history
-                df = get_price_history(self.symbol, self.start_date, self.end_date)
-            except Exception as e:
-                print(f"⚠️ Simple fetcher failed: {e}")
-                df = None
-
-        if df is None or df.empty:
-            raise ValueError(f"No data fetched for {self.symbol} - all data sources failed")
+            raise ValueError(f"No data fetched for {self.symbol} - all data sources failed. Check API keys.")
 
         # Filter to exact date range
         df = df[(df.index >= start) & (df.index <= end)]

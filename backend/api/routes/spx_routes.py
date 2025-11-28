@@ -416,13 +416,14 @@ async def run_spx_diagnostic():
     except Exception as e:
         results["checks"]["regime_classifier"] = {"status": "ERROR", "message": str(e)}
 
-    # Check SPX trader
+    # Check SPX trader (using unified trader with SPX symbol)
     try:
-        from spx_institutional_trader import SPXInstitutionalTrader
-        trader = SPXInstitutionalTrader(capital=100_000_000)
+        from autonomous_paper_trader import AutonomousPaperTrader
+        trader = AutonomousPaperTrader(symbol='SPX', capital=100_000_000)
         results["checks"]["spx_trader"] = {
             "status": "OK", "capital": trader.starting_capital,
-            "debug_logger": "enabled" if trader.debug_logger else "disabled"
+            "symbol": trader.symbol,
+            "type": "UnifiedTrader"
         }
     except Exception as e:
         results["checks"]["spx_trader"] = {"status": "ERROR", "message": str(e)}
