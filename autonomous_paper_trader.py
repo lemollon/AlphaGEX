@@ -41,7 +41,8 @@ from trading.mixins import (
     PositionSizerMixin,
     TradeExecutorMixin,
     PositionManagerMixin,
-    PerformanceTrackerMixin
+    PerformanceTrackerMixin,
+    RiskManagerMixin
 )
 
 # Configure structured logging for autonomous trader
@@ -329,7 +330,8 @@ class AutonomousPaperTrader(
     PositionSizerMixin,
     TradeExecutorMixin,
     PositionManagerMixin,
-    PerformanceTrackerMixin
+    PerformanceTrackerMixin,
+    RiskManagerMixin
 ):
     """
     Fully autonomous paper trader - NO manual intervention required
