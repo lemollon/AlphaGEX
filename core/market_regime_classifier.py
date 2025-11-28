@@ -41,7 +41,7 @@ except ImportError:
 
 # Legacy Polygon helper (fallback)
 try:
-    from data.polygon_helper import PolygonHelper
+    from data.polygon_data_fetcher import PolygonDataFetcher as PolygonHelper
     POLYGON_AVAILABLE = True
 except ImportError:
     POLYGON_AVAILABLE = False

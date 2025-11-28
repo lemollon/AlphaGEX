@@ -31,7 +31,7 @@ load_dotenv()
 
 # Import local modules
 from database_adapter import get_connection, get_db_adapter
-from polygon_helper import PolygonDataFetcher
+from data.polygon_data_fetcher import PolygonDataFetcher
 
 
 class ComprehensiveBackfiller:

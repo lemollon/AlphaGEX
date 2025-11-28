@@ -23,7 +23,7 @@ from database_adapter import get_connection
 
 # Import Polygon.io helper instead of yfinance
 try:
-    from data.polygon_helper import fetch_vix_data as polygon_fetch_vix_data
+    from data.polygon_data_fetcher import fetch_vix_data as polygon_fetch_vix_data
     POLYGON_AVAILABLE = True
 except ImportError:
     POLYGON_AVAILABLE = False

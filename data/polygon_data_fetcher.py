@@ -96,12 +96,19 @@ class PolygonDataFetcher:
     """
 
     def __init__(self):
-        self.api_key = os.getenv("POLYGON_API_KEY")
+        # Import from centralized config
+        try:
+            from unified_config import APIConfig
+            self.api_key = APIConfig.POLYGON_API_KEY
+            self.base_url = APIConfig.POLYGON_BASE_URL
+        except ImportError:
+            self.api_key = os.getenv("POLYGON_API_KEY")
+            self.base_url = "https://api.polygon.io"
+
         if not self.api_key:
             print("⚠️  POLYGON_API_KEY not set - data fetching will fail")
 
         self.cache = PolygonDataCache()
-        self.base_url = "https://api.polygon.io"
         self._detected_tier = None
 
     def get_price_history(
@@ -960,3 +967,82 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("✅ Testing complete!")
     print("=" * 80)
+
+
+# =============================================================================
+# Backward Compatibility with polygon_helper.py
+# =============================================================================
+# These functions provide the same interface as the deprecated polygon_helper.py
+
+def get_polygon_data_fetcher() -> PolygonDataFetcher:
+    """Get the singleton polygon fetcher (backward compat with polygon_helper)"""
+    return polygon_fetcher
+
+
+def get_historical_data(symbol: str, period: str = "90d", interval: str = "1d") -> List[Dict]:
+    """
+    Get historical data (backward compat with polygon_helper).
+
+    Args:
+        symbol: Stock symbol
+        period: Period string like "90d", "1y"
+        interval: Interval like "1d", "1h"
+
+    Returns:
+        List of dicts with OHLCV data
+    """
+    # Parse period
+    days = 90
+    if period.endswith('d'):
+        days = int(period[:-1])
+    elif period.endswith('y'):
+        days = int(period[:-1]) * 365
+
+    # Map interval to timeframe
+    timeframe_map = {'1d': 'day', '1h': 'hour', '1m': 'minute', '5m': 'minute'}
+    timeframe = timeframe_map.get(interval, 'day')
+    multiplier = 5 if interval == '5m' else 1
+
+    df = polygon_fetcher.get_price_history(symbol, days=days, timeframe=timeframe, multiplier=multiplier)
+    if df is None:
+        return []
+
+    # Convert to list of dicts
+    records = []
+    for idx, row in df.iterrows():
+        records.append({
+            'timestamp': idx.isoformat() if hasattr(idx, 'isoformat') else str(idx),
+            'open': row.get('Open', row.get('open', 0)),
+            'high': row.get('High', row.get('high', 0)),
+            'low': row.get('Low', row.get('low', 0)),
+            'close': row.get('Close', row.get('close', 0)),
+            'volume': row.get('Volume', row.get('volume', 0)),
+        })
+    return records
+
+
+def fetch_vix_data() -> Dict:
+    """
+    Fetch VIX data (backward compat with polygon_helper).
+
+    Returns:
+        Dict with current VIX value and metadata
+    """
+    # Try to get VIX price
+    price = polygon_fetcher.get_current_price('VIX')
+    if price is None:
+        price = polygon_fetcher.get_current_price('VIXY')  # Fallback ETF
+
+    if price is None:
+        # Return default
+        return {
+            'current': 20.0,
+            'source': 'default',
+            'timestamp': datetime.now().isoformat()
+        }
+
+    return {
+        'current': price,
+        'source': 'polygon',
+        'timestamp': datetime.now().isoformat()
+    }

@@ -32,7 +32,7 @@ except ImportError:
     OptionChain = None
 
 try:
-    from data.polygon_helper import PolygonHelper
+    from data.polygon_data_fetcher import PolygonDataFetcher as PolygonHelper
     POLYGON_AVAILABLE = True
 except ImportError:
     logger.warning("Polygon not available - some historical features may be limited")

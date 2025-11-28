@@ -23,7 +23,7 @@ print("\n1️⃣  Testing imports...")
 try:
     from psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
     from backtest.autonomous_backtest_engine import PatternBacktester
-    from data.polygon_helper import PolygonDataFetcher as PolygonHelper
+    from data.polygon_data_fetcher import PolygonDataFetcher as PolygonHelper
     print("✅ All imports successful")
 except Exception as e:
     print(f"❌ Import failed: {e}")
