@@ -18,7 +18,7 @@ import os
 import json
 
 # Import AlphaGEX components
-from langchain_models import (
+from .langchain_models import (
     TradeRecommendation,
     MarketRegimeAnalysis,
     RiskAssessment,
@@ -28,7 +28,7 @@ from langchain_models import (
     MarketMakerState,
     StrategyType
 )
-from langchain_tools import (
+from .langchain_tools import (
     ALL_TOOLS,
     MARKET_ANALYSIS_TOOLS,
     TRADE_PLANNING_TOOLS,

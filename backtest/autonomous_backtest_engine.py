@@ -24,7 +24,7 @@ import numpy as np
 
 # Import strategy stats for feedback loop
 try:
-    from strategy_stats import update_strategy_stats, log_change
+    from core.strategy_stats import update_strategy_stats, log_change
     STRATEGY_STATS_AVAILABLE = True
 except ImportError:
     STRATEGY_STATS_AVAILABLE = False

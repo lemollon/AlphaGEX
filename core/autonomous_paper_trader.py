@@ -65,7 +65,7 @@ _trade_execution_lock = threading.Lock()
 
 # CRITICAL: Import UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
-    from unified_data_provider import (
+    from data.unified_data_provider import (
         get_data_provider,
         get_quote,
         get_price,
@@ -80,12 +80,12 @@ except ImportError as e:
     logger.warning(f"Unified Data Provider not available: {e}")
 
 # Always import Polygon as fallback (used when Unified provider fails)
-from polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
+from data.polygon_data_fetcher import polygon_fetcher, calculate_theoretical_option_price, get_best_entry_price
 
 # CRITICAL: Import UNIFIED Market Regime Classifier
 # This is the SINGLE source of truth for ALL trading decisions
 try:
-    from market_regime_classifier import (
+    from .market_regime_classifier import (
         MarketRegimeClassifier,
         RegimeClassification,
         MarketAction,
@@ -102,9 +102,9 @@ except ImportError as e:
 
 # CRITICAL: Import Psychology Trap Detector
 try:
-    from psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
-    from gamma_expiration_builder import build_gamma_with_expirations
-    from polygon_helper import PolygonDataFetcher as PolygonHelper
+    from .psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
+    from gamma.gamma_expiration_builder import build_gamma_with_expirations
+    from data.polygon_helper import PolygonDataFetcher as PolygonHelper
     PSYCHOLOGY_AVAILABLE = True
     logger.info("Psychology Trap Detector integrated with Autonomous Trader")
 except ImportError as e:
@@ -114,7 +114,7 @@ except ImportError as e:
 
 # CRITICAL: Import AI Reasoning Engine (LangChain + Claude)
 try:
-    from autonomous_ai_reasoning import get_ai_reasoning
+    from ai.autonomous_ai_reasoning import get_ai_reasoning
     ai_reasoning = get_ai_reasoning()
     AI_REASONING_AVAILABLE = ai_reasoning.llm is not None
     if AI_REASONING_AVAILABLE:
@@ -126,7 +126,7 @@ except ImportError as e:
 
 # CRITICAL: Import Database Logger
 try:
-    from autonomous_database_logger import get_database_logger
+    from db.autonomous_database_logger import get_database_logger
     DATABASE_LOGGER_AVAILABLE = True
     logger.info("Database Logger ready for comprehensive logging")
 except ImportError as e:
@@ -136,7 +136,7 @@ except ImportError as e:
 # CRITICAL: Import Strategy Stats for unified backtester integration
 # This enables Kelly-based position sizing using backtest-informed win rates
 try:
-    from strategy_stats import get_strategy_stats, update_strategy_stats, log_change
+    from .strategy_stats import get_strategy_stats, update_strategy_stats, log_change
     STRATEGY_STATS_AVAILABLE = True
     logger.info("Strategy Stats integrated - Kelly position sizing available")
 except ImportError as e:
@@ -380,7 +380,7 @@ class AutonomousPaperTrader(
 
         # Initialize ML pattern learner
         try:
-            from autonomous_ml_pattern_learner import get_pattern_learner
+            from ai.autonomous_ml_pattern_learner import get_pattern_learner
             self.ml_learner = get_pattern_learner()
             print("✅ ML pattern learner initialized")
         except ImportError:
@@ -854,7 +854,7 @@ class AutonomousPaperTrader(
 
         Returns dict with signal details and delayed data warnings, or None if no signal.
         """
-        from polygon_data_fetcher import calculate_delayed_price_range
+        from data.polygon_data_fetcher import calculate_delayed_price_range
 
         self.log_action('SIGNAL_SCAN', 'Generating entry signal (NO EXECUTION)...')
         self.update_live_status(

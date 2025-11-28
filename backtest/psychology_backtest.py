@@ -32,7 +32,7 @@ from database_adapter import get_connection
 
 # CRITICAL: Import strategy_stats for unified backtest integration
 try:
-    from strategy_stats import update_strategy_stats, log_change
+    from core.strategy_stats import update_strategy_stats, log_change
     STRATEGY_STATS_AVAILABLE = True
 except ImportError:
     STRATEGY_STATS_AVAILABLE = False

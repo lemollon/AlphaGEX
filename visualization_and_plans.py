@@ -13,7 +13,7 @@ from typing import Dict, List
 import json
 
 # Import what we need from other files
-from config_and_database import MM_STATES, STRATEGIES
+from db.config_and_database import MM_STATES, STRATEGIES
 from intelligence_and_strategies import (
     TradingRAG, FREDIntegration, ClaudeIntelligence,
     MultiStrategyOptimizer, DynamicLevelCalculator,

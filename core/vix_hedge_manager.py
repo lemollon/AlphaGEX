@@ -33,14 +33,14 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
-    from unified_data_provider import get_data_provider, get_vix
+    from data.unified_data_provider import get_data_provider, get_vix
     UNIFIED_DATA_AVAILABLE = True
 except ImportError:
     UNIFIED_DATA_AVAILABLE = False
 
 # Legacy Polygon fallback
 try:
-    from polygon_data_fetcher import polygon_fetcher
+    from data.polygon_data_fetcher import polygon_fetcher
     POLYGON_AVAILABLE = True
 except ImportError:
     POLYGON_AVAILABLE = False

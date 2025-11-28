@@ -49,12 +49,12 @@ import numpy as np
 import time
 import pytz
 from typing import List, Dict, Optional
-from config_and_database import MM_STATES, STRATEGIES
+from db.config_and_database import MM_STATES, STRATEGIES
 from database_adapter import get_connection
 
 # Import Polygon.io helper for VIX data
 try:
-    from polygon_helper import fetch_vix_data
+    from data.polygon_helper import fetch_vix_data
     POLYGON_AVAILABLE = True
 except ImportError:
     POLYGON_AVAILABLE = False

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/trader", tags=["Trader"])
 
 # Try to import the autonomous trader
 try:
-    from autonomous_paper_trader import AutonomousPaperTrader
+    from core.autonomous_paper_trader import AutonomousPaperTrader
     trader = AutonomousPaperTrader()
     trader_available = True
 except Exception as e:

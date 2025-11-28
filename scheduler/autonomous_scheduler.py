@@ -11,7 +11,7 @@ import sys
 import traceback
 from datetime import datetime, time as dt_time, timedelta
 from zoneinfo import ZoneInfo
-from autonomous_paper_trader import AutonomousPaperTrader
+from core.autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
 
 # Backtest refresh interval (in days)
@@ -146,7 +146,7 @@ def check_and_refresh_backtests():
             print("📊 No backtest results found. Running initial backtests...")
 
         # Run backtests
-        from autonomous_backtest_engine import get_backtester
+        from backtest.autonomous_backtest_engine import get_backtester
 
         backtester = get_backtester()
         print("🔄 Running pattern backtests (90 days)...")

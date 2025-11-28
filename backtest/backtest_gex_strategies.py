@@ -16,12 +16,12 @@ for use by SPX and SPY traders via Kelly-based position sizing.
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from backtest_framework import BacktestBase, BacktestResults, Trade
+from backtest.backtest_framework import BacktestBase, BacktestResults, Trade
 from typing import Dict, List
 
 # CRITICAL: Import strategy_stats for explicit updates with standardized names
 try:
-    from strategy_stats import update_strategy_stats, log_change
+    from core.strategy_stats import update_strategy_stats, log_change
     STRATEGY_STATS_AVAILABLE = True
 except ImportError:
     STRATEGY_STATS_AVAILABLE = False

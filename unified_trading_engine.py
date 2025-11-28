@@ -43,14 +43,14 @@ except ImportError:
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
-    from unified_data_provider import get_data_provider, get_quote, get_options_chain, get_gex, get_vix
+    from data.unified_data_provider import get_data_provider, get_quote, get_options_chain, get_gex, get_vix
     UNIFIED_DATA_AVAILABLE = True
 except ImportError:
     UNIFIED_DATA_AVAILABLE = False
 
 # Legacy Polygon fallback
 try:
-    from polygon_helper import PolygonHelper
+    from data.polygon_helper import PolygonHelper
     POLYGON_AVAILABLE = True
 except ImportError:
     POLYGON_AVAILABLE = False

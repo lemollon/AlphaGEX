@@ -835,7 +835,7 @@ def display_signal_only(trader: AutonomousPaperTrader):
     with col2:
         if st.button("🔍 Check Data Status", type="secondary"):
             try:
-                from polygon_data_fetcher import detect_subscription_tier
+                from data.polygon_data_fetcher import detect_subscription_tier
                 tier_info = detect_subscription_tier()
                 options_status = tier_info.get('options_status', 'UNKNOWN')
 

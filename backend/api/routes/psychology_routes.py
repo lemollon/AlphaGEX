@@ -31,7 +31,7 @@ async def get_current_regime(symbol: str = "SPY"):
     """
     # Import at runtime to avoid circular imports
     try:
-        from psychology_trap_detector import analyze_current_market_complete
+        from core.psychology_trap_detector import analyze_current_market_complete
         from backend.main import api_client, get_cached_price_data
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Psychology module not available: {e}")
@@ -401,7 +401,7 @@ async def get_notification_stats():
 async def get_rsi_analysis(symbol: str):
     """Get multi-timeframe RSI analysis for symbol"""
     try:
-        from psychology_trap_detector import MultiTimeframeRSI
+        from core.psychology_trap_detector import MultiTimeframeRSI
         rsi_analyzer = MultiTimeframeRSI()
         analysis = rsi_analyzer.analyze(symbol)
         return {"symbol": symbol, "rsi_analysis": analysis}

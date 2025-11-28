@@ -298,7 +298,7 @@ def update_signal_outcomes():
     Update outcome tracking for past signals (run daily)
     Fetches current prices and calculates 1d, 5d, 10d changes
     """
-    from polygon_data_fetcher import PolygonDataFetcher
+    from data.polygon_data_fetcher import PolygonDataFetcher
 
     conn = get_db_connection()
     c = conn.cursor()
