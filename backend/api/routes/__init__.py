@@ -15,9 +15,13 @@ from . import gamma_routes
 from . import optimizer_routes
 from . import ai_routes
 from . import probability_routes
-from . import psychology_routes
+from . import notification_routes
+from . import misc_routes
 from . import alerts_routes
-from . import notifications_routes
+from . import setups_routes
+from . import scanner_routes
+from . import autonomous_routes
+from . import psychology_routes
 
 __all__ = [
     'vix_routes',
@@ -32,7 +36,11 @@ __all__ = [
     'optimizer_routes',
     'ai_routes',
     'probability_routes',
-    'psychology_routes',
+    'notification_routes',
+    'misc_routes',
     'alerts_routes',
-    'notifications_routes',
+    'setups_routes',
+    'scanner_routes',
+    'autonomous_routes',
+    'psychology_routes',
 ]

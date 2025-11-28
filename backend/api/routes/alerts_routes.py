@@ -1,87 +1,90 @@
 """
-Alerts API routes.
-
-Handles price alerts creation, listing, deletion, and checking.
+Alerts API routes - Price and GEX alerts management.
 """
 
-from datetime import datetime
-from typing import Optional
+from fastapi import APIRouter, HTTPException
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
-
-from database_adapter import get_connection
+from api.dependencies import api_client, get_connection
 
 router = APIRouter(prefix="/api/alerts", tags=["Alerts"])
 
 
-class AlertCreate(BaseModel):
-    symbol: str
-    alert_type: str  # 'price_above', 'price_below', 'gex_flip', 'regime_change'
-    condition_value: float
-    message: Optional[str] = None
-
-
 @router.post("/create")
-async def create_alert(alert: AlertCreate):
-    """Create a new price or GEX alert"""
+async def create_alert(request: dict):
+    """
+    Create a new alert
+    Request body:
+    {
+        "symbol": "SPY",
+        "alert_type": "price" | "net_gex" | "flip_point",
+        "condition": "above" | "below" | "crosses_above" | "crosses_below",
+        "threshold": 600.0,
+        "message": "Optional custom message"
+    }
+    """
     try:
+        symbol = request.get('symbol', 'SPY').upper()
+        alert_type = request.get('alert_type')
+        condition = request.get('condition')
+        threshold = request.get('threshold')
+        message = request.get('message', '')
+
+        if not all([alert_type, condition, threshold]):
+            raise HTTPException(status_code=400, detail="Missing required fields")
+
+        # Generate default message if not provided
+        if not message:
+            if alert_type == 'price':
+                message = f"{symbol} price {condition} ${threshold}"
+            elif alert_type == 'net_gex':
+                message = f"{symbol} Net GEX {condition} ${threshold/1e9:.1f}B"
+            elif alert_type == 'flip_point':
+                message = f"{symbol} {condition} flip point at ${threshold}"
+
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO price_alerts (symbol, alert_type, condition_value, message, active, created_at)
-            VALUES (%s, %s, %s, %s, true, NOW())
+        c = conn.cursor()
+
+        c.execute('''
+            INSERT INTO alerts (symbol, alert_type, condition, threshold, message)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id
-        """, (alert.symbol, alert.alert_type, alert.condition_value, alert.message))
-        alert_id = cursor.fetchone()[0]
+        ''', (symbol, alert_type, condition, threshold, message))
+
+        alert_id = c.fetchone()[0]
         conn.commit()
         conn.close()
 
         return {
             "success": True,
             "alert_id": alert_id,
-            "message": f"Alert created for {alert.symbol}"
+            "message": "Alert created successfully"
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/list")
-async def list_alerts(active_only: bool = True):
-    """List all alerts"""
+async def list_alerts(status: str = 'active'):
+    """Get all alerts with specified status"""
     try:
+        import pandas as pd
+
         conn = get_connection()
-        cursor = conn.cursor()
 
-        if active_only:
-            cursor.execute("""
-                SELECT id, symbol, alert_type, condition_value, message, active, created_at, triggered_at
-                FROM price_alerts
-                WHERE active = true
-                ORDER BY created_at DESC
-            """)
-        else:
-            cursor.execute("""
-                SELECT id, symbol, alert_type, condition_value, message, active, created_at, triggered_at
-                FROM price_alerts
-                ORDER BY created_at DESC
-            """)
+        alerts = pd.read_sql_query("""
+            SELECT * FROM alerts
+            WHERE status = %s
+            ORDER BY created_at DESC
+        """, conn, params=(status,))
 
-        rows = cursor.fetchall()
         conn.close()
 
-        alerts = [{
-            "id": row[0],
-            "symbol": row[1],
-            "alert_type": row[2],
-            "condition_value": float(row[3]) if row[3] else None,
-            "message": row[4],
-            "active": row[5],
-            "created_at": str(row[6]),
-            "triggered_at": str(row[7]) if row[7] else None
-        } for row in rows]
+        return {
+            "success": True,
+            "data": alerts.to_dict('records') if not alerts.empty else []
+        }
 
-        return {"alerts": alerts, "count": len(alerts)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -91,103 +94,141 @@ async def delete_alert(alert_id: int):
     """Delete an alert"""
     try:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM price_alerts WHERE id = %s RETURNING id", (alert_id,))
-        deleted = cursor.fetchone()
+        c = conn.cursor()
+
+        c.execute('DELETE FROM alerts WHERE id = %s', (alert_id,))
+
         conn.commit()
         conn.close()
 
-        if deleted:
-            return {"success": True, "message": f"Alert {alert_id} deleted"}
-        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
-    except HTTPException:
-        raise
+        return {
+            "success": True,
+            "message": "Alert deleted successfully"
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/check")
 async def check_alerts():
-    """Check and trigger any alerts that match current conditions"""
+    """
+    Check all active alerts against current market data
+    This endpoint should be called periodically (e.g., every minute)
+    """
     try:
-        # Import at runtime to avoid circular imports
-        from backend.main import api_client
+        import pandas as pd
 
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, symbol, alert_type, condition_value, message
-            FROM price_alerts
-            WHERE active = true
-        """)
-        alerts = cursor.fetchall()
 
-        triggered = []
+        # Get all active alerts
+        alerts = pd.read_sql_query("""
+            SELECT * FROM alerts
+            WHERE status = 'active'
+        """, conn)
 
-        for alert in alerts:
-            alert_id, symbol, alert_type, condition_value, message = alert
+        triggered_alerts = []
 
-            # Get current price
+        for _, alert in alerts.iterrows():
+            symbol = alert['symbol']
+            alert_type = alert['alert_type']
+            condition = alert['condition']
+            threshold = alert['threshold']
+
+            # Fetch current market data
             gex_data = api_client.get_net_gamma(symbol)
-            if not gex_data or 'error' in gex_data:
-                continue
+            spot_price = gex_data.get('spot_price', 0)
+            net_gex = gex_data.get('net_gex', 0)
+            flip_point = gex_data.get('flip_point', 0)
 
-            current_price = gex_data.get('spot_price', 0)
-            should_trigger = False
+            triggered = False
+            actual_value = 0
 
-            if alert_type == 'price_above' and current_price >= condition_value:
-                should_trigger = True
-            elif alert_type == 'price_below' and current_price <= condition_value:
-                should_trigger = True
+            # Check conditions
+            if alert_type == 'price':
+                actual_value = spot_price
+                if condition == 'above' and spot_price > threshold:
+                    triggered = True
+                elif condition == 'below' and spot_price < threshold:
+                    triggered = True
 
-            if should_trigger:
-                cursor.execute("""
-                    UPDATE price_alerts
-                    SET active = false, triggered_at = NOW()
+            elif alert_type == 'net_gex':
+                actual_value = net_gex
+                if condition == 'above' and net_gex > threshold:
+                    triggered = True
+                elif condition == 'below' and net_gex < threshold:
+                    triggered = True
+
+            elif alert_type == 'flip_point':
+                actual_value = spot_price
+                if condition == 'crosses_above' and spot_price > flip_point:
+                    triggered = True
+                elif condition == 'crosses_below' and spot_price < flip_point:
+                    triggered = True
+
+            if triggered:
+                # Mark alert as triggered
+                c = conn.cursor()
+                c.execute('''
+                    UPDATE alerts
+                    SET status = 'triggered', triggered_at = CURRENT_TIMESTAMP, triggered_value = %s
                     WHERE id = %s
-                """, (alert_id,))
-                triggered.append({
-                    "id": alert_id,
-                    "symbol": symbol,
-                    "type": alert_type,
-                    "condition": condition_value,
-                    "current_price": current_price,
-                    "message": message
+                ''', (actual_value, alert['id']))
+
+                # Add to alert history
+                c.execute('''
+                    INSERT INTO alert_history (
+                        alert_id, symbol, alert_type, condition, threshold,
+                        actual_value, message
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    alert['id'], symbol, alert_type, condition,
+                    threshold, actual_value, alert['message']
+                ))
+
+                conn.commit()
+
+                triggered_alerts.append({
+                    'id': alert['id'],
+                    'symbol': symbol,
+                    'message': alert['message'],
+                    'actual_value': actual_value,
+                    'threshold': threshold
                 })
 
-        conn.commit()
         conn.close()
 
-        return {"triggered": triggered, "count": len(triggered)}
+        return {
+            "success": True,
+            "checked": len(alerts),
+            "triggered": len(triggered_alerts),
+            "alerts": triggered_alerts
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history")
-async def get_alert_history(days: int = Query(7, ge=1, le=30)):
-    """Get triggered alert history"""
+async def get_alert_history(limit: int = 50):
+    """Get alert trigger history"""
     try:
+        import pandas as pd
+
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, symbol, alert_type, condition_value, message, triggered_at
-            FROM price_alerts
-            WHERE triggered_at IS NOT NULL
-            AND triggered_at > NOW() - INTERVAL '%s days'
+
+        history = pd.read_sql_query(f"""
+            SELECT * FROM alert_history
             ORDER BY triggered_at DESC
-        """, (days,))
-        rows = cursor.fetchall()
+            LIMIT {int(limit)}
+        """, conn)
+
         conn.close()
 
-        history = [{
-            "id": row[0],
-            "symbol": row[1],
-            "type": row[2],
-            "condition": float(row[3]) if row[3] else None,
-            "message": row[4],
-            "triggered_at": str(row[5])
-        } for row in rows]
+        return {
+            "success": True,
+            "data": history.to_dict('records') if not history.empty else []
+        }
 
-        return {"history": history, "count": len(history)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
