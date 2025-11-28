@@ -45,22 +45,23 @@ from api.routes import (
     scanner_routes,
     autonomous_routes,
     psychology_routes,
+    ai_intelligence_routes,
 )
 
 # Import existing AlphaGEX logic (DO NOT MODIFY THESE)
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
-from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
-from config_and_database import STRATEGIES, init_database, MM_STATES
+from core.intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
+from db.config_and_database import STRATEGIES, init_database, MM_STATES
 from database_adapter import get_connection
 import psycopg2
 import psycopg2.extras
 
 # Import probability calculator (NEW - Phase 2 Self-Learning)
-from probability_calculator import ProbabilityCalculator
+from core.probability_calculator import ProbabilityCalculator
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
-    from unified_data_provider import get_data_provider, get_quote, get_price, get_vix
+    from data.unified_data_provider import get_data_provider, get_quote, get_price, get_vix
     UNIFIED_DATA_AVAILABLE = True
     print("✅ Backend: Unified Data Provider (Tradier) integrated")
 except ImportError as e:
@@ -139,7 +140,8 @@ app.include_router(setups_routes.router)
 app.include_router(scanner_routes.router)
 app.include_router(autonomous_routes.router)
 app.include_router(psychology_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology")
+app.include_router(ai_intelligence_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()
@@ -1239,7 +1241,7 @@ async def startup_event():
     try:
         import sys
         sys.path.insert(0, str(parent_dir))
-        from startup_init import initialize_on_startup
+        from scripts.startup_init import initialize_on_startup
         initialize_on_startup()
     except Exception as e:
         print(f"⚠️  Initialization check failed: {e}")
@@ -1263,7 +1265,7 @@ async def startup_event():
                 try:
                     import sys
                     sys.path.insert(0, str(parent_dir))
-                    from autonomous_backtest_engine import get_backtester
+                    from backtest.autonomous_backtest_engine import get_backtester
 
                     print("🔄 Initializing autonomous backtest engine...")
                     backtester = get_backtester()
@@ -1291,7 +1293,7 @@ async def startup_event():
     # Start Autonomous Trader in background thread
     try:
         import threading
-        from autonomous_scheduler import run_continuous_scheduler
+        from scheduler.autonomous_scheduler import run_continuous_scheduler
 
         print("\n🤖 Starting Autonomous Trader...")
         print("⏰ Check interval: 5 minutes (optimized for max responsiveness)")

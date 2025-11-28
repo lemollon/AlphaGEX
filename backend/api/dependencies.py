@@ -37,10 +37,10 @@ sys.path.insert(0, str(backend_dir))
 
 # Import existing AlphaGEX logic
 from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
-from intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
+from core.intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
 from config_and_database import STRATEGIES, MM_STATES
 from database_adapter import get_connection
-from probability_calculator import ProbabilityCalculator
+from core.probability_calculator import ProbabilityCalculator
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
