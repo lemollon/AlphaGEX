@@ -86,6 +86,110 @@ interface TradeLogEntry {
   pnl: number
 }
 
+// ML Model interfaces
+interface MLModelStatus {
+  is_trained: boolean
+  accuracy: number
+  training_samples: number
+  feature_count: number
+  last_trained: string | null
+  feature_importance: Record<string, number>
+}
+
+interface MLPrediction {
+  prediction: 'bullish' | 'bearish' | 'neutral'
+  predicted_direction: number
+  symbol: string
+  pattern: string
+  timestamp: string
+  confidence: number
+  probability: number
+}
+
+// Risk interfaces
+interface RiskStatus {
+  daily_loss_limit: number
+  current_daily_loss: number
+  max_position_size: number
+  current_exposure: number
+  risk_score: number
+  alerts: string[]
+}
+
+interface RiskMetric {
+  timestamp: string
+  var_95: number
+  var_99: number
+  expected_shortfall: number
+  volatility: number
+}
+
+// VIX interfaces
+interface VixSignal {
+  signal: 'elevated' | 'normal' | 'low'
+  current_vix: number
+  threshold: number
+  recommendation: string
+}
+
+interface VixData {
+  current: number
+  previous_close: number
+  change_pct: number
+  ma_20: number
+  spike_detected: boolean
+}
+
+// Closed Trade interface
+interface ClosedTrade {
+  id: string
+  entry_date: string
+  entry_time: string
+  exit_date: string
+  exit_time: string
+  symbol: string
+  strategy: string
+  strike: number
+  option_type: string
+  contracts: number
+  entry_price: number
+  exit_price: number
+  pnl: number
+  pnl_pct: number
+  exit_reason: string
+  hold_duration_minutes: number
+  trade_reasoning?: string
+}
+
+// Backtest interface
+interface BacktestResult {
+  id: string
+  strategy: string
+  win_rate: number
+  total_trades: number
+  profit_factor: number
+  sharpe_ratio: number
+  max_drawdown: number
+  timestamp: string
+}
+
+// Diagnostics interface
+interface TraderDiagnostics {
+  api_latency_ms: number
+  last_market_check: string
+  websocket_status: 'connected' | 'disconnected'
+  data_freshness_seconds: number
+  errors_last_hour: number
+}
+
+// Equity curve point
+interface EquityCurvePoint {
+  timestamp: number
+  equity: number
+  pnl: number
+  date: string
+}
+
 export default function AutonomousTrader() {
   const [loading, setLoading] = useState(true)
   const [traderStatus, setTraderStatus] = useState<TraderStatus>({
@@ -129,12 +233,12 @@ export default function AutonomousTrader() {
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
 
   // Autonomous trader advanced features state
-  const [autonomousLogs, setAutonomousLogs] = useState<any[]>([])
-  const [competitionLeaderboard, setCompetitionLeaderboard] = useState<any[]>([])
-  const [backtestResults, setBacktestResults] = useState<any[]>([])
+  const [autonomousLogs, setAutonomousLogs] = useState<TradeLogEntry[]>([])
+  const [competitionLeaderboard, setCompetitionLeaderboard] = useState<{rank: number; name: string; pnl: number}[]>([])
+  const [backtestResults, setBacktestResults] = useState<BacktestResult[]>([])
   const [backtestDataSource, setBacktestDataSource] = useState<string>('none')
   const [backtestRefreshing, setBacktestRefreshing] = useState(false)
-  const [riskStatus, setRiskStatus] = useState<any>(null)
+  const [riskStatus, setRiskStatus] = useState<RiskStatus | null>(null)
 
   // Liberation and False Floor accuracy state
   const [liberationAccuracy, setLiberationAccuracy] = useState<{
@@ -152,33 +256,33 @@ export default function AutonomousTrader() {
   } | null>(null)
 
   // VIX Hedge Signal state
-  const [vixSignal, setVixSignal] = useState<any>(null)
-  const [vixData, setVixData] = useState<any>(null)
+  const [vixSignal, setVixSignal] = useState<VixSignal | null>(null)
+  const [vixData, setVixData] = useState<VixData | null>(null)
 
   // P&L Chart state
   const [equityCurve, setEquityCurve] = useState<{timestamp: string, equity: number, pnl: number, date: string}[]>([])
   const [chartPeriod, setChartPeriod] = useState<7 | 30 | 90>(30)
 
   // Closed Trades state
-  const [closedTrades, setClosedTrades] = useState<any[]>([])
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([])
   const [showClosedTrades, setShowClosedTrades] = useState(true)
 
   // Data verification timestamps
   const [lastDataFetch, setLastDataFetch] = useState<Date | null>(null)
 
   // ML Model state
-  const [mlModelStatus, setMlModelStatus] = useState<any>(null)
-  const [mlPredictions, setMlPredictions] = useState<any[]>([])
+  const [mlModelStatus, setMlModelStatus] = useState<MLModelStatus | null>(null)
+  const [mlPredictions, setMlPredictions] = useState<MLPrediction[]>([])
 
   // Risk Metrics History state
-  const [riskMetricsHistory, setRiskMetricsHistory] = useState<any[]>([])
+  const [riskMetricsHistory, setRiskMetricsHistory] = useState<RiskMetric[]>([])
 
   // Trader Control state
   const [executing, setExecuting] = useState(false)
   const [traderControlLoading, setTraderControlLoading] = useState(false)
 
   // Diagnostics state
-  const [diagnostics, setDiagnostics] = useState<any>(null)
+  const [diagnostics, setDiagnostics] = useState<TraderDiagnostics | null>(null)
 
   // Countdown timer state
   const [countdown, setCountdown] = useState<string>('--:--')

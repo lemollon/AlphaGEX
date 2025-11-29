@@ -298,6 +298,13 @@ export default function GammaIntelligence() {
     }
   }, [symbol, vix, fetchData])
 
+  // Update simulator strike to spot price when intelligence loads
+  useEffect(() => {
+    if (intelligence?.spot_price && simStrike === 450) {
+      setSimStrike(Math.round(intelligence.spot_price))
+    }
+  }, [intelligence?.spot_price, simStrike])
+
   useEffect(() => {
     // Fetch historical data when switching to historical tab
     if (activeTab === 'historical' && historicalData.length === 0) {
