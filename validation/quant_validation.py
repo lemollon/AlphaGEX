@@ -25,9 +25,14 @@ import warnings
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.logging_config import get_logger
-
-logger = get_logger(__name__)
+# Try to import logging, fall back to basic logging if unavailable
+try:
+    from utils.logging_config import get_logger
+    logger = get_logger(__name__)
+except ImportError:
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
 
 
 # =============================================================================

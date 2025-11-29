@@ -4,8 +4,15 @@ Calculate and display options expiration dates for strategies
 """
 
 from datetime import datetime, timedelta
-from typing import Tuple
-import streamlit as st
+from typing import Dict, Tuple
+
+# Streamlit is only needed for display functions, make it optional
+try:
+    import streamlit as st
+    STREAMLIT_AVAILABLE = True
+except ImportError:
+    STREAMLIT_AVAILABLE = False
+    st = None
 
 
 def get_next_friday(from_date: datetime = None) -> datetime:
@@ -276,6 +283,10 @@ def display_expiration_info(setup: Dict):
     Args:
         setup: Strategy setup with expiration info
     """
+    if not STREAMLIT_AVAILABLE:
+        print(f"Expiration: {setup.get('expiration_display', 'N/A')} ({setup.get('dte', 'N/A')} DTE)")
+        return
+
     if 'expiration_display' not in setup:
         setup = add_expiration_to_setup(setup)
 
