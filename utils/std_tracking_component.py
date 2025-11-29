@@ -3,7 +3,7 @@ Standard Deviation Level Tracking Component
 Tracks how +/-1 and +/-7 std levels move compared to prior day
 """
 
-import streamlit as st
+from utils.console_output import st
 from typing import Dict
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots

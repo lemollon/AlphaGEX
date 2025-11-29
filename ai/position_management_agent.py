@@ -8,7 +8,7 @@ from entry, helping you make better exit and adjustment decisions.
 import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
-import streamlit as st
+from utils.console_output import st
 from database_adapter import get_connection
 
 

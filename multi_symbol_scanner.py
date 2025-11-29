@@ -3,7 +3,7 @@ Multi-Symbol Scanner with Smart Caching
 Scans multiple symbols for trading opportunities while respecting API limits
 """
 
-import streamlit as st
+from utils.console_output import st
 from typing import List, Dict
 import pandas as pd
 from datetime import datetime, timedelta

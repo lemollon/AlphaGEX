@@ -3,7 +3,7 @@ Autonomous Trader Dashboard
 Monitor the fully automated paper trader - NO manual intervention needed
 """
 
-import streamlit as st
+from utils.console_output import st
 import pandas as pd
 from datetime import datetime, timedelta
 from core.autonomous_paper_trader import AutonomousPaperTrader

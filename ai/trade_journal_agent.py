@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
-import streamlit as st
+from utils.console_output import st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from database_adapter import get_connection

@@ -3,7 +3,7 @@ Real-Time Alerts System
 Monitor key levels and market conditions with intelligent polling
 """
 
-import streamlit as st
+from utils.console_output import st
 from typing import List, Dict, Tuple
 from datetime import datetime, timedelta
 import pandas as pd
