@@ -60,6 +60,24 @@ async def get_gex_data(symbol: str):
         else:
             regime = 'NEUTRAL'
 
+        # Get data timestamp - when the market data was collected
+        data_date = data.get('collection_date') or data.get('data_date')
+        if not data_date:
+            # Fallback: use last trading day
+            now = datetime.now()
+            if now.weekday() == 5:  # Saturday
+                data_date = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+            elif now.weekday() == 6:  # Sunday
+                data_date = (now - timedelta(days=2)).strftime('%Y-%m-%d')
+            elif now.hour < 9 or (now.hour == 9 and now.minute < 30):
+                # Before market open - use previous trading day
+                if now.weekday() == 0:  # Monday
+                    data_date = (now - timedelta(days=3)).strftime('%Y-%m-%d')
+                else:
+                    data_date = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+            else:
+                data_date = now.strftime('%Y-%m-%d')
+
         return {
             "success": True,
             "data": {
@@ -67,12 +85,13 @@ async def get_gex_data(symbol: str):
                 "net_gex": safe_round(net_gex),
                 "call_gex": safe_round(data.get('call_gex', 0)),
                 "put_gex": safe_round(data.get('put_gex', 0)),
-                "gamma_flip": safe_round(data.get('gamma_flip', 0)),
+                "gamma_flip": safe_round(data.get('gamma_flip', 0) or data.get('flip_point', 0)),
                 "call_wall": safe_round(data.get('call_wall', 0)),
                 "put_wall": safe_round(data.get('put_wall', 0)),
                 "max_pain": safe_round(data.get('max_pain', 0)),
                 "spot_price": safe_round(data.get('spot_price', 0)),
                 "regime": regime,
+                "data_date": data_date,
                 "timestamp": datetime.now().isoformat()
             }
         }

@@ -2,9 +2,25 @@
 VIX Hedge Manager API routes.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
+
+
+def get_last_trading_day():
+    """Get the last trading day date"""
+    now = datetime.now()
+    if now.weekday() == 5:  # Saturday
+        return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    elif now.weekday() == 6:  # Sunday
+        return (now - timedelta(days=2)).strftime('%Y-%m-%d')
+    elif now.hour < 9 or (now.hour == 9 and now.minute < 30):
+        # Before market open
+        if now.weekday() == 0:  # Monday
+            return (now - timedelta(days=3)).strftime('%Y-%m-%d')
+        else:
+            return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    return now.strftime('%Y-%m-%d')
 
 router = APIRouter(prefix="/api/vix", tags=["VIX"])
 
@@ -111,6 +127,7 @@ async def get_vix_current():
                 "vol_regime": vol_regime.value,
                 "vix_stress_level": vix_data.get('vix_stress_level', 'unknown'),
                 "position_size_multiplier": vix_data.get('position_size_multiplier', 1.0),
+                "data_date": get_last_trading_day(),
                 "timestamp": datetime.now().isoformat()
             }
         }
