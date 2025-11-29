@@ -8,6 +8,22 @@ from fastapi import APIRouter, HTTPException
 
 from backend.api.dependencies import api_client, get_connection
 
+
+def get_last_trading_day():
+    """Get the last trading day date"""
+    now = datetime.now()
+    if now.weekday() == 5:  # Saturday
+        return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    elif now.weekday() == 6:  # Sunday
+        return (now - timedelta(days=2)).strftime('%Y-%m-%d')
+    elif now.hour < 9 or (now.hour == 9 and now.minute < 30):
+        # Before market open
+        if now.weekday() == 0:  # Monday
+            return (now - timedelta(days=3)).strftime('%Y-%m-%d')
+        else:
+            return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    return now.strftime('%Y-%m-%d')
+
 router = APIRouter(prefix="/api/setups", tags=["Trade Setups"])
 
 
@@ -77,10 +93,16 @@ async def generate_trade_setups(request: dict):
                 'risk_reward': round(risk_reward, 2),
                 'max_risk_dollars': round(max_risk, 2),
                 'catalyst': catalyst,
+                'data_date': gex_data.get('collection_date') or get_last_trading_day(),
                 'timestamp': datetime.now().isoformat()
             })
 
-        return {"success": True, "setups": setups}
+        return {
+            "success": True,
+            "setups": setups,
+            "data_date": get_last_trading_day(),
+            "timestamp": datetime.now().isoformat()
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

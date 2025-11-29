@@ -5,10 +5,26 @@ Handles gamma analytics, probabilities, expiration analysis, and waterfall data.
 """
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
 import psycopg2.extras
+
+
+def get_last_trading_day():
+    """Get the last trading day date"""
+    now = datetime.now()
+    if now.weekday() == 5:  # Saturday
+        return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    elif now.weekday() == 6:  # Sunday
+        return (now - timedelta(days=2)).strftime('%Y-%m-%d')
+    elif now.hour < 9 or (now.hour == 9 and now.minute < 30):
+        # Before market open
+        if now.weekday() == 0:  # Monday
+            return (now - timedelta(days=3)).strftime('%Y-%m-%d')
+        else:
+            return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    return now.strftime('%Y-%m-%d')
 
 router = APIRouter(prefix="/api/gamma", tags=["Gamma Intelligence"])
 
@@ -107,6 +123,9 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
             f"Consider {'selling' if net_gex > 0 else 'buying'} volatility"
         ]
 
+        # Get data_date from GEX data or calculate
+        data_date = gex_data.get('collection_date') or get_last_trading_day()
+
         return {
             "success": True,
             "symbol": symbol,
@@ -133,7 +152,8 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
                 "strikes": profile.get('strikes', []) if profile else [],
                 "flip_point": profile.get('flip_point', 0) if profile else 0,
                 "call_wall": profile.get('call_wall', 0) if profile else 0,
-                "put_wall": profile.get('put_wall', 0) if profile else 0
+                "put_wall": profile.get('put_wall', 0) if profile else 0,
+                "data_date": data_date
             },
             "timestamp": datetime.now().isoformat()
         }
@@ -168,10 +188,13 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
             vix=vix
         )
 
+        data_date = gex_data.get('collection_date') or get_last_trading_day()
+
         return {
             "success": True,
             "symbol": symbol,
             "data": probabilities,
+            "data_date": data_date,
             "timestamp": datetime.now().isoformat()
         }
     except HTTPException:
@@ -483,6 +506,8 @@ async def get_gamma_expiration_intel(symbol: str):
             'vix': round(current_vix, 1)
         }
 
+        data_date = gex_data.get('collection_date') or get_last_trading_day()
+
         return {
             "success": True,
             "data": {
@@ -500,7 +525,8 @@ async def get_gamma_expiration_intel(symbol: str):
                 "net_gex": safe_round(net_gex),
                 "call_wall": safe_round(call_wall),
                 "put_wall": safe_round(put_wall),
-                "directional_prediction": directional_prediction
+                "directional_prediction": directional_prediction,
+                "data_date": data_date
             },
             "timestamp": datetime.now().isoformat()
         }
