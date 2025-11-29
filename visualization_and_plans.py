@@ -3,7 +3,7 @@ visualization_and_plans.py - Visualization and Trading Plan Classes
 This file contains all visualization and trading plan generation
 """
 
-import streamlit as st
+from utils.console_output import st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np

@@ -3,7 +3,7 @@ Gamma Alert System - Notify users of extreme gamma events
 Supports: Email, Streamlit notifications, extensible to Telegram/Discord
 """
 
-import streamlit as st
+from utils.console_output import st
 from datetime import datetime
 import pytz
 from typing import Dict, List

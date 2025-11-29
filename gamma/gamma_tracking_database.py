@@ -7,7 +7,7 @@ Tracks daily expirations (SPY, QQQ, IWM, etc.) throughout the week
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-import streamlit as st
+from utils.console_output import st
 from database_adapter import get_connection
 import numpy as np
 

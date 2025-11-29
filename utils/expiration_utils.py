@@ -6,14 +6,6 @@ Calculate and display options expiration dates for strategies
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
 
-# Streamlit is only needed for display functions, make it optional
-try:
-    import streamlit as st
-    STREAMLIT_AVAILABLE = True
-except ImportError:
-    STREAMLIT_AVAILABLE = False
-    st = None
-
 
 def get_next_friday(from_date: datetime = None) -> datetime:
     """
@@ -172,7 +164,7 @@ def get_expiration_color(dte: int) -> str:
         dte: Days to expiration
 
     Returns:
-        Color string for Streamlit
+        Color emoji indicator
     """
     if dte <= 2:
         return "🔴"  # Red - very short term
@@ -278,35 +270,17 @@ def add_expiration_to_setup(setup: Dict) -> Dict:
 
 def display_expiration_info(setup: Dict):
     """
-    Display expiration information in Streamlit UI
+    Display expiration information (console output)
 
     Args:
         setup: Strategy setup with expiration info
     """
-    if not STREAMLIT_AVAILABLE:
-        print(f"Expiration: {setup.get('expiration_display', 'N/A')} ({setup.get('dte', 'N/A')} DTE)")
-        return
-
     if 'expiration_display' not in setup:
         setup = add_expiration_to_setup(setup)
 
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(
-            "Expiration",
-            setup['expiration_display'],
-            help=f"Expires {setup['time_until_exp']} from now"
-        )
-
-    with col2:
-        st.metric(
-            "Type",
-            setup['expiration_type']
-        )
-
-    with col3:
-        st.markdown(f"{setup['exp_color']} **{setup['dte']} DTE**")
+    print(f"Expiration: {setup['expiration_display']}")
+    print(f"Type: {setup['expiration_type']}")
+    print(f"DTE: {setup['dte']} {setup['exp_color']}")
 
 
 def get_all_fridays_in_month(year: int, month: int) -> list:

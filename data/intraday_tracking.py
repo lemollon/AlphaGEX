@@ -3,7 +3,7 @@ Intraday GEX Tracking
 Monitor dealer repositioning throughout the trading day
 """
 
-import streamlit as st
+from utils.console_output import st
 from typing import Dict, List
 from datetime import datetime, time
 import pandas as pd

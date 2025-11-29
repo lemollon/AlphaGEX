@@ -30,40 +30,8 @@ try:
 except ImportError:
     yf = None
 
-# Optional streamlit import - only available when running in Streamlit context
-try:
-    import streamlit as st
-    STREAMLIT_AVAILABLE = True
-except ImportError:
-    STREAMLIT_AVAILABLE = False
-    # Create a mock streamlit object for non-Streamlit contexts
-    class MockStreamlit:
-        class session_state:
-            @staticmethod
-            def get(key, default=None):
-                return default
-
-        class secrets:
-            @staticmethod
-            def get(key, default=""):
-                return default
-
-        @staticmethod
-        def error(msg): pass
-
-        @staticmethod
-        def warning(msg): pass
-
-        @staticmethod
-        def info(msg): pass
-
-        @staticmethod
-        def write(msg): pass
-
-        @staticmethod
-        def success(msg): pass
-
-    st = MockStreamlit()
+# Console-based UI output (replaces Streamlit)
+from utils.console_output import st
 
 # Explicit exports for import clarity
 __all__ = [
