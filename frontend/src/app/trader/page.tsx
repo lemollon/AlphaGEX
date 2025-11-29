@@ -114,6 +114,22 @@ interface RiskStatus {
   current_exposure: number
   risk_score: number
   alerts: string[]
+  limits?: {
+    max_drawdown?: number
+    daily_loss?: number
+    position_size?: number
+    correlation?: number
+  }
+  status?: {
+    max_drawdown?: string
+    daily_loss?: string
+    position_size?: string
+    correlation?: string
+  }
+  current_drawdown_pct?: number
+  daily_loss_pct?: number
+  position_size_pct?: number
+  correlation_pct?: number
 }
 
 interface RiskMetric {
@@ -127,9 +143,14 @@ interface RiskMetric {
 // VIX interfaces
 interface VixSignal {
   signal: 'elevated' | 'normal' | 'low'
+  signal_type?: string
   current_vix: number
   threshold: number
   recommendation: string
+  recommended_action?: string
+  confidence?: number
+  reasoning?: string
+  risk_warning?: string
 }
 
 interface VixData {
@@ -138,6 +159,13 @@ interface VixData {
   change_pct: number
   ma_20: number
   spike_detected: boolean
+  vix_spot?: number
+  vol_regime?: 'low' | 'very_low' | 'elevated' | 'high' | 'extreme' | 'normal'
+  iv_percentile?: number
+  realized_vol_20d?: number
+  iv_rv_spread?: number
+  term_structure_pct?: number
+  structure_type?: string
 }
 
 // Closed Trade interface
@@ -165,12 +193,16 @@ interface ClosedTrade {
 interface BacktestResult {
   id: string
   strategy: string
+  pattern?: string
   win_rate: number
   total_trades: number
+  total_signals?: number
   profit_factor: number
   sharpe_ratio: number
   max_drawdown: number
   timestamp: string
+  expectancy?: number
+  avg_profit_pct?: number
 }
 
 // Diagnostics interface
@@ -180,6 +212,14 @@ interface TraderDiagnostics {
   websocket_status: 'connected' | 'disconnected'
   data_freshness_seconds: number
   errors_last_hour: number
+  recommendations?: string[]
+  checks?: {
+    market_hours?: {
+      current_time_ct: string
+      day_of_week: string
+      status: 'open' | 'closed'
+    }
+  }
 }
 
 // Equity curve point
@@ -188,6 +228,29 @@ interface EquityCurvePoint {
   equity: number
   pnl: number
   date: string
+}
+
+// AI Log Entry interface for autonomous trader logs
+interface AILogEntry {
+  id?: number
+  timestamp: string
+  log_type: string
+  symbol?: string
+  pattern_detected?: string
+  confidence_score?: number
+  trade_direction?: string
+  ai_thought_process?: string
+  action_taken?: string
+  reasoning_summary?: string
+  // Strike selection fields
+  strike_chosen?: number
+  strike_selection_reason?: string
+  // Position sizing fields
+  kelly_pct?: number
+  contracts?: number
+  sizing_rationale?: string
+  // AI evaluation fields
+  ai_confidence?: number
 }
 
 export default function AutonomousTrader() {
@@ -233,8 +296,19 @@ export default function AutonomousTrader() {
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
 
   // Autonomous trader advanced features state
-  const [autonomousLogs, setAutonomousLogs] = useState<TradeLogEntry[]>([])
-  const [competitionLeaderboard, setCompetitionLeaderboard] = useState<{rank: number; name: string; pnl: number}[]>([])
+  const [autonomousLogs, setAutonomousLogs] = useState<AILogEntry[]>([])
+  const [competitionLeaderboard, setCompetitionLeaderboard] = useState<{
+    rank?: number
+    name?: string
+    pnl?: number
+    strategy_id: string
+    strategy_name: string
+    current_capital: number
+    starting_capital: number
+    win_rate: number
+    total_trades: number
+    sharpe_ratio?: number
+  }[]>([])
   const [backtestResults, setBacktestResults] = useState<BacktestResult[]>([])
   const [backtestDataSource, setBacktestDataSource] = useState<string>('none')
   const [backtestRefreshing, setBacktestRefreshing] = useState(false)
@@ -424,19 +498,19 @@ export default function AutonomousTrader() {
     )
     let cumPnl = 0
     return sortedTrades.map((trade, idx) => {
-      cumPnl += (trade.realized_pnl || 0)
+      cumPnl += (trade.pnl || 0)
       return {
         date: trade.exit_date || `Trade ${idx + 1}`,
         pnl: cumPnl,
         equity: 1000000 + cumPnl,
-        dailyPnl: trade.realized_pnl || 0
+        dailyPnl: trade.pnl || 0
       }
     })
   }, [closedTrades])
 
   // Memoize total P&L from closed trades
   const closedTradesTotalPnl = useMemo(() =>
-    closedTrades.reduce((sum, t) => sum + (t.realized_pnl || 0), 0)
+    closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0)
   , [closedTrades])
 
   // Fetch data from API
@@ -1652,8 +1726,8 @@ export default function AutonomousTrader() {
                     t.contracts || 1,
                     t.entry_price || 0,
                     t.exit_price || 0,
-                    t.realized_pnl || 0,
-                    t.realized_pnl_pct || 0,
+                    t.pnl || 0,
+                    t.pnl_pct || 0,
                     t.exit_reason || '',
                     t.hold_duration_minutes || ''
                   ])
@@ -1689,19 +1763,19 @@ export default function AutonomousTrader() {
                   <div>
                     <p className="text-text-muted text-xs">Winning Trades</p>
                     <p className="text-success font-bold text-lg">
-                      {closedTrades.filter(t => (t.realized_pnl || 0) > 0).length}
+                      {closedTrades.filter(t => (t.pnl || 0) > 0).length}
                     </p>
                   </div>
                   <div>
                     <p className="text-text-muted text-xs">Losing Trades</p>
                     <p className="text-danger font-bold text-lg">
-                      {closedTrades.filter(t => (t.realized_pnl || 0) <= 0).length}
+                      {closedTrades.filter(t => (t.pnl || 0) <= 0).length}
                     </p>
                   </div>
                   <div>
                     <p className="text-text-muted text-xs">Win Rate</p>
                     <p className="text-text-primary font-bold text-lg">
-                      {((closedTrades.filter(t => (t.realized_pnl || 0) > 0).length / closedTrades.length) * 100).toFixed(1)}%
+                      {((closedTrades.filter(t => (t.pnl || 0) > 0).length / closedTrades.length) * 100).toFixed(1)}%
                     </p>
                   </div>
                   <div>
@@ -1735,8 +1809,8 @@ export default function AutonomousTrader() {
                     </thead>
                     <tbody>
                       {closedTrades.map((trade, idx) => {
-                        const pnl = trade.realized_pnl || 0
-                        const pnlPct = trade.realized_pnl_pct || 0
+                        const pnl = trade.pnl || 0
+                        const pnlPct = trade.pnl_pct || 0
                         const isWin = pnl > 0
                         return (
                           <tr key={idx} className="border-b border-border/50 hover:bg-background-hover transition-colors">
@@ -1873,13 +1947,13 @@ export default function AutonomousTrader() {
               </div>
               <div className="p-3 bg-background-hover rounded-lg">
                 <p className="text-text-muted text-xs">IV-RV Spread</p>
-                <p className={`font-semibold mt-1 ${vixData.iv_rv_spread > 5 ? 'text-warning' : 'text-success'}`}>
+                <p className={`font-semibold mt-1 ${(vixData.iv_rv_spread || 0) > 5 ? 'text-warning' : 'text-success'}`}>
                   {vixData.iv_rv_spread?.toFixed(1)} pts
                 </p>
               </div>
               <div className="p-3 bg-background-hover rounded-lg">
                 <p className="text-text-muted text-xs">Term Structure</p>
-                <p className={`font-semibold mt-1 ${vixData.term_structure_pct > 0 ? 'text-text-primary' : 'text-warning'}`}>
+                <p className={`font-semibold mt-1 ${(vixData.term_structure_pct || 0) > 0 ? 'text-text-primary' : 'text-warning'}`}>
                   {vixData.term_structure_pct?.toFixed(1)}% ({vixData.structure_type})
                 </p>
               </div>
@@ -2649,7 +2723,7 @@ export default function AutonomousTrader() {
                   <p className="text-text-secondary text-sm mb-1">Best Pattern</p>
                   <p className="text-text-primary font-bold text-lg">{backtestResults[0].pattern}</p>
                   <p className="text-success font-semibold text-sm mt-1">
-                    Win Rate: {backtestResults[0].win_rate?.toFixed(0)}% | Expectancy: {backtestResults[0].expectancy > 0 ? '+' : ''}{backtestResults[0].expectancy?.toFixed(2)}%
+                    Win Rate: {backtestResults[0].win_rate?.toFixed(0)}% | Expectancy: {(backtestResults[0].expectancy || 0) > 0 ? '+' : ''}{backtestResults[0].expectancy?.toFixed(2)}%
                   </p>
                 </div>
               )}
@@ -2671,7 +2745,7 @@ export default function AutonomousTrader() {
                   <p className="text-text-secondary text-sm mb-1">Highest Return</p>
                   <p className="text-text-primary font-bold text-lg">{backtestResults[2].pattern}</p>
                   <p className="text-warning font-semibold text-sm mt-1">
-                    Avg Win: {backtestResults[2].avg_profit_pct > 0 ? '+' : ''}{backtestResults[2].avg_profit_pct?.toFixed(2)}% | Sharpe: {backtestResults[2].sharpe_ratio?.toFixed(2)}
+                    Avg Win: {(backtestResults[2].avg_profit_pct || 0) > 0 ? '+' : ''}{backtestResults[2].avg_profit_pct?.toFixed(2)}% | Sharpe: {backtestResults[2].sharpe_ratio?.toFixed(2)}
                   </p>
                 </div>
               )}
@@ -2818,8 +2892,8 @@ export default function AutonomousTrader() {
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-text-secondary text-sm">Max Drawdown ({riskStatus.limits?.max_drawdown || 15}% limit)</span>
                   <span className={`font-semibold ${
-                    riskStatus.current_drawdown_pct < (riskStatus.limits?.max_drawdown || 15) * 0.7 ? 'text-success' :
-                    riskStatus.current_drawdown_pct < (riskStatus.limits?.max_drawdown || 15) ? 'text-warning' :
+                    (riskStatus.current_drawdown_pct || 0) < (riskStatus.limits?.max_drawdown || 15) * 0.7 ? 'text-success' :
+                    (riskStatus.current_drawdown_pct || 0) < (riskStatus.limits?.max_drawdown || 15) ? 'text-warning' :
                     'text-danger'
                   }`}>
                     {riskStatus.current_drawdown_pct?.toFixed(1) || 0}%
@@ -2827,10 +2901,10 @@ export default function AutonomousTrader() {
                 </div>
                 <div className="w-full bg-background-primary rounded-full h-2">
                   <div className={`h-2 rounded-full ${
-                    riskStatus.current_drawdown_pct < (riskStatus.limits?.max_drawdown || 15) * 0.7 ? 'bg-success' :
-                    riskStatus.current_drawdown_pct < (riskStatus.limits?.max_drawdown || 15) ? 'bg-warning' :
+                    (riskStatus.current_drawdown_pct || 0) < (riskStatus.limits?.max_drawdown || 15) * 0.7 ? 'bg-success' :
+                    (riskStatus.current_drawdown_pct || 0) < (riskStatus.limits?.max_drawdown || 15) ? 'bg-warning' :
                     'bg-danger'
-                  }`} style={{ width: `${Math.min((riskStatus.current_drawdown_pct / (riskStatus.limits?.max_drawdown || 15)) * 100, 100)}%` }}></div>
+                  }`} style={{ width: `${Math.min(((riskStatus.current_drawdown_pct || 0) / (riskStatus.limits?.max_drawdown || 15)) * 100, 100)}%` }}></div>
                 </div>
               </div>
 
@@ -2839,8 +2913,8 @@ export default function AutonomousTrader() {
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-text-secondary text-sm">Daily Loss Limit ({riskStatus.limits?.daily_loss || 5}% limit)</span>
                   <span className={`font-semibold ${
-                    riskStatus.daily_loss_pct < (riskStatus.limits?.daily_loss || 5) * 0.7 ? 'text-success' :
-                    riskStatus.daily_loss_pct < (riskStatus.limits?.daily_loss || 5) ? 'text-warning' :
+                    (riskStatus.daily_loss_pct || 0) < (riskStatus.limits?.daily_loss || 5) * 0.7 ? 'text-success' :
+                    (riskStatus.daily_loss_pct || 0) < (riskStatus.limits?.daily_loss || 5) ? 'text-warning' :
                     'text-danger'
                   }`}>
                     {riskStatus.daily_loss_pct?.toFixed(1) || 0}%
@@ -2848,10 +2922,10 @@ export default function AutonomousTrader() {
                 </div>
                 <div className="w-full bg-background-primary rounded-full h-2">
                   <div className={`h-2 rounded-full ${
-                    riskStatus.daily_loss_pct < (riskStatus.limits?.daily_loss || 5) * 0.7 ? 'bg-success' :
-                    riskStatus.daily_loss_pct < (riskStatus.limits?.daily_loss || 5) ? 'bg-warning' :
+                    (riskStatus.daily_loss_pct || 0) < (riskStatus.limits?.daily_loss || 5) * 0.7 ? 'bg-success' :
+                    (riskStatus.daily_loss_pct || 0) < (riskStatus.limits?.daily_loss || 5) ? 'bg-warning' :
                     'bg-danger'
-                  }`} style={{ width: `${Math.min((riskStatus.daily_loss_pct / (riskStatus.limits?.daily_loss || 5)) * 100, 100)}%` }}></div>
+                  }`} style={{ width: `${Math.min(((riskStatus.daily_loss_pct || 0) / (riskStatus.limits?.daily_loss || 5)) * 100, 100)}%` }}></div>
                 </div>
               </div>
 
@@ -2860,8 +2934,8 @@ export default function AutonomousTrader() {
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-text-secondary text-sm">Position Size ({riskStatus.limits?.position_size || 20}% limit)</span>
                   <span className={`font-semibold ${
-                    riskStatus.position_size_pct < (riskStatus.limits?.position_size || 20) * 0.7 ? 'text-success' :
-                    riskStatus.position_size_pct < (riskStatus.limits?.position_size || 20) ? 'text-warning' :
+                    (riskStatus.position_size_pct || 0) < (riskStatus.limits?.position_size || 20) * 0.7 ? 'text-success' :
+                    (riskStatus.position_size_pct || 0) < (riskStatus.limits?.position_size || 20) ? 'text-warning' :
                     'text-danger'
                   }`}>
                     {riskStatus.position_size_pct?.toFixed(1) || 0}%
@@ -2869,10 +2943,10 @@ export default function AutonomousTrader() {
                 </div>
                 <div className="w-full bg-background-primary rounded-full h-2">
                   <div className={`h-2 rounded-full ${
-                    riskStatus.position_size_pct < (riskStatus.limits?.position_size || 20) * 0.7 ? 'bg-success' :
-                    riskStatus.position_size_pct < (riskStatus.limits?.position_size || 20) ? 'bg-warning' :
+                    (riskStatus.position_size_pct || 0) < (riskStatus.limits?.position_size || 20) * 0.7 ? 'bg-success' :
+                    (riskStatus.position_size_pct || 0) < (riskStatus.limits?.position_size || 20) ? 'bg-warning' :
                     'bg-danger'
-                  }`} style={{ width: `${Math.min((riskStatus.position_size_pct / (riskStatus.limits?.position_size || 20)) * 100, 100)}%` }}></div>
+                  }`} style={{ width: `${Math.min(((riskStatus.position_size_pct || 0) / (riskStatus.limits?.position_size || 20)) * 100, 100)}%` }}></div>
                 </div>
               </div>
 
@@ -2881,8 +2955,8 @@ export default function AutonomousTrader() {
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-text-secondary text-sm">Correlation Exposure ({riskStatus.limits?.correlation || 50}% limit)</span>
                   <span className={`font-semibold ${
-                    riskStatus.correlation_pct < (riskStatus.limits?.correlation || 50) * 0.7 ? 'text-success' :
-                    riskStatus.correlation_pct < (riskStatus.limits?.correlation || 50) ? 'text-warning' :
+                    (riskStatus.correlation_pct || 0) < (riskStatus.limits?.correlation || 50) * 0.7 ? 'text-success' :
+                    (riskStatus.correlation_pct || 0) < (riskStatus.limits?.correlation || 50) ? 'text-warning' :
                     'text-danger'
                   }`}>
                     {riskStatus.correlation_pct?.toFixed(1) || 0}%
@@ -2890,10 +2964,10 @@ export default function AutonomousTrader() {
                 </div>
                 <div className="w-full bg-background-primary rounded-full h-2">
                   <div className={`h-2 rounded-full ${
-                    riskStatus.correlation_pct < (riskStatus.limits?.correlation || 50) * 0.7 ? 'bg-success' :
-                    riskStatus.correlation_pct < (riskStatus.limits?.correlation || 50) ? 'bg-warning' :
+                    (riskStatus.correlation_pct || 0) < (riskStatus.limits?.correlation || 50) * 0.7 ? 'bg-success' :
+                    (riskStatus.correlation_pct || 0) < (riskStatus.limits?.correlation || 50) ? 'bg-warning' :
                     'bg-danger'
-                  }`} style={{ width: `${Math.min((riskStatus.correlation_pct / (riskStatus.limits?.correlation || 50)) * 100, 100)}%` }}></div>
+                  }`} style={{ width: `${Math.min(((riskStatus.correlation_pct || 0) / (riskStatus.limits?.correlation || 50)) * 100, 100)}%` }}></div>
                 </div>
               </div>
 
