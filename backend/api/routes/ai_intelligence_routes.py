@@ -1,5 +1,4 @@
 """
-from database_adapter import get_connection
 AI Intelligence Enhancement Routes
 Provides 7 advanced AI features for profitable trading with transparency and actionability.
 
@@ -13,6 +12,7 @@ Features:
 7. Option Greeks Explainer - Context-aware Greeks education
 """
 
+from database_adapter import get_connection
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel

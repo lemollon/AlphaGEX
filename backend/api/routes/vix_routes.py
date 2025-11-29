@@ -16,7 +16,7 @@ async def get_vix_hedge_signal(portfolio_delta: float = 0, portfolio_value: floa
     This is a SIGNAL GENERATOR only - does not auto-execute trades.
     """
     try:
-        from vix_hedge_manager import get_vix_hedge_manager
+        from core.vix_hedge_manager import get_vix_hedge_manager
 
         manager = get_vix_hedge_manager()
         signal = manager.generate_hedge_signal(
@@ -45,7 +45,7 @@ async def get_vix_hedge_signal(portfolio_delta: float = 0, portfolio_value: floa
 async def get_vix_signal_history(days: int = 30):
     """Get historical VIX hedge signals"""
     try:
-        from vix_hedge_manager import get_vix_hedge_manager
+        from core.vix_hedge_manager import get_vix_hedge_manager
 
         manager = get_vix_hedge_manager()
         history = manager.get_signal_history(days)
@@ -82,7 +82,7 @@ async def get_vix_signal_history(days: int = 30):
 async def get_vix_current():
     """Get current VIX data and analysis with VVIX and stress indicators"""
     try:
-        from vix_hedge_manager import get_vix_hedge_manager
+        from core.vix_hedge_manager import get_vix_hedge_manager
 
         manager = get_vix_hedge_manager()
         vix_data = manager.get_vix_data()
@@ -122,7 +122,7 @@ async def get_vix_current():
 async def get_vix_debug():
     """VIX debugging endpoint - shows all VIX-related data and sources."""
     try:
-        from vix_hedge_manager import get_vix_hedge_manager
+        from core.vix_hedge_manager import get_vix_hedge_manager
 
         manager = get_vix_hedge_manager()
         vix_data = manager.get_vix_data()
