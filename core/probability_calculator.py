@@ -157,8 +157,8 @@ class ProbabilityCalculator:
 
             if result:
                 return ProbabilityWeights(*result)
-        except:
-            pass
+        except Exception:
+            pass  # Database might not have weights yet
 
         # Return defaults if no weights in DB
         return ProbabilityWeights()

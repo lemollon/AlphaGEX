@@ -83,7 +83,7 @@ def get_local_time(timezone_name='US/Central'):
     """Get current time in specified timezone"""
     try:
         return datetime.now(pytz.timezone(timezone_name))
-    except:
+    except (pytz.exceptions.UnknownTimeZoneError, Exception):
         return get_et_time()  # Fallback to ET
 
 def is_market_open():
@@ -769,12 +769,14 @@ class TradingRAG:
         try:
             df = pd.read_sql_query(query, conn, params=(current_gex, current_gex, limit))
             conn.close()
-            
+
             if not df.empty:
                 return df.to_dict('records')
-        except:
-            pass
-        
+        except Exception as e:
+            # Database query failed - log and return empty
+            import logging
+            logging.getLogger(__name__).debug(f"Similar trades query failed: {e}")
+
         conn.close()
         return []
     
@@ -868,12 +870,14 @@ class TradingRAG:
         try:
             result = pd.read_sql_query(query, conn, params=params).iloc[0]
             conn.close()
-            
+
             if result['total'] > 0:
                 return (result['wins'] / result['total']) * 100
-        except:
-            pass
-        
+        except Exception as e:
+            # Database query failed - log and return default
+            import logging
+            logging.getLogger(__name__).debug(f"Win rate query failed: {e}")
+
         conn.close()
         return 0
     
@@ -1226,8 +1230,8 @@ class FREDIntegration:
         if not self.api_key:
             try:
                 self.api_key = st.secrets.get("fred_api_key", "")
-            except:
-                self.api_key = ""
+            except (AttributeError, KeyError, Exception):
+                self.api_key = ""  # Streamlit secrets not available
 
         self.base_url = "https://api.stlouisfed.org/fred/series/observations"
         self.cache = {}
@@ -1364,8 +1368,8 @@ class ClaudeIntelligence:
         if not self.api_key:
             try:
                 self.api_key = st.secrets.get("claude_api_key", "")
-            except:
-                self.api_key = ""
+            except (AttributeError, KeyError, Exception):
+                self.api_key = ""  # Streamlit secrets not available
 
         # Use Claude Haiku 4.5 - fast and efficient model (2x faster than old haiku, much smarter)
         self.model = "claude-haiku-4-5-20251001"

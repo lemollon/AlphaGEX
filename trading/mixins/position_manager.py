@@ -421,8 +421,8 @@ REASON: [one concise sentence explaining why]"""
             logger.error(f"Failed to close position {position_id}: {e}")
             try:
                 conn.rollback()
-            except:
-                pass
+            except Exception:
+                pass  # Connection may already be closed
             return
         finally:
             conn.close()

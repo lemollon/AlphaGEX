@@ -814,7 +814,7 @@ def calculate_theoretical_option_price(
         exp_date = datetime.strptime(expiration, '%Y-%m-%d')
         days_to_exp = (exp_date - datetime.now()).days
         time_to_expiry = max(1, days_to_exp) / 365.0  # At least 1 day
-    except:
+    except (ValueError, TypeError):
         time_to_expiry = 7 / 365.0  # Default to 7 days
 
     # Get current spot price

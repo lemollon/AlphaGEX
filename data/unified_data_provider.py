@@ -479,8 +479,8 @@ class UnifiedDataProvider:
                 if price and price > 0:
                     logger.info(f"VIX from Polygon: {price}")
                     return price
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Polygon VIX fetch failed: {e}")
 
         logger.warning("VIX unavailable from all sources")
         return 0.0

@@ -141,8 +141,8 @@ class MCPClient:
         try:
             response = self.session.get(f"{self.server_url}/health", timeout=5)
             return response.status_code == 200
-        except:
-            return False
+        except (requests.RequestException, Exception):
+            return False  # Server unreachable or errored
 
 
 class MCPError(Exception):

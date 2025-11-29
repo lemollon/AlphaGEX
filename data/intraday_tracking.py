@@ -96,7 +96,7 @@ class IntradayTracker:
                 self._safe_float(snapshot.get('net_gex', 0))
                 self._safe_float(snapshot.get('flip_point', 0))
                 valid_snapshots.append(snapshot)
-            except:
+            except (ValueError, TypeError):
                 # Skip corrupted snapshot
                 continue
         return valid_snapshots

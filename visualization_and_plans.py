@@ -802,14 +802,14 @@ class TradingPlanGenerator:
             fred_data = self.fred.get_economic_data()
             fred_regime = self.fred.get_regime(fred_data)
             regime['macro_outlook'] = fred_regime.get('type', 'Neutral')
-        except:
-            regime['macro_outlook'] = 'Neutral'
+        except Exception:
+            regime['macro_outlook'] = 'Neutral'  # Default if FRED unavailable
 
         try:
             rag = TradingRAG()
             personal_stats = rag.get_personal_stats()
-        except:
-            personal_stats = {'win_rate': 65, 'total_trades': 100, 'best_day': 'Monday'}
+        except Exception:
+            personal_stats = {'win_rate': 65, 'total_trades': 100, 'best_day': 'Monday'}  # Defaults
 
         # ALWAYS generate setups - OPTIONS TRADERS MAKE MONEY EVERY DAY
         exact_trades = self._generate_all_setups(symbol, spot, net_gex, flip, call_wall, put_wall, day, regime)

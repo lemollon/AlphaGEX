@@ -228,15 +228,15 @@ async def stop_trader_manually():
 
             try:
                 os.remove(pid_file)
-            except:
-                pass
+            except OSError:
+                pass  # PID file cleanup failed, ignore
 
             return {"success": True, "message": f"Trader stopped (PID: {pid})"}
         except ProcessLookupError:
             try:
                 os.remove(pid_file)
-            except:
-                pass
+            except OSError:
+                pass  # PID file cleanup failed, ignore
             return {"success": False, "error": "Trader process not found. Cleaned up stale PID file."}
         except PermissionError:
             return {"success": False, "error": f"Permission denied when trying to stop PID {pid}"}

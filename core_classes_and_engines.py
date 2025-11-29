@@ -1197,8 +1197,8 @@ class TradingVolatilityAPI:
                         secrets.get("TRADING_VOLATILITY_API_KEY") or
                         ""
                     )
-            except:
-                pass
+            except (FileNotFoundError, Exception):
+                pass  # Secrets file not available, using env vars
 
         # Read endpoint from environment variables with fallback
         self.endpoint = (

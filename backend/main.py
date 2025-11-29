@@ -441,7 +441,7 @@ async def websocket_trader(websocket: WebSocket):
                         "message": str(e)[:200],  # Truncate error message
                         "timestamp": datetime.now().isoformat()
                     })
-                except:
+                except Exception:
                     pass  # If sending error fails, just continue
                 await asyncio.sleep(10)
 
@@ -455,8 +455,8 @@ async def websocket_trader(websocket: WebSocket):
             del _connection_subscriptions[connection_id]
         try:
             manager.disconnect(websocket)
-        except:
-            pass  # Ignore disconnect errors
+        except Exception:
+            pass  # Ignore disconnect errors - connection already closed
 
 async def _get_trader_update_data() -> dict:
     """

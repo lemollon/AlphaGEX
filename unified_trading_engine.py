@@ -938,8 +938,8 @@ class UnifiedTradingEngine:
                 try:
                     gex_idx = gex_data.index.get_indexer([timestamp], method='nearest')[0]
                     gex_row = gex_data.iloc[gex_idx]
-                except:
-                    pass
+                except (IndexError, KeyError, Exception):
+                    pass  # No matching GEX data for this timestamp
 
             bar = TradingBar(
                 timestamp=timestamp,

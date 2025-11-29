@@ -87,8 +87,8 @@ def display_position_sizing(setup: Dict, account_size: float, risk_percent: floa
         max_risk_str = str(setup['max_risk']).replace('$', '').replace(',', '')
         try:
             max_loss = float(max_risk_str)
-        except:
-            max_loss = option_premium * 100
+        except (ValueError, TypeError):
+            max_loss = option_premium * 100  # Default to premium if parsing fails
     else:
         # For long options, max loss = premium × 100
         max_loss = option_premium * 100

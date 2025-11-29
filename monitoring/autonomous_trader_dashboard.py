@@ -1310,8 +1310,8 @@ def display_control_panel(trader: AutonomousPaperTrader):
         from trader_scheduler import get_scheduler
         scheduler = get_scheduler()
         scheduler_running = scheduler.is_running
-    except:
-        scheduler_running = False
+    except (ImportError, AttributeError, Exception):
+        scheduler_running = False  # Scheduler not available or not configured
 
     # Display status
     col1, col2, col3 = st.columns(3)
@@ -1402,8 +1402,8 @@ def display_control_panel(trader: AutonomousPaperTrader):
                         st.info(f"⏰ **Next Check:** {sched_status['next_run']}")
                     else:
                         st.info("⏰ **Next Check:** Every 5 minutes")
-                except:
-                    st.info("⏰ **Next Check:** Every 5 minutes")
+                except Exception:
+                    st.info("⏰ **Next Check:** Every 5 minutes")  # Default if scheduler unavailable
 
         # Bot's current thinking - make it prominent
         if bot_status or bot_action:

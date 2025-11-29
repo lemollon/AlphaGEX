@@ -202,8 +202,8 @@ class VIXHedgeManager:
                     vvix = polygon_fetcher.get_current_price('^VVIX')
                     if vvix and vvix > 0:
                         vvix_source = 'polygon'
-                except:
-                    pass
+                except Exception:
+                    pass  # VVIX is optional, continue without it
 
             # VIX FUTURES ESTIMATION
             # CRITICAL: This is an estimate - real futures data would be better
@@ -415,8 +415,8 @@ class VIXHedgeManager:
         # Get SPY price for context
         try:
             spy_spot = polygon_fetcher.get_current_price('SPY')
-        except:
-            spy_spot = 500.0
+        except Exception:
+            spy_spot = 500.0  # Reasonable default for SPY
 
         # Decision logic
         signal_type = HedgeSignalType.NO_ACTION

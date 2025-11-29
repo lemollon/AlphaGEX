@@ -5,16 +5,56 @@ Handles database stats, API connectivity tests, and system health checks.
 """
 
 import os
+import re
 import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 import psycopg2.extras
+import psycopg2.sql as sql
 import requests
 
 from database_adapter import get_connection
+from utils.logging_config import get_logger, log_error_with_context
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["Database & System"])
+
+# Allowlist of valid table names for security
+VALID_TABLE_NAMES = {
+    'gex_history', 'trade_setups', 'trades', 'positions', 'backtest_results',
+    'regime_classifications', 'market_snapshots', 'alerts', 'notifications',
+    'psychology_patterns', 'price_history', 'options_chains', 'gamma_data',
+    'vix_history', 'iv_rank_history', 'portfolio_snapshots', 'trade_journal',
+    'performance_metrics', 'risk_metrics', 'strategy_performance',
+    'intraday_levels', 'key_levels', 'earnings_calendar', 'economic_events'
+}
+
+
+def validate_table_name(table_name: str) -> bool:
+    """
+    Validate table name against allowlist and format.
+
+    Args:
+        table_name: The table name to validate
+
+    Returns:
+        True if valid, False otherwise
+    """
+    # Check allowlist first (known tables)
+    if table_name in VALID_TABLE_NAMES:
+        return True
+
+    # For unknown tables, validate format (alphanumeric + underscore only)
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table_name):
+        logger.warning(
+            f"Invalid table name format rejected: {table_name}",
+            extra={"table_name": table_name, "security": "sql_injection_prevented"}
+        )
+        return False
+
+    return True
 
 
 @router.get("/api/database/stats")
@@ -37,12 +77,24 @@ async def get_database_stats():
         for t in tables_result:
             table_name = t['table_name']
 
+            # SECURITY: Validate table name before using in queries
+            if not validate_table_name(table_name):
+                logger.warning(
+                    f"Skipping invalid table name: {table_name}",
+                    extra={"table_name": table_name}
+                )
+                continue
+
+            # Use psycopg2.sql for safe SQL composition
             # Get row count
-            cursor.execute(f"SELECT COUNT(*) as cnt FROM {table_name}")
+            count_query = sql.SQL("SELECT COUNT(*) as cnt FROM {}").format(
+                sql.Identifier(table_name)
+            )
+            cursor.execute(count_query)
             row_count = cursor.fetchone()['cnt']
 
-            # Get column info
-            cursor.execute(f"""
+            # Get column info (parameterized query - already safe)
+            cursor.execute("""
                 SELECT column_name, data_type
                 FROM information_schema.columns
                 WHERE table_name = %s
@@ -51,7 +103,10 @@ async def get_database_stats():
             columns = [{"name": c['column_name'], "type": c['data_type']} for c in cursor.fetchall()]
 
             # Get sample data (first 3 rows)
-            cursor.execute(f"SELECT * FROM {table_name} LIMIT 3")
+            sample_query = sql.SQL("SELECT * FROM {} LIMIT 3").format(
+                sql.Identifier(table_name)
+            )
+            cursor.execute(sample_query)
             sample = cursor.fetchall()
 
             tables.append({
@@ -63,6 +118,11 @@ async def get_database_stats():
 
         conn.close()
 
+        logger.info(
+            f"Database stats retrieved for {len(tables)} tables",
+            extra={"table_count": len(tables)}
+        )
+
         return {
             "success": True,
             "database_path": os.getenv('DATABASE_URL', 'PostgreSQL'),
@@ -71,6 +131,7 @@ async def get_database_stats():
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
+        log_error_with_context(logger, "Failed to get database stats", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

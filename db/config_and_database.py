@@ -592,21 +592,21 @@ def init_database():
     # Add vix_spike_detected column if it doesn't exist (migration)
     try:
         c.execute("SELECT vix_spike_detected FROM regime_signals LIMIT 1")
-    except:
+    except Exception:
         c.execute("ALTER TABLE regime_signals ADD COLUMN vix_spike_detected INTEGER")
         print("✓ Added vix_spike_detected column to regime_signals table")
 
     # Add volatility_regime column if it doesn't exist (migration)
     try:
         c.execute("SELECT volatility_regime FROM regime_signals LIMIT 1")
-    except:
+    except Exception:
         c.execute("ALTER TABLE regime_signals ADD COLUMN volatility_regime TEXT")
         print("✓ Added volatility_regime column to regime_signals table")
 
     # Add at_flip_point column if it doesn't exist (migration)
     try:
         c.execute("SELECT at_flip_point FROM regime_signals LIMIT 1")
-    except:
+    except Exception:
         c.execute("ALTER TABLE regime_signals ADD COLUMN at_flip_point INTEGER")
         print("✓ Added at_flip_point column to regime_signals table")
 
@@ -1029,7 +1029,7 @@ def init_database():
                 WHERE table_name = %s
             """, (table_name,))
             return [row[0] for row in cursor.fetchall()]
-        except:
+        except Exception:
             # Table might not exist
             return []
 
@@ -1089,7 +1089,7 @@ def _get_table_columns(cursor, table_name):
             WHERE table_name = %s
         """, (table_name,))
         return [row[0] for row in cursor.fetchall()]
-    except:
+    except Exception:
         # Table might not exist
         return []
 
@@ -1179,5 +1179,6 @@ try:
             print(f"  [{change['timestamp'][:16]}] {change['category']} > {change['item']}")
             print(f"    {change['old_value']} → {change['new_value']}")
         print("="*70 + "\n")
-except:
+except (ImportError, Exception):
+    # strategy_stats module might not be available
     pass
