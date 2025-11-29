@@ -1,15 +1,20 @@
 """
 Gamma Alert System - Notify users of extreme gamma events
-Supports: Email, Streamlit notifications, extensible to Telegram/Discord
+Supports: Email, extensible to Telegram/Discord
+
+This module provides alert logic without any UI dependencies.
 """
 
-from utils.console_output import st
 from datetime import datetime
 import pytz
 from typing import Dict, List
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class GammaAlertSystem:
     """Send alerts for extreme gamma cliff days and opportunities"""
@@ -28,7 +33,7 @@ class GammaAlertSystem:
         self.email_config = email_config or {}
         self.email_enabled = bool(self.email_config.get('sender_email'))
 
-    def check_and_alert(self, gamma_intel: Dict, symbol: str, spot_price: float):
+    def check_and_alert(self, gamma_intel: Dict, symbol: str, spot_price: float) -> List[Dict]:
         """
         Check all gamma views and send alerts if needed
 
@@ -36,6 +41,9 @@ class GammaAlertSystem:
             gamma_intel: Full 3-view gamma intelligence
             symbol: Ticker
             spot_price: Current price
+
+        Returns:
+            List of alert dictionaries
         """
         alerts = []
 
@@ -156,31 +164,30 @@ This is a major OPEX week. Plan your week accordingly.
 
     def _send_alert(self, alert: Dict):
         """Send alert via all enabled channels"""
-        # Streamlit notification (always enabled)
-        self._send_streamlit_alert(alert)
+        # Log the alert
+        self._log_alert(alert)
 
         # Email (if configured)
         if self.email_enabled:
             try:
                 self._send_email_alert(alert)
             except Exception as e:
-                st.warning(f"Could not send email alert: {e}")
+                logger.warning(f"Could not send email alert: {e}")
 
-    def _send_streamlit_alert(self, alert: Dict):
-        """Display alert in Streamlit UI"""
-        severity_map = {
-            'CRITICAL': st.error,
-            'HIGH': st.warning,
-            'MEDIUM': st.info
-        }
+    def _log_alert(self, alert: Dict):
+        """Log alert to logger"""
+        severity = alert.get('severity', 'INFO')
+        title = alert.get('title', 'Alert')
+        message = alert.get('message', '')
 
-        alert_fn = severity_map.get(alert['severity'], st.info)
-
-        alert_fn(f"""
-**{alert['title']}**
-
-{alert['message']}
-        """)
+        if severity == 'CRITICAL':
+            logger.critical(f"{title}\n{message}")
+        elif severity == 'HIGH':
+            logger.error(f"{title}\n{message}")
+        elif severity == 'MEDIUM':
+            logger.warning(f"{title}\n{message}")
+        else:
+            logger.info(f"{title}\n{message}")
 
     def _send_email_alert(self, alert: Dict):
         """Send email alert"""
@@ -238,18 +245,18 @@ This is a major OPEX week. Plan your week accordingly.
 
 # Usage example:
 """
-# In gex_copilot.py, after fetching gamma intelligence:
+# In your trading code:
 
 alert_system = GammaAlertSystem(email_config={
     'smtp_server': 'smtp.gmail.com',
     'smtp_port': 587,
-    'sender_email': st.secrets.get('alert_email'),
-    'sender_password': st.secrets.get('alert_password'),
-    'recipient_email': st.secrets.get('trader_email')
+    'sender_email': os.environ.get('ALERT_EMAIL'),
+    'sender_password': os.environ.get('ALERT_PASSWORD'),
+    'recipient_email': os.environ.get('TRADER_EMAIL')
 })
 
 # Check for alerts
 alerts = alert_system.check_and_alert(gamma_intel, symbol='SPY', spot_price=585.25)
 
-# Alerts are automatically displayed and emailed
+# Alerts are automatically logged and emailed
 """

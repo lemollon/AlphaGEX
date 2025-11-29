@@ -30,9 +30,6 @@ try:
 except ImportError:
     yf = None
 
-# Console-based UI output (replaces Streamlit)
-from utils.console_output import st
-
 # Explicit exports for import clarity
 __all__ = [
     'GEXLevel',
