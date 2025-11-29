@@ -268,7 +268,7 @@ async def get_regime_statistics(days: int = Query(30, ge=1, le=90)):
 async def get_psychology_performance_overview():
     """Get psychology trading performance overview"""
     try:
-        from psychology_performance import get_performance_overview
+        from core.psychology_performance import get_performance_overview
         overview = get_performance_overview()
         return overview
     except ImportError:
@@ -281,7 +281,7 @@ async def get_psychology_performance_overview():
 async def get_performance_by_pattern():
     """Get performance breakdown by pattern type"""
     try:
-        from psychology_performance import get_performance_by_pattern
+        from core.psychology_performance import get_performance_by_pattern
         return get_performance_by_pattern()
     except ImportError:
         return {"error": "Psychology performance module not available"}
@@ -296,7 +296,7 @@ async def get_psychology_signals(
 ):
     """Get recent psychology signals with outcomes"""
     try:
-        from psychology_performance import get_recent_signals
+        from core.psychology_performance import get_recent_signals
         return get_recent_signals(limit=limit, pattern_type=pattern_type)
     except ImportError:
         return {"signals": [], "error": "Psychology performance module not available"}
@@ -308,7 +308,7 @@ async def get_psychology_signals(
 async def get_chart_data(days: int = Query(30, ge=1, le=90)):
     """Get time series data for psychology performance charts"""
     try:
-        from psychology_performance import get_chart_data
+        from core.psychology_performance import get_chart_data
         return get_chart_data(days=days)
     except ImportError:
         return {"error": "Psychology performance module not available"}
@@ -320,7 +320,7 @@ async def get_chart_data(days: int = Query(30, ge=1, le=90)):
 async def get_vix_correlation():
     """Get correlation between VIX levels and psychology pattern performance"""
     try:
-        from psychology_performance import get_vix_correlation
+        from core.psychology_performance import get_vix_correlation
         return get_vix_correlation()
     except ImportError:
         return {"error": "Psychology performance module not available"}
@@ -332,7 +332,7 @@ async def get_vix_correlation():
 async def stream_notifications():
     """Server-sent events stream for real-time psychology notifications"""
     try:
-        from psychology_notifications import notification_manager
+        from monitoring.psychology_notifications import notification_manager
 
         async def event_generator():
             while True:
