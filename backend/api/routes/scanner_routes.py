@@ -2,11 +2,27 @@
 Scanner API routes - Multi-symbol market scanning.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
 
 from backend.api.dependencies import api_client, get_connection
+
+
+def get_last_trading_day():
+    """Get the last trading day date"""
+    now = datetime.now()
+    if now.weekday() == 5:  # Saturday
+        return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    elif now.weekday() == 6:  # Sunday
+        return (now - timedelta(days=2)).strftime('%Y-%m-%d')
+    elif now.hour < 9 or (now.hour == 9 and now.minute < 30):
+        # Before market open
+        if now.weekday() == 0:  # Monday
+            return (now - timedelta(days=3)).strftime('%Y-%m-%d')
+        else:
+            return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    return now.strftime('%Y-%m-%d')
 
 router = APIRouter(prefix="/api/scanner", tags=["Scanner"])
 
@@ -39,6 +55,7 @@ async def scan_market(request: dict):
                     'net_gex': net_gex,
                     'flip_point': flip_point,
                     'signal': signal,
+                    'data_date': gex_data.get('collection_date') or get_last_trading_day(),
                     'timestamp': datetime.now().isoformat()
                 })
             except Exception as e:
@@ -60,7 +77,13 @@ async def scan_market(request: dict):
         except Exception:
             scan_id = None  # Database operation failed, continue without scan_id
 
-        return {"success": True, "scan_id": scan_id, "results": results}
+        return {
+            "success": True,
+            "scan_id": scan_id,
+            "results": results,
+            "data_date": get_last_trading_day(),
+            "timestamp": datetime.now().isoformat()
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
