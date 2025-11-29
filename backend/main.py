@@ -59,6 +59,9 @@ import psycopg2.extras
 # Import probability calculator (NEW - Phase 2 Self-Learning)
 from core.probability_calculator import ProbabilityCalculator
 
+# Import notification manager for psychology alerts
+from monitoring.psychology_notifications import notification_manager
+
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
     from data.unified_data_provider import get_data_provider, get_quote, get_price, get_vix
@@ -231,6 +234,54 @@ def validate_symbol(symbol: str) -> tuple[bool, str]:
             return False, f"Invalid symbol: contains blocked pattern"
 
     return True, symbol
+
+
+def get_cached_price_data(symbol: str, current_price: float = 0) -> dict:
+    """
+    Get price data for multi-timeframe analysis.
+
+    Returns dict with timeframe keys ('1d', '1h', etc.) containing OHLCV data.
+    Used by psychology trap detector for volume and price analysis.
+    """
+    price_data = {
+        '5m': [],
+        '15m': [],
+        '1h': [],
+        '4h': [],
+        '1d': []
+    }
+
+    # Try to get historical data from Polygon
+    polygon_key = os.getenv('POLYGON_API_KEY')
+    if not polygon_key:
+        # Return basic structure with current price
+        return price_data
+
+    try:
+        # Fetch daily bars for volume analysis (last 30 days)
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        from_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+
+        url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{from_date}/{to_date}"
+        params = {"apiKey": polygon_key, "sort": "asc", "limit": 50}
+
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') in ['OK', 'DELAYED'] and data.get('results'):
+                for bar in data['results']:
+                    price_data['1d'].append({
+                        'timestamp': bar['t'],
+                        'open': bar['o'],
+                        'high': bar['h'],
+                        'low': bar['l'],
+                        'close': bar['c'],
+                        'volume': bar.get('v', 0)
+                    })
+    except Exception as e:
+        print(f"Warning: Could not fetch price data from Polygon: {e}")
+
+    return price_data
 
 def fetch_vix_with_metadata(polygon_key: str = None) -> dict:
     """
