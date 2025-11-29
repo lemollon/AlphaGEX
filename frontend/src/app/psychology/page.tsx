@@ -453,7 +453,7 @@ export default function PsychologyTrapDetection() {
               historicalAvgLoss={backtestStats?.avg_loss || 70}
               ivRank={analysis.vix_data ? Math.min(100, Math.round((analysis.vix_data.current / 30) * 100)) : 50}
               thetaDecay={0.08}
-              expectedValue={backtestStats?.expected_value || 180}
+              expectedValue={backtestStats?.expectancy || 180}
             />
 
             {/* Alert Level Banner */}
