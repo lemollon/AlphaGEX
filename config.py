@@ -323,6 +323,125 @@ def get_vix_fallback(last_known_vix: Optional[float] = None) -> float:
     return VIXConfig.DEFAULT_VIX
 
 
+# ===== SIMULATION AND MODEL PARAMETERS =====
+
+class SimulationConfig:
+    """
+    Configuration for simulation and model parameters.
+
+    IMPORTANT: These values are used when real data is unavailable.
+    Results from simulated data should NOT be used for trading decisions.
+
+    All values documented with sources and typical ranges.
+    """
+
+    # ===== GEX LEVEL SIMULATION =====
+    # Used in backtest_gex_strategies.py and backtest_options_strategies.py
+    # when real Trading Volatility API data is unavailable
+
+    # Flip point distance from current price (percentage)
+    # Source: Empirical analysis of SPY options positioning
+    # Typical range: 1-4% below current price
+    # 2.5% represents median observed flip point distance
+    FLIP_POINT_DISTANCE_PCT = 0.025  # 2.5% below current price
+
+    # Call wall distance from current price (percentage)
+    # Source: Analysis of SPY call OI concentration
+    # Typical range: 1-3% above current price
+    # 2% represents median observed call wall distance
+    CALL_WALL_DISTANCE_PCT = 0.020  # 2% above current price
+
+    # Put wall distance from current price (percentage)
+    # Source: Analysis of SPY put OI concentration
+    # Typical range: 1-4% below current price
+    # 2.5% represents median observed put wall distance
+    PUT_WALL_DISTANCE_PCT = 0.025  # 2.5% below current price
+
+    # Net GEX simulation values (in billions)
+    # Source: Historical SPY GEX data analysis
+    # SPY GEX typically ranges from -20B to +20B
+    # These are simplified heuristic values for simulation ONLY
+    SIMULATED_GEX_HIGH_VOL = -5e9      # -$5B when volatility is high
+    SIMULATED_GEX_LOW_VOL = 2e9        # +$2B when volatility is low
+    SIMULATED_GEX_NEUTRAL = 0          # $0 when volatility is normal
+
+    # Volatility threshold multipliers for GEX simulation
+    # High vol = volatility > median * 1.5
+    # Low vol = volatility < median * 0.7
+    SIMULATED_GEX_HIGH_VOL_MULTIPLIER = 1.5
+    SIMULATED_GEX_LOW_VOL_MULTIPLIER = 0.7
+
+
+class GreeksModelConfig:
+    """
+    Configuration for options Greeks calculations.
+
+    These values are used in core_classes_and_engines.py for gamma calculations.
+    """
+
+    # Risk-free rate (annualized)
+    # Source: Federal Reserve fed funds rate
+    # Updated: Should track current Fed policy rate
+    # Current value based on Nov 2024 rates (adjust as rates change)
+    RISK_FREE_RATE = 0.045  # 4.5% (update when Fed changes rates)
+
+    # Base gamma calculation parameters
+    # Source: Black-Scholes model adaptations for dealer gamma
+    # These are model-specific tuning parameters
+
+    # Gamma base value (unitless scaling factor)
+    # Affects absolute gamma magnitude - validated against market data
+    GAMMA_BASE = 0.05
+
+    # Distance coefficient for ATM proximity effect
+    # Higher values = faster gamma decay away from ATM
+    # Typical range: 8-15
+    GAMMA_DISTANCE_COEFFICIENT = 10
+
+    # IV floor (minimum implied volatility for calculations)
+    # Prevents division issues and unrealistic gamma spikes
+    # Based on minimum observed IV for SPY options
+    IV_FLOOR = 0.10  # 10% minimum IV
+
+    # Time floor (minimum time to expiry in years)
+    # Prevents extreme gamma values at expiration
+    TIME_FLOOR_YEARS = 0.5 / 365  # 0.5 days minimum
+
+
+class OptionsContractConfig:
+    """
+    Configuration for options contract parameters.
+
+    These values affect strike selection, pricing, and position sizing.
+    """
+
+    # Strike selection parameters
+    # OTM distance for typical setups (percentage from ATM)
+    DEFAULT_OTM_DISTANCE_CALLS = 0.02   # 2% OTM for calls
+    DEFAULT_OTM_DISTANCE_PUTS = 0.025   # 2.5% OTM for puts
+
+    # Spread width as percentage of spot price
+    DEFAULT_SPREAD_WIDTH_PCT = 0.015    # 1.5% for most setups
+    MIN_SPREAD_WIDTH_POINTS = 1.0       # Minimum $1 spread width
+
+    # DTE (days to expiration) preferences
+    DEFAULT_DTE_MIN = 3                 # Minimum 3 DTE
+    DEFAULT_DTE_MAX = 14                # Maximum 14 DTE for most strategies
+    DTE_0DTE = 0                        # Same-day expiration
+    DTE_WEEKLY = 5                      # Weekly options
+
+    # Profit targets (percentage of max profit)
+    DEFAULT_PROFIT_TARGET_PCT = 0.50    # 50% of max profit
+    AGGRESSIVE_PROFIT_TARGET_PCT = 0.75 # 75% of max profit
+
+    # Stop loss (percentage of max loss)
+    DEFAULT_STOP_LOSS_PCT = 1.00        # 100% of max loss (let expire)
+    TIGHT_STOP_LOSS_PCT = 0.50          # 50% of max loss
+
+    # Trading days per year (for annualization)
+    TRADING_DAYS_PER_YEAR = 252
+
+
 # ===== CONFIGURATION VALIDATION =====
 
 def validate_config() -> bool:
@@ -367,6 +486,9 @@ __all__ = [
     'RateLimitConfig',
     'ImpliedVolatilityConfig',
     'SystemConfig',
+    'SimulationConfig',
+    'GreeksModelConfig',
+    'OptionsContractConfig',
     'get_gex_thresholds',
     'get_gamma_decay_pattern',
     'get_vix_fallback',

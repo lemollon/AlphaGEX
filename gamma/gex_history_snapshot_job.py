@@ -15,13 +15,13 @@ from typing import Dict, Optional
 try:
     from core_classes_and_engines import TradingVolatilityAPI
     TV_API_AVAILABLE = True
-except:
+except ImportError:
     TV_API_AVAILABLE = False
 
 try:
     from gex_copilot import calculate_gex_from_options_chain
     GEX_COPILOT_AVAILABLE = True
-except:
+except ImportError:
     GEX_COPILOT_AVAILABLE = False
 
 

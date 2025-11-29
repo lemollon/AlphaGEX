@@ -31,14 +31,14 @@ except ImportError:
 try:
     from polygon_data_fetcher import polygon_fetcher
     POLYGON_AVAILABLE = True
-except:
+except ImportError:
     POLYGON_AVAILABLE = False
 
 # Import TradingVolatilityAPI for net GEX
 try:
     from core_classes_and_engines import TradingVolatilityAPI
     TV_API_AVAILABLE = True
-except:
+except ImportError:
     TV_API_AVAILABLE = False
 
 

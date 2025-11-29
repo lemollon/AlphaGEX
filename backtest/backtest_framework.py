@@ -33,13 +33,13 @@ except ImportError:
 try:
     from polygon_data_fetcher import polygon_fetcher
     POLYGON_AVAILABLE = True
-except:
+except ImportError:
     POLYGON_AVAILABLE = False
 
 try:
     from flexible_price_data import price_data_fetcher
     FLEXIBLE_DATA_AVAILABLE = True
-except:
+except ImportError:
     FLEXIBLE_DATA_AVAILABLE = False
 
 
@@ -65,6 +65,44 @@ class Trade:
 
 
 @dataclass
+class DataQuality:
+    """Tracks data quality for backtest results - CRITICAL for quant integrity"""
+    price_data_source: str = "unknown"  # 'polygon', 'tradier', 'yfinance', 'simulated'
+    gex_data_source: str = "unknown"    # 'tradingvolatility', 'database', 'simulated'
+    uses_simulated_data: bool = False   # TRUE = Results are unreliable!
+    data_coverage_pct: float = 100.0    # % of days with complete data
+    warnings: List[str] = None
+
+    def __post_init__(self):
+        if self.warnings is None:
+            self.warnings = []
+
+    def is_production_ready(self) -> bool:
+        """
+        Returns True only if data quality is sufficient for production decisions.
+
+        QUANT RULE: Never trade based on simulated backtest data.
+        """
+        if self.uses_simulated_data:
+            return False
+        if self.data_coverage_pct < 90.0:
+            return False
+        if self.gex_data_source == "simulated":
+            return False
+        return True
+
+    def to_dict(self) -> Dict:
+        return {
+            'price_data_source': self.price_data_source,
+            'gex_data_source': self.gex_data_source,
+            'uses_simulated_data': self.uses_simulated_data,
+            'data_coverage_pct': self.data_coverage_pct,
+            'production_ready': self.is_production_ready(),
+            'warnings': self.warnings
+        }
+
+
+@dataclass
 class BacktestResults:
     """Complete backtest results with all metrics"""
     strategy_name: str
@@ -84,10 +122,19 @@ class BacktestResults:
     sharpe_ratio: float
     avg_trade_duration_days: float
     trades: List[Trade]
+    data_quality: DataQuality = None  # NEW: Track data quality
+
+    def __post_init__(self):
+        if self.data_quality is None:
+            self.data_quality = DataQuality()
+
+    def is_reliable(self) -> bool:
+        """Returns True only if results are based on real data"""
+        return self.data_quality.is_production_ready()
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON serialization"""
-        return {
+        result = {
             'strategy_name': self.strategy_name,
             'start_date': self.start_date,
             'end_date': self.end_date,
@@ -104,8 +151,12 @@ class BacktestResults:
             'max_drawdown_pct': round(self.max_drawdown_pct, 2),
             'sharpe_ratio': round(self.sharpe_ratio, 2),
             'avg_trade_duration_days': round(self.avg_trade_duration_days, 1),
-            'total_trades_count': len(self.trades)
+            'total_trades_count': len(self.trades),
+            # NEW: Data quality metadata
+            'data_quality': self.data_quality.to_dict() if self.data_quality else None,
+            'reliable': self.is_reliable()
         }
+        return result
 
 
 class BacktestBase:

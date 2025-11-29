@@ -941,7 +941,7 @@ Be SPECIFIC. Use the historical data to choose strikes that have actually worked
                     response_text = response_text[json_start:json_end].strip()
 
                 recommendation = json.loads(response_text)
-            except:
+            except (json.JSONDecodeError, ValueError, Exception):
                 # If JSON parsing fails, return raw text
                 recommendation = {
                     "raw_response": response_text,

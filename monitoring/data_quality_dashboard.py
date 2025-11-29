@@ -101,8 +101,8 @@ class DataQualityDashboard:
                             if result and result[0]:
                                 latest = result[0]
                                 break
-                        except:
-                            continue
+                        except Exception:
+                            continue  # Column doesn't exist, try next one
 
                     table_stats[table_name] = {
                         'row_count': count,

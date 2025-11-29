@@ -31,21 +31,39 @@ except ImportError:
 class GEXBacktester(BacktestBase):
     """Backtest GEX-based strategies using REAL GEX data"""
 
-    def __init__(self, **kwargs):
+    def __init__(self, allow_simulated_data: bool = False, **kwargs):
+        """
+        Initialize GEX backtester.
+
+        Args:
+            allow_simulated_data: If False (default), raises error instead of using simulated data.
+                                  QUANT RULE: Never make trading decisions on simulated backtests.
+        """
         super().__init__(**kwargs)
         self.gex_data = None
         self.api_client = None
+        self.allow_simulated_data = allow_simulated_data
+        self._uses_simulated_data = False
+        self._gex_data_source = "unknown"
 
     def simulate_gex_data(self, price_data: pd.DataFrame) -> pd.DataFrame:
         """
-        Simulate approximate GEX levels when real data unavailable
+        Simulate approximate GEX levels when real data unavailable.
 
-        Uses simplified heuristics based on price action and volatility:
-        - Flip point typically 2-3% below current price
-        - Call wall ~2% above price
-        - Put wall ~2-3% below price
-        - Net GEX correlates inversely with recent volatility
+        WARNING: Simulated data uses heuristics that may not reflect reality.
+        Results from simulated backtests should NOT be used for trading decisions.
+
+        Heuristics used (NOT validated against real market data):
+        - Flip point = 2.5% below current price (typical range: 1-4%)
+        - Call wall = 2% above price (typical range: 1-3%)
+        - Put wall = 2.5% below price (typical range: 1-4%)
+        - Net GEX = -5B when volatility high, +2B when low, 0 otherwise
+          (Real GEX ranges from -20B to +20B for SPY)
         """
+        # Mark that we're using simulated data
+        self._uses_simulated_data = True
+        self._gex_data_source = "simulated"
+
         df = price_data.copy()
 
         # Calculate volatility for GEX estimation
@@ -53,16 +71,20 @@ class GEXBacktester(BacktestBase):
         df['volatility'] = df['returns'].rolling(10).std() * 100
 
         # Simulate flip point (typically below current price, moves with volatility)
-        df['flip_point'] = df['Close'] * 0.975  # 2.5% below current
+        # NOTE: 2.5% is an approximation - real flip points vary based on dealer positioning
+        df['flip_point'] = df['Close'] * 0.975
 
         # Call wall (resistance above)
-        df['call_wall'] = df['Close'] * 1.020  # 2% above
+        # NOTE: 2% is an approximation - real call walls based on options OI
+        df['call_wall'] = df['Close'] * 1.020
 
         # Put wall (support below)
-        df['put_wall'] = df['Close'] * 0.975  # 2.5% below
+        # NOTE: 2.5% is an approximation - real put walls based on options OI
+        df['put_wall'] = df['Close'] * 0.975
 
         # Net GEX (negative when volatile, positive when calm)
-        # Scale based on median volatility to create realistic variation
+        # WARNING: These values (-5B, +2B) are arbitrary approximations
+        # Real GEX ranges from -20B to +20B and doesn't follow simple volatility rules
         median_vol = df['volatility'].median()
         df['net_gex'] = df['volatility'].apply(
             lambda v: -5e9 if v > median_vol * 1.5 else 2e9 if v < median_vol * 0.7 else 0
@@ -80,24 +102,47 @@ class GEXBacktester(BacktestBase):
         df['TR'] = df[['HL', 'HC', 'LC']].max(axis=1)
         df['ATR'] = df['TR'].rolling(14).mean()
 
-        print(f"✓ Simulated GEX data generated")
+        print("=" * 70)
+        print("⚠️  WARNING: USING SIMULATED GEX DATA")
+        print("=" * 70)
+        print("   These backtest results are NOT reliable for trading decisions!")
         print(f"   Net GEX range: ${df['net_gex'].min()/1e9:.2f}B to ${df['net_gex'].max()/1e9:.2f}B")
         print(f"   Flip point range: ${df['flip_point'].min():.2f} to ${df['flip_point'].max():.2f}")
+        print("=" * 70)
 
         return df
+
+    def _handle_simulated_data_fallback(self, reason: str, price_data: pd.DataFrame) -> pd.DataFrame:
+        """Handle fallback to simulated data or raise error based on settings."""
+        if self.allow_simulated_data:
+            print(f"⚠️ {reason}")
+            print("   allow_simulated_data=True, falling back to SIMULATED GEX data...")
+            return self.simulate_gex_data(price_data)
+        else:
+            raise ValueError(
+                f"BACKTEST ABORTED: {reason}\n"
+                f"Real GEX data is required for reliable backtests.\n"
+                f"Options:\n"
+                f"  1. Check Trading Volatility API credentials\n"
+                f"  2. Use historical GEX data from database\n"
+                f"  3. Set allow_simulated_data=True (NOT recommended for trading decisions)"
+            )
 
     def fetch_real_gex_data(self, price_data: pd.DataFrame) -> pd.DataFrame:
         """
         Fetch REAL historical GEX data from Trading Volatility API
 
         Returns price data merged with actual GEX levels (net GEX, flip point, walls)
+
+        Raises:
+            ValueError: If real data unavailable and allow_simulated_data=False
         """
         try:
             from core_classes_and_engines import TradingVolatilityAPI
         except ImportError as e:
-            print(f"⚠️ Trading Volatility API not available: {e}")
-            print("   Falling back to SIMULATED GEX data for backtesting...")
-            return self.simulate_gex_data(price_data)
+            return self._handle_simulated_data_fallback(
+                f"Trading Volatility API not available: {e}", price_data
+            )
 
         df = price_data.copy()
 
@@ -115,9 +160,9 @@ class GEXBacktester(BacktestBase):
             try:
                 self.api_client = TradingVolatilityAPI()
             except Exception as e:
-                print(f"⚠️ Failed to initialize Trading Volatility API: {e}")
-                print("   Falling back to SIMULATED GEX data for backtesting...")
-                return self.simulate_gex_data(price_data)
+                return self._handle_simulated_data_fallback(
+                    f"Failed to initialize Trading Volatility API: {e}", price_data
+                )
 
         print(f"📡 Fetching REAL historical GEX data from Trading Volatility API...")
 
@@ -130,15 +175,17 @@ class GEXBacktester(BacktestBase):
         try:
             historical_gex = self.api_client.get_historical_gamma(self.symbol, days_back=days_back)
         except Exception as e:
-            print(f"⚠️ Failed to fetch historical GEX data: {e}")
-            print("   Falling back to SIMULATED GEX data for backtesting...")
-            return self.simulate_gex_data(price_data)
+            return self._handle_simulated_data_fallback(
+                f"Failed to fetch historical GEX data: {e}", price_data
+            )
 
         if not historical_gex or len(historical_gex) == 0:
-            print("⚠️ WARNING: No historical GEX data available from Trading Volatility API")
-            print("   Falling back to SIMULATED GEX data for backtesting...")
-            print("   NOTE: Results will be approximate - use real data for production validation")
-            return self.simulate_gex_data(price_data)
+            return self._handle_simulated_data_fallback(
+                "No historical GEX data available from Trading Volatility API", price_data
+            )
+
+        # Track that we got real data
+        self._gex_data_source = "tradingvolatility"
 
         print(f"✅ Received {len(historical_gex)} days of REAL GEX data")
 
@@ -222,8 +269,9 @@ class GEXBacktester(BacktestBase):
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
         else:
-            print("⚠️  No recognized GEX columns found, falling back to simulated data")
-            return self.simulate_gex_data(price_data)
+            return self._handle_simulated_data_fallback(
+                "No recognized GEX columns found in API response", price_data
+            )
 
         # Forward fill missing GEX values (weekends/holidays)
         if 'net_gex' in df.columns:

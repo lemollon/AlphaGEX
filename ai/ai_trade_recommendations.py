@@ -222,8 +222,8 @@ Return your analysis as JSON."""
                 json_str = response_text.strip()
 
             return json.loads(json_str)
-        except:
-            # Fallback: return as narrative
+        except (json.JSONDecodeError, ValueError, Exception):
+            # Fallback: return as narrative when JSON parsing fails
             return {
                 'narrative': response_text,
                 'specific_trade': None,

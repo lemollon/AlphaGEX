@@ -57,8 +57,8 @@ async def scan_market(request: dict):
             scan_id = c.fetchone()[0]
             conn.commit()
             conn.close()
-        except:
-            scan_id = None
+        except Exception:
+            scan_id = None  # Database operation failed, continue without scan_id
 
         return {"success": True, "scan_id": scan_id, "results": results}
 

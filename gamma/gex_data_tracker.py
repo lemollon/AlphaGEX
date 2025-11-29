@@ -258,8 +258,8 @@ class GEXDataTracker:
             try:
                 from polygon_data_fetcher import polygon_fetcher
                 vix = polygon_fetcher.get_current_price('^VIX') or 17.0
-            except:
-                vix = 17.0
+            except (ImportError, Exception):
+                vix = 17.0  # Default VIX when unavailable
 
             snapshot = GEXSnapshot(
                 timestamp=now,
@@ -308,8 +308,8 @@ class GEXDataTracker:
             if data and not data.get('error'):
                 return data.get('net_gex', 0)
             return 0
-        except:
-            return 0
+        except Exception:
+            return 0  # Return default on API failure
 
     def _fetch_top_strikes(self, top_n: int = 10) -> Tuple[List[Dict], List[Dict]]:
         """Fetch top strikes by gamma (currently thrown away)"""
@@ -341,8 +341,8 @@ class GEXDataTracker:
                 [{'strike': c['strike'], 'gamma': c['call_gamma']} for c in calls],
                 [{'strike': p['strike'], 'gamma': p['put_gamma']} for p in puts]
             )
-        except:
-            return [], []
+        except Exception:
+            return [], []  # Return empty on API failure
 
     def _calculate_change_metrics(self, current_gex: float) -> Tuple[float, float, float]:
         """Calculate GEX change velocity"""
