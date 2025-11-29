@@ -3,13 +3,17 @@ position_management_agent.py - AI Agent for Active Position Monitoring
 
 This agent monitors your active positions and alerts when market conditions change
 from entry, helping you make better exit and adjustment decisions.
+
+UI rendering has been removed - use the backend API for monitoring views.
 """
 
 import pandas as pd
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
-from utils.console_output import st
+from typing import Dict, List, Optional
 from database_adapter import get_connection
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class PositionManagementAgent:
@@ -149,7 +153,7 @@ class PositionManagementAgent:
         if entry_gex_sign != current_gex_sign:
             alerts.append({
                 'type': 'gex_regime_flip',
-                'message': f"🚨 GEX Regime Flip: Entry was {entry_gex_sign} (${entry_net_gex/1e9:.2f}B), now {current_gex_sign} (${current_net_gex/1e9:.2f}B)",
+                'message': f"GEX Regime Flip: Entry was {entry_gex_sign} (${entry_net_gex/1e9:.2f}B), now {current_gex_sign} (${current_net_gex/1e9:.2f}B)",
                 'severity': 'critical',
                 'suggestion': "Position thesis may be invalidated. Consider closing or hedging."
             })
@@ -159,7 +163,7 @@ class PositionManagementAgent:
         elif abs(gex_change_pct) > 50:
             alerts.append({
                 'type': 'gex_material_change',
-                'message': f"⚠️ Large GEX Change: {gex_change_pct:+.1f}% from entry (${entry_net_gex/1e9:.2f}B → ${current_net_gex/1e9:.2f}B)",
+                'message': f"Large GEX Change: {gex_change_pct:+.1f}% from entry (${entry_net_gex/1e9:.2f}B -> ${current_net_gex/1e9:.2f}B)",
                 'severity': 'warning',
                 'suggestion': "Dealer positioning shifted significantly. Monitor closely."
             })
@@ -171,7 +175,7 @@ class PositionManagementAgent:
             direction = "up" if flip_change > 0 else "down"
             alerts.append({
                 'type': 'flip_movement',
-                'message': f"📊 Flip Point Moved {direction.upper()}: {flip_change_pct:+.2f}% (${entry_flip:.2f} → ${current_flip:.2f})",
+                'message': f"Flip Point Moved {direction.upper()}: {flip_change_pct:+.2f}% (${entry_flip:.2f} -> ${current_flip:.2f})",
                 'severity': 'warning' if abs(flip_change_pct) > 2 else 'info',
                 'suggestion': f"Target zone shifted {direction}. Consider rolling strikes {direction}." if abs(flip_change_pct) > 2 else f"Flip moved slightly {direction}."
             })
@@ -186,7 +190,7 @@ class PositionManagementAgent:
             crossed = "above" if current_above_flip else "below"
             alerts.append({
                 'type': 'flip_cross',
-                'message': f"🎯 Price Crossed Flip: Now {crossed} flip (Entry: ${entry_spot:.2f}, Flip: ${current_flip:.2f}, Current: ${current_spot:.2f})",
+                'message': f"Price Crossed Flip: Now {crossed} flip (Entry: ${entry_spot:.2f}, Flip: ${current_flip:.2f}, Current: ${current_spot:.2f})",
                 'severity': 'warning',
                 'suggestion': f"Price crossed flip point. Dealer hedging dynamics changed."
             })
@@ -197,7 +201,7 @@ class PositionManagementAgent:
         if abs(spot_change_pct) > 5.0:  # >5% price move
             alerts.append({
                 'type': 'large_price_move',
-                'message': f"📈 Large Price Move: {spot_change_pct:+.2f}% from entry (${entry_spot:.2f} → ${current_spot:.2f})",
+                'message': f"Large Price Move: {spot_change_pct:+.2f}% from entry (${entry_spot:.2f} -> ${current_spot:.2f})",
                 'severity': 'info',
                 'suggestion': "Consider taking profits or adjusting stops." if spot_change_pct > 0 else "Monitor for reversal."
             })
@@ -206,7 +210,7 @@ class PositionManagementAgent:
         if not alerts and abs(spot_change_pct) > 2.0 and severity == "info":
             alerts.append({
                 'type': 'stable_conditions',
-                'message': f"✅ Conditions Stable: Entry thesis intact. Price {spot_change_pct:+.2f}% from entry.",
+                'message': f"Conditions Stable: Entry thesis intact. Price {spot_change_pct:+.2f}% from entry.",
                 'severity': 'info',
                 'suggestion': "Let position work. Conditions remain favorable."
             })
@@ -270,139 +274,23 @@ class PositionManagementAgent:
                         })
 
             except Exception as e:
-                # Skip this position if we can't fetch data
+                logger.warning(f"Error checking position {symbol}: {e}")
                 continue
 
         return all_alerts
 
+    def get_alert_summary(self, alerts: List[Dict]) -> Dict:
+        """Get summary of alerts by severity"""
+        if not alerts:
+            return {'critical': 0, 'warning': 0, 'info': 0, 'total': 0}
 
-def display_position_monitoring(agent: PositionManagementAgent):
-    """Display position monitoring dashboard"""
+        critical = sum(1 for a in alerts if a['analysis']['severity'] == 'critical')
+        warning = sum(1 for a in alerts if a['analysis']['severity'] == 'warning')
+        info = sum(1 for a in alerts if a['analysis']['severity'] == 'info')
 
-    st.subheader("🔍 Active Position Monitoring")
-    st.markdown("**AI-powered monitoring of entry conditions vs current market**")
-
-    # Get active positions
-    positions = agent.get_active_positions_with_conditions()
-
-    if positions.empty:
-        st.info("""
-        📊 **No active positions to monitor**
-
-        When you open positions, this agent will:
-        - Store entry conditions (GEX, flip point, regime)
-        - Monitor how conditions change after entry
-        - Alert when your thesis is invalidated
-        - Suggest adjustments (roll, close, hedge)
-
-        Open a position to see this in action!
-        """)
-        return
-
-    # Display positions
-    st.markdown(f"**Monitoring {len(positions)} active position(s)**")
-
-    # Check if we should run monitoring
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.info("💡 Click 'Refresh Symbol' in the sidebar to update position conditions")
-    with col2:
-        if st.button("🔍 Check All Now", use_container_width=True):
-            with st.spinner("Checking position conditions..."):
-                alerts = agent.monitor_all_positions(st.session_state.api_client)
-                st.session_state.position_alerts = alerts
-                st.rerun()
-
-    # Display alerts if any
-    if 'position_alerts' in st.session_state and st.session_state.position_alerts:
-        alerts = st.session_state.position_alerts
-
-        st.divider()
-        st.subheader("⚠️ Position Alerts")
-
-        for alert_data in alerts:
-            symbol = alert_data['symbol']
-            strategy = alert_data['strategy']
-            analysis = alert_data['analysis']
-            severity = analysis['severity']
-
-            # Choose color based on severity
-            if severity == "critical":
-                st.error(f"**{symbol} - {strategy}**")
-            elif severity == "warning":
-                st.warning(f"**{symbol} - {strategy}**")
-            else:
-                st.info(f"**{symbol} - {strategy}**")
-
-            # Display each alert
-            for alert in analysis['alerts']:
-                st.markdown(alert['message'])
-                st.caption(f"💡 {alert['suggestion']}")
-
-            # Show entry vs current comparison
-            with st.expander(f"📊 View Entry vs Current Conditions - {symbol}"):
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.markdown("**Entry Conditions**")
-                    st.metric("Net GEX", f"${analysis['entry']['net_gex']/1e9:.2f}B")
-                    st.metric("Flip Point", f"${analysis['entry']['flip_point']:.2f}")
-                    st.metric("Spot Price", f"${analysis['entry']['spot_price']:.2f}")
-                    st.caption(analysis['entry']['regime'])
-
-                with col2:
-                    st.markdown("**Current Conditions**")
-                    st.metric(
-                        "Net GEX",
-                        f"${analysis['current']['net_gex']/1e9:.2f}B",
-                        delta=f"{analysis['changes']['gex_change_pct']:+.1f}%"
-                    )
-                    st.metric(
-                        "Flip Point",
-                        f"${analysis['current']['flip_point']:.2f}",
-                        delta=f"{analysis['changes']['flip_change_pct']:+.2f}%"
-                    )
-                    st.metric(
-                        "Spot Price",
-                        f"${analysis['current']['spot_price']:.2f}",
-                        delta=f"{analysis['changes']['spot_change_pct']:+.2f}%"
-                    )
-                    st.caption(analysis['current']['regime'])
-
-            st.divider()
-
-    else:
-        st.divider()
-        st.markdown("**Active Positions**")
-
-        # Display positions table
-        display_positions = positions[['symbol', 'strategy', 'entry_price', 'opened_at']].copy()
-        display_positions['opened_at'] = display_positions['opened_at'].dt.strftime('%Y-%m-%d %H:%M')
-        display_positions.columns = ['Symbol', 'Strategy', 'Entry Price', 'Opened']
-
-        st.dataframe(display_positions, use_container_width=True, hide_index=True)
-
-        # Check for positions without entry conditions
-        missing_conditions = positions[positions['entry_net_gex'].isna() | (positions['entry_net_gex'] == 0)]
-        if not missing_conditions.empty:
-            st.warning(f"⚠️ {len(missing_conditions)} position(s) missing entry conditions. Refresh symbols to capture current conditions.")
-
-
-def display_position_monitoring_widget():
-    """Compact widget for sidebar showing position alerts"""
-
-    if 'position_alerts' not in st.session_state or not st.session_state.position_alerts:
-        return
-
-    alerts = st.session_state.position_alerts
-
-    # Count by severity
-    critical = sum(1 for a in alerts if a['analysis']['severity'] == 'critical')
-    warning = sum(1 for a in alerts if a['analysis']['severity'] == 'warning')
-
-    if critical > 0:
-        st.error(f"🚨 {critical} Critical Position Alert(s)")
-    elif warning > 0:
-        st.warning(f"⚠️ {warning} Position Warning(s)")
-
-    st.caption("Check Positions tab for details")
+        return {
+            'critical': critical,
+            'warning': warning,
+            'info': info,
+            'total': len(alerts)
+        }
