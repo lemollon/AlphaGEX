@@ -28,7 +28,7 @@ async def optimize_strategy(strategy_name: str):
                 detail="ANTHROPIC_API_KEY not set. Configure API key to use optimizer."
             )
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
 
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
         result = optimizer.optimize_with_dynamic_stats(strategy_name=strategy_name)
@@ -69,7 +69,7 @@ async def optimize_all_strategies():
                 detail="ANTHROPIC_API_KEY not set. Configure API key to use optimizer."
             )
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
 
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
         result = optimizer.optimize_with_dynamic_stats(strategy_name=None)
@@ -109,7 +109,7 @@ async def get_trade_recommendation(request: dict):
                 detail="ANTHROPIC_API_KEY not set. Configure API key to use optimizer."
             )
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
 
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
         result = optimizer.get_trade_recommendation(current_market_data=request)
@@ -146,7 +146,7 @@ async def get_strike_performance(strategy: str = None):
         if not api_key:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set")
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
 
         strike_data_json = optimizer._analyze_strike_performance(strategy)
@@ -183,7 +183,7 @@ async def get_dte_optimization(strategy: str = None):
         if not api_key:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set")
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
 
         dte_data_json = optimizer._analyze_dte_performance(strategy)
@@ -220,7 +220,7 @@ async def get_regime_optimization(strategy: str = None):
         if not api_key:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set")
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
 
         regime_data_json = optimizer._optimize_by_regime(strategy)
@@ -257,7 +257,7 @@ async def get_live_strike_recommendations(request: dict):
         if not api_key:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set")
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
 
         required = ['spot_price', 'vix_current']
@@ -293,7 +293,7 @@ async def get_greeks_optimization(strategy: str = None):
         if not api_key:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set")
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
 
         greeks_data_json = optimizer._optimize_greeks(strategy)
@@ -330,7 +330,7 @@ async def get_best_combinations(strategy: str = None):
         if not api_key:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set")
 
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
 
         combinations_json = optimizer._find_best_combinations(strategy)

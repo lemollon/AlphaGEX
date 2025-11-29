@@ -115,7 +115,7 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
         c.execute("""
             SELECT SUM(realized_pnl)
             FROM trades
-            WHERE timestamp >= ? AND status = 'CLOSED'
+            WHERE timestamp >= %s AND status = 'CLOSED'
         """, (today_start,))
         today_pnl_row = c.fetchone()
         today_pnl = today_pnl_row[0] if today_pnl_row and today_pnl_row[0] else 0
@@ -124,7 +124,7 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
         c.execute("""
             SELECT MIN(account_value) as min_val, MAX(account_value) as max_val
             FROM account_state
-            WHERE timestamp >= datetime('now', '-30 days')
+            WHERE timestamp >= NOW() - INTERVAL '30 days'
         """)
         dd_row = c.fetchone()
         if dd_row and dd_row[0] and dd_row[1]:
@@ -139,7 +139,7 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
                     COUNT(*) as total,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins
                 FROM trades
-                WHERE pattern_type = ? AND status = 'CLOSED'
+                WHERE pattern_type = %s AND status = 'CLOSED'
             """, (request.pattern_type,))
             pattern_row = c.fetchone()
             if pattern_row and pattern_row[0] and pattern_row[0] > 0:
@@ -287,7 +287,7 @@ async def explain_trade(trade_id: str):
 
         # Get trade details
         c.execute("""
-            SELECT * FROM trades WHERE id = ? OR timestamp = ?
+            SELECT * FROM trades WHERE id = %s OR timestamp = %s
         """, (trade_id, trade_id))
         trade = c.fetchone()
 
@@ -299,8 +299,8 @@ async def explain_trade(trade_id: str):
         # Get associated autonomous logs
         c.execute("""
             SELECT * FROM autonomous_trader_logs
-            WHERE timestamp >= datetime(?, '-5 minutes')
-            AND timestamp <= datetime(?, '+5 minutes')
+            WHERE timestamp >= %s::timestamp - INTERVAL '5 minutes'
+            AND timestamp <= %s::timestamp + INTERVAL '5 minutes'
             ORDER BY timestamp DESC
         """, (trade_dict['timestamp'], trade_dict['timestamp']))
         logs = [dict(row) for row in c.fetchall()]
@@ -308,7 +308,7 @@ async def explain_trade(trade_id: str):
         # Get market context at time of trade
         c.execute("""
             SELECT * FROM market_data
-            WHERE timestamp <= ?
+            WHERE timestamp <= %s
             ORDER BY timestamp DESC LIMIT 1
         """, (trade_dict['timestamp'],))
         market_data = c.fetchone()
@@ -317,7 +317,7 @@ async def explain_trade(trade_id: str):
         # Get GEX context
         c.execute("""
             SELECT * FROM gex_levels
-            WHERE timestamp <= ?
+            WHERE timestamp <= %s
             ORDER BY timestamp DESC LIMIT 1
         """, (trade_dict['timestamp'],))
         gex_data = c.fetchone()
@@ -458,7 +458,7 @@ async def generate_daily_trading_plan():
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                 AVG(realized_pnl) as avg_pnl
             FROM trades
-            WHERE status = 'CLOSED' AND timestamp >= datetime('now', '-7 days')
+            WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '7 days'
         """)
         perf_row = c.fetchone()
         if perf_row and perf_row[0]:
@@ -478,7 +478,7 @@ async def generate_daily_trading_plan():
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as win_rate,
                 AVG(realized_pnl) as avg_pnl
             FROM trades
-            WHERE status = 'CLOSED' AND timestamp >= datetime('now', '-30 days')
+            WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '30 days'
             GROUP BY pattern_type
             HAVING COUNT(*) >= 3
             ORDER BY win_rate DESC, avg_pnl DESC
@@ -887,7 +887,7 @@ async def compare_strategies():
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as win_rate,
                 AVG(realized_pnl) as avg_pnl
             FROM trades
-            WHERE status = 'CLOSED' AND timestamp >= datetime('now', '-30 days')
+            WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '30 days'
             GROUP BY pattern_type
             ORDER BY win_rate DESC
             LIMIT 5

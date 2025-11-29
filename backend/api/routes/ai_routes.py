@@ -73,7 +73,7 @@ async def optimize_strategy(request: dict):
         }
     """
     try:
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
 
         strategy_name = request.get('strategy_name')
         api_key = request.get('api_key')
@@ -106,7 +106,7 @@ async def analyze_all_strategies(api_key: str = None):
     AI analysis of all strategies with rankings and recommendations
     """
     try:
-        from ai_strategy_optimizer import StrategyOptimizerAgent
+        from ai.ai_strategy_optimizer import StrategyOptimizerAgent
 
         optimizer = StrategyOptimizerAgent(anthropic_api_key=api_key)
         result = optimizer.analyze_all_strategies()
