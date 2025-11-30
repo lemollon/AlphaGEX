@@ -57,18 +57,28 @@ api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
 if api_key and not os.getenv('ANTHROPIC_API_KEY'):
     os.environ['ANTHROPIC_API_KEY'] = api_key
 
-# Initialize Claude Haiku 4.5
+# Initialize Claude for AI endpoints
 # Will use ANTHROPIC_API_KEY from environment
 llm = None
+llm_init_error = None
 if api_key and LANGCHAIN_AVAILABLE and ChatAnthropic:
     try:
+        # Use Claude 3.5 Haiku for fast, cost-effective AI responses
         llm = ChatAnthropic(
-            model="claude-haiku-4-20250514",
+            model="claude-3-5-haiku-latest",
             temperature=0.1,
             max_tokens=4096
         )
-    except Exception:
+        print("✅ AI Intelligence: Claude 3.5 Haiku initialized successfully")
+    except Exception as e:
+        llm_init_error = str(e)
+        print(f"⚠️ AI Intelligence: Claude initialization failed: {e}")
         llm = None
+else:
+    if not api_key:
+        print("⚠️ AI Intelligence: No API key found (ANTHROPIC_API_KEY or CLAUDE_API_KEY)")
+    if not LANGCHAIN_AVAILABLE:
+        print("⚠️ AI Intelligence: LangChain not installed")
 
 # Initialize AI systems (if available)
 ai_reasoning = AutonomousAIReasoning() if AutonomousAIReasoning else None
@@ -82,10 +92,18 @@ def require_api_key():
             status_code=503,
             detail="AI service unavailable: LangChain not installed. Install with: pip install langchain-anthropic"
         )
-    if not api_key or not llm:
+    if not api_key:
         raise HTTPException(
             status_code=503,
             detail="AI service unavailable: Claude API key not configured. Set ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable."
+        )
+    if not llm:
+        error_detail = f"AI service unavailable: Claude LLM initialization failed"
+        if llm_init_error:
+            error_detail += f" - {llm_init_error}"
+        raise HTTPException(
+            status_code=503,
+            detail=error_detail
         )
 
 

@@ -32,7 +32,14 @@ async def get_current_regime(symbol: str = "SPY"):
     # Import at runtime to avoid circular imports
     try:
         from core.psychology_trap_detector import analyze_current_market_complete
-        from backend.main import api_client, get_cached_price_data
+        from backend.api.dependencies import api_client
+        # get_cached_price_data is only in main.py, so we provide a fallback
+        try:
+            from backend.main import get_cached_price_data
+        except ImportError:
+            # Fallback function if main.py isn't fully loaded
+            def get_cached_price_data(symbol, current_price):
+                return {'1d': [], '4h': [], '1h': [], '15m': [], '5m': []}
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Psychology module not available: {e}")
 
@@ -131,7 +138,7 @@ async def get_regime_history(
                    secondary_regime_type, confidence_score, trade_direction,
                    risk_level, description, rsi_5m, rsi_15m, rsi_1h, rsi_4h, rsi_1d
             FROM regime_signals
-            WHERE timestamp > NOW() - INTERVAL '%s hours'
+            WHERE timestamp > NOW() - INTERVAL '1 hour' * %s
             ORDER BY timestamp DESC
             LIMIT %s
         """, (hours, limit))
@@ -174,7 +181,7 @@ async def get_liberation_setups(days: int = Query(7, ge=1, le=30)):
                    confidence_score, trade_direction, description
             FROM regime_signals
             WHERE primary_regime_type LIKE '%LIBERATION%'
-            AND timestamp > NOW() - INTERVAL '%s days'
+            AND timestamp > NOW() - INTERVAL '1 day' * %s
             ORDER BY timestamp DESC
         """, (days,))
         rows = cursor.fetchall()
@@ -206,7 +213,7 @@ async def get_false_floors(days: int = Query(7, ge=1, le=30)):
                    confidence_score, trade_direction, description
             FROM regime_signals
             WHERE primary_regime_type LIKE '%FALSE_FLOOR%'
-            AND timestamp > NOW() - INTERVAL '%s days'
+            AND timestamp > NOW() - INTERVAL '1 day' * %s
             ORDER BY timestamp DESC
         """, (days,))
         rows = cursor.fetchall()
@@ -238,7 +245,7 @@ async def get_regime_statistics(days: int = Query(30, ge=1, le=90)):
         cursor.execute("""
             SELECT primary_regime_type, COUNT(*) as count
             FROM regime_signals
-            WHERE timestamp > NOW() - INTERVAL '%s days'
+            WHERE timestamp > NOW() - INTERVAL '1 day' * %s
             GROUP BY primary_regime_type
             ORDER BY count DESC
         """, (days,))
@@ -248,7 +255,7 @@ async def get_regime_statistics(days: int = Query(30, ge=1, le=90)):
         cursor.execute("""
             SELECT primary_regime_type, AVG(confidence_score) as avg_confidence
             FROM regime_signals
-            WHERE timestamp > NOW() - INTERVAL '%s days'
+            WHERE timestamp > NOW() - INTERVAL '1 day' * %s
             GROUP BY primary_regime_type
         """, (days,))
         confidence_by_regime = cursor.fetchall()
