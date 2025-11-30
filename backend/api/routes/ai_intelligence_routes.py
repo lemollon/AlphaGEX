@@ -147,64 +147,96 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
     require_api_key()
 
     try:
+        print("[DEBUG] pre-trade-checklist: Starting...")
         conn = get_safe_connection()
         c = conn.cursor()
 
-        # Get account info
-        c.execute("SELECT account_value FROM account_state ORDER BY timestamp DESC LIMIT 1")
-        account_value_row = c.fetchone()
-        account_value = account_value_row[0] if account_value_row else 10000
+        # Get account info - with fallback
+        print("[DEBUG] pre-trade-checklist: Querying account_state...")
+        account_value = 10000
+        try:
+            c.execute("SELECT account_value FROM account_state ORDER BY timestamp DESC LIMIT 1")
+            account_value_row = c.fetchone()
+            account_value = account_value_row[0] if account_value_row else 10000
+            print(f"[DEBUG] pre-trade-checklist: account_value = {account_value}")
+        except Exception as e:
+            print(f"[DEBUG] pre-trade-checklist: account_state error: {e}")
 
-        # Get current positions
-        c.execute("SELECT SUM(ABS(contracts * entry_price * 100)) FROM trades WHERE status = 'OPEN'")
-        current_exposure_row = c.fetchone()
-        current_exposure = current_exposure_row[0] if current_exposure_row and current_exposure_row[0] else 0
+        # Get current positions - with fallback
+        print("[DEBUG] pre-trade-checklist: Querying trades for exposure...")
+        current_exposure = 0
+        try:
+            c.execute("SELECT SUM(ABS(contracts * entry_price * 100)) FROM trades WHERE status = 'OPEN'")
+            current_exposure_row = c.fetchone()
+            current_exposure = current_exposure_row[0] if current_exposure_row and current_exposure_row[0] else 0
+            print(f"[DEBUG] pre-trade-checklist: current_exposure = {current_exposure}")
+        except Exception as e:
+            print(f"[DEBUG] pre-trade-checklist: trades exposure error: {e}")
 
-        # Get today's P&L
-        today_start = datetime.now().replace(hour=0, minute=0, second=0).isoformat()
-        c.execute("""
-            SELECT SUM(realized_pnl)
-            FROM trades
-            WHERE timestamp >= %s AND status = 'CLOSED'
-        """, (today_start,))
-        today_pnl_row = c.fetchone()
-        today_pnl = today_pnl_row[0] if today_pnl_row and today_pnl_row[0] else 0
-
-        # Get max drawdown
-        c.execute("""
-            SELECT MIN(account_value) as min_val, MAX(account_value) as max_val
-            FROM account_state
-            WHERE timestamp >= NOW() - INTERVAL '30 days'
-        """)
-        dd_row = c.fetchone()
-        if dd_row and dd_row[0] and dd_row[1]:
-            current_drawdown_pct = ((dd_row[1] - account_value) / dd_row[1] * 100) if dd_row[1] > 0 else 0
-        else:
-            current_drawdown_pct = 0
-
-        # Get win rate for pattern
-        if request.pattern_type:
+        # Get today's P&L - with fallback
+        print("[DEBUG] pre-trade-checklist: Querying trades for today PnL...")
+        today_pnl = 0
+        try:
+            today_start = datetime.now().replace(hour=0, minute=0, second=0).isoformat()
             c.execute("""
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins
+                SELECT SUM(realized_pnl)
                 FROM trades
-                WHERE pattern_type = %s AND status = 'CLOSED'
-            """, (request.pattern_type,))
-            pattern_row = c.fetchone()
-            if pattern_row and pattern_row[0] and pattern_row[0] > 0:
-                pattern_win_rate = (pattern_row[1] / pattern_row[0] * 100) if pattern_row[0] > 0 else 0
-            else:
-                pattern_win_rate = 0
-        else:
-            pattern_win_rate = 0
+                WHERE timestamp >= %s AND status = 'CLOSED'
+            """, (today_start,))
+            today_pnl_row = c.fetchone()
+            today_pnl = today_pnl_row[0] if today_pnl_row and today_pnl_row[0] else 0
+            print(f"[DEBUG] pre-trade-checklist: today_pnl = {today_pnl}")
+        except Exception as e:
+            print(f"[DEBUG] pre-trade-checklist: trades pnl error: {e}")
 
-        # Get current VIX and market data
-        c.execute("SELECT vix FROM market_data ORDER BY timestamp DESC LIMIT 1")
-        vix_row = c.fetchone()
-        current_vix = vix_row[0] if vix_row else 15.0
+        # Get max drawdown - with fallback
+        print("[DEBUG] pre-trade-checklist: Querying account_state for drawdown...")
+        current_drawdown_pct = 0
+        try:
+            c.execute("""
+                SELECT MIN(account_value) as min_val, MAX(account_value) as max_val
+                FROM account_state
+                WHERE timestamp >= NOW() - INTERVAL '30 days'
+            """)
+            dd_row = c.fetchone()
+            if dd_row and dd_row[0] and dd_row[1]:
+                current_drawdown_pct = ((dd_row[1] - account_value) / dd_row[1] * 100) if dd_row[1] > 0 else 0
+            print(f"[DEBUG] pre-trade-checklist: current_drawdown_pct = {current_drawdown_pct}")
+        except Exception as e:
+            print(f"[DEBUG] pre-trade-checklist: account_state drawdown error: {e}")
+
+        # Get win rate for pattern - with fallback
+        pattern_win_rate = 0
+        if request.pattern_type:
+            print(f"[DEBUG] pre-trade-checklist: Querying trades for pattern {request.pattern_type}...")
+            try:
+                c.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins
+                    FROM trades
+                    WHERE pattern_type = %s AND status = 'CLOSED'
+                """, (request.pattern_type,))
+                pattern_row = c.fetchone()
+                if pattern_row and pattern_row[0] and pattern_row[0] > 0:
+                    pattern_win_rate = (pattern_row[1] / pattern_row[0] * 100) if pattern_row[0] > 0 else 0
+                print(f"[DEBUG] pre-trade-checklist: pattern_win_rate = {pattern_win_rate}")
+            except Exception as e:
+                print(f"[DEBUG] pre-trade-checklist: trades pattern error: {e}")
+
+        # Get current VIX and market data - with fallback
+        print("[DEBUG] pre-trade-checklist: Querying market_data for VIX...")
+        current_vix = 15.0
+        try:
+            c.execute("SELECT vix FROM market_data ORDER BY timestamp DESC LIMIT 1")
+            vix_row = c.fetchone()
+            current_vix = vix_row[0] if vix_row else 15.0
+            print(f"[DEBUG] pre-trade-checklist: current_vix = {current_vix}")
+        except Exception as e:
+            print(f"[DEBUG] pre-trade-checklist: market_data vix error: {e}")
 
         conn.close()
+        print("[DEBUG] pre-trade-checklist: Database queries complete")
 
         # Calculate trade metrics
         total_cost = request.contracts * request.cost_per_contract * 100
@@ -332,48 +364,77 @@ async def explain_trade(trade_id: str):
     require_api_key()
 
     try:
+        print(f"[DEBUG] trade-explainer: Starting for trade_id={trade_id}...")
         conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Get trade details
-        c.execute("""
-            SELECT * FROM trades WHERE id = %s OR timestamp = %s
-        """, (trade_id, trade_id))
-        trade = c.fetchone()
+        # Get trade details - with fallback
+        print("[DEBUG] trade-explainer: Querying trades...")
+        trade_dict = None
+        try:
+            c.execute("""
+                SELECT * FROM trades WHERE id::text = %s OR timestamp::text = %s
+            """, (trade_id, trade_id))
+            trade = c.fetchone()
+            if trade:
+                trade_dict = dict(trade)
+                print(f"[DEBUG] trade-explainer: Found trade")
+            else:
+                print(f"[DEBUG] trade-explainer: Trade not found")
+        except Exception as e:
+            print(f"[DEBUG] trade-explainer: trades query error: {e}")
 
-        if not trade:
+        if not trade_dict:
+            conn.close()
             raise HTTPException(status_code=404, detail="Trade not found")
 
-        trade_dict = dict(trade)
+        # Get associated autonomous logs - with fallback
+        print("[DEBUG] trade-explainer: Querying autonomous_trader_logs...")
+        logs = []
+        try:
+            c.execute("""
+                SELECT * FROM autonomous_trader_logs
+                WHERE timestamp >= %s::timestamp - INTERVAL '5 minutes'
+                AND timestamp <= %s::timestamp + INTERVAL '5 minutes'
+                ORDER BY timestamp DESC
+            """, (trade_dict['timestamp'], trade_dict['timestamp']))
+            logs = [dict(row) for row in c.fetchall()]
+            print(f"[DEBUG] trade-explainer: Found {len(logs)} logs")
+        except Exception as e:
+            print(f"[DEBUG] trade-explainer: autonomous_trader_logs error: {e}")
 
-        # Get associated autonomous logs
-        c.execute("""
-            SELECT * FROM autonomous_trader_logs
-            WHERE timestamp >= %s::timestamp - INTERVAL '5 minutes'
-            AND timestamp <= %s::timestamp + INTERVAL '5 minutes'
-            ORDER BY timestamp DESC
-        """, (trade_dict['timestamp'], trade_dict['timestamp']))
-        logs = [dict(row) for row in c.fetchall()]
+        # Get market context at time of trade - with fallback
+        print("[DEBUG] trade-explainer: Querying market_data...")
+        market_dict = {'spot_price': 0, 'vix': 15, 'net_gex': 0}
+        try:
+            c.execute("""
+                SELECT * FROM market_data
+                WHERE timestamp <= %s
+                ORDER BY timestamp DESC LIMIT 1
+            """, (trade_dict['timestamp'],))
+            market_data = c.fetchone()
+            market_dict = dict(market_data) if market_data else {'spot_price': 0, 'vix': 15, 'net_gex': 0}
+            print(f"[DEBUG] trade-explainer: market_data = {bool(market_data)}")
+        except Exception as e:
+            print(f"[DEBUG] trade-explainer: market_data error: {e}")
 
-        # Get market context at time of trade
-        c.execute("""
-            SELECT * FROM market_data
-            WHERE timestamp <= %s
-            ORDER BY timestamp DESC LIMIT 1
-        """, (trade_dict['timestamp'],))
-        market_data = c.fetchone()
-        market_dict = dict(market_data) if market_data else {}
-
-        # Get GEX context
-        c.execute("""
-            SELECT * FROM gex_levels
-            WHERE timestamp <= %s
-            ORDER BY timestamp DESC LIMIT 1
-        """, (trade_dict['timestamp'],))
-        gex_data = c.fetchone()
-        gex_dict = dict(gex_data) if gex_data else {}
+        # Get GEX context - with fallback
+        print("[DEBUG] trade-explainer: Querying gex_levels...")
+        gex_dict = {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
+        try:
+            c.execute("""
+                SELECT * FROM gex_levels
+                WHERE timestamp <= %s
+                ORDER BY timestamp DESC LIMIT 1
+            """, (trade_dict['timestamp'],))
+            gex_data = c.fetchone()
+            gex_dict = dict(gex_data) if gex_data else {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
+            print(f"[DEBUG] trade-explainer: gex_levels = {bool(gex_data)}")
+        except Exception as e:
+            print(f"[DEBUG] trade-explainer: gex_levels error: {e}")
 
         conn.close()
+        print("[DEBUG] trade-explainer: Database queries complete")
 
         # Generate comprehensive explanation using Claude
         prompt = f"""You are an expert options trader explaining a trade to a student. Generate a DETAILED trade breakdown that explains EXACTLY why this trade was taken, with specific price targets and exit strategy.
@@ -685,28 +746,43 @@ async def get_position_guidance(trade_id: str):
     require_api_key()
 
     try:
+        print(f"[DEBUG] position-guidance: Starting for trade_id={trade_id}...")
         conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Get trade
-        c.execute("SELECT * FROM trades WHERE (id = %s OR timestamp = %s) AND status = 'OPEN'", (trade_id, trade_id))
-        trade_row = c.fetchone()
+        # Get trade - with fallback
+        print("[DEBUG] position-guidance: Querying trades...")
+        trade = None
+        try:
+            c.execute("SELECT * FROM trades WHERE (id::text = %s OR timestamp::text = %s) AND status = 'OPEN'", (trade_id, trade_id))
+            trade_row = c.fetchone()
+            if trade_row:
+                trade = dict(trade_row)
+                print(f"[DEBUG] position-guidance: Found trade")
+        except Exception as e:
+            print(f"[DEBUG] position-guidance: trades query error: {e}")
 
-        if not trade_row:
+        if not trade:
+            conn.close()
             raise HTTPException(status_code=404, detail="Open position not found")
 
-        trade = dict(trade_row)
-
-        # Get current market price
-        c.execute("SELECT spot_price, vix FROM market_data ORDER BY timestamp DESC LIMIT 1")
-        market_row = c.fetchone()
-        current_spy = market_row[0] if market_row else 0
-        current_vix = market_row[1] if market_row else 15
+        # Get current market price - with fallback
+        print("[DEBUG] position-guidance: Querying market_data...")
+        current_spy = 0
+        current_vix = 15
+        try:
+            c.execute("SELECT spot_price, vix FROM market_data ORDER BY timestamp DESC LIMIT 1")
+            market_row = c.fetchone()
+            current_spy = market_row['spot_price'] if market_row else 0
+            current_vix = market_row['vix'] if market_row else 15
+            print(f"[DEBUG] position-guidance: current_spy={current_spy}, current_vix={current_vix}")
+        except Exception as e:
+            print(f"[DEBUG] position-guidance: market_data error: {e}")
 
         # Get current option price (estimate based on intrinsic value + time value)
-        strike = trade['strike']
-        entry_price = trade['entry_price']
-        option_type = trade['option_type']
+        strike = trade.get('strike', 0) or 0
+        entry_price = trade.get('entry_price', 0) or 0
+        option_type = trade.get('option_type', 'CALL')
 
         # Simple estimate: intrinsic value + 50% of remaining time value
         if option_type == 'CALL':
@@ -719,20 +795,38 @@ async def get_position_guidance(trade_id: str):
 
         # Calculate P&L
         pnl_per_contract = (current_price - entry_price) * 100
-        total_pnl = pnl_per_contract * trade['contracts']
+        contracts = trade.get('contracts', 1) or 1
+        total_pnl = pnl_per_contract * contracts
         pnl_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
 
         # Calculate time to expiration (rough estimate based on entry price)
-        entry_time = datetime.fromisoformat(trade['timestamp'])
-        time_held = (datetime.now() - entry_time).total_seconds() / 3600  # hours
+        time_held = 0
+        try:
+            trade_timestamp = trade.get('timestamp')
+            if trade_timestamp:
+                if isinstance(trade_timestamp, str):
+                    entry_time = datetime.fromisoformat(trade_timestamp.replace('Z', '+00:00'))
+                else:
+                    entry_time = trade_timestamp
+                time_held = (datetime.now() - entry_time.replace(tzinfo=None)).total_seconds() / 3600  # hours
+        except Exception as e:
+            print(f"[DEBUG] position-guidance: timestamp parse error: {e}")
 
-        # Get GEX walls
-        c.execute("SELECT call_wall, put_wall FROM gex_levels ORDER BY timestamp DESC LIMIT 1")
-        gex_row = c.fetchone()
-        call_wall = gex_row[0] if gex_row else strike + 10
-        put_wall = gex_row[1] if gex_row else strike - 10
+        # Get GEX walls - with fallback
+        print("[DEBUG] position-guidance: Querying gex_levels...")
+        call_wall = strike + 10
+        put_wall = strike - 10
+        try:
+            c.execute("SELECT call_wall, put_wall FROM gex_levels ORDER BY timestamp DESC LIMIT 1")
+            gex_row = c.fetchone()
+            call_wall = gex_row['call_wall'] if gex_row and gex_row['call_wall'] else strike + 10
+            put_wall = gex_row['put_wall'] if gex_row and gex_row['put_wall'] else strike - 10
+            print(f"[DEBUG] position-guidance: call_wall={call_wall}, put_wall={put_wall}")
+        except Exception as e:
+            print(f"[DEBUG] position-guidance: gex_levels error: {e}")
 
         conn.close()
+        print("[DEBUG] position-guidance: Database queries complete")
 
         # Generate position guidance
         prompt = f"""You are a professional position manager providing real-time guidance for an open options trade. Provide SPECIFIC next actions with exact prices and times.
@@ -989,45 +1083,77 @@ async def compare_strategies():
     require_api_key()
 
     try:
+        print("[DEBUG] compare-strategies: Starting...")
         conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Get market data
-        c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 1")
-        market_row = c.fetchone()
-        market = dict(market_row) if market_row else {}
+        # Get market data - with fallback
+        print("[DEBUG] compare-strategies: Querying market_data...")
+        market = {'spot_price': 0, 'vix': 15, 'net_gex': 0}
+        try:
+            c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 1")
+            market_row = c.fetchone()
+            market = dict(market_row) if market_row else {'spot_price': 0, 'vix': 15, 'net_gex': 0}
+            print(f"[DEBUG] compare-strategies: market_data = {bool(market_row)}")
+        except Exception as e:
+            print(f"[DEBUG] compare-strategies: market_data error: {e}")
 
-        # Get psychology
-        c.execute("SELECT * FROM psychology_analysis ORDER BY timestamp DESC LIMIT 1")
-        psych_row = c.fetchone()
-        psychology = dict(psych_row) if psych_row else {}
+        # Get psychology - with fallback
+        print("[DEBUG] compare-strategies: Querying psychology_analysis...")
+        psychology = {'regime_type': 'UNKNOWN', 'confidence': 0}
+        try:
+            c.execute("SELECT * FROM psychology_analysis ORDER BY timestamp DESC LIMIT 1")
+            psych_row = c.fetchone()
+            psychology = dict(psych_row) if psych_row else {'regime_type': 'UNKNOWN', 'confidence': 0}
+            print(f"[DEBUG] compare-strategies: psychology = {bool(psych_row)}")
+        except Exception as e:
+            print(f"[DEBUG] compare-strategies: psychology_analysis error: {e}")
 
-        # Get GEX
-        c.execute("SELECT * FROM gex_levels ORDER BY timestamp DESC LIMIT 1")
-        gex_row = c.fetchone()
-        gex = dict(gex_row) if gex_row else {}
+        # Get GEX - with fallback
+        print("[DEBUG] compare-strategies: Querying gex_levels...")
+        gex = {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
+        try:
+            c.execute("SELECT * FROM gex_levels ORDER BY timestamp DESC LIMIT 1")
+            gex_row = c.fetchone()
+            gex = dict(gex_row) if gex_row else {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
+            print(f"[DEBUG] compare-strategies: gex = {bool(gex_row)}")
+        except Exception as e:
+            print(f"[DEBUG] compare-strategies: gex_levels error: {e}")
 
-        # Get account value
-        c.execute("SELECT account_value FROM account_state ORDER BY timestamp DESC LIMIT 1")
-        account_row = c.fetchone()
-        account_value = account_row[0] if account_row else 10000
+        # Get account value - with fallback
+        print("[DEBUG] compare-strategies: Querying account_state...")
+        account_value = 10000
+        try:
+            c.execute("SELECT account_value FROM account_state ORDER BY timestamp DESC LIMIT 1")
+            account_row = c.fetchone()
+            account_value = account_row['account_value'] if account_row else 10000
+            print(f"[DEBUG] compare-strategies: account_value = {account_value}")
+        except Exception as e:
+            print(f"[DEBUG] compare-strategies: account_state error: {e}")
 
-        # Get pattern performance
-        c.execute("""
-            SELECT
-                pattern_type,
-                COUNT(*) as trades,
-                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as win_rate,
-                AVG(realized_pnl) as avg_pnl
-            FROM trades
-            WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '30 days'
-            GROUP BY pattern_type
-            ORDER BY win_rate DESC
-            LIMIT 5
-        """)
-        pattern_performance = [dict(row) for row in c.fetchall()]
+        # Get pattern performance - with fallback
+        print("[DEBUG] compare-strategies: Querying trades for pattern performance...")
+        pattern_performance = []
+        try:
+            c.execute("""
+                SELECT
+                    pattern_type,
+                    COUNT(*) as trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as win_rate,
+                    AVG(realized_pnl) as avg_pnl
+                FROM trades
+                WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '30 days'
+                GROUP BY pattern_type
+                ORDER BY win_rate DESC
+                LIMIT 5
+            """)
+            pattern_performance = [dict(row) for row in c.fetchall()]
+            print(f"[DEBUG] compare-strategies: pattern_performance count = {len(pattern_performance)}")
+        except Exception as e:
+            print(f"[DEBUG] compare-strategies: trades pattern error: {e}")
 
         conn.close()
+        print("[DEBUG] compare-strategies: Database queries complete")
 
         # Generate strategy comparison
         prompt = f"""You are a professional trader comparing available strategies for the current market. Provide a detailed head-to-head comparison with specific trade setups.

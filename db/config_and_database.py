@@ -265,7 +265,90 @@ def init_database():
             data_source TEXT
         )
     ''')
-    
+
+    # =========================================================================
+    # AI INTELLIGENCE TABLES (Required for AI Intelligence endpoints)
+    # =========================================================================
+
+    # Market Data - Real-time market snapshots
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS market_data (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            spot_price REAL,
+            vix REAL,
+            net_gex REAL,
+            call_volume REAL,
+            put_volume REAL,
+            data_source TEXT
+        )
+    ''')
+
+    # Psychology Analysis - Market regime and psychology detection
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS psychology_analysis (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            regime_type TEXT,
+            confidence REAL,
+            psychology_trap TEXT,
+            trap_probability REAL,
+            reasoning TEXT
+        )
+    ''')
+
+    # GEX Levels - Gamma exposure key levels
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gex_levels (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            call_wall REAL,
+            put_wall REAL,
+            flip_point REAL,
+            max_gamma_strike REAL,
+            net_gex REAL,
+            gex_regime TEXT
+        )
+    ''')
+
+    # Account State - Trading account snapshots
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS account_state (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            account_value REAL DEFAULT 10000,
+            cash_balance REAL,
+            buying_power REAL,
+            daily_pnl REAL,
+            total_pnl REAL
+        )
+    ''')
+
+    # Trades - All trade records (open and closed)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS trades (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            strike REAL,
+            option_type TEXT,
+            contracts INTEGER DEFAULT 1,
+            entry_price REAL,
+            exit_price REAL,
+            current_price REAL,
+            status TEXT DEFAULT 'OPEN',
+            pattern_type TEXT,
+            confidence_score REAL,
+            realized_pnl REAL,
+            unrealized_pnl REAL,
+            entry_reason TEXT,
+            exit_reason TEXT
+        )
+    ''')
+
     # Trade Recommendations
     c.execute('''
         CREATE TABLE IF NOT EXISTS recommendations (
