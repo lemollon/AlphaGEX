@@ -37,7 +37,15 @@ async def get_gex_data(symbol: str):
 
     try:
         from core_classes_and_engines import TradingVolatilityAPI
+    except ImportError as e:
+        raise HTTPException(status_code=503, detail=f"GEX service unavailable: module import error - {str(e)}")
+
+    try:
         api = TradingVolatilityAPI()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"GEX service unavailable: initialization error - {str(e)}")
+
+    try:
         data = api.get_net_gamma(symbol)
 
         if not data or 'error' in data:
@@ -99,7 +107,7 @@ async def get_gex_data(symbol: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"GEX data processing error: {type(e).__name__}: {str(e)}")
 
 
 @router.get("/{symbol}/levels")

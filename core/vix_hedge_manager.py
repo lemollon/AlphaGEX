@@ -92,7 +92,17 @@ class VIXHedgeManager:
         """Initialize the VIX hedge manager"""
         self.lookback_days = 252  # 1 year for IV percentile
         self.rv_window = 20  # 20-day realized vol
-        self._ensure_tables()
+        self._db_available = False
+        self._tables_initialized = False
+
+        # Try to initialize database tables (but don't fail if unavailable)
+        try:
+            self._ensure_tables()
+            self._db_available = True
+            self._tables_initialized = True
+        except Exception as e:
+            print(f"⚠️ VIX Hedge Manager: Database not available ({type(e).__name__}), running without persistence")
+            self._db_available = False
 
         # VIX thresholds
         self.vol_thresholds = {
@@ -580,6 +590,9 @@ class VIXHedgeManager:
 
     def _save_signal(self, signal: HedgeSignal):
         """Save signal to database for tracking"""
+        if not self._db_available:
+            return  # Skip saving if database not available
+
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -617,14 +630,21 @@ class VIXHedgeManager:
 
     def get_signal_history(self, days: int = 30) -> pd.DataFrame:
         """Get historical signals"""
-        conn = get_connection()
-        df = pd.read_sql_query(f"""
-            SELECT * FROM vix_hedge_signals
-            WHERE signal_date >= CURRENT_DATE - INTERVAL '{days} days'
-            ORDER BY signal_date DESC, signal_time DESC
-        """, conn)
-        conn.close()
-        return df
+        if not self._db_available:
+            return pd.DataFrame()  # Return empty DataFrame if no database
+
+        try:
+            conn = get_connection()
+            df = pd.read_sql_query(f"""
+                SELECT * FROM vix_hedge_signals
+                WHERE signal_date >= CURRENT_DATE - INTERVAL '{days} days'
+                ORDER BY signal_date DESC, signal_time DESC
+            """, conn)
+            conn.close()
+            return df
+        except Exception as e:
+            print(f"Error getting signal history: {e}")
+            return pd.DataFrame()
 
     def print_signal_report(self, signal: HedgeSignal):
         """Print a formatted signal report"""
