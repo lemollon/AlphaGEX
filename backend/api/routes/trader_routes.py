@@ -187,11 +187,11 @@ async def get_closed_trades(limit: int = 50):
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        cursor.execute(f"""
+        cursor.execute("""
             SELECT * FROM autonomous_closed_trades
             ORDER BY exit_date DESC, exit_time DESC
-            LIMIT {int(limit)}
-        """)
+            LIMIT %s
+        """, (int(limit),))
         trades = cursor.fetchall()
         conn.close()
 
@@ -221,7 +221,7 @@ async def get_equity_curve(days: int = 30):
         start_date = end_date - timedelta(days=days)
         starting_equity = 1000000
 
-        snapshots = pd.read_sql_query(f"""
+        snapshots = pd.read_sql_query("""
             SELECT
                 snapshot_date,
                 snapshot_time,
@@ -237,22 +237,22 @@ async def get_equity_curve(days: int = 30):
                 win_rate,
                 total_trades
             FROM autonomous_equity_snapshots
-            WHERE snapshot_date >= '{start_date.strftime('%Y-%m-%d')}'
+            WHERE snapshot_date >= %s
             ORDER BY snapshot_date ASC, snapshot_time ASC
-        """, conn)
+        """, conn, params=(start_date.strftime('%Y-%m-%d'),))
 
         if snapshots.empty:
             # Build from closed trades
-            trades = pd.read_sql_query(f"""
+            trades = pd.read_sql_query("""
                 SELECT
                     exit_date as trade_date,
                     exit_time as trade_time,
                     realized_pnl,
                     strategy
                 FROM autonomous_closed_trades
-                WHERE exit_date >= '{start_date.strftime('%Y-%m-%d')}'
+                WHERE exit_date >= %s
                 ORDER BY exit_date ASC, exit_time ASC
-            """, conn)
+            """, conn, params=(start_date.strftime('%Y-%m-%d'),))
 
             conn.close()
 
@@ -571,7 +571,7 @@ async def get_trader_trades(limit: int = 10):
 
         conn = get_connection()
 
-        open_trades = pd.read_sql_query(f"""
+        open_trades = pd.read_sql_query("""
             SELECT id, symbol, strategy, action, strike, option_type, expiration_date,
                    contracts, contract_symbol, entry_date, entry_time, entry_price,
                    entry_bid, entry_ask, entry_spot_price, current_price,
@@ -583,10 +583,10 @@ async def get_trader_trades(limit: int = 10):
                    NULL as realized_pnl, NULL as exit_reason
             FROM autonomous_open_positions
             ORDER BY entry_date DESC, entry_time DESC
-            LIMIT {limit}
-        """, conn)
+            LIMIT %s
+        """, conn, params=(limit,))
 
-        closed_trades = pd.read_sql_query(f"""
+        closed_trades = pd.read_sql_query("""
             SELECT id, symbol, strategy, action, strike, option_type, expiration_date,
                    contracts, contract_symbol, entry_date, entry_time, entry_price,
                    entry_bid, entry_ask, entry_spot_price, exit_price as current_price,
@@ -598,8 +598,8 @@ async def get_trader_trades(limit: int = 10):
                    exit_price, realized_pnl, exit_reason
             FROM autonomous_closed_trades
             ORDER BY exit_date DESC, exit_time DESC
-            LIMIT {limit}
-        """, conn)
+            LIMIT %s
+        """, conn, params=(limit,))
 
         conn.close()
 
@@ -654,7 +654,7 @@ async def get_trade_log():
             FROM autonomous_trade_activity
             WHERE activity_date = %s
             ORDER BY activity_time DESC
-        """, conn.raw_connection, params=(today,))
+        """, conn, params=(today,))
         conn.close()
 
         if not log_entries.empty:

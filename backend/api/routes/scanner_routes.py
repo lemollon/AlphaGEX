@@ -96,11 +96,11 @@ async def get_scanner_history(limit: int = 20):
         import pandas as pd
 
         conn = get_connection()
-        history = pd.read_sql_query(f"""
+        history = pd.read_sql_query("""
             SELECT * FROM scanner_history
             ORDER BY timestamp DESC
-            LIMIT {int(limit)}
-        """, conn)
+            LIMIT %s
+        """, conn, params=(int(limit),))
         conn.close()
 
         return {"success": True, "data": history.to_dict('records') if not history.empty else []}

@@ -217,11 +217,11 @@ async def get_alert_history(limit: int = 50):
 
         conn = get_connection()
 
-        history = pd.read_sql_query(f"""
+        history = pd.read_sql_query("""
             SELECT * FROM alert_history
             ORDER BY triggered_at DESC
-            LIMIT {int(limit)}
-        """, conn)
+            LIMIT %s
+        """, conn, params=(int(limit),))
 
         conn.close()
 

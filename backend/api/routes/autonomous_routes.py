@@ -16,11 +16,11 @@ async def get_autonomous_logs(limit: int = 100):
         import pandas as pd
 
         conn = get_connection()
-        logs = pd.read_sql_query(f"""
+        logs = pd.read_sql_query("""
             SELECT * FROM autonomous_trader_logs
             ORDER BY timestamp DESC
-            LIMIT {int(limit)}
-        """, conn)
+            LIMIT %s
+        """, conn, params=(int(limit),))
         conn.close()
 
         return {"success": True, "data": logs.to_dict('records') if not logs.empty else []}

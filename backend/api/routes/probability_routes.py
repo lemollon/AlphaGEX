@@ -93,7 +93,7 @@ async def get_probability_outcomes(days: int = 30):
                 correct_prediction,
                 outcome_timestamp
             FROM probability_outcomes
-            WHERE prediction_date >= NOW() - INTERVAL '%s days'
+            WHERE prediction_date >= NOW() - INTERVAL '1 day' * %s
             ORDER BY prediction_date DESC
         ''', (days,))
 
@@ -182,7 +182,7 @@ async def get_calibration_history(days: int = 90):
                 reason,
                 performance_delta
             FROM calibration_history
-            WHERE calibration_date >= NOW() - INTERVAL '%s days'
+            WHERE calibration_date >= NOW() - INTERVAL '1 day' * %s
             ORDER BY calibration_date DESC
         ''', (days,))
 
