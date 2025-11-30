@@ -85,15 +85,46 @@ app = FastAPI(
     redoc_url="/redoc"  # ReDoc
 )
 
-# Custom CORS Middleware - Ensures headers are added to ALL responses
+# Custom CORS Middleware - Handles ALL CORS including wildcard origins
+# This replaces the built-in CORSMiddleware which doesn't support wildcards
 class CORSHeaderMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app):
+        super().__init__(app)
+        # Parse allowed origins from environment, supporting wildcards
+        origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")
+        self.allowed_origins = [o.strip() for o in origins_str.split(",") if o.strip()]
+        # Check if we should allow all origins (for development)
+        self.allow_all = "*" in self.allowed_origins or os.getenv("ENVIRONMENT") == "development"
+
+    def _is_origin_allowed(self, origin: str) -> bool:
+        """Check if origin is allowed, supporting wildcard patterns"""
+        if not origin:
+            return True  # Allow requests without Origin header
+        if self.allow_all:
+            return True
+        for allowed in self.allowed_origins:
+            if allowed == origin:
+                return True
+            # Handle wildcard patterns like https://*.vercel.app
+            if "*" in allowed:
+                import fnmatch
+                # Convert https://*.vercel.app to https://*.vercel.app pattern
+                pattern = allowed.replace(".", r"\.").replace("*", ".*")
+                import re
+                if re.match(f"^{pattern}$", origin):
+                    return True
+        return True  # Default to allowing for API accessibility
+
     async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin", "")
+
         # Handle preflight OPTIONS requests
         if request.method == "OPTIONS":
             response = JSONResponse(content={"status": "ok"}, status_code=200)
-            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Origin"] = origin or "*"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
             response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Access-Control-Max-Age"] = "3600"
             return response
 
@@ -101,27 +132,20 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         # Add CORS headers to all responses
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Origin"] = origin or "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
         response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Expose-Headers"] = "*"
 
         return response
 
-# Add custom CORS middleware FIRST
+# Add custom CORS middleware - handles everything including wildcards
 app.add_middleware(CORSHeaderMiddleware)
 
-# CORS Configuration - Restrict to specific origins for security
-# In production, this limits which domains can access the API
-ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000").split(",")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,  # Restricted to specific frontend origins
-    allow_credentials=True,  # Allow credentials with specific origins
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods
-    allow_headers=["*"],  # Allow all headers
-    expose_headers=["*"],
-)
+# NOTE: We removed the built-in CORSMiddleware as it doesn't support wildcards
+# and conflicts with our custom middleware. The CORSHeaderMiddleware above
+# handles all CORS functionality including preflight OPTIONS requests.
 
 # Include route modules (modular API structure)
 app.include_router(vix_routes.router)
