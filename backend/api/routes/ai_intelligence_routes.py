@@ -41,7 +41,12 @@ except ImportError:
     get_trade_recommendation_prompt = lambda: ""
     get_educational_prompt = lambda: ""
 
-from langchain_anthropic import ChatAnthropic
+try:
+    from langchain_anthropic import ChatAnthropic
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    ChatAnthropic = None
+    LANGCHAIN_AVAILABLE = False
 
 router = APIRouter(prefix="/api/ai-intelligence", tags=["AI Intelligence"])
 
@@ -54,11 +59,16 @@ if api_key and not os.getenv('ANTHROPIC_API_KEY'):
 
 # Initialize Claude Haiku 4.5
 # Will use ANTHROPIC_API_KEY from environment
-llm = ChatAnthropic(
-    model="claude-haiku-4-20250514",
-    temperature=0.1,
-    max_tokens=4096
-) if api_key else None
+llm = None
+if api_key and LANGCHAIN_AVAILABLE and ChatAnthropic:
+    try:
+        llm = ChatAnthropic(
+            model="claude-haiku-4-20250514",
+            temperature=0.1,
+            max_tokens=4096
+        )
+    except Exception:
+        llm = None
 
 # Initialize AI systems (if available)
 ai_reasoning = AutonomousAIReasoning() if AutonomousAIReasoning else None
@@ -66,7 +76,12 @@ trade_advisor = AITradeAdvisor() if AITradeAdvisor else None
 
 # Helper function to validate API key is configured
 def require_api_key():
-    """Raises HTTPException if API key is not configured"""
+    """Raises HTTPException if API key is not configured or langchain unavailable"""
+    if not LANGCHAIN_AVAILABLE:
+        raise HTTPException(
+            status_code=500,
+            detail="LangChain not installed. Install with: pip install langchain-anthropic"
+        )
     if not api_key or not llm:
         raise HTTPException(
             status_code=500,
