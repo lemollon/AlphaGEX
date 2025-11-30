@@ -1232,18 +1232,18 @@ def backfill_ai_intelligence_tables():
                 INSERT INTO gex_levels (timestamp, symbol, call_wall, put_wall, flip_point, net_gex, gex_regime)
                 SELECT
                     timestamp,
-                    symbol,
+                    COALESCE(symbol, 'SPY') as symbol,
                     call_wall,
                     put_wall,
-                    COALESCE(flip_point, gamma_flip) as flip_point,
+                    flip_point,
                     net_gex,
                     regime as gex_regime
                 FROM gex_history
-                WHERE call_wall IS NOT NULL OR put_wall IS NOT NULL
+                WHERE (call_wall IS NOT NULL OR put_wall IS NOT NULL)
                 AND NOT EXISTS (
                     SELECT 1 FROM gex_levels gl
                     WHERE gl.timestamp = gex_history.timestamp
-                    AND gl.symbol = gex_history.symbol
+                    AND gl.symbol = COALESCE(gex_history.symbol, 'SPY')
                 )
                 ORDER BY timestamp DESC
                 LIMIT 1000
@@ -1259,19 +1259,19 @@ def backfill_ai_intelligence_tables():
         print("  🧠 Backfilling psychology_analysis from regime_signals...")
         try:
             c.execute("""
-                INSERT INTO psychology_analysis (timestamp, symbol, regime_type, confidence, reasoning)
+                INSERT INTO psychology_analysis (timestamp, symbol, regime_type, confidence, psychology_trap, reasoning)
                 SELECT
                     timestamp,
-                    symbol,
-                    regime_type,
-                    confidence,
-                    analysis as reasoning
+                    'SPY' as symbol,
+                    primary_regime_type as regime_type,
+                    confidence_score as confidence,
+                    psychology_trap,
+                    COALESCE(description, detailed_explanation) as reasoning
                 FROM regime_signals
-                WHERE regime_type IS NOT NULL
+                WHERE primary_regime_type IS NOT NULL
                 AND NOT EXISTS (
                     SELECT 1 FROM psychology_analysis pa
                     WHERE pa.timestamp = regime_signals.timestamp
-                    AND pa.symbol = regime_signals.symbol
                 )
                 ORDER BY timestamp DESC
                 LIMIT 1000
@@ -1313,7 +1313,7 @@ def backfill_ai_intelligence_tables():
             print(f"    ⚠️ account_state backfill error: {e}")
 
         # =====================================================================
-        # 5. BACKFILL trades FROM autonomous_positions + autonomous_trade_log
+        # 5. BACKFILL trades FROM autonomous_positions + autonomous_closed_trades
         # =====================================================================
         print("  📈 Backfilling trades from autonomous_positions...")
         try:
@@ -1321,7 +1321,7 @@ def backfill_ai_intelligence_tables():
                 INSERT INTO trades (timestamp, symbol, strike, option_type, contracts, entry_price,
                                    current_price, status, pattern_type, confidence_score, entry_reason)
                 SELECT
-                    entry_date as timestamp,
+                    entry_date::timestamp as timestamp,
                     symbol,
                     strike,
                     option_type,
@@ -1329,15 +1329,15 @@ def backfill_ai_intelligence_tables():
                     entry_price,
                     current_price,
                     status,
-                    entry_signal as pattern_type,
+                    strategy as pattern_type,
                     confidence as confidence_score,
-                    entry_reason
+                    trade_reasoning as entry_reason
                 FROM autonomous_positions
                 WHERE NOT EXISTS (
                     SELECT 1 FROM trades t
-                    WHERE t.timestamp = autonomous_positions.entry_date
-                    AND t.symbol = autonomous_positions.symbol
+                    WHERE t.symbol = autonomous_positions.symbol
                     AND t.strike = autonomous_positions.strike
+                    AND t.contracts = autonomous_positions.contracts
                 )
             """)
             rows_inserted = c.rowcount
@@ -1345,32 +1345,36 @@ def backfill_ai_intelligence_tables():
         except Exception as e:
             print(f"    ⚠️ trades backfill from autonomous_positions error: {e}")
 
-        # Also backfill from autonomous_trade_log
+        # Also backfill closed trades from autonomous_closed_trades if it exists
         try:
             c.execute("""
-                INSERT INTO trades (timestamp, symbol, strike, option_type, contracts, entry_price, status, pattern_type)
+                INSERT INTO trades (timestamp, symbol, strike, option_type, contracts, entry_price,
+                                   exit_price, status, realized_pnl, pattern_type)
                 SELECT
-                    timestamp,
+                    entry_date::timestamp as timestamp,
                     symbol,
                     strike,
                     option_type,
                     contracts,
-                    price as entry_price,
-                    CASE WHEN action = 'BUY' THEN 'OPEN' ELSE 'CLOSED' END as status,
-                    signal_type as pattern_type
-                FROM autonomous_trade_log
+                    entry_price,
+                    exit_price,
+                    'CLOSED' as status,
+                    realized_pnl,
+                    strategy as pattern_type
+                FROM autonomous_closed_trades
                 WHERE NOT EXISTS (
                     SELECT 1 FROM trades t
-                    WHERE t.timestamp = autonomous_trade_log.timestamp
-                    AND t.symbol = autonomous_trade_log.symbol
+                    WHERE t.symbol = autonomous_closed_trades.symbol
+                    AND t.strike = autonomous_closed_trades.strike
+                    AND t.status = 'CLOSED'
                 )
-                ORDER BY timestamp DESC
+                ORDER BY exit_date DESC
                 LIMIT 500
             """)
             rows_inserted = c.rowcount
-            print(f"    ✅ Inserted {rows_inserted} rows into trades from autonomous_trade_log")
+            print(f"    ✅ Inserted {rows_inserted} rows into trades from autonomous_closed_trades")
         except Exception as e:
-            print(f"    ⚠️ trades backfill from autonomous_trade_log error: {e}")
+            print(f"    ⚠️ trades backfill from autonomous_closed_trades error: {e}")
 
         conn.commit()
         conn.close()
