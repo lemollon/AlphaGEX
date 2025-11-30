@@ -1574,18 +1574,55 @@ async def get_data_sources():
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Tables to check with their key columns
+        # Tables to check with their key columns - ALL 42 TABLES
         tables_to_check = [
+            # Core GEX tables
             ('gex_history', 'timestamp', ['spot_price', 'net_gex', 'call_wall', 'put_wall', 'flip_point']),
             ('market_data', 'timestamp', ['spot_price', 'vix', 'net_gex', 'data_source']),
             ('gex_levels', 'timestamp', ['call_wall', 'put_wall', 'flip_point', 'net_gex']),
+            # Psychology tables
             ('psychology_analysis', 'timestamp', ['regime_type', 'confidence', 'psychology_trap']),
-            ('regime_signals', 'timestamp', ['primary_regime_type', 'confidence_score', 'spy_price', 'vix_current']),
+            ('regime_signals', 'timestamp', ['primary_regime_type', 'confidence_score', 'spy_price']),
+            ('psychology_notifications', 'timestamp', ['notification_type', 'regime_type', 'message']),
+            # Account tables
             ('account_state', 'timestamp', ['account_value', 'cash_balance']),
+            ('autonomous_config', None, ['key', 'value']),
+            # Trade tables
             ('trades', 'timestamp', ['symbol', 'strike', 'status', 'realized_pnl']),
             ('autonomous_positions', 'entry_date', ['symbol', 'strike', 'status', 'entry_price']),
             ('autonomous_closed_trades', 'exit_date', ['symbol', 'strike', 'realized_pnl']),
-            ('autonomous_config', None, ['key', 'value']),
+            ('autonomous_open_positions', 'entry_date', ['symbol', 'strike', 'status']),
+            ('autonomous_trade_log', 'date', ['action', 'details']),
+            ('autonomous_trade_activity', 'timestamp', ['action', 'symbol', 'reason']),
+            ('autonomous_trader_logs', 'timestamp', ['log_type', 'symbol', 'pattern_detected']),
+            # Equity tracking
+            ('autonomous_equity_snapshots', 'timestamp', ['equity', 'cash', 'daily_pnl']),
+            ('autonomous_live_status', 'timestamp', ['status', 'positions_open', 'daily_pnl']),
+            # Backtest tables
+            ('backtest_results', 'timestamp', ['strategy_name', 'win_rate', 'total_trades']),
+            ('backtest_summary', 'timestamp', ['symbol', 'psychology_win_rate']),
+            # Scanner/alerts
+            ('scanner_history', 'timestamp', ['symbols_scanned', 'scan_type']),
+            ('alerts', 'created_at', ['symbol', 'alert_type', 'active']),
+            ('alert_history', 'timestamp', ['alert_type', 'triggered_value']),
+            # Setups/strategies
+            ('trade_setups', 'created_at', ['symbol', 'setup_type', 'status']),
+            ('strategy_config', None, ['strategy_name', 'enabled']),
+            # Probability
+            ('probability_outcomes', 'timestamp', ['prediction_type', 'actual_outcome']),
+            ('probability_weights', None, ['factor_name', 'weight']),
+            ('calibration_history', 'timestamp', ['calibration_type', 'after_accuracy']),
+            # SPX tables
+            ('spx_institutional_positions', 'timestamp', ['symbol', 'status']),
+            ('spx_debug_logs', 'timestamp', ['category', 'message']),
+            # ML tables
+            ('ml_models', 'created_at', ['model_name', 'accuracy', 'status']),
+            ('ml_predictions', 'timestamp', ['prediction_type', 'confidence']),
+            # Other
+            ('conversations', 'timestamp', ['user_message', 'ai_response']),
+            ('recommendations', 'timestamp', ['symbol', 'strategy', 'confidence']),
+            ('positions', 'opened_at', ['symbol', 'status', 'pnl']),
+            ('performance', 'date', ['total_trades', 'win_rate']),
         ]
 
         for table_name, timestamp_col, sample_cols in tables_to_check:
