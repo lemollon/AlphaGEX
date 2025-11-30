@@ -36,20 +36,20 @@ async def get_backtest_results(strategy_name: str = None, limit: int = 50):
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         if strategy_name:
-            c.execute(f'''
+            c.execute('''
                 SELECT *
                 FROM backtest_results
                 WHERE strategy_name = %s
                 ORDER BY timestamp DESC
-                LIMIT {int(limit)}
-            ''', (strategy_name,))
+                LIMIT %s
+            ''', (strategy_name, int(limit)))
         else:
-            c.execute(f'''
+            c.execute('''
                 SELECT *
                 FROM backtest_results
                 ORDER BY timestamp DESC
-                LIMIT {int(limit)}
-            ''')
+                LIMIT %s
+            ''', (int(limit),))
 
         results = []
         for row in c.fetchall():
@@ -130,7 +130,7 @@ async def get_best_strategies(min_expectancy: float = 0.5, limit: int = 10):
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        c.execute(f'''
+        c.execute('''
             SELECT
                 strategy_name,
                 win_rate,
@@ -144,8 +144,8 @@ async def get_best_strategies(min_expectancy: float = 0.5, limit: int = 10):
             WHERE timestamp = (SELECT MAX(timestamp) FROM backtest_results)
               AND expectancy_pct >= %s
             ORDER BY expectancy_pct DESC
-            LIMIT {int(limit)}
-        ''', (min_expectancy,))
+            LIMIT %s
+        ''', (min_expectancy, int(limit)))
 
         strategies = []
         for row in c.fetchall():
