@@ -26,6 +26,7 @@ interface ScanSetup {
   win_rate: number
   money_making_plan: string
   reasoning: string
+  data_date?: string  // When the market data was collected
   regime?: {
     primary_type: string
     secondary_type?: string | null
@@ -574,6 +575,14 @@ export default function MultiSymbolScanner() {
                             <p className="text-xs text-text-muted">Win Rate: {(setup.win_rate * 100).toFixed(0)}%</p>
                           </div>
                         </div>
+
+                        {/* Data Date Display */}
+                        {setup.data_date && (
+                          <div className="flex items-center gap-2 mb-2 text-xs text-primary bg-primary/10 px-2 py-1 rounded w-fit">
+                            <Clock className="w-3 h-3" />
+                            <span>Market Data: {setup.data_date}</span>
+                          </div>
+                        )}
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
                           <div>

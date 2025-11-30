@@ -37,6 +37,7 @@ interface TradeSetup {
   time_horizon: string
   catalyst: string
   money_making_plan: string
+  data_date?: string  // When the market data was collected
   market_data?: {
     net_gex: number
     spot_price: number
@@ -229,6 +230,14 @@ export default function TradeSetupsPage() {
               )}
             </div>
           </div>
+
+          {/* Data Date Display */}
+          {setup.data_date && (
+            <div className="flex items-center gap-2 mb-3 text-xs text-primary bg-primary/10 px-2 py-1 rounded w-fit">
+              <Clock className="w-3 h-3" />
+              <span>Market Data: {setup.data_date}</span>
+            </div>
+          )}
 
           {/* Quick Stats */}
           <div className="grid grid-cols-4 gap-4 mb-3">
