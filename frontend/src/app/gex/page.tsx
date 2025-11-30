@@ -44,6 +44,7 @@ interface TickerData {
   put_wall: number
   vix: number
   mm_state: string
+  data_date?: string  // When the market data was collected
   psychology?: {
     fomo_level: number
     fear_level: number
@@ -584,6 +585,11 @@ export default function GEXAnalysisPage() {
                       ) : (
                         <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-success/10">
                           <span className="text-xs text-success font-semibold">✓ Loaded</span>
+                        </div>
+                      )}
+                      {data.data_date && (
+                        <div className="flex items-center space-x-2 text-xs text-primary bg-primary/10 px-2 py-1 rounded">
+                          <span>Data: {data.data_date}</span>
                         </div>
                       )}
                       {cacheInfo[ticker] && !isLoading && (

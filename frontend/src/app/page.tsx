@@ -8,6 +8,7 @@ import TradingViewChart from '@/components/TradingViewChart'
 import TradingViewWidget from '@/components/TradingViewWidget'
 import MarketCommentary from '@/components/MarketCommentary'
 import DailyTradingPlan from '@/components/DailyTradingPlan'
+import DataTimestamp from '@/components/DataTimestamp'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { LineData } from 'lightweight-charts'
@@ -53,6 +54,7 @@ interface TradeLogEntry {
 export default function Dashboard() {
   const router = useRouter()
   const [gexData, setGexData] = useState<any>(null)
+  const [dataDate, setDataDate] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [performanceData, setPerformanceData] = useState<LineData[]>([])
   const [positions, setPositions] = useState<Position[]>([])
@@ -73,6 +75,8 @@ export default function Dashboard() {
 
       if (gexRes.data.success) {
         setGexData(gexRes.data.data)
+        // Capture the data_date showing when market data was collected
+        setDataDate(gexRes.data.data?.data_date || null)
       }
 
       if (perfRes.data.success) {
@@ -284,6 +288,12 @@ export default function Dashboard() {
         </div>
 
         {/* Market Intelligence Cards */}
+        {dataDate && (
+          <div className="mb-4 flex items-center gap-2 text-sm text-text-secondary">
+            <Clock className="w-4 h-4" />
+            <span>Market Data as of: <span className="font-semibold text-primary">{dataDate}</span></span>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <div className="card bg-gradient-to-br from-background-card to-background-deep hover:shadow-xl transition-all duration-300 border border-border">
             <div className="flex items-start justify-between">
