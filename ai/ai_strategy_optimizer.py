@@ -386,7 +386,7 @@ class StrategyOptimizerAgent:
                     SELECT
                         strategy_name,
                         moneyness,
-                        ROUND(strike_distance_pct, 1) as strike_distance,
+                        ROUND(strike_distance_pct::numeric, 1) as strike_distance,
                         vix_regime,
                         COUNT(*) as total_trades,
                         SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END) as wins,
@@ -409,7 +409,7 @@ class StrategyOptimizerAgent:
                     SELECT
                         strategy_name,
                         moneyness,
-                        ROUND(strike_distance_pct, 1) as strike_distance,
+                        ROUND(strike_distance_pct::numeric, 1) as strike_distance,
                         COUNT(*) as total_trades,
                         AVG(CASE WHEN win = 1 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
                         AVG(pnl_pct) as avg_pnl_pct

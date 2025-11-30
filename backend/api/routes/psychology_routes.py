@@ -109,10 +109,10 @@ async def get_current_regime(symbol: str = "SPY"):
 
         # Run full analysis
         analysis = analyze_current_market_complete(
-            gex_data=gex_data,
+            current_price=current_price,
             price_data=price_data,
-            volume_ratio=volume_ratio,
-            save_to_db=True
+            gamma_data=gex_data,
+            volume_ratio=volume_ratio
         )
 
         return JSONResponse({"analysis": analysis, "market_status": {"is_open": True}})
