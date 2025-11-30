@@ -9,6 +9,12 @@ echo "🚀 Starting AlphaGEX API..."
 # Ensure we're in the project root
 cd "$(dirname "$0")"
 
+# CRITICAL: Set PYTHONPATH to include project root
+# This ensures all internal modules (utils, core, data, etc.) are importable
+# Fixes "ModuleNotFoundError: No module named 'utils.logging_config'" on Render
+export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$(pwd)"
+echo "📁 PYTHONPATH: $PYTHONPATH"
+
 # CRITICAL: Clear Python bytecode cache to ensure fresh code
 echo "🧹 Clearing Python cache..."
 find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
