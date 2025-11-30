@@ -15,6 +15,11 @@ except ImportError:
     )
 
 
+class DatabaseUnavailableError(Exception):
+    """Raised when database is not available"""
+    pass
+
+
 class DatabaseAdapter:
     """PostgreSQL database adapter"""
 
@@ -23,7 +28,7 @@ class DatabaseAdapter:
         self.database_url = os.getenv('DATABASE_URL')
 
         if not self.database_url:
-            raise ValueError(
+            raise DatabaseUnavailableError(
                 "DATABASE_URL environment variable is required.\n"
                 "For local development, set: export DATABASE_URL=postgresql://user:pass@localhost:5432/dbname"
             )
@@ -201,6 +206,21 @@ class PostgreSQLCursor:
 
 # Global adapter instance
 _adapter = None
+_db_available = None  # Cache the availability check
+
+
+def is_database_available() -> bool:
+    """Check if database is available without throwing an exception"""
+    global _db_available
+    if _db_available is not None:
+        return _db_available
+    try:
+        get_db_adapter()
+        _db_available = True
+        return True
+    except (DatabaseUnavailableError, ImportError):
+        _db_available = False
+        return False
 
 
 def get_db_adapter() -> DatabaseAdapter:

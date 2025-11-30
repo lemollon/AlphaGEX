@@ -79,13 +79,25 @@ def require_api_key():
     """Raises HTTPException if API key is not configured or langchain unavailable"""
     if not LANGCHAIN_AVAILABLE:
         raise HTTPException(
-            status_code=500,
-            detail="LangChain not installed. Install with: pip install langchain-anthropic"
+            status_code=503,
+            detail="AI service unavailable: LangChain not installed. Install with: pip install langchain-anthropic"
         )
     if not api_key or not llm:
         raise HTTPException(
-            status_code=500,
-            detail="Claude API key not configured. Set ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable."
+            status_code=503,
+            detail="AI service unavailable: Claude API key not configured. Set ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable."
+        )
+
+
+# Helper function to safely get database connection
+def get_safe_connection():
+    """Get database connection or raise 503 if unavailable"""
+    try:
+        return get_connection()
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database service unavailable: {type(e).__name__}"
         )
 
 
@@ -112,7 +124,7 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
     require_api_key()
 
     try:
-        conn = get_connection()
+        conn = get_safe_connection()
         c = conn.cursor()
 
         # Get account info
@@ -297,7 +309,7 @@ async def explain_trade(trade_id: str):
     require_api_key()
 
     try:
-        conn = get_connection()
+        conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get trade details
@@ -443,7 +455,7 @@ async def generate_daily_trading_plan():
     require_api_key()
 
     try:
-        conn = get_connection()
+        conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get latest market data
@@ -606,7 +618,7 @@ async def get_position_guidance(trade_id: str):
     require_api_key()
 
     try:
-        conn = get_connection()
+        conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get trade
@@ -761,7 +773,7 @@ async def get_market_commentary():
     require_api_key()
 
     try:
-        conn = get_connection()
+        conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get current market data
@@ -871,7 +883,7 @@ async def compare_strategies():
     require_api_key()
 
     try:
-        conn = get_connection()
+        conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get market data
