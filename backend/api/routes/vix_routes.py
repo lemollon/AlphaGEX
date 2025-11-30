@@ -99,8 +99,15 @@ async def get_vix_current():
     """Get current VIX data and analysis with VVIX and stress indicators"""
     try:
         from core.vix_hedge_manager import get_vix_hedge_manager
+    except ImportError as e:
+        raise HTTPException(status_code=503, detail=f"VIX service unavailable: module import error - {str(e)}")
 
+    try:
         manager = get_vix_hedge_manager()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"VIX service unavailable: initialization error - {str(e)}")
+
+    try:
         vix_data = manager.get_vix_data()
         vix_spot = vix_data.get('vix_spot', 18.0)
 
@@ -131,8 +138,10 @@ async def get_vix_current():
                 "timestamp": datetime.now().isoformat()
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"VIX data processing error: {type(e).__name__}: {str(e)}")
 
 
 @router.get("/debug")
