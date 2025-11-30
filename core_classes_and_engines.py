@@ -2866,6 +2866,22 @@ class TradingVolatilityAPI:
                 'symbol': symbol
             }
 
+    def get_option_data(self, symbol: str) -> Dict:
+        """
+        Alias for get_net_gamma - provides option/gamma data for a symbol.
+
+        This method exists for backward compatibility with code that may
+        reference get_option_data instead of get_net_gamma.
+
+        Args:
+            symbol: Ticker symbol (e.g., 'SPY')
+
+        Returns:
+            Dict with net gamma exposure data including spot_price, net_gex,
+            flip_point, call_wall, put_wall, etc.
+        """
+        return self.get_net_gamma(symbol)
+
 
 class MonteCarloEngine:
     """
