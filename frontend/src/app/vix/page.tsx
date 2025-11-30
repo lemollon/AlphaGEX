@@ -23,6 +23,7 @@ interface VIXData {
   vol_regime: string
   vix_stress_level: string
   position_size_multiplier: number
+  data_date?: string  // When the market data was collected
   timestamp: string
 }
 
@@ -159,6 +160,14 @@ export default function VIXDashboard() {
                 </button>
               </div>
             </div>
+
+            {/* Data Date Display */}
+            {vixData?.data_date && (
+              <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-3 py-1.5 rounded-lg w-fit">
+                <Clock className="w-4 h-4" />
+                <span>Market Data as of: <span className="font-semibold">{vixData.data_date}</span></span>
+              </div>
+            )}
 
             {loading && !vixData ? (
               <div className="text-center py-12">
