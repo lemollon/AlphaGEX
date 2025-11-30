@@ -804,6 +804,300 @@ def init_database():
         )
     ''')
 
+    # ===== MISSING TABLES REQUIRED BY API ROUTES =====
+
+    # Psychology Notifications (used by psychology_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS psychology_notifications (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            notification_type TEXT,
+            regime_type TEXT,
+            message TEXT,
+            severity TEXT DEFAULT 'info',
+            data JSONB,
+            read BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # Autonomous Closed Trades (used by autonomous_routes.py, trader_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_closed_trades (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT DEFAULT 'SPY',
+            strategy TEXT,
+            strike REAL,
+            option_type TEXT,
+            contracts INTEGER DEFAULT 1,
+            entry_date TEXT,
+            entry_time TEXT,
+            entry_price REAL,
+            exit_date TEXT,
+            exit_time TEXT,
+            exit_price REAL,
+            realized_pnl REAL,
+            exit_reason TEXT,
+            hold_time_hours REAL,
+            entry_spot_price REAL,
+            exit_spot_price REAL,
+            entry_vix REAL,
+            exit_vix REAL,
+            gex_regime TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # Autonomous Open Positions (alias view - used by some routes)
+    # Note: autonomous_positions table already exists, this is for compatibility
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_open_positions (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT DEFAULT 'SPY',
+            strategy TEXT,
+            strike REAL,
+            option_type TEXT,
+            contracts INTEGER DEFAULT 1,
+            entry_date TEXT,
+            entry_time TEXT,
+            entry_price REAL,
+            current_price REAL,
+            unrealized_pnl REAL,
+            status TEXT DEFAULT 'OPEN',
+            entry_spot_price REAL,
+            current_spot_price REAL,
+            gex_regime TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # Autonomous Equity Snapshots (used by autonomous_routes.py, trader_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_equity_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            equity REAL,
+            cash REAL,
+            positions_value REAL,
+            daily_pnl REAL,
+            cumulative_pnl REAL,
+            drawdown_pct REAL,
+            high_water_mark REAL
+        )
+    ''')
+
+    # Autonomous Live Status (used by trader_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_live_status (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            status TEXT DEFAULT 'idle',
+            last_scan TEXT,
+            positions_open INTEGER DEFAULT 0,
+            daily_trades INTEGER DEFAULT 0,
+            daily_pnl REAL DEFAULT 0,
+            message TEXT
+        )
+    ''')
+
+    # Autonomous Trade Activity (used by trader_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS autonomous_trade_activity (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            action TEXT,
+            symbol TEXT,
+            strike REAL,
+            option_type TEXT,
+            contracts INTEGER,
+            price REAL,
+            reason TEXT,
+            success BOOLEAN DEFAULT TRUE
+        )
+    ''')
+
+    # Scanner History (used by scanner_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS scanner_history (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbols_scanned TEXT,
+            results JSONB,
+            scan_type TEXT,
+            duration_ms INTEGER
+        )
+    ''')
+
+    # Alerts (used by alerts_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS alerts (
+            id SERIAL PRIMARY KEY,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            alert_type TEXT,
+            condition TEXT,
+            threshold REAL,
+            comparison TEXT,
+            active BOOLEAN DEFAULT TRUE,
+            triggered_at TIMESTAMPTZ,
+            notification_sent BOOLEAN DEFAULT FALSE
+        )
+    ''')
+
+    # Alert History (used by alerts_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS alert_history (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            alert_id INTEGER,
+            symbol TEXT,
+            alert_type TEXT,
+            triggered_value REAL,
+            threshold REAL,
+            message TEXT
+        )
+    ''')
+
+    # Trade Setups (used by setups_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS trade_setups (
+            id SERIAL PRIMARY KEY,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            setup_type TEXT,
+            strike REAL,
+            option_type TEXT,
+            entry_price REAL,
+            target_price REAL,
+            stop_price REAL,
+            contracts INTEGER DEFAULT 1,
+            expiration_date TEXT,
+            reasoning TEXT,
+            confidence REAL,
+            status TEXT DEFAULT 'pending',
+            executed_at TIMESTAMPTZ,
+            result TEXT
+        )
+    ''')
+
+    # Probability Outcomes (used by probability_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS probability_outcomes (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            prediction_type TEXT,
+            predicted_probability REAL,
+            actual_outcome BOOLEAN,
+            confidence REAL,
+            regime_type TEXT,
+            gex_value REAL,
+            vix_value REAL
+        )
+    ''')
+
+    # Probability Weights (used by probability_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS probability_weights (
+            id SERIAL PRIMARY KEY,
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            factor_name TEXT UNIQUE,
+            weight REAL,
+            category TEXT,
+            description TEXT
+        )
+    ''')
+
+    # Calibration History (used by probability_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS calibration_history (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            calibration_type TEXT,
+            before_accuracy REAL,
+            after_accuracy REAL,
+            adjustments JSONB,
+            sample_size INTEGER
+        )
+    ''')
+
+    # SPX Institutional Positions (used by spx_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_institutional_positions (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPX',
+            position_type TEXT,
+            strike REAL,
+            contracts INTEGER,
+            entry_price REAL,
+            current_price REAL,
+            unrealized_pnl REAL,
+            entry_date TEXT,
+            exit_date TEXT,
+            status TEXT DEFAULT 'OPEN'
+        )
+    ''')
+
+    # SPX Debug Logs (used by spx_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_debug_logs (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            category TEXT,
+            session_id TEXT,
+            log_level TEXT DEFAULT 'info',
+            message TEXT,
+            data JSONB,
+            scan_cycle INTEGER
+        )
+    ''')
+
+    # Strategy Config (used by trader_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS strategy_config (
+            id SERIAL PRIMARY KEY,
+            strategy_name TEXT UNIQUE,
+            enabled BOOLEAN DEFAULT TRUE,
+            max_position_size REAL,
+            max_daily_trades INTEGER,
+            risk_per_trade REAL,
+            parameters JSONB,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ML Models (used by autonomous_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ml_models (
+            id SERIAL PRIMARY KEY,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            model_name TEXT,
+            model_type TEXT,
+            version TEXT,
+            accuracy REAL,
+            training_samples INTEGER,
+            features TEXT,
+            hyperparameters JSONB,
+            status TEXT DEFAULT 'active'
+        )
+    ''')
+
+    # ML Predictions (used by autonomous_routes.py)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ml_predictions (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            model_id INTEGER,
+            symbol TEXT DEFAULT 'SPY',
+            prediction_type TEXT,
+            predicted_value REAL,
+            confidence REAL,
+            actual_value REAL,
+            correct BOOLEAN,
+            features_used JSONB
+        )
+    ''')
+
     # ===== BACKTEST RESULTS TABLES =====
 
     # Backtest results for all strategies
@@ -1100,6 +1394,73 @@ def init_database():
     c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_action ON autonomous_trade_log(action)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_position_id ON autonomous_trade_log(position_id)")
 
+    # ===== NEW TABLE INDEXES =====
+
+    # Psychology notifications indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_psychology_notifications_timestamp ON psychology_notifications(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_psychology_notifications_type ON psychology_notifications(notification_type)")
+
+    # Autonomous closed trades indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_symbol ON autonomous_closed_trades(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_exit_date ON autonomous_closed_trades(exit_date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_strategy ON autonomous_closed_trades(strategy)")
+
+    # Autonomous open positions indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_symbol ON autonomous_open_positions(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_status ON autonomous_open_positions(status)")
+
+    # Autonomous equity snapshots indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_equity_snapshots_timestamp ON autonomous_equity_snapshots(timestamp)")
+
+    # Autonomous live status indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_live_status_timestamp ON autonomous_live_status(timestamp)")
+
+    # Autonomous trade activity indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_timestamp ON autonomous_trade_activity(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_symbol ON autonomous_trade_activity(symbol)")
+
+    # Scanner history indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_scanner_history_timestamp ON scanner_history(timestamp)")
+
+    # Alerts indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_alerts_symbol ON alerts(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(active)")
+
+    # Alert history indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_alert_history_timestamp ON alert_history(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_alert_history_alert_id ON alert_history(alert_id)")
+
+    # Trade setups indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_trade_setups_symbol ON trade_setups(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_trade_setups_status ON trade_setups(status)")
+
+    # Probability outcomes indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_probability_outcomes_timestamp ON probability_outcomes(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_probability_outcomes_type ON probability_outcomes(prediction_type)")
+
+    # Calibration history indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calibration_history_timestamp ON calibration_history(timestamp)")
+
+    # SPX institutional positions indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_institutional_positions_status ON spx_institutional_positions(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_institutional_positions_symbol ON spx_institutional_positions(symbol)")
+
+    # SPX debug logs indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_timestamp ON spx_debug_logs(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_category ON spx_debug_logs(category)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_session_id ON spx_debug_logs(session_id)")
+
+    # Strategy config indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_strategy_config_name ON strategy_config(strategy_name)")
+
+    # ML models indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ml_models_status ON ml_models(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ml_models_name ON ml_models(model_name)")
+
+    # ML predictions indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ml_predictions_timestamp ON ml_predictions(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ml_predictions_model_id ON ml_predictions(model_id)")
+
     # ===== DATABASE MIGRATIONS =====
 
     # Helper function to get table columns (PostgreSQL)
@@ -1376,9 +1737,225 @@ def backfill_ai_intelligence_tables():
         except Exception as e:
             print(f"    ⚠️ trades backfill from autonomous_closed_trades error: {e}")
 
+        # =====================================================================
+        # 6. BACKFILL autonomous_closed_trades FROM autonomous_positions (closed)
+        # =====================================================================
+        print("  📈 Backfilling autonomous_closed_trades from autonomous_positions...")
+        try:
+            c.execute("""
+                INSERT INTO autonomous_closed_trades (symbol, strategy, strike, option_type, contracts,
+                    entry_date, entry_time, entry_price, exit_date, exit_price, realized_pnl,
+                    exit_reason, entry_spot_price, gex_regime)
+                SELECT
+                    symbol,
+                    strategy,
+                    strike,
+                    option_type,
+                    contracts,
+                    entry_date,
+                    entry_time,
+                    entry_price,
+                    closed_date as exit_date,
+                    exit_price,
+                    realized_pnl,
+                    exit_reason,
+                    entry_spot_price,
+                    gex_regime
+                FROM autonomous_positions
+                WHERE status = 'CLOSED'
+                AND NOT EXISTS (
+                    SELECT 1 FROM autonomous_closed_trades act
+                    WHERE act.symbol = autonomous_positions.symbol
+                    AND act.strike = autonomous_positions.strike
+                    AND act.entry_date = autonomous_positions.entry_date
+                )
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into autonomous_closed_trades")
+        except Exception as e:
+            print(f"    ⚠️ autonomous_closed_trades backfill error: {e}")
+
+        # =====================================================================
+        # 7. BACKFILL autonomous_open_positions FROM autonomous_positions (open)
+        # =====================================================================
+        print("  📈 Backfilling autonomous_open_positions from autonomous_positions...")
+        try:
+            c.execute("""
+                INSERT INTO autonomous_open_positions (symbol, strategy, strike, option_type, contracts,
+                    entry_date, entry_time, entry_price, current_price, unrealized_pnl, status,
+                    entry_spot_price, current_spot_price, gex_regime)
+                SELECT
+                    symbol,
+                    strategy,
+                    strike,
+                    option_type,
+                    contracts,
+                    entry_date,
+                    entry_time,
+                    entry_price,
+                    current_price,
+                    unrealized_pnl,
+                    status,
+                    entry_spot_price,
+                    current_spot_price,
+                    gex_regime
+                FROM autonomous_positions
+                WHERE status = 'OPEN'
+                AND NOT EXISTS (
+                    SELECT 1 FROM autonomous_open_positions aop
+                    WHERE aop.symbol = autonomous_positions.symbol
+                    AND aop.strike = autonomous_positions.strike
+                    AND aop.entry_date = autonomous_positions.entry_date
+                )
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into autonomous_open_positions")
+        except Exception as e:
+            print(f"    ⚠️ autonomous_open_positions backfill error: {e}")
+
+        # =====================================================================
+        # 8. BACKFILL autonomous_equity_snapshots (initial snapshot)
+        # =====================================================================
+        print("  💰 Backfilling autonomous_equity_snapshots...")
+        try:
+            # Get capital from autonomous_config
+            c.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
+            capital_row = c.fetchone()
+            capital = float(capital_row[0]) if capital_row else 10000
+
+            c.execute("""
+                INSERT INTO autonomous_equity_snapshots (equity, cash, positions_value, daily_pnl, cumulative_pnl)
+                SELECT %s, %s, 0, 0, 0
+                WHERE NOT EXISTS (SELECT 1 FROM autonomous_equity_snapshots LIMIT 1)
+            """, (capital, capital))
+            if c.rowcount > 0:
+                print(f"    ✅ Inserted initial equity snapshot with ${capital}")
+            else:
+                print(f"    ℹ️ autonomous_equity_snapshots already has data")
+        except Exception as e:
+            print(f"    ⚠️ autonomous_equity_snapshots backfill error: {e}")
+
+        # =====================================================================
+        # 9. BACKFILL autonomous_live_status (initial status)
+        # =====================================================================
+        print("  📡 Backfilling autonomous_live_status...")
+        try:
+            c.execute("""
+                INSERT INTO autonomous_live_status (status, last_scan, positions_open, daily_trades, daily_pnl, message)
+                SELECT 'idle', NOW()::text, 0, 0, 0, 'System initialized'
+                WHERE NOT EXISTS (SELECT 1 FROM autonomous_live_status LIMIT 1)
+            """)
+            if c.rowcount > 0:
+                print(f"    ✅ Inserted initial live status")
+            else:
+                print(f"    ℹ️ autonomous_live_status already has data")
+        except Exception as e:
+            print(f"    ⚠️ autonomous_live_status backfill error: {e}")
+
+        # =====================================================================
+        # 10. BACKFILL psychology_notifications FROM regime_signals
+        # =====================================================================
+        print("  🧠 Backfilling psychology_notifications from regime_signals...")
+        try:
+            c.execute("""
+                INSERT INTO psychology_notifications (timestamp, notification_type, regime_type, message, severity)
+                SELECT
+                    timestamp,
+                    'regime_change' as notification_type,
+                    primary_regime_type as regime_type,
+                    COALESCE(description, 'Regime detected: ' || primary_regime_type) as message,
+                    CASE
+                        WHEN risk_level = 'HIGH' THEN 'warning'
+                        WHEN risk_level = 'LOW' THEN 'success'
+                        ELSE 'info'
+                    END as severity
+                FROM regime_signals
+                WHERE primary_regime_type IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM psychology_notifications pn
+                    WHERE pn.timestamp = regime_signals.timestamp
+                )
+                ORDER BY timestamp DESC
+                LIMIT 500
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into psychology_notifications")
+        except Exception as e:
+            print(f"    ⚠️ psychology_notifications backfill error: {e}")
+
+        # =====================================================================
+        # 11. BACKFILL probability_weights (default values)
+        # =====================================================================
+        print("  📊 Backfilling probability_weights with defaults...")
+        try:
+            default_weights = [
+                ('gex_net', 0.25, 'gex', 'Net GEX impact on directional probability'),
+                ('gex_flip_distance', 0.15, 'gex', 'Distance to gamma flip point'),
+                ('vix_level', 0.20, 'volatility', 'VIX regime impact'),
+                ('regime_type', 0.20, 'psychology', 'Market regime classification'),
+                ('rsi_alignment', 0.10, 'technical', 'RSI multi-timeframe alignment'),
+                ('wall_strength', 0.10, 'gex', 'Call/Put wall strength')
+            ]
+            for factor, weight, category, desc in default_weights:
+                c.execute("""
+                    INSERT INTO probability_weights (factor_name, weight, category, description)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (factor_name) DO NOTHING
+                """, (factor, weight, category, desc))
+            print(f"    ✅ Inserted default probability weights")
+        except Exception as e:
+            print(f"    ⚠️ probability_weights backfill error: {e}")
+
+        # =====================================================================
+        # 12. BACKFILL strategy_config (default strategies)
+        # =====================================================================
+        print("  ⚙️ Backfilling strategy_config with defaults...")
+        try:
+            default_strategies = [
+                ('NEGATIVE_GEX_SQUEEZE', True, 2000, 3, 0.02),
+                ('POSITIVE_GEX_BREAKDOWN', True, 2000, 3, 0.02),
+                ('IRON_CONDOR', True, 3000, 2, 0.03),
+                ('BULLISH_CALL_SPREAD', True, 2000, 3, 0.02),
+                ('BEARISH_PUT_SPREAD', True, 2000, 3, 0.02)
+            ]
+            for name, enabled, max_size, max_trades, risk in default_strategies:
+                c.execute("""
+                    INSERT INTO strategy_config (strategy_name, enabled, max_position_size, max_daily_trades, risk_per_trade)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (strategy_name) DO NOTHING
+                """, (name, enabled, max_size, max_trades, risk))
+            print(f"    ✅ Inserted default strategy configs")
+        except Exception as e:
+            print(f"    ⚠️ strategy_config backfill error: {e}")
+
+        # =====================================================================
+        # 13. BACKFILL autonomous_trade_activity FROM autonomous_trade_log
+        # =====================================================================
+        print("  📈 Backfilling autonomous_trade_activity from autonomous_trade_log...")
+        try:
+            c.execute("""
+                INSERT INTO autonomous_trade_activity (timestamp, action, reason, success)
+                SELECT
+                    (date || ' ' || time)::timestamp as timestamp,
+                    action,
+                    details as reason,
+                    CASE WHEN success = 1 THEN TRUE ELSE FALSE END as success
+                FROM autonomous_trade_log
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM autonomous_trade_activity ata
+                    WHERE ata.timestamp = (autonomous_trade_log.date || ' ' || autonomous_trade_log.time)::timestamp
+                )
+                ORDER BY date DESC, time DESC
+                LIMIT 500
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into autonomous_trade_activity")
+        except Exception as e:
+            print(f"    ⚠️ autonomous_trade_activity backfill error: {e}")
+
         conn.commit()
         conn.close()
-        print("✅ AI Intelligence tables backfill complete!")
+        print("✅ All tables backfill complete!")
 
     except Exception as e:
         print(f"❌ Backfill failed: {e}")
