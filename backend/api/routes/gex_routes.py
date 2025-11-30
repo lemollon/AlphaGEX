@@ -76,16 +76,37 @@ def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def get_gex_from_tradier_calculation(symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    FALLBACK: Calculate GEX from Tradier options chain data.
+    This computes GEX in real-time when TradingVolatilityAPI is unavailable.
+    """
+    try:
+        from data.gex_calculator import get_calculated_gex
+        data = get_calculated_gex(symbol)
+        if data and 'error' not in data:
+            print(f"✅ GEX calculated from Tradier options for {symbol}")
+            return data
+        return None
+    except ImportError as e:
+        print(f"⚠️ GEX calculator import failed: {e}")
+        return None
+    except Exception as e:
+        print(f"⚠️ Tradier GEX calculation failed for {symbol}: {e}")
+        return None
+
+
 def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
     """
-    Get GEX data with intelligent fallback:
-    1. Try TradingVolatilityAPI first (live data)
-    2. Fallback to gex_history database (cached data)
-    3. Return error if nothing available
+    Get GEX data with intelligent fallback chain:
+    1. Try TradingVolatilityAPI first (live data from dedicated service)
+    2. Calculate from Tradier options chain (real-time calculation)
+    3. Fallback to gex_history database (cached historical data)
+    4. Return error if nothing available
     """
     errors = []
 
-    # PRIMARY: Try TradingVolatilityAPI
+    # PRIMARY: Try TradingVolatilityAPI (fastest, pre-calculated)
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
@@ -103,8 +124,16 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
     except Exception as e:
         errors.append(f"TradingVolatilityAPI error: {e}")
 
-    # FALLBACK 1: Try database (most recent cached data)
-    print(f"⚠️ Live API failed for {symbol}, trying database fallback...")
+    # FALLBACK 1: Calculate from Tradier options chain (real-time)
+    print(f"⚠️ TradingVolatilityAPI failed for {symbol}, trying Tradier calculation...")
+    tradier_data = get_gex_from_tradier_calculation(symbol)
+    if tradier_data:
+        return tradier_data
+    else:
+        errors.append("Tradier calculation: Failed or unavailable")
+
+    # FALLBACK 2: Try database (most recent cached data)
+    print(f"⚠️ Tradier calculation failed for {symbol}, trying database fallback...")
     db_data = get_gex_from_database(symbol)
     if db_data:
         print(f"✅ Using database fallback for {symbol}")
@@ -115,7 +144,7 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
     # All sources failed
     return {
         'error': f"All data sources failed: {'; '.join(errors)}",
-        'tried_sources': ['TradingVolatilityAPI', 'gex_history_database']
+        'tried_sources': ['TradingVolatilityAPI', 'Tradier_calculation', 'gex_history_database']
     }
 
 
