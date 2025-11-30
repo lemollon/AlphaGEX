@@ -1407,8 +1407,8 @@ class TradingVolatilityAPI:
 
         try:
             if not self.api_key:
-                print("❌ Trading Volatility username not found in secrets!")
-                print("Add 'tv_username' to your Streamlit secrets")
+                print("❌ Trading Volatility API key not found!")
+                print("Set TRADING_VOLATILITY_API_KEY or TV_USERNAME environment variable")
                 return {'error': 'API key not configured'}
 
             # Check cache first
