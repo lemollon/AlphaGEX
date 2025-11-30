@@ -15,9 +15,21 @@ import psycopg2.sql as sql
 import requests
 
 from database_adapter import get_connection
-from utils.logging_config import get_logger, log_error_with_context
 
-logger = get_logger(__name__)
+# Use standard logging with fallback for deployment compatibility
+# This ensures the module loads even if utils.logging_config is unavailable
+import logging
+try:
+    from utils.logging_config import get_logger, log_error_with_context
+    logger = get_logger(__name__)
+except ImportError:
+    # Fallback to standard logging if utils.logging_config is not available
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+    def log_error_with_context(logger, message, error):
+        """Fallback error logging function"""
+        logger.error(f"{message}: {type(error).__name__}: {error}")
 
 router = APIRouter(tags=["Database & System"])
 
