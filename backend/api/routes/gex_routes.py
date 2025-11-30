@@ -14,6 +14,13 @@ import psycopg2.extras
 
 from database_adapter import get_connection
 
+# Import data collector for storage
+try:
+    from services.data_collector import DataCollector
+    DATA_COLLECTOR_AVAILABLE = True
+except ImportError:
+    DATA_COLLECTOR_AVAILABLE = False
+
 router = APIRouter(prefix="/api/gex", tags=["GEX"])
 
 
@@ -115,6 +122,12 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
         if data and 'error' not in data:
             data['data_source'] = 'live_api'
             data['is_cached'] = False
+            # Store data for ML/AI analysis
+            if DATA_COLLECTOR_AVAILABLE:
+                try:
+                    DataCollector.store_gex(data, source='tradingvolatility')
+                except Exception as e:
+                    print(f"Warning: Failed to store GEX data: {e}")
             return data
         else:
             error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
@@ -128,6 +141,12 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
     print(f"⚠️ TradingVolatilityAPI failed for {symbol}, trying Tradier calculation...")
     tradier_data = get_gex_from_tradier_calculation(symbol)
     if tradier_data:
+        # Store calculated data for ML/AI analysis
+        if DATA_COLLECTOR_AVAILABLE:
+            try:
+                DataCollector.store_gex(tradier_data, source='tradier_calculated')
+            except Exception as e:
+                print(f"Warning: Failed to store Tradier GEX data: {e}")
         return tradier_data
     else:
         errors.append("Tradier calculation: Failed or unavailable")
