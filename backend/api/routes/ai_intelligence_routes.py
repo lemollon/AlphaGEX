@@ -825,6 +825,15 @@ Be extremely specific with prices, times, and percentages. Make this ACTIONABLE.
 
         plan = llm.invoke(prompt)
 
+        # Log the actual data being returned for debugging
+        print(f"[RESPONSE] daily-trading-plan returning:")
+        print(f"  - data_source: {market_data.get('data_source')}")
+        print(f"  - spot_price: ${market_data.get('spot_price', 0)}")
+        print(f"  - net_gex: ${(market_data.get('net_gex', 0) or 0)/1e9:.2f}B")
+        print(f"  - call_wall: ${market_data.get('call_wall', 0)}")
+        print(f"  - put_wall: ${market_data.get('put_wall', 0)}")
+        print(f"  - regime: {psychology.get('regime_type')}")
+
         return {
             'success': True,
             'data': {
@@ -835,7 +844,13 @@ Be extremely specific with prices, times, and percentages. Make this ACTIONABLE.
                 'account_value': account_value,
                 'performance': performance,
                 'top_patterns': top_patterns,
-                'generated_at': datetime.now().isoformat()
+                'generated_at': datetime.now().isoformat(),
+                '_data_sources': {
+                    'market_data': market_data.get('data_source', 'unknown'),
+                    'account': 'autonomous_config',
+                    'performance': 'autonomous_closed_trades',
+                    'is_live': market_data.get('data_source') != 'default'
+                }
             }
         }
 
@@ -1156,6 +1171,13 @@ Speak directly to the trader in an urgent, clear voice. Be specific with prices 
 
         commentary = llm.invoke(prompt)
 
+        # Log the actual data being returned for debugging
+        print(f"[RESPONSE] market-commentary returning:")
+        print(f"  - data_source: {current_market.get('data_source')}")
+        print(f"  - spot_price: ${current_market.get('spot_price', 0)}")
+        print(f"  - net_gex: ${(current_market.get('net_gex', 0) or 0)/1e9:.2f}B")
+        print(f"  - regime: {psychology.get('regime_type')}")
+
         return {
             'success': True,
             'data': {
@@ -1164,7 +1186,12 @@ Speak directly to the trader in an urgent, clear voice. Be specific with prices 
                 'psychology': psychology,
                 'gex': gex,
                 'open_positions': open_positions,
-                'generated_at': datetime.now().isoformat()
+                'generated_at': datetime.now().isoformat(),
+                '_data_sources': {
+                    'market_data': current_market.get('data_source', 'unknown'),
+                    'positions': 'autonomous_positions',
+                    'is_live': current_market.get('data_source') != 'default'
+                }
             }
         }
 
@@ -1318,6 +1345,12 @@ Be specific with all dollar amounts, strikes, and probabilities."""
 
         comparison = llm.invoke(prompt)
 
+        # Log the actual data being returned for debugging
+        print(f"[RESPONSE] compare-strategies returning:")
+        print(f"  - data_source: {market.get('data_source')}")
+        print(f"  - spot_price: ${market.get('spot_price', 0)}")
+        print(f"  - regime: {psychology.get('regime_type')}")
+
         return {
             'success': True,
             'data': {
@@ -1327,7 +1360,13 @@ Be specific with all dollar amounts, strikes, and probabilities."""
                 'gex': gex,
                 'account_value': account_value,
                 'pattern_performance': pattern_performance,
-                'generated_at': datetime.now().isoformat()
+                'generated_at': datetime.now().isoformat(),
+                '_data_sources': {
+                    'market_data': market.get('data_source', 'unknown'),
+                    'account': 'autonomous_config',
+                    'patterns': 'backtest_summary',
+                    'is_live': market.get('data_source') != 'default'
+                }
             }
         }
 
@@ -1434,4 +1473,229 @@ async def health_check():
             'Strategy Comparison Engine',
             'Option Greeks Explainer'
         ]
+    }
+
+
+# ============================================================================
+# DATA SOURCE DIAGNOSTIC ENDPOINT
+# ============================================================================
+
+@router.get("/data-sources")
+async def get_data_sources():
+    """
+    DIAGNOSTIC: Shows EXACTLY what data is available from each source.
+    Returns row counts, latest timestamps, and sample values.
+    This proves where data comes from and if it's real/current.
+    """
+    diagnostic = {
+        'timestamp': datetime.now().isoformat(),
+        'live_api_status': {},
+        'database_tables': {},
+        'data_flow_summary': {}
+    }
+
+    # =========================================================================
+    # 1. CHECK LIVE API SOURCE (TradingVolatilityAPI)
+    # =========================================================================
+    print("[DIAGNOSTIC] Checking TradingVolatilityAPI...")
+    if TradingVolatilityAPI:
+        try:
+            api = TradingVolatilityAPI()
+            gex_data = api.get_net_gamma('SPY')
+            if gex_data and 'error' not in gex_data:
+                diagnostic['live_api_status']['TradingVolatilityAPI'] = {
+                    'status': 'WORKING',
+                    'spot_price': float(gex_data.get('spot_price') or 0),
+                    'net_gex': float(gex_data.get('net_gex') or 0),
+                    'call_wall': float(gex_data.get('call_wall') or 0),
+                    'put_wall': float(gex_data.get('put_wall') or 0),
+                    'flip_point': float(gex_data.get('flip_point') or 0),
+                    'data_timestamp': gex_data.get('timestamp', 'unknown')
+                }
+            else:
+                diagnostic['live_api_status']['TradingVolatilityAPI'] = {
+                    'status': 'ERROR',
+                    'error': str(gex_data.get('error', 'Unknown error'))
+                }
+        except Exception as e:
+            diagnostic['live_api_status']['TradingVolatilityAPI'] = {
+                'status': 'EXCEPTION',
+                'error': str(e)
+            }
+    else:
+        diagnostic['live_api_status']['TradingVolatilityAPI'] = {
+            'status': 'NOT_LOADED',
+            'error': 'Module not imported'
+        }
+
+    # =========================================================================
+    # 2. CHECK UNIFIED DATA PROVIDER (VIX, Price)
+    # =========================================================================
+    print("[DIAGNOSTIC] Checking Unified Data Provider...")
+    if get_vix:
+        try:
+            vix_value = get_vix()
+            diagnostic['live_api_status']['UnifiedDataProvider_VIX'] = {
+                'status': 'WORKING' if vix_value else 'NO_DATA',
+                'vix': float(vix_value) if vix_value else None
+            }
+        except Exception as e:
+            diagnostic['live_api_status']['UnifiedDataProvider_VIX'] = {
+                'status': 'EXCEPTION',
+                'error': str(e)
+            }
+    else:
+        diagnostic['live_api_status']['UnifiedDataProvider_VIX'] = {
+            'status': 'NOT_LOADED'
+        }
+
+    if get_price:
+        try:
+            price_value = get_price('SPY')
+            diagnostic['live_api_status']['UnifiedDataProvider_Price'] = {
+                'status': 'WORKING' if price_value else 'NO_DATA',
+                'spy_price': float(price_value) if price_value else None
+            }
+        except Exception as e:
+            diagnostic['live_api_status']['UnifiedDataProvider_Price'] = {
+                'status': 'EXCEPTION',
+                'error': str(e)
+            }
+    else:
+        diagnostic['live_api_status']['UnifiedDataProvider_Price'] = {
+            'status': 'NOT_LOADED'
+        }
+
+    # =========================================================================
+    # 3. CHECK DATABASE TABLES
+    # =========================================================================
+    print("[DIAGNOSTIC] Checking database tables...")
+    try:
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Tables to check with their key columns
+        tables_to_check = [
+            ('gex_history', 'timestamp', ['spot_price', 'net_gex', 'call_wall', 'put_wall', 'flip_point']),
+            ('market_data', 'timestamp', ['spot_price', 'vix', 'net_gex', 'data_source']),
+            ('gex_levels', 'timestamp', ['call_wall', 'put_wall', 'flip_point', 'net_gex']),
+            ('psychology_analysis', 'timestamp', ['regime_type', 'confidence', 'psychology_trap']),
+            ('regime_signals', 'timestamp', ['primary_regime_type', 'confidence_score', 'spy_price', 'vix_current']),
+            ('account_state', 'timestamp', ['account_value', 'cash_balance']),
+            ('trades', 'timestamp', ['symbol', 'strike', 'status', 'realized_pnl']),
+            ('autonomous_positions', 'entry_date', ['symbol', 'strike', 'status', 'entry_price']),
+            ('autonomous_closed_trades', 'exit_date', ['symbol', 'strike', 'realized_pnl']),
+            ('autonomous_config', None, ['key', 'value']),
+        ]
+
+        for table_name, timestamp_col, sample_cols in tables_to_check:
+            try:
+                # Get row count
+                c.execute(f"SELECT COUNT(*) as count FROM {table_name}")
+                count_result = c.fetchone()
+                row_count = count_result['count'] if count_result else 0
+
+                table_info = {
+                    'row_count': row_count,
+                    'has_data': row_count > 0
+                }
+
+                if row_count > 0:
+                    # Get latest row
+                    if timestamp_col:
+                        c.execute(f"SELECT * FROM {table_name} ORDER BY {timestamp_col} DESC LIMIT 1")
+                    else:
+                        c.execute(f"SELECT * FROM {table_name} LIMIT 1")
+                    latest_row = c.fetchone()
+
+                    if latest_row:
+                        table_info['latest_row'] = {}
+                        for col in sample_cols:
+                            if col in latest_row:
+                                val = latest_row[col]
+                                # Convert to serializable format
+                                if hasattr(val, 'isoformat'):
+                                    val = val.isoformat()
+                                table_info['latest_row'][col] = val
+
+                        if timestamp_col and timestamp_col in latest_row:
+                            ts = latest_row[timestamp_col]
+                            if hasattr(ts, 'isoformat'):
+                                table_info['latest_timestamp'] = ts.isoformat()
+                            else:
+                                table_info['latest_timestamp'] = str(ts)
+
+                diagnostic['database_tables'][table_name] = table_info
+
+            except Exception as e:
+                diagnostic['database_tables'][table_name] = {
+                    'status': 'ERROR',
+                    'error': str(e)
+                }
+
+        conn.close()
+
+    except Exception as e:
+        diagnostic['database_tables']['connection_error'] = str(e)
+
+    # =========================================================================
+    # 4. SUMMARIZE DATA FLOW FOR AI INTELLIGENCE ENDPOINTS
+    # =========================================================================
+    print("[DIAGNOSTIC] Generating data flow summary...")
+
+    # Get live market data to show what endpoints will actually use
+    live_data = get_live_market_data('SPY')
+    live_psychology = get_live_psychology_regime('SPY')
+
+    diagnostic['data_flow_summary'] = {
+        'daily_trading_plan': {
+            'market_data_source': live_data.get('data_source', 'unknown'),
+            'spot_price': live_data.get('spot_price', 0),
+            'vix': live_data.get('vix', 0),
+            'net_gex': live_data.get('net_gex', 0),
+            'call_wall': live_data.get('call_wall', 0),
+            'put_wall': live_data.get('put_wall', 0),
+            'flip_point': live_data.get('flip_point', 0),
+            'regime': live_psychology.get('regime_type', 'UNKNOWN'),
+            'regime_confidence': live_psychology.get('confidence', 0)
+        },
+        'market_commentary': {
+            'uses_same_as': 'daily_trading_plan',
+            'data_is_live': live_data.get('data_source') != 'default'
+        },
+        'compare_strategies': {
+            'uses_same_as': 'daily_trading_plan',
+            'data_is_live': live_data.get('data_source') != 'default'
+        },
+        'pre_trade_checklist': {
+            'account_data_from': 'account_state or autonomous_config',
+            'trade_history_from': 'trades table'
+        },
+        'trade_explainer': {
+            'trade_data_from': 'trades table',
+            'market_context_from': 'market_data table'
+        },
+        'position_guidance': {
+            'position_from': 'trades table (status=OPEN)',
+            'market_context_from': 'market_data + gex_levels'
+        }
+    }
+
+    # Data freshness assessment
+    is_data_fresh = (
+        live_data.get('data_source') != 'default' and
+        live_data.get('spot_price', 0) > 0
+    )
+
+    diagnostic['overall_status'] = {
+        'live_api_working': live_data.get('data_source') in ['TradingVolatilityAPI', 'gex_history_database'],
+        'data_is_fresh': is_data_fresh,
+        'spot_price_available': live_data.get('spot_price', 0) > 0,
+        'gex_data_available': live_data.get('net_gex', 0) != 0 or live_data.get('call_wall', 0) > 0,
+        'recommendation': 'DATA READY' if is_data_fresh else 'CHECK API CONNECTIONS'
+    }
+
+    return {
+        'success': True,
+        'diagnostic': diagnostic
     }
