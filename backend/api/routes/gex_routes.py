@@ -2,10 +2,12 @@
 GEX (Gamma Exposure) API routes.
 
 Handles all GEX data, levels, history, and regime analysis.
+With fallback to database-stored data if live API fails.
 """
 
 import math
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException
 import psycopg2.extras
@@ -28,29 +30,107 @@ def safe_round(value, decimals=2, default=0):
         return default
 
 
+def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    Fallback: Get most recent GEX data from gex_history database.
+    Returns None if no data found.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get most recent GEX snapshot for this symbol (within last 7 days)
+        cursor.execute("""
+            SELECT
+                timestamp, net_gex, flip_point, call_wall, put_wall,
+                spot_price, mm_state, regime, data_source,
+                call_gex, put_gex, gamma_flip, max_pain
+            FROM gex_history
+            WHERE symbol = %s
+            AND timestamp >= NOW() - INTERVAL '7 days'
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (symbol,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            return {
+                'symbol': symbol,
+                'spot_price': float(row.get('spot_price') or 0),
+                'net_gex': float(row.get('net_gex') or 0),
+                'flip_point': float(row.get('flip_point') or row.get('gamma_flip') or 0),
+                'call_wall': float(row.get('call_wall') or 0),
+                'put_wall': float(row.get('put_wall') or 0),
+                'call_gex': float(row.get('call_gex') or 0),
+                'put_gex': float(row.get('put_gex') or 0),
+                'max_pain': float(row.get('max_pain') or 0),
+                'collection_date': row.get('timestamp').strftime('%Y-%m-%d') if row.get('timestamp') else None,
+                'data_source': 'database_fallback',
+                'is_cached': True
+            }
+        return None
+    except Exception as e:
+        print(f"Database fallback failed for {symbol}: {e}")
+        return None
+
+
+def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
+    """
+    Get GEX data with intelligent fallback:
+    1. Try TradingVolatilityAPI first (live data)
+    2. Fallback to gex_history database (cached data)
+    3. Return error if nothing available
+    """
+    errors = []
+
+    # PRIMARY: Try TradingVolatilityAPI
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        api = TradingVolatilityAPI()
+        data = api.get_net_gamma(symbol)
+
+        if data and 'error' not in data:
+            data['data_source'] = 'live_api'
+            data['is_cached'] = False
+            return data
+        else:
+            error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
+            errors.append(f"TradingVolatilityAPI: {error_msg}")
+    except ImportError as e:
+        errors.append(f"TradingVolatilityAPI import failed: {e}")
+    except Exception as e:
+        errors.append(f"TradingVolatilityAPI error: {e}")
+
+    # FALLBACK 1: Try database (most recent cached data)
+    print(f"⚠️ Live API failed for {symbol}, trying database fallback...")
+    db_data = get_gex_from_database(symbol)
+    if db_data:
+        print(f"✅ Using database fallback for {symbol}")
+        return db_data
+    else:
+        errors.append("Database fallback: No recent data found")
+
+    # All sources failed
+    return {
+        'error': f"All data sources failed: {'; '.join(errors)}",
+        'tried_sources': ['TradingVolatilityAPI', 'gex_history_database']
+    }
+
+
 @router.get("/{symbol}")
 async def get_gex_data(symbol: str):
-    """Get comprehensive GEX data for a symbol"""
+    """Get comprehensive GEX data for a symbol with automatic fallback"""
     symbol = symbol.upper().strip()
     if len(symbol) > 5 or not symbol.isalnum():
         raise HTTPException(status_code=400, detail="Invalid symbol")
 
     try:
-        from core_classes_and_engines import TradingVolatilityAPI
-    except ImportError as e:
-        raise HTTPException(status_code=503, detail=f"GEX service unavailable: module import error - {str(e)}")
+        data = get_gex_data_with_fallback(symbol)
 
-    try:
-        api = TradingVolatilityAPI()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"GEX service unavailable: initialization error - {str(e)}")
-
-    try:
-        data = api.get_net_gamma(symbol)
-
-        if not data or 'error' in data:
-            error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
-            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}: {error_msg}")
+        if 'error' in data:
+            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}: {data['error']}")
 
         # Calculate regime
         net_gex = data.get('net_gex', 0) or 0
@@ -112,19 +192,16 @@ async def get_gex_data(symbol: str):
 
 @router.get("/{symbol}/levels")
 async def get_gex_levels(symbol: str):
-    """Get key GEX support/resistance levels"""
+    """Get key GEX support/resistance levels with automatic fallback"""
     symbol = symbol.upper().strip()
     if len(symbol) > 5 or not symbol.isalnum():
         raise HTTPException(status_code=400, detail="Invalid symbol")
 
     try:
-        from core_classes_and_engines import TradingVolatilityAPI
-        api = TradingVolatilityAPI()
-        data = api.get_net_gamma(symbol)
+        data = get_gex_data_with_fallback(symbol)
 
-        if not data or 'error' in data:
-            error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
-            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}: {error_msg}")
+        if 'error' in data:
+            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}: {data['error']}")
 
         spot = data.get('spot_price', 0) or 0
         call_wall = data.get('call_wall', 0) or 0
