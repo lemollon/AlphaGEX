@@ -44,6 +44,7 @@ try:
     POLYGON_AVAILABLE = True
 except ImportError:
     POLYGON_AVAILABLE = False
+    polygon_fetcher = None  # Define as None to prevent NameError
 
 
 class HedgeSignalType(Enum):
@@ -185,7 +186,7 @@ class VIXHedgeManager:
                     vix_source = 'unified_provider'
 
             # Fallback to Polygon
-            if (not vix_spot or vix_spot <= 0) and POLYGON_AVAILABLE:
+            if (not vix_spot or vix_spot <= 0) and POLYGON_AVAILABLE and polygon_fetcher:
                 vix_spot = polygon_fetcher.get_current_price('^VIX')
                 if vix_spot and vix_spot > 0:
                     vix_source = 'polygon'
@@ -197,7 +198,7 @@ class VIXHedgeManager:
             # Try to get VVIX (volatility of VIX) for timing signals
             vvix = None
             vvix_source = 'none'
-            if POLYGON_AVAILABLE:
+            if POLYGON_AVAILABLE and polygon_fetcher:
                 try:
                     vvix = polygon_fetcher.get_current_price('^VVIX')
                     if vvix and vvix > 0:
@@ -300,12 +301,14 @@ class VIXHedgeManager:
         Uses historical VIX data to determine where current VIX sits.
         """
         try:
-            # Get historical VIX data
-            data = polygon_fetcher.get_price_history(
-                '^VIX',
-                days=self.lookback_days,
-                timeframe='day'
-            )
+            # Get historical VIX data (only if Polygon available)
+            data = None
+            if POLYGON_AVAILABLE and polygon_fetcher:
+                data = polygon_fetcher.get_price_history(
+                    '^VIX',
+                    days=self.lookback_days,
+                    timeframe='day'
+                )
 
             if data is None or len(data) < 50:
                 # Fallback: use typical VIX distribution
@@ -343,11 +346,14 @@ class VIXHedgeManager:
         Returns annualized volatility percentage.
         """
         try:
-            data = polygon_fetcher.get_price_history(
-                symbol,
-                days=30,
-                timeframe='day'
-            )
+            # Get historical price data (only if Polygon available)
+            data = None
+            if POLYGON_AVAILABLE and polygon_fetcher:
+                data = polygon_fetcher.get_price_history(
+                    symbol,
+                    days=30,
+                    timeframe='day'
+                )
 
             if data is None or len(data) < self.rv_window:
                 return 18.0  # Default estimate
@@ -413,10 +419,12 @@ class VIXHedgeManager:
         iv_rv_spread = vix_spot - realized_vol
 
         # Get SPY price for context
-        try:
-            spy_spot = polygon_fetcher.get_current_price('SPY')
-        except Exception:
-            spy_spot = 500.0  # Reasonable default for SPY
+        spy_spot = 500.0  # Reasonable default for SPY
+        if POLYGON_AVAILABLE and polygon_fetcher:
+            try:
+                spy_spot = polygon_fetcher.get_current_price('SPY') or 500.0
+            except Exception:
+                pass  # Use default
 
         # Decision logic
         signal_type = HedgeSignalType.NO_ACTION
