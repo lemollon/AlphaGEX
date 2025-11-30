@@ -1177,6 +1177,211 @@ def _get_table_columns(cursor, table_name):
         return []
 
 
+# ============================================================================
+# BACKFILL AI INTELLIGENCE TABLES FROM HISTORICAL DATA
+# ============================================================================
+
+def backfill_ai_intelligence_tables():
+    """
+    Backfill market_data, gex_levels, psychology_analysis, account_state, trades
+    from existing historical data in gex_history, regime_signals, autonomous tables.
+
+    This should run on startup to ensure AI Intelligence endpoints have data.
+    """
+    print("🔄 Starting AI Intelligence tables backfill...")
+
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # =====================================================================
+        # 1. BACKFILL market_data FROM gex_history
+        # =====================================================================
+        print("  📊 Backfilling market_data from gex_history...")
+        try:
+            c.execute("""
+                INSERT INTO market_data (timestamp, symbol, spot_price, vix, net_gex, data_source)
+                SELECT
+                    timestamp,
+                    symbol,
+                    spot_price,
+                    15.0 as vix,  -- Default VIX, will be updated by live data
+                    net_gex,
+                    'backfill_from_gex_history'
+                FROM gex_history
+                WHERE spot_price IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM market_data md
+                    WHERE md.timestamp = gex_history.timestamp
+                    AND md.symbol = gex_history.symbol
+                )
+                ORDER BY timestamp DESC
+                LIMIT 1000
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into market_data")
+        except Exception as e:
+            print(f"    ⚠️ market_data backfill error: {e}")
+
+        # =====================================================================
+        # 2. BACKFILL gex_levels FROM gex_history
+        # =====================================================================
+        print("  📊 Backfilling gex_levels from gex_history...")
+        try:
+            c.execute("""
+                INSERT INTO gex_levels (timestamp, symbol, call_wall, put_wall, flip_point, net_gex, gex_regime)
+                SELECT
+                    timestamp,
+                    symbol,
+                    call_wall,
+                    put_wall,
+                    COALESCE(flip_point, gamma_flip) as flip_point,
+                    net_gex,
+                    regime as gex_regime
+                FROM gex_history
+                WHERE call_wall IS NOT NULL OR put_wall IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM gex_levels gl
+                    WHERE gl.timestamp = gex_history.timestamp
+                    AND gl.symbol = gex_history.symbol
+                )
+                ORDER BY timestamp DESC
+                LIMIT 1000
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into gex_levels")
+        except Exception as e:
+            print(f"    ⚠️ gex_levels backfill error: {e}")
+
+        # =====================================================================
+        # 3. BACKFILL psychology_analysis FROM regime_signals
+        # =====================================================================
+        print("  🧠 Backfilling psychology_analysis from regime_signals...")
+        try:
+            c.execute("""
+                INSERT INTO psychology_analysis (timestamp, symbol, regime_type, confidence, reasoning)
+                SELECT
+                    timestamp,
+                    symbol,
+                    regime_type,
+                    confidence,
+                    analysis as reasoning
+                FROM regime_signals
+                WHERE regime_type IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM psychology_analysis pa
+                    WHERE pa.timestamp = regime_signals.timestamp
+                    AND pa.symbol = regime_signals.symbol
+                )
+                ORDER BY timestamp DESC
+                LIMIT 1000
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into psychology_analysis")
+        except Exception as e:
+            print(f"    ⚠️ psychology_analysis backfill error: {e}")
+
+        # =====================================================================
+        # 4. BACKFILL account_state FROM autonomous_config
+        # =====================================================================
+        print("  💰 Backfilling account_state from autonomous_config...")
+        try:
+            # Get current capital from autonomous_config
+            c.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
+            capital_row = c.fetchone()
+            if capital_row:
+                capital = float(capital_row[0])
+                # Insert initial account state if not exists
+                c.execute("""
+                    INSERT INTO account_state (account_value, cash_balance, buying_power)
+                    SELECT %s, %s, %s
+                    WHERE NOT EXISTS (SELECT 1 FROM account_state LIMIT 1)
+                """, (capital, capital, capital * 2))
+                if c.rowcount > 0:
+                    print(f"    ✅ Inserted initial account_state with capital ${capital}")
+                else:
+                    print(f"    ℹ️ account_state already has data")
+            else:
+                # Insert default capital
+                c.execute("""
+                    INSERT INTO account_state (account_value, cash_balance, buying_power)
+                    SELECT 10000, 10000, 20000
+                    WHERE NOT EXISTS (SELECT 1 FROM account_state LIMIT 1)
+                """)
+                print(f"    ✅ Inserted default account_state with $10000")
+        except Exception as e:
+            print(f"    ⚠️ account_state backfill error: {e}")
+
+        # =====================================================================
+        # 5. BACKFILL trades FROM autonomous_positions + autonomous_trade_log
+        # =====================================================================
+        print("  📈 Backfilling trades from autonomous_positions...")
+        try:
+            c.execute("""
+                INSERT INTO trades (timestamp, symbol, strike, option_type, contracts, entry_price,
+                                   current_price, status, pattern_type, confidence_score, entry_reason)
+                SELECT
+                    entry_date as timestamp,
+                    symbol,
+                    strike,
+                    option_type,
+                    contracts,
+                    entry_price,
+                    current_price,
+                    status,
+                    entry_signal as pattern_type,
+                    confidence as confidence_score,
+                    entry_reason
+                FROM autonomous_positions
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM trades t
+                    WHERE t.timestamp = autonomous_positions.entry_date
+                    AND t.symbol = autonomous_positions.symbol
+                    AND t.strike = autonomous_positions.strike
+                )
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into trades from autonomous_positions")
+        except Exception as e:
+            print(f"    ⚠️ trades backfill from autonomous_positions error: {e}")
+
+        # Also backfill from autonomous_trade_log
+        try:
+            c.execute("""
+                INSERT INTO trades (timestamp, symbol, strike, option_type, contracts, entry_price, status, pattern_type)
+                SELECT
+                    timestamp,
+                    symbol,
+                    strike,
+                    option_type,
+                    contracts,
+                    price as entry_price,
+                    CASE WHEN action = 'BUY' THEN 'OPEN' ELSE 'CLOSED' END as status,
+                    signal_type as pattern_type
+                FROM autonomous_trade_log
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM trades t
+                    WHERE t.timestamp = autonomous_trade_log.timestamp
+                    AND t.symbol = autonomous_trade_log.symbol
+                )
+                ORDER BY timestamp DESC
+                LIMIT 500
+            """)
+            rows_inserted = c.rowcount
+            print(f"    ✅ Inserted {rows_inserted} rows into trades from autonomous_trade_log")
+        except Exception as e:
+            print(f"    ⚠️ trades backfill from autonomous_trade_log error: {e}")
+
+        conn.commit()
+        conn.close()
+        print("✅ AI Intelligence tables backfill complete!")
+
+    except Exception as e:
+        print(f"❌ Backfill failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def _migrate_positions_table(cursor):
     """Add new columns to existing positions table if they don't exist"""
 

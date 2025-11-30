@@ -93,7 +93,7 @@ STRATEGIES = {}
 MM_STATES = {}
 init_database = None
 try:
-    from db.config_and_database import STRATEGIES, init_database, MM_STATES
+    from db.config_and_database import STRATEGIES, init_database, MM_STATES, backfill_ai_intelligence_tables
     print("✅ Backend: config_and_database loaded")
 except ImportError as e:
     print(f"⚠️ Backend: config_and_database import failed: {e}")
@@ -145,6 +145,15 @@ if init_database:
     try:
         init_database()
         print("✓ Database initialized")
+
+        # Backfill AI Intelligence tables from historical data
+        print("Backfilling AI Intelligence tables from historical data...")
+        try:
+            backfill_ai_intelligence_tables()
+            print("✓ AI Intelligence tables backfilled")
+        except Exception as e:
+            print(f"⚠️ AI Intelligence backfill failed: {e}")
+
     except Exception as e:
         print(f"⚠️ Database initialization failed: {e}")
 else:
