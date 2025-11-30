@@ -48,33 +48,107 @@ from backend.api.routes import (
     ai_intelligence_routes,
 )
 
-# Import existing AlphaGEX logic (DO NOT MODIFY THESE)
-from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
-from core.intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
-from db.config_and_database import STRATEGIES, init_database, MM_STATES
-from database_adapter import get_connection
+# ============================================================================
+# Import existing AlphaGEX logic with graceful fallbacks
+# These imports are wrapped in try/except to prevent startup failures
+# ============================================================================
+
+# Core classes - critical for GEX data
+TradingVolatilityAPI = None
+MonteCarloEngine = None
+BlackScholesPricer = None
+try:
+    from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
+    print("✅ Backend: core_classes_and_engines loaded")
+except ImportError as e:
+    print(f"⚠️ Backend: core_classes_and_engines import failed: {e}")
+
+# Intelligence and strategies
+ClaudeIntelligence = None
+MultiStrategyOptimizer = None
+get_et_time = None
+get_local_time = None
+is_market_open = None
+try:
+    from core.intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
+    print("✅ Backend: intelligence_and_strategies loaded")
+except ImportError as e:
+    print(f"⚠️ Backend: intelligence_and_strategies import failed: {e}")
+    # Provide fallback functions so routes don't crash
+    from zoneinfo import ZoneInfo
+    def get_et_time():
+        return datetime.now(ZoneInfo("America/New_York"))
+    def get_local_time(tz='US/Central'):
+        return datetime.now(ZoneInfo(tz))
+    def is_market_open():
+        et = datetime.now(ZoneInfo("America/New_York"))
+        if et.weekday() >= 5:
+            return False
+        market_open = et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = et.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= et <= market_close
+
+# Database configuration and initialization
+STRATEGIES = {}
+MM_STATES = {}
+init_database = None
+try:
+    from db.config_and_database import STRATEGIES, init_database, MM_STATES
+    print("✅ Backend: config_and_database loaded")
+except ImportError as e:
+    print(f"⚠️ Backend: config_and_database import failed: {e}")
+
+# Database adapter
+get_connection = None
+try:
+    from database_adapter import get_connection
+    print("✅ Backend: database_adapter loaded")
+except ImportError as e:
+    print(f"⚠️ Backend: database_adapter import failed: {e}")
+
+# PostgreSQL - should always be available if psycopg2 is installed
 import psycopg2
 import psycopg2.extras
 
-# Import probability calculator (NEW - Phase 2 Self-Learning)
-from core.probability_calculator import ProbabilityCalculator
+# Probability calculator
+ProbabilityCalculator = None
+try:
+    from core.probability_calculator import ProbabilityCalculator
+    print("✅ Backend: probability_calculator loaded")
+except ImportError as e:
+    print(f"⚠️ Backend: probability_calculator import failed: {e}")
 
-# Import notification manager for psychology alerts
-from monitoring.psychology_notifications import notification_manager
+# Notification manager
+notification_manager = None
+try:
+    from monitoring.psychology_notifications import notification_manager
+    print("✅ Backend: psychology_notifications loaded")
+except ImportError as e:
+    print(f"⚠️ Backend: psychology_notifications import failed: {e}")
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
+UNIFIED_DATA_AVAILABLE = False
+get_data_provider = None
+get_quote = None
+get_price = None
+get_vix = None
 try:
     from data.unified_data_provider import get_data_provider, get_quote, get_price, get_vix
     UNIFIED_DATA_AVAILABLE = True
     print("✅ Backend: Unified Data Provider (Tradier) integrated")
 except ImportError as e:
-    UNIFIED_DATA_AVAILABLE = False
     print(f"⚠️ Backend: Unified Data Provider not available: {e}")
 
-# Initialize database schema on startup
-print("Initializing database schema...")
-init_database()
-print("✓ Database initialized")
+# Initialize database schema on startup (if available)
+if init_database:
+    print("Initializing database schema...")
+    try:
+        init_database()
+        print("✓ Database initialized")
+    except Exception as e:
+        print(f"⚠️ Database initialization failed: {e}")
+else:
+    print("⚠️ Skipping database initialization - init_database not available")
 
 # Create FastAPI app
 app = FastAPI(
