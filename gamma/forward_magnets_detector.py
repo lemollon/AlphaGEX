@@ -21,16 +21,17 @@ def detect_forward_magnets():
     3. Within reasonable distance (2-5% from spot)
     """
     try:
-        from tradingvolatility_api import get_gamma_exposure
+        from core_classes_and_engines import TradingVolatilityAPI
         import pandas as pd
 
         print("🧲 Forward Magnets Detector - Finding Gamma Price Magnets\n")
 
-        # Get current GEX data
-        gex_data = get_gamma_exposure('SPY')
+        # Get current GEX data using the correct API
+        api = TradingVolatilityAPI()
+        gex_data = api.get_net_gamma('SPY')
 
-        if not gex_data or 'levels' not in gex_data:
-            print("❌ No GEX data available")
+        if not gex_data or gex_data.get('error'):
+            print(f"❌ No GEX data available: {gex_data.get('error', 'unknown')}")
             return
 
         spot_price = gex_data.get('spot_price', 0)
@@ -38,16 +39,36 @@ def detect_forward_magnets():
             print("❌ No spot price available")
             return
 
-        # Get gamma by strike
-        levels = gex_data['levels']
+        # Get gamma by strike from raw_data.gamma_array
+        raw_data = gex_data.get('raw_data', {})
+        gamma_array = raw_data.get('gamma_array', [])
+
+        if not gamma_array:
+            print("❌ No gamma levels available in API response")
+            return
+
+        # Transform gamma_array to expected format
+        levels = []
+        for item in gamma_array:
+            if item and 'strike' in item:
+                levels.append({
+                    'strike': float(item.get('strike', 0)),
+                    'gamma_ex': float(item.get('call_gamma', 0)) + float(item.get('put_gamma', 0)),
+                    'call_gamma': float(item.get('call_gamma', 0)),
+                    'put_gamma': float(item.get('put_gamma', 0))
+                })
+
         df = pd.DataFrame(levels)
 
         if df.empty:
-            print("❌ No gamma levels available")
+            print("❌ No gamma levels available after parsing")
             return
 
         # Calculate total gamma
         total_gamma = df['gamma_ex'].abs().sum()
+        if total_gamma == 0:
+            print("❌ Total gamma is zero")
+            return
 
         # Find potential magnets (high gamma concentration)
         df['gamma_pct'] = (df['gamma_ex'].abs() / total_gamma) * 100
