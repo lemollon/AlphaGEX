@@ -1383,40 +1383,40 @@ def init_database():
     # ===== INDEXES FOR NEW ML TABLES =====
 
     # Price history indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_price_history_symbol_timeframe ON price_history(symbol, timeframe)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_price_history_symbol_timeframe ON price_history(symbol, timeframe)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp)")
 
     # Greeks snapshots indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_timestamp ON greeks_snapshots(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_symbol_strike ON greeks_snapshots(symbol, strike)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_context ON greeks_snapshots(context)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_timestamp ON greeks_snapshots(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_symbol_strike ON greeks_snapshots(symbol, strike)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_context ON greeks_snapshots(context)")
 
     # VIX term structure indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_vix_term_structure_timestamp ON vix_term_structure(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_vix_term_structure_timestamp ON vix_term_structure(timestamp)")
 
     # Options flow indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_options_flow_timestamp ON options_flow(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_options_flow_symbol ON options_flow(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_options_flow_timestamp ON options_flow(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_options_flow_symbol ON options_flow(symbol)")
 
     # AI analysis indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_timestamp ON ai_analysis_history(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_type ON ai_analysis_history(analysis_type)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_outcome ON ai_analysis_history(outcome_tracked)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_timestamp ON ai_analysis_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_type ON ai_analysis_history(analysis_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_outcome ON ai_analysis_history(outcome_tracked)")
 
     # Position sizing indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_position_sizing_history_timestamp ON position_sizing_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_position_sizing_history_timestamp ON position_sizing_history(timestamp)")
 
     # Strategy comparison indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_strategy_comparison_history_timestamp ON strategy_comparison_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strategy_comparison_history_timestamp ON strategy_comparison_history(timestamp)")
 
     # Market snapshots indexes (critical for ML queries)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_market_snapshots_timestamp ON market_snapshots(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_market_snapshots_regime ON market_snapshots(gex_regime, psychology_regime)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_market_snapshots_timestamp ON market_snapshots(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_market_snapshots_regime ON market_snapshots(gex_regime, psychology_regime)")
 
     # Data collection log indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_data_collection_log_timestamp ON data_collection_log(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_data_collection_log_type ON data_collection_log(collection_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_data_collection_log_timestamp ON data_collection_log(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_data_collection_log_type ON data_collection_log(collection_type)")
 
     # ===== BACKTEST RESULTS TABLES =====
 
@@ -1494,12 +1494,12 @@ def init_database():
     ''')
 
     # Indexes for backtest trades (for quick verification lookups)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_id ON backtest_trades(backtest_run_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_strategy ON backtest_trades(strategy_name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_entry_date ON backtest_trades(entry_date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_win ON backtest_trades(win)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_runs_run_id ON backtest_runs(run_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_runs_strategy ON backtest_runs(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_id ON backtest_trades(backtest_run_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_trades_strategy ON backtest_trades(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_trades_entry_date ON backtest_trades(entry_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_trades_win ON backtest_trades(win)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_runs_run_id ON backtest_runs(run_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_runs_strategy ON backtest_runs(strategy_name)")
 
     # Backtest results for all strategies (summary only)
     c.execute('''
@@ -1723,148 +1723,151 @@ def init_database():
 
     # Performance optimization: Add indexes for frequently queried columns
     # These indexes significantly speed up queries by symbol, date, and status
-    c.execute("CREATE INDEX IF NOT EXISTS idx_gex_history_symbol ON gex_history(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_gex_history_timestamp ON gex_history(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_recommendations_symbol ON recommendations(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_recommendations_timestamp ON recommendations(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_positions_closed_at ON positions(closed_at)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_performance_date ON performance(date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_conversations_timestamp ON conversations(timestamp)")
+    # Helper function to safely create indexes (some columns may not exist in older schemas)
+    def safe_index(sql):
+        try:
+            c.execute(sql)
+        except Exception:
+            pass  # Column or table may not exist in older schema
+
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gex_history_symbol ON gex_history(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gex_history_timestamp ON gex_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_recommendations_symbol ON recommendations(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_recommendations_timestamp ON recommendations(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_positions_closed_at ON positions(closed_at)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_performance_date ON performance(date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_conversations_timestamp ON conversations(timestamp)")
 
     # Psychology trap detection indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_regime_signals_timestamp ON regime_signals(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_regime_signals_type ON regime_signals(primary_regime_type)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_regime_signals_liberation ON regime_signals(liberation_setup_detected, liberation_expiry_date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_regime_signals_false_floor ON regime_signals(false_floor_detected, false_floor_expiry_date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_expiration_timeline_expiration ON gamma_expiration_timeline(expiration_date, strike)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_expiration_timeline_snapshot ON gamma_expiration_timeline(snapshot_date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_historical_oi_date_strike ON historical_open_interest(date, strike, expiration_date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_forward_magnets_snapshot_strike ON forward_magnets(snapshot_date, strike)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_regime_signals_timestamp ON regime_signals(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_regime_signals_type ON regime_signals(primary_regime_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_regime_signals_liberation ON regime_signals(liberation_setup_detected, liberation_expiry_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_regime_signals_false_floor ON regime_signals(false_floor_detected, false_floor_expiry_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_expiration_timeline_expiration ON gamma_expiration_timeline(expiration_date, strike)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_expiration_timeline_snapshot ON gamma_expiration_timeline(snapshot_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_historical_oi_date_strike ON historical_open_interest(date, strike, expiration_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_forward_magnets_snapshot_strike ON forward_magnets(snapshot_date, strike)")
 
     # Backtest indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy ON backtest_results(strategy_name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_timestamp ON backtest_results(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy ON backtest_results(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_results_timestamp ON backtest_results(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)")
 
     # Strategy Optimizer indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_strategy ON strike_performance(strategy_name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_timestamp ON strike_performance(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_dte ON strike_performance(dte)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_moneyness ON strike_performance(moneyness)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_vix_regime ON strike_performance(vix_regime)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_strike_performance_win ON strike_performance(win)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strike_performance_strategy ON strike_performance(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strike_performance_timestamp ON strike_performance(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strike_performance_dte ON strike_performance(dte)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strike_performance_moneyness ON strike_performance(moneyness)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strike_performance_vix_regime ON strike_performance(vix_regime)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strike_performance_win ON strike_performance(win)")
 
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spread_width_strategy ON spread_width_performance(strategy_name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spread_width_timestamp ON spread_width_performance(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spread_width_type ON spread_width_performance(spread_type)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spread_width_win ON spread_width_performance(win)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spread_width_strategy ON spread_width_performance(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spread_width_timestamp ON spread_width_performance(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spread_width_type ON spread_width_performance(spread_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spread_width_win ON spread_width_performance(win)")
 
-    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_performance_strategy ON greeks_performance(strategy_name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_performance_timestamp ON greeks_performance(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_performance_delta_target ON greeks_performance(delta_target)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_performance_win ON greeks_performance(win)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_greeks_performance_strategy ON greeks_performance(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_greeks_performance_timestamp ON greeks_performance(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_greeks_performance_delta_target ON greeks_performance(delta_target)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_greeks_performance_win ON greeks_performance(win)")
 
-    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_strategy ON dte_performance(strategy_name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_timestamp ON dte_performance(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_bucket ON dte_performance(dte_bucket)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_pattern ON dte_performance(pattern_type)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_dte_performance_win ON dte_performance(win)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_dte_performance_strategy ON dte_performance(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_dte_performance_timestamp ON dte_performance(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_dte_performance_bucket ON dte_performance(dte_bucket)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_dte_performance_pattern ON dte_performance(pattern_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_dte_performance_win ON dte_performance(win)")
 
     # Push notification indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_created_at ON push_subscriptions(created_at)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_created_at ON push_subscriptions(created_at)")
 
     # Autonomous trader logs indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_timestamp ON autonomous_trader_logs(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_type ON autonomous_trader_logs(log_type)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_symbol ON autonomous_trader_logs(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_position ON autonomous_trader_logs(position_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_session ON autonomous_trader_logs(session_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_pattern ON autonomous_trader_logs(pattern_detected)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_timestamp ON autonomous_trader_logs(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_type ON autonomous_trader_logs(log_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_symbol ON autonomous_trader_logs(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_position ON autonomous_trader_logs(position_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_session ON autonomous_trader_logs(session_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_logs_pattern ON autonomous_trader_logs(pattern_detected)")
 
     # Autonomous positions indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_status ON autonomous_positions(status)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_symbol ON autonomous_positions(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_entry_date ON autonomous_positions(entry_date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_strategy ON autonomous_positions(strategy)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_status ON autonomous_positions(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_symbol ON autonomous_positions(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_entry_date ON autonomous_positions(entry_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_positions_strategy ON autonomous_positions(strategy)")
 
     # Autonomous trade log indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_date ON autonomous_trade_log(date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_action ON autonomous_trade_log(action)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_position_id ON autonomous_trade_log(position_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_date ON autonomous_trade_log(date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_action ON autonomous_trade_log(action)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_position_id ON autonomous_trade_log(position_id)")
 
     # ===== NEW TABLE INDEXES =====
 
     # Psychology notifications indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_psychology_notifications_timestamp ON psychology_notifications(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_psychology_notifications_type ON psychology_notifications(notification_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_psychology_notifications_timestamp ON psychology_notifications(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_psychology_notifications_type ON psychology_notifications(notification_type)")
 
     # Autonomous closed trades indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_symbol ON autonomous_closed_trades(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_exit_date ON autonomous_closed_trades(exit_date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_strategy ON autonomous_closed_trades(strategy)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_symbol ON autonomous_closed_trades(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_exit_date ON autonomous_closed_trades(exit_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_closed_trades_strategy ON autonomous_closed_trades(strategy)")
 
     # Autonomous open positions indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_symbol ON autonomous_open_positions(symbol)")
-    # Status column may not exist in older schema - wrap in try/except
-    try:
-        c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_status ON autonomous_open_positions(status)")
-    except Exception:
-        pass  # Column doesn't exist in older schema
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_symbol ON autonomous_open_positions(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_status ON autonomous_open_positions(status)")
 
     # Autonomous equity snapshots indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_equity_snapshots_timestamp ON autonomous_equity_snapshots(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_equity_snapshots_timestamp ON autonomous_equity_snapshots(timestamp)")
 
     # Autonomous live status indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_live_status_timestamp ON autonomous_live_status(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_live_status_timestamp ON autonomous_live_status(timestamp)")
 
     # Autonomous trade activity indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_timestamp ON autonomous_trade_activity(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_symbol ON autonomous_trade_activity(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_timestamp ON autonomous_trade_activity(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_symbol ON autonomous_trade_activity(symbol)")
 
     # Scanner history indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_scanner_history_timestamp ON scanner_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_scanner_history_timestamp ON scanner_history(timestamp)")
 
     # Alerts indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_alerts_symbol ON alerts(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(active)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_alerts_symbol ON alerts(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(active)")
 
     # Alert history indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_alert_history_timestamp ON alert_history(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_alert_history_alert_id ON alert_history(alert_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_alert_history_timestamp ON alert_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_alert_history_alert_id ON alert_history(alert_id)")
 
     # Trade setups indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_trade_setups_symbol ON trade_setups(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_trade_setups_status ON trade_setups(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_trade_setups_symbol ON trade_setups(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_trade_setups_status ON trade_setups(status)")
 
     # Probability outcomes indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_probability_outcomes_timestamp ON probability_outcomes(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_probability_outcomes_type ON probability_outcomes(prediction_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_probability_outcomes_timestamp ON probability_outcomes(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_probability_outcomes_type ON probability_outcomes(prediction_type)")
 
     # Calibration history indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_calibration_history_timestamp ON calibration_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_calibration_history_timestamp ON calibration_history(timestamp)")
 
     # SPX institutional positions indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_institutional_positions_status ON spx_institutional_positions(status)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_institutional_positions_symbol ON spx_institutional_positions(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spx_institutional_positions_status ON spx_institutional_positions(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spx_institutional_positions_symbol ON spx_institutional_positions(symbol)")
 
     # SPX debug logs indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_timestamp ON spx_debug_logs(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_category ON spx_debug_logs(category)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_session_id ON spx_debug_logs(session_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_timestamp ON spx_debug_logs(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_category ON spx_debug_logs(category)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spx_debug_logs_session_id ON spx_debug_logs(session_id)")
 
     # Strategy config indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_strategy_config_name ON strategy_config(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strategy_config_name ON strategy_config(strategy_name)")
 
     # ML models indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ml_models_status ON ml_models(status)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ml_models_name ON ml_models(model_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ml_models_status ON ml_models(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ml_models_name ON ml_models(model_name)")
 
     # ML predictions indexes
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ml_predictions_timestamp ON ml_predictions(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ml_predictions_model_id ON ml_predictions(model_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ml_predictions_timestamp ON ml_predictions(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ml_predictions_model_id ON ml_predictions(model_id)")
 
     # ===== DATABASE MIGRATIONS =====
 
