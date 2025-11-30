@@ -16,10 +16,18 @@ Critical Features:
 """
 
 import pandas as pd
+import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from database_adapter import get_connection
+
+# Data collection for ML storage
+try:
+    from services.data_collector import DataCollector
+    DATA_COLLECTOR_AVAILABLE = True
+except:
+    DATA_COLLECTOR_AVAILABLE = False
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
@@ -425,6 +433,12 @@ class BacktestBase:
         except Exception as e:
             print(f"⚠️  Could not auto-update strategy stats: {e}")
 
+        # Store individual trades for ML/audit
+        try:
+            self.save_trades_to_db(trades, strategy_name)
+        except Exception as e:
+            print(f"⚠️  Could not save individual trades: {e}")
+
         return results
 
     def save_results_to_db(self, results: BacktestResults):
@@ -479,6 +493,32 @@ class BacktestBase:
         conn.close()
 
         print(f"✓ Saved {results.strategy_name} results to database")
+
+    def save_trades_to_db(self, trades: List, strategy_name: str):
+        """Save individual backtest trades for audit and ML training"""
+        if not DATA_COLLECTOR_AVAILABLE or not trades:
+            return
+
+        run_id = str(uuid.uuid4())
+        for i, trade in enumerate(trades, 1):
+            try:
+                trade_data = {
+                    'strategy': strategy_name,
+                    'symbol': getattr(trade, 'symbol', 'SPY'),
+                    'entry_date': getattr(trade, 'entry_date', None),
+                    'exit_date': getattr(trade, 'exit_date', None),
+                    'entry_price': getattr(trade, 'entry_price', 0),
+                    'exit_price': getattr(trade, 'exit_price', 0),
+                    'pnl_dollars': getattr(trade, 'pnl_dollars', 0),
+                    'pnl_percent': getattr(trade, 'pnl_percent', 0),
+                    'win': getattr(trade, 'win', False),
+                    'confidence': getattr(trade, 'confidence', 0),
+                }
+                DataCollector.store_backtest_trade(run_id, trade_data, i)
+            except Exception as e:
+                pass  # Don't fail backtest if storage fails
+
+        print(f"✓ Saved {len(trades)} individual trades to backtest_trades table")
 
     def print_summary(self, results: BacktestResults):
         """Print formatted backtest summary"""
