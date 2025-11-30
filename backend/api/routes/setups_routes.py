@@ -55,10 +55,11 @@ async def generate_trade_setups(request: dict):
             matched_strategy = None
             strategy_config = None
 
-            if net_gex < STRATEGIES['NEGATIVE_GEX_SQUEEZE']['conditions']['net_gex_threshold']:
+            neg_gex_threshold = STRATEGIES.get('NEGATIVE_GEX_SQUEEZE', {}).get('conditions', {}).get('net_gex_threshold', -500)
+            if net_gex < neg_gex_threshold:
                 if spot_price < flip_point:
                     matched_strategy = 'NEGATIVE_GEX_SQUEEZE'
-                    strategy_config = STRATEGIES['NEGATIVE_GEX_SQUEEZE']
+                    strategy_config = STRATEGIES.get('NEGATIVE_GEX_SQUEEZE', {})
                     entry_price = spot_price
                     target_price = call_wall if call_wall else spot_price * 1.03
                     stop_price = put_wall if put_wall else spot_price * 0.98

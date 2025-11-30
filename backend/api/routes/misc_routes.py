@@ -33,7 +33,7 @@ async def get_oi_trends(symbol: str = "SPY", days: int = 30):
                 put_call_ratio
             FROM historical_open_interest
             WHERE symbol = %s
-            AND snapshot_date >= CURRENT_DATE - INTERVAL '%s days'
+            AND snapshot_date >= CURRENT_DATE - INTERVAL '1 day' * %s
             ORDER BY snapshot_date DESC, total_oi DESC
         ''', (symbol, days))
 
@@ -83,7 +83,7 @@ async def get_unusual_oi_activity(symbol: str = "SPY", days: int = 7):
                 AND h1.expiration = h2.expiration
                 AND h2.snapshot_date = h1.snapshot_date - INTERVAL '1 day'
             WHERE h1.symbol = %s
-            AND h1.snapshot_date >= CURRENT_DATE - INTERVAL '%s days'
+            AND h1.snapshot_date >= CURRENT_DATE - INTERVAL '1 day' * %s
             AND h2.total_oi IS NOT NULL
             AND abs((h1.total_oi - h2.total_oi) * 100.0 / h2.total_oi) > 20
             ORDER BY abs((h1.total_oi - h2.total_oi) * 100.0 / h2.total_oi) DESC
@@ -139,7 +139,7 @@ async def get_recommendations_history(days: int = 30):
                 status,
                 actual_outcome
             FROM recommendations
-            WHERE timestamp >= NOW() - INTERVAL '%s days'
+            WHERE timestamp >= NOW() - INTERVAL '1 day' * %s
             ORDER BY timestamp DESC
         ''', (days,))
 

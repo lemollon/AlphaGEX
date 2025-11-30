@@ -391,9 +391,8 @@ async def run_spx_diagnostic():
 
     # Check GEX data
     try:
-        from core_classes_and_engines import TradingVolatilityAPI
-        api = TradingVolatilityAPI()
-        gex = api.get_net_gamma('SPX')
+        from backend.api.dependencies import api_client
+        gex = api_client.get_net_gamma('SPX')
         if gex and not gex.get('error'):
             results["checks"]["gex_data"] = {
                 "status": "OK", "net_gex": gex.get('net_gex'), "flip_point": gex.get('flip_point')
