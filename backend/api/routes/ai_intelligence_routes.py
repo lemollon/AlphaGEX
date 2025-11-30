@@ -87,12 +87,15 @@ trade_advisor = AITradeAdvisor() if AITradeAdvisor else None
 # Helper function to validate API key is configured
 def require_api_key():
     """Raises HTTPException if API key is not configured or langchain unavailable"""
+    print(f"[DEBUG] require_api_key: LANGCHAIN_AVAILABLE={LANGCHAIN_AVAILABLE}, api_key={bool(api_key)}, llm={bool(llm)}")
     if not LANGCHAIN_AVAILABLE:
+        print("[DEBUG] require_api_key: LangChain not available")
         raise HTTPException(
             status_code=503,
             detail="AI service unavailable: LangChain not installed. Install with: pip install langchain-anthropic"
         )
     if not api_key:
+        print("[DEBUG] require_api_key: No API key")
         raise HTTPException(
             status_code=503,
             detail="AI service unavailable: Claude API key not configured. Set ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable."
@@ -101,10 +104,12 @@ def require_api_key():
         error_detail = f"AI service unavailable: Claude LLM initialization failed"
         if llm_init_error:
             error_detail += f" - {llm_init_error}"
+        print(f"[DEBUG] require_api_key: LLM not initialized - {error_detail}")
         raise HTTPException(
             status_code=503,
             detail=error_detail
         )
+    print("[DEBUG] require_api_key: All checks passed")
 
 
 # Helper function to safely get database connection
@@ -473,63 +478,104 @@ async def generate_daily_trading_plan():
     require_api_key()
 
     try:
+        print("[DEBUG] daily-trading-plan: Starting...")
         conn = get_safe_connection()
+        print("[DEBUG] daily-trading-plan: Got connection")
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        print("[DEBUG] daily-trading-plan: Got cursor")
 
-        # Get latest market data
-        c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 1")
-        market_row = c.fetchone()
-        market_data = dict(market_row) if market_row else {}
+        # Get latest market data - with fallback for missing table
+        print("[DEBUG] daily-trading-plan: Querying market_data...")
+        market_data = {}
+        try:
+            c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 1")
+            market_row = c.fetchone()
+            market_data = dict(market_row) if market_row else {}
+            print(f"[DEBUG] daily-trading-plan: market_data = {bool(market_row)}")
+        except Exception as e:
+            print(f"[DEBUG] daily-trading-plan: market_data table error: {e}")
+            market_data = {'spot_price': 0, 'vix': 15, 'net_gex': 0}
 
-        # Get latest psychology analysis
-        c.execute("SELECT * FROM psychology_analysis ORDER BY timestamp DESC LIMIT 1")
-        psych_row = c.fetchone()
-        psychology = dict(psych_row) if psych_row else {}
+        # Get latest psychology analysis - with fallback for missing table
+        print("[DEBUG] daily-trading-plan: Querying psychology_analysis...")
+        psychology = {}
+        try:
+            c.execute("SELECT * FROM psychology_analysis ORDER BY timestamp DESC LIMIT 1")
+            psych_row = c.fetchone()
+            psychology = dict(psych_row) if psych_row else {}
+            print(f"[DEBUG] daily-trading-plan: psychology = {bool(psych_row)}")
+        except Exception as e:
+            print(f"[DEBUG] daily-trading-plan: psychology_analysis table error: {e}")
+            psychology = {'regime_type': 'UNKNOWN', 'confidence': 0}
 
-        # Get GEX levels
-        c.execute("SELECT * FROM gex_levels ORDER BY timestamp DESC LIMIT 1")
-        gex_row = c.fetchone()
-        gex = dict(gex_row) if gex_row else {}
+        # Get GEX levels - with fallback for missing table
+        print("[DEBUG] daily-trading-plan: Querying gex_levels...")
+        gex = {}
+        try:
+            c.execute("SELECT * FROM gex_levels ORDER BY timestamp DESC LIMIT 1")
+            gex_row = c.fetchone()
+            gex = dict(gex_row) if gex_row else {}
+            print(f"[DEBUG] daily-trading-plan: gex = {bool(gex_row)}")
+        except Exception as e:
+            print(f"[DEBUG] daily-trading-plan: gex_levels table error: {e}")
+            gex = {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
 
-        # Get account status
-        c.execute("SELECT account_value FROM account_state ORDER BY timestamp DESC LIMIT 1")
-        account_row = c.fetchone()
-        account_value = account_row[0] if account_row else 10000
+        # Get account status - with fallback for missing table
+        print("[DEBUG] daily-trading-plan: Querying account_state...")
+        account_value = 10000
+        try:
+            c.execute("SELECT account_value FROM account_state ORDER BY timestamp DESC LIMIT 1")
+            account_row = c.fetchone()
+            account_value = account_row[0] if account_row else 10000
+            print(f"[DEBUG] daily-trading-plan: account_value = {account_value}")
+        except Exception as e:
+            print(f"[DEBUG] daily-trading-plan: account_state table error: {e}")
+            account_value = 10000
 
-        # Get recent performance
-        c.execute("""
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                AVG(realized_pnl) as avg_pnl
-            FROM trades
-            WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '7 days'
-        """)
-        perf_row = c.fetchone()
-        if perf_row and perf_row[0]:
-            performance = {
-                'total_trades': perf_row[0],
-                'win_rate': (perf_row[1] / perf_row[0] * 100) if perf_row[0] > 0 else 0,
-                'avg_pnl': perf_row[2] or 0
-            }
-        else:
-            performance = {'total_trades': 0, 'win_rate': 0, 'avg_pnl': 0}
+        # Get recent performance - with fallback for missing table
+        print("[DEBUG] daily-trading-plan: Querying trades for performance...")
+        performance = {'total_trades': 0, 'win_rate': 0, 'avg_pnl': 0}
+        try:
+            c.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    AVG(realized_pnl) as avg_pnl
+                FROM trades
+                WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '7 days'
+            """)
+            perf_row = c.fetchone()
+            if perf_row and perf_row['total']:
+                performance = {
+                    'total_trades': perf_row['total'],
+                    'win_rate': (perf_row['wins'] / perf_row['total'] * 100) if perf_row['total'] > 0 else 0,
+                    'avg_pnl': perf_row['avg_pnl'] or 0
+                }
+            print(f"[DEBUG] daily-trading-plan: performance = {performance}")
+        except Exception as e:
+            print(f"[DEBUG] daily-trading-plan: trades table error: {e}")
 
-        # Get top patterns
-        c.execute("""
-            SELECT
-                pattern_type,
-                COUNT(*) as trades,
-                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as win_rate,
-                AVG(realized_pnl) as avg_pnl
-            FROM trades
-            WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '30 days'
-            GROUP BY pattern_type
-            HAVING COUNT(*) >= 3
-            ORDER BY win_rate DESC, avg_pnl DESC
-            LIMIT 3
-        """)
-        top_patterns = [dict(row) for row in c.fetchall()]
+        # Get top patterns - with fallback for missing table
+        print("[DEBUG] daily-trading-plan: Querying trades for patterns...")
+        top_patterns = []
+        try:
+            c.execute("""
+                SELECT
+                    pattern_type,
+                    COUNT(*) as trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as win_rate,
+                    AVG(realized_pnl) as avg_pnl
+                FROM trades
+                WHERE status = 'CLOSED' AND timestamp >= NOW() - INTERVAL '30 days'
+                GROUP BY pattern_type
+                HAVING COUNT(*) >= 3
+                ORDER BY win_rate DESC, avg_pnl DESC
+                LIMIT 3
+            """)
+            top_patterns = [dict(row) for row in c.fetchall()]
+            print(f"[DEBUG] daily-trading-plan: top_patterns count = {len(top_patterns)}")
+        except Exception as e:
+            print(f"[DEBUG] daily-trading-plan: trades patterns error: {e}")
 
         conn.close()
 
@@ -616,7 +662,10 @@ Be extremely specific with prices, times, and percentages. Make this ACTIONABLE.
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate daily plan: {str(e)}")
+        import traceback
+        print(f"[ERROR] daily-trading-plan failed: {type(e).__name__}: {str(e)}")
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate daily plan: {type(e).__name__}: {str(e)}")
 
 
 # ============================================================================
@@ -791,35 +840,71 @@ async def get_market_commentary():
     require_api_key()
 
     try:
+        print("[DEBUG] market-commentary: Starting...")
         conn = get_safe_connection()
+        print("[DEBUG] market-commentary: Got connection")
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        print("[DEBUG] market-commentary: Got cursor")
 
-        # Get current market data
-        c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 2")
-        market_data = [dict(row) for row in c.fetchall()]
-        current_market = market_data[0] if len(market_data) > 0 else {}
-        previous_market = market_data[1] if len(market_data) > 1 else current_market
+        # Get current market data - with fallback for missing table
+        print("[DEBUG] market-commentary: Querying market_data...")
+        current_market = {'spot_price': 0, 'vix': 15, 'net_gex': 0}
+        previous_market = current_market
+        try:
+            c.execute("SELECT * FROM market_data ORDER BY timestamp DESC LIMIT 2")
+            market_data = [dict(row) for row in c.fetchall()]
+            current_market = market_data[0] if len(market_data) > 0 else {'spot_price': 0, 'vix': 15, 'net_gex': 0}
+            previous_market = market_data[1] if len(market_data) > 1 else current_market
+            print(f"[DEBUG] market-commentary: market_data count = {len(market_data)}")
+        except Exception as e:
+            print(f"[DEBUG] market-commentary: market_data table error: {e}")
 
-        # Get psychology analysis
-        c.execute("SELECT * FROM psychology_analysis ORDER BY timestamp DESC LIMIT 1")
-        psych_row = c.fetchone()
-        psychology = dict(psych_row) if psych_row else {}
+        # Get psychology analysis - with fallback for missing table
+        print("[DEBUG] market-commentary: Querying psychology_analysis...")
+        psychology = {'regime_type': 'UNKNOWN', 'confidence': 0}
+        try:
+            c.execute("SELECT * FROM psychology_analysis ORDER BY timestamp DESC LIMIT 1")
+            psych_row = c.fetchone()
+            psychology = dict(psych_row) if psych_row else {'regime_type': 'UNKNOWN', 'confidence': 0}
+            print(f"[DEBUG] market-commentary: psychology = {bool(psych_row)}")
+        except Exception as e:
+            print(f"[DEBUG] market-commentary: psychology_analysis table error: {e}")
 
-        # Get GEX
-        c.execute("SELECT * FROM gex_levels ORDER BY timestamp DESC LIMIT 1")
-        gex_row = c.fetchone()
-        gex = dict(gex_row) if gex_row else {}
+        # Get GEX - with fallback for missing table
+        print("[DEBUG] market-commentary: Querying gex_levels...")
+        gex = {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
+        try:
+            c.execute("SELECT * FROM gex_levels ORDER BY timestamp DESC LIMIT 1")
+            gex_row = c.fetchone()
+            gex = dict(gex_row) if gex_row else {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
+            print(f"[DEBUG] market-commentary: gex = {bool(gex_row)}")
+        except Exception as e:
+            print(f"[DEBUG] market-commentary: gex_levels table error: {e}")
 
-        # Get open positions
-        c.execute("SELECT COUNT(*) as count FROM trades WHERE status = 'OPEN'")
-        open_positions = c.fetchone()[0]
+        # Get open positions - with fallback for missing table
+        print("[DEBUG] market-commentary: Querying trades for open positions...")
+        open_positions = 0
+        try:
+            c.execute("SELECT COUNT(*) as count FROM trades WHERE status = 'OPEN'")
+            result = c.fetchone()
+            open_positions = result['count'] if result else 0
+            print(f"[DEBUG] market-commentary: open_positions = {open_positions}")
+        except Exception as e:
+            print(f"[DEBUG] market-commentary: trades count error: {e}")
 
-        # Get recent trade
-        c.execute("SELECT * FROM trades ORDER BY timestamp DESC LIMIT 1")
-        recent_trade_row = c.fetchone()
-        recent_trade = dict(recent_trade_row) if recent_trade_row else None
+        # Get recent trade - with fallback for missing table
+        print("[DEBUG] market-commentary: Querying trades for recent trade...")
+        recent_trade = None
+        try:
+            c.execute("SELECT * FROM trades ORDER BY timestamp DESC LIMIT 1")
+            recent_trade_row = c.fetchone()
+            recent_trade = dict(recent_trade_row) if recent_trade_row else None
+            print(f"[DEBUG] market-commentary: recent_trade = {bool(recent_trade)}")
+        except Exception as e:
+            print(f"[DEBUG] market-commentary: trades recent error: {e}")
 
         conn.close()
+        print("[DEBUG] market-commentary: Database queries complete, generating AI response...")
 
         # Calculate changes
         vix_change = (current_market.get('vix') or 15) - (previous_market.get('vix') or 15)
@@ -885,7 +970,10 @@ Speak directly to the trader in an urgent, clear voice. Be specific with prices 
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate commentary: {str(e)}")
+        import traceback
+        print(f"[ERROR] market-commentary failed: {type(e).__name__}: {str(e)}")
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate commentary: {type(e).__name__}: {str(e)}")
 
 
 # ============================================================================
