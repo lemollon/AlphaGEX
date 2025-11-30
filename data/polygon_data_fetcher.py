@@ -44,6 +44,13 @@ from typing import Optional, Dict, List, Tuple
 from functools import lru_cache
 from scipy.stats import norm
 
+# Data collection hook for ML storage
+try:
+    from services.data_collector import DataCollector
+    DATA_COLLECTOR_AVAILABLE = True
+except:
+    DATA_COLLECTOR_AVAILABLE = False
+
 
 class PolygonDataCache:
     """Aggressive caching to minimize API calls"""
@@ -175,6 +182,18 @@ class PolygonDataFetcher:
 
                     # Cache the result
                     self.cache.set('price_history', cache_key, result)
+
+                    # Store in ML database for analysis
+                    if DATA_COLLECTOR_AVAILABLE:
+                        try:
+                            prices = [
+                                {'timestamp': idx, 'o': row['Open'], 'h': row['High'],
+                                 'l': row['Low'], 'c': row['Close'], 'v': row['Volume']}
+                                for idx, row in result.iterrows()
+                            ]
+                            DataCollector.store_prices(prices, symbol, timeframe)
+                        except:
+                            pass  # Don't fail if storage fails
 
                     print(f"✅ Fetched {len(result)} bars for {symbol} ({status})")
                     return result
