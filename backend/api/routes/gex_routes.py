@@ -38,10 +38,11 @@ async def get_gex_data(symbol: str):
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
-        data = api.get_option_data(symbol)
+        data = api.get_net_gamma(symbol)
 
-        if not data:
-            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}")
+        if not data or 'error' in data:
+            error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
+            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}: {error_msg}")
 
         # Calculate regime
         net_gex = data.get('net_gex', 0) or 0
@@ -111,10 +112,11 @@ async def get_gex_levels(symbol: str):
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
-        data = api.get_option_data(symbol)
+        data = api.get_net_gamma(symbol)
 
-        if not data:
-            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}")
+        if not data or 'error' in data:
+            error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
+            raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}: {error_msg}")
 
         spot = data.get('spot_price', 0) or 0
         call_wall = data.get('call_wall', 0) or 0

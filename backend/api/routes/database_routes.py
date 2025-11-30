@@ -165,7 +165,7 @@ async def test_api_connections():
         api = TradingVolatilityAPI()
 
         start = time.time()
-        data = api.get_option_data('SPY')
+        data = api.get_net_gamma('SPY')
         elapsed = (time.time() - start) * 1000
 
         results["trading_volatility"]["response_time_ms"] = round(elapsed)
