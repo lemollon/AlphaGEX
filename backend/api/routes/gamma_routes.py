@@ -6,9 +6,98 @@ Handles gamma analytics, probabilities, expiration analysis, and waterfall data.
 
 import math
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException
 import psycopg2.extras
+
+
+def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
+    """
+    Get GEX data with intelligent fallback chain:
+    1. TradingVolatilityAPI (live data)
+    2. Tradier calculation (real-time from options chain)
+    3. Database (historical cache)
+    """
+    # PRIMARY: Try TradingVolatilityAPI
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        api = TradingVolatilityAPI()
+        data = api.get_net_gamma(symbol)
+        if data and 'error' not in data:
+            data['data_source'] = 'live_api'
+            return data
+    except Exception as e:
+        print(f"⚠️ TradingVolatilityAPI failed for {symbol}: {e}")
+
+    # FALLBACK 1: Calculate from Tradier
+    try:
+        from data.gex_calculator import get_calculated_gex
+        data = get_calculated_gex(symbol)
+        if data and 'error' not in data:
+            print(f"✅ GEX calculated from Tradier for {symbol}")
+            return data
+    except Exception as e:
+        print(f"⚠️ Tradier GEX calculation failed for {symbol}: {e}")
+
+    # FALLBACK 2: Try database
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor.execute("""
+            SELECT net_gex, flip_point, call_wall, put_wall, spot_price,
+                   call_gex, put_gex, max_pain, timestamp
+            FROM gex_history
+            WHERE symbol = %s AND timestamp >= NOW() - INTERVAL '7 days'
+            ORDER BY timestamp DESC LIMIT 1
+        """, (symbol,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            print(f"✅ Using database GEX for {symbol}")
+            return {
+                'symbol': symbol,
+                'spot_price': float(row.get('spot_price') or 0),
+                'net_gex': float(row.get('net_gex') or 0),
+                'flip_point': float(row.get('flip_point') or 0),
+                'call_wall': float(row.get('call_wall') or 0),
+                'put_wall': float(row.get('put_wall') or 0),
+                'call_gex': float(row.get('call_gex') or 0),
+                'put_gex': float(row.get('put_gex') or 0),
+                'max_pain': float(row.get('max_pain') or 0),
+                'collection_date': row.get('timestamp').strftime('%Y-%m-%d') if row.get('timestamp') else None,
+                'data_source': 'database_fallback'
+            }
+    except Exception as e:
+        print(f"⚠️ Database fallback failed for {symbol}: {e}")
+
+    return {'error': 'All data sources failed'}
+
+
+def get_gex_profile_with_fallback(symbol: str) -> Optional[Dict[str, Any]]:
+    """Get detailed GEX profile with fallback to Tradier calculation."""
+    # PRIMARY: Try TradingVolatilityAPI
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        api = TradingVolatilityAPI()
+        profile = api.get_gex_profile(symbol)
+        if profile and 'error' not in profile:
+            return profile
+    except Exception as e:
+        print(f"⚠️ TradingVolatilityAPI profile failed for {symbol}: {e}")
+
+    # FALLBACK: Calculate from Tradier
+    try:
+        from data.gex_calculator import get_calculated_gex_profile
+        profile = get_calculated_gex_profile(symbol)
+        if profile and 'error' not in profile:
+            print(f"✅ GEX profile calculated from Tradier for {symbol}")
+            return profile
+    except Exception as e:
+        print(f"⚠️ Tradier GEX profile calculation failed for {symbol}: {e}")
+
+    return None
 
 
 def get_last_trading_day():
@@ -47,28 +136,21 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
     """
     Get comprehensive gamma intelligence for a symbol.
     Returns gamma metrics, market regime, and MM state analysis.
+    Uses fallback chain: TradingVolatilityAPI -> Tradier calculation -> Database
     """
     try:
-        from core_classes_and_engines import TradingVolatilityAPI
         from core.strategy_stats import calculate_mm_confidence, get_mm_states
 
         symbol = symbol.upper()
-        api_client = TradingVolatilityAPI()
 
-        # Get basic GEX data
-        gex_data = api_client.get_net_gamma(symbol)
+        # Get basic GEX data with fallback chain
+        gex_data = get_gex_with_fallback(symbol)
         if not gex_data or gex_data.get('error'):
             error_msg = gex_data.get('error', 'Unknown error') if gex_data else 'No data returned'
             raise HTTPException(status_code=404, detail=f"GEX data not available for {symbol}: {error_msg}")
 
-        # Try to get detailed profile (rate limited)
-        profile = None
-        try:
-            profile = api_client.get_gex_profile(symbol)
-            if profile and profile.get('error'):
-                profile = None
-        except Exception:
-            profile = None
+        # Try to get detailed profile (with fallback)
+        profile = get_gex_profile_with_fallback(symbol)
 
         # Calculate gamma from strike data or estimate
         total_call_gamma = 0
@@ -167,15 +249,14 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
 async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: float = 10000):
     """Get actionable probability analysis for gamma-based trading."""
     try:
-        from core_classes_and_engines import TradingVolatilityAPI
         from core.probability_calculator import ProbabilityCalculator
 
         symbol = symbol.upper()
-        api_client = TradingVolatilityAPI()
         prob_calc = ProbabilityCalculator()
 
-        gex_data = api_client.get_net_gamma(symbol)
-        if not gex_data:
+        # Use fallback chain for GEX data
+        gex_data = get_gex_with_fallback(symbol)
+        if not gex_data or gex_data.get('error'):
             raise HTTPException(status_code=404, detail=f"No data for {symbol}")
 
         net_gex = gex_data.get('net_gex', 0)
@@ -207,12 +288,10 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
 async def get_gamma_expiration(symbol: str):
     """Get gamma by expiration date analysis."""
     try:
-        from core_classes_and_engines import TradingVolatilityAPI
-
         symbol = symbol.upper()
-        api_client = TradingVolatilityAPI()
 
-        profile = api_client.get_gex_profile(symbol)
+        # Use fallback chain for profile data
+        profile = get_gex_profile_with_fallback(symbol)
         if not profile or profile.get('error'):
             return {
                 "success": True,
@@ -237,12 +316,10 @@ async def get_gamma_expiration(symbol: str):
 async def get_gamma_expiration_waterfall(symbol: str):
     """Get gamma expiration waterfall for visualization."""
     try:
-        from core_classes_and_engines import TradingVolatilityAPI
-
         symbol = symbol.upper()
-        api_client = TradingVolatilityAPI()
 
-        profile = api_client.get_gex_profile(symbol)
+        # Use fallback chain for profile data
+        profile = get_gex_profile_with_fallback(symbol)
         if not profile:
             return {
                 "success": True,
@@ -324,39 +401,34 @@ async def get_gamma_expiration_intel(symbol: str):
     Returns weekly gamma structure, directional prediction, and risk levels.
     """
     try:
-        from core_classes_and_engines import TradingVolatilityAPI
-        from data.unified_data_provider import get_vix
-
         symbol = symbol.upper()
-        api_client = TradingVolatilityAPI()
 
-        # Get real GEX data
-        gex_data = api_client.get_net_gamma(symbol)
-        if not gex_data:
+        # Get real GEX data with fallback chain
+        gex_data = get_gex_with_fallback(symbol)
+        if not gex_data or gex_data.get('error'):
             raise HTTPException(status_code=404, detail=f"No GEX data for {symbol}")
 
         net_gex = gex_data.get('net_gex', 0)
         spot_price = gex_data.get('spot_price', 0)
 
-        # Get profile data for walls and flip point
-        profile = None
-        try:
-            profile = api_client.get_gex_profile(symbol)
-            if profile and profile.get('error'):
-                profile = None
-        except Exception:
-            profile = None
+        # Get profile data with fallback
+        profile = get_gex_profile_with_fallback(symbol)
 
         flip_point = profile.get('flip_point', spot_price) if profile else spot_price
         call_wall = profile.get('call_wall', spot_price * 1.02) if profile else spot_price * 1.02
         put_wall = profile.get('put_wall', spot_price * 0.98) if profile else spot_price * 0.98
 
-        # Get VIX
+        # Get VIX with fallback
+        current_vix = 18
         try:
-            vix_data = get_vix()
-            current_vix = vix_data.get('current', 18) if vix_data else 18
+            from data.unified_data_provider import get_vix as udp_get_vix
+            vix_value = udp_get_vix()
+            if vix_value and isinstance(vix_value, (int, float)) and vix_value > 0:
+                current_vix = float(vix_value)
+            elif vix_value and isinstance(vix_value, dict):
+                current_vix = vix_value.get('current', 18) or vix_value.get('value', 18) or 18
         except Exception:
-            current_vix = 18
+            pass
 
         # Determine day of week
         today = datetime.now()

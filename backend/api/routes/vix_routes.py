@@ -31,6 +31,7 @@ def get_vix_fallback_data() -> Dict[str, Any]:
     """
     Fallback VIX data when vix_hedge_manager is unavailable.
     Tries Tradier first, then Polygon, then returns estimated data.
+    ALWAYS returns valid data - never throws.
     """
     vix_data = {
         'vix_spot': 18.0,
@@ -51,11 +52,20 @@ def get_vix_fallback_data() -> Dict[str, Any]:
     try:
         from data.unified_data_provider import get_vix
         vix_value = get_vix()
-        if vix_value and vix_value > 0:
-            vix_data['vix_spot'] = float(vix_value)
-            vix_data['vix_source'] = 'tradier'
-            vix_data['is_estimated'] = False
-            return vix_data
+        if vix_value:
+            # Handle both float and dict return types
+            if isinstance(vix_value, (int, float)) and vix_value > 0:
+                vix_data['vix_spot'] = float(vix_value)
+                vix_data['vix_source'] = 'tradier'
+                vix_data['is_estimated'] = False
+                return vix_data
+            elif isinstance(vix_value, dict) and vix_value.get('value', 0) > 0:
+                vix_data['vix_spot'] = float(vix_value['value'])
+                vix_data['vix_source'] = vix_value.get('source', 'tradier')
+                vix_data['is_estimated'] = False
+                return vix_data
+    except ImportError as e:
+        print(f"Tradier VIX import failed (expected on some deployments): {e}")
     except Exception as e:
         print(f"Tradier VIX fallback failed: {e}")
 
