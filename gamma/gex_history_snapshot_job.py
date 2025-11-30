@@ -45,17 +45,31 @@ def get_current_gex_data(symbol: str = 'SPY') -> Optional[Dict]:
     if TV_API_AVAILABLE:
         try:
             api = TradingVolatilityAPI()
-            gex_data = api.get_gex_data(symbol)
+            gex_data = api.get_net_gamma(symbol)  # Fixed: was get_gex_data which doesn't exist
 
-            if gex_data:
+            if gex_data and not gex_data.get('error'):
+                # Determine regime from net_gex
+                net_gex = gex_data.get('net_gex', 0)
+                if net_gex > 1e9:
+                    regime = 'POSITIVE'
+                elif net_gex < -1e9:
+                    regime = 'NEGATIVE'
+                else:
+                    regime = 'NEUTRAL'
+
+                # Determine MM state from spot vs flip
+                spot = gex_data.get('spot_price', 0)
+                flip = gex_data.get('flip_point', 0)
+                mm_state = 'LONG_GAMMA' if spot > flip else 'SHORT_GAMMA'
+
                 return {
-                    'net_gex': gex_data.get('net_gex', 0),
-                    'flip_point': gex_data.get('flip_point', 0),
+                    'net_gex': net_gex,
+                    'flip_point': flip,
                     'call_wall': gex_data.get('call_wall', 0),
                     'put_wall': gex_data.get('put_wall', 0),
-                    'spot_price': gex_data.get('spot_price', 0),
-                    'mm_state': gex_data.get('mm_state', 'UNKNOWN'),
-                    'regime': gex_data.get('regime', 'UNKNOWN'),
+                    'spot_price': spot,
+                    'mm_state': mm_state,
+                    'regime': regime,
                     'data_source': 'TradingVolatility'
                 }
         except Exception as e:

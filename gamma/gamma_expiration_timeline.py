@@ -28,23 +28,41 @@ def track_gamma_expiration_timeline():
     This helps identify patterns in dealer hedging behavior
     """
     try:
-        from tradingvolatility_api import get_gamma_exposure
+        from core_classes_and_engines import TradingVolatilityAPI
         import pandas as pd
 
         print("📅 Gamma Expiration Timeline - Tracking Gamma Decay Patterns\n")
 
         # Get current GEX data with expiration breakdown
-        gex_data = get_gamma_exposure('SPY')
+        api = TradingVolatilityAPI()
+        gex_data = api.get_net_gamma('SPY')
 
-        if not gex_data or 'levels' not in gex_data:
-            print("❌ No GEX data available")
+        if not gex_data or gex_data.get('error'):
+            print(f"❌ No GEX data available: {gex_data.get('error', 'unknown')}")
             return
 
         spot_price = gex_data.get('spot_price', 0)
         net_gex = gex_data.get('net_gex', 0)
 
-        # Get expiration dates and group gamma by DTE
-        levels = gex_data['levels']
+        # Get gamma array from raw_data
+        raw_data = gex_data.get('raw_data', {})
+        gamma_array = raw_data.get('gamma_array', [])
+
+        if not gamma_array:
+            print("⚠️ No expiration data, using simplified logging")
+            log_simplified_gamma_timeline(gex_data)
+            return
+
+        # Transform gamma_array to expected format
+        levels = []
+        for item in gamma_array:
+            if item and 'strike' in item:
+                levels.append({
+                    'strike': float(item.get('strike', 0)),
+                    'gamma_ex': float(item.get('call_gamma', 0)) + float(item.get('put_gamma', 0)),
+                    'expiration': item.get('expiration_date', item.get('expiration', '')),
+                })
+
         df = pd.DataFrame(levels)
 
         if df.empty or 'expiration' not in df.columns:
