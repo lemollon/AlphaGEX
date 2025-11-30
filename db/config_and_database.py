@@ -1098,9 +1098,410 @@ def init_database():
         )
     ''')
 
+    # =========================================================================
+    # ML/AI DATA COLLECTION TABLES - COMPREHENSIVE STORAGE FOR ANALYSIS
+    # =========================================================================
+    # These tables store ALL data needed for machine learning and AI analysis
+    # Everything that flows through the system should be captured here
+
+    # Historical Price Data (OHLCV bars from Polygon)
+    # Previously: Fetched for charts but NOT stored - now stored for ML training
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS price_history (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ NOT NULL,
+            symbol TEXT DEFAULT 'SPY',
+            timeframe TEXT NOT NULL,  -- '1min', '5min', '15min', '1h', '1d'
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume BIGINT,
+            vwap REAL,
+            num_trades INTEGER,
+            data_source TEXT DEFAULT 'polygon',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(symbol, timeframe, timestamp)
+        )
+    ''')
+
+    # Greeks Snapshots - Capture Greeks at every significant moment
+    # Previously: Calculated and discarded - now stored for ML correlation
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS greeks_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            strike REAL NOT NULL,
+            option_type TEXT NOT NULL,  -- 'CALL' or 'PUT'
+            expiration_date DATE NOT NULL,
+            dte INTEGER,
+            -- The Greeks
+            delta REAL,
+            gamma REAL,
+            theta REAL,
+            vega REAL,
+            rho REAL,
+            -- Volatility metrics
+            implied_volatility REAL,
+            iv_rank REAL,
+            iv_percentile REAL,
+            -- Price context
+            underlying_price REAL,
+            option_price REAL,
+            bid REAL,
+            ask REAL,
+            spread_pct REAL,
+            -- Volume context
+            volume INTEGER,
+            open_interest INTEGER,
+            -- Source tracking
+            data_source TEXT,
+            context TEXT  -- 'entry', 'exit', 'monitoring', 'hourly_snapshot'
+        )
+    ''')
+
+    # VIX Term Structure - Full volatility curve
+    # Previously: Only spot VIX stored - now full term structure for ML
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS vix_term_structure (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            -- Spot VIX
+            vix_spot REAL NOT NULL,
+            vix_9d REAL,  -- VIX9D
+            vix_3m REAL,  -- VIX3M (VXV)
+            vix_6m REAL,  -- VIX6M
+            -- VIX Futures
+            vx_front_month REAL,
+            vx_front_month_expiry DATE,
+            vx_second_month REAL,
+            vx_second_month_expiry DATE,
+            vx_third_month REAL,
+            vx_fourth_month REAL,
+            -- Derived metrics
+            contango_pct REAL,  -- % between spot and front month
+            term_structure_slope REAL,  -- Overall slope
+            inversion_detected BOOLEAN DEFAULT FALSE,
+            -- Related indices
+            vvix REAL,  -- VIX of VIX
+            skew_index REAL,  -- CBOE SKEW
+            put_call_ratio REAL,
+            -- Context
+            spy_price REAL,
+            regime TEXT,  -- 'low_vol', 'normal', 'elevated', 'crisis'
+            data_source TEXT
+        )
+    ''')
+
+    # Options Flow/Volume - Capture unusual activity for ML sentiment
+    # Previously: Used for GEX calc then discarded - now stored
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS options_flow (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            -- Aggregate volume
+            total_call_volume INTEGER,
+            total_put_volume INTEGER,
+            put_call_ratio REAL,
+            -- Unusual activity
+            unusual_call_volume INTEGER,
+            unusual_put_volume INTEGER,
+            unusual_strikes TEXT,  -- JSON array of unusual strike activity
+            -- Open interest changes
+            call_oi_change INTEGER,
+            put_oi_change INTEGER,
+            largest_oi_strike REAL,
+            largest_oi_type TEXT,
+            -- Premium flow (if available)
+            net_call_premium REAL,
+            net_put_premium REAL,
+            -- Expiration breakdown
+            zero_dte_volume INTEGER,
+            weekly_volume INTEGER,
+            monthly_volume INTEGER,
+            -- Context
+            spot_price REAL,
+            vix_level REAL,
+            data_source TEXT
+        )
+    ''')
+
+    # AI Analysis Results - Store every AI insight for learning
+    # Previously: Displayed and discarded - now stored for feedback loop
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ai_analysis_history (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            analysis_type TEXT NOT NULL,  -- 'market_commentary', 'trade_advice', 'risk_analysis', 'copilot_chat'
+            -- Input context
+            symbol TEXT DEFAULT 'SPY',
+            input_prompt TEXT,
+            market_context JSONB,  -- GEX, VIX, price, regime at time of analysis
+            -- AI output
+            ai_response TEXT NOT NULL,
+            confidence_score REAL,
+            recommendations JSONB,  -- Structured recommendations if any
+            warnings TEXT,
+            -- Model info
+            model_used TEXT,
+            tokens_used INTEGER,
+            response_time_ms INTEGER,
+            -- Outcome tracking (for feedback loop)
+            outcome_tracked BOOLEAN DEFAULT FALSE,
+            outcome_correct BOOLEAN,
+            actual_result TEXT,
+            feedback_notes TEXT
+        )
+    ''')
+
+    # Position Sizing History - Track all sizing decisions
+    # Previously: Calculated and discarded - now stored for optimization
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS position_sizing_history (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            -- Input parameters
+            account_value REAL,
+            win_rate REAL,
+            avg_win REAL,
+            avg_loss REAL,
+            current_drawdown_pct REAL,
+            -- Calculated sizes
+            kelly_full REAL,
+            kelly_half REAL,
+            kelly_quarter REAL,
+            recommended_size REAL,
+            max_risk_dollars REAL,
+            -- Risk metrics
+            var_95 REAL,
+            expected_value REAL,
+            risk_of_ruin REAL,
+            -- Context
+            vix_level REAL,
+            regime TEXT,
+            sizing_rationale TEXT,
+            -- Outcome tracking
+            trade_taken BOOLEAN DEFAULT FALSE,
+            actual_size_used REAL,
+            trade_outcome REAL  -- Actual P&L if trade was taken
+        )
+    ''')
+
+    # Strategy Comparison Results - Track strategy selection decisions
+    # Previously: Displayed and discarded - now stored for optimization
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS strategy_comparison_history (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            -- Market conditions at comparison time
+            spot_price REAL,
+            net_gex REAL,
+            vix_level REAL,
+            regime TEXT,
+            -- Strategies compared
+            strategies_evaluated JSONB,  -- Array of strategy names
+            comparison_results JSONB,  -- Full comparison data
+            -- Winner
+            recommended_strategy TEXT,
+            recommendation_confidence REAL,
+            recommendation_reasoning TEXT,
+            -- Alternatives
+            second_best_strategy TEXT,
+            third_best_strategy TEXT,
+            -- Outcome tracking
+            strategy_chosen TEXT,  -- What user actually chose
+            trade_taken BOOLEAN DEFAULT FALSE,
+            trade_outcome REAL
+        )
+    ''')
+
+    # Real-Time Market Snapshots - Comprehensive market state every minute
+    # This is the master table for ML feature engineering
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS market_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            -- Price data
+            price REAL NOT NULL,
+            bid REAL,
+            ask REAL,
+            spread_pct REAL,
+            volume_1min BIGINT,
+            -- GEX data
+            net_gex REAL,
+            call_wall REAL,
+            put_wall REAL,
+            flip_point REAL,
+            distance_to_call_wall_pct REAL,
+            distance_to_put_wall_pct REAL,
+            distance_to_flip_pct REAL,
+            -- VIX data
+            vix_spot REAL,
+            vix_change_1d_pct REAL,
+            -- RSI multi-timeframe
+            rsi_5m REAL,
+            rsi_15m REAL,
+            rsi_1h REAL,
+            rsi_4h REAL,
+            rsi_1d REAL,
+            -- Regime classification
+            gex_regime TEXT,
+            psychology_regime TEXT,
+            volatility_regime TEXT,
+            -- Derived signals
+            liberation_setup BOOLEAN DEFAULT FALSE,
+            false_floor BOOLEAN DEFAULT FALSE,
+            trap_detected TEXT,
+            -- Session info
+            market_session TEXT,  -- 'pre', 'regular', 'post', 'closed'
+            minutes_to_close INTEGER,
+            day_of_week INTEGER
+        )
+    ''')
+
+    # Data Collection Log - Track what data was collected when
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS data_collection_log (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            collection_type TEXT NOT NULL,  -- 'price', 'greeks', 'vix', 'flow', 'gex'
+            source TEXT NOT NULL,  -- 'polygon', 'tradier', 'yahoo', 'tradingvolatility'
+            symbol TEXT DEFAULT 'SPY',
+            records_collected INTEGER,
+            success BOOLEAN DEFAULT TRUE,
+            error_message TEXT,
+            duration_ms INTEGER,
+            next_collection_at TIMESTAMPTZ
+        )
+    ''')
+
+    # ===== INDEXES FOR NEW ML TABLES =====
+
+    # Price history indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_price_history_symbol_timeframe ON price_history(symbol, timeframe)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp)")
+
+    # Greeks snapshots indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_timestamp ON greeks_snapshots(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_symbol_strike ON greeks_snapshots(symbol, strike)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_greeks_snapshots_context ON greeks_snapshots(context)")
+
+    # VIX term structure indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_vix_term_structure_timestamp ON vix_term_structure(timestamp)")
+
+    # Options flow indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_options_flow_timestamp ON options_flow(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_options_flow_symbol ON options_flow(symbol)")
+
+    # AI analysis indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_timestamp ON ai_analysis_history(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_type ON ai_analysis_history(analysis_type)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_history_outcome ON ai_analysis_history(outcome_tracked)")
+
+    # Position sizing indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_position_sizing_history_timestamp ON position_sizing_history(timestamp)")
+
+    # Strategy comparison indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_strategy_comparison_history_timestamp ON strategy_comparison_history(timestamp)")
+
+    # Market snapshots indexes (critical for ML queries)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_market_snapshots_timestamp ON market_snapshots(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol ON market_snapshots(symbol)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_market_snapshots_regime ON market_snapshots(gex_regime, psychology_regime)")
+
+    # Data collection log indexes
+    c.execute("CREATE INDEX IF NOT EXISTS idx_data_collection_log_timestamp ON data_collection_log(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_data_collection_log_type ON data_collection_log(collection_type)")
+
     # ===== BACKTEST RESULTS TABLES =====
 
-    # Backtest results for all strategies
+    # Backtest INDIVIDUAL TRADES - For verification and audit
+    # This is the PROOF of every trade that makes up the backtest results
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_trades (
+            id SERIAL PRIMARY KEY,
+            -- Link to backtest run
+            backtest_run_id TEXT NOT NULL,  -- UUID for each backtest run
+            strategy_name TEXT NOT NULL,
+            -- Trade details
+            trade_number INTEGER NOT NULL,
+            symbol TEXT DEFAULT 'SPY',
+            -- Entry
+            entry_date DATE NOT NULL,
+            entry_time TIME,
+            entry_price REAL NOT NULL,
+            entry_strike REAL,
+            entry_option_type TEXT,  -- 'CALL' or 'PUT'
+            entry_expiration DATE,
+            entry_dte INTEGER,
+            entry_spot_price REAL,
+            -- Entry context (why this trade was taken)
+            entry_net_gex REAL,
+            entry_flip_point REAL,
+            entry_vix REAL,
+            entry_regime TEXT,
+            entry_pattern TEXT,
+            entry_signal_confidence REAL,
+            entry_reasoning TEXT,
+            -- Exit
+            exit_date DATE NOT NULL,
+            exit_time TIME,
+            exit_price REAL NOT NULL,
+            exit_spot_price REAL,
+            exit_reason TEXT,  -- 'target_hit', 'stop_loss', 'time_exit', 'signal_exit'
+            -- Results
+            pnl_dollars REAL NOT NULL,
+            pnl_percent REAL NOT NULL,
+            win BOOLEAN NOT NULL,
+            hold_time_hours REAL,
+            -- Greeks at entry (for analysis)
+            entry_delta REAL,
+            entry_gamma REAL,
+            entry_theta REAL,
+            entry_iv REAL,
+            -- Timestamps
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # Backtest runs - Track each backtest execution
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_runs (
+            id SERIAL PRIMARY KEY,
+            run_id TEXT UNIQUE NOT NULL,  -- UUID
+            strategy_name TEXT NOT NULL,
+            symbol TEXT DEFAULT 'SPY',
+            -- Time range
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            -- Configuration used
+            config JSONB,
+            -- Summary (duplicated from results for quick access)
+            total_trades INTEGER,
+            win_rate REAL,
+            total_pnl REAL,
+            -- Run metadata
+            started_at TIMESTAMPTZ DEFAULT NOW(),
+            completed_at TIMESTAMPTZ,
+            duration_seconds REAL,
+            status TEXT DEFAULT 'running'  -- 'running', 'completed', 'failed'
+        )
+    ''')
+
+    # Indexes for backtest trades (for quick verification lookups)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_id ON backtest_trades(backtest_run_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_strategy ON backtest_trades(strategy_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_entry_date ON backtest_trades(entry_date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_win ON backtest_trades(win)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_runs_run_id ON backtest_runs(run_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_runs_strategy ON backtest_runs(strategy_name)")
+
+    # Backtest results for all strategies (summary only)
     c.execute('''
         CREATE TABLE IF NOT EXISTS backtest_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
