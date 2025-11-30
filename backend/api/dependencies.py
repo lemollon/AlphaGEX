@@ -35,34 +35,89 @@ parent_dir = backend_dir.parent
 sys.path.insert(0, str(parent_dir))
 sys.path.insert(0, str(backend_dir))
 
-# Import existing AlphaGEX logic
-from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
-from core.intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
-from db.config_and_database import STRATEGIES, MM_STATES
-from database_adapter import get_connection
-from core.probability_calculator import ProbabilityCalculator
+# ============================================================================
+# Import existing AlphaGEX logic with fallback handling
+# These imports are wrapped in try/except to prevent module load failures
+# ============================================================================
+
+# TradingVolatilityAPI - Core GEX data provider
+TradingVolatilityAPI = None
+MonteCarloEngine = None
+BlackScholesPricer = None
+try:
+    from core_classes_and_engines import TradingVolatilityAPI, MonteCarloEngine, BlackScholesPricer
+except ImportError as e:
+    print(f"⚠️ Dependencies: core_classes_and_engines import failed: {e}")
+
+# Intelligence and strategies
+ClaudeIntelligence = None
+MultiStrategyOptimizer = None
+get_et_time = None
+get_local_time = None
+is_market_open = None
+try:
+    from core.intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
+except ImportError as e:
+    print(f"⚠️ Dependencies: intelligence_and_strategies import failed: {e}")
+    # Provide fallback functions
+    from zoneinfo import ZoneInfo
+    def get_et_time():
+        return datetime.now(ZoneInfo("America/New_York"))
+    def get_local_time(tz='US/Central'):
+        return datetime.now(ZoneInfo(tz))
+    def is_market_open():
+        et = datetime.now(ZoneInfo("America/New_York"))
+        if et.weekday() >= 5:
+            return False
+        market_open = et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = et.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= et <= market_close
+
+# Database configuration
+STRATEGIES = {}
+MM_STATES = {}
+try:
+    from db.config_and_database import STRATEGIES, MM_STATES
+except ImportError as e:
+    print(f"⚠️ Dependencies: config_and_database import failed: {e}")
+
+# Database adapter
+get_connection = None
+try:
+    from database_adapter import get_connection
+except ImportError as e:
+    print(f"⚠️ Dependencies: database_adapter import failed: {e}")
+
+# Probability calculator
+ProbabilityCalculator = None
+try:
+    from core.probability_calculator import ProbabilityCalculator
+except ImportError as e:
+    print(f"⚠️ Dependencies: probability_calculator import failed: {e}")
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
+UNIFIED_DATA_AVAILABLE = False
+get_data_provider = None
+get_quote = None
+get_price = None
+get_vix = None
 try:
     from data.unified_data_provider import get_data_provider, get_quote, get_price, get_vix
     UNIFIED_DATA_AVAILABLE = True
-except ImportError:
-    UNIFIED_DATA_AVAILABLE = False
-    get_data_provider = None
-    get_quote = None
-    get_price = None
-    get_vix = None
+except ImportError as e:
+    print(f"⚠️ Dependencies: unified_data_provider import failed: {e}")
 
 # ============================================================================
 # Singleton Instances (shared across all routes)
+# Created safely with None checks
 # ============================================================================
 
-api_client = TradingVolatilityAPI()
-claude_ai = ClaudeIntelligence()
-monte_carlo = MonteCarloEngine()
-pricer = BlackScholesPricer()
-strategy_optimizer = MultiStrategyOptimizer()
-probability_calc = ProbabilityCalculator()
+api_client = TradingVolatilityAPI() if TradingVolatilityAPI else None
+claude_ai = ClaudeIntelligence() if ClaudeIntelligence else None
+monte_carlo = MonteCarloEngine() if MonteCarloEngine else None
+pricer = BlackScholesPricer() if BlackScholesPricer else None
+strategy_optimizer = MultiStrategyOptimizer() if MultiStrategyOptimizer else None
+probability_calc = ProbabilityCalculator() if ProbabilityCalculator else None
 
 # ============================================================================
 # RSI Cache (thread-safe)

@@ -8,15 +8,45 @@ from datetime import datetime, timedelta
 import requests
 from fastapi import APIRouter, HTTPException
 
-from backend.api.dependencies import (
-    api_client,
-    get_et_time,
-    get_local_time,
-    is_market_open,
-    UNIFIED_DATA_AVAILABLE,
-)
-from core_classes_and_engines import TradingVolatilityAPI
-from database_adapter import get_connection
+# Import dependencies with fallback handling
+try:
+    from backend.api.dependencies import (
+        api_client,
+        get_et_time,
+        get_local_time,
+        is_market_open,
+        UNIFIED_DATA_AVAILABLE,
+    )
+except ImportError as e:
+    print(f"⚠️ core_routes: dependencies import failed: {e}")
+    api_client = None
+    UNIFIED_DATA_AVAILABLE = False
+    from zoneinfo import ZoneInfo
+    def get_et_time():
+        return datetime.now(ZoneInfo("America/New_York"))
+    def get_local_time(tz='US/Central'):
+        return datetime.now(ZoneInfo(tz))
+    def is_market_open():
+        et = datetime.now(ZoneInfo("America/New_York"))
+        if et.weekday() >= 5:
+            return False
+        market_open = et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = et.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= et <= market_close
+
+# TradingVolatilityAPI - with fallback
+TradingVolatilityAPI = None
+try:
+    from core_classes_and_engines import TradingVolatilityAPI
+except ImportError as e:
+    print(f"⚠️ core_routes: TradingVolatilityAPI import failed: {e}")
+
+# Database connection - with fallback
+get_connection = None
+try:
+    from database_adapter import get_connection
+except ImportError as e:
+    print(f"⚠️ core_routes: database_adapter import failed: {e}")
 
 router = APIRouter(tags=["Core"])
 
@@ -58,22 +88,42 @@ async def health_check():
 @router.get("/api/rate-limit-status")
 async def get_rate_limit_status():
     """Get current Trading Volatility API rate limit status and health"""
+    if not TradingVolatilityAPI:
+        return {
+            "calls_this_minute": 0,
+            "limit_per_minute": 20,
+            "remaining": 20,
+            "circuit_breaker_active": False,
+            "cache_size": 0,
+            "cache_duration_minutes": 0,
+            "total_calls_lifetime": 0,
+            "status": "unavailable",
+            "recommendation": "TradingVolatilityAPI not loaded"
+        }
+
     return {
-        "calls_this_minute": TradingVolatilityAPI._shared_api_call_count_minute,
+        "calls_this_minute": getattr(TradingVolatilityAPI, '_shared_api_call_count_minute', 0),
         "limit_per_minute": 20,
-        "remaining": max(0, 20 - TradingVolatilityAPI._shared_api_call_count_minute),
-        "circuit_breaker_active": TradingVolatilityAPI._shared_circuit_breaker_active,
-        "cache_size": len(TradingVolatilityAPI._shared_response_cache),
-        "cache_duration_minutes": TradingVolatilityAPI._shared_cache_duration / 60,
-        "total_calls_lifetime": TradingVolatilityAPI._shared_api_call_count,
-        "status": "healthy" if not TradingVolatilityAPI._shared_circuit_breaker_active else "rate_limited",
-        "recommendation": "Rate limit OK" if TradingVolatilityAPI._shared_api_call_count_minute < 15 else "Approaching limit - requests may queue"
+        "remaining": max(0, 20 - getattr(TradingVolatilityAPI, '_shared_api_call_count_minute', 0)),
+        "circuit_breaker_active": getattr(TradingVolatilityAPI, '_shared_circuit_breaker_active', False),
+        "cache_size": len(getattr(TradingVolatilityAPI, '_shared_response_cache', {})),
+        "cache_duration_minutes": getattr(TradingVolatilityAPI, '_shared_cache_duration', 0) / 60,
+        "total_calls_lifetime": getattr(TradingVolatilityAPI, '_shared_api_call_count', 0),
+        "status": "healthy" if not getattr(TradingVolatilityAPI, '_shared_circuit_breaker_active', False) else "rate_limited",
+        "recommendation": "Rate limit OK" if getattr(TradingVolatilityAPI, '_shared_api_call_count_minute', 0) < 15 else "Approaching limit - requests may queue"
     }
 
 
 @router.post("/api/rate-limit-reset")
 async def reset_rate_limit():
     """Manually reset the circuit breaker and rate limit counters"""
+    if not TradingVolatilityAPI:
+        return {
+            "success": False,
+            "message": "TradingVolatilityAPI not available",
+            "new_status": {}
+        }
+
     TradingVolatilityAPI._shared_circuit_breaker_active = False
     TradingVolatilityAPI._shared_circuit_breaker_until = 0
     TradingVolatilityAPI._shared_consecutive_rate_limit_errors = 0
@@ -211,6 +261,14 @@ async def diagnostic_rsi():
 @router.get("/api/database/stats")
 async def get_database_stats():
     """Get database statistics"""
+    if not get_connection:
+        return {
+            "success": False,
+            "error": "Database adapter not available",
+            "data": {},
+            "timestamp": datetime.now().isoformat()
+        }
+
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -250,24 +308,30 @@ async def test_connections():
     }
 
     # Test Trading Volatility API
-    try:
-        gex = api_client.get_net_gamma("SPY")
-        results["connections"]["trading_volatility"] = {
-            "status": "ok" if gex and not gex.get('error') else "error",
-            "error": gex.get('error') if gex else "No response"
-        }
-    except Exception as e:
-        results["connections"]["trading_volatility"] = {"status": "error", "error": str(e)}
+    if not api_client:
+        results["connections"]["trading_volatility"] = {"status": "not_configured", "error": "API client not loaded"}
+    else:
+        try:
+            gex = api_client.get_net_gamma("SPY")
+            results["connections"]["trading_volatility"] = {
+                "status": "ok" if gex and not gex.get('error') else "error",
+                "error": gex.get('error') if gex else "No response"
+            }
+        except Exception as e:
+            results["connections"]["trading_volatility"] = {"status": "error", "error": str(e)}
 
     # Test Database
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        conn.close()
-        results["connections"]["database"] = {"status": "ok"}
-    except Exception as e:
-        results["connections"]["database"] = {"status": "error", "error": str(e)}
+    if not get_connection:
+        results["connections"]["database"] = {"status": "not_configured", "error": "Database adapter not loaded"}
+    else:
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            conn.close()
+            results["connections"]["database"] = {"status": "ok"}
+        except Exception as e:
+            results["connections"]["database"] = {"status": "error", "error": str(e)}
 
     # Test Polygon
     polygon_key = os.getenv('POLYGON_API_KEY')
