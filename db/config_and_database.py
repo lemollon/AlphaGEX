@@ -1808,7 +1808,11 @@ def init_database():
 
     # Autonomous open positions indexes
     c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_symbol ON autonomous_open_positions(symbol)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_status ON autonomous_open_positions(status)")
+    # Status column may not exist in older schema - wrap in try/except
+    try:
+        c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_open_positions_status ON autonomous_open_positions(status)")
+    except Exception:
+        pass  # Column doesn't exist in older schema
 
     # Autonomous equity snapshots indexes
     c.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_equity_snapshots_timestamp ON autonomous_equity_snapshots(timestamp)")
