@@ -1588,11 +1588,13 @@ class TradingVolatilityAPI:
             cache_suffix = f'_exp_{expiration}' if expiration else ''
             cache_key = self._get_cache_key(f'gex/gammaOI{cache_suffix}', symbol)
             cached_data = self._get_cached_response(cache_key)
+            used_cache = False
             if cached_data:
                 cache_duration = self._get_cache_duration()
                 exp_label = f" (exp={expiration})" if expiration else ""
                 print(f"✅ Using cached gammaOI data for {symbol}{exp_label} (cache TTL: {cache_duration/60:.0f} min)")
                 json_response = cached_data
+                used_cache = True
             else:
                 # Use intelligent rate limiter if available
                 if RATE_LIMITER_AVAILABLE:
@@ -1694,20 +1696,50 @@ class TradingVolatilityAPI:
             call_wall = 0
             put_wall = 0
 
+            debug_first_strike = True
             for strike_obj in gamma_array:
                 # Skip empty objects
                 if not strike_obj or 'strike' not in strike_obj:
                     continue
 
                 strike = float(strike_obj['strike'])
-                call_gamma = abs(float(strike_obj.get('call_gamma', 0)))
-                put_gamma = abs(float(strike_obj.get('put_gamma', 0)))
 
-                # Calculate total/net gamma (call gamma is positive, put gamma is negative in API)
-                # But we stored abs values above, so need to get raw values for net calculation
-                call_gamma_raw = float(strike_obj.get('call_gamma', 0))
-                put_gamma_raw = float(strike_obj.get('put_gamma', 0))
+                # Get raw values from API - these may be strings like "9446.0"
+                call_gamma_raw_value = strike_obj.get('call_gamma', 0)
+                put_gamma_raw_value = strike_obj.get('put_gamma', 0)
+
+                # Convert to float - handle both string and numeric values
+                try:
+                    call_gamma_raw = float(call_gamma_raw_value) if call_gamma_raw_value else 0.0
+                except (ValueError, TypeError):
+                    call_gamma_raw = 0.0
+
+                try:
+                    put_gamma_raw = float(put_gamma_raw_value) if put_gamma_raw_value else 0.0
+                except (ValueError, TypeError):
+                    put_gamma_raw = 0.0
+
+                # Use absolute values for display (both bars positive in chart)
+                call_gamma = abs(call_gamma_raw)
+                put_gamma = abs(put_gamma_raw)
+
+                # Calculate total/net gamma (preserves sign - negative for puts)
                 total_gamma = call_gamma_raw + put_gamma_raw
+
+                # Debug first strike to see what's happening
+                if debug_first_strike:
+                    print(f"\n{'='*60}")
+                    print(f"DEBUG: GAMMA PROCESSING - First Strike")
+                    print(f"{'='*60}")
+                    print(f"Raw call_gamma value: {call_gamma_raw_value!r} (type: {type(call_gamma_raw_value).__name__})")
+                    print(f"Raw put_gamma value: {put_gamma_raw_value!r} (type: {type(put_gamma_raw_value).__name__})")
+                    print(f"Parsed call_gamma_raw: {call_gamma_raw}")
+                    print(f"Parsed put_gamma_raw: {put_gamma_raw}")
+                    print(f"Absolute call_gamma: {call_gamma}")
+                    print(f"Absolute put_gamma: {put_gamma}")
+                    print(f"Calculated total_gamma: {total_gamma}")
+                    print(f"{'='*60}\n")
+                    debug_first_strike = False
 
                 # Extract open interest data
                 call_oi = float(strike_obj.get('call_open_interest', 0))
@@ -1817,13 +1849,29 @@ class TradingVolatilityAPI:
                         )
                         break
 
+            # Get first strike from raw API response for debugging
+            first_raw_strike = gamma_array[0] if gamma_array else {}
+
             profile = {
                 'strikes': strikes_data_filtered,  # Use filtered strikes
                 'spot_price': spot_price,
                 'flip_point': flip_point if flip_point else spot_price,
                 'call_wall': call_wall_filtered,  # Use filtered wall
                 'put_wall': put_wall_filtered,    # Use filtered wall
-                'symbol': symbol
+                'symbol': symbol,
+                '_debug': {
+                    'used_cache': used_cache,
+                    'total_strikes_before_filter': len(strikes_data),
+                    'total_strikes_after_filter': len(strikes_data_filtered),
+                    'raw_api_first_strike': {
+                        'strike': first_raw_strike.get('strike'),
+                        'call_gamma': first_raw_strike.get('call_gamma'),
+                        'put_gamma': first_raw_strike.get('put_gamma'),
+                        'call_gamma_type': type(first_raw_strike.get('call_gamma')).__name__,
+                        'put_gamma_type': type(first_raw_strike.get('put_gamma')).__name__
+                    },
+                    'processed_first_strike': strikes_data[0] if strikes_data else {}
+                }
             }
 
             # If gammaOI includes aggregate data, add it to profile to avoid separate /gex/latest call
