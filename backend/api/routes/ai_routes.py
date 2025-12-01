@@ -244,7 +244,7 @@ async def get_conversation_history(limit: int = 50):
                 timestamp,
                 user_message,
                 ai_response,
-                context,
+                context_data,
                 session_id
             FROM conversations
             ORDER BY timestamp DESC
@@ -258,7 +258,7 @@ async def get_conversation_history(limit: int = 50):
                 'timestamp': row[1],
                 'user_message': row[2],
                 'ai_response': row[3],
-                'context': row[4],
+                'context_data': row[4],
                 'session_id': row[5]
             })
 
@@ -286,7 +286,7 @@ async def get_conversation_detail(conversation_id: int):
                 timestamp,
                 user_message,
                 ai_response,
-                context,
+                context_data,
                 session_id
             FROM conversations
             WHERE id = %s
@@ -303,7 +303,7 @@ async def get_conversation_detail(conversation_id: int):
                     'timestamp': row[1],
                     'user_message': row[2],
                     'ai_response': row[3],
-                    'context': row[4],
+                    'context_data': row[4],
                     'session_id': row[5]
                 }
             }

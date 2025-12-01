@@ -67,10 +67,10 @@ async def scan_market(request: dict):
             c = conn.cursor()
             import json
             c.execute("""
-                INSERT INTO scanner_history (symbols, results)
-                VALUES (%s, %s)
+                INSERT INTO scanner_history (symbols_scanned, results, scan_type)
+                VALUES (%s, %s, %s)
                 RETURNING id
-            """, (json.dumps(symbols), json.dumps(results)))
+            """, (json.dumps(symbols), json.dumps(results), 'multi_symbol'))
             scan_id = c.fetchone()[0]
             conn.commit()
             conn.close()
@@ -116,12 +116,21 @@ async def get_scan_results(scan_id: int):
         conn = get_connection()
         c = conn.cursor()
 
-        c.execute("SELECT * FROM scanner_history WHERE id = %s", (scan_id,))
+        c.execute("""
+            SELECT id, timestamp, symbols_scanned, results, scan_type
+            FROM scanner_history WHERE id = %s
+        """, (scan_id,))
         row = c.fetchone()
         conn.close()
 
         if row:
-            return {"success": True, "scan": dict(zip(['id', 'symbols', 'results', 'timestamp'], row))}
+            return {"success": True, "scan": {
+                'id': row[0],
+                'timestamp': row[1],
+                'symbols_scanned': row[2],
+                'results': row[3],
+                'scan_type': row[4]
+            }}
         else:
             return {"success": False, "error": "Scan not found"}
 
