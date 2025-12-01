@@ -604,8 +604,16 @@ async def get_0dte_gamma_comparison(symbol: str):
                 "net_gex": total_net_gex,
                 "gamma_array": gamma_array,
                 "strikes_count": len(gamma_array),
-                "expiration": "All expirations (gammaOI)",  # Note: not filtered to 0DTE
-                "_debug": debug_info
+                "expiration": "All expirations (gammaOI)",
+                "_debug": {
+                    **debug_info,
+                    "calculated_call_wall": call_wall,
+                    "calculated_put_wall": put_wall,
+                    "max_call_gamma": max_call_gamma,
+                    "max_put_gamma": max_put_gamma,
+                    "sample_gamma_values": gamma_array[:3] if gamma_array else [],
+                    "total_net_gex_calculated": total_net_gex
+                }
             }
         else:
             result["errors"].append("TradingVolatility API: No gamma profile data available")
