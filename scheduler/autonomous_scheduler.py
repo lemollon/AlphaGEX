@@ -163,9 +163,9 @@ def check_and_refresh_backtests():
         return False
 
 
-def run_autonomous_trader_cycle():
+def run_autonomous_trader_cycle(symbol: str = 'SPY'):
     """
-    Run one full cycle of the autonomous trader
+    Run one full cycle of the autonomous trader for a specific symbol
 
     What it does:
     - Checks for new trade opportunities during market hours (8:30 AM - 3:00 PM CT)
@@ -173,21 +173,27 @@ def run_autonomous_trader_cycle():
     - Manages existing positions continuously
     - Updates live status for UI monitoring
 
+    Args:
+        symbol: Trading symbol - 'SPY' or 'SPX'
+
     GUARANTEE: Multi-level fallback ensures at least one trade executes daily:
     1. Directional GEX trade (preferred)
     2. Iron Condor fallback (if no directional setup)
     3. ATM Straddle final fallback (if Iron Condor fails)
     """
 
+    # Set capital based on symbol
+    capital = 100_000_000 if symbol == 'SPX' else 1_000_000
+
     ct_now = get_central_time()
     print(f"\n{'='*60}")
-    print(f"AUTONOMOUS TRADER CYCLE - {ct_now.strftime('%Y-%m-%d %I:%M:%S %p CT')}")
+    print(f"AUTONOMOUS {symbol} TRADER CYCLE - {ct_now.strftime('%Y-%m-%d %I:%M:%S %p CT')}")
     print(f"{'='*60}\n")
 
     # Initialize with comprehensive error handling
     try:
-        trader = AutonomousPaperTrader()
-        print(f"✅ Trader initialized successfully")
+        trader = AutonomousPaperTrader(symbol=symbol, capital=capital)
+        print(f"✅ {symbol} Trader initialized successfully (${capital:,.0f})")
         print(f"   Database: PostgreSQL via DATABASE_URL")
 
         # CRITICAL: Update heartbeat immediately so UI knows worker is alive
@@ -221,8 +227,8 @@ def run_autonomous_trader_cycle():
         # Log the check cycle start
         trader.log_action(
             'CHECK_START',
-            f'Starting trade search cycle at {ct_now.strftime("%I:%M:%S %p CT")}. '
-            f'Market is open. Analyzing SPY GEX structure and looking for high-probability setups.',
+            f'Starting {symbol} trade search cycle at {ct_now.strftime("%I:%M:%S %p CT")}. '
+            f'Market is open. Analyzing {symbol} GEX structure and looking for high-probability setups.',
             success=True
         )
 
@@ -311,7 +317,7 @@ def run_autonomous_trader_cycle():
     print(f"{'='*60}\n")
 
 
-def run_continuous_scheduler(check_interval_minutes: int = 5):
+def run_continuous_scheduler(check_interval_minutes: int = 5, symbols: list = None):
     """
     Run the autonomous trader continuously during market hours
     Automatically waits until market opens, then checks at specified interval
@@ -319,20 +325,24 @@ def run_continuous_scheduler(check_interval_minutes: int = 5):
 
     Args:
         check_interval_minutes: How often to check for trades (default: 5 minutes)
+        symbols: List of symbols to trade (default: ['SPY', 'SPX'])
 
     This is the MAIN mode for production deployment.
     """
+    if symbols is None:
+        symbols = ['SPY', 'SPX']
 
     check_interval_seconds = check_interval_minutes * 60
 
     print("=" * 70)
     print("🤖 AUTONOMOUS TRADER - CONTINUOUS MODE")
     print("=" * 70)
+    print(f"📈 Trading symbols: {', '.join(symbols)}")
     print(f"⏰ Runs AUTOMATICALLY during market hours: 8:30 AM - 3:00 PM CT")
     print(f"📅 Active days: Monday - Friday")
     print(f"🔄 Check interval: Every {check_interval_minutes} minutes")
     print(f"📊 Backtest refresh: Every {BACKTEST_REFRESH_INTERVAL_DAYS} days")
-    print(f"✅ GUARANTEE: MINIMUM ONE trade per day (multi-level fallback)")
+    print(f"✅ GUARANTEE: MINIMUM ONE trade per day per symbol (multi-level fallback)")
     print(f"🛡️ Auto-restarts on errors")
     print("=" * 70)
     print()
@@ -356,8 +366,14 @@ def run_continuous_scheduler(check_interval_minutes: int = 5):
                 cycle_count += 1
                 print(f"\n🟢 MARKET OPEN - Running cycle #{cycle_count}")
 
-                # Run trading cycle
-                run_autonomous_trader_cycle()
+                # Run trading cycle for each symbol
+                for symbol in symbols:
+                    try:
+                        print(f"\n--- Processing {symbol} ---")
+                        run_autonomous_trader_cycle(symbol=symbol)
+                    except Exception as e:
+                        print(f"❌ Error in {symbol} cycle: {e}")
+                        traceback.print_exc()
 
                 # Wait specified interval before next check
                 print(f"⏳ Waiting {check_interval_minutes} minutes until next cycle...")

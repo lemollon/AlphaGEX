@@ -6,11 +6,19 @@ Handles backtest results, strategy analysis, and smart recommendations.
 
 import logging
 from datetime import datetime
+from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 import psycopg2.extras
 
 from database_adapter import get_connection
+
+
+class BacktestRunConfig(BaseModel):
+    """Configuration for running backtests"""
+    lookback_days: int = 90
+    strategies: Optional[List[str]] = None
 
 # Import centralized utilities
 from backend.api.utils import safe_round, clean_dict_for_json
@@ -166,7 +174,7 @@ async def get_best_strategies(min_expectancy: float = 0.5, limit: int = 10):
 
 
 @router.post("/run")
-async def run_backtests(lookback_days: int = 90):
+async def run_backtests(config: BacktestRunConfig = BacktestRunConfig()):
     """
     Run backtests for all pattern strategies.
 
@@ -175,10 +183,15 @@ async def run_backtests(lookback_days: int = 90):
     2. Calculates win rates, expectancy, etc.
     3. Saves results to backtest_results table
     4. Updates strategy_stats.json for Kelly sizing
+
+    Accepts JSON body with:
+    - lookback_days: int (default 90)
+    - strategies: list of strategy names (optional, runs all if not specified)
     """
     try:
         from backtest.autonomous_backtest_engine import get_backtester
 
+        lookback_days = config.lookback_days
         backtester = get_backtester()
         results = backtester.backtest_all_patterns_and_save(
             lookback_days=lookback_days,

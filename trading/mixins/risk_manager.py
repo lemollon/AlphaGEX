@@ -79,15 +79,12 @@ class RiskManagerMixin:
             conn = get_connection()
             c = conn.cursor()
 
-            # Query open positions for this symbol
-            table = 'spx_institutional_positions' if self.symbol == 'SPX' else 'autonomous_open_positions'
-
-            # Get basic position info - Greeks may not be stored in all tables
-            c.execute(f"""
-                SELECT option_type, contracts, strike
-                FROM {table}
-                WHERE status = 'OPEN'
-            """)
+            # Query open positions for this symbol from unified table
+            c.execute("""
+                SELECT action as option_type, contracts, strike
+                FROM autonomous_open_positions
+                WHERE symbol = %s
+            """, (self.symbol,))
 
             positions = c.fetchall()
             conn.close()
@@ -177,11 +174,8 @@ class RiskManagerMixin:
             conn = get_connection()
             c = conn.cursor()
 
-            # Determine table based on symbol
-            table = 'spx_institutional_positions' if self.symbol == 'SPX' else 'autonomous_closed_trades'
-
-            # Get closed trades stats
-            c.execute(f"""
+            # Get closed trades stats from unified table filtered by symbol
+            c.execute("""
                 SELECT
                     COUNT(*) as total_trades,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
@@ -190,9 +184,9 @@ class RiskManagerMixin:
                     AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END) as avg_loss,
                     MAX(realized_pnl) as largest_win,
                     MIN(realized_pnl) as largest_loss
-                FROM {table}
-                WHERE status = 'CLOSED'
-            """)
+                FROM autonomous_closed_trades
+                WHERE symbol = %s
+            """, (self.symbol,))
 
             row = c.fetchone()
 
@@ -263,13 +257,12 @@ class RiskManagerMixin:
             c = conn.cursor()
 
             today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
-            table = 'spx_institutional_positions' if self.symbol == 'SPX' else 'autonomous_closed_trades'
 
-            c.execute(f"""
+            c.execute("""
                 SELECT COALESCE(SUM(realized_pnl), 0)
-                FROM {table}
-                WHERE exit_date = %s AND status = 'CLOSED'
-            """, (today,))
+                FROM autonomous_closed_trades
+                WHERE exit_date = %s AND symbol = %s
+            """, (today, self.symbol))
 
             result = c.fetchone()
             conn.close()
@@ -286,14 +279,12 @@ class RiskManagerMixin:
             conn = get_connection()
             c = conn.cursor()
 
-            table = 'spx_institutional_positions' if self.symbol == 'SPX' else 'autonomous_closed_trades'
-
-            c.execute(f"""
+            c.execute("""
                 SELECT exit_date, realized_pnl
-                FROM {table}
-                WHERE status = 'CLOSED'
+                FROM autonomous_closed_trades
+                WHERE symbol = %s
                 ORDER BY exit_date ASC
-            """)
+            """, (self.symbol,))
 
             trades = c.fetchall()
             conn.close()
@@ -328,16 +319,14 @@ class RiskManagerMixin:
             conn = get_connection()
             c = conn.cursor()
 
-            table = 'spx_institutional_positions' if self.symbol == 'SPX' else 'autonomous_open_positions'
-
-            c.execute(f"""
+            c.execute("""
                 SELECT
-                    id, option_type, strike, expiration_date, contracts,
+                    id, action as option_type, strike, expiration_date, contracts,
                     entry_price, current_price, unrealized_pnl, strategy
-                FROM {table}
-                WHERE status = 'OPEN'
+                FROM autonomous_open_positions
+                WHERE symbol = %s
                 ORDER BY entry_date DESC
-            """)
+            """, (self.symbol,))
 
             positions = []
             total_unrealized = 0

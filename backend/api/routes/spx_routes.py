@@ -74,31 +74,55 @@ async def check_spx_risk_limits(contracts: int, entry_price: float, delta: float
 
 @router.get("/trades")
 async def get_spx_trades(limit: int = 20):
-    """Get SPX institutional positions/trades"""
+    """Get SPX positions/trades from unified tables"""
     try:
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
+        # Get open positions for SPX
+        c.execute('''
+            SELECT id, symbol, action as option_type, strike, expiration_date,
+                   contracts, entry_price, entry_date, entry_time,
+                   NULL::date as exit_date, NULL::time as exit_time, NULL::real as exit_price,
+                   unrealized_pnl, NULL::real as realized_pnl, 'OPEN' as status,
+                   strategy, entry_reasoning as trade_reasoning
+            FROM autonomous_open_positions
+            WHERE symbol = 'SPX'
+        ''')
+        open_trades = [dict(row) for row in c.fetchall()]
+
+        # Get closed trades for SPX
         c.execute(f'''
-            SELECT id, entry_date, entry_time, exit_date, exit_time, option_type,
-                   strike, expiration_date, contracts, entry_price, exit_price,
-                   realized_pnl, unrealized_pnl, status, strategy, trade_reasoning
-            FROM spx_institutional_positions
-            ORDER BY entry_date DESC, entry_time DESC
+            SELECT id, symbol, action as option_type, strike, expiration_date,
+                   contracts, entry_price, entry_date, entry_time,
+                   exit_date, exit_time, exit_price,
+                   NULL::real as unrealized_pnl, realized_pnl, 'CLOSED' as status,
+                   strategy, entry_reasoning as trade_reasoning
+            FROM autonomous_closed_trades
+            WHERE symbol = 'SPX'
+            ORDER BY exit_date DESC, exit_time DESC
             LIMIT {int(limit)}
         ''')
+        closed_trades = [dict(row) for row in c.fetchall()]
 
+        conn.close()
+
+        # Combine and sort
+        all_trades = open_trades + closed_trades
+        all_trades.sort(key=lambda x: (x.get('entry_date') or '', x.get('entry_time') or ''), reverse=True)
+        all_trades = all_trades[:limit]
+
+        # Clean NaN/Inf values
         trades = []
-        for row in c.fetchall():
+        for row in all_trades:
             trade = {}
-            for key, value in dict(row).items():
+            for key, value in row.items():
                 if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
                     trade[key] = 0
                 else:
                     trade[key] = value
             trades.append(trade)
 
-        conn.close()
         return {"success": True, "count": len(trades), "data": trades}
     except Exception as e:
         return {"success": True, "count": 0, "data": [], "message": f"No SPX trades available: {str(e)}"}
@@ -106,7 +130,7 @@ async def get_spx_trades(limit: int = 20):
 
 @router.get("/equity-curve")
 async def get_spx_equity_curve(days: int = 30):
-    """Get SPX institutional equity curve from position history"""
+    """Get SPX equity curve from unified closed trades table"""
     try:
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -114,10 +138,11 @@ async def get_spx_equity_curve(days: int = 30):
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
         starting_capital = 100_000_000
 
+        # Query unified closed trades table for SPX
         c.execute('''
             SELECT exit_date as date, SUM(realized_pnl) as daily_pnl
-            FROM spx_institutional_positions
-            WHERE status = 'CLOSED' AND exit_date >= %s
+            FROM autonomous_closed_trades
+            WHERE symbol = 'SPX' AND exit_date >= %s
             GROUP BY exit_date
             ORDER BY exit_date ASC
         ''', (start_date,))
@@ -161,32 +186,53 @@ async def get_spx_equity_curve(days: int = 30):
 
 @router.get("/trade-log")
 async def get_spx_trade_log():
-    """Get SPX trade activity log"""
+    """Get SPX trade activity log from unified tables"""
     try:
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
+        # Get open positions for SPX
         c.execute('''
             SELECT id, entry_date as date, entry_time as time,
-                   CASE WHEN status = 'OPEN' THEN 'OPEN ' || option_type ELSE 'CLOSE ' || option_type END as action,
-                   'SPX ' || strike || ' ' || option_type || ' ' || expiration_date as details,
-                   COALESCE(realized_pnl, unrealized_pnl, 0) as pnl
-            FROM spx_institutional_positions
-            ORDER BY entry_date DESC, entry_time DESC
+                   'OPEN ' || action as action,
+                   'SPX ' || strike || ' ' || action || ' ' || expiration_date as details,
+                   COALESCE(unrealized_pnl, 0) as pnl
+            FROM autonomous_open_positions
+            WHERE symbol = 'SPX'
+        ''')
+        open_logs = [dict(row) for row in c.fetchall()]
+
+        # Get closed trades for SPX
+        c.execute('''
+            SELECT id, exit_date as date, exit_time as time,
+                   'CLOSE ' || action as action,
+                   'SPX ' || strike || ' ' || action || ' ' || expiration_date as details,
+                   COALESCE(realized_pnl, 0) as pnl
+            FROM autonomous_closed_trades
+            WHERE symbol = 'SPX'
+            ORDER BY exit_date DESC, exit_time DESC
             LIMIT 50
         ''')
+        closed_logs = [dict(row) for row in c.fetchall()]
 
+        conn.close()
+
+        # Combine and sort by date/time
+        all_logs = open_logs + closed_logs
+        all_logs.sort(key=lambda x: (str(x.get('date') or ''), str(x.get('time') or '')), reverse=True)
+        all_logs = all_logs[:50]
+
+        # Clean NaN/Inf values
         trades = []
-        for row in c.fetchall():
+        for row in all_logs:
             trade = {}
-            for key, value in dict(row).items():
+            for key, value in row.items():
                 if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
                     trade[key] = 0
                 else:
                     trade[key] = value
             trades.append(trade)
 
-        conn.close()
         return {"success": True, "data": trades}
     except Exception as e:
         return {"success": True, "data": [], "message": str(e)}
