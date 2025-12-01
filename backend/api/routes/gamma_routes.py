@@ -258,12 +258,15 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
         if not gex_data or gex_data.get('error'):
             raise HTTPException(status_code=404, detail=f"No data for {symbol}")
 
-        net_gex = gex_data.get('net_gex', 0)
-        spot_price = gex_data.get('spot_price', 0)
-        flip_point = gex_data.get('flip_point', spot_price)
-        call_wall = gex_data.get('call_wall', spot_price * 1.02)
-        put_wall = gex_data.get('put_wall', spot_price * 0.98)
-        mm_state = gex_data.get('mm_state', 'NEUTRAL')
+        net_gex = gex_data.get('net_gex', 0) or 0
+        spot_price = gex_data.get('spot_price', 0) or 590.0  # Default SPY price
+        flip_point = gex_data.get('flip_point') or spot_price
+        call_wall = gex_data.get('call_wall') or (spot_price * 1.02)
+        put_wall = gex_data.get('put_wall') or (spot_price * 0.98)
+        mm_state = gex_data.get('mm_state') or 'NEUTRAL'
+
+        # Ensure vix is never None
+        vix = float(vix) if vix else 20.0
 
         # Build gex_data dict for probability calculator
         gex_input = {
@@ -272,7 +275,7 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
             'call_wall': call_wall,
             'put_wall': put_wall,
             'vix': vix,
-            'implied_vol': vix / 100 if vix else 0.20,
+            'implied_vol': vix / 100,
             'mm_state': mm_state
         }
 

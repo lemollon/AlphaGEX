@@ -168,6 +168,15 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
 @router.get("/{symbol}")
 async def get_gex_data(symbol: str):
     """Get comprehensive GEX data for a symbol with automatic fallback"""
+    # Skip reserved paths - redirect to proper endpoints
+    # These routes are defined later but /{symbol} matches first due to FastAPI order
+    if symbol.lower() == 'history':
+        # Forward to history endpoint logic
+        return await get_gex_history()
+    if symbol.lower() == 'regime-changes':
+        # Forward to regime-changes endpoint logic
+        return await get_regime_changes()
+
     symbol = symbol.upper().strip()
     if len(symbol) > 5 or not symbol.isalnum():
         raise HTTPException(status_code=400, detail="Invalid symbol")

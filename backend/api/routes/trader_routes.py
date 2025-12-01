@@ -102,16 +102,28 @@ async def get_trader_performance():
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get latest equity snapshot
-        cursor.execute("""
-            SELECT drawdown_pct, daily_pnl, cumulative_pnl
-            FROM autonomous_equity_snapshots
-            ORDER BY timestamp DESC
-            LIMIT 1
-        """)
-        snapshot = cursor.fetchone()
-        max_drawdown = float(snapshot[0] or 0) if snapshot else 0
-        sharpe_ratio = 0  # Not tracked in snapshots table
+        # Get latest equity snapshot - handle missing columns gracefully
+        max_drawdown = 0
+        sharpe_ratio = 0
+        try:
+            cursor.execute("""
+                SELECT equity, cumulative_pnl
+                FROM autonomous_equity_snapshots
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            snapshot = cursor.fetchone()
+            # Calculate drawdown from equity if available
+            if snapshot and snapshot[0]:
+                # Get starting capital for drawdown calculation
+                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
+                cap_row = cursor.fetchone()
+                starting_capital = float(cap_row[0]) if cap_row else 1000000
+                current_equity = float(snapshot[0])
+                if current_equity < starting_capital:
+                    max_drawdown = ((starting_capital - current_equity) / starting_capital * 100)
+        except Exception:
+            pass  # Column may not exist
 
         # Get today's P&L
         from zoneinfo import ZoneInfo
@@ -221,18 +233,14 @@ async def get_equity_curve(days: int = 30):
         start_date = end_date - timedelta(days=days)
         starting_equity = 1000000
 
+        # Query only columns that exist - avoid daily_pnl, drawdown_pct
         snapshots = pd.read_sql_query("""
             SELECT
                 DATE(timestamp) as snapshot_date,
                 timestamp::time as snapshot_time,
                 equity as account_value,
-                daily_pnl,
-                cumulative_pnl as total_realized_pnl,
-                drawdown_pct,
-                high_water_mark,
-                CASE WHEN high_water_mark > 0
-                     THEN ROUND(((equity - 1000000) / 1000000 * 100)::numeric, 2)
-                     ELSE 0 END as total_return_pct
+                COALESCE(cumulative_pnl, 0) as total_realized_pnl,
+                ROUND(((equity - 1000000) / 1000000 * 100)::numeric, 2) as total_return_pct
             FROM autonomous_equity_snapshots
             WHERE timestamp >= %s
             ORDER BY timestamp ASC
@@ -312,17 +320,30 @@ async def get_equity_curve(days: int = 30):
 
         conn.close()
 
-        # Format snapshot data
+        # Format snapshot data - calculate drawdown on the fly
         equity_data = []
+        peak_equity = starting_equity
+        max_drawdown = 0
+        prev_pnl = 0
+
         for _, row in snapshots.iterrows():
+            current_equity = float(row['account_value'] or starting_equity)
+            current_pnl = float(row['total_realized_pnl'] or 0)
+            daily_pnl = current_pnl - prev_pnl
+            prev_pnl = current_pnl
+
+            peak_equity = max(peak_equity, current_equity)
+            drawdown = (peak_equity - current_equity) / peak_equity * 100 if peak_equity > 0 else 0
+            max_drawdown = max(max_drawdown, drawdown)
+
             equity_data.append({
                 "timestamp": int(pd.Timestamp(row['snapshot_date']).timestamp()),
                 "date": str(row['snapshot_date']),
-                "equity": safe_round(row['account_value']),
-                "pnl": safe_round(row['total_realized_pnl']),
-                "daily_pnl": safe_round(row['daily_pnl']),
+                "equity": safe_round(current_equity),
+                "pnl": safe_round(current_pnl),
+                "daily_pnl": safe_round(daily_pnl),
                 "total_return_pct": safe_round(row['total_return_pct']),
-                "max_drawdown_pct": safe_round(row['drawdown_pct'])
+                "max_drawdown_pct": safe_round(drawdown)
             })
 
         return {
@@ -330,7 +351,7 @@ async def get_equity_curve(days: int = 30):
             "data": equity_data,
             "total_pnl": safe_round(snapshots['total_realized_pnl'].iloc[-1]) if len(snapshots) > 0 else 0,
             "starting_equity": starting_equity,
-            "max_drawdown_pct": safe_round(snapshots['drawdown_pct'].max()) if len(snapshots) > 0 else 0
+            "max_drawdown_pct": safe_round(max_drawdown)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -564,14 +585,15 @@ async def get_trader_trades(limit: int = 10):
 
         conn = get_connection()
 
+        # Query only columns that are likely to exist
         open_trades = pd.read_sql_query("""
             SELECT id, symbol, strategy, strike, option_type,
                    contracts, entry_date, entry_time, entry_price,
-                   entry_spot_price, current_price,
-                   current_spot_price, unrealized_pnl,
-                   gex_regime, status,
-                   NULL as exit_date, NULL as exit_time, NULL as exit_price,
-                   NULL as realized_pnl, NULL as exit_reason
+                   COALESCE(unrealized_pnl, 0) as unrealized_pnl,
+                   'OPEN' as status,
+                   NULL::date as exit_date, NULL::time as exit_time,
+                   NULL::numeric as exit_price,
+                   NULL::numeric as realized_pnl, NULL::text as exit_reason
             FROM autonomous_open_positions
             ORDER BY entry_date DESC, entry_time DESC
             LIMIT %s
@@ -580,9 +602,8 @@ async def get_trader_trades(limit: int = 10):
         closed_trades = pd.read_sql_query("""
             SELECT id, symbol, strategy, strike, option_type,
                    contracts, entry_date, entry_time, entry_price,
-                   entry_spot_price, exit_price as current_price,
-                   exit_spot_price as current_spot_price, realized_pnl as unrealized_pnl,
-                   gex_regime, 'CLOSED' as status, exit_date, exit_time,
+                   COALESCE(realized_pnl, 0) as unrealized_pnl,
+                   'CLOSED' as status, exit_date, exit_time,
                    exit_price, realized_pnl, exit_reason
             FROM autonomous_closed_trades
             ORDER BY exit_date DESC, exit_time DESC

@@ -143,8 +143,15 @@ async def get_database_stats():
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        log_error_with_context(logger, "Failed to get database stats", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return minimal stats on error
+        return {
+            "success": False,
+            "error": str(e),
+            "database_path": os.getenv('DATABASE_URL', 'PostgreSQL'),
+            "total_tables": 0,
+            "tables": [],
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @router.get("/api/test-connections")
