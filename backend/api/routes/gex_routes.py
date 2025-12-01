@@ -511,22 +511,35 @@ async def get_0dte_gamma_comparison(symbol: str):
     }
 
     # Source 1: TradingVolatility API (primary)
+    # Use expiration='1' to get ONLY the nearest expiration (0DTE/1DTE)
+    # This ensures apples-to-apples comparison with Tradier 0DTE calculation
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
-        tv_profile = api.get_gex_profile(symbol)
+        # Request only nearest expiration (0DTE) data for proper comparison
+        tv_profile = api.get_gex_profile(symbol, expiration='1')
 
         if tv_profile and 'strikes' in tv_profile and tv_profile['strikes']:
             # Format to match expected gamma_array structure
             gamma_array = []
+            total_net_gex = 0
             for strike_data in tv_profile['strikes']:
+                strike_net_gex = strike_data.get('total_gamma', 0)
+                total_net_gex += strike_net_gex
                 gamma_array.append({
                     'strike': strike_data.get('strike', 0),
                     'call_gamma': strike_data.get('call_gamma', 0),
                     'put_gamma': strike_data.get('put_gamma', 0),
                     'total_gamma': strike_data.get('total_gamma', 0),
-                    'net_gex': strike_data.get('total_gamma', 0)
+                    'net_gex': strike_net_gex
                 })
+
+            # Get aggregate data if available from profile
+            aggregate_data = tv_profile.get('aggregate_from_gammaOI', {})
+            # Use aggregate net_gex if available, otherwise use calculated sum
+            net_gex = aggregate_data.get('net_gex', total_net_gex)
+            put_call_ratio = aggregate_data.get('put_call_ratio', 0)
+            implied_vol = aggregate_data.get('implied_volatility', 0)
 
             result["trading_volatility"] = {
                 "data_source": "trading_volatility_api",
@@ -534,11 +547,15 @@ async def get_0dte_gamma_comparison(symbol: str):
                 "flip_point": tv_profile.get('flip_point', 0),
                 "call_wall": tv_profile.get('call_wall', 0),
                 "put_wall": tv_profile.get('put_wall', 0),
+                "net_gex": net_gex,
+                "put_call_ratio": put_call_ratio,
+                "implied_volatility": implied_vol,
                 "gamma_array": gamma_array,
-                "strikes_count": len(gamma_array)
+                "strikes_count": len(gamma_array),
+                "expiration": "0DTE (nearest)"  # Indicate we're filtering to 0DTE
             }
         else:
-            result["errors"].append("TradingVolatility API: No gamma profile data available")
+            result["errors"].append("TradingVolatility API: No gamma profile data available for 0DTE")
     except ImportError as e:
         result["errors"].append(f"TradingVolatility API: Import failed - {e}")
     except Exception as e:
