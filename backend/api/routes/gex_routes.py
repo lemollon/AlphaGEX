@@ -213,6 +213,30 @@ async def get_gex_data(symbol: str):
             else:
                 data_date = now.strftime('%Y-%m-%d')
 
+        # Get VIX for response
+        vix_value = 18.0  # Default
+        try:
+            from data.unified_data_provider import get_vix
+            vix_result = get_vix()
+            if vix_result:
+                if isinstance(vix_result, (int, float)):
+                    vix_value = float(vix_result)
+                elif isinstance(vix_result, dict):
+                    vix_value = float(vix_result.get('value', vix_result.get('current', 18.0)))
+        except Exception:
+            pass
+
+        # Calculate MM state
+        flip_point = data.get('flip_point', 0) or data.get('gamma_flip', 0) or 0
+        spot_price = data.get('spot_price', 0) or 0
+        if spot_price > 0 and flip_point > 0:
+            if spot_price > flip_point:
+                mm_state = 'LONG_GAMMA' if net_gex > 0 else 'DEFENDING'
+            else:
+                mm_state = 'SHORT_GAMMA' if net_gex < 0 else 'SQUEEZING'
+        else:
+            mm_state = data.get('mm_state', 'NEUTRAL')
+
         return {
             "success": True,
             "data": {
@@ -220,11 +244,14 @@ async def get_gex_data(symbol: str):
                 "net_gex": safe_round(net_gex),
                 "call_gex": safe_round(data.get('call_gex', 0)),
                 "put_gex": safe_round(data.get('put_gex', 0)),
-                "gamma_flip": safe_round(data.get('gamma_flip', 0) or data.get('flip_point', 0)),
+                "flip_point": safe_round(flip_point),
+                "gamma_flip": safe_round(flip_point),  # Alias for backwards compat
                 "call_wall": safe_round(data.get('call_wall', 0)),
                 "put_wall": safe_round(data.get('put_wall', 0)),
                 "max_pain": safe_round(data.get('max_pain', 0)),
-                "spot_price": safe_round(data.get('spot_price', 0)),
+                "spot_price": safe_round(spot_price),
+                "vix": safe_round(vix_value, 1),
+                "mm_state": mm_state,
                 "regime": regime,
                 "data_date": data_date,
                 "timestamp": datetime.now().isoformat()

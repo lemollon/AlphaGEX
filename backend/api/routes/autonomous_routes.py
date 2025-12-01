@@ -62,10 +62,10 @@ async def get_competition_leaderboard():
             })
 
         conn.close()
-        return {"success": True, "leaderboard": leaderboard}
+        return {"success": True, "data": leaderboard, "leaderboard": leaderboard}
 
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "data": []}
 
 
 @router.get("/backtests/all-patterns")
@@ -110,18 +110,24 @@ async def get_risk_status():
 
         conn.close()
 
+        risk_data = {
+            "total_exposure": round(exposure, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "capital": capital,
+            "exposure_pct": round(exposure / capital * 100, 2) if capital > 0 else 0,
+            "max_drawdown_pct": 0,  # Will be calculated from equity snapshots
+            "daily_loss_limit_pct": 2.0,
+            "daily_loss_remaining": capital * 0.02,
+            "risk_level": "LOW" if (exposure / capital * 100 if capital > 0 else 0) < 20 else "MEDIUM" if (exposure / capital * 100 if capital > 0 else 0) < 50 else "HIGH"
+        }
         return {
             "success": True,
-            "risk_status": {
-                "total_exposure": round(exposure, 2),
-                "unrealized_pnl": round(unrealized, 2),
-                "capital": capital,
-                "exposure_pct": round(exposure / capital * 100, 2) if capital > 0 else 0
-            }
+            "data": risk_data,
+            "risk_status": risk_data  # Backwards compat
         }
 
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "data": {}}
 
 
 @router.get("/risk/metrics")
@@ -153,14 +159,17 @@ async def get_risk_metrics():
         metrics = {
             'max_drawdown_pct': round(float(row[0] or 0), 2) if row else 0,
             'sharpe_ratio': 0,  # Not tracked in database
-            'win_rate': win_rate
+            'win_rate': win_rate,
+            'total_trades': total_trades,
+            'wins': wins,
+            'losses': total_trades - wins
         }
 
         conn.close()
-        return {"success": True, "metrics": metrics}
+        return {"success": True, "data": metrics, "metrics": metrics}
 
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "data": {}}
 
 
 @router.get("/ml/model-status")
@@ -187,10 +196,19 @@ async def get_ml_model_status():
             })
 
         conn.close()
-        return {"success": True, "models": models}
+
+        # Add overall status for frontend
+        model_status = {
+            "models": models,
+            "total_models": len(models),
+            "latest_model": models[0] if models else None,
+            "is_trained": len(models) > 0,
+            "needs_training": len(models) == 0
+        }
+        return {"success": True, "data": model_status, "models": models}
 
     except Exception as e:
-        return {"success": False, "error": str(e), "models": []}
+        return {"success": False, "error": str(e), "data": {"models": [], "is_trained": False}, "models": []}
 
 
 @router.get("/ml/predictions/recent")
