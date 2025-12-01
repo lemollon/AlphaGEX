@@ -547,36 +547,50 @@ async def get_0dte_gamma_comparison(symbol: str):
 
                 strike = float(strike_data.get('strike', 0))
 
-                # Try multiple field names for gamma value
-                # Known field names from Trading Volatility API:
-                # - gammaOI uses: net_gamma_$_at_strike, call_gamma, put_gamma
-                # - /gex/gamma may use: gamma, GEX, gex, net_gamma
-                net_gamma = (
-                    strike_data.get('net_gamma_$_at_strike') or
-                    strike_data.get('gamma') or
-                    strike_data.get('GEX') or
-                    strike_data.get('gex') or
-                    strike_data.get('net_gamma') or
-                    strike_data.get('net_gex') or
-                    strike_data.get('total_gamma') or
-                    0
-                )
-                net_gamma = float(net_gamma) if net_gamma else 0.0
+                # Try to extract gamma values - handle TWO possible API formats:
+                # Format 1: gammaOI style with separate call_gamma/put_gamma
+                # Format 2: /gex/gamma style with single gamma/GEX field
+
+                call_gamma_val = 0.0
+                put_gamma_val = 0.0
+
+                # First try: separate call_gamma and put_gamma fields (gammaOI format)
+                if 'call_gamma' in strike_data or 'put_gamma' in strike_data:
+                    call_gamma_val = float(strike_data.get('call_gamma', 0) or 0)
+                    put_gamma_val = float(strike_data.get('put_gamma', 0) or 0)
+                    net_gamma = call_gamma_val + put_gamma_val
+                else:
+                    # Second try: single net gamma field
+                    net_gamma = (
+                        strike_data.get('net_gamma_$_at_strike') or
+                        strike_data.get('gamma') or
+                        strike_data.get('GEX') or
+                        strike_data.get('gex') or
+                        strike_data.get('net_gamma') or
+                        strike_data.get('net_gex') or
+                        strike_data.get('total_gamma') or
+                        0
+                    )
+                    net_gamma = float(net_gamma) if net_gamma else 0.0
+                    # Attribute positive to calls, negative to puts
+                    call_gamma_val = max(0, net_gamma)
+                    put_gamma_val = min(0, net_gamma)
+
                 total_net_gex += net_gamma
 
-                # For call_wall: find strike with highest positive gamma (above spot)
-                # For put_wall: find strike with highest negative gamma (below spot)
-                if net_gamma > max_positive_gamma:
-                    max_positive_gamma = net_gamma
+                # For call_wall: find strike with highest call gamma
+                # For put_wall: find strike with highest (absolute) put gamma
+                if call_gamma_val > max_positive_gamma:
+                    max_positive_gamma = call_gamma_val
                     call_wall = strike
-                if net_gamma < max_negative_gamma:
-                    max_negative_gamma = net_gamma
+                if put_gamma_val < max_negative_gamma:
+                    max_negative_gamma = put_gamma_val
                     put_wall = strike
 
                 gamma_array.append({
                     'strike': strike,
-                    'call_gamma': max(0, net_gamma),  # Positive gamma attributed to calls
-                    'put_gamma': min(0, net_gamma),   # Negative gamma attributed to puts
+                    'call_gamma': call_gamma_val,
+                    'put_gamma': put_gamma_val,
                     'total_gamma': net_gamma,
                     'net_gex': net_gamma
                 })
@@ -594,6 +608,15 @@ async def get_0dte_gamma_comparison(symbol: str):
                     flip_point = s1 + (s2 - s1) * (-g1 / (g2 - g1))
                     break
 
+            # Include debug info about raw API response fields
+            debug_info = {}
+            if raw_gamma_array and len(raw_gamma_array) > 0:
+                first_strike = raw_gamma_array[0]
+                debug_info = {
+                    "raw_fields": list(first_strike.keys()),
+                    "sample_strike": {k: str(v)[:50] for k, v in first_strike.items()}  # Truncate long values
+                }
+
             result["trading_volatility"] = {
                 "data_source": "trading_volatility_api",
                 "spot_price": spot_price,
@@ -603,7 +626,8 @@ async def get_0dte_gamma_comparison(symbol: str):
                 "net_gex": total_net_gex,
                 "gamma_array": gamma_array,
                 "strikes_count": len(gamma_array),
-                "expiration": tv_data.get('expiry_date', '0DTE (nearest)')
+                "expiration": tv_data.get('expiry_date', '0DTE (nearest)'),
+                "_debug": debug_info  # Temporary debug field to see raw API structure
             }
         else:
             result["errors"].append("TradingVolatility API: No gamma data available for 0DTE (exp=1)")
