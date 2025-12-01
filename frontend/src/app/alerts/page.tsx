@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -71,7 +73,7 @@ export default function AlertsPage() {
         setActiveAlerts(response.data.data)
       }
     } catch (error) {
-      console.error('Error fetching alerts:', error)
+      logger.error('Error fetching alerts:', error)
     }
   }
 
@@ -82,7 +84,7 @@ export default function AlertsPage() {
         setAlertHistory(response.data.data)
       }
     } catch (error) {
-      console.error('Error fetching alert history:', error)
+      logger.error('Error fetching alert history:', error)
     }
   }
 
@@ -99,7 +101,7 @@ export default function AlertsPage() {
         alert(`${response.data.triggered} alert(s) triggered!`)
       }
     } catch (error) {
-      console.error('Error checking alerts:', error)
+      logger.error('Error checking alerts:', error)
     } finally {
       setChecking(false)
     }
@@ -125,7 +127,7 @@ export default function AlertsPage() {
         await fetchActiveAlerts()
       }
     } catch (error) {
-      console.error('Error creating alert:', error)
+      logger.error('Error creating alert:', error)
       alert('Failed to create alert')
     } finally {
       setLoading(false)
@@ -141,7 +143,7 @@ export default function AlertsPage() {
         await fetchActiveAlerts()
       }
     } catch (error) {
-      console.error('Error deleting alert:', error)
+      logger.error('Error deleting alert:', error)
       alert('Failed to delete alert')
     }
   }

@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle, Calendar, Clock } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -57,7 +59,7 @@ export default function BacktestingPage() {
         setError('Failed to load backtest results')
       }
     } catch (err) {
-      console.error('Failed to fetch backtest results:', err)
+      logger.error('Failed to fetch backtest results:', err)
       setError('Failed to connect to API')
     } finally {
       setLoading(false)
@@ -78,7 +80,7 @@ export default function BacktestingPage() {
         setRunError(data.error || data.message || 'Failed to run backtests')
       }
     } catch (err: any) {
-      console.error('Failed to run backtests:', err)
+      logger.error('Failed to run backtests:', err)
       setRunError(err.message || 'Failed to connect to API')
     } finally {
       setRunning(false)

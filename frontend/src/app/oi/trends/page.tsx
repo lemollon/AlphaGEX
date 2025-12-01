@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -57,7 +59,7 @@ export default function OITrendsPage() {
         setUnusualActivity(unusualRes.data.unusual_activity)
       }
     } catch (error) {
-      console.error('Error fetching OI data:', error)
+      logger.error('Error fetching OI data:', error)
     } finally {
       setLoading(false)
     }

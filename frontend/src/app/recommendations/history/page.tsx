@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -60,7 +62,7 @@ export default function RecommendationsHistory() {
         setPerformance(perfRes.data.performance_buckets)
       }
     } catch (error) {
-      console.error('Error fetching recommendations:', error)
+      logger.error('Error fetching recommendations:', error)
     } finally {
       setLoading(false)
     }

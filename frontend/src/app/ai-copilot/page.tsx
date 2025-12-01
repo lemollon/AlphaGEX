@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useRef, useEffect } from 'react'
 import { MessageSquare, Send, Sparkles, TrendingUp, BarChart3, Zap, Clock, User, Bot } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -84,7 +86,7 @@ export default function AICopilot() {
         throw new Error('Analysis service returned no data')
       }
     } catch (error) {
-      console.error('Error getting AI response:', error)
+      logger.error('Error getting AI response:', error)
 
       // Fallback response
       const aiMessage: Message = {

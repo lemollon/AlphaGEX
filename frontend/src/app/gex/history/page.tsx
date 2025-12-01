@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -55,7 +57,7 @@ export default function GEXHistory() {
         setRegimeChanges(regimeRes.data.regime_changes)
       }
     } catch (error) {
-      console.error('Error fetching GEX history:', error)
+      logger.error('Error fetching GEX history:', error)
     } finally {
       setLoading(false)
     }

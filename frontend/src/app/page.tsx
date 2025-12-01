@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { logger } from '@/lib/logger'
 import Navigation from '@/components/Navigation'
 import StatusCard from '@/components/StatusCard'
 import TradingViewChart from '@/components/TradingViewChart'
@@ -40,7 +41,14 @@ interface Position {
   entry_price: number
   current_price: number
   entry_date: string
+  entry_time?: string
+  entry_timestamp?: string
+  expiration?: string
+  expiration_date?: string
+  contract_symbol?: string
   unrealized_pnl: number
+  strategy?: string
+  confidence?: number
 }
 
 interface TradeLogEntry {
@@ -99,7 +107,7 @@ export default function Dashboard() {
 
       setLoading(false)
     } catch (error) {
-      console.error('Failed to fetch dashboard data:', error)
+      logger.error('Failed to fetch dashboard data:', error)
       setLoading(false)
     }
   }
@@ -498,7 +506,14 @@ export default function Dashboard() {
                             <ArrowDownRight className="w-5 h-5 text-danger" />
                           )}
                         </div>
-                        <div className="text-xs text-text-muted mt-1">{pos.entry_date}</div>
+                        {/* Expiration date - critical for tracking */}
+                        <div className="text-xs text-warning font-semibold mt-1">
+                          Exp: {pos.expiration || pos.expiration_date || 'N/A'}
+                        </div>
+                        {/* Entry timestamp for external tracking */}
+                        <div className="text-xs text-text-muted mt-0.5">
+                          Entry: {pos.entry_timestamp || `${pos.entry_date} ${pos.entry_time || ''}`}
+                        </div>
                       </div>
                       <div className="text-right">
                         <div className={`text-2xl font-bold ${pos.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'}`}>
@@ -523,6 +538,12 @@ export default function Dashboard() {
                         <div className="font-mono font-semibold text-text-primary">{pos.contracts}</div>
                       </div>
                     </div>
+                    {/* Contract symbol for external broker tracking */}
+                    {pos.contract_symbol && (
+                      <div className="mt-2 pt-2 border-t border-border/50">
+                        <div className="text-xs text-text-muted font-mono">{pos.contract_symbol}</div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}

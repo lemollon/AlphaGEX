@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -72,7 +74,7 @@ export default function PositionSizingPage() {
         setResult(response.data)
       }
     } catch (error) {
-      console.error('Error calculating position size:', error)
+      logger.error('Error calculating position size:', error)
       alert('Failed to calculate. Please check your inputs.')
     } finally {
       setLoading(false)

@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { MessageSquare, RefreshCw } from 'lucide-react'
 import { apiClient } from '@/lib/api'
@@ -26,7 +28,7 @@ export default function MarketCommentary() {
         }))
       }
     } catch (err: any) {
-      console.error('Failed to fetch market commentary:', err)
+      logger.error('Failed to fetch market commentary:', err)
 
       // Extract error message from backend or use generic message
       const errorMessage = err?.message || 'Unable to load commentary'

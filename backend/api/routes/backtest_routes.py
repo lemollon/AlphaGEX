@@ -4,7 +4,7 @@ Backtesting API routes.
 Handles backtest results, strategy analysis, and smart recommendations.
 """
 
-import math
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -12,20 +12,15 @@ import psycopg2.extras
 
 from database_adapter import get_connection
 
+# Import centralized utilities
+from backend.api.utils import safe_round, clean_dict_for_json
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/backtests", tags=["Backtesting"])
 
 
-def safe_round(value, decimals=2, default=0):
-    """Round a value, returning default if inf/nan"""
-    if value is None:
-        return default
-    try:
-        float_val = float(value)
-        if math.isnan(float_val) or math.isinf(float_val):
-            return default
-        return round(float_val, decimals)
-    except (ValueError, TypeError, OverflowError):
-        return default
+# Note: safe_round is imported from backend.api.utils
 
 
 @router.get("/results")

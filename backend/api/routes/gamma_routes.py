@@ -4,12 +4,17 @@ Gamma Intelligence API routes.
 Handles gamma analytics, probabilities, expiration analysis, and waterfall data.
 """
 
-import math
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException
 import psycopg2.extras
+
+# Import centralized utilities
+from backend.api.utils import safe_round, safe_float, clean_dict_for_json
+
+logger = logging.getLogger(__name__)
 
 
 def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
@@ -28,17 +33,17 @@ def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
             data['data_source'] = 'live_api'
             return data
     except Exception as e:
-        print(f"⚠️ TradingVolatilityAPI failed for {symbol}: {e}")
+        logger.debug(f"TradingVolatilityAPI failed for {symbol}: {type(e).__name__}")
 
     # FALLBACK 1: Calculate from Tradier
     try:
         from data.gex_calculator import get_calculated_gex
         data = get_calculated_gex(symbol)
         if data and 'error' not in data:
-            print(f"✅ GEX calculated from Tradier for {symbol}")
+            logger.debug(f"GEX calculated from Tradier for {symbol}")
             return data
     except Exception as e:
-        print(f"⚠️ Tradier GEX calculation failed for {symbol}: {e}")
+        logger.debug(f"Tradier GEX calculation failed for {symbol}: {type(e).__name__}")
 
     # FALLBACK 2: Try database
     try:
@@ -55,7 +60,7 @@ def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
         row = cursor.fetchone()
         conn.close()
         if row:
-            print(f"✅ Using database GEX for {symbol}")
+            logger.debug(f"Using database GEX for {symbol}")
             return {
                 'symbol': symbol,
                 'spot_price': float(row.get('spot_price') or 0),
@@ -69,7 +74,7 @@ def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
                 'data_source': 'database_fallback'
             }
     except Exception as e:
-        print(f"⚠️ Database fallback failed for {symbol}: {e}")
+        logger.debug(f"Database fallback failed for {symbol}: {type(e).__name__}")
 
     return {'error': 'All data sources failed'}
 
@@ -84,17 +89,17 @@ def get_gex_profile_with_fallback(symbol: str) -> Optional[Dict[str, Any]]:
         if profile and 'error' not in profile:
             return profile
     except Exception as e:
-        print(f"⚠️ TradingVolatilityAPI profile failed for {symbol}: {e}")
+        logger.debug(f"TradingVolatilityAPI profile failed for {symbol}: {type(e).__name__}")
 
     # FALLBACK: Calculate from Tradier
     try:
         from data.gex_calculator import get_calculated_gex_profile
         profile = get_calculated_gex_profile(symbol)
         if profile and 'error' not in profile:
-            print(f"✅ GEX profile calculated from Tradier for {symbol}")
+            logger.debug(f"GEX profile calculated from Tradier for {symbol}")
             return profile
     except Exception as e:
-        print(f"⚠️ Tradier GEX profile calculation failed for {symbol}: {e}")
+        logger.debug(f"Tradier GEX profile calculation failed for {symbol}: {type(e).__name__}")
 
     return None
 
@@ -117,17 +122,7 @@ def get_last_trading_day():
 router = APIRouter(prefix="/api/gamma", tags=["Gamma Intelligence"])
 
 
-def safe_round(value, decimals=2, default=0):
-    """Round a value, returning default if inf/nan"""
-    if value is None:
-        return default
-    try:
-        float_val = float(value)
-        if math.isnan(float_val) or math.isinf(float_val):
-            return default
-        return round(float_val, decimals)
-    except (ValueError, TypeError, OverflowError):
-        return default
+# Note: safe_round is imported from backend.api.utils
 
 
 @router.get("/{symbol}/intelligence")

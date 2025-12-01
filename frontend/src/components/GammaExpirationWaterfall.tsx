@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect, useMemo } from 'react'
 import { Calendar, TrendingDown, AlertTriangle, Info, RefreshCw, Target } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine } from 'recharts'
@@ -67,7 +69,7 @@ export default function GammaExpirationWaterfall({ symbol = 'SPY' }: { symbol?: 
         throw new Error('Failed to load gamma expiration data')
       }
     } catch (err: any) {
-      console.error('Error fetching waterfall data:', err)
+      logger.error('Error fetching waterfall data:', err)
       setError(err.message || 'Failed to load gamma expiration data')
     } finally {
       setLoading(false)

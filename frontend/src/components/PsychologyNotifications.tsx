@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import React, { useState, useEffect, useRef } from 'react'
 import { Bell, BellOff, AlertCircle, Zap, Target, TrendingDown, X, Settings, History } from 'lucide-react'
 import { apiClient } from '@/lib/api'
@@ -74,7 +76,7 @@ export default function PsychologyNotifications() {
         setStats(data.stats)
       }
     } catch (error) {
-      console.error('Failed to fetch notification stats:', error)
+      logger.error('Failed to fetch notification stats:', error)
     }
   }
 
@@ -86,7 +88,7 @@ export default function PsychologyNotifications() {
         setNotifications((data.notifications || []).reverse()) // Newest first
       }
     } catch (error) {
-      console.error('Failed to fetch notification history:', error)
+      logger.error('Failed to fetch notification history:', error)
     }
   }
 
@@ -100,7 +102,7 @@ export default function PsychologyNotifications() {
           const data = JSON.parse(event.data)
 
           if (data.type === 'connected') {
-            console.log('Connected to notification stream')
+            logger.info('Connected to notification stream')
             return
           }
 
@@ -112,18 +114,18 @@ export default function PsychologyNotifications() {
           // New notification received
           handleNewNotification(data)
         } catch (error) {
-          console.error('Error parsing notification:', error)
+          logger.error('Error parsing notification:', error)
         }
       }
 
       eventSource.onerror = (error) => {
-        console.error('SSE connection error:', error)
+        logger.error('SSE connection error:', error)
         // Auto-reconnect handled by EventSource
       }
 
       eventSourceRef.current = eventSource
     } catch (error) {
-      console.error('Failed to connect to notifications:', error)
+      logger.error('Failed to connect to notifications:', error)
     }
   }
 
@@ -172,7 +174,7 @@ export default function PsychologyNotifications() {
         browserNotif.close()
       }
     } catch (error) {
-      console.error('Failed to show browser notification:', error)
+      logger.error('Failed to show browser notification:', error)
     }
   }
 
@@ -193,7 +195,7 @@ export default function PsychologyNotifications() {
       oscillator.start()
       oscillator.stop(audioContext.currentTime + 0.2)
     } catch (error) {
-      console.error('Failed to play notification sound:', error)
+      logger.error('Failed to play notification sound:', error)
     }
   }
 

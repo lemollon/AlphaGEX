@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -92,7 +94,7 @@ export default function Navigation() {
           setMarketOpen(timeRes.data.market_open)
         }
       } catch (error) {
-        console.error('Error fetching market data:', error)
+        logger.error('Error fetching market data:', error)
         setApiConnected(false)
       }
     }

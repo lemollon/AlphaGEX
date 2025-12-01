@@ -5,7 +5,7 @@ Handles all GEX data, levels, history, and regime analysis.
 With fallback to database-stored data if live API fails.
 """
 
-import math
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
@@ -13,6 +13,11 @@ from fastapi import APIRouter, HTTPException
 import psycopg2.extras
 
 from database_adapter import get_connection
+
+# Import centralized utilities
+from backend.api.utils import safe_round, safe_float, clean_dict_for_json
+
+logger = logging.getLogger(__name__)
 
 # Import data collector for storage
 try:
@@ -24,17 +29,7 @@ except ImportError:
 router = APIRouter(prefix="/api/gex", tags=["GEX"])
 
 
-def safe_round(value, decimals=2, default=0):
-    """Round a value, returning default if inf/nan"""
-    if value is None:
-        return default
-    try:
-        float_val = float(value)
-        if math.isnan(float_val) or math.isinf(float_val):
-            return default
-        return round(float_val, decimals)
-    except (ValueError, TypeError, OverflowError):
-        return default
+# Note: safe_round is imported from backend.api.utils
 
 
 def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
@@ -77,7 +72,7 @@ def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
             }
         return None
     except Exception as e:
-        print(f"Database fallback failed for {symbol}: {e}")
+        logger.debug(f"Database fallback failed for {symbol}: {e}")
         return None
 
 
@@ -90,14 +85,14 @@ def get_gex_from_tradier_calculation(symbol: str) -> Optional[Dict[str, Any]]:
         from data.gex_calculator import get_calculated_gex
         data = get_calculated_gex(symbol)
         if data and 'error' not in data:
-            print(f"✅ GEX calculated from Tradier options for {symbol}")
+            logger.debug(f" GEX calculated from Tradier options for {symbol}")
             return data
         return None
     except ImportError as e:
-        print(f"⚠️ GEX calculator import failed: {e}")
+        logger.debug(f" GEX calculator import failed: {e}")
         return None
     except Exception as e:
-        print(f"⚠️ Tradier GEX calculation failed for {symbol}: {e}")
+        logger.debug(f" Tradier GEX calculation failed for {symbol}: {e}")
         return None
 
 
@@ -125,7 +120,7 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
                 try:
                     DataCollector.store_gex(data, source='tradingvolatility')
                 except Exception as e:
-                    print(f"Warning: Failed to store GEX data: {e}")
+                    logger.warning(f": Failed to store GEX data: {e}")
             return data
         else:
             error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
@@ -136,7 +131,7 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
         errors.append(f"TradingVolatilityAPI error: {e}")
 
     # FALLBACK 1: Calculate from Tradier options chain (real-time)
-    print(f"⚠️ TradingVolatilityAPI failed for {symbol}, trying Tradier calculation...")
+    logger.debug(f" TradingVolatilityAPI failed for {symbol}, trying Tradier calculation...")
     tradier_data = get_gex_from_tradier_calculation(symbol)
     if tradier_data:
         # Store calculated data for ML/AI analysis
@@ -144,16 +139,16 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
             try:
                 DataCollector.store_gex(tradier_data, source='tradier_calculated')
             except Exception as e:
-                print(f"Warning: Failed to store Tradier GEX data: {e}")
+                logger.warning(f": Failed to store Tradier GEX data: {e}")
         return tradier_data
     else:
         errors.append("Tradier calculation: Failed or unavailable")
 
     # FALLBACK 2: Try database (most recent cached data)
-    print(f"⚠️ Tradier calculation failed for {symbol}, trying database fallback...")
+    logger.debug(f" Tradier calculation failed for {symbol}, trying database fallback...")
     db_data = get_gex_from_database(symbol)
     if db_data:
-        print(f"✅ Using database fallback for {symbol}")
+        logger.debug(f" Using database fallback for {symbol}")
         return db_data
     else:
         errors.append("Database fallback: No recent data found")

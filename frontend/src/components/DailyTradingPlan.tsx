@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { Calendar, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import { apiClient } from '@/lib/api'
@@ -27,7 +29,7 @@ export default function DailyTradingPlan() {
         }))
       }
     } catch (err: any) {
-      console.error('Failed to fetch daily plan:', err)
+      logger.error('Failed to fetch daily plan:', err)
 
       // Extract error message from backend or use generic message
       const errorMessage = err?.message || 'Daily trading plan temporarily unavailable.'

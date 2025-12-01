@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -105,7 +107,7 @@ export default function TradeSetupsPage() {
         setSavedSetups(response.data.data)
       }
     } catch (error) {
-      console.error('Error fetching saved setups:', error)
+      logger.error('Error fetching saved setups:', error)
     }
   }
 
@@ -123,7 +125,7 @@ export default function TradeSetupsPage() {
         setSelectedTab('current')
       }
     } catch (error) {
-      console.error('Error generating setups:', error)
+      logger.error('Error generating setups:', error)
       alert('Failed to generate setups. Make sure the backend is running.')
     } finally {
       setLoading(false)
@@ -138,7 +140,7 @@ export default function TradeSetupsPage() {
         await fetchSavedSetups()
       }
     } catch (error) {
-      console.error('Error saving setup:', error)
+      logger.error('Error saving setup:', error)
       alert('Failed to save setup')
     }
   }

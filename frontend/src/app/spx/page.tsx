@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { Building2, DollarSign, TrendingUp, TrendingDown, Activity, Shield, AlertTriangle, Target, BarChart3, PieChart, Briefcase, Clock, History } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
@@ -111,7 +113,7 @@ export default function SPXInstitutionalTrader() {
           setEquityCurve(res.data.data)
         }
       } catch (err) {
-        console.error('Failed to fetch equity curve:', err)
+        logger.error('Failed to fetch equity curve:', err)
       }
     }
     fetchEquityCurve()

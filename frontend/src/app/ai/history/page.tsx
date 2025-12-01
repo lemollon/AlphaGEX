@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -48,7 +50,7 @@ export default function ConversationHistory() {
         setFilteredConversations(res.data.conversations)
       }
     } catch (error) {
-      console.error('Error fetching conversations:', error)
+      logger.error('Error fetching conversations:', error)
     } finally {
       setLoading(false)
     }

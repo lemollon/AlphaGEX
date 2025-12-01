@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createWebSocket, apiClient } from '@/lib/api'
+import { logger } from '@/lib/logger'
 
 interface WebSocketData {
   type: string
@@ -23,7 +24,7 @@ async function fetchMarketData(symbol: string): Promise<WebSocketData | null> {
     }
     return null
   } catch (err) {
-    console.error('Failed to fetch market data via REST:', err)
+    logger.error('Failed to fetch market data via REST:', err)
     return null
   }
 }
@@ -42,7 +43,7 @@ export function useWebSocket(symbol: string = 'SPY') {
   const startPolling = useCallback(() => {
     if (pollingIntervalRef.current) return // Already polling
 
-    console.log('Starting REST API polling fallback for market data...')
+    logger.info('Starting REST API polling fallback for market data...')
     setUsingRestFallback(true)
 
     // Immediate fetch
@@ -77,7 +78,7 @@ export function useWebSocket(symbol: string = 'SPY') {
       const ws = createWebSocket(symbol)
 
       ws.onopen = () => {
-        console.log('WebSocket connected')
+        logger.info('WebSocket connected')
         setIsConnected(true)
         setError(null)
         wsFailCountRef.current = 0
@@ -89,24 +90,24 @@ export function useWebSocket(symbol: string = 'SPY') {
           const message = JSON.parse(event.data)
           setData(message)
         } catch (err) {
-          console.error('Failed to parse WebSocket message:', err)
+          logger.error('Failed to parse WebSocket message:', err)
         }
       }
 
       ws.onerror = (event) => {
-        console.error('WebSocket error:', event)
+        logger.error('WebSocket error:', event)
         wsFailCountRef.current++
         setError('WebSocket connection error')
 
         // After 2 failed attempts, switch to REST polling
         if (wsFailCountRef.current >= 2) {
-          console.log('WebSocket unavailable, switching to REST API fallback')
+          logger.info('WebSocket unavailable, switching to REST API fallback')
           startPolling()
         }
       }
 
       ws.onclose = () => {
-        console.log('WebSocket disconnected')
+        logger.info('WebSocket disconnected')
         setIsConnected(false)
 
         // Start REST polling immediately on close
@@ -116,14 +117,14 @@ export function useWebSocket(symbol: string = 'SPY') {
 
         // Still try to reconnect WebSocket in background
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('Attempting WebSocket reconnect...')
+          logger.info('Attempting WebSocket reconnect...')
           connect()
         }, 30000) // Try WS reconnect every 30s
       }
 
       wsRef.current = ws
     } catch (err) {
-      console.error('Failed to create WebSocket:', err)
+      logger.error('Failed to create WebSocket:', err)
       setError('Failed to establish WebSocket connection')
       wsFailCountRef.current++
 

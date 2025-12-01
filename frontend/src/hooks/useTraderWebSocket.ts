@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { logger } from '@/lib/logger'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -142,7 +143,7 @@ async function fetchTraderData(): Promise<TraderUpdate | null> {
       ai_logs: logsData
     }
   } catch (err) {
-    console.error('Failed to fetch trader data via REST:', err)
+    logger.error('Failed to fetch trader data via REST:', err)
     return null
   }
 }
@@ -164,7 +165,7 @@ export function useTraderWebSocket() {
     if (pollingIntervalRef.current) return // Already polling
     if (!mountedRef.current) return // Don't start if unmounted
 
-    console.log('Starting REST API polling fallback...')
+    logger.info('Starting REST API polling fallback...')
     setUsingRestFallback(true)
 
     // Immediate fetch
@@ -187,7 +188,7 @@ export function useTraderWebSocket() {
       if (!mountedRef.current) return
       // Skip if a fetch is already in progress (prevents request stacking)
       if (fetchInProgressRef.current) {
-        console.log('Skipping poll - previous request still in progress')
+        logger.debug('Skipping poll - previous request still in progress')
         return
       }
       fetchInProgressRef.current = true
@@ -218,7 +219,7 @@ export function useTraderWebSocket() {
 
       ws.onopen = () => {
         if (!mountedRef.current) return
-        console.log('Trader WebSocket connected')
+        logger.info('Trader WebSocket connected')
         setIsConnected(true)
         setError(null)
         wsFailCountRef.current = 0
@@ -233,26 +234,26 @@ export function useTraderWebSocket() {
             setData(message)
           }
         } catch (err) {
-          console.error('Failed to parse WebSocket message:', err)
+          logger.error('Failed to parse WebSocket message:', err)
         }
       }
 
       ws.onerror = (event) => {
         if (!mountedRef.current) return
-        console.error('WebSocket error:', event)
+        logger.error('WebSocket error:', event)
         wsFailCountRef.current++
         setError('WebSocket connection error')
 
         // After 2 failed attempts, switch to REST polling
         if (wsFailCountRef.current >= 2) {
-          console.log('WebSocket unavailable, switching to REST API fallback')
+          logger.info('WebSocket unavailable, switching to REST API fallback')
           startPolling()
         }
       }
 
       ws.onclose = () => {
         if (!mountedRef.current) return
-        console.log('Trader WebSocket disconnected')
+        logger.info('Trader WebSocket disconnected')
         setIsConnected(false)
 
         // Start REST polling immediately on close
@@ -263,14 +264,14 @@ export function useTraderWebSocket() {
         // Still try to reconnect WebSocket in background
         reconnectTimeoutRef.current = setTimeout(() => {
           if (!mountedRef.current) return
-          console.log('Attempting WebSocket reconnect...')
+          logger.info('Attempting WebSocket reconnect...')
           connect()
         }, 30000) // Try WS reconnect every 30s
       }
 
       wsRef.current = ws
     } catch (err) {
-      console.error('Failed to create WebSocket:', err)
+      logger.error('Failed to create WebSocket:', err)
       setError('Failed to establish WebSocket connection')
       wsFailCountRef.current++
 

@@ -1,4 +1,6 @@
 """
+import logging
+logger = logging.getLogger(__name__)
 Strategy Optimizer API routes - AI-powered strategy optimization.
 """
 
@@ -48,7 +50,7 @@ async def optimize_strategy(strategy_name: str):
             detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
         )
     except Exception as e:
-        print(f"❌ Error in strategy optimizer: {str(e)}")
+        logger.error(f" Error in strategy optimizer: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -88,7 +90,7 @@ async def optimize_all_strategies():
             detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
         )
     except Exception as e:
-        print(f"❌ Error in strategy optimizer: {str(e)}")
+        logger.error(f" Error in strategy optimizer: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -128,7 +130,7 @@ async def get_trade_recommendation(request: dict):
             detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
         )
     except Exception as e:
-        print(f"❌ Error getting trade recommendation: {str(e)}")
+        logger.error(f" Error getting trade recommendation: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -166,7 +168,7 @@ async def get_strike_performance(strategy: str = None):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error in strike performance: {str(e)}")
+        logger.error(f" Error in strike performance: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -203,7 +205,7 @@ async def get_dte_optimization(strategy: str = None):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error in DTE optimization: {str(e)}")
+        logger.error(f" Error in DTE optimization: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -240,7 +242,7 @@ async def get_regime_optimization(strategy: str = None):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error in regime optimization: {str(e)}")
+        logger.error(f" Error in regime optimization: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -276,7 +278,7 @@ async def get_live_strike_recommendations(request: dict):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error getting live recommendations: {str(e)}")
+        logger.error(f" Error getting live recommendations: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -313,7 +315,7 @@ async def get_greeks_optimization(strategy: str = None):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error in Greeks optimization: {str(e)}")
+        logger.error(f" Error in Greeks optimization: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -350,6 +352,6 @@ async def get_best_combinations(strategy: str = None):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error finding best combinations: {str(e)}")
+        logger.error(f" Error finding best combinations: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

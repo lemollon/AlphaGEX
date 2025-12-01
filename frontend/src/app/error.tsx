@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useEffect } from 'react'
 import { AlertTriangle, RefreshCcw, Home } from 'lucide-react'
 import Link from 'next/link'
@@ -13,7 +15,7 @@ export default function Error({
 }) {
   useEffect(() => {
     // Log error to console for debugging
-    console.error('Application Error:', {
+    logger.error('Application Error:', {
       message: error.message,
       digest: error.digest,
       stack: error.stack,

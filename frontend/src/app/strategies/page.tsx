@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -93,7 +95,7 @@ export default function StrategyComparisonPage() {
         setError('Failed to fetch strategy comparison')
       }
     } catch (error: any) {
-      console.error('Error fetching comparison:', error)
+      logger.error('Error fetching comparison:', error)
       setError(error.response?.data?.detail || 'Failed to fetch data. Make sure the backend is running.')
     } finally {
       setLoading(false)
