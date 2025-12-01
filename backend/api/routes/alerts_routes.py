@@ -66,17 +66,20 @@ async def create_alert(request: dict):
 
 @router.get("/list")
 async def list_alerts(status: str = 'active'):
-    """Get all alerts with specified status"""
+    """Get all alerts with specified status (active/triggered)"""
     try:
         import pandas as pd
 
         conn = get_connection()
 
+        # Convert status string to boolean for 'active' column
+        is_active = status.lower() == 'active'
+
         alerts = pd.read_sql_query("""
             SELECT * FROM alerts
-            WHERE status = %s
+            WHERE active = %s
             ORDER BY created_at DESC
-        """, conn, params=(status,))
+        """, conn, params=(is_active,))
 
         conn.close()
 
@@ -124,7 +127,7 @@ async def check_alerts():
         # Get all active alerts
         alerts = pd.read_sql_query("""
             SELECT * FROM alerts
-            WHERE status = 'active'
+            WHERE active = TRUE
         """, conn)
 
         triggered_alerts = []
@@ -171,9 +174,9 @@ async def check_alerts():
                 c = conn.cursor()
                 c.execute('''
                     UPDATE alerts
-                    SET status = 'triggered', triggered_at = CURRENT_TIMESTAMP, triggered_value = %s
+                    SET active = FALSE, triggered_at = CURRENT_TIMESTAMP, notification_sent = TRUE
                     WHERE id = %s
-                ''', (actual_value, alert['id']))
+                ''', (alert['id'],))
 
                 # Add to alert history
                 c.execute('''

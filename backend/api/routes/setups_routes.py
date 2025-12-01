@@ -119,9 +119,8 @@ async def save_trade_setup(request: dict):
         c.execute("""
             INSERT INTO trade_setups (
                 symbol, setup_type, confidence, entry_price, target_price,
-                stop_price, risk_reward, position_size, max_risk_dollars,
-                time_horizon, catalyst, money_making_plan
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                stop_price, contracts, reasoning
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             request['symbol'],
@@ -130,12 +129,8 @@ async def save_trade_setup(request: dict):
             request['entry_price'],
             request['target_price'],
             request['stop_price'],
-            request['risk_reward'],
             request.get('position_size', 1),
-            request['max_risk_dollars'],
-            request.get('time_horizon', '1 day'),
-            request['catalyst'],
-            request.get('money_making_plan', '')
+            request.get('catalyst', '') or request.get('reasoning', '')
         ))
 
         setup_id = c.fetchone()[0]

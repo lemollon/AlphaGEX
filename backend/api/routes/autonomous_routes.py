@@ -161,9 +161,9 @@ async def get_ml_model_status():
         c = conn.cursor()
 
         c.execute("""
-            SELECT model_name, accuracy, last_trained, training_samples
+            SELECT model_name, accuracy, created_at, training_samples
             FROM ml_models
-            ORDER BY last_trained DESC
+            ORDER BY created_at DESC
             LIMIT 5
         """)
 

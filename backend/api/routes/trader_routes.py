@@ -104,14 +104,14 @@ async def get_trader_performance():
 
         # Get latest equity snapshot
         cursor.execute("""
-            SELECT sharpe_ratio, max_drawdown_pct, daily_pnl
+            SELECT drawdown_pct, daily_pnl, cumulative_pnl
             FROM autonomous_equity_snapshots
-            ORDER BY snapshot_date DESC, snapshot_time DESC
+            ORDER BY timestamp DESC
             LIMIT 1
         """)
         snapshot = cursor.fetchone()
-        sharpe_ratio = float(snapshot[0] or 0) if snapshot else 0
-        max_drawdown = float(snapshot[1] or 0) if snapshot else 0
+        max_drawdown = float(snapshot[0] or 0) if snapshot else 0
+        sharpe_ratio = 0  # Not tracked in snapshots table
 
         # Get today's P&L
         from zoneinfo import ZoneInfo
@@ -223,22 +223,19 @@ async def get_equity_curve(days: int = 30):
 
         snapshots = pd.read_sql_query("""
             SELECT
-                snapshot_date,
-                snapshot_time,
-                starting_capital,
-                total_realized_pnl,
-                total_unrealized_pnl,
-                account_value,
+                DATE(timestamp) as snapshot_date,
+                timestamp::time as snapshot_time,
+                equity as account_value,
                 daily_pnl,
-                daily_return_pct,
-                total_return_pct,
-                max_drawdown_pct,
-                sharpe_ratio,
-                win_rate,
-                total_trades
+                cumulative_pnl as total_realized_pnl,
+                drawdown_pct,
+                high_water_mark,
+                CASE WHEN high_water_mark > 0
+                     THEN ROUND(((equity - 1000000) / 1000000 * 100)::numeric, 2)
+                     ELSE 0 END as total_return_pct
             FROM autonomous_equity_snapshots
-            WHERE snapshot_date >= %s
-            ORDER BY snapshot_date ASC, snapshot_time ASC
+            WHERE timestamp >= %s
+            ORDER BY timestamp ASC
         """, conn, params=(start_date.strftime('%Y-%m-%d'),))
 
         if snapshots.empty:
@@ -325,9 +322,7 @@ async def get_equity_curve(days: int = 30):
                 "pnl": safe_round(row['total_realized_pnl']),
                 "daily_pnl": safe_round(row['daily_pnl']),
                 "total_return_pct": safe_round(row['total_return_pct']),
-                "max_drawdown_pct": safe_round(row['max_drawdown_pct']),
-                "sharpe_ratio": safe_round(row['sharpe_ratio']),
-                "win_rate": safe_round(row['win_rate'])
+                "max_drawdown_pct": safe_round(row['drawdown_pct'])
             })
 
         return {
@@ -335,9 +330,7 @@ async def get_equity_curve(days: int = 30):
             "data": equity_data,
             "total_pnl": safe_round(snapshots['total_realized_pnl'].iloc[-1]) if len(snapshots) > 0 else 0,
             "starting_equity": starting_equity,
-            "sharpe_ratio": safe_round(snapshots['sharpe_ratio'].iloc[-1]) if len(snapshots) > 0 else 0,
-            "max_drawdown_pct": safe_round(snapshots['max_drawdown_pct'].max()) if len(snapshots) > 0 else 0,
-            "win_rate": safe_round(snapshots['win_rate'].iloc[-1]) if len(snapshots) > 0 else 0
+            "max_drawdown_pct": safe_round(snapshots['drawdown_pct'].max()) if len(snapshots) > 0 else 0
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -572,13 +565,11 @@ async def get_trader_trades(limit: int = 10):
         conn = get_connection()
 
         open_trades = pd.read_sql_query("""
-            SELECT id, symbol, strategy, action, strike, option_type, expiration_date,
-                   contracts, contract_symbol, entry_date, entry_time, entry_price,
-                   entry_bid, entry_ask, entry_spot_price, current_price,
-                   current_spot_price, unrealized_pnl, unrealized_pnl_pct,
-                   confidence, gex_regime, entry_net_gex, entry_flip_point,
-                   entry_iv, entry_delta, current_iv, current_delta,
-                   trade_reasoning, 'OPEN' as status,
+            SELECT id, symbol, strategy, strike, option_type,
+                   contracts, entry_date, entry_time, entry_price,
+                   entry_spot_price, current_price,
+                   current_spot_price, unrealized_pnl,
+                   gex_regime, status,
                    NULL as exit_date, NULL as exit_time, NULL as exit_price,
                    NULL as realized_pnl, NULL as exit_reason
             FROM autonomous_open_positions
@@ -587,14 +578,11 @@ async def get_trader_trades(limit: int = 10):
         """, conn, params=(limit,))
 
         closed_trades = pd.read_sql_query("""
-            SELECT id, symbol, strategy, action, strike, option_type, expiration_date,
-                   contracts, contract_symbol, entry_date, entry_time, entry_price,
-                   entry_bid, entry_ask, entry_spot_price, exit_price as current_price,
+            SELECT id, symbol, strategy, strike, option_type,
+                   contracts, entry_date, entry_time, entry_price,
+                   entry_spot_price, exit_price as current_price,
                    exit_spot_price as current_spot_price, realized_pnl as unrealized_pnl,
-                   realized_pnl_pct as unrealized_pnl_pct, confidence, gex_regime,
-                   entry_net_gex, entry_flip_point, entry_iv, entry_delta,
-                   NULL as current_iv, NULL as current_delta,
-                   trade_reasoning, 'CLOSED' as status, exit_date, exit_time,
+                   gex_regime, 'CLOSED' as status, exit_date, exit_time,
                    exit_price, realized_pnl, exit_reason
             FROM autonomous_closed_trades
             ORDER BY exit_date DESC, exit_time DESC

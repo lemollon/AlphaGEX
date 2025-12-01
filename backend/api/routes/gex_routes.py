@@ -50,8 +50,7 @@ def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
         cursor.execute("""
             SELECT
                 timestamp, net_gex, flip_point, call_wall, put_wall,
-                spot_price, mm_state, regime, data_source,
-                call_gex, put_gex, gamma_flip, max_pain
+                spot_price, mm_state, regime, data_source
             FROM gex_history
             WHERE symbol = %s
             AND timestamp >= NOW() - INTERVAL '7 days'
@@ -67,12 +66,11 @@ def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
                 'symbol': symbol,
                 'spot_price': float(row.get('spot_price') or 0),
                 'net_gex': float(row.get('net_gex') or 0),
-                'flip_point': float(row.get('flip_point') or row.get('gamma_flip') or 0),
+                'flip_point': float(row.get('flip_point') or 0),
                 'call_wall': float(row.get('call_wall') or 0),
                 'put_wall': float(row.get('put_wall') or 0),
-                'call_gex': float(row.get('call_gex') or 0),
-                'put_gex': float(row.get('put_gex') or 0),
-                'max_pain': float(row.get('max_pain') or 0),
+                'mm_state': row.get('mm_state'),
+                'regime': row.get('regime'),
                 'collection_date': row.get('timestamp').strftime('%Y-%m-%d') if row.get('timestamp') else None,
                 'data_source': 'database_fallback',
                 'is_cached': True
