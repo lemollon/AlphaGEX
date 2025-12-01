@@ -574,15 +574,15 @@ async def explain_trade(trade_id: str):
         prompt = f"""You are an expert options trader explaining a trade to a student. Generate a DETAILED trade breakdown that explains EXACTLY why this trade was taken, with specific price targets and exit strategy.
 
 TRADE EXECUTED:
-• Symbol: {trade_dict.get('symbol', 'SPY')}
-• Strike: ${trade_dict.get('strike', 0)}
-• Type: {trade_dict.get('option_type', 'CALL')}
-• Contracts: {trade_dict.get('contracts', 0)}
-• Entry Price: ${trade_dict.get('entry_price', 0)}
-• Total Cost: ${trade_dict.get('contracts', 0) * trade_dict.get('entry_price', 0) * 100:.2f}
-• Pattern: {trade_dict.get('pattern_type', 'N/A')}
-• Confidence: {trade_dict.get('confidence_score', 0)}%
-• Timestamp: {trade_dict.get('timestamp', 'N/A')}
+• Symbol: {trade_dict.get('symbol') or 'SPY'}
+• Strike: ${trade_dict.get('strike') or 0}
+• Type: {trade_dict.get('option_type') or 'CALL'}
+• Contracts: {trade_dict.get('contracts') or 0}
+• Entry Price: ${trade_dict.get('entry_price') or 0}
+• Total Cost: ${(trade_dict.get('contracts') or 0) * (trade_dict.get('entry_price') or 0) * 100:.2f}
+• Pattern: {trade_dict.get('pattern_type') or 'N/A'}
+• Confidence: {trade_dict.get('confidence_score') or 0}%
+• Timestamp: {trade_dict.get('timestamp') or 'N/A'}
 
 MARKET CONTEXT AT TRADE TIME:
 • SPY Price: ${market_dict.get('spot_price') or 0}
@@ -779,8 +779,8 @@ CURRENT MARKET STATUS:
 
 ACCOUNT STATUS:
 • Balance: ${account_value:.2f}
-• Win Rate (7d): {performance['win_rate']:.1f}%
-• Recent Trades: {performance['total_trades']}
+• Win Rate (7d): {performance.get('win_rate') or 0:.1f}%
+• Recent Trades: {performance.get('total_trades') or 0}
 
 TOP PERFORMING PATTERNS (30d):
 {chr(10).join([f"• {p.get('pattern_type', 'N/A')}: {(p.get('win_rate') or 0)*100:.0f}% win rate, ${float(p.get('avg_pnl') or 0):.2f} avg P&L" for p in top_patterns])}
@@ -968,15 +968,15 @@ async def get_position_guidance(trade_id: str):
         prompt = f"""You are a professional position manager providing real-time guidance for an open options trade. Provide SPECIFIC next actions with exact prices and times.
 
 CURRENT POSITION:
-• Symbol: {trade['symbol']}
+• Symbol: {trade.get('symbol') or 'SPY'}
 • Strike: ${strike}
 • Type: {option_type}
-• Contracts: {trade['contracts']}
+• Contracts: {trade.get('contracts') or 0}
 • Entry Price: ${entry_price:.2f}
 • Current Price (est): ${current_price:.2f}
 • P&L: ${total_pnl:.2f} ({pnl_pct:+.1f}%)
 • Time Held: {time_held:.1f} hours
-• Entry: {trade['timestamp']}
+• Entry: {trade.get('timestamp') or 'N/A'}
 
 CURRENT MARKET:
 • SPY: ${current_spy}
@@ -986,7 +986,7 @@ CURRENT MARKET:
 • Current Time: {datetime.now().strftime('%I:%M %p')}
 
 ORIGINAL TRADE PLAN:
-• Pattern: {trade.get('pattern_type', 'N/A')}
+• Pattern: {trade.get('pattern_type') or 'N/A'}
 • Expected Target: Estimate based on strike
 • Original Stop: Estimate
 
@@ -1140,13 +1140,13 @@ CURRENT MARKET (LIVE):
 • Flip Point: ${gex.get('flip_point') or 0}
 
 PSYCHOLOGY STATUS:
-• Regime: {psychology.get('regime_type', 'UNKNOWN')}
+• Regime: {psychology.get('regime_type') or 'UNKNOWN'}
 • Confidence: {psychology.get('confidence') or 0}%
-• Trap Detected: {psychology.get('psychology_trap', 'NONE')}
+• Trap Detected: {psychology.get('psychology_trap') or 'NONE'}
 
 YOUR POSITIONS:
 • Open positions: {open_positions}
-{f"• Last trade: {recent_trade['symbol']} ${recent_trade['strike']} {recent_trade['option_type']} @ {recent_trade['timestamp']}" if recent_trade else ""}
+{f"• Last trade: {recent_trade.get('symbol') or 'N/A'} ${recent_trade.get('strike') or 0} {recent_trade.get('option_type') or 'N/A'} @ {recent_trade.get('timestamp') or 'N/A'}" if recent_trade else ""}
 
 TIME: {datetime.now().strftime('%I:%M %p CT')}
 
