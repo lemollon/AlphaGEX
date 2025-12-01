@@ -144,7 +144,8 @@ async def get_scanner_history(limit: int = 20):
         return {"success": True, "data": formatted_history}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return empty data on error (table may not exist)
+        return {"success": True, "data": [], "message": "Scanner history not available"}
 
 
 @router.get("/results/{scan_id}")

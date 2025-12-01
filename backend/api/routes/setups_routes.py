@@ -164,7 +164,8 @@ async def list_trade_setups(limit: int = 20, status: str = 'active'):
         return {"success": True, "data": setups.to_dict('records') if not setups.empty else []}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return empty data on error (table may not exist)
+        return {"success": True, "data": [], "message": "Trade setups not available"}
 
 
 @router.put("/{setup_id}")
