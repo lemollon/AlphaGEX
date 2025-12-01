@@ -115,6 +115,16 @@ class PostgreSQLCursor:
     def execute(self, sql, params=None):
         """Execute SQL"""
         import re
+        from psycopg2 import sql as psycopg2_sql
+
+        # If sql is a Composed object (from psycopg2.sql), execute directly without transformation
+        # Composed objects are already safely constructed and shouldn't be modified
+        if isinstance(sql, (psycopg2_sql.Composed, psycopg2_sql.SQL)):
+            if params:
+                self._cursor.execute(sql, params)
+            else:
+                self._cursor.execute(sql)
+            return self
 
         # Convert ? placeholders to %s for PostgreSQL
         if '?' in sql and params:
