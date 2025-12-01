@@ -528,7 +528,9 @@ async def websocket_market_data(websocket: WebSocket, symbol: str = "SPY"):
         manager.disconnect(websocket)
     except Exception as e:
         manager.disconnect(websocket)
-        print(f"WebSocket error: {e}")
+        # Only log non-empty errors (empty usually means client disconnected normally)
+        if str(e):
+            print(f"WebSocket error: {e}")
 
 @app.websocket("/ws/trader")
 async def websocket_trader(websocket: WebSocket):
@@ -606,7 +608,9 @@ async def websocket_trader(websocket: WebSocket):
     except WebSocketDisconnect:
         pass  # Normal disconnect, cleanup in finally
     except Exception as e:
-        print(f"Trader WebSocket error: {e}")
+        # Only log non-empty errors (empty usually means client disconnected normally)
+        if str(e):
+            print(f"Trader WebSocket error: {e}")
     finally:
         # Guaranteed cleanup - prevents memory leak
         if connection_id in _connection_subscriptions:
@@ -816,7 +820,9 @@ async def websocket_positions(websocket: WebSocket):
         manager.disconnect(websocket)
     except Exception as e:
         manager.disconnect(websocket)
-        print(f"Positions WebSocket error: {e}")
+        # Only log non-empty errors (empty usually means client disconnected normally)
+        if str(e):
+            print(f"Positions WebSocket error: {e}")
 
 # ============================================================================
 # Error Handlers

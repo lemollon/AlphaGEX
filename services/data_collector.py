@@ -51,11 +51,21 @@ class DataCollector:
         try:
             conn = get_connection()
             c = conn.cursor()
-            c.execute("""
-                INSERT INTO data_collection_log
-                (collection_type, source, symbol, records_collected, success, error_message)
-                VALUES (%s, %s, 'SPY', %s, %s, %s)
-            """, (collection_type, source, records, success, error))
+            # Try with symbol column first
+            try:
+                c.execute("""
+                    INSERT INTO data_collection_log
+                    (collection_type, source, symbol, records_collected, success, error_message)
+                    VALUES (%s, %s, 'SPY', %s, %s, %s)
+                """, (collection_type, source, records, success, error))
+            except Exception:
+                # Fallback: table might not have symbol column (older schema)
+                conn.rollback()
+                c.execute("""
+                    INSERT INTO data_collection_log
+                    (collection_type, source, records_collected, success, error_message)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (collection_type, source, records, success, error))
             conn.commit()
             conn.close()
         except Exception as e:
