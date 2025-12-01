@@ -511,51 +511,82 @@ async def get_0dte_gamma_comparison(symbol: str):
     }
 
     # Source 1: TradingVolatility API (primary)
-    # Use expiration='1' to get ONLY the nearest expiration (0DTE/1DTE)
+    # Use /gex/gamma endpoint with exp='1' to get ONLY the nearest expiration (0DTE/1DTE)
+    # NOTE: /gex/gammaOI does NOT support exp parameter, so we use /gex/gamma instead
     # This ensures apples-to-apples comparison with Tradier 0DTE calculation
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
-        # Request only nearest expiration (0DTE) data for proper comparison
-        tv_profile = api.get_gex_profile(symbol, expiration='1')
 
-        if tv_profile and 'strikes' in tv_profile and tv_profile['strikes']:
+        # Use get_gamma_by_expiration which calls /gex/gamma with exp='1' (nearest expiration)
+        # This endpoint properly filters to 0DTE/1DTE data
+        tv_data = api.get_gamma_by_expiration(symbol, expiration='1')
+
+        if tv_data and 'gamma_array' in tv_data and tv_data['gamma_array']:
+            raw_gamma_array = tv_data.get('gamma_array', [])
+
             # Format to match expected gamma_array structure
+            # Note: /gex/gamma returns 'gamma' field (net gamma), not separate call/put
             gamma_array = []
             total_net_gex = 0
-            for strike_data in tv_profile['strikes']:
-                strike_net_gex = strike_data.get('total_gamma', 0)
-                total_net_gex += strike_net_gex
+            max_positive_gamma = 0
+            max_negative_gamma = 0
+            call_wall = 0
+            put_wall = 0
+            spot_price = float(tv_data.get('price', 0))
+
+            for strike_data in raw_gamma_array:
+                if not strike_data or 'strike' not in strike_data:
+                    continue
+
+                strike = float(strike_data.get('strike', 0))
+                # /gex/gamma provides 'gamma' as net gamma per strike
+                net_gamma = float(strike_data.get('gamma', 0))
+                total_net_gex += net_gamma
+
+                # For call_wall: find strike with highest positive gamma (above spot)
+                # For put_wall: find strike with highest negative gamma (below spot)
+                if net_gamma > max_positive_gamma:
+                    max_positive_gamma = net_gamma
+                    call_wall = strike
+                if net_gamma < max_negative_gamma:
+                    max_negative_gamma = net_gamma
+                    put_wall = strike
+
                 gamma_array.append({
-                    'strike': strike_data.get('strike', 0),
-                    'call_gamma': strike_data.get('call_gamma', 0),
-                    'put_gamma': strike_data.get('put_gamma', 0),
-                    'total_gamma': strike_data.get('total_gamma', 0),
-                    'net_gex': strike_net_gex
+                    'strike': strike,
+                    'call_gamma': max(0, net_gamma),  # Positive gamma attributed to calls
+                    'put_gamma': min(0, net_gamma),   # Negative gamma attributed to puts
+                    'total_gamma': net_gamma,
+                    'net_gex': net_gamma
                 })
 
-            # Get aggregate data if available from profile
-            aggregate_data = tv_profile.get('aggregate_from_gammaOI', {})
-            # Use aggregate net_gex if available, otherwise use calculated sum
-            net_gex = aggregate_data.get('net_gex', total_net_gex)
-            put_call_ratio = aggregate_data.get('put_call_ratio', 0)
-            implied_vol = aggregate_data.get('implied_volatility', 0)
+            # Calculate flip point (where gamma crosses zero)
+            flip_point = spot_price  # Default to spot price
+            sorted_strikes = sorted(gamma_array, key=lambda x: x['strike'])
+            for i in range(len(sorted_strikes) - 1):
+                g1 = sorted_strikes[i]['net_gex']
+                g2 = sorted_strikes[i + 1]['net_gex']
+                s1 = sorted_strikes[i]['strike']
+                s2 = sorted_strikes[i + 1]['strike']
+                if g1 * g2 < 0:  # Sign change = zero crossing
+                    # Linear interpolation
+                    flip_point = s1 + (s2 - s1) * (-g1 / (g2 - g1))
+                    break
 
             result["trading_volatility"] = {
                 "data_source": "trading_volatility_api",
-                "spot_price": tv_profile.get('spot_price', 0),
-                "flip_point": tv_profile.get('flip_point', 0),
-                "call_wall": tv_profile.get('call_wall', 0),
-                "put_wall": tv_profile.get('put_wall', 0),
-                "net_gex": net_gex,
-                "put_call_ratio": put_call_ratio,
-                "implied_volatility": implied_vol,
+                "spot_price": spot_price,
+                "flip_point": flip_point,
+                "call_wall": call_wall,
+                "put_wall": put_wall,
+                "net_gex": total_net_gex,
                 "gamma_array": gamma_array,
                 "strikes_count": len(gamma_array),
-                "expiration": "0DTE (nearest)"  # Indicate we're filtering to 0DTE
+                "expiration": tv_data.get('expiry_date', '0DTE (nearest)')
             }
         else:
-            result["errors"].append("TradingVolatility API: No gamma profile data available for 0DTE")
+            result["errors"].append("TradingVolatility API: No gamma data available for 0DTE (exp=1)")
     except ImportError as e:
         result["errors"].append(f"TradingVolatility API: Import failed - {e}")
     except Exception as e:
