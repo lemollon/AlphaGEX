@@ -96,6 +96,7 @@ async def get_trader_performance():
             }
         }
 
+    conn = None
     try:
         perf = trader.get_performance() if hasattr(trader, 'get_performance') else {}
 
@@ -123,50 +124,61 @@ async def get_trader_performance():
                 if current_equity < starting_capital:
                     max_drawdown = ((starting_capital - current_equity) / starting_capital * 100)
         except Exception:
-            pass  # Column may not exist
+            # Rollback on error to clear aborted transaction state
+            conn.rollback()
 
         # Get today's P&L
         from zoneinfo import ZoneInfo
         today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
-        cursor.execute("""
-            SELECT COALESCE(SUM(realized_pnl), 0)
-            FROM autonomous_closed_trades
-            WHERE exit_date = %s
-        """, (today,))
-        today_realized = cursor.fetchone()[0] or 0
+        today_pnl = 0
+        try:
+            cursor.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM autonomous_closed_trades
+                WHERE exit_date = %s
+            """, (today,))
+            today_realized = cursor.fetchone()[0] or 0
 
-        cursor.execute("""
-            SELECT COALESCE(SUM(unrealized_pnl), 0)
-            FROM autonomous_open_positions
-        """)
-        today_unrealized = cursor.fetchone()[0] or 0
+            cursor.execute("""
+                SELECT COALESCE(SUM(unrealized_pnl), 0)
+                FROM autonomous_open_positions
+            """)
+            today_unrealized = cursor.fetchone()[0] or 0
+
+            today_pnl = float(today_realized) + float(today_unrealized)
+        except Exception:
+            conn.rollback()
 
         conn.close()
-
-        today_pnl = float(today_realized) + float(today_unrealized)
 
         return {
             "success": True,
             "data": {
-                "total_pnl": perf.get('total_pnl', 0),
-                "today_pnl": today_pnl,
-                "win_rate": perf.get('win_rate', 0),
+                "total_pnl": safe_round(perf.get('total_pnl', 0)),
+                "today_pnl": safe_round(today_pnl),
+                "win_rate": safe_round(perf.get('win_rate', 0)),
                 "total_trades": perf.get('total_trades', 0),
                 "closed_trades": perf.get('closed_trades', 0),
                 "open_positions": perf.get('open_positions', 0),
                 "winning_trades": perf.get('winning_trades', 0),
                 "losing_trades": perf.get('losing_trades', 0),
-                "sharpe_ratio": sharpe_ratio,
-                "max_drawdown": max_drawdown,
-                "realized_pnl": perf.get('realized_pnl', 0),
-                "unrealized_pnl": perf.get('unrealized_pnl', 0),
+                "sharpe_ratio": safe_round(sharpe_ratio),
+                "max_drawdown": safe_round(max_drawdown),
+                "realized_pnl": safe_round(perf.get('realized_pnl', 0)),
+                "unrealized_pnl": safe_round(perf.get('unrealized_pnl', 0)),
                 "starting_capital": perf.get('starting_capital', 1000000),
-                "current_value": perf.get('current_value', 1000000),
-                "return_pct": perf.get('return_pct', 0)
+                "current_value": safe_round(perf.get('current_value', 1000000)),
+                "return_pct": safe_round(perf.get('return_pct', 0))
             }
         }
     except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -225,6 +237,7 @@ async def get_equity_curve(days: int = 30):
             "data": []
         }
 
+    conn = None
     try:
         import pandas as pd
 
@@ -232,9 +245,11 @@ async def get_equity_curve(days: int = 30):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
         starting_equity = 1000000
+        start_date_str = start_date.strftime('%Y-%m-%d')
 
         # Query only columns that exist - avoid daily_pnl, drawdown_pct
-        snapshots = pd.read_sql_query("""
+        # Use string formatting for date since pandas can be finicky with params
+        snapshots = pd.read_sql_query(f"""
             SELECT
                 DATE(timestamp) as snapshot_date,
                 timestamp::time as snapshot_time,
@@ -242,22 +257,22 @@ async def get_equity_curve(days: int = 30):
                 COALESCE(cumulative_pnl, 0) as total_realized_pnl,
                 ROUND(((equity - 1000000) / 1000000 * 100)::numeric, 2) as total_return_pct
             FROM autonomous_equity_snapshots
-            WHERE timestamp >= %s
+            WHERE timestamp >= '{start_date_str}'
             ORDER BY timestamp ASC
-        """, conn, params=(start_date.strftime('%Y-%m-%d'),))
+        """, conn)
 
         if snapshots.empty:
             # Build from closed trades
-            trades = pd.read_sql_query("""
+            trades = pd.read_sql_query(f"""
                 SELECT
                     exit_date as trade_date,
                     exit_time as trade_time,
                     realized_pnl,
                     strategy
                 FROM autonomous_closed_trades
-                WHERE exit_date >= %s
+                WHERE exit_date >= '{start_date_str}'
                 ORDER BY exit_date ASC, exit_time ASC
-            """, conn, params=(start_date.strftime('%Y-%m-%d'),))
+            """, conn)
 
             conn.close()
 
@@ -354,6 +369,11 @@ async def get_equity_curve(days: int = 30):
             "max_drawdown_pct": safe_round(max_drawdown)
         }
     except Exception as e:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -580,13 +600,15 @@ async def get_trader_trades(limit: int = 10):
 
     limit = max(1, min(limit, 100))
 
+    conn = None
     try:
         import pandas as pd
+        import numpy as np
 
         conn = get_connection()
 
         # Query only columns that are likely to exist
-        open_trades = pd.read_sql_query("""
+        open_trades = pd.read_sql_query(f"""
             SELECT id, symbol, strategy, strike, option_type,
                    contracts, entry_date, entry_time, entry_price,
                    COALESCE(unrealized_pnl, 0) as unrealized_pnl,
@@ -596,10 +618,10 @@ async def get_trader_trades(limit: int = 10):
                    NULL::numeric as realized_pnl, NULL::text as exit_reason
             FROM autonomous_open_positions
             ORDER BY entry_date DESC, entry_time DESC
-            LIMIT %s
-        """, conn, params=(limit,))
+            LIMIT {int(limit)}
+        """, conn)
 
-        closed_trades = pd.read_sql_query("""
+        closed_trades = pd.read_sql_query(f"""
             SELECT id, symbol, strategy, strike, option_type,
                    contracts, entry_date, entry_time, entry_price,
                    COALESCE(realized_pnl, 0) as unrealized_pnl,
@@ -607,8 +629,8 @@ async def get_trader_trades(limit: int = 10):
                    exit_price, realized_pnl, exit_reason
             FROM autonomous_closed_trades
             ORDER BY exit_date DESC, exit_time DESC
-            LIMIT %s
-        """, conn, params=(limit,))
+            LIMIT {int(limit)}
+        """, conn)
 
         conn.close()
 
@@ -619,13 +641,31 @@ async def get_trader_trades(limit: int = 10):
                 ascending=[False, False]
             ).head(limit)
 
-        trades_list = all_trades.to_dict('records') if not all_trades.empty else []
+            # Replace inf/-inf/nan with None for JSON compatibility
+            all_trades = all_trades.replace([np.inf, -np.inf], np.nan)
+
+        # Convert to list and clean NaN values
+        trades_list = []
+        if not all_trades.empty:
+            for record in all_trades.to_dict('records'):
+                cleaned = {}
+                for k, v in record.items():
+                    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                        cleaned[k] = None
+                    else:
+                        cleaned[k] = v
+                trades_list.append(cleaned)
 
         return {
             "success": True,
             "data": trades_list
         }
     except Exception as e:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
