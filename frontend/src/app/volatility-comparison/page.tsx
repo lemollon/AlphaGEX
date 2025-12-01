@@ -29,6 +29,36 @@ interface GammaSource {
   net_gex?: number
   put_call_ratio?: number
   timestamp?: string
+  _debug?: {
+    raw_fields?: string[]
+    sample_strike?: Record<string, string>
+    profile_first_strike_gamma?: {
+      call_gamma: number | string
+      put_gamma: number | string
+      total_gamma: number | string
+      call_gamma_type: string
+      put_gamma_type: string
+    }
+    calculated_call_wall?: number
+    calculated_put_wall?: number
+    max_call_gamma?: number
+    max_put_gamma?: number
+    sample_gamma_values?: GammaStrike[]
+    total_net_gex_calculated?: number
+    profile_debug?: {
+      used_cache?: boolean
+      total_strikes_before_filter?: number
+      total_strikes_after_filter?: number
+      raw_api_first_strike?: {
+        strike: number
+        call_gamma: string | number
+        put_gamma: string | number
+        call_gamma_type: string
+        put_gamma_type: string
+      }
+      processed_first_strike?: Record<string, number>
+    }
+  }
 }
 
 interface ComparisonData {
@@ -94,7 +124,7 @@ export default function VolatilityComparison() {
   const [usingFallback, setUsingFallback] = useState(false)
   const [tradingVolError, setTradingVolError] = useState<string | null>(null)
 
-  const fetchData = useCallback(async (showLoading = true) => {
+  const fetchData = useCallback(async (showLoading = true, forceRefresh = false) => {
     try {
       if (showLoading) setLoading(true)
       setError(null)
@@ -102,7 +132,7 @@ export default function VolatilityComparison() {
 
       // Fetch all data in parallel
       const [comparisonRes, gexRes, vixRes] = await Promise.all([
-        apiClient.get0DTEGammaComparison(symbol).catch((e) => ({
+        apiClient.get0DTEGammaComparison(symbol, forceRefresh).catch((e) => ({
           data: { success: false, errors: [e.message] }
         })),
         apiClient.getGEX(symbol).catch((e) => ({ data: { success: false, error: e.message } })),
@@ -336,6 +366,15 @@ export default function VolatilityComparison() {
                 >
                   <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                   Refresh
+                </button>
+                <button
+                  onClick={() => fetchData(true, true)}
+                  disabled={loading}
+                  title="Force refresh clears cached data and fetches fresh from APIs"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-warning/20 text-warning border border-warning/30 hover:bg-warning/30 disabled:opacity-50"
+                >
+                  <Database className="w-4 h-4" />
+                  Force Refresh
                 </button>
               </div>
             </div>
@@ -1063,6 +1102,60 @@ export default function VolatilityComparison() {
                       </div>
                     </div>
                   </div>
+                )}
+
+                {/* Debug Panel - Collapsible */}
+                {comparisonData?.trading_volatility?._debug && (
+                  <details className="card bg-gray-900/50">
+                    <summary className="cursor-pointer flex items-center gap-2 text-text-muted hover:text-text-primary">
+                      <AlertTriangle className="w-4 h-4 text-warning" />
+                      <span className="font-semibold">Debug Info (TradingVol API)</span>
+                      <span className="text-xs ml-2">
+                        {comparisonData.trading_volatility._debug.profile_debug?.used_cache ? '(cached)' : '(fresh)'}
+                      </span>
+                    </summary>
+                    <div className="mt-4 text-xs font-mono overflow-x-auto">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="p-3 bg-background-hover rounded-lg">
+                          <h4 className="text-warning font-semibold mb-2">Raw API First Strike</h4>
+                          <pre className="text-text-muted whitespace-pre-wrap">
+{JSON.stringify(comparisonData.trading_volatility._debug.profile_debug?.raw_api_first_strike || 'N/A', null, 2)}
+                          </pre>
+                        </div>
+                        <div className="p-3 bg-background-hover rounded-lg">
+                          <h4 className="text-warning font-semibold mb-2">Processed First Strike</h4>
+                          <pre className="text-text-muted whitespace-pre-wrap">
+{JSON.stringify(comparisonData.trading_volatility._debug.profile_debug?.processed_first_strike || 'N/A', null, 2)}
+                          </pre>
+                        </div>
+                        <div className="p-3 bg-background-hover rounded-lg">
+                          <h4 className="text-warning font-semibold mb-2">Profile First Strike Gamma</h4>
+                          <pre className="text-text-muted whitespace-pre-wrap">
+{JSON.stringify(comparisonData.trading_volatility._debug.profile_first_strike_gamma || 'N/A', null, 2)}
+                          </pre>
+                        </div>
+                        <div className="p-3 bg-background-hover rounded-lg">
+                          <h4 className="text-warning font-semibold mb-2">Sample Gamma Values (First 3)</h4>
+                          <pre className="text-text-muted whitespace-pre-wrap">
+{JSON.stringify(comparisonData.trading_volatility._debug.sample_gamma_values || [], null, 2)}
+                          </pre>
+                        </div>
+                      </div>
+                      <div className="mt-3 p-3 bg-background-hover rounded-lg">
+                        <h4 className="text-warning font-semibold mb-2">Summary</h4>
+                        <ul className="text-text-muted space-y-1">
+                          <li>Cache used: <span className={comparisonData.trading_volatility._debug.profile_debug?.used_cache ? 'text-warning' : 'text-success'}>{String(comparisonData.trading_volatility._debug.profile_debug?.used_cache)}</span></li>
+                          <li>Strikes before filter: {comparisonData.trading_volatility._debug.profile_debug?.total_strikes_before_filter}</li>
+                          <li>Strikes after filter: {comparisonData.trading_volatility._debug.profile_debug?.total_strikes_after_filter}</li>
+                          <li>Max call gamma: {comparisonData.trading_volatility._debug.max_call_gamma}</li>
+                          <li>Max put gamma: {comparisonData.trading_volatility._debug.max_put_gamma}</li>
+                          <li>Calculated call wall: ${comparisonData.trading_volatility._debug.calculated_call_wall}</li>
+                          <li>Calculated put wall: ${comparisonData.trading_volatility._debug.calculated_put_wall}</li>
+                          <li>Total net GEX: {comparisonData.trading_volatility._debug.total_net_gex_calculated}</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </details>
                 )}
 
                 {/* Info Footer */}

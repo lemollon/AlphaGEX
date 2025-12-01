@@ -485,7 +485,7 @@ async def get_regime_changes(symbol: str = "SPY", days: int = 30):
 
 
 @router.get("/compare/0dte/{symbol}")
-async def get_0dte_gamma_comparison(symbol: str):
+async def get_0dte_gamma_comparison(symbol: str, force_refresh: bool = False):
     """
     Get 0DTE gamma arrays from BOTH data sources for side-by-side comparison.
 
@@ -496,6 +496,9 @@ async def get_0dte_gamma_comparison(symbol: str):
     Both arrays should be nearly identical if the calculations are correct.
     This endpoint is used by the Volatility Comparison page to validate
     that the Tradier fallback produces accurate results.
+
+    Query params:
+        force_refresh: If true, clears cached data and fetches fresh from APIs
     """
     symbol = symbol.upper().strip()
     if len(symbol) > 5 or not symbol.isalnum():
@@ -508,7 +511,8 @@ async def get_0dte_gamma_comparison(symbol: str):
         "trading_volatility": None,        # All expirations from Trading Volatility API
         "tradier_all_expirations": None,   # All expirations from Tradier (apples-to-apples)
         "tradier_0dte": None,              # 0DTE only from Tradier
-        "errors": []
+        "errors": [],
+        "force_refresh": force_refresh
     }
 
     # Source 1: TradingVolatility API (primary)
@@ -518,6 +522,13 @@ async def get_0dte_gamma_comparison(symbol: str):
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
+
+        # Clear cache if force_refresh is requested
+        if force_refresh:
+            cache_key = api._get_cache_key('gex/gammaOI', symbol)
+            if cache_key in TradingVolatilityAPI._shared_response_cache:
+                del TradingVolatilityAPI._shared_response_cache[cache_key]
+                print(f"🗑️ Cleared cache for {symbol} gammaOI")
 
         # Use get_gex_profile which calls /gex/gammaOI (has actual per-strike gamma)
         tv_profile = api.get_gex_profile(symbol)
@@ -531,10 +542,31 @@ async def get_0dte_gamma_comparison(symbol: str):
                 sample = raw_strikes[0]
                 print(f"DEBUG /gex/gammaOI response - First strike fields: {list(sample.keys())}")
                 print(f"DEBUG /gex/gammaOI response - First strike data: {sample}")
+
+                # Capture EXACT values for debugging (not just string representation)
+                sample_call = sample.get('call_gamma', 'MISSING')
+                sample_put = sample.get('put_gamma', 'MISSING')
+                sample_total = sample.get('total_gamma', 'MISSING')
+
                 debug_info = {
                     "raw_fields": list(sample.keys()),
-                    "sample_strike": {k: str(v)[:50] for k, v in sample.items()}
+                    "sample_strike": {k: str(v)[:50] for k, v in sample.items()},
+                    "profile_first_strike_gamma": {
+                        "call_gamma": sample_call,
+                        "put_gamma": sample_put,
+                        "total_gamma": sample_total,
+                        "call_gamma_type": str(type(sample_call).__name__),
+                        "put_gamma_type": str(type(sample_put).__name__)
+                    }
                 }
+
+                # Check for alternative field names
+                print(f"DEBUG - call_gamma value: {sample_call} (type: {type(sample_call).__name__})")
+                print(f"DEBUG - put_gamma value: {sample_put} (type: {type(sample_put).__name__})")
+                print(f"DEBUG - total_gamma value: {sample_total}")
+                print(f"DEBUG - net_gamma value: {sample.get('net_gamma', 'NOT FOUND')}")
+                print(f"DEBUG - call_gex value: {sample.get('call_gex', 'NOT FOUND')}")
+                print(f"DEBUG - put_gex value: {sample.get('put_gex', 'NOT FOUND')}")
 
             # Format to match expected gamma_array structure
             gamma_array = []
@@ -550,18 +582,33 @@ async def get_0dte_gamma_comparison(symbol: str):
                     continue
 
                 strike = float(strike_data.get('strike', 0))
+
+                # Get gamma values - they're already processed by get_gex_profile()
+                # Values are stored as absolute values in the profile
                 call_gamma = float(strike_data.get('call_gamma', 0) or 0)
                 put_gamma = float(strike_data.get('put_gamma', 0) or 0)
-                total_gamma = float(strike_data.get('total_gamma', 0) or (call_gamma + put_gamma))
+                total_gamma = float(strike_data.get('total_gamma', 0) or 0)
+
+                # If total_gamma is 0 but call/put aren't, calculate it
+                if total_gamma == 0 and (call_gamma != 0 or put_gamma != 0):
+                    total_gamma = call_gamma - put_gamma  # Call positive, put negative for net
+
+                # If call/put are 0 but total isn't, derive from total
+                if call_gamma == 0 and put_gamma == 0 and total_gamma != 0:
+                    # Attribute to call if positive, put if negative
+                    if total_gamma > 0:
+                        call_gamma = total_gamma
+                    else:
+                        put_gamma = abs(total_gamma)
 
                 total_net_gex += total_gamma
 
-                # Track walls
+                # Track walls - use the higher gamma values
                 if call_gamma > max_call_gamma:
                     max_call_gamma = call_gamma
                     call_wall = strike
-                if abs(put_gamma) > max_put_gamma:
-                    max_put_gamma = abs(put_gamma)
+                if put_gamma > max_put_gamma:
+                    max_put_gamma = put_gamma
                     put_wall = strike
 
                 gamma_array.append({
@@ -581,8 +628,17 @@ async def get_0dte_gamma_comparison(symbol: str):
                 "net_gex": total_net_gex,
                 "gamma_array": gamma_array,
                 "strikes_count": len(gamma_array),
-                "expiration": "All expirations (gammaOI)",  # Note: not filtered to 0DTE
-                "_debug": debug_info
+                "expiration": "All expirations (gammaOI)",
+                "_debug": {
+                    **debug_info,
+                    "calculated_call_wall": call_wall,
+                    "calculated_put_wall": put_wall,
+                    "max_call_gamma": max_call_gamma,
+                    "max_put_gamma": max_put_gamma,
+                    "sample_gamma_values": gamma_array[:3] if gamma_array else [],
+                    "total_net_gex_calculated": total_net_gex,
+                    "profile_debug": tv_profile.get('_debug', {})
+                }
             }
         else:
             result["errors"].append("TradingVolatility API: No gamma profile data available")
