@@ -276,19 +276,24 @@ class PerformanceTrackerMixin:
             print(f"Failed to create equity snapshot: {e}")
 
     def get_performance(self) -> Dict:
-        """Get trading performance stats from tables"""
+        """Get trading performance stats from tables, filtered by symbol"""
         conn = get_connection()
 
-        # Get closed trades from dedicated table
+        # Get symbol from instance (default to SPY if not set)
+        symbol = getattr(self, 'symbol', 'SPY')
+
+        # Get closed trades from dedicated table - FILTER BY SYMBOL
         closed = pd.read_sql_query("""
             SELECT * FROM autonomous_closed_trades
+            WHERE symbol = %s
             ORDER BY exit_date DESC, exit_time DESC
-        """, conn)
+        """, conn, params=(symbol,))
 
-        # Get open positions from dedicated table
+        # Get open positions from dedicated table - FILTER BY SYMBOL
         open_pos = pd.read_sql_query("""
             SELECT * FROM autonomous_open_positions
-        """, conn)
+            WHERE symbol = %s
+        """, conn, params=(symbol,))
 
         conn.close()
 
@@ -300,15 +305,23 @@ class PerformanceTrackerMixin:
         total_pnl = total_realized + total_unrealized
         current_value = capital + total_pnl
 
-        win_rate = 0
-        winning_trades = 0
-        losing_trades = 0
+        # Calculate win rate from CLOSED trades (realized P&L)
+        closed_winning = 0
+        closed_losing = 0
         if not closed.empty:
-            winners = closed[closed['realized_pnl'] > 0]
-            losers = closed[closed['realized_pnl'] <= 0]
-            winning_trades = len(winners)
-            losing_trades = len(losers)
-            win_rate = (winning_trades / len(closed) * 100)
+            closed_winning = len(closed[closed['realized_pnl'] > 0])
+            closed_losing = len(closed[closed['realized_pnl'] <= 0])
+
+        # Also track open positions with unrealized gains/losses for dashboard display
+        open_winning = 0
+        open_losing = 0
+        if not open_pos.empty:
+            open_winning = len(open_pos[open_pos['unrealized_pnl'] > 0])
+            open_losing = len(open_pos[open_pos['unrealized_pnl'] < 0])
+
+        # Win rate based on closed trades only (realized results)
+        total_closed = closed_winning + closed_losing
+        win_rate = (closed_winning / total_closed * 100) if total_closed > 0 else 0
 
         total_trades = len(closed) + len(open_pos)
 
@@ -322,9 +335,12 @@ class PerformanceTrackerMixin:
             'total_trades': total_trades,
             'closed_trades': len(closed),
             'open_positions': len(open_pos),
-            'winning_trades': winning_trades,
-            'losing_trades': losing_trades,
-            'win_rate': win_rate
+            'winning_trades': closed_winning,
+            'losing_trades': closed_losing,
+            'open_winning': open_winning,
+            'open_losing': open_losing,
+            'win_rate': win_rate,
+            'symbol': symbol
         }
 
     def _log_spread_width_performance(self, position_id: int):
