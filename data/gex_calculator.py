@@ -535,7 +535,11 @@ class TradierGEXCalculator:
                 return {'error': f'No 0DTE options found for {symbol}'}
 
             # Convert contracts to format for GEX calculation
+            # Also calculate P/C ratio from open interest
             options_data = []
+            total_call_oi = 0
+            total_put_oi = 0
+
             for contract in zero_dte_contracts:
                 options_data.append({
                     'strike': contract.strike,
@@ -543,6 +547,15 @@ class TradierGEXCalculator:
                     'open_interest': contract.open_interest,
                     'option_type': contract.option_type
                 })
+                # Track OI for P/C ratio
+                oi = contract.open_interest or 0
+                if contract.option_type == 'call':
+                    total_call_oi += oi
+                elif contract.option_type == 'put':
+                    total_put_oi += oi
+
+            # Calculate P/C ratio
+            put_call_ratio = total_put_oi / total_call_oi if total_call_oi > 0 else 0
 
             # Calculate GEX for 0DTE only
             result = calculate_gex_from_chain(symbol, spot_price, options_data)
@@ -566,6 +579,9 @@ class TradierGEXCalculator:
                 'put_wall': result.put_wall,
                 'max_pain': result.max_pain,
                 'net_gex': result.net_gex,
+                'put_call_ratio': round(put_call_ratio, 3),
+                'total_call_oi': total_call_oi,
+                'total_put_oi': total_put_oi,
                 'gamma_array': gamma_array,
                 'expiration': zero_dte_expiration,
                 'contracts_count': len(zero_dte_contracts),

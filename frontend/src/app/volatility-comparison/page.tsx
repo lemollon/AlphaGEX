@@ -27,6 +27,8 @@ interface GammaSource {
   expiration?: string
   max_pain?: number
   net_gex?: number
+  put_call_ratio?: number
+  timestamp?: string
 }
 
 interface ComparisonData {
@@ -229,6 +231,33 @@ export default function VolatilityComparison() {
 
   const tradingVolChartData = prepareChartData(comparisonData?.trading_volatility || null, 'tv')
   const tradierChartData = prepareChartData(comparisonData?.tradier_calculated || null, 'tr')
+
+  // Calculate shared Y-axis domain for both charts (so they're visually comparable)
+  const calculateSharedYDomain = () => {
+    const allValues: number[] = []
+
+    // Collect all gamma values from both sources
+    if (comparisonData?.trading_volatility?.gamma_array) {
+      comparisonData.trading_volatility.gamma_array.forEach(item => {
+        allValues.push(item.call_gamma, -Math.abs(item.put_gamma))
+      })
+    }
+    if (comparisonData?.tradier_calculated?.gamma_array) {
+      comparisonData.tradier_calculated.gamma_array.forEach(item => {
+        allValues.push(item.call_gamma, -Math.abs(item.put_gamma))
+      })
+    }
+
+    if (allValues.length === 0) return [-100, 100]
+
+    const maxVal = Math.max(...allValues)
+    const minVal = Math.min(...allValues)
+    // Add 10% padding
+    const padding = Math.max(Math.abs(maxVal), Math.abs(minVal)) * 0.1
+    return [minVal - padding, maxVal + padding]
+  }
+
+  const sharedYDomain = calculateSharedYDomain()
 
   // Calculate IV-RV spread
   const ivRvSpread = tradingVolData && traderCalcs
@@ -591,6 +620,7 @@ export default function VolatilityComparison() {
                                   stroke="#9CA3AF"
                                   tick={{ fill: '#9CA3AF', fontSize: 9 }}
                                   tickFormatter={formatGamma}
+                                  domain={sharedYDomain as [number, number]}
                                 />
                                 <Tooltip
                                   contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
@@ -641,6 +671,7 @@ export default function VolatilityComparison() {
                                   stroke="#9CA3AF"
                                   tick={{ fill: '#9CA3AF', fontSize: 9 }}
                                   tickFormatter={formatGamma}
+                                  domain={sharedYDomain as [number, number]}
                                 />
                                 <Tooltip
                                   contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
@@ -794,7 +825,7 @@ export default function VolatilityComparison() {
                           <td className="py-2 px-4 text-text-primary">Net GEX</td>
                           <td className="py-2 px-4 text-right font-mono">
                             <span className={(tradingVolData?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
-                              {formatNumber(tradingVolData?.net_gex, 2)}B
+                              {formatGamma((tradingVolData?.net_gex || 0) * 1e9)}
                             </span>
                           </td>
                           <td className="py-2 px-4 text-right font-mono">
@@ -840,8 +871,11 @@ export default function VolatilityComparison() {
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">P/C Ratio</td>
                           <td className="py-2 px-4 text-right font-mono">{formatNumber(tradingVolData?.put_call_ratio, 3)}</td>
-                          <td className="py-2 px-4 text-right font-mono">--</td>
-                          <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
+                          <td className="py-2 px-4 text-right font-mono">{formatNumber(comparisonData?.tradier_calculated?.put_call_ratio, 3)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">
+                            {tradingVolData?.put_call_ratio && comparisonData?.tradier_calculated?.put_call_ratio
+                              ? formatNumber(Math.abs(tradingVolData.put_call_ratio - comparisonData.tradier_calculated.put_call_ratio), 3) : '--'}
+                          </td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Implied Vol</td>
@@ -855,7 +889,7 @@ export default function VolatilityComparison() {
                           <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_calculated?.expiration || '--'}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
-                        <tr>
+                        <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Strike Count</td>
                           <td className="py-2 px-4 text-right font-mono">{comparisonData?.trading_volatility?.strikes_count || '--'}</td>
                           <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_calculated?.strikes_count || '--'}</td>
@@ -863,6 +897,22 @@ export default function VolatilityComparison() {
                             {comparisonData?.trading_volatility?.strikes_count && comparisonData?.tradier_calculated?.strikes_count
                               ? Math.abs(comparisonData.trading_volatility.strikes_count - comparisonData.tradier_calculated.strikes_count) : '--'}
                           </td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-4 text-text-primary">Last Updated</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted text-xs">
+                            {comparisonData?.trading_volatility?.timestamp
+                              ? new Date(comparisonData.trading_volatility.timestamp).toLocaleTimeString()
+                              : comparisonData?.timestamp
+                              ? new Date(comparisonData.timestamp).toLocaleTimeString()
+                              : '--'}
+                          </td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted text-xs">
+                            {comparisonData?.tradier_calculated?.timestamp
+                              ? new Date(comparisonData.tradier_calculated.timestamp).toLocaleTimeString()
+                              : '--'}
+                          </td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
                       </tbody>
                     </table>

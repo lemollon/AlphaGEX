@@ -558,9 +558,11 @@ async def get_0dte_gamma_comparison(symbol: str):
                 "put_wall": tradier_profile.get('put_wall', 0),
                 "max_pain": tradier_profile.get('max_pain', 0),
                 "net_gex": tradier_profile.get('net_gex', 0),
+                "put_call_ratio": tradier_profile.get('put_call_ratio', 0),
                 "expiration": tradier_profile.get('expiration', ''),
                 "gamma_array": tradier_profile.get('gamma_array', []),
-                "strikes_count": len(tradier_profile.get('gamma_array', []))
+                "strikes_count": len(tradier_profile.get('gamma_array', [])),
+                "timestamp": tradier_profile.get('timestamp', '')
             }
         else:
             error_msg = tradier_profile.get('error', 'Unknown error') if tradier_profile else 'No data returned'
