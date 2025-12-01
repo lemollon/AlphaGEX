@@ -362,7 +362,7 @@ async def get_notification_history(limit: int = Query(50, ge=1, le=200)):
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, timestamp, pattern_type, alert_level, message, spy_price
+            SELECT id, timestamp, notification_type, regime_type, severity, message, data
             FROM psychology_notifications
             ORDER BY timestamp DESC
             LIMIT %s
@@ -373,10 +373,11 @@ async def get_notification_history(limit: int = Query(50, ge=1, le=200)):
         notifications = [{
             "id": row[0],
             "timestamp": str(row[1]),
-            "pattern_type": row[2],
-            "alert_level": row[3],
-            "message": row[4],
-            "spy_price": float(row[5]) if row[5] else None
+            "notification_type": row[2],
+            "pattern_type": row[3],  # regime_type as pattern_type for backwards compat
+            "alert_level": row[4],   # severity as alert_level for backwards compat
+            "message": row[5],
+            "data": row[6]
         } for row in rows]
 
         return {"notifications": notifications}
@@ -391,15 +392,15 @@ async def get_notification_stats():
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT pattern_type, COUNT(*) as count
+            SELECT regime_type, COUNT(*) as count
             FROM psychology_notifications
             WHERE timestamp > NOW() - INTERVAL '7 days'
-            GROUP BY pattern_type
+            GROUP BY regime_type
         """)
         rows = cursor.fetchall()
         conn.close()
 
-        return {"stats": {row[0]: row[1] for row in rows}, "period": "7 days"}
+        return {"stats": {row[0]: row[1] for row in rows if row[0]}, "period": "7 days"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
