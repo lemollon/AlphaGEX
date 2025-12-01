@@ -551,10 +551,10 @@ async def get_table_freshness():
         ("gex_history", "timestamp"),
         ("autonomous_open_positions", "entry_date"),
         ("autonomous_closed_trades", "exit_date"),
-        ("autonomous_trade_log", "timestamp"),
-        ("backtest_results", "created_at"),
+        ("autonomous_trade_log", "date"),  # Uses 'date' column, not 'timestamp'
+        ("backtest_results", "timestamp"),  # Uses 'timestamp', not 'created_at'
         ("regime_signals", "timestamp"),
-        ("recommendations", "created_at"),
+        ("recommendations", "timestamp"),  # Uses 'timestamp', not 'created_at'
     ]
 
     try:
@@ -619,6 +619,8 @@ async def get_table_freshness():
                     }
 
             except Exception as e:
+                # Rollback to clear aborted transaction state
+                conn.rollback()
                 freshness["tables"][table_name] = {
                     "status": "error",
                     "error": str(e)
