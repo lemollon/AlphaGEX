@@ -12,6 +12,7 @@ Features:
 7. Option Greeks Explainer - Context-aware Greeks education
 """
 
+import logging
 from database_adapter import get_connection
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional, Dict, Any
@@ -19,6 +20,9 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 import os
 import psycopg2.extras
+
+logger = logging.getLogger(__name__)
+
 try:
     from ai.autonomous_ai_reasoning import AutonomousAIReasoning
 except ImportError:
@@ -52,17 +56,17 @@ except ImportError:
 TradingVolatilityAPI = None
 try:
     from core_classes_and_engines import TradingVolatilityAPI
-    print("✅ AI Intelligence: TradingVolatilityAPI loaded")
+    logger.info("TradingVolatilityAPI loaded")
 except ImportError as e:
-    print(f"⚠️ AI Intelligence: TradingVolatilityAPI import failed: {e}")
+    logger.debug(f"TradingVolatilityAPI import failed: {type(e).__name__}")
 
 get_vix = None
 get_price = None
 try:
     from data.unified_data_provider import get_vix, get_price
-    print("✅ AI Intelligence: Unified Data Provider loaded")
+    logger.info("Unified Data Provider loaded")
 except ImportError as e:
-    print(f"⚠️ AI Intelligence: Unified Data Provider import failed: {e}")
+    logger.debug(f"Unified Data Provider import failed: {type(e).__name__}")
 
 router = APIRouter(prefix="/api/ai-intelligence", tags=["AI Intelligence"])
 
@@ -98,9 +102,9 @@ def get_live_market_data(symbol: str = 'SPY') -> Dict[str, Any]:
                 data['put_wall'] = float(gex_data.get('put_wall') or 0)
                 data['flip_point'] = float(gex_data.get('flip_point') or 0)
                 data['data_source'] = 'TradingVolatilityAPI'
-                print(f"[DEBUG] get_live_market_data: Got GEX from API - spot={data['spot_price']}")
+                logger.debug(f"get_live_market_data: Got GEX from API - spot={data['spot_price']}")
         except Exception as e:
-            print(f"[DEBUG] get_live_market_data: TradingVolatilityAPI error: {e}")
+            logger.debug(f"get_live_market_data: TradingVolatilityAPI error: {type(e).__name__}")
 
     # Try Unified Data Provider for VIX
     if get_vix:
@@ -108,9 +112,9 @@ def get_live_market_data(symbol: str = 'SPY') -> Dict[str, Any]:
             vix_value = get_vix()
             if vix_value and vix_value > 0:
                 data['vix'] = float(vix_value)
-                print(f"[DEBUG] get_live_market_data: Got VIX from Unified Provider - vix={data['vix']}")
+                logger.debug(f"get_live_market_data: Got VIX from Unified Provider - vix={data['vix']}")
         except Exception as e:
-            print(f"[DEBUG] get_live_market_data: get_vix error: {e}")
+            logger.debug(f"get_live_market_data: get_vix error: {type(e).__name__}")
 
     # Fallback: Try gex_history database
     if data['data_source'] == 'default':
@@ -133,9 +137,9 @@ def get_live_market_data(symbol: str = 'SPY') -> Dict[str, Any]:
                 data['put_wall'] = float(row.get('put_wall') or 0)
                 data['flip_point'] = float(row.get('flip_point') or 0)
                 data['data_source'] = 'gex_history_database'
-                print(f"[DEBUG] get_live_market_data: Got GEX from database - spot={data['spot_price']}")
+                logger.debug(f"get_live_market_data: Got GEX from database - spot={data['spot_price']}")
         except Exception as e:
-            print(f"[DEBUG] get_live_market_data: Database fallback error: {e}")
+            logger.debug(f"get_live_market_data: Database fallback error: {type(e).__name__}")
 
     return data
 
@@ -199,16 +203,16 @@ if api_key and LANGCHAIN_AVAILABLE and ChatAnthropic:
             temperature=0.1,
             max_tokens=4096
         )
-        print("✅ AI Intelligence: Claude 3.5 Haiku initialized successfully")
+        logger.info("AI Intelligence: Claude 3.5 Haiku initialized successfully")
     except Exception as e:
         llm_init_error = str(e)
-        print(f"⚠️ AI Intelligence: Claude initialization failed: {e}")
+        logger.warning(f"AI Intelligence: Claude initialization failed: {e}")
         llm = None
 else:
     if not api_key:
-        print("⚠️ AI Intelligence: No API key found (ANTHROPIC_API_KEY or CLAUDE_API_KEY)")
+        logger.warning("AI Intelligence: No API key found (ANTHROPIC_API_KEY or CLAUDE_API_KEY)")
     if not LANGCHAIN_AVAILABLE:
-        print("⚠️ AI Intelligence: LangChain not installed")
+        logger.warning("AI Intelligence: LangChain not installed")
 
 # Initialize AI systems (if available)
 ai_reasoning = AutonomousAIReasoning() if AutonomousAIReasoning else None
@@ -217,15 +221,15 @@ trade_advisor = AITradeAdvisor() if AITradeAdvisor else None
 # Helper function to validate API key is configured
 def require_api_key():
     """Raises HTTPException if API key is not configured or langchain unavailable"""
-    print(f"[DEBUG] require_api_key: LANGCHAIN_AVAILABLE={LANGCHAIN_AVAILABLE}, api_key={bool(api_key)}, llm={bool(llm)}")
+    logger.debug(f" require_api_key: LANGCHAIN_AVAILABLE={LANGCHAIN_AVAILABLE}, api_key={bool(api_key)}, llm={bool(llm)}")
     if not LANGCHAIN_AVAILABLE:
-        print("[DEBUG] require_api_key: LangChain not available")
+        logger.debug(" require_api_key: LangChain not available")
         raise HTTPException(
             status_code=503,
             detail="AI service unavailable: LangChain not installed. Install with: pip install langchain-anthropic"
         )
     if not api_key:
-        print("[DEBUG] require_api_key: No API key")
+        logger.debug(" require_api_key: No API key")
         raise HTTPException(
             status_code=503,
             detail="AI service unavailable: Claude API key not configured. Set ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable."
@@ -234,12 +238,12 @@ def require_api_key():
         error_detail = f"AI service unavailable: Claude LLM initialization failed"
         if llm_init_error:
             error_detail += f" - {llm_init_error}"
-        print(f"[DEBUG] require_api_key: LLM not initialized - {error_detail}")
+        logger.debug(f" require_api_key: LLM not initialized - {error_detail}")
         raise HTTPException(
             status_code=503,
             detail=error_detail
         )
-    print("[DEBUG] require_api_key: All checks passed")
+    logger.debug(" require_api_key: All checks passed")
 
 
 # Helper function to safely get database connection
@@ -277,34 +281,34 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
     require_api_key()
 
     try:
-        print("[DEBUG] pre-trade-checklist: Starting...")
+        logger.debug(" pre-trade-checklist: Starting...")
         conn = get_safe_connection()
         c = conn.cursor()
 
         # Get account info - with fallback
-        print("[DEBUG] pre-trade-checklist: Querying account_state...")
+        logger.debug(" pre-trade-checklist: Querying account_state...")
         account_value = 10000
         try:
             c.execute("SELECT account_value FROM account_state ORDER BY timestamp DESC LIMIT 1")
             account_value_row = c.fetchone()
             account_value = account_value_row[0] if account_value_row else 10000
-            print(f"[DEBUG] pre-trade-checklist: account_value = {account_value}")
+            logger.debug(f" pre-trade-checklist: account_value = {account_value}")
         except Exception as e:
-            print(f"[DEBUG] pre-trade-checklist: account_state error: {e}")
+            logger.debug(f" pre-trade-checklist: account_state error: {e}")
 
         # Get current positions - with fallback
-        print("[DEBUG] pre-trade-checklist: Querying trades for exposure...")
+        logger.debug(" pre-trade-checklist: Querying trades for exposure...")
         current_exposure = 0
         try:
             c.execute("SELECT SUM(ABS(contracts * entry_price * 100)) FROM trades WHERE status = 'OPEN'")
             current_exposure_row = c.fetchone()
             current_exposure = current_exposure_row[0] if current_exposure_row and current_exposure_row[0] else 0
-            print(f"[DEBUG] pre-trade-checklist: current_exposure = {current_exposure}")
+            logger.debug(f" pre-trade-checklist: current_exposure = {current_exposure}")
         except Exception as e:
-            print(f"[DEBUG] pre-trade-checklist: trades exposure error: {e}")
+            logger.debug(f" pre-trade-checklist: trades exposure error: {e}")
 
         # Get today's P&L - with fallback
-        print("[DEBUG] pre-trade-checklist: Querying trades for today PnL...")
+        logger.debug(" pre-trade-checklist: Querying trades for today PnL...")
         today_pnl = 0
         try:
             today_start = datetime.now().replace(hour=0, minute=0, second=0).isoformat()
@@ -315,12 +319,12 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
             """, (today_start,))
             today_pnl_row = c.fetchone()
             today_pnl = today_pnl_row[0] if today_pnl_row and today_pnl_row[0] else 0
-            print(f"[DEBUG] pre-trade-checklist: today_pnl = {today_pnl}")
+            logger.debug(f" pre-trade-checklist: today_pnl = {today_pnl}")
         except Exception as e:
-            print(f"[DEBUG] pre-trade-checklist: trades pnl error: {e}")
+            logger.debug(f" pre-trade-checklist: trades pnl error: {e}")
 
         # Get max drawdown - with fallback
-        print("[DEBUG] pre-trade-checklist: Querying account_state for drawdown...")
+        logger.debug(" pre-trade-checklist: Querying account_state for drawdown...")
         current_drawdown_pct = 0
         try:
             c.execute("""
@@ -331,14 +335,14 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
             dd_row = c.fetchone()
             if dd_row and dd_row[0] and dd_row[1]:
                 current_drawdown_pct = ((dd_row[1] - account_value) / dd_row[1] * 100) if dd_row[1] > 0 else 0
-            print(f"[DEBUG] pre-trade-checklist: current_drawdown_pct = {current_drawdown_pct}")
+            logger.debug(f" pre-trade-checklist: current_drawdown_pct = {current_drawdown_pct}")
         except Exception as e:
-            print(f"[DEBUG] pre-trade-checklist: account_state drawdown error: {e}")
+            logger.debug(f" pre-trade-checklist: account_state drawdown error: {e}")
 
         # Get win rate for pattern - with fallback
         pattern_win_rate = 0
         if request.pattern_type:
-            print(f"[DEBUG] pre-trade-checklist: Querying trades for pattern {request.pattern_type}...")
+            logger.debug(f" pre-trade-checklist: Querying trades for pattern {request.pattern_type}...")
             try:
                 c.execute("""
                     SELECT
@@ -350,23 +354,23 @@ async def generate_pre_trade_checklist(request: PreTradeChecklistRequest):
                 pattern_row = c.fetchone()
                 if pattern_row and pattern_row[0] and pattern_row[0] > 0:
                     pattern_win_rate = (pattern_row[1] / pattern_row[0] * 100) if pattern_row[0] > 0 else 0
-                print(f"[DEBUG] pre-trade-checklist: pattern_win_rate = {pattern_win_rate}")
+                logger.debug(f" pre-trade-checklist: pattern_win_rate = {pattern_win_rate}")
             except Exception as e:
-                print(f"[DEBUG] pre-trade-checklist: trades pattern error: {e}")
+                logger.debug(f" pre-trade-checklist: trades pattern error: {e}")
 
         # Get current VIX and market data - with fallback
-        print("[DEBUG] pre-trade-checklist: Querying market_data for VIX...")
+        logger.debug(" pre-trade-checklist: Querying market_data for VIX...")
         current_vix = 15.0
         try:
             c.execute("SELECT vix FROM market_data ORDER BY timestamp DESC LIMIT 1")
             vix_row = c.fetchone()
             current_vix = vix_row[0] if vix_row else 15.0
-            print(f"[DEBUG] pre-trade-checklist: current_vix = {current_vix}")
+            logger.debug(f" pre-trade-checklist: current_vix = {current_vix}")
         except Exception as e:
-            print(f"[DEBUG] pre-trade-checklist: market_data vix error: {e}")
+            logger.debug(f" pre-trade-checklist: market_data vix error: {e}")
 
         conn.close()
-        print("[DEBUG] pre-trade-checklist: Database queries complete")
+        logger.debug(" pre-trade-checklist: Database queries complete")
 
         # Calculate trade metrics
         total_cost = request.contracts * request.cost_per_contract * 100
@@ -494,12 +498,12 @@ async def explain_trade(trade_id: str):
     require_api_key()
 
     try:
-        print(f"[DEBUG] trade-explainer: Starting for trade_id={trade_id}...")
+        logger.debug(f" trade-explainer: Starting for trade_id={trade_id}...")
         conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get trade details - with fallback
-        print("[DEBUG] trade-explainer: Querying trades...")
+        logger.debug(" trade-explainer: Querying trades...")
         trade_dict = None
         try:
             c.execute("""
@@ -508,18 +512,18 @@ async def explain_trade(trade_id: str):
             trade = c.fetchone()
             if trade:
                 trade_dict = dict(trade)
-                print(f"[DEBUG] trade-explainer: Found trade")
+                logger.debug(f" trade-explainer: Found trade")
             else:
-                print(f"[DEBUG] trade-explainer: Trade not found")
+                logger.debug(f" trade-explainer: Trade not found")
         except Exception as e:
-            print(f"[DEBUG] trade-explainer: trades query error: {e}")
+            logger.debug(f" trade-explainer: trades query error: {e}")
 
         if not trade_dict:
             conn.close()
             raise HTTPException(status_code=404, detail="Trade not found")
 
         # Get associated autonomous logs - with fallback
-        print("[DEBUG] trade-explainer: Querying autonomous_trader_logs...")
+        logger.debug(" trade-explainer: Querying autonomous_trader_logs...")
         logs = []
         try:
             c.execute("""
@@ -529,12 +533,12 @@ async def explain_trade(trade_id: str):
                 ORDER BY timestamp DESC
             """, (trade_dict['timestamp'], trade_dict['timestamp']))
             logs = [dict(row) for row in c.fetchall()]
-            print(f"[DEBUG] trade-explainer: Found {len(logs)} logs")
+            logger.debug(f" trade-explainer: Found {len(logs)} logs")
         except Exception as e:
-            print(f"[DEBUG] trade-explainer: autonomous_trader_logs error: {e}")
+            logger.debug(f" trade-explainer: autonomous_trader_logs error: {e}")
 
         # Get market context at time of trade - with fallback
-        print("[DEBUG] trade-explainer: Querying market_data...")
+        logger.debug(" trade-explainer: Querying market_data...")
         market_dict = {'spot_price': 0, 'vix': 15, 'net_gex': 0}
         try:
             c.execute("""
@@ -544,12 +548,12 @@ async def explain_trade(trade_id: str):
             """, (trade_dict['timestamp'],))
             market_data = c.fetchone()
             market_dict = dict(market_data) if market_data else {'spot_price': 0, 'vix': 15, 'net_gex': 0}
-            print(f"[DEBUG] trade-explainer: market_data = {bool(market_data)}")
+            logger.debug(f" trade-explainer: market_data = {bool(market_data)}")
         except Exception as e:
-            print(f"[DEBUG] trade-explainer: market_data error: {e}")
+            logger.debug(f" trade-explainer: market_data error: {e}")
 
         # Get GEX context - with fallback
-        print("[DEBUG] trade-explainer: Querying gex_levels...")
+        logger.debug(" trade-explainer: Querying gex_levels...")
         gex_dict = {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
         try:
             c.execute("""
@@ -559,12 +563,12 @@ async def explain_trade(trade_id: str):
             """, (trade_dict['timestamp'],))
             gex_data = c.fetchone()
             gex_dict = dict(gex_data) if gex_data else {'call_wall': 0, 'put_wall': 0, 'flip_point': 0}
-            print(f"[DEBUG] trade-explainer: gex_levels = {bool(gex_data)}")
+            logger.debug(f" trade-explainer: gex_levels = {bool(gex_data)}")
         except Exception as e:
-            print(f"[DEBUG] trade-explainer: gex_levels error: {e}")
+            logger.debug(f" trade-explainer: gex_levels error: {e}")
 
         conn.close()
-        print("[DEBUG] trade-explainer: Database queries complete")
+        logger.debug(" trade-explainer: Database queries complete")
 
         # Generate comprehensive explanation using Claude
         prompt = f"""You are an expert options trader explaining a trade to a student. Generate a DETAILED trade breakdown that explains EXACTLY why this trade was taken, with specific price targets and exit strategy.
@@ -669,20 +673,20 @@ async def generate_daily_trading_plan():
     require_api_key()
 
     try:
-        print("[DEBUG] daily-trading-plan: Starting...")
+        logger.debug(" daily-trading-plan: Starting...")
 
         # =====================================================================
         # GET LIVE MARKET DATA (uses TradingVolatilityAPI, gex_history fallback)
         # =====================================================================
-        print("[DEBUG] daily-trading-plan: Fetching LIVE market data...")
+        logger.debug(" daily-trading-plan: Fetching LIVE market data...")
         market_data = get_live_market_data('SPY')
-        print(f"[DEBUG] daily-trading-plan: LIVE data source = {market_data.get('data_source')}")
-        print(f"[DEBUG] daily-trading-plan: spot_price = {market_data.get('spot_price')}, vix = {market_data.get('vix')}")
+        logger.debug(f" daily-trading-plan: LIVE data source = {market_data.get('data_source')}")
+        logger.debug(f" daily-trading-plan: spot_price = {market_data.get('spot_price')}, vix = {market_data.get('vix')}")
 
         # Get psychology regime from live data
-        print("[DEBUG] daily-trading-plan: Computing psychology regime...")
+        logger.debug(" daily-trading-plan: Computing psychology regime...")
         psychology = get_live_psychology_regime('SPY')
-        print(f"[DEBUG] daily-trading-plan: regime = {psychology.get('regime_type')}, confidence = {psychology.get('confidence')}")
+        logger.debug(f" daily-trading-plan: regime = {psychology.get('regime_type')}, confidence = {psychology.get('confidence')}")
 
         # GEX levels from live data
         gex = {
@@ -690,7 +694,7 @@ async def generate_daily_trading_plan():
             'put_wall': market_data.get('put_wall', 0),
             'flip_point': market_data.get('flip_point', 0)
         }
-        print(f"[DEBUG] daily-trading-plan: call_wall={gex['call_wall']}, put_wall={gex['put_wall']}")
+        logger.debug(f" daily-trading-plan: call_wall={gex['call_wall']}, put_wall={gex['put_wall']}")
 
         # =====================================================================
         # DATABASE QUERIES (for account/trades - these have real data)
@@ -699,19 +703,19 @@ async def generate_daily_trading_plan():
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get account status - try autonomous_config first (has real capital)
-        print("[DEBUG] daily-trading-plan: Querying autonomous_config for capital...")
+        logger.debug(" daily-trading-plan: Querying autonomous_config for capital...")
         account_value = 10000
         try:
             c.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
             config_row = c.fetchone()
             if config_row and config_row['value']:
                 account_value = float(config_row['value'])
-            print(f"[DEBUG] daily-trading-plan: account_value = {account_value}")
+            logger.debug(f" daily-trading-plan: account_value = {account_value}")
         except Exception as e:
-            print(f"[DEBUG] daily-trading-plan: autonomous_config error: {e}")
+            logger.debug(f" daily-trading-plan: autonomous_config error: {e}")
 
         # Get recent performance from autonomous_closed_trades (has real data)
-        print("[DEBUG] daily-trading-plan: Querying autonomous_closed_trades for performance...")
+        logger.debug(" daily-trading-plan: Querying autonomous_closed_trades for performance...")
         performance = {'total_trades': 0, 'win_rate': 0, 'avg_pnl': 0}
         try:
             c.execute("""
@@ -729,12 +733,12 @@ async def generate_daily_trading_plan():
                     'win_rate': (perf_row['wins'] / perf_row['total'] * 100) if perf_row['total'] > 0 else 0,
                     'avg_pnl': perf_row['avg_pnl'] or 0
                 }
-            print(f"[DEBUG] daily-trading-plan: performance = {performance}")
+            logger.debug(f" daily-trading-plan: performance = {performance}")
         except Exception as e:
-            print(f"[DEBUG] daily-trading-plan: trades table error: {e}")
+            logger.debug(f" daily-trading-plan: trades table error: {e}")
 
         # Get top patterns - with fallback for missing table
-        print("[DEBUG] daily-trading-plan: Querying trades for patterns...")
+        logger.debug(" daily-trading-plan: Querying trades for patterns...")
         top_patterns = []
         try:
             c.execute("""
@@ -751,9 +755,9 @@ async def generate_daily_trading_plan():
                 LIMIT 3
             """)
             top_patterns = [dict(row) for row in c.fetchall()]
-            print(f"[DEBUG] daily-trading-plan: top_patterns count = {len(top_patterns)}")
+            logger.debug(f" daily-trading-plan: top_patterns count = {len(top_patterns)}")
         except Exception as e:
-            print(f"[DEBUG] daily-trading-plan: trades patterns error: {e}")
+            logger.debug(f" daily-trading-plan: trades patterns error: {e}")
 
         conn.close()
 
@@ -826,13 +830,13 @@ Be extremely specific with prices, times, and percentages. Make this ACTIONABLE.
         plan = llm.invoke(prompt)
 
         # Log the actual data being returned for debugging
-        print(f"[RESPONSE] daily-trading-plan returning:")
-        print(f"  - data_source: {market_data.get('data_source')}")
-        print(f"  - spot_price: ${market_data.get('spot_price', 0)}")
-        print(f"  - net_gex: ${(market_data.get('net_gex', 0) or 0)/1e9:.2f}B")
-        print(f"  - call_wall: ${market_data.get('call_wall', 0)}")
-        print(f"  - put_wall: ${market_data.get('put_wall', 0)}")
-        print(f"  - regime: {psychology.get('regime_type')}")
+        logger.debug(f"[RESPONSE] daily-trading-plan returning:")
+        logger.debug(f"  - data_source: {market_data.get('data_source')}")
+        logger.debug(f"  - spot_price: ${market_data.get('spot_price', 0)}")
+        logger.debug(f"  - net_gex: ${(market_data.get('net_gex', 0) or 0)/1e9:.2f}B")
+        logger.debug(f"  - call_wall: ${market_data.get('call_wall', 0)}")
+        logger.debug(f"  - put_wall: ${market_data.get('put_wall', 0)}")
+        logger.debug(f"  - regime: {psychology.get('regime_type')}")
 
         return {
             'success': True,
@@ -856,8 +860,8 @@ Be extremely specific with prices, times, and percentages. Make this ACTIONABLE.
 
     except Exception as e:
         import traceback
-        print(f"[ERROR] daily-trading-plan failed: {type(e).__name__}: {str(e)}")
-        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        logger.error(f"[ERROR] daily-trading-plan failed: {type(e).__name__}: {str(e)}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to generate daily plan: {type(e).__name__}: {str(e)}")
 
 
@@ -878,28 +882,28 @@ async def get_position_guidance(trade_id: str):
     require_api_key()
 
     try:
-        print(f"[DEBUG] position-guidance: Starting for trade_id={trade_id}...")
+        logger.debug(f" position-guidance: Starting for trade_id={trade_id}...")
         conn = get_safe_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get trade - with fallback
-        print("[DEBUG] position-guidance: Querying trades...")
+        logger.debug(" position-guidance: Querying trades...")
         trade = None
         try:
             c.execute("SELECT * FROM trades WHERE (id::text = %s OR timestamp::text = %s) AND status = 'OPEN'", (trade_id, trade_id))
             trade_row = c.fetchone()
             if trade_row:
                 trade = dict(trade_row)
-                print(f"[DEBUG] position-guidance: Found trade")
+                logger.debug(f" position-guidance: Found trade")
         except Exception as e:
-            print(f"[DEBUG] position-guidance: trades query error: {e}")
+            logger.debug(f" position-guidance: trades query error: {e}")
 
         if not trade:
             conn.close()
             raise HTTPException(status_code=404, detail="Open position not found")
 
         # Get current market price - with fallback
-        print("[DEBUG] position-guidance: Querying market_data...")
+        logger.debug(" position-guidance: Querying market_data...")
         current_spy = 0
         current_vix = 15
         try:
@@ -907,9 +911,9 @@ async def get_position_guidance(trade_id: str):
             market_row = c.fetchone()
             current_spy = market_row['spot_price'] if market_row else 0
             current_vix = market_row['vix'] if market_row else 15
-            print(f"[DEBUG] position-guidance: current_spy={current_spy}, current_vix={current_vix}")
+            logger.debug(f" position-guidance: current_spy={current_spy}, current_vix={current_vix}")
         except Exception as e:
-            print(f"[DEBUG] position-guidance: market_data error: {e}")
+            logger.debug(f" position-guidance: market_data error: {e}")
 
         # Get current option price (estimate based on intrinsic value + time value)
         strike = trade.get('strike', 0) or 0
@@ -942,10 +946,10 @@ async def get_position_guidance(trade_id: str):
                     entry_time = trade_timestamp
                 time_held = (datetime.now() - entry_time.replace(tzinfo=None)).total_seconds() / 3600  # hours
         except Exception as e:
-            print(f"[DEBUG] position-guidance: timestamp parse error: {e}")
+            logger.debug(f" position-guidance: timestamp parse error: {e}")
 
         # Get GEX walls - with fallback
-        print("[DEBUG] position-guidance: Querying gex_levels...")
+        logger.debug(" position-guidance: Querying gex_levels...")
         call_wall = strike + 10
         put_wall = strike - 10
         try:
@@ -953,12 +957,12 @@ async def get_position_guidance(trade_id: str):
             gex_row = c.fetchone()
             call_wall = gex_row['call_wall'] if gex_row and gex_row['call_wall'] else strike + 10
             put_wall = gex_row['put_wall'] if gex_row and gex_row['put_wall'] else strike - 10
-            print(f"[DEBUG] position-guidance: call_wall={call_wall}, put_wall={put_wall}")
+            logger.debug(f" position-guidance: call_wall={call_wall}, put_wall={put_wall}")
         except Exception as e:
-            print(f"[DEBUG] position-guidance: gex_levels error: {e}")
+            logger.debug(f" position-guidance: gex_levels error: {e}")
 
         conn.close()
-        print("[DEBUG] position-guidance: Database queries complete")
+        logger.debug(" position-guidance: Database queries complete")
 
         # Generate position guidance
         prompt = f"""You are a professional position manager providing real-time guidance for an open options trade. Provide SPECIFIC next actions with exact prices and times.
@@ -1066,20 +1070,20 @@ async def get_market_commentary():
     require_api_key()
 
     try:
-        print("[DEBUG] market-commentary: Starting...")
+        logger.debug(" market-commentary: Starting...")
 
         # =====================================================================
         # GET LIVE MARKET DATA (uses TradingVolatilityAPI, gex_history fallback)
         # =====================================================================
-        print("[DEBUG] market-commentary: Fetching LIVE market data...")
+        logger.debug(" market-commentary: Fetching LIVE market data...")
         current_market = get_live_market_data('SPY')
-        print(f"[DEBUG] market-commentary: LIVE data source = {current_market.get('data_source')}")
-        print(f"[DEBUG] market-commentary: spot_price = {current_market.get('spot_price')}, vix = {current_market.get('vix')}")
+        logger.debug(f" market-commentary: LIVE data source = {current_market.get('data_source')}")
+        logger.debug(f" market-commentary: spot_price = {current_market.get('spot_price')}, vix = {current_market.get('vix')}")
 
         # Get psychology regime from live data
-        print("[DEBUG] market-commentary: Computing psychology regime...")
+        logger.debug(" market-commentary: Computing psychology regime...")
         psychology = get_live_psychology_regime('SPY')
-        print(f"[DEBUG] market-commentary: regime = {psychology.get('regime_type')}, confidence = {psychology.get('confidence')}")
+        logger.debug(f" market-commentary: regime = {psychology.get('regime_type')}, confidence = {psychology.get('confidence')}")
 
         # GEX levels from live data
         gex = {
@@ -1087,7 +1091,7 @@ async def get_market_commentary():
             'put_wall': current_market.get('put_wall', 0),
             'flip_point': current_market.get('flip_point', 0)
         }
-        print(f"[DEBUG] market-commentary: call_wall={gex['call_wall']}, put_wall={gex['put_wall']}")
+        logger.debug(f" market-commentary: call_wall={gex['call_wall']}, put_wall={gex['put_wall']}")
 
         # =====================================================================
         # DATABASE QUERIES (for positions - use autonomous_positions)
@@ -1096,29 +1100,29 @@ async def get_market_commentary():
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get open positions from autonomous_positions (has real data)
-        print("[DEBUG] market-commentary: Querying autonomous_positions...")
+        logger.debug(" market-commentary: Querying autonomous_positions...")
         open_positions = 0
         try:
             c.execute("SELECT COUNT(*) as count FROM autonomous_positions WHERE status = 'OPEN'")
             result = c.fetchone()
             open_positions = result['count'] if result else 0
-            print(f"[DEBUG] market-commentary: open_positions = {open_positions}")
+            logger.debug(f" market-commentary: open_positions = {open_positions}")
         except Exception as e:
-            print(f"[DEBUG] market-commentary: autonomous_positions error: {e}")
+            logger.debug(f" market-commentary: autonomous_positions error: {e}")
 
         # Get recent trade from autonomous_trade_log (has real data)
-        print("[DEBUG] market-commentary: Querying autonomous_trade_log...")
+        logger.debug(" market-commentary: Querying autonomous_trade_log...")
         recent_trade = None
         try:
             c.execute("SELECT * FROM autonomous_trade_log ORDER BY timestamp DESC LIMIT 1")
             recent_trade_row = c.fetchone()
             recent_trade = dict(recent_trade_row) if recent_trade_row else None
-            print(f"[DEBUG] market-commentary: recent_trade = {bool(recent_trade)}")
+            logger.debug(f" market-commentary: recent_trade = {bool(recent_trade)}")
         except Exception as e:
-            print(f"[DEBUG] market-commentary: autonomous_trade_log error: {e}")
+            logger.debug(f" market-commentary: autonomous_trade_log error: {e}")
 
         conn.close()
-        print("[DEBUG] market-commentary: Data collection complete, generating AI response...")
+        logger.debug(" market-commentary: Data collection complete, generating AI response...")
 
         # Use current data (no previous for change calculation since we're using live data)
         vix_change = 0
@@ -1172,11 +1176,11 @@ Speak directly to the trader in an urgent, clear voice. Be specific with prices 
         commentary = llm.invoke(prompt)
 
         # Log the actual data being returned for debugging
-        print(f"[RESPONSE] market-commentary returning:")
-        print(f"  - data_source: {current_market.get('data_source')}")
-        print(f"  - spot_price: ${current_market.get('spot_price', 0)}")
-        print(f"  - net_gex: ${(current_market.get('net_gex', 0) or 0)/1e9:.2f}B")
-        print(f"  - regime: {psychology.get('regime_type')}")
+        logger.debug(f"[RESPONSE] market-commentary returning:")
+        logger.debug(f"  - data_source: {current_market.get('data_source')}")
+        logger.debug(f"  - spot_price: ${current_market.get('spot_price', 0)}")
+        logger.debug(f"  - net_gex: ${(current_market.get('net_gex', 0) or 0)/1e9:.2f}B")
+        logger.debug(f"  - regime: {psychology.get('regime_type')}")
 
         return {
             'success': True,
@@ -1197,8 +1201,8 @@ Speak directly to the trader in an urgent, clear voice. Be specific with prices 
 
     except Exception as e:
         import traceback
-        print(f"[ERROR] market-commentary failed: {type(e).__name__}: {str(e)}")
-        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        logger.error(f"[ERROR] market-commentary failed: {type(e).__name__}: {str(e)}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to generate commentary: {type(e).__name__}: {str(e)}")
 
 
@@ -1215,20 +1219,20 @@ async def compare_strategies():
     require_api_key()
 
     try:
-        print("[DEBUG] compare-strategies: Starting...")
+        logger.debug(" compare-strategies: Starting...")
 
         # =====================================================================
         # GET LIVE MARKET DATA (uses TradingVolatilityAPI, gex_history fallback)
         # =====================================================================
-        print("[DEBUG] compare-strategies: Fetching LIVE market data...")
+        logger.debug(" compare-strategies: Fetching LIVE market data...")
         market = get_live_market_data('SPY')
-        print(f"[DEBUG] compare-strategies: LIVE data source = {market.get('data_source')}")
-        print(f"[DEBUG] compare-strategies: spot_price = {market.get('spot_price')}, vix = {market.get('vix')}")
+        logger.debug(f" compare-strategies: LIVE data source = {market.get('data_source')}")
+        logger.debug(f" compare-strategies: spot_price = {market.get('spot_price')}, vix = {market.get('vix')}")
 
         # Get psychology regime from live data
-        print("[DEBUG] compare-strategies: Computing psychology regime...")
+        logger.debug(" compare-strategies: Computing psychology regime...")
         psychology = get_live_psychology_regime('SPY')
-        print(f"[DEBUG] compare-strategies: regime = {psychology.get('regime_type')}, confidence = {psychology.get('confidence')}")
+        logger.debug(f" compare-strategies: regime = {psychology.get('regime_type')}, confidence = {psychology.get('confidence')}")
 
         # GEX levels from live data
         gex = {
@@ -1236,7 +1240,7 @@ async def compare_strategies():
             'put_wall': market.get('put_wall', 0),
             'flip_point': market.get('flip_point', 0)
         }
-        print(f"[DEBUG] compare-strategies: call_wall={gex['call_wall']}, put_wall={gex['put_wall']}")
+        logger.debug(f" compare-strategies: call_wall={gex['call_wall']}, put_wall={gex['put_wall']}")
 
         # =====================================================================
         # DATABASE QUERIES (for account/performance - use existing tables)
@@ -1245,19 +1249,19 @@ async def compare_strategies():
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get account value from autonomous_config
-        print("[DEBUG] compare-strategies: Querying autonomous_config for capital...")
+        logger.debug(" compare-strategies: Querying autonomous_config for capital...")
         account_value = 10000
         try:
             c.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
             config_row = c.fetchone()
             if config_row and config_row['value']:
                 account_value = float(config_row['value'])
-            print(f"[DEBUG] compare-strategies: account_value = {account_value}")
+            logger.debug(f" compare-strategies: account_value = {account_value}")
         except Exception as e:
-            print(f"[DEBUG] compare-strategies: autonomous_config error: {e}")
+            logger.debug(f" compare-strategies: autonomous_config error: {e}")
 
         # Get pattern performance from backtest results if available
-        print("[DEBUG] compare-strategies: Querying backtest_summary for pattern performance...")
+        logger.debug(" compare-strategies: Querying backtest_summary for pattern performance...")
         pattern_performance = []
         try:
             c.execute("""
@@ -1271,12 +1275,12 @@ async def compare_strategies():
                 LIMIT 5
             """)
             pattern_performance = [dict(row) for row in c.fetchall()]
-            print(f"[DEBUG] compare-strategies: pattern_performance count = {len(pattern_performance)}")
+            logger.debug(f" compare-strategies: pattern_performance count = {len(pattern_performance)}")
         except Exception as e:
-            print(f"[DEBUG] compare-strategies: trades pattern error: {e}")
+            logger.debug(f" compare-strategies: trades pattern error: {e}")
 
         conn.close()
-        print("[DEBUG] compare-strategies: Database queries complete")
+        logger.debug(" compare-strategies: Database queries complete")
 
         # Generate strategy comparison
         prompt = f"""You are a professional trader comparing available strategies for the current market. Provide a detailed head-to-head comparison with specific trade setups.
@@ -1346,10 +1350,10 @@ Be specific with all dollar amounts, strikes, and probabilities."""
         comparison = llm.invoke(prompt)
 
         # Log the actual data being returned for debugging
-        print(f"[RESPONSE] compare-strategies returning:")
-        print(f"  - data_source: {market.get('data_source')}")
-        print(f"  - spot_price: ${market.get('spot_price', 0)}")
-        print(f"  - regime: {psychology.get('regime_type')}")
+        logger.debug(f"[RESPONSE] compare-strategies returning:")
+        logger.debug(f"  - data_source: {market.get('data_source')}")
+        logger.debug(f"  - spot_price: ${market.get('spot_price', 0)}")
+        logger.debug(f"  - regime: {psychology.get('regime_type')}")
 
         return {
             'success': True,
@@ -1497,7 +1501,7 @@ async def get_data_sources():
     # =========================================================================
     # 1. CHECK LIVE API SOURCE (TradingVolatilityAPI)
     # =========================================================================
-    print("[DIAGNOSTIC] Checking TradingVolatilityAPI...")
+    logger.debug("[DIAGNOSTIC] Checking TradingVolatilityAPI...")
     if TradingVolatilityAPI:
         try:
             api = TradingVolatilityAPI()
@@ -1531,7 +1535,7 @@ async def get_data_sources():
     # =========================================================================
     # 2. CHECK UNIFIED DATA PROVIDER (VIX, Price)
     # =========================================================================
-    print("[DIAGNOSTIC] Checking Unified Data Provider...")
+    logger.debug("[DIAGNOSTIC] Checking Unified Data Provider...")
     if get_vix:
         try:
             vix_value = get_vix()
@@ -1569,7 +1573,7 @@ async def get_data_sources():
     # =========================================================================
     # 3. CHECK DATABASE TABLES
     # =========================================================================
-    print("[DIAGNOSTIC] Checking database tables...")
+    logger.debug("[DIAGNOSTIC] Checking database tables...")
     try:
         conn = get_connection()
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -1678,7 +1682,7 @@ async def get_data_sources():
     # =========================================================================
     # 4. SUMMARIZE DATA FLOW FOR AI INTELLIGENCE ENDPOINTS
     # =========================================================================
-    print("[DIAGNOSTIC] Generating data flow summary...")
+    logger.debug("[DIAGNOSTIC] Generating data flow summary...")
 
     # Get live market data to show what endpoints will actually use
     live_data = get_live_market_data('SPY')

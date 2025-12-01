@@ -780,9 +780,9 @@ async def execute_trader_cycle():
     try:
         from backend.api.dependencies import api_client
 
-        print("\n" + "="*60)
-        print(f"🤖 MANUAL TRADER EXECUTION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*60 + "\n")
+        logger.info(" + "="*60)
+        logger.info(f" MANUAL TRADER EXECUTION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=*60 + "\n")
 
         trader.update_live_status(
             status='MANUAL_EXECUTION',
@@ -796,35 +796,33 @@ async def execute_trader_cycle():
             "message": ""
         }
 
-        print("🔍 Checking for new trade opportunity...")
+        logger.info("Checking for new trade opportunity...")
         try:
             position_id = trader.find_and_execute_daily_trade(api_client)
 
             if position_id:
-                print(f"✅ SUCCESS: Opened position #{position_id}")
+                logger.info(f"SUCCESS: Opened position #{position_id}")
                 results["new_trade"] = {
                     "position_id": position_id,
                     "message": f"Successfully opened position #{position_id}"
                 }
                 results["message"] = f"New position #{position_id} opened"
             else:
-                print("ℹ️  INFO: No new trade (already traded today or no setup found)")
+                logger.info("No new trade (already traded today or no setup found)")
                 results["message"] = "No new trade (already traded today or no qualifying setup)"
 
         except Exception as e:
-            print(f"❌ ERROR during trade execution: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"ERROR during trade execution: {type(e).__name__}")
             results["message"] = f"Trade execution error: {str(e)}"
 
-        print("\n🔄 Checking open positions for exit conditions...")
+        logger.info("Checking open positions for exit conditions...")
         try:
             actions = trader.auto_manage_positions(api_client)
 
             if actions:
-                print(f"✅ SUCCESS: Closed {len(actions)} position(s)")
+                logger.info(f"SUCCESS: Closed {len(actions)} position(s)")
                 for action in actions:
-                    print(f"   - {action['strategy']}: P&L ${action['pnl']:+,.2f} ({action['pnl_pct']:+.1f}%) - {action['reason']}")
+                    logger.info(f"- {action['strategy']}: P&L ${action['pnl']:+,.2f} ({action['pnl_pct']:+.1f}%) - {action['reason']}")
 
                 results["closed_positions"] = actions
                 if not results["message"]:
@@ -832,27 +830,23 @@ async def execute_trader_cycle():
                 else:
                     results["message"] += f", closed {len(actions)} position(s)"
             else:
-                print("ℹ️  INFO: All positions look good - no exits needed")
+                logger.info("All positions look good - no exits needed")
                 if not results["message"]:
                     results["message"] = "No exits needed"
 
         except Exception as e:
-            print(f"❌ ERROR during position management: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"ERROR during position management: {type(e).__name__}")
 
         perf = trader.get_performance()
-        print("\n📊 PERFORMANCE SUMMARY:")
-        print(f"   Starting Capital: ${perf['starting_capital']:,.0f}")
-        print(f"   Current Value: ${perf['current_value']:,.2f}")
-        print(f"   Total P&L: ${perf['total_pnl']:+,.2f} ({perf['return_pct']:+.2f}%)")
-        print(f"   Total Trades: {perf['total_trades']}")
-        print(f"   Open Positions: {perf['open_positions']}")
-        print(f"   Win Rate: {perf['win_rate']:.1f}%")
+        logger.info("PERFORMANCE SUMMARY:")
+        logger.info(f"Starting Capital: ${perf['starting_capital']:,.0f}")
+        logger.info(f"Current Value: ${perf['current_value']:,.2f}")
+        logger.info(f"Total P&L: ${perf['total_pnl']:+,.2f} ({perf['return_pct']:+.2f}%)")
+        logger.info(f"Total Trades: {perf['total_trades']}")
+        logger.info(f"Open Positions: {perf['open_positions']}")
+        logger.info(f"Win Rate: {perf['win_rate']:.1f}%")
 
-        print(f"\n{'='*60}")
-        print("CYCLE COMPLETE")
-        print("="*60 + "\n")
+        logger.info("CYCLE COMPLETE")
 
         return {
             "success": True,
@@ -863,7 +857,7 @@ async def execute_trader_cycle():
         }
 
     except Exception as e:
-        print(f"❌ CRITICAL ERROR: {e}")
+        logger.error(f" CRITICAL ERROR: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -907,7 +901,7 @@ async def toggle_strategy(strategy_id: str, enabled: bool = True):
             "enabled": enabled
         }
     except Exception as e:
-        print(f"Error toggling strategy: {e}")
+        logger.error(f"Error toggling strategy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -940,5 +934,5 @@ async def get_strategy_configs():
         config = {row['strategy_name']: row['enabled'] for _, row in df.iterrows()}
         return {"success": True, "data": config}
     except Exception as e:
-        print(f"Error getting strategy configs: {e}")
+        logger.error(f"Error getting strategy configs: {e}")
         return {"success": False, "data": {}}

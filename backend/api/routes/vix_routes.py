@@ -1,4 +1,6 @@
 """
+import logging
+logger = logging.getLogger(__name__)
 VIX Hedge Manager API routes.
 With fallback data sources when VIX module is unavailable.
 """
@@ -65,9 +67,9 @@ def get_vix_fallback_data() -> Dict[str, Any]:
                 vix_data['is_estimated'] = False
                 return vix_data
     except ImportError as e:
-        print(f"Tradier VIX import failed (expected on some deployments): {e}")
+        logger.debug(f"Tradier VIX import failed (expected on some deployments): {e}")
     except Exception as e:
-        print(f"Tradier VIX fallback failed: {e}")
+        logger.debug(f"Tradier VIX fallback failed: {e}")
 
     # Try Polygon
     polygon_key = os.getenv('POLYGON_API_KEY')
@@ -88,7 +90,7 @@ def get_vix_fallback_data() -> Dict[str, Any]:
                     vix_data['is_estimated'] = False
                     return vix_data
         except Exception as e:
-            print(f"Polygon VIX fallback failed: {e}")
+            logger.debug(f"Polygon VIX fallback failed: {e}")
 
     # Calculate stress level based on VIX value
     vix = vix_data['vix_spot']
@@ -142,9 +144,9 @@ async def get_vix_hedge_signal(portfolio_delta: float = 0, portfolio_value: floa
             }
         }
     except ImportError as e:
-        print(f"⚠️ VIX hedge manager import failed: {e}, using fallback signal")
+        logger.debug(f" VIX hedge manager import failed: {e}, using fallback signal")
     except Exception as e:
-        print(f"⚠️ VIX hedge manager error: {e}, using fallback signal")
+        logger.debug(f" VIX hedge manager error: {e}, using fallback signal")
 
     # FALLBACK: Generate basic signal from VIX level
     try:
@@ -237,7 +239,7 @@ async def get_vix_signal_history(days: int = 30):
             "data": formatted_data
         }
     except ImportError as e:
-        print(f"⚠️ VIX hedge manager import failed for history: {e}")
+        logger.debug(f" VIX hedge manager import failed for history: {e}")
         return {"success": True, "data": [], "fallback_mode": True, "message": "Signal history unavailable - module not loaded"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -284,9 +286,9 @@ async def get_vix_current():
             }
         }
     except ImportError as e:
-        print(f"⚠️ VIX hedge manager import failed: {e}, using fallback")
+        logger.debug(f" VIX hedge manager import failed: {e}, using fallback")
     except Exception as e:
-        print(f"⚠️ VIX hedge manager error: {e}, using fallback")
+        logger.debug(f" VIX hedge manager error: {e}, using fallback")
 
     # FALLBACK: Use direct API calls when vix_hedge_manager is unavailable
     try:

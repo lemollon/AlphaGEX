@@ -1,4 +1,6 @@
 """
+import logging
+logger = logging.getLogger(__name__)
 Push Notification API routes - Browser push notification management.
 """
 
@@ -16,7 +18,7 @@ try:
     push_service = get_push_service()
     push_notifications_available = True
 except Exception as e:
-    print(f"⚠️ Push notifications not available in route module: {e}")
+    logger.warning(f" Push notifications not available in route module: {e}")
     push_service = None
     push_notifications_available = False
 
@@ -81,7 +83,7 @@ async def subscribe_to_push_notifications(request: dict):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error subscribing: {e}")
+        logger.error(f" Error subscribing: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -109,7 +111,7 @@ async def unsubscribe_from_push_notifications(request: dict):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error unsubscribing: {e}")
+        logger.error(f" Error unsubscribing: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -148,7 +150,7 @@ async def update_notification_preferences(request: dict):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error updating preferences: {e}")
+        logger.error(f" Error updating preferences: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -175,7 +177,7 @@ async def send_test_notification():
         }
 
     except Exception as e:
-        print(f"❌ Error sending test notification: {e}")
+        logger.error(f" Error sending test notification: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

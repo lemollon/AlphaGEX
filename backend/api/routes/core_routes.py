@@ -1,4 +1,6 @@
 """
+import logging
+logger = logging.getLogger(__name__)
 Core API routes - Health, diagnostics, time, rate-limit endpoints.
 """
 
@@ -18,7 +20,7 @@ try:
         UNIFIED_DATA_AVAILABLE,
     )
 except ImportError as e:
-    print(f"⚠️ core_routes: dependencies import failed: {e}")
+    logger.debug(f" core_routes: dependencies import failed: {e}")
     api_client = None
     UNIFIED_DATA_AVAILABLE = False
     from zoneinfo import ZoneInfo
@@ -39,14 +41,14 @@ TradingVolatilityAPI = None
 try:
     from core_classes_and_engines import TradingVolatilityAPI
 except ImportError as e:
-    print(f"⚠️ core_routes: TradingVolatilityAPI import failed: {e}")
+    logger.debug(f" core_routes: TradingVolatilityAPI import failed: {e}")
 
 # Database connection - with fallback
 get_connection = None
 try:
     from database_adapter import get_connection
 except ImportError as e:
-    print(f"⚠️ core_routes: database_adapter import failed: {e}")
+    logger.debug(f" core_routes: database_adapter import failed: {e}")
 
 router = APIRouter(tags=["Core"])
 
