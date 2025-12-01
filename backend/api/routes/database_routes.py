@@ -541,8 +541,15 @@ async def get_table_freshness():
     Get data freshness for each table (last record timestamps).
     Helps identify stale data.
     """
+    from zoneinfo import ZoneInfo
+
+    # Use Central Time for display
+    central_tz = ZoneInfo("America/Chicago")
+    now_central = datetime.now(central_tz)
+
     freshness = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_central.isoformat(),
+        "timezone": "America/Chicago",
         "tables": {}
     }
 
@@ -551,10 +558,10 @@ async def get_table_freshness():
         ("gex_history", "timestamp"),
         ("autonomous_open_positions", "entry_date"),
         ("autonomous_closed_trades", "exit_date"),
-        ("autonomous_trade_log", "timestamp"),
-        ("backtest_results", "created_at"),
+        ("autonomous_trade_log", "date"),  # Uses 'date' column, not 'timestamp'
+        ("backtest_results", "timestamp"),  # Uses 'timestamp', not 'created_at'
         ("regime_signals", "timestamp"),
-        ("recommendations", "created_at"),
+        ("recommendations", "timestamp"),  # Uses 'timestamp', not 'created_at'
     ]
 
     try:
@@ -594,7 +601,16 @@ async def get_table_freshness():
                     elif not isinstance(latest, datetime):
                         latest = datetime.combine(latest, datetime.min.time())
 
-                    age = datetime.now() - latest.replace(tzinfo=None)
+                    # Make timezone-aware if not already
+                    if latest.tzinfo is None:
+                        # Assume UTC for naive datetimes from database
+                        latest = latest.replace(tzinfo=ZoneInfo("UTC"))
+
+                    # Convert to Central Time for display
+                    latest_central = latest.astimezone(central_tz)
+
+                    # Calculate age from now
+                    age = now_central - latest_central
                     age_minutes = int(age.total_seconds() / 60)
 
                     # Determine status based on age
@@ -607,7 +623,7 @@ async def get_table_freshness():
 
                     freshness["tables"][table_name] = {
                         "status": status,
-                        "last_record": latest.isoformat(),
+                        "last_record": latest_central.strftime("%Y-%m-%d %I:%M:%S %p CT"),
                         "age_minutes": age_minutes,
                         "age_human": f"{age_minutes // 60}h {age_minutes % 60}m" if age_minutes >= 60 else f"{age_minutes}m"
                     }
@@ -619,6 +635,8 @@ async def get_table_freshness():
                     }
 
             except Exception as e:
+                # Rollback to clear aborted transaction state
+                conn.rollback()
                 freshness["tables"][table_name] = {
                     "status": "error",
                     "error": str(e)
