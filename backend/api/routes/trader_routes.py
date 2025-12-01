@@ -183,7 +183,7 @@ async def get_open_positions():
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Explicitly select fields including expiration_date and entry_time for tracking
+        # Explicitly select fields including expiration_date and entry_time for tracking - SPY only
         cursor.execute("""
             SELECT
                 id,
@@ -208,6 +208,7 @@ async def get_open_positions():
                 stop_loss_pct,
                 created_at
             FROM autonomous_open_positions
+            WHERE symbol = 'SPY'
             ORDER BY entry_date DESC, entry_time DESC
         """)
         positions = cursor.fetchall()
@@ -235,13 +236,14 @@ async def get_open_positions():
 
 @router.get("/closed-trades")
 async def get_closed_trades(limit: int = 50):
-    """Get closed trades from database"""
+    """Get closed trades from database - SPY only"""
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         cursor.execute("""
             SELECT * FROM autonomous_closed_trades
+            WHERE symbol = 'SPY'
             ORDER BY exit_date DESC, exit_time DESC
             LIMIT %s
         """, (int(limit),))
@@ -291,7 +293,7 @@ async def get_equity_curve(days: int = 30):
         """, conn)
 
         if snapshots.empty:
-            # Build from closed trades
+            # Build from closed trades - SPY only
             trades = pd.read_sql_query(f"""
                 SELECT
                     exit_date as trade_date,
@@ -299,7 +301,7 @@ async def get_equity_curve(days: int = 30):
                     realized_pnl,
                     strategy
                 FROM autonomous_closed_trades
-                WHERE exit_date >= '{start_date_str}'
+                WHERE symbol = 'SPY' AND exit_date >= '{start_date_str}'
                 ORDER BY exit_date ASC, exit_time ASC
             """, conn)
 
@@ -452,6 +454,7 @@ async def get_strategies():
                 AVG(realized_pnl) as avg_pnl,
                 MAX(exit_date) as last_trade_date
             FROM autonomous_closed_trades
+            WHERE symbol = 'SPY'
             GROUP BY strategy
             ORDER BY total_pnl DESC
         """)
@@ -666,8 +669,8 @@ async def get_trader_trades(limit: int = 10):
 
         conn = get_connection()
 
-        # Query only columns that are likely to exist
-        open_trades = pd.read_sql_query(f"""
+        # Query only columns that are likely to exist - FILTER BY SPY
+        open_trades = pd.read_sql_query("""
             SELECT id, symbol, strategy, strike, option_type,
                    contracts, entry_date, entry_time, entry_price,
                    COALESCE(unrealized_pnl, 0) as unrealized_pnl,
@@ -676,20 +679,22 @@ async def get_trader_trades(limit: int = 10):
                    NULL::numeric as exit_price,
                    NULL::numeric as realized_pnl, NULL::text as exit_reason
             FROM autonomous_open_positions
+            WHERE symbol = 'SPY'
             ORDER BY entry_date DESC, entry_time DESC
-            LIMIT {int(limit)}
-        """, conn)
+            LIMIT %s
+        """, conn, params=(int(limit),))
 
-        closed_trades = pd.read_sql_query(f"""
+        closed_trades = pd.read_sql_query("""
             SELECT id, symbol, strategy, strike, option_type,
                    contracts, entry_date, entry_time, entry_price,
                    COALESCE(realized_pnl, 0) as unrealized_pnl,
                    'CLOSED' as status, exit_date, exit_time,
                    exit_price, realized_pnl, exit_reason
             FROM autonomous_closed_trades
+            WHERE symbol = 'SPY'
             ORDER BY exit_date DESC, exit_time DESC
-            LIMIT {int(limit)}
-        """, conn)
+            LIMIT %s
+        """, conn, params=(int(limit),))
 
         conn.close()
 
