@@ -7,7 +7,9 @@ Handles database stats, API connectivity tests, and system health checks.
 import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import deque
+from typing import Dict, List, Any, Optional
 
 from fastapi import APIRouter, HTTPException
 import psycopg2.extras
@@ -15,6 +17,46 @@ import psycopg2.sql as sql
 import requests
 
 from database_adapter import get_connection
+
+
+# In-memory error log buffer (circular buffer, max 500 entries)
+ERROR_LOG_BUFFER: deque = deque(maxlen=500)
+ACTIVITY_LOG_BUFFER: deque = deque(maxlen=200)
+
+
+def log_error_event(source: str, error_type: str, message: str, details: Optional[Dict] = None):
+    """Log an error event to the in-memory buffer"""
+    ERROR_LOG_BUFFER.append({
+        "timestamp": datetime.now().isoformat(),
+        "source": source,
+        "error_type": error_type,
+        "message": message,
+        "details": details or {}
+    })
+
+
+def log_activity_event(action: str, details: Optional[Dict] = None):
+    """Log an activity event to the in-memory buffer"""
+    ACTIVITY_LOG_BUFFER.append({
+        "timestamp": datetime.now().isoformat(),
+        "action": action,
+        "details": details or {}
+    })
+
+
+def mask_database_url(url: str) -> str:
+    """Mask sensitive credentials in database URL"""
+    if not url:
+        return "Not configured"
+    # Mask password in postgresql://user:password@host/db format
+    masked = re.sub(
+        r'(postgresql://[^:]+:)[^@]+(@.+)',
+        r'\1****\2',
+        url
+    )
+    # Also mask any remaining sensitive parts
+    masked = re.sub(r'password=[^&\s]+', 'password=****', masked)
+    return masked
 
 # Use standard logging with fallback for deployment compatibility
 # This ensures the module loads even if utils.logging_config is unavailable
@@ -135,19 +177,27 @@ async def get_database_stats():
             extra={"table_count": len(tables)}
         )
 
+        # Log activity
+        log_activity_event("database_stats_fetched", {"table_count": len(tables)})
+
         return {
             "success": True,
-            "database_path": os.getenv('DATABASE_URL', 'PostgreSQL'),
+            "database_path": mask_database_url(os.getenv('DATABASE_URL', '')),
+            "database_type": "PostgreSQL",
+            "connection_status": "connected",
             "total_tables": len(tables),
             "tables": tables,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
+        log_error_event("database", "connection_error", str(e))
         # Return minimal stats on error
         return {
             "success": False,
             "error": str(e),
-            "database_path": os.getenv('DATABASE_URL', 'PostgreSQL'),
+            "database_path": mask_database_url(os.getenv('DATABASE_URL', '')),
+            "database_type": "PostgreSQL",
+            "connection_status": "disconnected",
             "total_tables": 0,
             "tables": [],
             "timestamp": datetime.now().isoformat()
@@ -315,3 +365,296 @@ async def get_server_time():
             "day_of_week": now.strftime("%A")
         }
     }
+
+
+@router.get("/api/system/logs")
+async def get_system_logs(limit: int = 50, log_type: str = "all"):
+    """
+    Get system error and activity logs.
+
+    Args:
+        limit: Maximum number of log entries to return (default 50)
+        log_type: 'errors', 'activity', or 'all' (default 'all')
+    """
+    log_activity_event("system_logs_viewed", {"log_type": log_type})
+
+    result = {
+        "success": True,
+        "timestamp": datetime.now().isoformat()
+    }
+
+    if log_type in ["errors", "all"]:
+        result["errors"] = list(ERROR_LOG_BUFFER)[-limit:]
+        result["error_count"] = len(ERROR_LOG_BUFFER)
+
+    if log_type in ["activity", "all"]:
+        result["activity"] = list(ACTIVITY_LOG_BUFFER)[-limit:]
+        result["activity_count"] = len(ACTIVITY_LOG_BUFFER)
+
+    return result
+
+
+@router.delete("/api/system/logs/clear")
+async def clear_system_logs(log_type: str = "all"):
+    """Clear system logs"""
+    if log_type in ["errors", "all"]:
+        ERROR_LOG_BUFFER.clear()
+    if log_type in ["activity", "all"]:
+        ACTIVITY_LOG_BUFFER.clear()
+
+    log_activity_event("logs_cleared", {"log_type": log_type})
+
+    return {"success": True, "message": f"Cleared {log_type} logs"}
+
+
+@router.get("/api/system/health")
+async def get_system_health():
+    """
+    Comprehensive system health check.
+    Returns status of all system components.
+    """
+    from zoneinfo import ZoneInfo
+
+    health = {
+        "timestamp": datetime.now().isoformat(),
+        "overall_status": "healthy",
+        "components": {}
+    }
+
+    issues = []
+
+    # 1. Database Health
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.close()
+        conn.close()
+        health["components"]["database"] = {
+            "status": "healthy",
+            "message": "Connected"
+        }
+    except Exception as e:
+        health["components"]["database"] = {
+            "status": "error",
+            "message": str(e)
+        }
+        issues.append("database")
+        log_error_event("health_check", "database_error", str(e))
+
+    # 2. Trading Volatility API Health
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        circuit_breaker = getattr(TradingVolatilityAPI, '_shared_circuit_breaker_active', False)
+        calls_this_min = getattr(TradingVolatilityAPI, '_shared_api_call_count_minute', 0)
+
+        if circuit_breaker:
+            health["components"]["trading_volatility_api"] = {
+                "status": "degraded",
+                "message": "Circuit breaker active",
+                "calls_this_minute": calls_this_min
+            }
+            issues.append("trading_volatility_api")
+        elif calls_this_min > 15:
+            health["components"]["trading_volatility_api"] = {
+                "status": "warning",
+                "message": f"High usage: {calls_this_min}/20 calls",
+                "calls_this_minute": calls_this_min
+            }
+        else:
+            health["components"]["trading_volatility_api"] = {
+                "status": "healthy",
+                "message": "Operational",
+                "calls_this_minute": calls_this_min
+            }
+    except Exception as e:
+        health["components"]["trading_volatility_api"] = {
+            "status": "unknown",
+            "message": str(e)
+        }
+
+    # 3. Polygon API Health
+    polygon_key = os.getenv('POLYGON_API_KEY')
+    if polygon_key:
+        health["components"]["polygon_api"] = {
+            "status": "configured",
+            "message": "API key present"
+        }
+    else:
+        health["components"]["polygon_api"] = {
+            "status": "not_configured",
+            "message": "No API key"
+        }
+
+    # 4. Market Status
+    try:
+        now = datetime.now(ZoneInfo("America/New_York"))
+        market_open = (
+            now.weekday() < 5 and
+            9 <= now.hour < 16 and
+            not (now.hour == 9 and now.minute < 30)
+        )
+        health["components"]["market"] = {
+            "status": "open" if market_open else "closed",
+            "current_time_et": now.strftime("%H:%M:%S ET"),
+            "day": now.strftime("%A")
+        }
+    except Exception as e:
+        health["components"]["market"] = {
+            "status": "unknown",
+            "message": str(e)
+        }
+
+    # 5. Error Rate (last hour)
+    one_hour_ago = datetime.now() - timedelta(hours=1)
+    recent_errors = [
+        e for e in ERROR_LOG_BUFFER
+        if datetime.fromisoformat(e["timestamp"]) > one_hour_ago
+    ]
+    error_rate = len(recent_errors)
+
+    health["components"]["error_rate"] = {
+        "status": "healthy" if error_rate < 10 else "warning" if error_rate < 50 else "critical",
+        "errors_last_hour": error_rate,
+        "total_errors": len(ERROR_LOG_BUFFER)
+    }
+
+    if error_rate >= 50:
+        issues.append("high_error_rate")
+
+    # Determine overall status
+    if len(issues) == 0:
+        health["overall_status"] = "healthy"
+    elif "database" in issues:
+        health["overall_status"] = "critical"
+    else:
+        health["overall_status"] = "degraded"
+
+    health["issues"] = issues
+
+    return health
+
+
+@router.get("/api/database/table-freshness")
+async def get_table_freshness():
+    """
+    Get data freshness for each table (last record timestamps).
+    Helps identify stale data.
+    """
+    freshness = {
+        "timestamp": datetime.now().isoformat(),
+        "tables": {}
+    }
+
+    # Tables and their timestamp columns
+    table_configs = [
+        ("gex_history", "timestamp"),
+        ("autonomous_open_positions", "entry_date"),
+        ("autonomous_closed_trades", "exit_date"),
+        ("autonomous_trade_log", "timestamp"),
+        ("backtest_results", "created_at"),
+        ("regime_signals", "timestamp"),
+        ("recommendations", "created_at"),
+    ]
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        for table_name, ts_column in table_configs:
+            try:
+                # Check if table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = %s
+                    )
+                """, (table_name,))
+
+                if not cursor.fetchone()['exists']:
+                    freshness["tables"][table_name] = {
+                        "status": "not_found",
+                        "last_record": None,
+                        "age_minutes": None
+                    }
+                    continue
+
+                # Get latest record timestamp
+                query = sql.SQL("SELECT MAX({}) as latest FROM {}").format(
+                    sql.Identifier(ts_column),
+                    sql.Identifier(table_name)
+                )
+                cursor.execute(query)
+                result = cursor.fetchone()
+
+                if result and result['latest']:
+                    latest = result['latest']
+                    if isinstance(latest, str):
+                        latest = datetime.fromisoformat(latest.replace('Z', '+00:00'))
+                    elif not isinstance(latest, datetime):
+                        latest = datetime.combine(latest, datetime.min.time())
+
+                    age = datetime.now() - latest.replace(tzinfo=None)
+                    age_minutes = int(age.total_seconds() / 60)
+
+                    # Determine status based on age
+                    if age_minutes < 60:
+                        status = "fresh"
+                    elif age_minutes < 1440:  # 24 hours
+                        status = "recent"
+                    else:
+                        status = "stale"
+
+                    freshness["tables"][table_name] = {
+                        "status": status,
+                        "last_record": latest.isoformat(),
+                        "age_minutes": age_minutes,
+                        "age_human": f"{age_minutes // 60}h {age_minutes % 60}m" if age_minutes >= 60 else f"{age_minutes}m"
+                    }
+                else:
+                    freshness["tables"][table_name] = {
+                        "status": "empty",
+                        "last_record": None,
+                        "age_minutes": None
+                    }
+
+            except Exception as e:
+                freshness["tables"][table_name] = {
+                    "status": "error",
+                    "error": str(e)
+                }
+
+        conn.close()
+
+    except Exception as e:
+        freshness["error"] = str(e)
+        log_error_event("database", "freshness_check_error", str(e))
+
+    return freshness
+
+
+@router.post("/api/system/cache/clear")
+async def clear_system_cache():
+    """Clear server-side caches"""
+    try:
+        # Try to clear TradingVolatilityAPI cache
+        from core_classes_and_engines import TradingVolatilityAPI
+        if hasattr(TradingVolatilityAPI, '_shared_response_cache'):
+            TradingVolatilityAPI._shared_response_cache.clear()
+
+        log_activity_event("cache_cleared", {"source": "admin_action"})
+
+        return {
+            "success": True,
+            "message": "Server caches cleared successfully"
+        }
+    except Exception as e:
+        log_error_event("cache", "clear_error", str(e))
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+# Export the logging functions for use by other modules
+__all__ = ['router', 'log_error_event', 'log_activity_event', 'ERROR_LOG_BUFFER', 'ACTIVITY_LOG_BUFFER']

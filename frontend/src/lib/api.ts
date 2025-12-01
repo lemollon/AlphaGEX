@@ -274,9 +274,16 @@ export const apiClient = {
   getPushSubscriptions: () => api.get('/api/notifications/subscriptions'),
   deletePushSubscription: (id: number) => api.delete(`/api/notifications/subscription/${id}`),
 
-  // Database Administration
+  // Database Administration & System Monitoring
   getDatabaseStats: () => api.get('/api/database/stats'),
+  getTableFreshness: () => api.get('/api/database/table-freshness'),
   testConnections: () => api.get('/api/test-connections'),
+  getSystemHealth: () => api.get('/api/system/health'),
+  getSystemLogs: (limit?: number, logType?: string) =>
+    api.get('/api/system/logs', { params: { limit: limit || 50, log_type: logType || 'all' } }),
+  clearSystemLogs: (logType?: string) =>
+    api.delete('/api/system/logs/clear', { params: { log_type: logType || 'all' } }),
+  clearSystemCache: () => api.post('/api/system/cache/clear'),
 
   // VIX Hedge Manager
   getVIXHedgeSignal: (portfolioDelta?: number, portfolioValue?: number) =>
