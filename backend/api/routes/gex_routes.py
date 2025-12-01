@@ -536,6 +536,14 @@ async def get_0dte_gamma_comparison(symbol: str):
                     "sample_strike": {k: str(v)[:50] for k, v in sample.items()}
                 }
 
+                # Check for alternative field names
+                print(f"DEBUG - call_gamma value: {sample.get('call_gamma', 'NOT FOUND')}")
+                print(f"DEBUG - put_gamma value: {sample.get('put_gamma', 'NOT FOUND')}")
+                print(f"DEBUG - total_gamma value: {sample.get('total_gamma', 'NOT FOUND')}")
+                print(f"DEBUG - net_gamma value: {sample.get('net_gamma', 'NOT FOUND')}")
+                print(f"DEBUG - call_gex value: {sample.get('call_gex', 'NOT FOUND')}")
+                print(f"DEBUG - put_gex value: {sample.get('put_gex', 'NOT FOUND')}")
+
             # Format to match expected gamma_array structure
             gamma_array = []
             total_net_gex = 0
@@ -550,18 +558,33 @@ async def get_0dte_gamma_comparison(symbol: str):
                     continue
 
                 strike = float(strike_data.get('strike', 0))
+
+                # Get gamma values - they're already processed by get_gex_profile()
+                # Values are stored as absolute values in the profile
                 call_gamma = float(strike_data.get('call_gamma', 0) or 0)
                 put_gamma = float(strike_data.get('put_gamma', 0) or 0)
-                total_gamma = float(strike_data.get('total_gamma', 0) or (call_gamma + put_gamma))
+                total_gamma = float(strike_data.get('total_gamma', 0) or 0)
+
+                # If total_gamma is 0 but call/put aren't, calculate it
+                if total_gamma == 0 and (call_gamma != 0 or put_gamma != 0):
+                    total_gamma = call_gamma - put_gamma  # Call positive, put negative for net
+
+                # If call/put are 0 but total isn't, derive from total
+                if call_gamma == 0 and put_gamma == 0 and total_gamma != 0:
+                    # Attribute to call if positive, put if negative
+                    if total_gamma > 0:
+                        call_gamma = total_gamma
+                    else:
+                        put_gamma = abs(total_gamma)
 
                 total_net_gex += total_gamma
 
-                # Track walls
+                # Track walls - use the higher gamma values
                 if call_gamma > max_call_gamma:
                     max_call_gamma = call_gamma
                     call_wall = strike
-                if abs(put_gamma) > max_put_gamma:
-                    max_put_gamma = abs(put_gamma)
+                if put_gamma > max_put_gamma:
+                    max_put_gamma = put_gamma
                     put_wall = strike
 
                 gamma_array.append({
