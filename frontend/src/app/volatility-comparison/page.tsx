@@ -754,77 +754,150 @@ export default function VolatilityComparison() {
                   </div>
                 )}
 
-                {/* Data Source Details */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="card">
-                    <h3 className="text-lg font-semibold text-text-primary mb-3 flex items-center gap-2">
-                      <ExternalLink className="w-4 h-4 text-blue-400" />
-                      Trading Volatility API Details
-                    </h3>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Collection Date</span>
-                        <span className="text-text-primary font-mono">{tradingVolData?.collection_date || '--'}</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Spot Price</span>
-                        <span className="text-text-primary font-mono">${formatNumber(tradingVolData?.spot_price)}</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Implied Volatility</span>
-                        <span className="text-text-primary font-mono">{formatNumber((tradingVolData?.implied_volatility || 0) * 100, 1)}%</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Net GEX</span>
-                        <span className={`font-mono ${(tradingVolData?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
-                          {formatNumber(tradingVolData?.net_gex, 2)}B
-                        </span>
-                      </div>
-                      <div className="flex justify-between py-2">
-                        <span className="text-text-secondary">P/C Ratio</span>
-                        <span className="text-text-primary font-mono">{formatNumber(tradingVolData?.put_call_ratio, 3)}</span>
-                      </div>
-                    </div>
+                {/* Full Data Comparison Table - Same metrics from both sources */}
+                <div className="card">
+                  <div className="flex items-center gap-2 mb-4">
+                    <BarChart3 className="w-5 h-5 text-primary" />
+                    <h2 className="text-lg font-semibold text-text-primary">Full Data Comparison</h2>
                   </div>
-
-                  <div className="card">
-                    <h3 className="text-lg font-semibold text-text-primary mb-3 flex items-center gap-2">
-                      <Database className="w-4 h-4 text-green-400" />
-                      Trader Calculation Details
-                    </h3>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">VIX Spot</span>
-                        <span className="text-text-primary font-mono">{formatNumber(traderCalcs?.vix_spot)}</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">IV Percentile</span>
-                        <span className="text-text-primary font-mono">{formatNumber(traderCalcs?.iv_percentile, 0)}th</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Realized Vol (20d)</span>
-                        <span className="text-text-primary font-mono">{formatNumber(traderCalcs?.realized_vol_20d, 1)}%</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">IV-RV Spread</span>
-                        <span className={`font-mono ${
-                          (traderCalcs?.iv_rv_spread || 0) > 5 ? 'text-warning' :
-                          (traderCalcs?.iv_rv_spread || 0) < 0 ? 'text-success' : 'text-text-primary'
-                        }`}>
-                          {formatNumber(traderCalcs?.iv_rv_spread, 1)} pts
-                        </span>
-                      </div>
-                      <div className="flex justify-between py-2">
-                        <span className="text-text-secondary">Term Structure</span>
-                        <span className={`font-mono ${
-                          traderCalcs?.structure_type === 'contango' ? 'text-success' : 'text-danger'
-                        }`}>
-                          {traderCalcs?.structure_type?.toUpperCase() || '--'}
-                        </span>
-                      </div>
-                    </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className="text-left py-3 px-4 text-text-muted font-medium">Metric</th>
+                          <th className="text-right py-3 px-4 text-blue-400 font-medium">
+                            <div className="flex items-center justify-end gap-1">
+                              <ExternalLink className="w-3 h-3" />
+                              TradingVol API
+                            </div>
+                          </th>
+                          <th className="text-right py-3 px-4 text-green-400 font-medium">
+                            <div className="flex items-center justify-end gap-1">
+                              <Database className="w-3 h-3" />
+                              Tradier Calc
+                            </div>
+                          </th>
+                          <th className="text-right py-3 px-4 text-text-muted font-medium">Diff</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">Spot Price</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(tradingVolData?.spot_price)}</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.spot_price)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">
+                            {tradingVolData?.spot_price && comparisonData?.tradier_calculated?.spot_price
+                              ? `$${formatNumber(Math.abs(tradingVolData.spot_price - comparisonData.tradier_calculated.spot_price))}` : '--'}
+                          </td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">Net GEX</td>
+                          <td className="py-2 px-4 text-right font-mono">
+                            <span className={(tradingVolData?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
+                              {formatNumber(tradingVolData?.net_gex, 2)}B
+                            </span>
+                          </td>
+                          <td className="py-2 px-4 text-right font-mono">
+                            <span className={(comparisonData?.tradier_calculated?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
+                              {formatGamma(comparisonData?.tradier_calculated?.net_gex || 0)}
+                            </span>
+                          </td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">Flip Point</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(tradingVolData?.flip_point)}</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.flip_point)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">
+                            {tradingVolData?.flip_point && comparisonData?.tradier_calculated?.flip_point
+                              ? `$${formatNumber(Math.abs(tradingVolData.flip_point - comparisonData.tradier_calculated.flip_point))}` : '--'}
+                          </td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">Call Wall</td>
+                          <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(tradingVolData?.call_wall)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.tradier_calculated?.call_wall)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">
+                            {tradingVolData?.call_wall && comparisonData?.tradier_calculated?.call_wall
+                              ? `$${formatNumber(Math.abs(tradingVolData.call_wall - comparisonData.tradier_calculated.call_wall))}` : '--'}
+                          </td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">Put Wall</td>
+                          <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(tradingVolData?.put_wall)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.tradier_calculated?.put_wall)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">
+                            {tradingVolData?.put_wall && comparisonData?.tradier_calculated?.put_wall
+                              ? `$${formatNumber(Math.abs(tradingVolData.put_wall - comparisonData.tradier_calculated.put_wall))}` : '--'}
+                          </td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">Max Pain</td>
+                          <td className="py-2 px-4 text-right font-mono">--</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.max_pain)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">P/C Ratio</td>
+                          <td className="py-2 px-4 text-right font-mono">{formatNumber(tradingVolData?.put_call_ratio, 3)}</td>
+                          <td className="py-2 px-4 text-right font-mono">--</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">Implied Vol</td>
+                          <td className="py-2 px-4 text-right font-mono">{formatNumber((tradingVolData?.implied_volatility || 0) * 100, 1)}%</td>
+                          <td className="py-2 px-4 text-right font-mono">--</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 px-4 text-text-primary">Expiration (0DTE)</td>
+                          <td className="py-2 px-4 text-right font-mono">--</td>
+                          <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_calculated?.expiration || '--'}</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-4 text-text-primary">Strike Count</td>
+                          <td className="py-2 px-4 text-right font-mono">{comparisonData?.trading_volatility?.strikes_count || '--'}</td>
+                          <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_calculated?.strikes_count || '--'}</td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">
+                            {comparisonData?.trading_volatility?.strikes_count && comparisonData?.tradier_calculated?.strikes_count
+                              ? Math.abs(comparisonData.trading_volatility.strikes_count - comparisonData.tradier_calculated.strikes_count) : '--'}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+
+                {/* VIX Context (supplemental) */}
+                {traderCalcs && (
+                  <div className="card">
+                    <div className="flex items-center gap-2 mb-4">
+                      <TrendingUp className="w-5 h-5 text-yellow-400" />
+                      <h2 className="text-lg font-semibold text-text-primary">VIX Context (Supplemental)</h2>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div className="p-3 bg-background-hover rounded-lg">
+                        <p className="text-text-muted text-xs">VIX Spot</p>
+                        <p className="text-xl font-bold">{formatNumber(traderCalcs.vix_spot)}</p>
+                      </div>
+                      <div className="p-3 bg-background-hover rounded-lg">
+                        <p className="text-text-muted text-xs">IV Percentile</p>
+                        <p className="text-xl font-bold">{formatNumber(traderCalcs.iv_percentile, 0)}th</p>
+                      </div>
+                      <div className="p-3 bg-background-hover rounded-lg">
+                        <p className="text-text-muted text-xs">Realized Vol 20d</p>
+                        <p className="text-xl font-bold">{formatNumber(traderCalcs.realized_vol_20d, 1)}%</p>
+                      </div>
+                      <div className="p-3 bg-background-hover rounded-lg">
+                        <p className="text-text-muted text-xs">Term Structure</p>
+                        <p className={`text-xl font-bold ${traderCalcs.structure_type === 'contango' ? 'text-success' : 'text-danger'}`}>
+                          {traderCalcs.structure_type?.toUpperCase() || '--'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Info Footer */}
                 <div className="text-center text-text-muted text-sm">

@@ -82,8 +82,10 @@ def calculate_gex_from_chain(
     strikes_gex = {}
     total_call_gex = 0
     total_put_gex = 0
-    max_call_gex = 0
-    max_put_gex = 0
+
+    # For wall calculation - track max gamma ABOVE and BELOW spot
+    max_call_gex_above_spot = 0  # Call wall should be at/above spot (resistance)
+    max_put_gex_below_spot = 0   # Put wall should be at/below spot (support)
     call_wall_strike = spot_price
     put_wall_strike = spot_price
 
@@ -113,8 +115,9 @@ def calculate_gex_from_chain(
             total_call_gex += gex_value
             call_oi_by_strike[strike] = call_oi_by_strike.get(strike, 0) + open_interest
 
-            if gex_value > max_call_gex:
-                max_call_gex = gex_value
+            # Call Wall = max call gamma AT or ABOVE spot price (resistance level)
+            if strike >= spot_price and gex_value > max_call_gex_above_spot:
+                max_call_gex_above_spot = gex_value
                 call_wall_strike = strike
 
         elif option_type == 'put':
@@ -123,8 +126,9 @@ def calculate_gex_from_chain(
             total_put_gex += gex_value  # Store absolute value
             put_oi_by_strike[strike] = put_oi_by_strike.get(strike, 0) + open_interest
 
-            if gex_value > max_put_gex:
-                max_put_gex = gex_value
+            # Put Wall = max put gamma AT or BELOW spot price (support level)
+            if strike <= spot_price and gex_value > max_put_gex_below_spot:
+                max_put_gex_below_spot = gex_value
                 put_wall_strike = strike
 
     # Calculate net GEX per strike and find flip point
