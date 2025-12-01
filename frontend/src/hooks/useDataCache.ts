@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { logger } from '@/lib/logger'
 
 interface CacheOptions {
   key: string
@@ -36,7 +37,7 @@ export function useDataCache<T>(options: CacheOptions) {
         }
       }
     } catch (error) {
-      console.error('Error loading cached data:', error)
+      logger.error('Error loading cached data:', error)
       sessionStorage.removeItem(key)
     }
   }, [key, ttl])
@@ -53,7 +54,7 @@ export function useDataCache<T>(options: CacheOptions) {
       setCachedData(data)
       setLastFetch(cacheData.timestamp)
     } catch (error) {
-      console.error('Error saving to cache:', error)
+      logger.error('Error saving to cache:', error)
     }
   }, [key])
 
@@ -64,7 +65,7 @@ export function useDataCache<T>(options: CacheOptions) {
       setCachedData(null)
       setLastFetch(0)
     } catch (error) {
-      console.error('Error clearing cache:', error)
+      logger.error('Error clearing cache:', error)
     }
   }, [key])
 

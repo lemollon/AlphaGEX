@@ -4,6 +4,7 @@
  * Caches data across page navigation using localStorage
  * Automatically expires stale data based on TTL
  */
+import { logger } from '@/lib/logger'
 
 interface CachedData<T> {
   data: T
@@ -39,7 +40,7 @@ class DataStore {
       return null
     }
 
-    console.log(`📦 Cache HIT: ${key} (${Math.round((cached.ttl - (now - cached.timestamp)) / 1000)}s remaining)`)
+    logger.debug(`Cache HIT: ${key} (${Math.round((cached.ttl - (now - cached.timestamp)) / 1000)}s remaining)`)
     return cached.data as T
   }
 
@@ -53,7 +54,7 @@ class DataStore {
       ttl
     })
     this.saveToStorage()
-    console.log(`💾 Cache SET: ${key} (TTL: ${ttl / 1000}s)`)
+    logger.debug(`Cache SET: ${key} (TTL: ${ttl / 1000}s)`)
   }
 
   /**
@@ -62,10 +63,10 @@ class DataStore {
   clear(key?: string): void {
     if (key) {
       this.cache.delete(key)
-      console.log(`🗑️ Cache CLEAR: ${key}`)
+      logger.debug(`Cache CLEAR: ${key}`)
     } else {
       this.cache.clear()
-      console.log('🗑️ Cache CLEAR: all')
+      logger.debug('Cache CLEAR: all')
     }
     this.saveToStorage()
   }
@@ -119,14 +120,14 @@ class DataStore {
         }
 
         if (cleanedCount > 0) {
-          console.log(`🧹 Cleaned ${cleanedCount} expired cache entries`)
+          logger.debug(`Cleaned ${cleanedCount} expired cache entries`)
           this.saveToStorage()
         }
 
-        console.log(`📦 Cache loaded: ${this.cache.size} entries`)
+        logger.debug(`Cache loaded: ${this.cache.size} entries`)
       }
     } catch (error) {
-      console.error('Failed to load cache from storage:', error)
+      logger.error('Failed to load cache from storage:', error)
       this.cache = new Map()
     }
   }
@@ -145,16 +146,16 @@ class DataStore {
       const serialized = JSON.stringify(Array.from(this.cache.entries()))
       localStorage.setItem(this.storageKey, serialized)
     } catch (error) {
-      console.error('Failed to save cache to storage:', error)
+      logger.error('Failed to save cache to storage:', error)
       // If storage is full, clear old entries and try again
       if (error instanceof Error && error.name === 'QuotaExceededError') {
-        console.warn('Storage quota exceeded, clearing old cache entries')
+        logger.warn('Storage quota exceeded, clearing old cache entries')
         this.clearOldestEntries(5)
         try {
           const serialized = JSON.stringify(Array.from(this.cache.entries()))
           localStorage.setItem(this.storageKey, serialized)
         } catch (e) {
-          console.error('Still failed after clearing old entries')
+          logger.error('Still failed after clearing old entries')
         }
       }
     }

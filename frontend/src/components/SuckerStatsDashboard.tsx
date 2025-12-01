@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { AlertTriangle, TrendingDown, Target, Percent, BarChart3, RefreshCw, Info } from 'lucide-react'
 import { apiClient } from '@/lib/api'
@@ -45,7 +47,7 @@ export default function SuckerStatsDashboard() {
         throw new Error('Failed to load statistics')
       }
     } catch (err: any) {
-      console.error('Error fetching sucker stats:', err)
+      logger.error('Error fetching sucker stats:', err)
       setError(err.message || 'Failed to load statistics')
     } finally {
       setLoading(false)

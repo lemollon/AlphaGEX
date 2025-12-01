@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import Link from 'next/link'
 import { useEffect } from 'react'
 import { Home, ArrowLeft, Search } from 'lucide-react'
@@ -7,7 +9,7 @@ import { Home, ArrowLeft, Search } from 'lucide-react'
 export default function NotFound() {
   useEffect(() => {
     // Log 404 errors for debugging
-    console.error('404 Page Not Found:', {
+    logger.error('404 Page Not Found:', {
       url: window.location.href,
       timestamp: new Date().toISOString(),
       referrer: document.referrer

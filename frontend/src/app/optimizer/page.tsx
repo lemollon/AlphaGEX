@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { TrendingUp, Target, Activity, Zap, LineChart, Brain, Trophy, AlertCircle, CheckCircle, BarChart3, PieChart } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -129,7 +131,7 @@ export default function StrategyOptimizer() {
           setBestCombinations(combosRes.data.combinations)
         }
       } catch (error) {
-        console.error('Error fetching optimizer data:', error)
+        logger.error('Error fetching optimizer data:', error)
       } finally {
         setLoading(false)
       }
@@ -151,7 +153,7 @@ export default function StrategyOptimizer() {
         setLiveRecommendations(response.data.recommendations)
       }
     } catch (error) {
-      console.error('Error fetching live recommendations:', error)
+      logger.error('Error fetching live recommendations:', error)
     }
   }
 

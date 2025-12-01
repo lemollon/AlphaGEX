@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { logger } from '@/lib/logger'
 import Navigation from '@/components/Navigation'
 import StatusCard from '@/components/StatusCard'
 import TradingViewChart from '@/components/TradingViewChart'
@@ -106,7 +107,7 @@ export default function Dashboard() {
 
       setLoading(false)
     } catch (error) {
-      console.error('Failed to fetch dashboard data:', error)
+      logger.error('Failed to fetch dashboard data:', error)
       setLoading(false)
     }
   }

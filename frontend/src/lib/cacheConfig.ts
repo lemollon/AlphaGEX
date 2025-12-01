@@ -7,6 +7,7 @@
  * Previous Limit: 20 calls/minute (single source)
  * New Capability: 5 sources with auto-fallback = much higher effective limit
  */
+import { logger } from '@/lib/logger'
 
 export const CACHE_DURATIONS = {
   // ========================================================================
@@ -115,9 +116,7 @@ export function getCacheTTL(
   const baseDuration = CACHE_DURATIONS[cacheType]
   const ttl = adaptive ? getAdaptiveCacheDuration(baseDuration) : baseDuration
 
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`📦 Cache TTL for ${cacheType}: ${ttl / 1000 / 60} minutes`)
-  }
+  logger.debug(`Cache TTL for ${cacheType}: ${ttl / 1000 / 60} minutes`)
 
   return ttl
 }

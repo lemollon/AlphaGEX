@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect, useCallback } from 'react'
 import { Zap, TrendingUp, TrendingDown, Activity, BarChart3, Target, Clock, AlertCircle, RefreshCw, Calendar } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -157,24 +159,24 @@ export default function GammaIntelligence() {
       forceRefresh ? setIsRefreshing(true) : setLoading(true)
       setError(null)
 
-      console.log('=== FETCHING GAMMA INTELLIGENCE ===')
-      console.log('Symbol:', symbol, 'VIX:', vix)
+      logger.info('=== FETCHING GAMMA INTELLIGENCE ===')
+      logger.info('Symbol:', symbol, 'VIX:', vix)
 
       const response = await apiClient.getGammaIntelligence(symbol, vix)
 
       // Check if request was cancelled
       if (signal?.aborted) {
-        console.log('Request cancelled')
+        logger.info('Request cancelled')
         return
       }
 
-      console.log('API Response:', response.data)
-      console.log('Has strikes?', response.data.data?.strikes?.length || 0)
+      logger.info('API Response:', response.data)
+      logger.info('Has strikes?', response.data.data?.strikes?.length || 0)
 
       const data = response.data.data
 
       // Log what we received for debugging
-      console.log('Intelligence data:', {
+      logger.info('Intelligence data:', {
         has_strikes: !!data.strikes,
         strikes_count: data.strikes?.length || 0,
         has_flip_point: !!data.flip_point,
@@ -186,11 +188,11 @@ export default function GammaIntelligence() {
     } catch (error: any) {
       // Ignore cancellation errors
       if (error.name === 'AbortError' || signal?.aborted) {
-        console.log('Request cancelled')
+        logger.info('Request cancelled')
         return
       }
 
-      console.error('Error fetching gamma intelligence:', error)
+      logger.error('Error fetching gamma intelligence:', error)
       const errorMessage = error.response?.data?.detail || error.message || 'Failed to fetch gamma intelligence'
       setError(errorMessage)
     } finally {
@@ -203,21 +205,21 @@ export default function GammaIntelligence() {
   const fetchHistoricalData = useCallback(async () => {
     try {
       setLoadingHistory(true)
-      console.log('=== FETCHING HISTORICAL DATA ===')
-      console.log('Symbol:', symbol)
+      logger.info('=== FETCHING HISTORICAL DATA ===')
+      logger.info('Symbol:', symbol)
 
       const response = await apiClient.getGammaHistory(symbol, 30)
       const data = response.data.data
 
-      console.log('Historical data received:', {
+      logger.info('Historical data received:', {
         count: data?.length || 0,
         sample: data?.[0] || null
       })
 
       setHistoricalData(data || [])
     } catch (error: any) {
-      console.error('Error fetching historical data:', error)
-      console.error('Error details:', error.response?.data || error.message)
+      logger.error('Error fetching historical data:', error)
+      logger.error('Error details:', error.response?.data || error.message)
     } finally {
       setLoadingHistory(false)
     }
@@ -227,8 +229,8 @@ export default function GammaIntelligence() {
   const fetchProbabilityData = useCallback(async () => {
     try {
       setLoadingProbabilities(true)
-      console.log('=== FETCHING PROBABILITY DATA ===')
-      console.log('Symbol:', symbol, 'VIX:', vix)
+      logger.info('=== FETCHING PROBABILITY DATA ===')
+      logger.info('Symbol:', symbol, 'VIX:', vix)
 
       const response = await apiClient.getGammaProbabilities(symbol, vix)
 
@@ -248,7 +250,7 @@ export default function GammaIntelligence() {
         return
       }
 
-      console.log('Probability data received:', {
+      logger.info('Probability data received:', {
         has_setup: !!data?.best_setup,
         strike_count: data?.strike_probabilities?.length || 0,
         has_position_sizing: !!data?.position_sizing,
@@ -257,15 +259,15 @@ export default function GammaIntelligence() {
 
       // Check if there's no trading edge
       if (!data.best_setup) {
-        console.warn('No trading setup available - insufficient edge in current conditions')
+        logger.warn('No trading setup available - insufficient edge in current conditions')
         // Still set the data so components can show "no edge" message
       }
 
       setProbabilityData(data)
       setError(null) // Clear any previous errors
     } catch (error: any) {
-      console.error('Error fetching probability data:', error)
-      console.error('Error details:', error.response?.data || error.message)
+      logger.error('Error fetching probability data:', error)
+      logger.error('Error details:', error.response?.data || error.message)
 
       // Set user-friendly error message
       if (error.status === 422) {

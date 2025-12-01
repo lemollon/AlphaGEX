@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect, useCallback } from 'react'
 import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar, Sparkles, BarChart3, Eye, EyeOff, PlayCircle, TrendingUpIcon } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -182,7 +184,7 @@ export default function PsychologyTrapDetection() {
 
     } catch (err: any) {
       const errorMsg = err.message || 'Failed to fetch analysis'
-      console.error('Psychology API Error:', errorMsg, err)
+      logger.error('Psychology API Error:', errorMsg, err)
       setError(errorMsg)
     } finally {
       setLoading(false)
@@ -199,7 +201,7 @@ export default function PsychologyTrapDetection() {
         setLiberationSetups(data.liberation_setups || [])
       }
     } catch (err) {
-      console.error('Failed to fetch liberation setups:', err)
+      logger.error('Failed to fetch liberation setups:', err)
     }
   }, [])
 
@@ -212,7 +214,7 @@ export default function PsychologyTrapDetection() {
         setFalseFloors(data.false_floors || [])
       }
     } catch (err) {
-      console.error('Failed to fetch false floors:', err)
+      logger.error('Failed to fetch false floors:', err)
     }
   }, [])
 

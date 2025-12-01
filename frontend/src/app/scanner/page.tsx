@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { Search, TrendingUp, TrendingDown, Target, DollarSign, Clock, CheckCircle, XCircle, AlertCircle, History, BarChart3, RefreshCw } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -88,7 +90,7 @@ export default function MultiSymbolScanner() {
     const cachedResults = dataStore.get<ScanSetup[]>('scanner_results')
     if (cachedResults) {
       setScanResults(cachedResults)
-      console.log(`📦 Loaded ${cachedResults.length} cached scan results`)
+      logger.info(`Loaded ${cachedResults.length} cached scan results`)
     }
   }, [])
 
@@ -99,7 +101,7 @@ export default function MultiSymbolScanner() {
         setScanHistory(response.data.data)
       }
     } catch (error) {
-      console.error('Error fetching scan history:', error)
+      logger.error('Error fetching scan history:', error)
     }
   }
 
@@ -124,9 +126,9 @@ export default function MultiSymbolScanner() {
     setScanningStatus({ symbol: 'Starting scan...', progress: '0%' })
 
     try {
-      console.log('🔍 Starting scan for symbols:', selectedSymbols)
-      console.log('📡 API URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
-      console.log(`⏱️ Estimated time: ~${selectedSymbols.length * 20}s with rate limiting`)
+      logger.info('Starting scan for symbols:', selectedSymbols)
+      logger.info('API URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
+      logger.info(`Estimated time: ~${selectedSymbols.length * 20}s with rate limiting`)
 
       // Scan symbols ONE AT A TIME and show results as they come in
       const allResults: ScanSetup[] = []
@@ -148,17 +150,17 @@ export default function MultiSymbolScanner() {
             // Add new results immediately
             allResults.push(...response.data.results)
             setScanResults([...allResults]) // Update UI with new results
-            console.log(`✅ ${symbol}: Found ${response.data.results.length} opportunities`)
+            logger.info(`${symbol}: Found ${response.data.results.length} opportunities`)
           } else {
-            console.log(`⚠️ ${symbol}: No opportunities found`)
+            logger.info(`${symbol}: No opportunities found`)
           }
         } catch (err) {
-          console.error(`❌ ${symbol}: Scan failed`, err)
+          logger.error(`${symbol}: Scan failed`, err)
           // Continue scanning other symbols even if one fails
         }
       }
 
-      console.log(`✅ Scan complete: ${allResults.length} total opportunities`)
+      logger.info(`Scan complete: ${allResults.length} total opportunities`)
       setScanningStatus(null)
       setScanWarning(null)
 
@@ -173,7 +175,7 @@ export default function MultiSymbolScanner() {
       await fetchScanHistory()
 
     } catch (error: any) {
-      console.error('❌ Error scanning symbols:', error)
+      logger.error('Error scanning symbols:', error)
 
       let errorMessage = 'Scan failed. '
 
@@ -202,7 +204,7 @@ export default function MultiSymbolScanner() {
         setShowHistory(false)
       }
     } catch (error) {
-      console.error('Error loading historical scan:', error)
+      logger.error('Error loading historical scan:', error)
     }
   }
 

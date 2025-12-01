@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect, useCallback } from 'react'
 import { AlertTriangle, TrendingUp, TrendingDown, Clock, Zap, Target, Calendar, Activity, RefreshCw, BarChart3, DollarSign } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -72,7 +74,7 @@ export default function GammaExpirationTracker() {
 
       setData(expirationData)
     } catch (error: any) {
-      console.error('Error fetching expiration data:', error)
+      logger.error('Error fetching expiration data:', error)
       setError(error.message || 'Failed to fetch data')
     } finally {
       setLoading(false)

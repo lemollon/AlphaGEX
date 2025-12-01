@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { Target, TrendingUp, AlertCircle, CheckCircle, PlayCircle, ExternalLink } from 'lucide-react'
 import { apiClient } from '@/lib/api'
@@ -51,7 +53,7 @@ export default function SmartStrategyPicker() {
         setError('Unable to fetch recommendations - run Psychology Analysis first')
       }
     } catch (err) {
-      console.error('Failed to fetch smart recommendations:', err)
+      logger.error('Failed to fetch smart recommendations:', err)
       setError('Failed to connect to API')
     } finally {
       setLoading(false)

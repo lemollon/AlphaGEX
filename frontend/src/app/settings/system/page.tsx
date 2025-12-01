@@ -52,7 +52,7 @@ export default function SystemSettings() {
         setStatus(respData.status)
       }
     } catch (error) {
-      console.error('Error fetching trader status:', error)
+      logger.error('Error fetching trader status:', error)
     } finally {
       setLoading(false)
     }
@@ -86,7 +86,7 @@ export default function SystemSettings() {
         })
       }
     } catch (error) {
-      console.error('Error fetching data sources:', error)
+      logger.error('Error fetching data sources:', error)
     } finally {
       setDataSourceLoading(false)
     }

@@ -33,7 +33,7 @@ export default function NotificationSettings() {
         setSubscriptions(res.data.subscriptions)
       }
     } catch (error) {
-      console.error('Error fetching subscriptions:', error)
+      logger.error('Error fetching subscriptions:', error)
     } finally {
       setLoading(false)
     }
@@ -49,7 +49,7 @@ export default function NotificationSettings() {
         showSuccess('Subscription removed successfully')
       }
     } catch (error) {
-      console.error('Error deleting subscription:', error)
+      logger.error('Error deleting subscription:', error)
     } finally {
       setDeleteLoading(null)
     }

@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import { TrendingUp, TrendingDown, BarChart3, Activity, PlayCircle, Filter, ChevronDown, Target, Zap } from 'lucide-react'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
@@ -60,7 +62,7 @@ export default function PsychologyPerformance() {
       }
 
     } catch (err) {
-      console.error('Failed to fetch performance data:', err)
+      logger.error('Failed to fetch performance data:', err)
       setError('Failed to load performance data')
     } finally {
       setLoading(false)

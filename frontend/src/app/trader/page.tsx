@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect, Fragment, useMemo } from 'react'
 import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3, Calendar, Zap, Brain, RefreshCw, Power, PowerOff, History, Cpu, ChevronDown, ChevronUp } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
@@ -707,7 +709,7 @@ export default function AutonomousTrader() {
           setVixData(vixDataRes.value.data.data)
         }
       } catch (error) {
-        console.error('Error fetching trader data:', error)
+        logger.error('Error fetching trader data:', error)
         // Keep default/empty state on error
       } finally {
         setLoading(false)
@@ -753,7 +755,7 @@ export default function AutonomousTrader() {
         }))
       }
     } catch (error) {
-      console.error('Failed to toggle strategy:', error)
+      logger.error('Failed to toggle strategy:', error)
     } finally {
       setStrategyTogglingId(null)
     }
@@ -954,7 +956,7 @@ export default function AutonomousTrader() {
       }
       setLastDataFetch(new Date())
     } catch (error) {
-      console.error('Error refreshing data:', error)
+      logger.error('Error refreshing data:', error)
     }
   }
 
@@ -2773,7 +2775,7 @@ export default function AutonomousTrader() {
                   alert(`Backtest complete! ${res.data.patterns_with_data} patterns saved to database.`)
                 }
               } catch (error) {
-                console.error('Error running backtest:', error)
+                logger.error('Error running backtest:', error)
                 alert('Error running backtest. Check console for details.')
               } finally {
                 setBacktestRefreshing(false)

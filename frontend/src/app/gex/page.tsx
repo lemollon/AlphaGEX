@@ -1,5 +1,7 @@
 'use client'
 
+import { logger } from '@/lib/logger'
+
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import LoadingWithTips from '@/components/LoadingWithTips'
@@ -108,7 +110,7 @@ export default function GEXAnalysisPage() {
     expandedTickers.forEach((ticker) => {
       // Only load if we have ticker data but don't have GEX levels yet
       if (tickerData[ticker] && !gexLevels[ticker] && !loadingGexLevels.has(ticker) && !gexLevelsErrors[ticker]) {
-        console.log(`🔄 Auto-loading GEX levels for expanded ticker: ${ticker}`)
+        logger.info(`Auto-loading GEX levels for expanded ticker: ${ticker}`)
         loadGexLevels(ticker)
       }
     })
@@ -136,7 +138,7 @@ export default function GEXAnalysisPage() {
     // Show cached data immediately
     if (Object.keys(cachedData).length > 0) {
       setTickerData(cachedData)
-      console.log(`📦 Loaded ${Object.keys(cachedData).length} tickers from cache`)
+      logger.info(`Loaded ${Object.keys(cachedData).length} tickers from cache`)
 
       // DON'T auto-fetch GEX levels - only load when user expands chart
       // This prevents hitting rate limits (gammaOI has 2 calls/min during trading hours)
@@ -185,12 +187,12 @@ export default function GEXAnalysisPage() {
       })
       setCacheInfo(newCacheInfo)
 
-      console.log(`✅ Loaded ${Object.keys(freshResults).length} fresh tickers from API`)
+      logger.info(`Loaded ${Object.keys(freshResults).length} fresh tickers from API`)
 
       // DON'T auto-fetch GEX levels - only load when user expands chart
       // This prevents hitting rate limits (gammaOI has 2 calls/min during trading hours)
     } catch (err) {
-      console.error('Failed to load tickers:', err)
+      logger.error('Failed to load tickers:', err)
       setError('Some tickers failed to load. Using cached data where available.')
     } finally {
       setLoading(false)
@@ -237,7 +239,7 @@ export default function GEXAnalysisPage() {
         }))
       }
     } catch (err) {
-      console.error(`Failed to refresh ${ticker}:`, err)
+      logger.error(`Failed to refresh ${ticker}:`, err)
       setError(`Failed to refresh ${ticker}`)
     } finally {
       setRefreshing(false)
@@ -292,7 +294,7 @@ export default function GEXAnalysisPage() {
         }
 
         // If levels is empty (rate limited), fall back to gamma intelligence endpoint
-        console.log(`⚠️ GEX levels empty for ${ticker}, trying gamma intelligence endpoint as fallback...`)
+        logger.info(`GEX levels empty for ${ticker}, trying gamma intelligence endpoint as fallback...`)
       }
 
       // FALLBACK: Try gamma intelligence endpoint which has the same strike data
@@ -311,7 +313,7 @@ export default function GEXAnalysisPage() {
             total_gex: strike.total_gamma
           }))
 
-          console.log(`✅ Loaded ${transformedLevels.length} strikes from gamma intelligence for ${ticker}`)
+          logger.info(`Loaded ${transformedLevels.length} strikes from gamma intelligence for ${ticker}`)
           setGexLevels(prev => ({
             ...prev,
             [ticker]: transformedLevels
@@ -319,7 +321,7 @@ export default function GEXAnalysisPage() {
           return
         }
       } catch (gammaErr) {
-        console.error(`Gamma intelligence fallback also failed for ${ticker}:`, gammaErr)
+        logger.error(`Gamma intelligence fallback also failed for ${ticker}:`, gammaErr)
       }
 
       // If both endpoints fail or return empty, show error
@@ -329,7 +331,7 @@ export default function GEXAnalysisPage() {
       }))
 
     } catch (err: any) {
-      console.error(`Failed to load GEX levels for ${ticker}:`, err)
+      logger.error(`Failed to load GEX levels for ${ticker}:`, err)
 
       // Still try the gamma intelligence fallback even if levels endpoint threw an error
       try {
@@ -343,7 +345,7 @@ export default function GEXAnalysisPage() {
             total_gex: strike.total_gamma
           }))
 
-          console.log(`✅ Loaded ${transformedLevels.length} strikes from gamma intelligence fallback for ${ticker}`)
+          logger.info(`Loaded ${transformedLevels.length} strikes from gamma intelligence fallback for ${ticker}`)
           setGexLevels(prev => ({
             ...prev,
             [ticker]: transformedLevels
@@ -351,7 +353,7 @@ export default function GEXAnalysisPage() {
           return
         }
       } catch (gammaErr) {
-        console.error(`Gamma intelligence fallback also failed for ${ticker}:`, gammaErr)
+        logger.error(`Gamma intelligence fallback also failed for ${ticker}:`, gammaErr)
       }
 
       const errorMessage = err.response?.data?.detail || err.message || 'Failed to load GEX profile chart'

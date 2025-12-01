@@ -2,6 +2,7 @@
  * Intelligent caching system to avoid API rate limit violations
  * Trading Volatility API: 20 calls/min limit
  */
+import { logger } from '@/lib/logger'
 
 interface CacheEntry<T> {
   data: T
@@ -67,10 +68,10 @@ export class IntelligentCache {
         return null
       }
 
-      console.log(`📦 Cache HIT for ${key} (age: ${Math.floor(age / 1000)}s)`)
+      logger.debug(`Cache HIT for ${key} (age: ${Math.floor(age / 1000)}s)`)
       return entry.data
     } catch (error) {
-      console.error('Cache read error:', error)
+      logger.error('Cache read error:', error)
       return null
     }
   }
@@ -83,9 +84,9 @@ export class IntelligentCache {
         symbol,
       }
       localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry))
-      console.log(`💾 Cached ${key} for ${symbol}`)
+      logger.debug(`Cached ${key} for ${symbol}`)
     } catch (error) {
-      console.error('Cache write error:', error)
+      logger.error('Cache write error:', error)
     }
   }
 
@@ -100,7 +101,7 @@ export class IntelligentCache {
         localStorage.removeItem(key)
       }
     })
-    console.log('🧹 Cache cleared')
+    logger.debug('Cache cleared')
   }
 
   static getAge(key: string): number | null {
@@ -172,7 +173,7 @@ export class RateLimiter {
   static async waitForNextCall(): Promise<void> {
     const waitTime = this.getTimeUntilNextCall()
     if (waitTime > 0) {
-      console.log(`⏱️ Rate limit: waiting ${Math.ceil(waitTime / 1000)}s`)
+      logger.debug(`Rate limit: waiting ${Math.ceil(waitTime / 1000)}s`)
       await new Promise((resolve) => setTimeout(resolve, waitTime))
     }
   }
@@ -211,7 +212,7 @@ export class StaggeredLoader {
         results[item] = data
         IntelligentCache.set(item, data, item)
       } catch (error) {
-        console.error(`Failed to load ${item}:`, error)
+        logger.error(`Failed to load ${item}:`, error)
       }
 
       // Delay before next call (except for last item)

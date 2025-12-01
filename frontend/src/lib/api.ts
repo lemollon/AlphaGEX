@@ -1,4 +1,5 @@
 import axios, { AxiosError } from 'axios'
+import { logger } from '@/lib/logger'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -66,7 +67,7 @@ api.interceptors.response.use(
       config._retryCount = 1
       const retryDelay = 1000 // 1 second
 
-      console.warn(`API Error (retrying in ${retryDelay}ms):`, error.message)
+      logger.warn(`API Error (retrying in ${retryDelay}ms):`, error.message)
       await delay(retryDelay)
 
       return api(config)
@@ -82,7 +83,7 @@ api.interceptors.response.use(
       originalError: error
     }
 
-    console.error('API Error:', {
+    logger.error('API Error:', {
       message: enhancedError.message,
       status: enhancedError.status,
       type: enhancedError.type,

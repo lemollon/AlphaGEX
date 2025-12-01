@@ -8,6 +8,7 @@
  * - Service worker registration
  * - Alert preferences
  */
+import { logger } from '@/lib/logger'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -61,7 +62,7 @@ export class PushNotificationService {
    */
   public async requestPermission(): Promise<boolean> {
     if (!this.isSupported()) {
-      console.warn('Push notifications not supported')
+      logger.warn('Push notifications not supported')
       return false
     }
 
@@ -69,15 +70,15 @@ export class PushNotificationService {
       const permission = await Notification.requestPermission()
 
       if (permission === 'granted') {
-        console.log('✅ Notification permission granted')
+        logger.info('Notification permission granted')
         await this.subscribeToNotifications()
         return true
       } else {
-        console.warn('⚠️ Notification permission denied')
+        logger.warn('Notification permission denied')
         return false
       }
     } catch (error) {
-      console.error('❌ Error requesting notification permission:', error)
+      logger.error('Error requesting notification permission:', error)
       return false
     }
   }
@@ -91,7 +92,7 @@ export class PushNotificationService {
       const registration = await this.registerServiceWorker()
 
       if (!registration) {
-        console.error('Service worker registration failed')
+        logger.error('Service worker registration failed')
         return
       }
 
@@ -107,7 +108,7 @@ export class PushNotificationService {
           applicationServerKey: this.urlBase64ToUint8Array(vapidPublicKey)
         })
 
-        console.log('✅ Push subscription created')
+        logger.info('Push subscription created')
       }
 
       // Send subscription to server
@@ -115,7 +116,7 @@ export class PushNotificationService {
 
       this.subscription = subscription
     } catch (error) {
-      console.error('❌ Error subscribing to push notifications:', error)
+      logger.error('Error subscribing to push notifications:', error)
     }
   }
 
@@ -126,12 +127,12 @@ export class PushNotificationService {
     try {
       if ('serviceWorker' in navigator) {
         const registration = await navigator.serviceWorker.register('/sw.js')
-        console.log('✅ Service Worker registered')
+        logger.info('Service Worker registered')
         return registration
       }
       return null
     } catch (error) {
-      console.error('❌ Service Worker registration failed:', error)
+      logger.error('Service Worker registration failed:', error)
       return null
     }
   }
@@ -145,7 +146,7 @@ export class PushNotificationService {
       const data = await response.json()
       return data.public_key
     } catch (error) {
-      console.error('❌ Error fetching VAPID key:', error)
+      logger.error('Error fetching VAPID key:', error)
       // Fallback to a default key (should be replaced with your actual VAPID key)
       return 'BCqVrF4RkZxS0zCdV_Y0gHn3DfELfFqW6vqXzJx5lY8QfJ1pZ2X3Y4Z5A6B7C8D9'
     }
@@ -166,9 +167,9 @@ export class PushNotificationService {
           preferences: this.preferences
         })
       })
-      console.log('✅ Subscription sent to server')
+      logger.info('Subscription sent to server')
     } catch (error) {
-      console.error('❌ Error sending subscription to server:', error)
+      logger.error('Error sending subscription to server:', error)
     }
   }
 
@@ -180,12 +181,12 @@ export class PushNotificationService {
     options: NotificationOptions = {}
   ): Promise<void> {
     if (!this.isSupported()) {
-      console.warn('Notifications not supported')
+      logger.warn('Notifications not supported')
       return
     }
 
     if (Notification.permission !== 'granted') {
-      console.warn('Notification permission not granted')
+      logger.warn('Notification permission not granted')
       return
     }
 
@@ -207,7 +208,7 @@ export class PushNotificationService {
         this.playNotificationSound()
       }
     } catch (error) {
-      console.error('❌ Error showing notification:', error)
+      logger.error('Error showing notification:', error)
 
       // Fallback to basic notification
       new Notification(title, options)
@@ -221,9 +222,9 @@ export class PushNotificationService {
     try {
       const audio = new Audio('/sounds/notification.mp3')
       audio.volume = 0.5
-      audio.play().catch(e => console.warn('Could not play notification sound:', e))
+      audio.play().catch(e => logger.warn('Could not play notification sound:', e))
     } catch (error) {
-      console.warn('Could not play notification sound:', error)
+      logger.warn('Could not play notification sound:', error)
     }
   }
 
@@ -317,7 +318,7 @@ export class PushNotificationService {
         body: JSON.stringify(this.preferences)
       })
     } catch (error) {
-      console.error('❌ Error updating preferences:', error)
+      logger.error('Error updating preferences:', error)
     }
   }
 
@@ -338,7 +339,7 @@ export class PushNotificationService {
         return JSON.parse(saved)
       }
     } catch (error) {
-      console.warn('Could not load preferences:', error)
+      logger.warn('Could not load preferences:', error)
     }
 
     // Default preferences
@@ -360,7 +361,7 @@ export class PushNotificationService {
     try {
       localStorage.setItem('notification_preferences', JSON.stringify(this.preferences))
     } catch (error) {
-      console.warn('Could not save preferences:', error)
+      logger.warn('Could not save preferences:', error)
     }
   }
 
@@ -384,10 +385,10 @@ export class PushNotificationService {
         })
 
         this.subscription = null
-        console.log('✅ Unsubscribed from push notifications')
+        logger.info('Unsubscribed from push notifications')
       }
     } catch (error) {
-      console.error('❌ Error unsubscribing:', error)
+      logger.error('Error unsubscribing:', error)
     }
   }
 
