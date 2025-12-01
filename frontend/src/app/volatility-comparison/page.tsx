@@ -1,30 +1,42 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, TrendingUp, TrendingDown, BarChart3, RefreshCw, AlertTriangle, Clock, Zap, Target, ArrowUpDown, Database, ExternalLink } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine, BarChart, Bar, Legend, ComposedChart } from 'recharts'
+import { Activity, TrendingUp, BarChart3, RefreshCw, AlertTriangle, Clock, Zap, ArrowUpDown, Database, ExternalLink, CheckCircle, XCircle } from 'lucide-react'
+import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 
-interface TradingVolData {
-  symbol: string
-  spot_price: number
-  net_gex: number
-  flip_point: number
-  call_wall: number | null
-  put_wall: number | null
-  put_call_ratio: number
-  implied_volatility: number
-  collection_date: string
-  gamma_array?: Array<{
-    strike: number
-    call_gamma: number
-    put_gamma: number
-    total_gamma: number
-  }>
+interface GammaStrike {
+  strike: number
+  call_gamma: number
+  put_gamma: number
+  total_gamma: number
+  net_gex?: number
 }
 
-interface TraderCalculations {
+interface GammaSource {
+  data_source: string
+  spot_price: number
+  flip_point: number
+  call_wall: number
+  put_wall: number
+  gamma_array: GammaStrike[]
+  strikes_count: number
+  expiration?: string
+  max_pain?: number
+  net_gex?: number
+}
+
+interface ComparisonData {
+  success: boolean
+  symbol: string
+  timestamp: string
+  trading_volatility: GammaSource | null
+  tradier_calculated: GammaSource | null
+  errors: string[]
+}
+
+interface VIXData {
   vix_spot: number
   vix_m1: number
   vix_m2: number
@@ -32,109 +44,44 @@ interface TraderCalculations {
   structure_type: string
   iv_percentile: number
   realized_vol_20d: number
-  iv_rv_spread: number
   vol_regime: string
-}
-
-interface GEXLevelData {
-  strike: number
-  call_gex: number
-  put_gex: number
-  total_gex: number
-}
-
-interface ComparisonHistory {
-  timestamp: string
-  trading_vol_iv: number
-  trader_realized_vol: number
-  vix_level: number
-  spread: number
 }
 
 export default function VolatilityComparison() {
   const [loading, setLoading] = useState(true)
   const [symbol, setSymbol] = useState('SPY')
-  const [tradingVolData, setTradingVolData] = useState<TradingVolData | null>(null)
-  const [traderCalcs, setTraderCalcs] = useState<TraderCalculations | null>(null)
-  const [gexLevels, setGexLevels] = useState<GEXLevelData[]>([])
-  const [comparisonHistory, setComparisonHistory] = useState<ComparisonHistory[]>([])
+  const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null)
+  const [vixData, setVixData] = useState<VIXData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
-  const [usingFallback, setUsingFallback] = useState(false)
-  const [tradingVolError, setTradingVolError] = useState<string | null>(null)
 
   const fetchData = useCallback(async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true)
       setError(null)
-      setTradingVolError(null)
 
-      // Fetch all data in parallel
-      const [gexRes, vixRes, levelsRes] = await Promise.all([
-        apiClient.getGEX(symbol).catch((e) => ({ data: { success: false, error: e.message } })),
-        apiClient.getVIXCurrent().catch((e) => ({ data: { success: false, error: e.message } })),
-        apiClient.getGEXLevels(symbol).catch((e) => ({ data: { success: false, data: [] } }))
+      // Fetch 0DTE gamma comparison and VIX data in parallel
+      const [comparisonRes, vixRes] = await Promise.all([
+        apiClient.get0DTEGammaComparison(symbol).catch((e) => ({
+          data: { success: false, errors: [e.message] }
+        })),
+        apiClient.getVIXCurrent().catch((e) => ({
+          data: { success: false, error: e.message }
+        }))
       ])
 
-      // Check if Trading Volatility API succeeded
-      const tradingVolSuccess = gexRes.data?.success && gexRes.data?.data
-      const traderCalcsSuccess = vixRes.data?.success && vixRes.data?.data
-
-      // Trading Volatility API data (PRIMARY SOURCE)
-      if (tradingVolSuccess) {
-        const data = gexRes.data.data
-        setTradingVolData({
-          symbol: data.symbol || symbol,
-          spot_price: data.spot_price || 0,
-          net_gex: data.net_gex || 0,
-          flip_point: data.flip_point || 0,
-          call_wall: data.call_wall,
-          put_wall: data.put_wall,
-          put_call_ratio: data.put_call_ratio || 0,
-          implied_volatility: data.implied_vol || data.implied_volatility || 0,
-          collection_date: data.collection_date || new Date().toISOString(),
-          gamma_array: data.gamma_array || []
-        })
-        setUsingFallback(false)
+      // Process comparison data
+      if (comparisonRes.data?.success) {
+        setComparisonData(comparisonRes.data)
       } else {
-        // Trading Vol API failed - set error and mark as using fallback
-        setTradingVolData(null)
-        setTradingVolError(gexRes.data?.error || 'Trading Volatility API unavailable')
-        setUsingFallback(true)
+        const errorMsg = comparisonRes.data?.errors?.join('; ') || 'Failed to fetch comparison data'
+        setError(errorMsg)
       }
 
-      // Trader calculations (VIX-based) - FALLBACK SOURCE
-      if (traderCalcsSuccess) {
-        setTraderCalcs(vixRes.data.data)
-      }
-
-      // GEX Levels for strike chart
-      if (levelsRes.data?.success && levelsRes.data?.data) {
-        const levels = Array.isArray(levelsRes.data.data) ? levelsRes.data.data : levelsRes.data.data.levels || []
-        setGexLevels(levels.slice(0, 30)) // Top 30 levels
-      }
-
-      // Build comparison history
-      const currentComparison: ComparisonHistory = {
-        timestamp: new Date().toISOString(),
-        trading_vol_iv: tradingVolSuccess
-          ? (gexRes.data.data?.implied_vol || gexRes.data.data?.implied_volatility || 0) * 100
-          : 0,
-        trader_realized_vol: vixRes.data?.data?.realized_vol_20d || 0,
-        vix_level: vixRes.data?.data?.vix_spot || 0,
-        spread: vixRes.data?.data?.iv_rv_spread || 0
-      }
-
-      setComparisonHistory(prev => {
-        const newHistory = [...prev, currentComparison]
-        // Keep last 50 data points
-        return newHistory.slice(-50)
-      })
-
-      // Only set error if BOTH sources failed
-      if (!tradingVolSuccess && !traderCalcsSuccess) {
-        setError('Both Trading Volatility API and Trader calculations unavailable')
+      // Process VIX data
+      if (vixRes.data?.success && vixRes.data?.data) {
+        setVixData(vixRes.data.data)
       }
 
       setLastUpdated(new Date())
@@ -145,22 +92,33 @@ export default function VolatilityComparison() {
     }
   }, [symbol])
 
-  // Initial fetch and auto-refresh
+  // Initial fetch and auto-refresh every 5 minutes
   useEffect(() => {
     fetchData()
 
     let interval: NodeJS.Timeout | null = null
     if (autoRefresh) {
-      // Auto-refresh every 5 minutes
       interval = setInterval(() => {
         fetchData(false)
-      }, 5 * 60 * 1000)
+      }, 5 * 60 * 1000) // 5 minutes
     }
 
     return () => {
       if (interval) clearInterval(interval)
     }
   }, [fetchData, autoRefresh])
+
+  const formatNumber = (num: number | null | undefined, decimals = 2) => {
+    if (num === null || num === undefined) return '--'
+    return num.toFixed(decimals)
+  }
+
+  const formatGamma = (value: number) => {
+    if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)}B`
+    if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(2)}M`
+    if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(2)}K`
+    return value.toFixed(2)
+  }
 
   const getVolRegimeColor = (regime: string) => {
     switch (regime) {
@@ -179,15 +137,19 @@ export default function VolatilityComparison() {
     }
   }
 
-  const formatNumber = (num: number | null | undefined, decimals = 2) => {
-    if (num === null || num === undefined) return '--'
-    return num.toFixed(decimals)
+  // Prepare chart data - merge both sources for comparison
+  const prepareChartData = (source: GammaSource | null, label: string) => {
+    if (!source || !source.gamma_array) return []
+    return source.gamma_array.map(item => ({
+      strike: item.strike,
+      [`${label}_call`]: item.call_gamma,
+      [`${label}_put`]: -Math.abs(item.put_gamma), // Negative for puts
+      [`${label}_net`]: item.total_gamma || item.net_gex || 0
+    }))
   }
 
-  // Calculate spread between Trading Vol IV and realized vol
-  const ivRvSpread = tradingVolData && traderCalcs
-    ? ((tradingVolData.implied_volatility * 100) - traderCalcs.realized_vol_20d).toFixed(2)
-    : '--'
+  const tradingVolChartData = prepareChartData(comparisonData?.trading_volatility || null, 'tv')
+  const tradierChartData = prepareChartData(comparisonData?.tradier_calculated || null, 'tr')
 
   return (
     <div className="min-h-screen">
@@ -200,9 +162,9 @@ export default function VolatilityComparison() {
               <div>
                 <div className="flex items-center gap-3">
                   <ArrowUpDown className="w-8 h-8 text-primary" />
-                  <h1 className="text-3xl font-bold text-text-primary">Volatility Comparison</h1>
+                  <h1 className="text-3xl font-bold text-text-primary">0DTE Gamma Comparison</h1>
                 </div>
-                <p className="text-text-secondary mt-1">Compare Trading Volatility API data with Trader calculations</p>
+                <p className="text-text-secondary mt-1">Compare TradingVolatility API vs Tradier 0DTE NET Gamma</p>
               </div>
               <div className="flex items-center gap-4">
                 {/* Symbol Selector */}
@@ -244,10 +206,10 @@ export default function VolatilityComparison() {
               </div>
             </div>
 
-            {loading && !tradingVolData && !traderCalcs ? (
+            {loading && !comparisonData ? (
               <div className="text-center py-12">
                 <Activity className="w-8 h-8 text-primary mx-auto animate-spin" />
-                <p className="text-text-secondary mt-2">Loading volatility data...</p>
+                <p className="text-text-secondary mt-2">Loading 0DTE gamma data...</p>
               </div>
             ) : error ? (
               <div className="card bg-danger/10 border-danger/20">
@@ -261,489 +223,353 @@ export default function VolatilityComparison() {
               </div>
             ) : (
               <>
-                {/* Fallback Warning Banner */}
-                {usingFallback && (
-                  <div className="card bg-warning/10 border-warning/30 border">
-                    <div className="flex items-center gap-3">
-                      <AlertTriangle className="w-6 h-6 text-warning flex-shrink-0" />
-                      <div className="flex-1">
-                        <p className="text-warning font-semibold">Using Fallback Data</p>
-                        <p className="text-text-secondary text-sm">
-                          Trading Volatility API unavailable ({tradingVolError}). Displaying Trader calculations as fallback.
-                        </p>
+                {/* Data Source Status Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* TradingVolatility API Status */}
+                  <div className={`card border-l-4 ${comparisonData?.trading_volatility ? 'border-l-blue-500' : 'border-l-gray-500'}`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <ExternalLink className="w-5 h-5 text-blue-400" />
+                        <h3 className="font-semibold text-text-primary">TradingVolatility API</h3>
                       </div>
-                      <div className="px-3 py-1 rounded-full bg-warning/20 text-warning text-xs font-semibold">
-                        FALLBACK MODE
+                      {comparisonData?.trading_volatility ? (
+                        <span className="flex items-center gap-1 px-2 py-1 rounded bg-success/20 text-success text-xs font-semibold">
+                          <CheckCircle className="w-3 h-3" /> ACTIVE
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 px-2 py-1 rounded bg-danger/20 text-danger text-xs font-semibold">
+                          <XCircle className="w-3 h-3" /> UNAVAILABLE
+                        </span>
+                      )}
+                    </div>
+                    {comparisonData?.trading_volatility && (
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div className="p-2 bg-background-hover rounded">
+                          <p className="text-text-muted text-xs">Spot</p>
+                          <p className="font-semibold">${formatNumber(comparisonData.trading_volatility.spot_price)}</p>
+                        </div>
+                        <div className="p-2 bg-background-hover rounded">
+                          <p className="text-text-muted text-xs">Flip Point</p>
+                          <p className="font-semibold">${formatNumber(comparisonData.trading_volatility.flip_point)}</p>
+                        </div>
+                        <div className="p-2 bg-background-hover rounded">
+                          <p className="text-text-muted text-xs">Strikes</p>
+                          <p className="font-semibold">{comparisonData.trading_volatility.strikes_count}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Tradier Calculated Status */}
+                  <div className={`card border-l-4 ${comparisonData?.tradier_calculated ? 'border-l-green-500' : 'border-l-gray-500'}`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Database className="w-5 h-5 text-green-400" />
+                        <h3 className="font-semibold text-text-primary">Tradier Calculation</h3>
+                      </div>
+                      {comparisonData?.tradier_calculated ? (
+                        <span className="flex items-center gap-1 px-2 py-1 rounded bg-success/20 text-success text-xs font-semibold">
+                          <CheckCircle className="w-3 h-3" /> ACTIVE
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 px-2 py-1 rounded bg-danger/20 text-danger text-xs font-semibold">
+                          <XCircle className="w-3 h-3" /> UNAVAILABLE
+                        </span>
+                      )}
+                    </div>
+                    {comparisonData?.tradier_calculated && (
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div className="p-2 bg-background-hover rounded">
+                          <p className="text-text-muted text-xs">Spot</p>
+                          <p className="font-semibold">${formatNumber(comparisonData.tradier_calculated.spot_price)}</p>
+                        </div>
+                        <div className="p-2 bg-background-hover rounded">
+                          <p className="text-text-muted text-xs">Expiration</p>
+                          <p className="font-semibold">{comparisonData.tradier_calculated.expiration || '--'}</p>
+                        </div>
+                        <div className="p-2 bg-background-hover rounded">
+                          <p className="text-text-muted text-xs">Strikes</p>
+                          <p className="font-semibold">{comparisonData.tradier_calculated.strikes_count}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Errors Banner */}
+                {comparisonData?.errors && comparisonData.errors.length > 0 && (
+                  <div className="card bg-warning/10 border-warning/30 border">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-warning font-semibold">Data Source Warnings</p>
+                        <ul className="text-text-secondary text-sm mt-1 list-disc list-inside">
+                          {comparisonData.errors.map((err, i) => (
+                            <li key={i}>{err}</li>
+                          ))}
+                        </ul>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Active Data Source Indicator */}
-                <div className="card bg-background-hover">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full ${usingFallback ? 'bg-warning' : 'bg-success'} animate-pulse`}></div>
-                      <span className="text-text-primary font-semibold">Active Data Source:</span>
-                      <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                        usingFallback
-                          ? 'bg-green-500/20 text-green-400'
-                          : 'bg-blue-500/20 text-blue-400'
-                      }`}>
-                        {usingFallback ? 'Trader Calculations (Fallback)' : 'Trading Volatility API (Primary)'}
-                      </span>
-                    </div>
-                    <div className="text-xs text-text-muted">
-                      {usingFallback ? 'VIX-based internal calculations' : 'External GEX data provider'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Source Labels */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className={`card bg-gradient-to-r ${
-                    !usingFallback
-                      ? 'from-blue-900/20 to-transparent border-blue-500/30'
-                      : 'from-gray-900/20 to-transparent border-gray-500/30 opacity-50'
-                  }`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <ExternalLink className={`w-5 h-5 ${!usingFallback ? 'text-blue-400' : 'text-gray-400'}`} />
-                        <h2 className={`text-lg font-semibold ${!usingFallback ? 'text-blue-400' : 'text-gray-400'}`}>
-                          Trading Volatility API
-                        </h2>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                        !usingFallback
-                          ? 'bg-success/20 text-success'
-                          : 'bg-danger/20 text-danger'
-                      }`}>
-                        {!usingFallback ? 'ACTIVE' : 'UNAVAILABLE'}
-                      </span>
-                    </div>
-                    <p className="text-text-secondary text-sm">
-                      {!usingFallback
-                        ? 'Primary source - GEX, IV, walls, gamma profiles'
-                        : tradingVolError || 'API connection failed'}
-                    </p>
-                  </div>
-                  <div className={`card bg-gradient-to-r ${
-                    usingFallback
-                      ? 'from-green-900/20 to-transparent border-green-500/30'
-                      : 'from-green-900/10 to-transparent border-green-500/20'
-                  }`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <Database className="w-5 h-5 text-green-400" />
-                        <h2 className="text-lg font-semibold text-green-400">Trader Calculations</h2>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                        usingFallback
-                          ? 'bg-warning/20 text-warning'
-                          : 'bg-primary/20 text-primary'
-                      }`}>
-                        {usingFallback ? 'FALLBACK ACTIVE' : 'STANDBY'}
-                      </span>
-                    </div>
-                    <p className="text-text-secondary text-sm">
-                      {usingFallback
-                        ? 'Active fallback - VIX, realized vol, IV percentile'
-                        : 'Ready as fallback - VIX-based calculations'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Main Comparison Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Trading Vol: Implied Volatility */}
-                  <div className="card border-l-4 border-l-blue-500">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-text-secondary text-sm">Trading Vol IV</p>
-                        <p className="text-3xl font-bold text-blue-400 mt-1">
-                          {formatNumber((tradingVolData?.implied_volatility || 0) * 100, 1)}%
-                        </p>
-                      </div>
-                      <div className="p-2 rounded-lg bg-blue-500/20">
-                        <Activity className="w-5 h-5 text-blue-400" />
-                      </div>
-                    </div>
-                    <p className="text-xs text-text-muted mt-2">From Trading Volatility API</p>
-                  </div>
-
-                  {/* Trader: Realized Volatility */}
-                  <div className="card border-l-4 border-l-green-500">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-text-secondary text-sm">Realized Vol (20d)</p>
-                        <p className="text-3xl font-bold text-green-400 mt-1">
-                          {formatNumber(traderCalcs?.realized_vol_20d, 1)}%
-                        </p>
-                      </div>
-                      <div className="p-2 rounded-lg bg-green-500/20">
-                        <TrendingUp className="w-5 h-5 text-green-400" />
-                      </div>
-                    </div>
-                    <p className="text-xs text-text-muted mt-2">Trader calculation</p>
-                  </div>
-
-                  {/* VIX Spot */}
-                  <div className="card border-l-4 border-l-yellow-500">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-text-secondary text-sm">VIX Spot</p>
-                        <p className={`text-3xl font-bold mt-1 ${
-                          (traderCalcs?.vix_spot || 0) > 25 ? 'text-danger' :
-                          (traderCalcs?.vix_spot || 0) > 18 ? 'text-warning' : 'text-success'
-                        }`}>
-                          {formatNumber(traderCalcs?.vix_spot)}
-                        </p>
-                      </div>
-                      <div className={`px-2 py-1 rounded text-xs font-semibold ${getVolRegimeColor(traderCalcs?.vol_regime || '')}`}>
-                        {traderCalcs?.vol_regime?.toUpperCase().replace('_', ' ') || 'N/A'}
-                      </div>
-                    </div>
-                    <p className="text-xs text-text-muted mt-2">IV Percentile: {formatNumber(traderCalcs?.iv_percentile, 0)}th</p>
-                  </div>
-
-                  {/* IV-RV Spread Comparison */}
-                  <div className="card border-l-4 border-l-purple-500">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-text-secondary text-sm">IV-RV Spread</p>
-                        <p className={`text-3xl font-bold mt-1 ${
-                          parseFloat(ivRvSpread) > 5 ? 'text-warning' :
-                          parseFloat(ivRvSpread) < 0 ? 'text-success' : 'text-text-primary'
-                        }`}>
-                          {ivRvSpread} pts
-                        </p>
-                      </div>
-                      <div className="p-2 rounded-lg bg-purple-500/20">
-                        <ArrowUpDown className="w-5 h-5 text-purple-400" />
-                      </div>
-                    </div>
-                    <p className="text-xs text-text-muted mt-2">
-                      {parseFloat(ivRvSpread) > 5 ? 'IV Premium High' :
-                       parseFloat(ivRvSpread) < 0 ? 'IV Discount' : 'Normal Range'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* GEX Data Comparison */}
+                {/* Side-by-Side Gamma Charts */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Trading Vol GEX Data */}
+                  {/* TradingVolatility API Chart */}
                   <div className="card">
                     <div className="flex items-center gap-2 mb-4">
                       <BarChart3 className="w-5 h-5 text-blue-400" />
-                      <h2 className="text-xl font-semibold text-text-primary">Trading Volatility GEX</h2>
-                      <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400">External</span>
+                      <h2 className="text-lg font-semibold text-text-primary">TradingVolatility API - 0DTE Gamma</h2>
                     </div>
-
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div className="p-3 rounded-lg bg-background-hover">
-                        <p className="text-text-muted text-xs">Net GEX</p>
-                        <p className={`text-xl font-bold ${(tradingVolData?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
-                          {formatNumber(tradingVolData?.net_gex, 2)}B
-                        </p>
+                    {tradingVolChartData.length > 0 ? (
+                      <div className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={tradingVolChartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis
+                              dataKey="strike"
+                              stroke="#9CA3AF"
+                              tick={{ fill: '#9CA3AF', fontSize: 10 }}
+                              tickFormatter={(value) => `$${value}`}
+                              interval="preserveStartEnd"
+                            />
+                            <YAxis
+                              stroke="#9CA3AF"
+                              tick={{ fill: '#9CA3AF', fontSize: 10 }}
+                              tickFormatter={(value) => formatGamma(value)}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#1F2937',
+                                border: '1px solid #374151',
+                                borderRadius: '8px'
+                              }}
+                              labelStyle={{ color: '#F3F4F6' }}
+                              formatter={(value: number, name: string) => [
+                                formatGamma(value),
+                                name.includes('call') ? 'Call Gamma' : name.includes('put') ? 'Put Gamma' : 'Net Gamma'
+                              ]}
+                              labelFormatter={(label) => `Strike: $${label}`}
+                            />
+                            <Bar dataKey="tv_call" fill="#22C55E" name="Call" stackId="stack" />
+                            <Bar dataKey="tv_put" fill="#EF4444" name="Put" stackId="stack" />
+                            {comparisonData?.trading_volatility?.spot_price && (
+                              <ReferenceLine
+                                x={comparisonData.trading_volatility.spot_price}
+                                stroke="#3B82F6"
+                                strokeWidth={2}
+                                label={{ value: 'Spot', fill: '#3B82F6', fontSize: 12 }}
+                              />
+                            )}
+                          </BarChart>
+                        </ResponsiveContainer>
                       </div>
-                      <div className="p-3 rounded-lg bg-background-hover">
-                        <p className="text-text-muted text-xs">Flip Point</p>
-                        <p className="text-xl font-bold text-text-primary">
-                          ${formatNumber(tradingVolData?.flip_point, 2)}
-                        </p>
+                    ) : (
+                      <div className="h-80 flex items-center justify-center text-text-muted">
+                        <p>No data available</p>
                       </div>
-                      <div className="p-3 rounded-lg bg-background-hover">
-                        <p className="text-text-muted text-xs">Call Wall</p>
-                        <p className="text-xl font-bold text-success">
-                          ${formatNumber(tradingVolData?.call_wall)}
-                        </p>
-                      </div>
-                      <div className="p-3 rounded-lg bg-background-hover">
-                        <p className="text-text-muted text-xs">Put Wall</p>
-                        <p className="text-xl font-bold text-danger">
-                          ${formatNumber(tradingVolData?.put_wall)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-lg bg-background-hover">
-                      <p className="text-text-muted text-xs mb-1">P/C Ratio (OI)</p>
-                      <p className={`text-lg font-semibold ${
-                        (tradingVolData?.put_call_ratio || 0) > 1.2 ? 'text-danger' :
-                        (tradingVolData?.put_call_ratio || 0) < 0.8 ? 'text-success' : 'text-text-primary'
-                      }`}>
-                        {formatNumber(tradingVolData?.put_call_ratio, 3)}
-                      </p>
-                    </div>
+                    )}
                   </div>
 
-                  {/* Trader VIX Term Structure */}
+                  {/* Tradier Calculated Chart */}
                   <div className="card">
                     <div className="flex items-center gap-2 mb-4">
-                      <TrendingUp className="w-5 h-5 text-green-400" />
-                      <h2 className="text-xl font-semibold text-text-primary">Trader VIX Analysis</h2>
-                      <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-400">Internal</span>
+                      <BarChart3 className="w-5 h-5 text-green-400" />
+                      <h2 className="text-lg font-semibold text-text-primary">Tradier Calculated - 0DTE Gamma</h2>
                     </div>
-
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-                        <div>
-                          <p className="text-text-muted text-xs">VIX Spot</p>
-                          <p className="text-xl font-bold text-text-primary">{formatNumber(traderCalcs?.vix_spot)}</p>
-                        </div>
-                        <div className={`px-3 py-1 rounded-lg font-semibold ${getVolRegimeColor(traderCalcs?.vol_regime || '')}`}>
-                          {traderCalcs?.vol_regime?.toUpperCase().replace('_', ' ') || 'N/A'}
-                        </div>
+                    {tradierChartData.length > 0 ? (
+                      <div className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={tradierChartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis
+                              dataKey="strike"
+                              stroke="#9CA3AF"
+                              tick={{ fill: '#9CA3AF', fontSize: 10 }}
+                              tickFormatter={(value) => `$${value}`}
+                              interval="preserveStartEnd"
+                            />
+                            <YAxis
+                              stroke="#9CA3AF"
+                              tick={{ fill: '#9CA3AF', fontSize: 10 }}
+                              tickFormatter={(value) => formatGamma(value)}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#1F2937',
+                                border: '1px solid #374151',
+                                borderRadius: '8px'
+                              }}
+                              labelStyle={{ color: '#F3F4F6' }}
+                              formatter={(value: number, name: string) => [
+                                formatGamma(value),
+                                name.includes('call') ? 'Call Gamma' : name.includes('put') ? 'Put Gamma' : 'Net Gamma'
+                              ]}
+                              labelFormatter={(label) => `Strike: $${label}`}
+                            />
+                            <Bar dataKey="tr_call" fill="#22C55E" name="Call" stackId="stack" />
+                            <Bar dataKey="tr_put" fill="#EF4444" name="Put" stackId="stack" />
+                            {comparisonData?.tradier_calculated?.spot_price && (
+                              <ReferenceLine
+                                x={comparisonData.tradier_calculated.spot_price}
+                                stroke="#3B82F6"
+                                strokeWidth={2}
+                                label={{ value: 'Spot', fill: '#3B82F6', fontSize: 12 }}
+                              />
+                            )}
+                          </BarChart>
+                        </ResponsiveContainer>
                       </div>
-
-                      <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-                        <div>
-                          <p className="text-text-muted text-xs">VIX Front Month (M1)</p>
-                          <p className="text-xl font-bold text-text-primary">{formatNumber(traderCalcs?.vix_m1)}</p>
-                        </div>
-                        <div className={`px-2 py-1 rounded font-semibold text-sm ${
-                          (traderCalcs?.term_structure_pct || 0) > 0 ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
-                        }`}>
-                          {(traderCalcs?.term_structure_pct || 0) > 0 ? '+' : ''}{formatNumber(traderCalcs?.term_structure_pct, 1)}%
-                        </div>
+                    ) : (
+                      <div className="h-80 flex items-center justify-center text-text-muted">
+                        <p>No data available</p>
                       </div>
-
-                      <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
-                        <div>
-                          <p className="text-text-muted text-xs">VIX Second Month (M2)</p>
-                          <p className="text-xl font-bold text-text-primary">{formatNumber(traderCalcs?.vix_m2)}</p>
-                        </div>
-                      </div>
-
-                      <div className={`p-3 rounded-lg border ${
-                        traderCalcs?.structure_type === 'contango' ? 'bg-success/10 border-success/20' :
-                        traderCalcs?.structure_type === 'backwardation' ? 'bg-danger/10 border-danger/20' :
-                        'bg-background-hover border-border'
-                      }`}>
-                        <div className="flex items-center gap-2">
-                          <Zap className="w-5 h-5" />
-                          <span className="font-semibold">
-                            {traderCalcs?.structure_type?.toUpperCase() || 'UNKNOWN'}
-                          </span>
-                        </div>
-                        <p className="text-sm text-text-secondary mt-1">
-                          {traderCalcs?.structure_type === 'contango'
-                            ? 'Normal market - futures above spot'
-                            : traderCalcs?.structure_type === 'backwardation'
-                            ? 'Stress signal - spot above futures'
-                            : 'Analyzing term structure...'}
-                        </p>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </div>
 
-                {/* GEX Profile Chart - Trading Vol Data */}
-                {gexLevels.length > 0 && (
-                  <div className="card">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <BarChart3 className="w-5 h-5 text-primary" />
-                        <h2 className="text-xl font-semibold text-text-primary">GEX Profile by Strike</h2>
-                        <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400">Trading Vol API</span>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded bg-success"></div>
-                          <span className="text-text-secondary">Call GEX</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded bg-danger"></div>
-                          <span className="text-text-secondary">Put GEX</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={gexLevels} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                          <XAxis
-                            dataKey="strike"
-                            stroke="#9CA3AF"
-                            tick={{ fill: '#9CA3AF', fontSize: 11 }}
-                            tickFormatter={(value) => `$${value}`}
-                          />
-                          <YAxis
-                            stroke="#9CA3AF"
-                            tick={{ fill: '#9CA3AF', fontSize: 11 }}
-                            tickFormatter={(value) => `${(value / 1e9).toFixed(1)}B`}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: '#1F2937',
-                              border: '1px solid #374151',
-                              borderRadius: '8px'
-                            }}
-                            labelStyle={{ color: '#F3F4F6' }}
-                            formatter={(value: number, name: string) => [
-                              `${(value / 1e9).toFixed(3)}B`,
-                              name === 'call_gex' ? 'Call GEX' : name === 'put_gex' ? 'Put GEX' : 'Total GEX'
-                            ]}
-                            labelFormatter={(label) => `Strike: $${label}`}
-                          />
-                          <Bar dataKey="call_gex" fill="#22C55E" name="Call GEX" />
-                          <Bar dataKey="put_gex" fill="#EF4444" name="Put GEX" />
-                          {tradingVolData?.flip_point && (
-                            <ReferenceLine
-                              x={tradingVolData.flip_point}
-                              stroke="#F59E0B"
-                              strokeDasharray="5 5"
-                              label={{ value: 'Flip', fill: '#F59E0B', fontSize: 12 }}
-                            />
-                          )}
-                          {tradingVolData?.spot_price && (
-                            <ReferenceLine
-                              x={tradingVolData.spot_price}
-                              stroke="#3B82F6"
-                              strokeWidth={2}
-                              label={{ value: 'Spot', fill: '#3B82F6', fontSize: 12 }}
-                            />
-                          )}
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                )}
-
-                {/* Volatility Comparison Over Time */}
-                {comparisonHistory.length > 1 && (
+                {/* Key Levels Comparison Table */}
+                {(comparisonData?.trading_volatility || comparisonData?.tradier_calculated) && (
                   <div className="card">
                     <div className="flex items-center gap-2 mb-4">
-                      <Clock className="w-5 h-5 text-primary" />
-                      <h2 className="text-xl font-semibold text-text-primary">Volatility Comparison (Session)</h2>
+                      <Zap className="w-5 h-5 text-primary" />
+                      <h2 className="text-lg font-semibold text-text-primary">Key Levels Comparison</h2>
                     </div>
-
-                    <div className="h-64">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={comparisonHistory} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                          <XAxis
-                            dataKey="timestamp"
-                            stroke="#9CA3AF"
-                            tick={{ fill: '#9CA3AF', fontSize: 11 }}
-                            tickFormatter={(value) => new Date(value).toLocaleTimeString()}
-                          />
-                          <YAxis
-                            stroke="#9CA3AF"
-                            tick={{ fill: '#9CA3AF', fontSize: 11 }}
-                            domain={['auto', 'auto']}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: '#1F2937',
-                              border: '1px solid #374151',
-                              borderRadius: '8px'
-                            }}
-                            labelStyle={{ color: '#F3F4F6' }}
-                            labelFormatter={(label) => new Date(label).toLocaleString()}
-                          />
-                          <Legend />
-                          <Line
-                            type="monotone"
-                            dataKey="trading_vol_iv"
-                            stroke="#3B82F6"
-                            name="Trading Vol IV (%)"
-                            strokeWidth={2}
-                            dot={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="trader_realized_vol"
-                            stroke="#22C55E"
-                            name="Realized Vol 20d (%)"
-                            strokeWidth={2}
-                            dot={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="vix_level"
-                            stroke="#F59E0B"
-                            name="VIX"
-                            strokeWidth={2}
-                            dot={false}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="text-left py-3 px-4 text-text-muted font-medium">Metric</th>
+                            <th className="text-right py-3 px-4 text-blue-400 font-medium">TradingVol API</th>
+                            <th className="text-right py-3 px-4 text-green-400 font-medium">Tradier Calc</th>
+                            <th className="text-right py-3 px-4 text-text-muted font-medium">Difference</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b border-border/50">
+                            <td className="py-3 px-4 text-text-primary">Spot Price</td>
+                            <td className="py-3 px-4 text-right font-mono">
+                              ${formatNumber(comparisonData?.trading_volatility?.spot_price)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono">
+                              ${formatNumber(comparisonData?.tradier_calculated?.spot_price)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-text-muted">
+                              {comparisonData?.trading_volatility?.spot_price && comparisonData?.tradier_calculated?.spot_price
+                                ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.spot_price - comparisonData.tradier_calculated.spot_price))}`
+                                : '--'}
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50">
+                            <td className="py-3 px-4 text-text-primary">Flip Point</td>
+                            <td className="py-3 px-4 text-right font-mono">
+                              ${formatNumber(comparisonData?.trading_volatility?.flip_point)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono">
+                              ${formatNumber(comparisonData?.tradier_calculated?.flip_point)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-text-muted">
+                              {comparisonData?.trading_volatility?.flip_point && comparisonData?.tradier_calculated?.flip_point
+                                ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.flip_point - comparisonData.tradier_calculated.flip_point))}`
+                                : '--'}
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50">
+                            <td className="py-3 px-4 text-text-primary">Call Wall</td>
+                            <td className="py-3 px-4 text-right font-mono text-success">
+                              ${formatNumber(comparisonData?.trading_volatility?.call_wall)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-success">
+                              ${formatNumber(comparisonData?.tradier_calculated?.call_wall)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-text-muted">
+                              {comparisonData?.trading_volatility?.call_wall && comparisonData?.tradier_calculated?.call_wall
+                                ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.call_wall - comparisonData.tradier_calculated.call_wall))}`
+                                : '--'}
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50">
+                            <td className="py-3 px-4 text-text-primary">Put Wall</td>
+                            <td className="py-3 px-4 text-right font-mono text-danger">
+                              ${formatNumber(comparisonData?.trading_volatility?.put_wall)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-danger">
+                              ${formatNumber(comparisonData?.tradier_calculated?.put_wall)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-text-muted">
+                              {comparisonData?.trading_volatility?.put_wall && comparisonData?.tradier_calculated?.put_wall
+                                ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.put_wall - comparisonData.tradier_calculated.put_wall))}`
+                                : '--'}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="py-3 px-4 text-text-primary">Strike Count</td>
+                            <td className="py-3 px-4 text-right font-mono">
+                              {comparisonData?.trading_volatility?.strikes_count || '--'}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono">
+                              {comparisonData?.tradier_calculated?.strikes_count || '--'}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-text-muted">
+                              {comparisonData?.trading_volatility?.strikes_count && comparisonData?.tradier_calculated?.strikes_count
+                                ? Math.abs(comparisonData.trading_volatility.strikes_count - comparisonData.tradier_calculated.strikes_count)
+                                : '--'}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 )}
 
-                {/* Data Source Details */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* VIX Context Card */}
+                {vixData && (
                   <div className="card">
-                    <h3 className="text-lg font-semibold text-text-primary mb-3 flex items-center gap-2">
-                      <ExternalLink className="w-4 h-4 text-blue-400" />
-                      Trading Volatility API Details
-                    </h3>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Collection Date</span>
-                        <span className="text-text-primary font-mono">{tradingVolData?.collection_date || '--'}</span>
+                    <div className="flex items-center gap-2 mb-4">
+                      <TrendingUp className="w-5 h-5 text-yellow-400" />
+                      <h2 className="text-lg font-semibold text-text-primary">VIX Context</h2>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="p-3 bg-background-hover rounded-lg">
+                        <p className="text-text-muted text-xs mb-1">VIX Spot</p>
+                        <p className={`text-2xl font-bold ${
+                          vixData.vix_spot > 25 ? 'text-danger' :
+                          vixData.vix_spot > 18 ? 'text-warning' : 'text-success'
+                        }`}>
+                          {formatNumber(vixData.vix_spot, 1)}
+                        </p>
                       </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Spot Price</span>
-                        <span className="text-text-primary font-mono">${formatNumber(tradingVolData?.spot_price)}</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Implied Volatility</span>
-                        <span className="text-text-primary font-mono">{formatNumber((tradingVolData?.implied_volatility || 0) * 100, 1)}%</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Net GEX</span>
-                        <span className={`font-mono ${(tradingVolData?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
-                          {formatNumber(tradingVolData?.net_gex, 2)}B
+                      <div className="p-3 bg-background-hover rounded-lg">
+                        <p className="text-text-muted text-xs mb-1">Vol Regime</p>
+                        <span className={`inline-block px-2 py-1 rounded text-sm font-semibold ${getVolRegimeColor(vixData.vol_regime)}`}>
+                          {vixData.vol_regime?.toUpperCase().replace('_', ' ') || 'N/A'}
                         </span>
                       </div>
-                      <div className="flex justify-between py-2">
-                        <span className="text-text-secondary">P/C Ratio</span>
-                        <span className="text-text-primary font-mono">{formatNumber(tradingVolData?.put_call_ratio, 3)}</span>
+                      <div className="p-3 bg-background-hover rounded-lg">
+                        <p className="text-text-muted text-xs mb-1">Term Structure</p>
+                        <p className={`text-xl font-bold ${
+                          vixData.structure_type === 'contango' ? 'text-success' : 'text-danger'
+                        }`}>
+                          {vixData.structure_type?.toUpperCase() || '--'}
+                        </p>
+                        <p className="text-text-muted text-xs">
+                          {vixData.term_structure_pct > 0 ? '+' : ''}{formatNumber(vixData.term_structure_pct, 1)}%
+                        </p>
+                      </div>
+                      <div className="p-3 bg-background-hover rounded-lg">
+                        <p className="text-text-muted text-xs mb-1">IV Percentile</p>
+                        <p className="text-xl font-bold text-text-primary">
+                          {formatNumber(vixData.iv_percentile, 0)}th
+                        </p>
                       </div>
                     </div>
                   </div>
+                )}
 
-                  <div className="card">
-                    <h3 className="text-lg font-semibold text-text-primary mb-3 flex items-center gap-2">
-                      <Database className="w-4 h-4 text-green-400" />
-                      Trader Calculation Details
-                    </h3>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">VIX Spot</span>
-                        <span className="text-text-primary font-mono">{formatNumber(traderCalcs?.vix_spot)}</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">IV Percentile</span>
-                        <span className="text-text-primary font-mono">{formatNumber(traderCalcs?.iv_percentile, 0)}th</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Realized Vol (20d)</span>
-                        <span className="text-text-primary font-mono">{formatNumber(traderCalcs?.realized_vol_20d, 1)}%</span>
-                      </div>
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">IV-RV Spread</span>
-                        <span className={`font-mono ${
-                          (traderCalcs?.iv_rv_spread || 0) > 5 ? 'text-warning' :
-                          (traderCalcs?.iv_rv_spread || 0) < 0 ? 'text-success' : 'text-text-primary'
-                        }`}>
-                          {formatNumber(traderCalcs?.iv_rv_spread, 1)} pts
-                        </span>
-                      </div>
-                      <div className="flex justify-between py-2">
-                        <span className="text-text-secondary">Term Structure</span>
-                        <span className={`font-mono ${
-                          traderCalcs?.structure_type === 'contango' ? 'text-success' : 'text-danger'
-                        }`}>
-                          {traderCalcs?.structure_type?.toUpperCase() || '--'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                {/* Info Footer */}
+                <div className="text-center text-text-muted text-sm">
+                  <Clock className="w-4 h-4 inline mr-1" />
+                  Data refreshes every 5 minutes. Both charts should show nearly identical patterns if calculations are correct.
                 </div>
               </>
             )}
