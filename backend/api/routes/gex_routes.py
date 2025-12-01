@@ -308,12 +308,12 @@ async def get_gex_history(symbol: str = "SPY", days: int = 30):
             SELECT
                 timestamp,
                 net_gex,
-                call_gex,
-                put_gex,
-                gamma_flip,
+                flip_point,
                 call_wall,
                 put_wall,
-                spot_price
+                spot_price,
+                mm_state,
+                regime
             FROM gex_history
             WHERE symbol = %s AND DATE(timestamp) >= %s
             ORDER BY timestamp ASC
@@ -324,42 +324,42 @@ async def get_gex_history(symbol: str = "SPY", days: int = 30):
             history.append({
                 "timestamp": row['timestamp'].isoformat() if row['timestamp'] else None,
                 "net_gex": safe_round(row['net_gex']),
-                "call_gex": safe_round(row['call_gex']),
-                "put_gex": safe_round(row['put_gex']),
-                "gamma_flip": safe_round(row['gamma_flip']),
+                "flip_point": safe_round(row['flip_point']),
+                "gamma_flip": safe_round(row['flip_point']),  # Alias for backwards compat
                 "call_wall": safe_round(row['call_wall']),
                 "put_wall": safe_round(row['put_wall']),
-                "spot_price": safe_round(row['spot_price'])
+                "spot_price": safe_round(row['spot_price']),
+                "mm_state": row['mm_state'],
+                "regime": row['regime']
             })
 
         conn.close()
 
-        # Calculate regime and other fields expected by frontend
+        # Add data_source and ensure all fields are present for frontend
         gex_history = []
         for h in history:
-            net_gex = h.get('net_gex', 0) or 0
-            # Determine regime
-            if net_gex <= -3e9:
-                regime = 'NEGATIVE'
-            elif net_gex < 0:
-                regime = 'NEGATIVE'
-            elif net_gex >= 3e9:
-                regime = 'POSITIVE'
-            elif net_gex > 0:
-                regime = 'POSITIVE'
-            else:
-                regime = 'NEUTRAL'
+            # Use stored regime/mm_state if available, otherwise calculate
+            regime = h.get('regime')
+            mm_state = h.get('mm_state')
 
-            # Determine MM state
-            flip_point = h.get('gamma_flip', 0) or 0
-            spot_price = h.get('spot_price', 0) or 0
-            mm_state = 'LONG_GAMMA' if spot_price > flip_point else 'SHORT_GAMMA'
+            if not regime:
+                net_gex = h.get('net_gex', 0) or 0
+                if net_gex < 0:
+                    regime = 'NEGATIVE'
+                elif net_gex > 0:
+                    regime = 'POSITIVE'
+                else:
+                    regime = 'NEUTRAL'
+
+            if not mm_state:
+                flip_point = h.get('flip_point', 0) or 0
+                spot_price = h.get('spot_price', 0) or 0
+                mm_state = 'LONG_GAMMA' if spot_price > flip_point else 'SHORT_GAMMA'
 
             gex_history.append({
                 **h,
                 'regime': regime,
                 'mm_state': mm_state,
-                'flip_point': flip_point,
                 'data_source': 'gex_history'
             })
 

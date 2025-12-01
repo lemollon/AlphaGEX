@@ -133,17 +133,27 @@ async def get_risk_metrics():
 
         # Get latest equity snapshot
         c.execute("""
-            SELECT max_drawdown_pct, sharpe_ratio, win_rate
+            SELECT drawdown_pct, cumulative_pnl, equity
             FROM autonomous_equity_snapshots
-            ORDER BY snapshot_date DESC, snapshot_time DESC
+            ORDER BY timestamp DESC
             LIMIT 1
         """)
         row = c.fetchone()
 
+        # Calculate win rate from closed trades
+        c.execute("""
+            SELECT COUNT(*), SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)
+            FROM autonomous_closed_trades
+        """)
+        trade_stats = c.fetchone()
+        total_trades = trade_stats[0] or 0
+        wins = trade_stats[1] or 0
+        win_rate = round((wins / total_trades * 100), 1) if total_trades > 0 else 0
+
         metrics = {
             'max_drawdown_pct': round(float(row[0] or 0), 2) if row else 0,
-            'sharpe_ratio': round(float(row[1] or 0), 2) if row else 0,
-            'win_rate': round(float(row[2] or 0), 1) if row else 0
+            'sharpe_ratio': 0,  # Not tracked in database
+            'win_rate': win_rate
         }
 
         conn.close()
