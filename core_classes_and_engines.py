@@ -1565,8 +1565,18 @@ class TradingVolatilityAPI:
             traceback.print_exc()
             return {'error': str(e)}
 
-    def get_gex_profile(self, symbol: str) -> Dict:
-        """Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint with intelligent rate limiting"""
+    def get_gex_profile(self, symbol: str, expiration: str = None) -> Dict:
+        """
+        Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint with intelligent rate limiting
+
+        Args:
+            symbol: Ticker symbol (e.g., 'SPY')
+            expiration: Optional expiration filter:
+                - '1' = nearest expiration (0DTE)
+                - '2' = nearest monthly expiration
+                - 'YYYY-MM-DD' = specific date
+                - None = all expirations combined (default)
+        """
         import requests
 
         try:
@@ -1574,12 +1584,14 @@ class TradingVolatilityAPI:
                 print("❌ Trading Volatility username not found in secrets!")
                 return {}
 
-            # Check cache first
-            cache_key = self._get_cache_key('gex/gammaOI', symbol)
+            # Check cache first - include expiration in cache key
+            cache_suffix = f'_exp_{expiration}' if expiration else ''
+            cache_key = self._get_cache_key(f'gex/gammaOI{cache_suffix}', symbol)
             cached_data = self._get_cached_response(cache_key)
             if cached_data:
                 cache_duration = self._get_cache_duration()
-                print(f"✅ Using cached gammaOI data for {symbol} (cache TTL: {cache_duration/60:.0f} min)")
+                exp_label = f" (exp={expiration})" if expiration else ""
+                print(f"✅ Using cached gammaOI data for {symbol}{exp_label} (cache TTL: {cache_duration/60:.0f} min)")
                 json_response = cached_data
             else:
                 # Use intelligent rate limiter if available
@@ -1591,14 +1603,22 @@ class TradingVolatilityAPI:
                     # Fallback to old rate limiting
                     self._wait_for_rate_limit()
 
+                # Build request parameters
+                params = {
+                    'ticker': symbol,
+                    'username': self.api_key,
+                    'format': 'json'
+                }
+
+                # Add expiration filter if specified
+                if expiration:
+                    params['exp'] = expiration
+                    print(f"🔍 Requesting gammaOI for {symbol} with exp={expiration}")
+
                 # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
                 response = requests.get(
                     self.endpoint + '/gex/gammaOI',
-                    params={
-                        'ticker': symbol,
-                        'username': self.api_key,
-                        'format': 'json'
-                    },
+                    params=params,
                     headers={'Accept': 'application/json'},
                     timeout=120
                 )
