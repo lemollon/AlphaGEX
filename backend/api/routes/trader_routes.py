@@ -276,6 +276,8 @@ async def get_equity_curve(days: int = 30):
         starting_equity = 1000000
         start_date_str = start_date.strftime('%Y-%m-%d')
 
+        logger.debug(f"equity-curve: Querying snapshots from {start_date_str}")
+
         # Query only columns that exist - avoid daily_pnl, drawdown_pct
         # Use string formatting for date since pandas can be finicky with params
         snapshots = pd.read_sql_query(f"""
@@ -289,6 +291,8 @@ async def get_equity_curve(days: int = 30):
             WHERE timestamp >= '{start_date_str}'
             ORDER BY timestamp ASC
         """, conn)
+
+        logger.debug(f"equity-curve: Found {len(snapshots)} snapshots")
 
         if snapshots.empty:
             # Build from closed trades
@@ -416,12 +420,15 @@ async def get_equity_curve(days: int = 30):
             "max_drawdown_pct": safe_round(max_drawdown)
         }
     except Exception as e:
+        import traceback
+        logger.error(f"equity-curve failed: {type(e).__name__}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         if conn:
             try:
                 conn.close()
             except Exception:
                 pass
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 
 @router.get("/strategies")
