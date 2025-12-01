@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { logger } from '@/lib/logger'
 import { Bell, BellOff, Trash2, Check, AlertCircle, Smartphone } from 'lucide-react'
 
 interface PushSubscription {
