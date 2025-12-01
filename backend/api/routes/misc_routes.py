@@ -55,7 +55,8 @@ async def get_oi_trends(symbol: str = "SPY", days: int = 30):
 
         return {
             "success": True,
-            "trends": trends,
+            "oi_history": trends,  # Frontend expects oi_history
+            "trends": trends,      # Keep for backwards compatibility
             "symbol": symbol
         }
     except Exception as e:
@@ -146,21 +147,24 @@ async def get_recommendations_history(days: int = 30):
 
         recommendations = []
         for row in c.fetchall():
+            # Map to frontend-expected field names
+            direction = 'BULLISH' if row[7] == 'CALL' else 'BEARISH' if row[7] == 'PUT' else 'NEUTRAL'
             recommendations.append({
                 'id': row[0],
-                'timestamp': row[1],
+                'recommendation_date': row[1],  # Frontend expects recommendation_date
                 'symbol': row[2],
-                'strategy': row[3],
-                'confidence': row[4],
+                'strategy_type': row[3],  # Frontend expects strategy_type
+                'confidence_pct': row[4],  # Frontend expects confidence_pct
                 'reasoning': row[5],
-                'option_strike': row[6],
-                'option_type': row[7],
-                'dte': row[8],
-                'entry_price': row[9],
-                'target_price': row[10],
-                'stop_price': row[11],
+                'entry_strike': row[6],  # Frontend expects entry_strike
+                'exit_strike': row[11] or row[10],  # stop_price or target_price as exit
+                'direction': direction,  # Frontend expects direction
+                'recommended_entry_price': row[9] or 0,  # Frontend expects recommended_entry_price
+                'actual_entry_price': row[9],  # Use entry_price as actual
+                'actual_exit_price': None,  # Not tracked in current schema
                 'outcome': row[12],
-                'pnl': row[13]
+                'pnl': row[13],
+                'outcome_date': None  # Not tracked in current schema
             })
 
         conn.close()
@@ -218,21 +222,29 @@ async def get_recommendation_performance():
 
         conn.close()
 
-        # Calculate win rates
-        performance = {}
-        for bucket, data in confidence_buckets.items():
-            if data['total'] > 0:
-                performance[bucket] = {
-                    'total_trades': data['total'],
-                    'wins': data['wins'],
-                    'win_rate': round(data['wins'] / data['total'] * 100, 1)
-                }
-            else:
-                performance[bucket] = {
-                    'total_trades': 0,
-                    'wins': 0,
-                    'win_rate': 0
-                }
+        # Calculate win rates - format as array for frontend
+        performance_buckets = []
+        bucket_ranges = {
+            'high': '80-100%',
+            'medium': '60-79%',
+            'low': '0-59%'
+        }
+
+        for bucket in ['high', 'medium', 'low']:
+            data = confidence_buckets[bucket]
+            win_rate = round(data['wins'] / data['total'] * 100, 1) if data['total'] > 0 else 0
+            losses = data['total'] - data['wins']
+
+            performance_buckets.append({
+                'confidence_range': bucket_ranges[bucket],
+                'total_recommendations': data['total'],
+                'executed_trades': data['total'],  # Assume all were executed
+                'winning_trades': data['wins'],
+                'losing_trades': losses,
+                'win_rate_pct': win_rate,
+                'avg_pnl': 0,  # Not tracked in current schema
+                'total_pnl': 0  # Not tracked in current schema
+            })
 
         overall_win_rate = round(total_wins / total_trades * 100, 1) if total_trades > 0 else 0
 
@@ -243,7 +255,8 @@ async def get_recommendation_performance():
                 "wins": total_wins,
                 "win_rate": overall_win_rate
             },
-            "by_confidence": performance
+            "performance_buckets": performance_buckets,  # Frontend expects this
+            "by_confidence": {b['confidence_range']: b for b in performance_buckets}  # Keep for backwards compat
         }
     except Exception as e:
         return {"success": False, "error": str(e)}

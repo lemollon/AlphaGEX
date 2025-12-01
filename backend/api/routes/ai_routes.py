@@ -258,7 +258,7 @@ async def get_conversation_history(limit: int = 50):
                 'timestamp': row[1],
                 'user_message': row[2],
                 'ai_response': row[3],
-                'context_data': row[4],
+                'context': row[4],  # Frontend expects 'context' not 'context_data'
                 'session_id': row[5]
             })
 
@@ -303,7 +303,7 @@ async def get_conversation_detail(conversation_id: int):
                     'timestamp': row[1],
                     'user_message': row[2],
                     'ai_response': row[3],
-                    'context_data': row[4],
+                    'context': row[4],  # Frontend expects 'context' not 'context_data'
                     'session_id': row[5]
                 }
             }

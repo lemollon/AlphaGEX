@@ -100,8 +100,8 @@ async def get_probability_outcomes(days: int = 30):
         outcomes = []
         for row in c.fetchall():
             outcomes.append({
-                'timestamp': row[0],
-                'prediction_type': row[1],
+                'prediction_date': row[0],  # Frontend expects prediction_date
+                'pattern_type': row[1],  # Frontend expects pattern_type
                 'predicted_probability': row[2],
                 'actual_outcome': row[3],
                 'correct_prediction': bool(row[4]) if row[4] is not None else None,
@@ -201,7 +201,7 @@ async def get_calibration_history(days: int = 90):
 
         return {
             "success": True,
-            "history": history
+            "calibration_history": history  # Frontend expects calibration_history
         }
     except Exception as e:
         return {"success": False, "error": str(e)}

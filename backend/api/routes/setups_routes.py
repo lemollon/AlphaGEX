@@ -151,9 +151,12 @@ async def list_trade_setups(limit: int = 20, status: str = 'active'):
 
         conn = get_connection()
         setups = pd.read_sql_query("""
-            SELECT * FROM trade_setups
+            SELECT id, symbol, setup_type, confidence, entry_price, target_price,
+                   stop_price, contracts, reasoning, status, result,
+                   created_at as timestamp
+            FROM trade_setups
             WHERE status = %s
-            ORDER BY timestamp DESC
+            ORDER BY created_at DESC
             LIMIT %s
         """, conn, params=(status, limit))
         conn.close()

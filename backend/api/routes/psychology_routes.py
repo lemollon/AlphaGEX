@@ -285,13 +285,18 @@ async def get_psychology_performance_overview():
 
 
 @router.get("/performance/by-pattern")
+@router.get("/performance/patterns")  # Alias for frontend compatibility
 async def get_performance_by_pattern():
     """Get performance breakdown by pattern type"""
     try:
         from core.psychology_performance import get_performance_by_pattern
-        return get_performance_by_pattern()
+        patterns = get_performance_by_pattern()
+        # Ensure response has expected format
+        if isinstance(patterns, dict) and 'patterns' not in patterns:
+            return {"patterns": patterns.get('data', []) if isinstance(patterns, dict) else []}
+        return patterns
     except ImportError:
-        return {"error": "Psychology performance module not available"}
+        return {"patterns": [], "error": "Psychology performance module not available"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
