@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { Power, PowerOff, PlayCircle, StopCircle, RefreshCw, AlertCircle, CheckCircle, Activity, Database, Wifi, WifiOff, Clock, Zap } from 'lucide-react'
 import { apiClient } from '@/lib/api'
+import { logger } from '@/lib/logger'
 
 interface TraderStatus {
   trader_running: boolean
