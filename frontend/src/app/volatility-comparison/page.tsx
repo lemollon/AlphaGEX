@@ -814,18 +814,18 @@ export default function VolatilityComparison() {
                       <tbody>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Spot Price</td>
-                          <td className="py-2 px-4 text-right font-mono">${formatNumber(tradingVolData?.spot_price)}</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.trading_volatility?.spot_price)}</td>
                           <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.spot_price)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {tradingVolData?.spot_price && comparisonData?.tradier_calculated?.spot_price
-                              ? `$${formatNumber(Math.abs(tradingVolData.spot_price - comparisonData.tradier_calculated.spot_price))}` : '--'}
+                            {comparisonData?.trading_volatility?.spot_price && comparisonData?.tradier_calculated?.spot_price
+                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.spot_price - comparisonData.tradier_calculated.spot_price))}` : '--'}
                           </td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Net GEX</td>
                           <td className="py-2 px-4 text-right font-mono">
-                            <span className={(tradingVolData?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
-                              {formatGamma((tradingVolData?.net_gex || 0) * 1e9)}
+                            <span className={(comparisonData?.trading_volatility?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
+                              {formatGamma(comparisonData?.trading_volatility?.net_gex || 0)}
                             </span>
                           </td>
                           <td className="py-2 px-4 text-right font-mono">
@@ -837,29 +837,29 @@ export default function VolatilityComparison() {
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Flip Point</td>
-                          <td className="py-2 px-4 text-right font-mono">${formatNumber(tradingVolData?.flip_point)}</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.trading_volatility?.flip_point)}</td>
                           <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.flip_point)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {tradingVolData?.flip_point && comparisonData?.tradier_calculated?.flip_point
-                              ? `$${formatNumber(Math.abs(tradingVolData.flip_point - comparisonData.tradier_calculated.flip_point))}` : '--'}
+                            {comparisonData?.trading_volatility?.flip_point && comparisonData?.tradier_calculated?.flip_point
+                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.flip_point - comparisonData.tradier_calculated.flip_point))}` : '--'}
                           </td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Call Wall</td>
-                          <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(tradingVolData?.call_wall)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.trading_volatility?.call_wall)}</td>
                           <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.tradier_calculated?.call_wall)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {tradingVolData?.call_wall && comparisonData?.tradier_calculated?.call_wall
-                              ? `$${formatNumber(Math.abs(tradingVolData.call_wall - comparisonData.tradier_calculated.call_wall))}` : '--'}
+                            {comparisonData?.trading_volatility?.call_wall && comparisonData?.tradier_calculated?.call_wall
+                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.call_wall - comparisonData.tradier_calculated.call_wall))}` : '--'}
                           </td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Put Wall</td>
-                          <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(tradingVolData?.put_wall)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.trading_volatility?.put_wall)}</td>
                           <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.tradier_calculated?.put_wall)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {tradingVolData?.put_wall && comparisonData?.tradier_calculated?.put_wall
-                              ? `$${formatNumber(Math.abs(tradingVolData.put_wall - comparisonData.tradier_calculated.put_wall))}` : '--'}
+                            {comparisonData?.trading_volatility?.put_wall && comparisonData?.tradier_calculated?.put_wall
+                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.put_wall - comparisonData.tradier_calculated.put_wall))}` : '--'}
                           </td>
                         </tr>
                         <tr className="border-b border-border/50">
@@ -870,22 +870,19 @@ export default function VolatilityComparison() {
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">P/C Ratio</td>
-                          <td className="py-2 px-4 text-right font-mono">{formatNumber(tradingVolData?.put_call_ratio, 3)}</td>
+                          <td className="py-2 px-4 text-right font-mono">--</td>
                           <td className="py-2 px-4 text-right font-mono">{formatNumber(comparisonData?.tradier_calculated?.put_call_ratio, 3)}</td>
-                          <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {tradingVolData?.put_call_ratio && comparisonData?.tradier_calculated?.put_call_ratio
-                              ? formatNumber(Math.abs(tradingVolData.put_call_ratio - comparisonData.tradier_calculated.put_call_ratio), 3) : '--'}
-                          </td>
+                          <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Implied Vol</td>
-                          <td className="py-2 px-4 text-right font-mono">{formatNumber((tradingVolData?.implied_volatility || 0) * 100, 1)}%</td>
+                          <td className="py-2 px-4 text-right font-mono">--</td>
                           <td className="py-2 px-4 text-right font-mono">--</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Expiration (0DTE)</td>
-                          <td className="py-2 px-4 text-right font-mono">--</td>
+                          <td className="py-2 px-4 text-right font-mono">{comparisonData?.trading_volatility?.expiration || '--'}</td>
                           <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_calculated?.expiration || '--'}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
