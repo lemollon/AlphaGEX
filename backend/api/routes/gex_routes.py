@@ -548,7 +548,11 @@ async def get_0dte_gamma_comparison(symbol: str):
                 strike = float(strike_data.get('strike', 0))
 
                 # Try multiple field names for gamma value
+                # Known field names from Trading Volatility API:
+                # - gammaOI uses: net_gamma_$_at_strike, call_gamma, put_gamma
+                # - /gex/gamma may use: gamma, GEX, gex, net_gamma
                 net_gamma = (
+                    strike_data.get('net_gamma_$_at_strike') or
                     strike_data.get('gamma') or
                     strike_data.get('GEX') or
                     strike_data.get('gex') or
