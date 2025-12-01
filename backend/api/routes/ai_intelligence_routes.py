@@ -783,7 +783,7 @@ ACCOUNT STATUS:
 • Recent Trades: {performance['total_trades']}
 
 TOP PERFORMING PATTERNS (30d):
-{chr(10).join([f"• {p.get('pattern_type', 'N/A')}: {p.get('win_rate', 0)*100:.0f}% win rate, ${p.get('avg_pnl', 0):.2f} avg P&L" for p in top_patterns])}
+{chr(10).join([f"• {p.get('pattern_type', 'N/A')}: {(p.get('win_rate') or 0)*100:.0f}% win rate, ${float(p.get('avg_pnl') or 0):.2f} avg P&L" for p in top_patterns])}
 
 Create a detailed daily trading plan with:
 
@@ -1298,7 +1298,7 @@ ACCOUNT:
 • Balance: ${account_value:.2f}
 
 RECENT PATTERN PERFORMANCE (30 days):
-{chr(10).join([f"• {p['pattern_type']}: {p['win_rate']*100:.0f}% win rate" for p in pattern_performance])}
+{chr(10).join([f"• {p.get('pattern_type', 'N/A')}: {(p.get('win_rate') or 0)*100:.0f}% win rate" for p in pattern_performance])}
 
 Compare these 3 strategies for RIGHT NOW:
 

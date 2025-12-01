@@ -338,21 +338,30 @@ async def get_equity_curve(days: int = 30):
             daily.columns = ['trade_date', 'daily_pnl', 'trades_count']
 
             for _, row in daily.iterrows():
-                cumulative_pnl += float(row['daily_pnl'])
-                current_equity = starting_equity + cumulative_pnl
-                peak_equity = max(peak_equity, current_equity)
-                drawdown = (peak_equity - current_equity) / peak_equity * 100 if peak_equity > 0 else 0
-                max_drawdown = max(max_drawdown, drawdown)
+                try:
+                    daily_pnl_val = float(row['daily_pnl'] or 0)
+                    cumulative_pnl += daily_pnl_val
+                    current_equity = starting_equity + cumulative_pnl
+                    peak_equity = max(peak_equity, current_equity)
+                    drawdown = (peak_equity - current_equity) / peak_equity * 100 if peak_equity > 0 else 0
+                    max_drawdown = max(max_drawdown, drawdown)
 
-                equity_data.append({
-                    "timestamp": int(row['trade_date'].timestamp()),
-                    "date": row['trade_date'].strftime('%Y-%m-%d'),
-                    "equity": safe_round(current_equity),
-                    "pnl": safe_round(cumulative_pnl),
-                    "daily_pnl": safe_round(row['daily_pnl']),
-                    "total_return_pct": safe_round(cumulative_pnl / starting_equity * 100),
-                    "max_drawdown_pct": safe_round(max_drawdown)
-                })
+                    trade_date = row['trade_date']
+                    if pd.isna(trade_date) or trade_date is None:
+                        continue
+
+                    equity_data.append({
+                        "timestamp": int(trade_date.timestamp()),
+                        "date": trade_date.strftime('%Y-%m-%d'),
+                        "equity": safe_round(current_equity),
+                        "pnl": safe_round(cumulative_pnl),
+                        "daily_pnl": safe_round(daily_pnl_val),
+                        "total_return_pct": safe_round(cumulative_pnl / starting_equity * 100),
+                        "max_drawdown_pct": safe_round(max_drawdown)
+                    })
+                except Exception as row_error:
+                    logger.warning(f"Skipping trade row due to error: {row_error}")
+                    continue
 
             return {
                 "success": True,
@@ -371,24 +380,33 @@ async def get_equity_curve(days: int = 30):
         prev_pnl = 0
 
         for _, row in snapshots.iterrows():
-            current_equity = float(row['account_value'] or starting_equity)
-            current_pnl = float(row['total_realized_pnl'] or 0)
-            daily_pnl = current_pnl - prev_pnl
-            prev_pnl = current_pnl
+            try:
+                current_equity = float(row['account_value'] or starting_equity)
+                current_pnl = float(row['total_realized_pnl'] or 0)
+                daily_pnl = current_pnl - prev_pnl
+                prev_pnl = current_pnl
 
-            peak_equity = max(peak_equity, current_equity)
-            drawdown = (peak_equity - current_equity) / peak_equity * 100 if peak_equity > 0 else 0
-            max_drawdown = max(max_drawdown, drawdown)
+                peak_equity = max(peak_equity, current_equity)
+                drawdown = (peak_equity - current_equity) / peak_equity * 100 if peak_equity > 0 else 0
+                max_drawdown = max(max_drawdown, drawdown)
 
-            equity_data.append({
-                "timestamp": int(pd.Timestamp(row['snapshot_date']).timestamp()),
-                "date": str(row['snapshot_date']),
-                "equity": safe_round(current_equity),
-                "pnl": safe_round(current_pnl),
-                "daily_pnl": safe_round(daily_pnl),
-                "total_return_pct": safe_round(row['total_return_pct']),
-                "max_drawdown_pct": safe_round(drawdown)
-            })
+                # Safely handle timestamp conversion
+                snapshot_date = row['snapshot_date']
+                if pd.isna(snapshot_date) or snapshot_date is None:
+                    continue  # Skip rows with null dates
+
+                equity_data.append({
+                    "timestamp": int(pd.Timestamp(snapshot_date).timestamp()),
+                    "date": str(snapshot_date),
+                    "equity": safe_round(current_equity),
+                    "pnl": safe_round(current_pnl),
+                    "daily_pnl": safe_round(daily_pnl),
+                    "total_return_pct": safe_round(row['total_return_pct']),
+                    "max_drawdown_pct": safe_round(drawdown)
+                })
+            except Exception as row_error:
+                logger.warning(f"Skipping equity snapshot row due to error: {row_error}")
+                continue
 
         return {
             "success": True,
