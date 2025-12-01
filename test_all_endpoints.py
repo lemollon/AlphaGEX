@@ -8,7 +8,7 @@ import json
 import sys
 from datetime import datetime
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "https://alphagex-api.onrender.com"
 
 # All endpoints used by the navigation pages
 ENDPOINTS = [
