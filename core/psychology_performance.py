@@ -417,3 +417,31 @@ class PerformanceTracker:
 
 # Singleton instance
 performance_tracker = PerformanceTracker()
+
+
+# Wrapper functions for API routes compatibility
+def get_performance_overview(days: int = 30) -> Dict:
+    """Get overall performance overview - wrapper for API routes"""
+    return performance_tracker.get_overview_metrics(days)
+
+
+def get_performance_by_pattern(days: int = 90) -> Dict:
+    """Get performance by pattern type - wrapper for API routes"""
+    patterns = performance_tracker.get_pattern_performance(days)
+    return {"patterns": patterns}
+
+
+def get_recent_signals(limit: int = 100, pattern_type: Optional[str] = None) -> Dict:
+    """Get recent signals - wrapper for API routes"""
+    signals = performance_tracker.get_historical_signals(limit, pattern_type)
+    return {"signals": signals, "count": len(signals)}
+
+
+def get_chart_data(days: int = 90) -> Dict:
+    """Get chart data - wrapper for API routes"""
+    return performance_tracker.get_chart_data(days)
+
+
+def get_vix_correlation(days: int = 90) -> Dict:
+    """Get VIX correlation - wrapper for API routes"""
+    return performance_tracker.get_vix_correlation(days)

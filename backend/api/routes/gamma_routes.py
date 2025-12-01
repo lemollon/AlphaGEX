@@ -260,12 +260,36 @@ async def get_gamma_probabilities(symbol: str, vix: float = 20, account_size: fl
 
         net_gex = gex_data.get('net_gex', 0)
         spot_price = gex_data.get('spot_price', 0)
+        flip_point = gex_data.get('flip_point', spot_price)
+        call_wall = gex_data.get('call_wall', spot_price * 1.02)
+        put_wall = gex_data.get('put_wall', spot_price * 0.98)
+        mm_state = gex_data.get('mm_state', 'NEUTRAL')
 
-        # Calculate probabilities
-        probabilities = prob_calc.calculate_move_probabilities(
-            spot_price=spot_price,
-            net_gex=net_gex,
-            vix=vix
+        # Build gex_data dict for probability calculator
+        gex_input = {
+            'net_gex': net_gex,
+            'flip_point': flip_point,
+            'call_wall': call_wall,
+            'put_wall': put_wall,
+            'vix': vix,
+            'implied_vol': vix / 100 if vix else 0.20,
+            'mm_state': mm_state
+        }
+
+        # Default psychology data
+        psychology_data = {
+            'fomo_level': 50,
+            'fear_level': 50,
+            'state': 'NEUTRAL'
+        }
+
+        # Calculate probabilities using the correct method
+        probabilities = prob_calc.calculate_probability(
+            symbol=symbol,
+            current_price=spot_price,
+            gex_data=gex_input,
+            psychology_data=psychology_data,
+            prediction_type='EOD'
         )
 
         data_date = gex_data.get('collection_date') or get_last_trading_day()
