@@ -505,144 +505,128 @@ async def get_0dte_gamma_comparison(symbol: str):
         "success": True,
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
-        "trading_volatility": None,
-        "tradier_calculated": None,
+        "trading_volatility": None,        # All expirations from Trading Volatility API
+        "tradier_all_expirations": None,   # All expirations from Tradier (apples-to-apples)
+        "tradier_0dte": None,              # 0DTE only from Tradier
         "errors": []
     }
 
     # Source 1: TradingVolatility API (primary)
-    # Use /gex/gamma endpoint with exp='1' to get ONLY the nearest expiration (0DTE/1DTE)
-    # NOTE: /gex/gammaOI does NOT support exp parameter, so we use /gex/gamma instead
-    # This ensures apples-to-apples comparison with Tradier 0DTE calculation
+    # NOTE: /gex/gamma endpoint returns gamma=0.0 for all strikes (no per-strike data)
+    # So we use /gex/gammaOI which HAS real call_gamma/put_gamma values
+    # Trade-off: gammaOI is all expirations, not just 0DTE
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
 
-        # Use get_gamma_by_expiration which calls /gex/gamma with exp='1' (nearest expiration)
-        # This endpoint properly filters to 0DTE/1DTE data
-        tv_data = api.get_gamma_by_expiration(symbol, expiration='1')
+        # Use get_gex_profile which calls /gex/gammaOI (has actual per-strike gamma)
+        tv_profile = api.get_gex_profile(symbol)
 
-        if tv_data and 'gamma_array' in tv_data and tv_data['gamma_array']:
-            raw_gamma_array = tv_data.get('gamma_array', [])
+        if tv_profile and 'strikes' in tv_profile and tv_profile['strikes']:
+            raw_strikes = tv_profile.get('strikes', [])
 
             # Debug: Log first strike to see available fields
-            if raw_gamma_array and len(raw_gamma_array) > 0:
-                sample = raw_gamma_array[0]
-                print(f"DEBUG /gex/gamma response - First strike fields: {list(sample.keys())}")
-                print(f"DEBUG /gex/gamma response - First strike data: {sample}")
+            debug_info = {}
+            if raw_strikes and len(raw_strikes) > 0:
+                sample = raw_strikes[0]
+                print(f"DEBUG /gex/gammaOI response - First strike fields: {list(sample.keys())}")
+                print(f"DEBUG /gex/gammaOI response - First strike data: {sample}")
+                debug_info = {
+                    "raw_fields": list(sample.keys()),
+                    "sample_strike": {k: str(v)[:50] for k, v in sample.items()}
+                }
 
             # Format to match expected gamma_array structure
-            # The /gex/gamma endpoint may use different field names: gamma, GEX, gex, net_gamma, etc.
             gamma_array = []
             total_net_gex = 0
-            max_positive_gamma = 0
-            max_negative_gamma = 0
+            max_call_gamma = 0
+            max_put_gamma = 0
             call_wall = 0
             put_wall = 0
-            spot_price = float(tv_data.get('price', 0))
+            spot_price = float(tv_profile.get('spot_price', 0))
 
-            for strike_data in raw_gamma_array:
+            for strike_data in raw_strikes:
                 if not strike_data or 'strike' not in strike_data:
                     continue
 
                 strike = float(strike_data.get('strike', 0))
+                call_gamma = float(strike_data.get('call_gamma', 0) or 0)
+                put_gamma = float(strike_data.get('put_gamma', 0) or 0)
+                total_gamma = float(strike_data.get('total_gamma', 0) or (call_gamma + put_gamma))
 
-                # Try to extract gamma values - handle TWO possible API formats:
-                # Format 1: gammaOI style with separate call_gamma/put_gamma
-                # Format 2: /gex/gamma style with single gamma/GEX field
+                total_net_gex += total_gamma
 
-                call_gamma_val = 0.0
-                put_gamma_val = 0.0
-
-                # First try: separate call_gamma and put_gamma fields (gammaOI format)
-                if 'call_gamma' in strike_data or 'put_gamma' in strike_data:
-                    call_gamma_val = float(strike_data.get('call_gamma', 0) or 0)
-                    put_gamma_val = float(strike_data.get('put_gamma', 0) or 0)
-                    net_gamma = call_gamma_val + put_gamma_val
-                else:
-                    # Second try: single net gamma field
-                    net_gamma = (
-                        strike_data.get('net_gamma_$_at_strike') or
-                        strike_data.get('gamma') or
-                        strike_data.get('GEX') or
-                        strike_data.get('gex') or
-                        strike_data.get('net_gamma') or
-                        strike_data.get('net_gex') or
-                        strike_data.get('total_gamma') or
-                        0
-                    )
-                    net_gamma = float(net_gamma) if net_gamma else 0.0
-                    # Attribute positive to calls, negative to puts
-                    call_gamma_val = max(0, net_gamma)
-                    put_gamma_val = min(0, net_gamma)
-
-                total_net_gex += net_gamma
-
-                # For call_wall: find strike with highest call gamma
-                # For put_wall: find strike with highest (absolute) put gamma
-                if call_gamma_val > max_positive_gamma:
-                    max_positive_gamma = call_gamma_val
+                # Track walls
+                if call_gamma > max_call_gamma:
+                    max_call_gamma = call_gamma
                     call_wall = strike
-                if put_gamma_val < max_negative_gamma:
-                    max_negative_gamma = put_gamma_val
+                if abs(put_gamma) > max_put_gamma:
+                    max_put_gamma = abs(put_gamma)
                     put_wall = strike
 
                 gamma_array.append({
                     'strike': strike,
-                    'call_gamma': call_gamma_val,
-                    'put_gamma': put_gamma_val,
-                    'total_gamma': net_gamma,
-                    'net_gex': net_gamma
+                    'call_gamma': call_gamma,
+                    'put_gamma': put_gamma,
+                    'total_gamma': total_gamma,
+                    'net_gex': total_gamma
                 })
-
-            # Calculate flip point (where gamma crosses zero)
-            flip_point = spot_price  # Default to spot price
-            sorted_strikes = sorted(gamma_array, key=lambda x: x['strike'])
-            for i in range(len(sorted_strikes) - 1):
-                g1 = sorted_strikes[i]['net_gex']
-                g2 = sorted_strikes[i + 1]['net_gex']
-                s1 = sorted_strikes[i]['strike']
-                s2 = sorted_strikes[i + 1]['strike']
-                if g1 * g2 < 0:  # Sign change = zero crossing
-                    # Linear interpolation
-                    flip_point = s1 + (s2 - s1) * (-g1 / (g2 - g1))
-                    break
-
-            # Include debug info about raw API response fields
-            debug_info = {}
-            if raw_gamma_array and len(raw_gamma_array) > 0:
-                first_strike = raw_gamma_array[0]
-                debug_info = {
-                    "raw_fields": list(first_strike.keys()),
-                    "sample_strike": {k: str(v)[:50] for k, v in first_strike.items()}  # Truncate long values
-                }
 
             result["trading_volatility"] = {
                 "data_source": "trading_volatility_api",
                 "spot_price": spot_price,
-                "flip_point": flip_point,
-                "call_wall": call_wall,
-                "put_wall": put_wall,
+                "flip_point": tv_profile.get('flip_point', spot_price),
+                "call_wall": tv_profile.get('call_wall', call_wall),
+                "put_wall": tv_profile.get('put_wall', put_wall),
                 "net_gex": total_net_gex,
                 "gamma_array": gamma_array,
                 "strikes_count": len(gamma_array),
-                "expiration": tv_data.get('expiry_date', '0DTE (nearest)'),
-                "_debug": debug_info  # Temporary debug field to see raw API structure
+                "expiration": "All expirations (gammaOI)",  # Note: not filtered to 0DTE
+                "_debug": debug_info
             }
         else:
-            result["errors"].append("TradingVolatility API: No gamma data available for 0DTE (exp=1)")
+            result["errors"].append("TradingVolatility API: No gamma profile data available")
     except ImportError as e:
         result["errors"].append(f"TradingVolatility API: Import failed - {e}")
     except Exception as e:
         result["errors"].append(f"TradingVolatility API: {str(e)}")
 
-    # Source 2: Tradier 0DTE Calculation (fallback)
+    # Source 2: Tradier ALL EXPIRATIONS Calculation (apples-to-apples with Trading Volatility)
+    try:
+        from data.gex_calculator import get_all_expirations_gex_profile
+        tradier_all_profile = get_all_expirations_gex_profile(symbol)
+
+        if tradier_all_profile and 'error' not in tradier_all_profile:
+            result["tradier_all_expirations"] = {
+                "data_source": "tradier_all_expirations_calculated",
+                "spot_price": tradier_all_profile.get('spot_price', 0),
+                "flip_point": tradier_all_profile.get('flip_point', 0),
+                "call_wall": tradier_all_profile.get('call_wall', 0),
+                "put_wall": tradier_all_profile.get('put_wall', 0),
+                "max_pain": tradier_all_profile.get('max_pain', 0),
+                "net_gex": tradier_all_profile.get('net_gex', 0),
+                "put_call_ratio": tradier_all_profile.get('put_call_ratio', 0),
+                "expiration": tradier_all_profile.get('expiration', 'All expirations'),
+                "expirations_included": tradier_all_profile.get('expirations_included', []),
+                "gamma_array": tradier_all_profile.get('gamma_array', []),
+                "strikes_count": len(tradier_all_profile.get('gamma_array', [])),
+                "timestamp": tradier_all_profile.get('timestamp', '')
+            }
+        else:
+            error_msg = tradier_all_profile.get('error', 'Unknown error') if tradier_all_profile else 'No data returned'
+            result["errors"].append(f"Tradier all-expirations: {error_msg}")
+    except ImportError as e:
+        result["errors"].append(f"Tradier all-expirations: Import failed - {e}")
+    except Exception as e:
+        result["errors"].append(f"Tradier all-expirations: {str(e)}")
+
+    # Source 3: Tradier 0DTE Calculation (for reference)
     try:
         from data.gex_calculator import get_0dte_gex_profile
         tradier_profile = get_0dte_gex_profile(symbol)
 
         if tradier_profile and 'error' not in tradier_profile:
-            result["tradier_calculated"] = {
+            result["tradier_0dte"] = {
                 "data_source": "tradier_0dte_calculated",
                 "spot_price": tradier_profile.get('spot_price', 0),
                 "flip_point": tradier_profile.get('flip_point', 0),
@@ -658,14 +642,14 @@ async def get_0dte_gamma_comparison(symbol: str):
             }
         else:
             error_msg = tradier_profile.get('error', 'Unknown error') if tradier_profile else 'No data returned'
-            result["errors"].append(f"Tradier calculation: {error_msg}")
+            result["errors"].append(f"Tradier 0DTE: {error_msg}")
     except ImportError as e:
-        result["errors"].append(f"Tradier calculation: Import failed - {e}")
+        result["errors"].append(f"Tradier 0DTE: Import failed - {e}")
     except Exception as e:
-        result["errors"].append(f"Tradier calculation: {str(e)}")
+        result["errors"].append(f"Tradier 0DTE: {str(e)}")
 
-    # If both sources failed, return error
-    if result["trading_volatility"] is None and result["tradier_calculated"] is None:
+    # If all sources failed, return error
+    if result["trading_volatility"] is None and result["tradier_all_expirations"] is None and result["tradier_0dte"] is None:
         raise HTTPException(
             status_code=503,
             detail=f"Both data sources failed: {'; '.join(result['errors'])}"
