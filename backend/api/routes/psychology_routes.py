@@ -68,28 +68,32 @@ async def get_current_regime(symbol: str = "SPY"):
 
                 if cached_row:
                     cached_response = {
-                        "analysis": {
-                            "timestamp": str(cached_row[13]),
-                            "spy_price": cached_row[0] or 590.0,
-                            "regime": {
-                                "primary_type": cached_row[2] or "NEUTRAL",
-                                "secondary_type": cached_row[3],
-                                "confidence": cached_row[4] or 0.7,
-                                "description": cached_row[7] or "Cached analysis",
-                                "trade_direction": cached_row[5] or "NEUTRAL",
-                                "risk_level": cached_row[6] or "MEDIUM",
-                            },
-                            "rsi_analysis": {
-                                "individual_rsi": {
-                                    "5m": cached_row[8],
-                                    "15m": cached_row[9],
-                                    "1h": cached_row[10],
-                                    "4h": cached_row[11],
-                                    "1d": cached_row[12]
+                        "success": True,
+                        "data": {
+                            "analysis": {
+                                "timestamp": str(cached_row[13]),
+                                "spy_price": cached_row[0] or 590.0,
+                                "regime": {
+                                    "primary_type": cached_row[2] or "NEUTRAL",
+                                    "secondary_type": cached_row[3],
+                                    "confidence": cached_row[4] or 0.7,
+                                    "description": cached_row[7] or "Cached analysis",
+                                    "trade_direction": cached_row[5] or "NEUTRAL",
+                                    "risk_level": cached_row[6] or "MEDIUM",
+                                },
+                                "rsi_analysis": {
+                                    "individual_rsi": {
+                                        "5m": cached_row[8],
+                                        "15m": cached_row[9],
+                                        "1h": cached_row[10],
+                                        "4h": cached_row[11],
+                                        "1d": cached_row[12]
+                                    }
                                 }
-                            }
-                        },
-                        "_cached": True
+                            },
+                            "market_status": {"is_open": True},
+                            "_cached": True
+                        }
                     }
                     return JSONResponse(cached_response)
             except Exception:
@@ -115,7 +119,13 @@ async def get_current_regime(symbol: str = "SPY"):
             volume_ratio=volume_ratio
         )
 
-        return JSONResponse({"analysis": analysis, "market_status": {"is_open": True}})
+        return JSONResponse({
+            "success": True,
+            "data": {
+                "analysis": analysis,
+                "market_status": {"is_open": True}
+            }
+        })
 
     except HTTPException:
         raise
@@ -165,7 +175,7 @@ async def get_regime_history(
             }
         } for row in rows]
 
-        return {"signals": signals, "count": len(signals)}
+        return {"success": True, "data": signals, "signals": signals, "count": len(signals)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -197,7 +207,7 @@ async def get_liberation_setups(days: int = Query(7, ge=1, le=30)):
             "description": row[6]
         } for row in rows]
 
-        return {"liberation_setups": setups, "count": len(setups)}
+        return {"success": True, "data": setups, "liberation_setups": setups, "count": len(setups)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -229,7 +239,7 @@ async def get_false_floors(days: int = Query(7, ge=1, le=30)):
             "description": row[6]
         } for row in rows]
 
-        return {"false_floors": floors, "count": len(floors)}
+        return {"success": True, "data": floors, "false_floors": floors, "count": len(floors)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -262,11 +272,12 @@ async def get_regime_statistics(days: int = Query(30, ge=1, le=90)):
 
         conn.close()
 
-        return {
+        stats_data = {
             "regime_distribution": {row[0]: row[1] for row in regime_counts},
             "confidence_by_regime": {row[0]: float(row[1]) if row[1] else 0 for row in confidence_by_regime},
             "period_days": days
         }
+        return {"success": True, "data": stats_data, **stats_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -277,9 +288,9 @@ async def get_psychology_performance_overview():
     try:
         from core.psychology_performance import get_performance_overview
         overview = get_performance_overview()
-        return overview
+        return {"success": True, "data": overview, **overview}
     except ImportError:
-        return {"error": "Psychology performance module not available"}
+        return {"success": False, "error": "Psychology performance module not available", "data": {}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -290,13 +301,11 @@ async def get_performance_by_pattern():
     """Get performance breakdown by pattern type"""
     try:
         from core.psychology_performance import get_performance_by_pattern
-        patterns = get_performance_by_pattern()
-        # Ensure response has expected format
-        if isinstance(patterns, dict) and 'patterns' not in patterns:
-            return {"patterns": patterns.get('data', []) if isinstance(patterns, dict) else []}
-        return patterns
+        result = get_performance_by_pattern()
+        patterns = result.get('patterns', []) if isinstance(result, dict) else []
+        return {"success": True, "data": patterns, "patterns": patterns}
     except ImportError:
-        return {"patterns": [], "error": "Psychology performance module not available"}
+        return {"success": False, "patterns": [], "data": [], "error": "Psychology performance module not available"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -309,33 +318,37 @@ async def get_psychology_signals(
     """Get recent psychology signals with outcomes"""
     try:
         from core.psychology_performance import get_recent_signals
-        return get_recent_signals(limit=limit, pattern_type=pattern_type)
+        result = get_recent_signals(limit=limit, pattern_type=pattern_type)
+        signals = result.get('signals', []) if isinstance(result, dict) else []
+        return {"success": True, "data": signals, "signals": signals, "count": len(signals)}
     except ImportError:
-        return {"signals": [], "error": "Psychology performance module not available"}
+        return {"success": False, "signals": [], "data": [], "error": "Psychology performance module not available"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/performance/chart-data")
-async def get_chart_data(days: int = Query(30, ge=1, le=90)):
+async def get_chart_data_endpoint(days: int = Query(30, ge=1, le=90)):
     """Get time series data for psychology performance charts"""
     try:
         from core.psychology_performance import get_chart_data
-        return get_chart_data(days=days)
+        result = get_chart_data(days=days)
+        return {"success": True, "data": result, **result}
     except ImportError:
-        return {"error": "Psychology performance module not available"}
+        return {"success": False, "error": "Psychology performance module not available", "data": {}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/performance/vix-correlation")
-async def get_vix_correlation():
+async def get_vix_correlation_endpoint():
     """Get correlation between VIX levels and psychology pattern performance"""
     try:
         from core.psychology_performance import get_vix_correlation
-        return get_vix_correlation()
+        result = get_vix_correlation()
+        return {"success": True, "data": result, **result}
     except ImportError:
-        return {"error": "Psychology performance module not available"}
+        return {"success": False, "error": "Psychology performance module not available", "data": {}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -385,7 +398,7 @@ async def get_notification_history(limit: int = Query(50, ge=1, le=200)):
             "data": row[6]
         } for row in rows]
 
-        return {"notifications": notifications}
+        return {"success": True, "data": notifications, "notifications": notifications}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -405,7 +418,8 @@ async def get_notification_stats():
         rows = cursor.fetchall()
         conn.close()
 
-        return {"stats": {row[0]: row[1] for row in rows if row[0]}, "period": "7 days"}
+        stats = {row[0]: row[1] for row in rows if row[0]}
+        return {"success": True, "data": {"stats": stats, "period": "7 days"}, "stats": stats, "period": "7 days"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
