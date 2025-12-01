@@ -525,8 +525,14 @@ async def get_0dte_gamma_comparison(symbol: str):
         if tv_data and 'gamma_array' in tv_data and tv_data['gamma_array']:
             raw_gamma_array = tv_data.get('gamma_array', [])
 
+            # Debug: Log first strike to see available fields
+            if raw_gamma_array and len(raw_gamma_array) > 0:
+                sample = raw_gamma_array[0]
+                print(f"DEBUG /gex/gamma response - First strike fields: {list(sample.keys())}")
+                print(f"DEBUG /gex/gamma response - First strike data: {sample}")
+
             # Format to match expected gamma_array structure
-            # Note: /gex/gamma returns 'gamma' field (net gamma), not separate call/put
+            # The /gex/gamma endpoint may use different field names: gamma, GEX, gex, net_gamma, etc.
             gamma_array = []
             total_net_gex = 0
             max_positive_gamma = 0
@@ -540,8 +546,18 @@ async def get_0dte_gamma_comparison(symbol: str):
                     continue
 
                 strike = float(strike_data.get('strike', 0))
-                # /gex/gamma provides 'gamma' as net gamma per strike
-                net_gamma = float(strike_data.get('gamma', 0))
+
+                # Try multiple field names for gamma value
+                net_gamma = (
+                    strike_data.get('gamma') or
+                    strike_data.get('GEX') or
+                    strike_data.get('gex') or
+                    strike_data.get('net_gamma') or
+                    strike_data.get('net_gex') or
+                    strike_data.get('total_gamma') or
+                    0
+                )
+                net_gamma = float(net_gamma) if net_gamma else 0.0
                 total_net_gex += net_gamma
 
                 # For call_wall: find strike with highest positive gamma (above spot)
