@@ -5,7 +5,7 @@ Handles all GEX data, levels, history, and regime analysis.
 With fallback to database-stored data if live API fails.
 """
 
-import math
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
@@ -13,6 +13,11 @@ from fastapi import APIRouter, HTTPException
 import psycopg2.extras
 
 from database_adapter import get_connection
+
+# Import centralized utilities
+from backend.api.utils import safe_round, safe_float, clean_dict_for_json
+
+logger = logging.getLogger(__name__)
 
 # Import data collector for storage
 try:
@@ -24,17 +29,7 @@ except ImportError:
 router = APIRouter(prefix="/api/gex", tags=["GEX"])
 
 
-def safe_round(value, decimals=2, default=0):
-    """Round a value, returning default if inf/nan"""
-    if value is None:
-        return default
-    try:
-        float_val = float(value)
-        if math.isnan(float_val) or math.isinf(float_val):
-            return default
-        return round(float_val, decimals)
-    except (ValueError, TypeError, OverflowError):
-        return default
+# Note: safe_round is imported from backend.api.utils
 
 
 def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:

@@ -6,36 +6,30 @@ Handles trader status, performance, positions, trades, and equity curve.
 
 import math
 from datetime import datetime, timedelta
+import logging
 
 from fastapi import APIRouter, HTTPException
 import psycopg2.extras
 
 from database_adapter import get_connection
 
+# Import centralized utilities
+from backend.api.utils import safe_round, clean_dict_for_json, get_market_time
+from backend.api.logging_config import api_logger, log_trade_entry, log_trade_exit
+
 router = APIRouter(prefix="/api/trader", tags=["Trader"])
+logger = logging.getLogger(__name__)
 
 # Try to import the autonomous trader
 try:
     from core.autonomous_paper_trader import AutonomousPaperTrader
     trader = AutonomousPaperTrader()
     trader_available = True
+    logger.info("Autonomous trader initialized successfully")
 except Exception as e:
     trader = None
     trader_available = False
-    print(f"⚠️ Trader routes: Autonomous trader not available: {e}")
-
-
-def safe_round(value, decimals=2, default=0):
-    """Round a value, returning default if inf/nan"""
-    if value is None:
-        return default
-    try:
-        float_val = float(value)
-        if math.isnan(float_val) or math.isinf(float_val):
-            return default
-        return round(float_val, decimals)
-    except (ValueError, TypeError, OverflowError):
-        return default
+    logger.warning(f"Autonomous trader not available: {type(e).__name__}")
 
 
 @router.get("/status")
@@ -184,21 +178,56 @@ async def get_trader_performance():
 
 @router.get("/positions")
 async def get_open_positions():
-    """Get all open positions from database"""
+    """Get all open positions from database with full details for tracking"""
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
+        # Explicitly select fields including expiration_date and entry_time for tracking
         cursor.execute("""
-            SELECT * FROM autonomous_open_positions
+            SELECT
+                id,
+                symbol,
+                strategy,
+                strike,
+                option_type,
+                contracts,
+                entry_price,
+                current_price,
+                unrealized_pnl,
+                entry_date,
+                entry_time,
+                expiration_date,
+                contract_symbol,
+                entry_spot_price,
+                current_spot_price,
+                gex_regime,
+                confidence,
+                trade_reasoning,
+                profit_target_pct,
+                stop_loss_pct,
+                created_at
+            FROM autonomous_open_positions
             ORDER BY entry_date DESC, entry_time DESC
         """)
         positions = cursor.fetchall()
         conn.close()
 
+        # Format the response with proper date/time handling
+        formatted_positions = []
+        for p in positions:
+            pos = dict(p)
+            # Format entry_date and entry_time into a combined timestamp for display
+            if pos.get('entry_date') and pos.get('entry_time'):
+                pos['entry_timestamp'] = f"{pos['entry_date']} {pos['entry_time']}"
+            # Format expiration_date as string for frontend
+            if pos.get('expiration_date'):
+                pos['expiration'] = str(pos['expiration_date'])
+            formatted_positions.append(pos)
+
         return {
             "success": True,
-            "data": [dict(p) for p in positions]
+            "data": formatted_positions
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
