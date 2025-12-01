@@ -593,6 +593,111 @@ class TradierGEXCalculator:
             logger.error(f"0DTE GEX calculation failed for {symbol}: {e}")
             return {'error': f'0DTE GEX calculation failed: {str(e)}'}
 
+    def get_all_expirations_gex_profile(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get ALL expirations GEX profile with per-strike NET gamma.
+
+        This combines all available expirations to match TradingVolatility API's
+        gammaOI endpoint which returns all expirations.
+
+        Returns:
+        {
+            'symbol': str,
+            'spot_price': float,
+            'flip_point': float,
+            'call_wall': float,
+            'put_wall': float,
+            'net_gex': float,
+            'gamma_array': List[{strike, call_gamma, put_gamma, total_gamma}],
+            'expiration': 'all_expirations',
+            'data_source': 'tradier_all_expirations_calculated',
+            'timestamp': str
+        }
+        """
+        tradier = self._get_tradier()
+        if not tradier:
+            return {'error': 'Tradier client not available'}
+
+        try:
+            # Get spot price
+            quote = tradier.get_quote(symbol)
+            if not quote:
+                return {'error': f'Could not get quote for {symbol}'}
+
+            spot_price = float(quote.get('last', 0) or quote.get('close', 0) or 0)
+            if spot_price <= 0:
+                return {'error': f'Invalid spot price for {symbol}'}
+
+            # Get options chain with Greeks
+            chain = tradier.get_option_chain(symbol, greeks=True)
+            if not chain or not chain.chains:
+                return {'error': f'No options chain for {symbol}'}
+
+            # Combine ALL expirations
+            all_contracts = []
+            total_call_oi = 0
+            total_put_oi = 0
+            expirations_included = []
+
+            for expiration, contracts in chain.chains.items():
+                expirations_included.append(expiration)
+                for contract in contracts:
+                    all_contracts.append({
+                        'strike': contract.strike,
+                        'gamma': contract.gamma,
+                        'open_interest': contract.open_interest,
+                        'option_type': contract.option_type
+                    })
+                    # Track OI for P/C ratio
+                    oi = contract.open_interest or 0
+                    if contract.option_type == 'call':
+                        total_call_oi += oi
+                    elif contract.option_type == 'put':
+                        total_put_oi += oi
+
+            if not all_contracts:
+                return {'error': f'No options contracts found for {symbol}'}
+
+            # Calculate P/C ratio
+            put_call_ratio = total_put_oi / total_call_oi if total_call_oi > 0 else 0
+
+            # Calculate GEX for ALL expirations
+            result = calculate_gex_from_chain(symbol, spot_price, all_contracts)
+
+            # Format gamma_array to match TradingVolatility API format
+            gamma_array = []
+            for strike_data in (result.strikes_data or []):
+                gamma_array.append({
+                    'strike': strike_data['strike'],
+                    'call_gamma': abs(strike_data.get('call_gex', 0)),  # Absolute value
+                    'put_gamma': abs(strike_data.get('put_gex', 0)),   # Absolute value
+                    'total_gamma': strike_data.get('net_gex', 0),      # Net (can be negative)
+                    'net_gex': strike_data.get('net_gex', 0)           # Alias
+                })
+
+            return {
+                'symbol': symbol,
+                'spot_price': spot_price,
+                'flip_point': result.gamma_flip,
+                'call_wall': result.call_wall,
+                'put_wall': result.put_wall,
+                'max_pain': result.max_pain,
+                'net_gex': result.net_gex,
+                'put_call_ratio': round(put_call_ratio, 3),
+                'total_call_oi': total_call_oi,
+                'total_put_oi': total_put_oi,
+                'gamma_array': gamma_array,
+                'expiration': 'All expirations',
+                'expirations_included': sorted(expirations_included),
+                'contracts_count': len(all_contracts),
+                'data_source': 'tradier_all_expirations_calculated',
+                'timestamp': datetime.now().isoformat()
+            }
+
+        except Exception as e:
+            logger.error(f"All expirations GEX calculation failed for {symbol}: {e}")
+            return {'error': f'All expirations GEX calculation failed: {str(e)}'}
+
 
 # Global instance for easy import
 _gex_calculator = None
@@ -618,3 +723,8 @@ def get_calculated_gex_profile(symbol: str) -> Optional[Dict[str, Any]]:
 def get_0dte_gex_profile(symbol: str) -> Optional[Dict[str, Any]]:
     """Convenience function to get 0DTE GEX profile for comparison"""
     return get_gex_calculator().get_0dte_gex_profile(symbol)
+
+
+def get_all_expirations_gex_profile(symbol: str) -> Optional[Dict[str, Any]]:
+    """Convenience function to get all-expirations GEX profile for comparison"""
+    return get_gex_calculator().get_all_expirations_gex_profile(symbol)

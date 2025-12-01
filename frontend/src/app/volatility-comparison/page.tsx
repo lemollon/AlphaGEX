@@ -35,8 +35,10 @@ interface ComparisonData {
   success: boolean
   symbol: string
   timestamp: string
-  trading_volatility: GammaSource | null
-  tradier_calculated: GammaSource | null
+  trading_volatility: GammaSource | null      // All expirations from Trading Volatility API
+  tradier_all_expirations: GammaSource | null // All expirations from Tradier (apples-to-apples)
+  tradier_0dte: GammaSource | null            // 0DTE only from Tradier
+  tradier_calculated?: GammaSource | null     // Legacy field for backwards compatibility
   errors: string[]
 }
 
@@ -229,21 +231,23 @@ export default function VolatilityComparison() {
     }))
   }
 
+  // Chart data for all 3 sources
   const tradingVolChartData = prepareChartData(comparisonData?.trading_volatility || null, 'tv')
-  const tradierChartData = prepareChartData(comparisonData?.tradier_calculated || null, 'tr')
+  const tradierAllExpChartData = prepareChartData(comparisonData?.tradier_all_expirations || null, 'ta')
+  const tradier0dteChartData = prepareChartData(comparisonData?.tradier_0dte || null, 'tr')
 
-  // Calculate shared Y-axis domain for both charts (so they're visually comparable)
+  // Calculate shared Y-axis domain for the two "all expirations" charts (so they're visually comparable)
   const calculateSharedYDomain = () => {
     const allValues: number[] = []
 
-    // Collect all gamma values from both sources
+    // Collect all gamma values from both "all expirations" sources
     if (comparisonData?.trading_volatility?.gamma_array) {
       comparisonData.trading_volatility.gamma_array.forEach(item => {
         allValues.push(item.call_gamma, -Math.abs(item.put_gamma))
       })
     }
-    if (comparisonData?.tradier_calculated?.gamma_array) {
-      comparisonData.tradier_calculated.gamma_array.forEach(item => {
+    if (comparisonData?.tradier_all_expirations?.gamma_array) {
+      comparisonData.tradier_all_expirations.gamma_array.forEach(item => {
         allValues.push(item.call_gamma, -Math.abs(item.put_gamma))
       })
     }
@@ -258,6 +262,23 @@ export default function VolatilityComparison() {
   }
 
   const sharedYDomain = calculateSharedYDomain()
+
+  // Separate Y domain for 0DTE chart
+  const calculate0dteYDomain = () => {
+    const allValues: number[] = []
+    if (comparisonData?.tradier_0dte?.gamma_array) {
+      comparisonData.tradier_0dte.gamma_array.forEach(item => {
+        allValues.push(item.call_gamma, -Math.abs(item.put_gamma))
+      })
+    }
+    if (allValues.length === 0) return [-100, 100]
+    const maxVal = Math.max(...allValues)
+    const minVal = Math.min(...allValues)
+    const padding = Math.max(Math.abs(maxVal), Math.abs(minVal)) * 0.1
+    return [minVal - padding, maxVal + padding]
+  }
+
+  const zerodte_YDomain = calculate0dteYDomain()
 
   // Calculate IV-RV spread
   const ivRvSpread = tradingVolData && traderCalcs
@@ -574,27 +595,27 @@ export default function VolatilityComparison() {
                   </div>
                 </div>
 
-                {/* 0DTE Gamma Comparison Charts (NEW) */}
-                {(comparisonData?.trading_volatility || comparisonData?.tradier_calculated) && (
+                {/* All Expirations Gamma Comparison Charts */}
+                {(comparisonData?.trading_volatility || comparisonData?.tradier_all_expirations) && (
                   <>
                     <div className="card bg-gradient-to-r from-primary/10 to-transparent">
                       <div className="flex items-center gap-2 mb-2">
                         <Target className="w-5 h-5 text-primary" />
-                        <h2 className="text-xl font-semibold text-text-primary">0DTE Gamma Comparison</h2>
+                        <h2 className="text-xl font-semibold text-text-primary">All Expirations Gamma Comparison</h2>
                       </div>
                       <p className="text-text-secondary text-sm">
-                        Side-by-side comparison of 0DTE NET gamma from TradingVolatility API vs Tradier calculation.
-                        Both charts should look nearly identical if calculations are correct.
+                        Apples-to-apples comparison of ALL expirations NET gamma from TradingVolatility API vs Tradier calculation.
+                        Both charts should look similar if calculations are correct.
                       </p>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {/* TradingVolatility API Chart */}
+                      {/* TradingVolatility API Chart - All Expirations */}
                       <div className="card">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center gap-2">
                             <BarChart3 className="w-5 h-5 text-blue-400" />
-                            <h3 className="font-semibold text-text-primary">TradingVol API - 0DTE</h3>
+                            <h3 className="font-semibold text-text-primary">TradingVol API - All Exp</h3>
                           </div>
                           {comparisonData?.trading_volatility ? (
                             <span className="text-xs text-text-muted">
@@ -640,25 +661,25 @@ export default function VolatilityComparison() {
                         )}
                       </div>
 
-                      {/* Tradier Calculated Chart */}
+                      {/* Tradier All Expirations Chart */}
                       <div className="card">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center gap-2">
                             <BarChart3 className="w-5 h-5 text-green-400" />
-                            <h3 className="font-semibold text-text-primary">Tradier Calc - 0DTE</h3>
+                            <h3 className="font-semibold text-text-primary">Tradier Calc - All Exp</h3>
                           </div>
-                          {comparisonData?.tradier_calculated ? (
+                          {comparisonData?.tradier_all_expirations ? (
                             <span className="text-xs text-text-muted">
-                              {comparisonData.tradier_calculated.expiration} | {comparisonData.tradier_calculated.strikes_count} strikes
+                              {comparisonData.tradier_all_expirations.strikes_count} strikes
                             </span>
                           ) : (
                             <span className="text-xs text-danger">No data</span>
                           )}
                         </div>
-                        {tradierChartData.length > 0 ? (
+                        {tradierAllExpChartData.length > 0 ? (
                           <div className="h-64">
                             <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={tradierChartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                              <BarChart data={tradierAllExpChartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                                 <XAxis
                                   dataKey="strike"
@@ -678,10 +699,10 @@ export default function VolatilityComparison() {
                                   formatter={(value: number, name: string) => [formatGamma(value), name.includes('call') ? 'Call' : 'Put']}
                                   labelFormatter={(label) => `Strike: $${label}`}
                                 />
-                                <Bar dataKey="tr_call" fill="#22C55E" stackId="stack" />
-                                <Bar dataKey="tr_put" fill="#EF4444" stackId="stack" />
-                                {comparisonData?.tradier_calculated?.spot_price && (
-                                  <ReferenceLine x={comparisonData.tradier_calculated.spot_price} stroke="#3B82F6" strokeWidth={2} />
+                                <Bar dataKey="ta_call" fill="#22C55E" stackId="stack" />
+                                <Bar dataKey="ta_put" fill="#EF4444" stackId="stack" />
+                                {comparisonData?.tradier_all_expirations?.spot_price && (
+                                  <ReferenceLine x={comparisonData.tradier_all_expirations.spot_price} stroke="#3B82F6" strokeWidth={2} />
                                 )}
                               </BarChart>
                             </ResponsiveContainer>
@@ -692,11 +713,11 @@ export default function VolatilityComparison() {
                       </div>
                     </div>
 
-                    {/* Key Levels Comparison Table */}
+                    {/* Key Levels Comparison Table - All Expirations */}
                     <div className="card">
                       <div className="flex items-center gap-2 mb-4">
                         <Zap className="w-5 h-5 text-primary" />
-                        <h2 className="text-lg font-semibold text-text-primary">0DTE Key Levels Comparison</h2>
+                        <h2 className="text-lg font-semibold text-text-primary">All Expirations Key Levels Comparison</h2>
                       </div>
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
@@ -704,7 +725,7 @@ export default function VolatilityComparison() {
                             <tr className="border-b border-border">
                               <th className="text-left py-3 px-4 text-text-muted font-medium">Metric</th>
                               <th className="text-right py-3 px-4 text-blue-400 font-medium">TradingVol API</th>
-                              <th className="text-right py-3 px-4 text-green-400 font-medium">Tradier Calc</th>
+                              <th className="text-right py-3 px-4 text-green-400 font-medium">Tradier All Exp</th>
                               <th className="text-right py-3 px-4 text-text-muted font-medium">Diff</th>
                             </tr>
                           </thead>
@@ -712,41 +733,139 @@ export default function VolatilityComparison() {
                             <tr className="border-b border-border/50">
                               <td className="py-2 px-4">Spot Price</td>
                               <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.trading_volatility?.spot_price)}</td>
-                              <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.spot_price)}</td>
+                              <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_all_expirations?.spot_price)}</td>
                               <td className="py-2 px-4 text-right font-mono text-text-muted">
-                                {comparisonData?.trading_volatility?.spot_price && comparisonData?.tradier_calculated?.spot_price
-                                  ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.spot_price - comparisonData.tradier_calculated.spot_price))}` : '--'}
+                                {comparisonData?.trading_volatility?.spot_price && comparisonData?.tradier_all_expirations?.spot_price
+                                  ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.spot_price - comparisonData.tradier_all_expirations.spot_price))}` : '--'}
                               </td>
                             </tr>
                             <tr className="border-b border-border/50">
                               <td className="py-2 px-4">Flip Point</td>
                               <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.trading_volatility?.flip_point)}</td>
-                              <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.flip_point)}</td>
+                              <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_all_expirations?.flip_point)}</td>
                               <td className="py-2 px-4 text-right font-mono text-text-muted">
-                                {comparisonData?.trading_volatility?.flip_point && comparisonData?.tradier_calculated?.flip_point
-                                  ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.flip_point - comparisonData.tradier_calculated.flip_point))}` : '--'}
+                                {comparisonData?.trading_volatility?.flip_point && comparisonData?.tradier_all_expirations?.flip_point
+                                  ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.flip_point - comparisonData.tradier_all_expirations.flip_point))}` : '--'}
                               </td>
                             </tr>
                             <tr className="border-b border-border/50">
                               <td className="py-2 px-4">Call Wall</td>
                               <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.trading_volatility?.call_wall)}</td>
-                              <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.tradier_calculated?.call_wall)}</td>
+                              <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.tradier_all_expirations?.call_wall)}</td>
                               <td className="py-2 px-4 text-right font-mono text-text-muted">
-                                {comparisonData?.trading_volatility?.call_wall && comparisonData?.tradier_calculated?.call_wall
-                                  ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.call_wall - comparisonData.tradier_calculated.call_wall))}` : '--'}
+                                {comparisonData?.trading_volatility?.call_wall && comparisonData?.tradier_all_expirations?.call_wall
+                                  ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.call_wall - comparisonData.tradier_all_expirations.call_wall))}` : '--'}
+                              </td>
+                            </tr>
+                            <tr className="border-b border-border/50">
+                              <td className="py-2 px-4">Put Wall</td>
+                              <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.trading_volatility?.put_wall)}</td>
+                              <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.tradier_all_expirations?.put_wall)}</td>
+                              <td className="py-2 px-4 text-right font-mono text-text-muted">
+                                {comparisonData?.trading_volatility?.put_wall && comparisonData?.tradier_all_expirations?.put_wall
+                                  ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.put_wall - comparisonData.tradier_all_expirations.put_wall))}` : '--'}
                               </td>
                             </tr>
                             <tr>
-                              <td className="py-2 px-4">Put Wall</td>
-                              <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.trading_volatility?.put_wall)}</td>
-                              <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.tradier_calculated?.put_wall)}</td>
-                              <td className="py-2 px-4 text-right font-mono text-text-muted">
-                                {comparisonData?.trading_volatility?.put_wall && comparisonData?.tradier_calculated?.put_wall
-                                  ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.put_wall - comparisonData.tradier_calculated.put_wall))}` : '--'}
+                              <td className="py-2 px-4">Net GEX</td>
+                              <td className="py-2 px-4 text-right font-mono">
+                                <span className={(comparisonData?.trading_volatility?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
+                                  {formatGamma(comparisonData?.trading_volatility?.net_gex || 0)}
+                                </span>
                               </td>
+                              <td className="py-2 px-4 text-right font-mono">
+                                <span className={(comparisonData?.tradier_all_expirations?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
+                                  {formatGamma(comparisonData?.tradier_all_expirations?.net_gex || 0)}
+                                </span>
+                              </td>
+                              <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                             </tr>
                           </tbody>
                         </table>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* 0DTE Chart - Tradier Only (below the comparison) */}
+                {comparisonData?.tradier_0dte && (
+                  <>
+                    <div className="card bg-gradient-to-r from-yellow-500/10 to-transparent">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Clock className="w-5 h-5 text-yellow-400" />
+                        <h2 className="text-xl font-semibold text-text-primary">0DTE Gamma (Tradier)</h2>
+                      </div>
+                      <p className="text-text-secondary text-sm">
+                        Zero Days to Expiration gamma profile from Tradier calculation only.
+                        Expiration: {comparisonData.tradier_0dte.expiration}
+                      </p>
+                    </div>
+
+                    <div className="card">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <BarChart3 className="w-5 h-5 text-yellow-400" />
+                          <h3 className="font-semibold text-text-primary">Tradier 0DTE Gamma</h3>
+                        </div>
+                        <span className="text-xs text-text-muted">
+                          {comparisonData.tradier_0dte.expiration} | {comparisonData.tradier_0dte.strikes_count} strikes
+                        </span>
+                      </div>
+                      {tradier0dteChartData.length > 0 ? (
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={tradier0dteChartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                              <XAxis
+                                dataKey="strike"
+                                stroke="#9CA3AF"
+                                tick={{ fill: '#9CA3AF', fontSize: 9 }}
+                                tickFormatter={(v) => `$${v}`}
+                                interval="preserveStartEnd"
+                              />
+                              <YAxis
+                                stroke="#9CA3AF"
+                                tick={{ fill: '#9CA3AF', fontSize: 9 }}
+                                tickFormatter={formatGamma}
+                                domain={zerodte_YDomain as [number, number]}
+                              />
+                              <Tooltip
+                                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
+                                formatter={(value: number, name: string) => [formatGamma(value), name.includes('call') ? 'Call' : 'Put']}
+                                labelFormatter={(label) => `Strike: $${label}`}
+                              />
+                              <Bar dataKey="tr_call" fill="#22C55E" stackId="stack" />
+                              <Bar dataKey="tr_put" fill="#EF4444" stackId="stack" />
+                              {comparisonData.tradier_0dte.spot_price && (
+                                <ReferenceLine x={comparisonData.tradier_0dte.spot_price} stroke="#F59E0B" strokeWidth={2} />
+                              )}
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      ) : (
+                        <div className="h-64 flex items-center justify-center text-text-muted">No 0DTE data available</div>
+                      )}
+
+                      {/* 0DTE Key Levels */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-4 border-t border-border">
+                        <div className="p-3 rounded-lg bg-background-hover">
+                          <p className="text-text-muted text-xs">Flip Point</p>
+                          <p className="text-lg font-bold text-text-primary">${formatNumber(comparisonData.tradier_0dte.flip_point)}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-background-hover">
+                          <p className="text-text-muted text-xs">Call Wall</p>
+                          <p className="text-lg font-bold text-success">${formatNumber(comparisonData.tradier_0dte.call_wall)}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-background-hover">
+                          <p className="text-text-muted text-xs">Put Wall</p>
+                          <p className="text-lg font-bold text-danger">${formatNumber(comparisonData.tradier_0dte.put_wall)}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-background-hover">
+                          <p className="text-text-muted text-xs">Net GEX</p>
+                          <p className={`text-lg font-bold ${(comparisonData.tradier_0dte.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                            {formatGamma(comparisonData.tradier_0dte.net_gex || 0)}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -785,11 +904,11 @@ export default function VolatilityComparison() {
                   </div>
                 )}
 
-                {/* Full Data Comparison Table - Same metrics from both sources */}
+                {/* Full Data Comparison Table - All Expirations */}
                 <div className="card">
                   <div className="flex items-center gap-2 mb-4">
                     <BarChart3 className="w-5 h-5 text-primary" />
-                    <h2 className="text-lg font-semibold text-text-primary">Full Data Comparison</h2>
+                    <h2 className="text-lg font-semibold text-text-primary">Full Data Comparison (All Expirations)</h2>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -805,7 +924,7 @@ export default function VolatilityComparison() {
                           <th className="text-right py-3 px-4 text-green-400 font-medium">
                             <div className="flex items-center justify-end gap-1">
                               <Database className="w-3 h-3" />
-                              Tradier Calc
+                              Tradier All Exp
                             </div>
                           </th>
                           <th className="text-right py-3 px-4 text-text-muted font-medium">Diff</th>
@@ -815,10 +934,10 @@ export default function VolatilityComparison() {
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Spot Price</td>
                           <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.trading_volatility?.spot_price)}</td>
-                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.spot_price)}</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_all_expirations?.spot_price)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {comparisonData?.trading_volatility?.spot_price && comparisonData?.tradier_calculated?.spot_price
-                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.spot_price - comparisonData.tradier_calculated.spot_price))}` : '--'}
+                            {comparisonData?.trading_volatility?.spot_price && comparisonData?.tradier_all_expirations?.spot_price
+                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.spot_price - comparisonData.tradier_all_expirations.spot_price))}` : '--'}
                           </td>
                         </tr>
                         <tr className="border-b border-border/50">
@@ -829,8 +948,8 @@ export default function VolatilityComparison() {
                             </span>
                           </td>
                           <td className="py-2 px-4 text-right font-mono">
-                            <span className={(comparisonData?.tradier_calculated?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
-                              {formatGamma(comparisonData?.tradier_calculated?.net_gex || 0)}
+                            <span className={(comparisonData?.tradier_all_expirations?.net_gex || 0) >= 0 ? 'text-success' : 'text-danger'}>
+                              {formatGamma(comparisonData?.tradier_all_expirations?.net_gex || 0)}
                             </span>
                           </td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
@@ -838,40 +957,40 @@ export default function VolatilityComparison() {
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Flip Point</td>
                           <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.trading_volatility?.flip_point)}</td>
-                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.flip_point)}</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_all_expirations?.flip_point)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {comparisonData?.trading_volatility?.flip_point && comparisonData?.tradier_calculated?.flip_point
-                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.flip_point - comparisonData.tradier_calculated.flip_point))}` : '--'}
+                            {comparisonData?.trading_volatility?.flip_point && comparisonData?.tradier_all_expirations?.flip_point
+                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.flip_point - comparisonData.tradier_all_expirations.flip_point))}` : '--'}
                           </td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Call Wall</td>
                           <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.trading_volatility?.call_wall)}</td>
-                          <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.tradier_calculated?.call_wall)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-success">${formatNumber(comparisonData?.tradier_all_expirations?.call_wall)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {comparisonData?.trading_volatility?.call_wall && comparisonData?.tradier_calculated?.call_wall
-                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.call_wall - comparisonData.tradier_calculated.call_wall))}` : '--'}
+                            {comparisonData?.trading_volatility?.call_wall && comparisonData?.tradier_all_expirations?.call_wall
+                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.call_wall - comparisonData.tradier_all_expirations.call_wall))}` : '--'}
                           </td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Put Wall</td>
                           <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.trading_volatility?.put_wall)}</td>
-                          <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.tradier_calculated?.put_wall)}</td>
+                          <td className="py-2 px-4 text-right font-mono text-danger">${formatNumber(comparisonData?.tradier_all_expirations?.put_wall)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {comparisonData?.trading_volatility?.put_wall && comparisonData?.tradier_calculated?.put_wall
-                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.put_wall - comparisonData.tradier_calculated.put_wall))}` : '--'}
+                            {comparisonData?.trading_volatility?.put_wall && comparisonData?.tradier_all_expirations?.put_wall
+                              ? `$${formatNumber(Math.abs(comparisonData.trading_volatility.put_wall - comparisonData.tradier_all_expirations.put_wall))}` : '--'}
                           </td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Max Pain</td>
                           <td className="py-2 px-4 text-right font-mono">--</td>
-                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_calculated?.max_pain)}</td>
+                          <td className="py-2 px-4 text-right font-mono">${formatNumber(comparisonData?.tradier_all_expirations?.max_pain)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">P/C Ratio</td>
                           <td className="py-2 px-4 text-right font-mono">--</td>
-                          <td className="py-2 px-4 text-right font-mono">{formatNumber(comparisonData?.tradier_calculated?.put_call_ratio, 3)}</td>
+                          <td className="py-2 px-4 text-right font-mono">{formatNumber(comparisonData?.tradier_all_expirations?.put_call_ratio, 3)}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
                         <tr className="border-b border-border/50">
@@ -881,18 +1000,18 @@ export default function VolatilityComparison() {
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
                         <tr className="border-b border-border/50">
-                          <td className="py-2 px-4 text-text-primary">Expiration (0DTE)</td>
+                          <td className="py-2 px-4 text-text-primary">Expiration</td>
                           <td className="py-2 px-4 text-right font-mono">{comparisonData?.trading_volatility?.expiration || '--'}</td>
-                          <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_calculated?.expiration || '--'}</td>
+                          <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_all_expirations?.expiration || '--'}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2 px-4 text-text-primary">Strike Count</td>
                           <td className="py-2 px-4 text-right font-mono">{comparisonData?.trading_volatility?.strikes_count || '--'}</td>
-                          <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_calculated?.strikes_count || '--'}</td>
+                          <td className="py-2 px-4 text-right font-mono">{comparisonData?.tradier_all_expirations?.strikes_count || '--'}</td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">
-                            {comparisonData?.trading_volatility?.strikes_count && comparisonData?.tradier_calculated?.strikes_count
-                              ? Math.abs(comparisonData.trading_volatility.strikes_count - comparisonData.tradier_calculated.strikes_count) : '--'}
+                            {comparisonData?.trading_volatility?.strikes_count && comparisonData?.tradier_all_expirations?.strikes_count
+                              ? Math.abs(comparisonData.trading_volatility.strikes_count - comparisonData.tradier_all_expirations.strikes_count) : '--'}
                           </td>
                         </tr>
                         <tr>
@@ -905,8 +1024,8 @@ export default function VolatilityComparison() {
                               : '--'}
                           </td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted text-xs">
-                            {comparisonData?.tradier_calculated?.timestamp
-                              ? new Date(comparisonData.tradier_calculated.timestamp).toLocaleTimeString()
+                            {comparisonData?.tradier_all_expirations?.timestamp
+                              ? new Date(comparisonData.tradier_all_expirations.timestamp).toLocaleTimeString()
                               : '--'}
                           </td>
                           <td className="py-2 px-4 text-right font-mono text-text-muted">--</td>

@@ -505,8 +505,9 @@ async def get_0dte_gamma_comparison(symbol: str):
         "success": True,
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
-        "trading_volatility": None,
-        "tradier_calculated": None,
+        "trading_volatility": None,        # All expirations from Trading Volatility API
+        "tradier_all_expirations": None,   # All expirations from Tradier (apples-to-apples)
+        "tradier_0dte": None,              # 0DTE only from Tradier
         "errors": []
     }
 
@@ -590,13 +591,42 @@ async def get_0dte_gamma_comparison(symbol: str):
     except Exception as e:
         result["errors"].append(f"TradingVolatility API: {str(e)}")
 
-    # Source 2: Tradier 0DTE Calculation (fallback)
+    # Source 2: Tradier ALL EXPIRATIONS Calculation (apples-to-apples with Trading Volatility)
+    try:
+        from data.gex_calculator import get_all_expirations_gex_profile
+        tradier_all_profile = get_all_expirations_gex_profile(symbol)
+
+        if tradier_all_profile and 'error' not in tradier_all_profile:
+            result["tradier_all_expirations"] = {
+                "data_source": "tradier_all_expirations_calculated",
+                "spot_price": tradier_all_profile.get('spot_price', 0),
+                "flip_point": tradier_all_profile.get('flip_point', 0),
+                "call_wall": tradier_all_profile.get('call_wall', 0),
+                "put_wall": tradier_all_profile.get('put_wall', 0),
+                "max_pain": tradier_all_profile.get('max_pain', 0),
+                "net_gex": tradier_all_profile.get('net_gex', 0),
+                "put_call_ratio": tradier_all_profile.get('put_call_ratio', 0),
+                "expiration": tradier_all_profile.get('expiration', 'All expirations'),
+                "expirations_included": tradier_all_profile.get('expirations_included', []),
+                "gamma_array": tradier_all_profile.get('gamma_array', []),
+                "strikes_count": len(tradier_all_profile.get('gamma_array', [])),
+                "timestamp": tradier_all_profile.get('timestamp', '')
+            }
+        else:
+            error_msg = tradier_all_profile.get('error', 'Unknown error') if tradier_all_profile else 'No data returned'
+            result["errors"].append(f"Tradier all-expirations: {error_msg}")
+    except ImportError as e:
+        result["errors"].append(f"Tradier all-expirations: Import failed - {e}")
+    except Exception as e:
+        result["errors"].append(f"Tradier all-expirations: {str(e)}")
+
+    # Source 3: Tradier 0DTE Calculation (for reference)
     try:
         from data.gex_calculator import get_0dte_gex_profile
         tradier_profile = get_0dte_gex_profile(symbol)
 
         if tradier_profile and 'error' not in tradier_profile:
-            result["tradier_calculated"] = {
+            result["tradier_0dte"] = {
                 "data_source": "tradier_0dte_calculated",
                 "spot_price": tradier_profile.get('spot_price', 0),
                 "flip_point": tradier_profile.get('flip_point', 0),
@@ -612,14 +642,14 @@ async def get_0dte_gamma_comparison(symbol: str):
             }
         else:
             error_msg = tradier_profile.get('error', 'Unknown error') if tradier_profile else 'No data returned'
-            result["errors"].append(f"Tradier calculation: {error_msg}")
+            result["errors"].append(f"Tradier 0DTE: {error_msg}")
     except ImportError as e:
-        result["errors"].append(f"Tradier calculation: Import failed - {e}")
+        result["errors"].append(f"Tradier 0DTE: Import failed - {e}")
     except Exception as e:
-        result["errors"].append(f"Tradier calculation: {str(e)}")
+        result["errors"].append(f"Tradier 0DTE: {str(e)}")
 
-    # If both sources failed, return error
-    if result["trading_volatility"] is None and result["tradier_calculated"] is None:
+    # If all sources failed, return error
+    if result["trading_volatility"] is None and result["tradier_all_expirations"] is None and result["tradier_0dte"] is None:
         raise HTTPException(
             status_code=503,
             detail=f"Both data sources failed: {'; '.join(result['errors'])}"
