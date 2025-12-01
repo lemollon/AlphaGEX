@@ -220,9 +220,20 @@ async def get_alert_history(limit: int = 50):
 
         conn = get_connection()
 
+        # Select specific columns with aliases for frontend compatibility
         history = pd.read_sql_query("""
-            SELECT * FROM alert_history
-            ORDER BY triggered_at DESC
+            SELECT
+                id,
+                alert_id,
+                timestamp as triggered_at,
+                symbol,
+                alert_type,
+                condition,
+                threshold,
+                actual_value,
+                message
+            FROM alert_history
+            ORDER BY timestamp DESC
             LIMIT %s
         """, conn, params=(int(limit),))
 

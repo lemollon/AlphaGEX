@@ -94,16 +94,54 @@ async def get_scanner_history(limit: int = 20):
     """Get recent scan history"""
     try:
         import pandas as pd
+        import json as json_module
 
         conn = get_connection()
         history = pd.read_sql_query("""
-            SELECT * FROM scanner_history
+            SELECT id, timestamp, symbols_scanned, results, scan_type, duration_ms
+            FROM scanner_history
             ORDER BY timestamp DESC
             LIMIT %s
         """, conn, params=(int(limit),))
         conn.close()
 
-        return {"success": True, "data": history.to_dict('records') if not history.empty else []}
+        # Transform to match frontend expectations
+        formatted_history = []
+        for _, row in history.iterrows():
+            # Parse symbols and results for computed fields
+            symbols = row['symbols_scanned']
+            results = row['results']
+
+            # Handle JSON parsing
+            if isinstance(symbols, str):
+                try:
+                    symbols_list = json_module.loads(symbols)
+                except (json_module.JSONDecodeError, TypeError):
+                    symbols_list = [symbols] if symbols else []
+            else:
+                symbols_list = symbols if symbols else []
+
+            if isinstance(results, str):
+                try:
+                    results_list = json_module.loads(results)
+                except (json_module.JSONDecodeError, TypeError):
+                    results_list = []
+            else:
+                results_list = results if results else []
+
+            # Count opportunities (results without errors)
+            opportunities = len([r for r in results_list if isinstance(r, dict) and 'error' not in r])
+
+            formatted_history.append({
+                'id': str(row['id']),
+                'timestamp': str(row['timestamp']) if row['timestamp'] else None,
+                'symbols_scanned': ', '.join(symbols_list) if isinstance(symbols_list, list) else str(symbols_list),
+                'total_symbols': len(symbols_list) if isinstance(symbols_list, list) else 1,
+                'opportunities_found': opportunities,
+                'scan_duration_seconds': (row['duration_ms'] / 1000) if row['duration_ms'] else 0
+            })
+
+        return {"success": True, "data": formatted_history}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -113,6 +151,8 @@ async def get_scanner_history(limit: int = 20):
 async def get_scan_results(scan_id: int):
     """Get results of a specific scan"""
     try:
+        import json as json_module
+
         conn = get_connection()
         c = conn.cursor()
 
@@ -124,15 +164,18 @@ async def get_scan_results(scan_id: int):
         conn.close()
 
         if row:
-            return {"success": True, "scan": {
-                'id': row[0],
-                'timestamp': row[1],
-                'symbols_scanned': row[2],
-                'results': row[3],
-                'scan_type': row[4]
-            }}
+            # Parse results JSON to return as list for frontend
+            results = row[3]
+            if isinstance(results, str):
+                try:
+                    results = json_module.loads(results)
+                except (json_module.JSONDecodeError, TypeError):
+                    results = []
+
+            # Return data (the results list) for frontend compatibility
+            return {"success": True, "data": results if isinstance(results, list) else []}
         else:
-            return {"success": False, "error": "Scan not found"}
+            return {"success": False, "error": "Scan not found", "data": []}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
