@@ -47,7 +47,7 @@ def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cursor.execute("""
             SELECT net_gex, flip_point, call_wall, put_wall, spot_price,
-                   call_gex, put_gex, max_pain, timestamp
+                   mm_state, regime, timestamp
             FROM gex_history
             WHERE symbol = %s AND timestamp >= NOW() - INTERVAL '7 days'
             ORDER BY timestamp DESC LIMIT 1
@@ -63,9 +63,8 @@ def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
                 'flip_point': float(row.get('flip_point') or 0),
                 'call_wall': float(row.get('call_wall') or 0),
                 'put_wall': float(row.get('put_wall') or 0),
-                'call_gex': float(row.get('call_gex') or 0),
-                'put_gex': float(row.get('put_gex') or 0),
-                'max_pain': float(row.get('max_pain') or 0),
+                'mm_state': row.get('mm_state'),
+                'regime': row.get('regime'),
                 'collection_date': row.get('timestamp').strftime('%Y-%m-%d') if row.get('timestamp') else None,
                 'data_source': 'database_fallback'
             }
@@ -365,7 +364,7 @@ async def get_gamma_history(symbol: str, days: int = 30):
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
         cursor.execute("""
-            SELECT timestamp, net_gex, call_gex, put_gex, spot_price
+            SELECT timestamp, net_gex, spot_price, flip_point, call_wall, put_wall, regime
             FROM gex_history
             WHERE symbol = %s AND DATE(timestamp) >= %s
             ORDER BY timestamp ASC
@@ -376,9 +375,11 @@ async def get_gamma_history(symbol: str, days: int = 30):
             history.append({
                 "timestamp": row['timestamp'].isoformat() if row['timestamp'] else None,
                 "net_gex": safe_round(row['net_gex']),
-                "call_gex": safe_round(row['call_gex']),
-                "put_gex": safe_round(row['put_gex']),
-                "spot_price": safe_round(row['spot_price'])
+                "call_gex": safe_round(row.get('call_wall') or 0),
+                "put_gex": safe_round(row.get('put_wall') or 0),
+                "spot_price": safe_round(row['spot_price']),
+                "flip_point": safe_round(row.get('flip_point') or 0),
+                "regime": row.get('regime')
             })
 
         conn.close()

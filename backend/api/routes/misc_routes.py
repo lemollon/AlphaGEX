@@ -22,33 +22,33 @@ async def get_oi_trends(symbol: str = "SPY", days: int = 30):
 
         c.execute('''
             SELECT
-                snapshot_date,
+                date,
                 strike,
-                expiration,
+                expiration_date,
                 call_oi,
                 put_oi,
-                total_oi,
+                COALESCE(call_oi, 0) + COALESCE(put_oi, 0) as total_oi,
                 call_volume,
                 put_volume,
-                put_call_ratio
+                CASE WHEN call_oi > 0 THEN ROUND(put_oi::numeric / call_oi::numeric, 2) ELSE 0 END as put_call_ratio
             FROM historical_open_interest
             WHERE symbol = %s
-            AND snapshot_date >= CURRENT_DATE - INTERVAL '1 day' * %s
-            ORDER BY snapshot_date DESC, total_oi DESC
+            AND date >= CURRENT_DATE - INTERVAL '1 day' * %s
+            ORDER BY date DESC, (COALESCE(call_oi, 0) + COALESCE(put_oi, 0)) DESC
         ''', (symbol, days))
 
         trends = []
         for row in c.fetchall():
             trends.append({
-                'snapshot_date': row[0],
+                'date': row[0],
                 'strike': row[1],
-                'expiration': row[2],
+                'expiration_date': row[2],
                 'call_oi': row[3],
                 'put_oi': row[4],
                 'total_oi': row[5],
                 'call_volume': row[6],
                 'put_volume': row[7],
-                'put_call_ratio': row[8]
+                'put_call_ratio': float(row[8]) if row[8] else 0
             })
 
         conn.close()
@@ -71,22 +71,23 @@ async def get_unusual_oi_activity(symbol: str = "SPY", days: int = 7):
 
         c.execute('''
             SELECT
-                h1.snapshot_date,
+                h1.date,
                 h1.strike,
-                h1.expiration,
-                h1.total_oi,
-                h2.total_oi as prev_oi,
-                ((h1.total_oi - h2.total_oi) * 100.0 / h2.total_oi) as oi_change_pct
+                h1.expiration_date,
+                (COALESCE(h1.call_oi, 0) + COALESCE(h1.put_oi, 0)) as total_oi,
+                (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0)) as prev_oi,
+                ROUND((((COALESCE(h1.call_oi, 0) + COALESCE(h1.put_oi, 0)) - (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) * 100.0 / NULLIF(COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0), 0))::numeric, 2) as oi_change_pct
             FROM historical_open_interest h1
             LEFT JOIN historical_open_interest h2
                 ON h1.strike = h2.strike
-                AND h1.expiration = h2.expiration
-                AND h2.snapshot_date = h1.snapshot_date - INTERVAL '1 day'
+                AND h1.expiration_date = h2.expiration_date
+                AND h1.symbol = h2.symbol
+                AND h2.date = h1.date - INTERVAL '1 day'
             WHERE h1.symbol = %s
-            AND h1.snapshot_date >= CURRENT_DATE - INTERVAL '1 day' * %s
-            AND h2.total_oi IS NOT NULL
-            AND abs((h1.total_oi - h2.total_oi) * 100.0 / h2.total_oi) > 20
-            ORDER BY abs((h1.total_oi - h2.total_oi) * 100.0 / h2.total_oi) DESC
+            AND h1.date >= CURRENT_DATE - INTERVAL '1 day' * %s
+            AND (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0)) > 0
+            AND abs(((COALESCE(h1.call_oi, 0) + COALESCE(h1.put_oi, 0)) - (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) * 100.0 / (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) > 20
+            ORDER BY abs(((COALESCE(h1.call_oi, 0) + COALESCE(h1.put_oi, 0)) - (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) * 100.0 / (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) DESC
             LIMIT 50
         ''', (symbol, days))
 
@@ -95,10 +96,10 @@ async def get_unusual_oi_activity(symbol: str = "SPY", days: int = 7):
             unusual.append({
                 'date': row[0],
                 'strike': row[1],
-                'expiration': row[2],
+                'expiration_date': row[2],
                 'current_oi': row[3],
                 'previous_oi': row[4],
-                'change_pct': row[5]
+                'change_pct': float(row[5]) if row[5] else 0
             })
 
         conn.close()
@@ -128,16 +129,16 @@ async def get_recommendations_history(days: int = 30):
                 timestamp,
                 symbol,
                 strategy,
-                direction,
                 confidence,
                 reasoning,
-                strike,
-                expiration,
+                option_strike,
+                option_type,
+                dte,
                 entry_price,
                 target_price,
-                stop_loss,
-                status,
-                actual_outcome
+                stop_price,
+                outcome,
+                pnl
             FROM recommendations
             WHERE timestamp >= NOW() - INTERVAL '1 day' * %s
             ORDER BY timestamp DESC
@@ -150,16 +151,16 @@ async def get_recommendations_history(days: int = 30):
                 'timestamp': row[1],
                 'symbol': row[2],
                 'strategy': row[3],
-                'direction': row[4],
-                'confidence': row[5],
-                'reasoning': row[6],
-                'strike': row[7],
-                'expiration': row[8],
+                'confidence': row[4],
+                'reasoning': row[5],
+                'option_strike': row[6],
+                'option_type': row[7],
+                'dte': row[8],
                 'entry_price': row[9],
                 'target_price': row[10],
-                'stop_loss': row[11],
-                'status': row[12],
-                'actual_outcome': row[13]
+                'stop_price': row[11],
+                'outcome': row[12],
+                'pnl': row[13]
             })
 
         conn.close()
@@ -183,11 +184,10 @@ async def get_recommendation_performance():
         c.execute('''
             SELECT
                 confidence,
-                actual_outcome,
-                CASE WHEN actual_outcome = 'WIN' THEN 1 ELSE 0 END as won
+                outcome,
+                CASE WHEN outcome = 'WIN' THEN 1 ELSE 0 END as won
             FROM recommendations
-            WHERE status = 'CLOSED'
-            AND actual_outcome IS NOT NULL
+            WHERE outcome IS NOT NULL
         ''')
 
         results = c.fetchall()

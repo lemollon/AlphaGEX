@@ -86,25 +86,25 @@ async def get_probability_outcomes(days: int = 30):
 
         c.execute('''
             SELECT
-                prediction_date,
-                pattern_type,
+                timestamp,
+                prediction_type,
                 predicted_probability,
                 actual_outcome,
                 correct_prediction,
                 outcome_timestamp
             FROM probability_outcomes
-            WHERE prediction_date >= NOW() - INTERVAL '1 day' * %s
-            ORDER BY prediction_date DESC
+            WHERE timestamp >= NOW() - INTERVAL '1 day' * %s
+            ORDER BY timestamp DESC
         ''', (days,))
 
         outcomes = []
         for row in c.fetchall():
             outcomes.append({
-                'prediction_date': row[0],
-                'pattern_type': row[1],
+                'timestamp': row[0],
+                'prediction_type': row[1],
                 'predicted_probability': row[2],
                 'actual_outcome': row[3],
-                'correct_prediction': bool(row[4]),
+                'correct_prediction': bool(row[4]) if row[4] is not None else None,
                 'outcome_timestamp': row[5]
             })
 
