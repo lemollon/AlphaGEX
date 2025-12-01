@@ -482,3 +482,99 @@ async def get_regime_changes(symbol: str = "SPY", days: int = 30):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/compare/0dte/{symbol}")
+async def get_0dte_gamma_comparison(symbol: str):
+    """
+    Get 0DTE gamma arrays from BOTH data sources for side-by-side comparison.
+
+    Returns gamma arrays from:
+    1. TradingVolatility API (primary/external source)
+    2. Tradier calculated (fallback/internal calculation)
+
+    Both arrays should be nearly identical if the calculations are correct.
+    This endpoint is used by the Volatility Comparison page to validate
+    that the Tradier fallback produces accurate results.
+    """
+    symbol = symbol.upper().strip()
+    if len(symbol) > 5 or not symbol.isalnum():
+        raise HTTPException(status_code=400, detail="Invalid symbol")
+
+    result = {
+        "success": True,
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "trading_volatility": None,
+        "tradier_calculated": None,
+        "errors": []
+    }
+
+    # Source 1: TradingVolatility API (primary)
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        api = TradingVolatilityAPI()
+        tv_profile = api.get_gex_profile(symbol)
+
+        if tv_profile and 'strikes' in tv_profile and tv_profile['strikes']:
+            # Format to match expected gamma_array structure
+            gamma_array = []
+            for strike_data in tv_profile['strikes']:
+                gamma_array.append({
+                    'strike': strike_data.get('strike', 0),
+                    'call_gamma': strike_data.get('call_gamma', 0),
+                    'put_gamma': strike_data.get('put_gamma', 0),
+                    'total_gamma': strike_data.get('total_gamma', 0),
+                    'net_gex': strike_data.get('total_gamma', 0)
+                })
+
+            result["trading_volatility"] = {
+                "data_source": "trading_volatility_api",
+                "spot_price": tv_profile.get('spot_price', 0),
+                "flip_point": tv_profile.get('flip_point', 0),
+                "call_wall": tv_profile.get('call_wall', 0),
+                "put_wall": tv_profile.get('put_wall', 0),
+                "gamma_array": gamma_array,
+                "strikes_count": len(gamma_array)
+            }
+        else:
+            result["errors"].append("TradingVolatility API: No gamma profile data available")
+    except ImportError as e:
+        result["errors"].append(f"TradingVolatility API: Import failed - {e}")
+    except Exception as e:
+        result["errors"].append(f"TradingVolatility API: {str(e)}")
+
+    # Source 2: Tradier 0DTE Calculation (fallback)
+    try:
+        from data.gex_calculator import get_0dte_gex_profile
+        tradier_profile = get_0dte_gex_profile(symbol)
+
+        if tradier_profile and 'error' not in tradier_profile:
+            result["tradier_calculated"] = {
+                "data_source": "tradier_0dte_calculated",
+                "spot_price": tradier_profile.get('spot_price', 0),
+                "flip_point": tradier_profile.get('flip_point', 0),
+                "call_wall": tradier_profile.get('call_wall', 0),
+                "put_wall": tradier_profile.get('put_wall', 0),
+                "max_pain": tradier_profile.get('max_pain', 0),
+                "net_gex": tradier_profile.get('net_gex', 0),
+                "expiration": tradier_profile.get('expiration', ''),
+                "gamma_array": tradier_profile.get('gamma_array', []),
+                "strikes_count": len(tradier_profile.get('gamma_array', []))
+            }
+        else:
+            error_msg = tradier_profile.get('error', 'Unknown error') if tradier_profile else 'No data returned'
+            result["errors"].append(f"Tradier calculation: {error_msg}")
+    except ImportError as e:
+        result["errors"].append(f"Tradier calculation: Import failed - {e}")
+    except Exception as e:
+        result["errors"].append(f"Tradier calculation: {str(e)}")
+
+    # If both sources failed, return error
+    if result["trading_volatility"] is None and result["tradier_calculated"] is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Both data sources failed: {'; '.join(result['errors'])}"
+        )
+
+    return result

@@ -103,6 +103,7 @@ export const apiClient = {
   // GEX Data
   getGEX: (symbol: string) => api.get(`/api/gex/${symbol}`),
   getGEXLevels: (symbol: string) => api.get(`/api/gex/${symbol}/levels`),
+  get0DTEGammaComparison: (symbol: string) => api.get(`/api/gex/compare/0dte/${symbol}`),
 
   // Market Data
   getPriceHistory: (symbol: string, days: number = 90) => api.get(`/api/market/price-history/${symbol}`, { params: { days } }),
