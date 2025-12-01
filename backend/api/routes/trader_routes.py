@@ -408,10 +408,22 @@ async def get_equity_curve(days: int = 30):
                 logger.warning(f"Skipping equity snapshot row due to error: {row_error}")
                 continue
 
+        # Safely get total_pnl from the last snapshot
+        total_pnl = 0
+        if len(equity_data) > 0:
+            # Use the last equity_data entry's pnl value (already processed and safe)
+            total_pnl = equity_data[-1].get('pnl', 0)
+        elif len(snapshots) > 0:
+            try:
+                last_pnl = snapshots['total_realized_pnl'].iloc[-1]
+                total_pnl = safe_round(last_pnl) if last_pnl is not None and not pd.isna(last_pnl) else 0
+            except (IndexError, KeyError):
+                total_pnl = 0
+
         return {
             "success": True,
             "data": equity_data,
-            "total_pnl": safe_round(snapshots['total_realized_pnl'].iloc[-1]) if len(snapshots) > 0 else 0,
+            "total_pnl": total_pnl,
             "starting_equity": starting_equity,
             "max_drawdown_pct": safe_round(max_drawdown)
         }
@@ -798,9 +810,9 @@ async def execute_trader_cycle():
     try:
         from backend.api.dependencies import api_client
 
-        logger.info(" + "="*60)
-        logger.info(f" MANUAL TRADER EXECUTION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("=*60 + "\n")
+        logger.info("=" * 60)
+        logger.info(f"MANUAL TRADER EXECUTION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 60)
 
         trader.update_live_status(
             status='MANUAL_EXECUTION',
