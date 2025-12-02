@@ -6,6 +6,7 @@ import { useState, useEffect, Fragment, useMemo } from 'react'
 import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3, Calendar, Zap, Brain, RefreshCw, Power, PowerOff, History, Cpu, ChevronDown, ChevronUp } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
+import ExportButtons from '@/components/trader/ExportButtons'
 import { apiClient } from '@/lib/api'
 import { useTraderWebSocket } from '@/hooks/useTraderWebSocket'
 
@@ -1110,6 +1111,9 @@ export default function AutonomousTrader() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Export Buttons */}
+            <ExportButtons symbol="SPY" />
+
             {/* Manual Execute Button */}
             <button
               onClick={handleExecuteTraderCycle}

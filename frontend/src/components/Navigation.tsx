@@ -27,7 +27,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
-  Settings
+  Settings,
+  RotateCcw
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
@@ -51,6 +52,7 @@ const navItems = [
   { href: '/backtesting', label: 'Backtesting', icon: TestTube, category: 'AI & Testing' },
   { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
   { href: '/trader', label: 'SPY Autonomous Trader', icon: Bot, category: 'Automation' },
+  { href: '/wheel', label: 'Wheel Strategy', icon: RotateCcw, category: 'Automation' },
   { href: '/spx', label: 'SPX Autonomous Trader', icon: TrendingUp, category: 'Automation' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Automation' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Automation' },
