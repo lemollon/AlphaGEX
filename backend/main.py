@@ -48,6 +48,8 @@ from backend.api.routes import (
     ai_intelligence_routes,
     wheel_routes,
     export_routes,
+    ml_routes,
+    spx_backtest_routes,
 )
 
 # ============================================================================
@@ -255,7 +257,9 @@ app.include_router(psychology_routes.router)
 app.include_router(ai_intelligence_routes.router)
 app.include_router(wheel_routes.router)
 app.include_router(export_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence")
+app.include_router(ml_routes.router)
+app.include_router(spx_backtest_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()
