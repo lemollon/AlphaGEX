@@ -1,291 +1,215 @@
 """
-Machine Learning API Routes
+REAL Machine Learning API Routes for SPX Wheel Strategy
 
-Exposes the ML PatternLearner for:
-1. Training on historical data
-2. Getting predictions for new trades
-3. Viewing feature importance
-4. Analyzing similar patterns
-5. TRANSPARENCY - all ML decisions are logged
+HONEST DISCLOSURE:
+- ML can ONLY help if trained on REAL trade outcomes
+- Without training data, ML predictions are meaningless
+- The base strategy (selling puts) has an edge from volatility risk premium
+- ML tries to improve WHEN to sell, not WHETHER selling works
 
-This integrates ML into the trading system in a VISIBLE way.
+This routes file provides:
+1. Honest status about ML readiness
+2. Training on REAL trade outcomes
+3. Predictions with clear reasoning
+4. Transparency about what ML can and cannot do
 """
 
 import os
 import sys
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from datetime import datetime
+from typing import Optional, List, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 # Add project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from database_adapter import get_connection
-import psycopg2.extras
-import json
-
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ml", tags=["Machine Learning"])
-
-
-# ============================================================================
-# ML Model Instance - Singleton
-# ============================================================================
-
-_ml_learner = None
-
-def get_ml_learner():
-    """Get or create ML PatternLearner instance"""
-    global _ml_learner
-    if _ml_learner is None:
-        try:
-            from ai.autonomous_ml_pattern_learner import PatternLearner
-            _ml_learner = PatternLearner()
-
-            # Try to load saved model
-            model_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-                'models',
-                'pattern_learner.pkl'
-            )
-            if os.path.exists(model_path):
-                _ml_learner.load_model(model_path)
-                logger.info(f"Loaded ML model from {model_path}")
-        except ImportError as e:
-            logger.warning(f"ML PatternLearner not available: {e}")
-            _ml_learner = None
-    return _ml_learner
 
 
 # ============================================================================
 # Request/Response Models
 # ============================================================================
 
-class TrainModelRequest(BaseModel):
-    """Request to train the ML model"""
-    lookback_days: int = 180
+class TrainRequest(BaseModel):
+    """Request to train ML model"""
+    min_samples: int = 30  # Minimum trades needed to train
 
 
 class PredictRequest(BaseModel):
-    """Request for ML prediction on a trade setup"""
-    symbol: str = "SPX"
+    """Request for ML prediction - requires REAL market data"""
+    trade_date: str
     strike: float
     underlying_price: float
     dte: int
     delta: float = 0.20
-    iv: float = 0.15
-    vix: float = 15.0
-    net_gex: float = 0.0
-    rsi_1h: float = 50.0
-    rsi_1d: float = 50.0
-    confidence_score: float = 50.0
+    premium: float
+
+    # These should come from REAL data sources
+    iv: float  # Option implied volatility
+    iv_rank: float  # IV percentile (0-100)
+    vix: float
+    vix_percentile: float = 50  # VIX percentile (0-100)
+    vix_term_structure: float = 0  # VIX - VIX3M
+
+    # GEX data (from Trading Volatility API)
+    put_wall_distance_pct: float = 5
+    call_wall_distance_pct: float = 5
+    net_gex: float = 0
+
+    # Market data
+    spx_20d_return: float = 0
+    spx_5d_return: float = 0
+    spx_distance_from_high: float = 0
 
 
-class MLLogEntry(BaseModel):
-    """A single ML decision log entry"""
-    timestamp: str
-    symbol: str
-    action: str
-    ml_score: float
-    recommendation: str
-    features: Dict[str, Any]
-    outcome: Optional[str] = None
-
-
-# ============================================================================
-# ML Logging - TRANSPARENCY
-# ============================================================================
-
-def ensure_ml_log_table():
-    """Create ML decision log table if not exists"""
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS ml_decision_log (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                symbol VARCHAR(20),
-                action VARCHAR(50),
-                ml_score DECIMAL(5,4),
-                ml_confidence VARCHAR(20),
-                recommendation VARCHAR(20),
-                features JSONB,
-                similar_patterns JSONB,
-                trade_id INTEGER,
-                outcome VARCHAR(20),
-                actual_pnl DECIMAL(12,2)
-            )
-        ''')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_ml_log_timestamp ON ml_decision_log(timestamp DESC)
-        ''')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_ml_log_symbol ON ml_decision_log(symbol)
-        ''')
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"Error creating ML log table: {e}")
-        return False
-
-
-def log_ml_decision(
-    symbol: str,
-    action: str,
-    ml_result: Dict,
-    features: Dict,
-    similar_patterns: List = None,
-    trade_id: int = None
-):
-    """Log an ML decision for transparency and auditing"""
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            INSERT INTO ml_decision_log (
-                symbol, action, ml_score, ml_confidence, recommendation,
-                features, similar_patterns, trade_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        ''', (
-            symbol,
-            action,
-            ml_result.get('success_probability', 0.5),
-            ml_result.get('ml_confidence', 'UNKNOWN'),
-            ml_result.get('recommendation', 'UNKNOWN'),
-            json.dumps(features),
-            json.dumps(similar_patterns) if similar_patterns else None,
-            trade_id
-        ))
-
-        log_id = cursor.fetchone()[0]
-        conn.commit()
-        conn.close()
-
-        logger.info(f"ML Decision logged (id={log_id}): {symbol} {action} -> {ml_result.get('recommendation')}")
-        return log_id
-
-    except Exception as e:
-        logger.error(f"Error logging ML decision: {e}")
-        return None
+class RecordOutcomeRequest(BaseModel):
+    """Request to record trade outcome for ML learning"""
+    trade_id: str
+    outcome: str  # 'WIN' or 'LOSS'
+    pnl: float
+    settlement_price: float
+    max_drawdown: float = 0
 
 
 # ============================================================================
-# API Endpoints
+# HONEST STATUS ENDPOINT
 # ============================================================================
 
 @router.get("/status")
 async def get_ml_status():
     """
-    Get ML system status - is it trained, what accuracy, etc.
+    Get HONEST status of ML system.
 
-    TRANSPARENCY: Shows if ML is active and how accurate it is.
+    Returns:
+    - Whether ML is available
+    - Whether model is trained
+    - How many trades it was trained on
+    - Whether you should trust it
     """
-    learner = get_ml_learner()
+    try:
+        from trading.spx_wheel_ml import get_spx_wheel_ml_trainer, get_outcome_tracker, ML_AVAILABLE
 
-    if learner is None:
+        trainer = get_spx_wheel_ml_trainer()
+        tracker = get_outcome_tracker()
+
+        # Get outcome count
+        try:
+            outcomes = tracker.get_all_outcomes()
+            outcome_count = len(outcomes)
+        except:
+            outcome_count = 0
+
+        model_trained = trainer.model is not None
+        metrics = trainer.training_metrics
+
         return {
             "success": True,
             "data": {
-                "ml_available": False,
-                "status": "ML not available (scikit-learn not installed)",
-                "model_trained": False
+                "ml_library_available": ML_AVAILABLE,
+                "model_trained": model_trained,
+                "training_data_available": outcome_count,
+                "can_train": outcome_count >= 30,
+                "should_trust_predictions": model_trained and outcome_count >= 50,
+
+                "honest_assessment": _get_honest_assessment(model_trained, outcome_count),
+
+                "training_metrics": metrics if metrics else None,
+
+                "what_ml_can_do": [
+                    "Identify high IV environments (better premium)",
+                    "Avoid extreme stress conditions",
+                    "Find support levels for safer strikes",
+                    "Time entries after pullbacks"
+                ],
+                "what_ml_cannot_do": [
+                    "Predict black swan events",
+                    "Guarantee profits",
+                    "Eliminate drawdowns",
+                    "Create edge where none exists"
+                ]
+            }
+        }
+    except Exception as e:
+        logger.error(f"Status error: {e}")
+        return {
+            "success": True,
+            "data": {
+                "ml_library_available": False,
+                "model_trained": False,
+                "error": str(e),
+                "honest_assessment": "ML system not available. Use mechanical strategy rules."
             }
         }
 
-    model_trained = learner.model is not None
 
-    return {
-        "success": True,
-        "data": {
-            "ml_available": True,
-            "status": "Model trained and ready" if model_trained else "Model not trained",
-            "model_trained": model_trained,
-            "feature_importance": dict(sorted(
-                learner.feature_importance.items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:10]) if learner.feature_importance else {},
-            "top_features": list(dict(sorted(
-                learner.feature_importance.items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:5]).keys()) if learner.feature_importance else []
-        }
-    }
+def _get_honest_assessment(model_trained: bool, outcome_count: int) -> str:
+    """Provide honest assessment of ML readiness"""
+    if not model_trained and outcome_count < 30:
+        return f"ML NOT READY. Need {30 - outcome_count} more completed trades to train. Use mechanical rules."
+    elif not model_trained and outcome_count >= 30:
+        return "ML can be trained. Call POST /api/ml/train to train on your trade history."
+    elif model_trained and outcome_count < 50:
+        return f"ML trained on {outcome_count} trades. Results may not be reliable yet. Consider as secondary signal only."
+    elif model_trained and outcome_count < 100:
+        return f"ML trained on {outcome_count} trades. Reasonably reliable for filtering obvious bad trades."
+    else:
+        return f"ML trained on {outcome_count} trades. Should provide useful filtering."
 
+
+# ============================================================================
+# TRAINING ENDPOINT
+# ============================================================================
 
 @router.post("/train")
-async def train_ml_model(config: TrainModelRequest = TrainModelRequest()):
+async def train_ml_model(config: TrainRequest = TrainRequest()):
     """
-    Train the ML model on historical trade data.
+    Train ML model on REAL trade outcomes.
 
-    TRANSPARENCY: Shows exactly what the model learned and how accurate it is.
+    IMPORTANT: This trains on YOUR actual trades, not theoretical data.
+    The more trades you have, the better the model.
+
+    Minimum 30 trades required to train.
     """
-    learner = get_ml_learner()
-
-    if learner is None:
-        raise HTTPException(
-            status_code=500,
-            detail="ML not available. Install scikit-learn: pip install scikit-learn"
-        )
-
     try:
-        # Train
-        results = learner.train_pattern_classifier(lookback_days=config.lookback_days)
+        from trading.spx_wheel_ml import get_spx_wheel_ml_trainer, get_outcome_tracker
 
-        if 'error' in results:
+        trainer = get_spx_wheel_ml_trainer()
+        tracker = get_outcome_tracker()
+
+        # Get all completed outcomes
+        outcomes = tracker.get_all_outcomes()
+
+        if len(outcomes) < config.min_samples:
             return {
                 "success": False,
-                "error": results['error'],
-                "message": "Training failed - need more data"
+                "error": f"Not enough training data",
+                "detail": {
+                    "trades_available": len(outcomes),
+                    "trades_needed": config.min_samples,
+                    "action_required": "Complete more trades and record their outcomes using POST /api/ml/record-outcome"
+                }
             }
 
-        # Save model
-        models_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-            'models'
-        )
-        os.makedirs(models_dir, exist_ok=True)
-        model_path = os.path.join(models_dir, 'pattern_learner.pkl')
-        learner.save_model(model_path)
+        # Train
+        result = trainer.train(outcomes, min_samples=config.min_samples)
 
-        # Log training event
-        log_ml_decision(
-            symbol="ALL",
-            action="TRAIN_MODEL",
-            ml_result={
-                'success_probability': results.get('accuracy', 0),
-                'ml_confidence': 'N/A',
-                'recommendation': 'TRAINED'
-            },
-            features={
-                'samples': results.get('samples', 0),
-                'accuracy': results.get('accuracy', 0),
-                'f1_score': results.get('f1_score', 0)
+        if 'error' in result:
+            return {
+                "success": False,
+                "error": result['error'],
+                "detail": result
             }
-        )
 
         return {
             "success": True,
-            "message": f"ML model trained on {results.get('samples', 0)} samples",
+            "message": f"ML model trained on {len(outcomes)} trades",
             "data": {
-                "training_samples": results.get('samples', 0),
-                "test_samples": results.get('test_samples', 0),
-                "accuracy": round(results.get('accuracy', 0) * 100, 1),
-                "precision": round(results.get('precision', 0) * 100, 1),
-                "recall": round(results.get('recall', 0) * 100, 1),
-                "f1_score": round(results.get('f1_score', 0) * 100, 1),
-                "top_features": [
-                    {"feature": f[0], "importance": round(f[1] * 100, 1)}
-                    for f in results.get('top_features', [])[:10]
-                ],
-                "model_saved": model_path
+                "metrics": result['metrics'],
+                "interpretation": result['interpretation'],
+                "what_this_means": _explain_training_results(result)
             }
         }
 
@@ -294,483 +218,443 @@ async def train_ml_model(config: TrainModelRequest = TrainModelRequest()):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _explain_training_results(result: Dict) -> str:
+    """Plain English explanation of training results"""
+    metrics = result.get('metrics', {})
+    interp = result.get('interpretation', {})
+
+    baseline = metrics.get('baseline_win_rate', 0)
+    accuracy = metrics.get('test_accuracy', 0)
+
+    if accuracy > baseline + 0.05:
+        return f"ML is adding value. Your trades have a {baseline:.0%} base win rate. ML predicts correctly {accuracy:.0%} of the time. Use ML to filter trades."
+    elif accuracy > baseline:
+        return f"ML shows slight improvement over baseline ({baseline:.0%} -> {accuracy:.0%}). May help avoid worst trades."
+    else:
+        return f"ML is NOT improving on your base win rate ({baseline:.0%}). Stick to mechanical rules. This could mean: (1) not enough data, (2) your rules are already optimal, or (3) market is random."
+
+
+# ============================================================================
+# PREDICTION ENDPOINT
+# ============================================================================
+
 @router.post("/predict")
-async def predict_trade_success(request: PredictRequest):
+async def predict_trade(request: PredictRequest):
     """
     Get ML prediction for a potential trade.
 
-    TRANSPARENCY: Shows exactly why the ML recommends or rejects a trade.
-    """
-    ensure_ml_log_table()
-    learner = get_ml_learner()
+    IMPORTANT: This uses REAL features you provide.
+    Garbage in = garbage out. Use accurate market data.
 
-    if learner is None or learner.model is None:
+    Returns:
+    - Win probability (if model is trained)
+    - Clear reasoning for the prediction
+    - Key factors driving the decision
+    """
+    try:
+        from trading.spx_wheel_ml import (
+            get_spx_wheel_ml_trainer,
+            SPXWheelFeatures
+        )
+
+        trainer = get_spx_wheel_ml_trainer()
+
+        # Build features
+        premium_to_strike = request.premium / request.strike * 100
+        annualized_return = premium_to_strike * (365 / request.dte) if request.dte > 0 else 0
+
+        features = SPXWheelFeatures(
+            trade_date=request.trade_date,
+            strike=request.strike,
+            underlying_price=request.underlying_price,
+            dte=request.dte,
+            delta=request.delta,
+            premium=request.premium,
+            iv=request.iv,
+            iv_rank=request.iv_rank,
+            vix=request.vix,
+            vix_percentile=request.vix_percentile,
+            vix_term_structure=request.vix_term_structure,
+            put_wall_distance_pct=request.put_wall_distance_pct,
+            call_wall_distance_pct=request.call_wall_distance_pct,
+            net_gex=request.net_gex,
+            spx_20d_return=request.spx_20d_return,
+            spx_5d_return=request.spx_5d_return,
+            spx_distance_from_high=request.spx_distance_from_high,
+            premium_to_strike_pct=premium_to_strike,
+            annualized_return=annualized_return
+        )
+
+        # Get prediction
+        prediction = trainer.predict(features)
+
         return {
             "success": True,
             "data": {
-                "prediction": {
-                    "success_probability": 0.5,
-                    "ml_confidence": "UNKNOWN",
-                    "recommendation": "TRADE",
-                    "note": "ML model not trained - using baseline"
+                "prediction": prediction,
+                "trade_summary": {
+                    "strike": request.strike,
+                    "underlying": request.underlying_price,
+                    "otm_pct": round((request.underlying_price - request.strike) / request.underlying_price * 100, 2),
+                    "dte": request.dte,
+                    "premium": request.premium,
+                    "annualized_return": round(annualized_return, 1)
                 },
-                "ml_active": False
+                "important_note": "ML prediction is only as good as (1) your training data and (2) the accuracy of the features you provided."
             }
         }
 
-    # Build regime dict for prediction
-    regime = {
-        'rsi_5m': 50,
-        'rsi_15m': 50,
-        'rsi_1h': request.rsi_1h,
-        'rsi_4h': (request.rsi_1h + request.rsi_1d) / 2,
-        'rsi_1d': request.rsi_1d,
-        'net_gamma': request.net_gex,
-        'call_wall_distance_pct': 2.0,
-        'put_wall_distance_pct': 2.0,
-        'vix_current': request.vix,
-        'liberation_setup_detected': False,
-        'false_floor_detected': False,
-        'monthly_magnet_above': 0,
-        'monthly_magnet_below': 0,
-        'confidence_score': request.confidence_score
-    }
+    except Exception as e:
+        logger.error(f"Prediction error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # Get prediction
-    prediction = learner.predict_pattern_success(regime)
 
-    # Get similar patterns for context
-    similar = learner.analyze_pattern_similarity(regime, top_n=3)
+# ============================================================================
+# OUTCOME RECORDING - CRITICAL FOR ML LEARNING
+# ============================================================================
 
-    # Prepare features for logging
-    features = {
-        'symbol': request.symbol,
-        'strike': request.strike,
-        'underlying': request.underlying_price,
-        'dte': request.dte,
-        'delta': request.delta,
-        'iv': request.iv,
-        'vix': request.vix,
-        'net_gex': request.net_gex,
-        'rsi_1h': request.rsi_1h,
-        'rsi_1d': request.rsi_1d
-    }
+@router.post("/record-outcome")
+async def record_trade_outcome(request: RecordOutcomeRequest):
+    """
+    Record a trade outcome - THIS IS HOW ML LEARNS.
 
-    # Log this prediction for transparency
-    log_id = log_ml_decision(
-        symbol=request.symbol,
-        action="PREDICT_TRADE",
-        ml_result=prediction,
-        features=features,
-        similar_patterns=similar
-    )
+    After each trade closes:
+    1. Call this endpoint with the outcome
+    2. ML uses this data to improve
 
-    return {
-        "success": True,
-        "data": {
-            "prediction": {
-                "success_probability": round(prediction.get('success_probability', 0.5) * 100, 1),
-                "ml_confidence": prediction.get('ml_confidence', 'UNKNOWN'),
-                "recommendation": prediction.get('recommendation', 'UNKNOWN'),
-                "adjusted_confidence": round(prediction.get('adjusted_confidence', 50), 1),
-                "ml_boost": round(prediction.get('ml_boost', 0) * 100, 1)
-            },
-            "similar_patterns": [
-                {
-                    "similarity": round(s.get('similarity_score', 0) * 100, 1),
-                    "outcome": s.get('outcome'),
-                    "confidence": s.get('confidence'),
-                    "price_change": round(s.get('price_change', 0), 2)
-                }
-                for s in similar[:3]
-            ],
-            "features_used": features,
-            "log_id": log_id,
-            "ml_active": True
+    Without recording outcomes, ML cannot learn from your trades.
+    """
+    try:
+        from trading.spx_wheel_ml import get_outcome_tracker
+
+        tracker = get_outcome_tracker()
+
+        outcome = tracker.record_trade_outcome(
+            trade_id=request.trade_id,
+            outcome=request.outcome,
+            pnl=request.pnl,
+            settlement_price=request.settlement_price,
+            max_drawdown=request.max_drawdown
+        )
+
+        if outcome is None:
+            return {
+                "success": False,
+                "error": f"Trade {request.trade_id} not found. Record entry first with POST /api/ml/record-entry"
+            }
+
+        # Check if we can train now
+        all_outcomes = tracker.get_all_outcomes()
+
+        return {
+            "success": True,
+            "message": f"Recorded {request.outcome} for trade {request.trade_id}",
+            "data": {
+                "trade_id": request.trade_id,
+                "outcome": request.outcome,
+                "pnl": request.pnl,
+                "total_recorded_outcomes": len(all_outcomes),
+                "can_train_ml": len(all_outcomes) >= 30,
+                "next_step": "Call POST /api/ml/train to retrain model" if len(all_outcomes) >= 30 else f"Need {30 - len(all_outcomes)} more outcomes to train"
+            }
         }
-    }
 
+    except Exception as e:
+        logger.error(f"Record outcome error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/record-entry")
+async def record_trade_entry(request: PredictRequest, trade_id: str):
+    """
+    Record a trade entry for future outcome tracking.
+
+    Call this when you open a new trade.
+    Later, call /record-outcome when the trade closes.
+    """
+    try:
+        from trading.spx_wheel_ml import get_outcome_tracker, SPXWheelFeatures
+
+        tracker = get_outcome_tracker()
+
+        premium_to_strike = request.premium / request.strike * 100
+        annualized_return = premium_to_strike * (365 / request.dte) if request.dte > 0 else 0
+
+        features = SPXWheelFeatures(
+            trade_date=request.trade_date,
+            strike=request.strike,
+            underlying_price=request.underlying_price,
+            dte=request.dte,
+            delta=request.delta,
+            premium=request.premium,
+            iv=request.iv,
+            iv_rank=request.iv_rank,
+            vix=request.vix,
+            vix_percentile=request.vix_percentile,
+            vix_term_structure=request.vix_term_structure,
+            put_wall_distance_pct=request.put_wall_distance_pct,
+            call_wall_distance_pct=request.call_wall_distance_pct,
+            net_gex=request.net_gex,
+            spx_20d_return=request.spx_20d_return,
+            spx_5d_return=request.spx_5d_return,
+            spx_distance_from_high=request.spx_distance_from_high,
+            premium_to_strike_pct=premium_to_strike,
+            annualized_return=annualized_return
+        )
+
+        tracker.record_trade_entry(trade_id, features)
+
+        return {
+            "success": True,
+            "message": f"Recorded entry for trade {trade_id}",
+            "data": {
+                "trade_id": trade_id,
+                "features_recorded": len(SPXWheelFeatures.feature_names()),
+                "next_step": f"When trade closes, call POST /api/ml/record-outcome with trade_id={trade_id}"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Record entry error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# FEATURE IMPORTANCE - WHAT ACTUALLY MATTERS
+# ============================================================================
 
 @router.get("/feature-importance")
 async def get_feature_importance():
     """
-    Get ML feature importance rankings.
+    See which features the ML model considers most important.
 
-    TRANSPARENCY: Shows exactly which factors the ML considers most important.
+    This shows what factors actually drive profitable trades
+    based on YOUR trading history.
     """
-    learner = get_ml_learner()
-
-    if learner is None or not learner.feature_importance:
-        return {
-            "success": True,
-            "data": {
-                "features": [],
-                "message": "Model not trained yet"
-            }
-        }
-
-    sorted_features = sorted(
-        learner.feature_importance.items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-    return {
-        "success": True,
-        "data": {
-            "features": [
-                {
-                    "name": f[0],
-                    "importance_pct": round(f[1] * 100, 2),
-                    "rank": i + 1
-                }
-                for i, f in enumerate(sorted_features)
-            ],
-            "interpretation": {
-                "top_3": [f[0] for f in sorted_features[:3]],
-                "description": f"The model weighs {sorted_features[0][0]} most heavily ({sorted_features[0][1]*100:.1f}%)"
-                if sorted_features else "No features analyzed yet"
-            }
-        }
-    }
-
-
-@router.get("/logs")
-async def get_ml_decision_logs(
-    symbol: Optional[str] = None,
-    limit: int = 50,
-    include_features: bool = False
-):
-    """
-    Get ML decision logs.
-
-    TRANSPARENCY: Full audit trail of every ML decision made.
-    """
-    ensure_ml_log_table()
-
     try:
-        conn = get_connection()
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        from trading.spx_wheel_ml import get_spx_wheel_ml_trainer
 
-        if symbol:
-            cursor.execute('''
-                SELECT id, timestamp, symbol, action, ml_score, ml_confidence,
-                       recommendation, features, outcome, actual_pnl
-                FROM ml_decision_log
-                WHERE symbol = %s
-                ORDER BY timestamp DESC
-                LIMIT %s
-            ''', (symbol, limit))
-        else:
-            cursor.execute('''
-                SELECT id, timestamp, symbol, action, ml_score, ml_confidence,
-                       recommendation, features, outcome, actual_pnl
-                FROM ml_decision_log
-                ORDER BY timestamp DESC
-                LIMIT %s
-            ''', (limit,))
+        trainer = get_spx_wheel_ml_trainer()
 
-        rows = cursor.fetchall()
-        conn.close()
-
-        logs = []
-        for row in rows:
-            log_entry = {
-                "id": row['id'],
-                "timestamp": row['timestamp'].isoformat() if row['timestamp'] else None,
-                "symbol": row['symbol'],
-                "action": row['action'],
-                "ml_score": float(row['ml_score']) if row['ml_score'] else 0.5,
-                "ml_confidence": row['ml_confidence'],
-                "recommendation": row['recommendation'],
-                "outcome": row['outcome'],
-                "actual_pnl": float(row['actual_pnl']) if row['actual_pnl'] else None
-            }
-
-            if include_features and row['features']:
-                log_entry['features'] = row['features']
-
-            logs.append(log_entry)
-
-        return {
-            "success": True,
-            "data": {
-                "logs": logs,
-                "count": len(logs),
-                "showing": f"Last {limit} decisions"
-            }
-        }
-
-    except Exception as e:
-        logger.error(f"Error fetching ML logs: {e}")
-        return {
-            "success": True,
-            "data": {"logs": [], "count": 0, "message": "No logs yet"}
-        }
-
-
-@router.get("/accuracy-report")
-async def get_ml_accuracy_report():
-    """
-    Get ML accuracy report comparing predictions to actual outcomes.
-
-    TRANSPARENCY: Shows how accurate the ML has been.
-    """
-    ensure_ml_log_table()
-
-    try:
-        conn = get_connection()
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-        # Get predictions with outcomes
-        cursor.execute('''
-            SELECT
-                recommendation,
-                outcome,
-                ml_score,
-                actual_pnl
-            FROM ml_decision_log
-            WHERE outcome IS NOT NULL
-            AND action = 'PREDICT_TRADE'
-        ''')
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        if not rows:
+        if not trainer.model:
             return {
                 "success": True,
                 "data": {
-                    "message": "No completed trades with ML predictions yet",
-                    "total_predictions": 0
+                    "model_trained": False,
+                    "message": "Train the model first to see feature importance",
+                    "theoretical_importance": {
+                        "iv_rank": "HIGH - Selling high IV = better premium",
+                        "vix": "HIGH - Indicates market fear/premium levels",
+                        "put_wall_distance": "MEDIUM - Support levels matter",
+                        "spx_5d_return": "MEDIUM - Mean reversion after drops",
+                        "annualized_return": "MEDIUM - Premium quality"
+                    }
                 }
             }
 
-        # Calculate accuracy
-        total = len(rows)
-        correct = 0
-        trade_recommended = 0
-        trade_won = 0
-        skip_recommended = 0
-        skip_would_have_lost = 0
-
-        for row in rows:
-            rec = row['recommendation']
-            outcome = row['outcome']
-            pnl = float(row['actual_pnl']) if row['actual_pnl'] else 0
-
-            if rec in ['TRADE', 'CAUTION']:
-                trade_recommended += 1
-                if pnl > 0:
-                    trade_won += 1
-                    correct += 1
-            elif rec == 'SKIP':
-                skip_recommended += 1
-                if pnl < 0:
-                    skip_would_have_lost += 1
-                    correct += 1
-
-        accuracy = (correct / total * 100) if total > 0 else 0
-        trade_accuracy = (trade_won / trade_recommended * 100) if trade_recommended > 0 else 0
-        skip_accuracy = (skip_would_have_lost / skip_recommended * 100) if skip_recommended > 0 else 0
+        importance = trainer.feature_importance
+        sorted_features = sorted(importance.items(), key=lambda x: x[1], reverse=True)
 
         return {
             "success": True,
             "data": {
-                "total_predictions": total,
-                "overall_accuracy": round(accuracy, 1),
-                "trade_recommendations": {
-                    "total": trade_recommended,
-                    "profitable": trade_won,
-                    "accuracy": round(trade_accuracy, 1)
-                },
-                "skip_recommendations": {
-                    "total": skip_recommended,
-                    "correct_skips": skip_would_have_lost,
-                    "accuracy": round(skip_accuracy, 1)
-                },
-                "value_added": "ML is contributing positively" if accuracy > 50 else "ML needs more training data"
+                "model_trained": True,
+                "features": [
+                    {
+                        "name": f[0],
+                        "importance": round(f[1] * 100, 1),
+                        "meaning": _get_feature_meaning(f[0])
+                    }
+                    for f in sorted_features
+                ],
+                "interpretation": f"Your model finds '{sorted_features[0][0]}' most important ({sorted_features[0][1]*100:.1f}%)"
             }
         }
 
     except Exception as e:
-        logger.error(f"Error generating accuracy report: {e}")
+        logger.error(f"Feature importance error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/update-outcome")
-async def update_ml_outcome(log_id: int, outcome: str, actual_pnl: float):
-    """
-    Update an ML prediction log with the actual outcome.
-
-    Called after a trade closes to track ML accuracy.
-    """
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            UPDATE ml_decision_log
-            SET outcome = %s, actual_pnl = %s
-            WHERE id = %s
-        ''', (outcome, actual_pnl, log_id))
-
-        conn.commit()
-        conn.close()
-
-        return {
-            "success": True,
-            "message": f"Updated log {log_id} with outcome: {outcome}, P&L: ${actual_pnl:.2f}"
-        }
-
-    except Exception as e:
-        logger.error(f"Error updating outcome: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+def _get_feature_meaning(feature: str) -> str:
+    """Get plain English meaning of each feature"""
+    meanings = {
+        'iv_rank': 'IV percentile - higher = more expensive options = better to sell',
+        'iv': 'Implied volatility of the option',
+        'vix': 'Market fear gauge - higher = more premium but more risk',
+        'vix_percentile': 'VIX compared to history',
+        'vix_term_structure': 'VIX curve shape - backwardation = stress',
+        'put_wall_distance_pct': 'Distance to support from options positioning',
+        'call_wall_distance_pct': 'Distance to resistance',
+        'net_gex_billions': 'Dealer gamma - positive = dealers buy dips',
+        'spx_20d_return': '20-day momentum',
+        'spx_5d_return': 'Recent move - negative = potential mean reversion',
+        'spx_distance_from_high': 'How far below all-time high',
+        'dte': 'Days to expiration',
+        'delta': 'Option delta - probability of ITM',
+        'premium_to_strike_pct': 'Premium yield',
+        'annualized_return': 'Annualized return if trade wins'
+    }
+    return meanings.get(feature, 'Feature for ML model')
 
 
 # ============================================================================
-# Integration with SPX Backtest
+# WHY THE STRATEGY WORKS - HONEST EXPLANATION
 # ============================================================================
 
-@router.post("/score-spx-trade")
-async def score_spx_trade(
-    strike: float,
-    underlying_price: float,
-    dte: int,
-    premium: float,
-    vix: float = 15.0,
-    net_gex: float = 0.0
-):
+@router.get("/strategy-explanation")
+async def get_strategy_explanation():
     """
-    Score an SPX put trade using ML + strategy rules.
+    HONEST explanation of why SPX put selling can make money.
 
-    This is the KEY integration point - ML contributes to trade selection.
-
-    Returns a comprehensive score that combines:
-    1. ML prediction (60% weight)
-    2. Risk/reward ratio (20% weight)
-    3. Market conditions (20% weight)
+    No hype, no guarantees - just the math and risks.
     """
-    ensure_ml_log_table()
-    learner = get_ml_learner()
-
-    # Calculate basic metrics
-    otm_pct = (underlying_price - strike) / underlying_price * 100
-    premium_pct = premium / underlying_price * 100
-
-    # ML prediction
-    ml_score = 0.5  # Baseline
-    ml_confidence = "UNKNOWN"
-    ml_recommendation = "TRADE"
-
-    if learner and learner.model is not None:
-        regime = {
-            'rsi_5m': 50,
-            'rsi_15m': 50,
-            'rsi_1h': 50,
-            'rsi_4h': 50,
-            'rsi_1d': 50,
-            'net_gamma': net_gex,
-            'call_wall_distance_pct': otm_pct,
-            'put_wall_distance_pct': otm_pct,
-            'vix_current': vix,
-            'liberation_setup_detected': False,
-            'false_floor_detected': False,
-            'monthly_magnet_above': 0,
-            'monthly_magnet_below': 0,
-            'confidence_score': 50
-        }
-
-        prediction = learner.predict_pattern_success(regime)
-        ml_score = prediction.get('success_probability', 0.5)
-        ml_confidence = prediction.get('ml_confidence', 'UNKNOWN')
-        ml_recommendation = prediction.get('recommendation', 'TRADE')
-
-    # Risk/Reward score (higher premium relative to risk = better)
-    # At 45 DTE, 20 delta put, ~3-5% OTM is typical
-    # Premium of 0.5-1.5% of underlying is good
-    rr_score = min(1.0, premium_pct / 1.0)  # 1% premium = perfect score
-
-    # Market conditions score
-    # Low VIX (12-16): cautious, High VIX (>25): opportunities
-    if vix < 12:
-        market_score = 0.3  # Too calm, low premiums
-    elif vix < 18:
-        market_score = 0.6  # Normal
-    elif vix < 25:
-        market_score = 0.8  # Good premium environment
-    else:
-        market_score = 0.7  # High fear, risky but high premium
-
-    # Combine scores (weighted)
-    combined_score = (
-        ml_score * 0.60 +
-        rr_score * 0.20 +
-        market_score * 0.20
-    )
-
-    # Final recommendation
-    if combined_score >= 0.65:
-        final_recommendation = "STRONG_TRADE"
-    elif combined_score >= 0.50:
-        final_recommendation = "TRADE"
-    elif combined_score >= 0.40:
-        final_recommendation = "CAUTION"
-    else:
-        final_recommendation = "SKIP"
-
-    # Log this scoring
-    log_ml_decision(
-        symbol="SPX",
-        action="SCORE_TRADE",
-        ml_result={
-            'success_probability': combined_score,
-            'ml_confidence': ml_confidence,
-            'recommendation': final_recommendation
-        },
-        features={
-            'strike': strike,
-            'underlying': underlying_price,
-            'dte': dte,
-            'premium': premium,
-            'otm_pct': otm_pct,
-            'vix': vix,
-            'net_gex': net_gex,
-            'ml_score': ml_score,
-            'rr_score': rr_score,
-            'market_score': market_score
-        }
-    )
-
     return {
         "success": True,
         "data": {
-            "combined_score": round(combined_score * 100, 1),
-            "recommendation": final_recommendation,
-            "breakdown": {
-                "ml_contribution": {
-                    "score": round(ml_score * 100, 1),
-                    "weight": "60%",
-                    "confidence": ml_confidence,
-                    "recommendation": ml_recommendation
+            "strategy": "SPX Cash-Secured Put Selling",
+
+            "why_it_works": {
+                "volatility_risk_premium": {
+                    "explanation": "Implied volatility exceeds realized volatility ~80% of the time",
+                    "why": "People pay extra for insurance (put protection)",
+                    "you_benefit": "By selling that insurance, you collect the premium"
                 },
-                "risk_reward_contribution": {
-                    "score": round(rr_score * 100, 1),
-                    "weight": "20%",
-                    "premium_pct": round(premium_pct, 3)
+                "theta_decay": {
+                    "explanation": "Options lose value every day as expiration approaches",
+                    "why": "Time value decays - mathematical certainty",
+                    "you_benefit": "Every day that passes, you keep more premium"
                 },
-                "market_conditions_contribution": {
-                    "score": round(market_score * 100, 1),
-                    "weight": "20%",
-                    "vix": vix
+                "probability": {
+                    "explanation": "20-delta puts have ~80% chance of expiring worthless",
+                    "why": "You're selling far out-of-the-money options",
+                    "you_benefit": "You win more often than you lose"
                 }
             },
-            "trade_details": {
-                "strike": strike,
-                "underlying": underlying_price,
-                "otm_pct": round(otm_pct, 2),
-                "dte": dte,
-                "premium": premium
-            }
+
+            "why_it_can_fail": {
+                "tail_risk": {
+                    "explanation": "The 20% losses can be HUGE",
+                    "examples": ["March 2020: SPX -34%", "2008: SPX -50%+"],
+                    "impact": "One bad month can wipe out a year of gains"
+                },
+                "asymmetric_payoff": {
+                    "explanation": "You win small amounts often, lose big occasionally",
+                    "math": "Win $2,000 eight times, lose $10,000 twice = breakeven"
+                },
+                "drawdowns": {
+                    "explanation": "Even without crashes, you'll have losing streaks",
+                    "reality": "3-4 losses in a row is normal and expected"
+                }
+            },
+
+            "what_ml_adds": {
+                "helps_with": [
+                    "Identifying HIGH IV environments (sell when premium is rich)",
+                    "Avoiding EXTREME STRESS (skip when crash indicators flash)",
+                    "Finding SUPPORT (sell into put walls)",
+                    "TIMING (enter after pullbacks)"
+                ],
+                "cannot_help_with": [
+                    "Predicting black swans (nobody can)",
+                    "Eliminating losses (impossible)",
+                    "Guaranteeing profits (no such thing)"
+                ]
+            },
+
+            "realistic_expectations": {
+                "annual_return": "10-20% in normal years (if done well)",
+                "max_drawdown": "20-40% in bad years (March 2020 type)",
+                "win_rate": "70-85% of trades profitable",
+                "key_insight": "Survival matters more than optimization. Don't oversize positions."
+            },
+
+            "bottom_line": "This strategy has a statistical edge from volatility risk premium. ML can help you capture that edge more efficiently. But no ML can turn a losing strategy into a winner or protect against black swans."
         }
     }
+
+
+# ============================================================================
+# DATA QUALITY CHECK
+# ============================================================================
+
+@router.get("/data-quality")
+async def check_data_quality():
+    """
+    Check quality of your training data.
+
+    More data = better ML. Better data = better ML.
+    """
+    try:
+        from trading.spx_wheel_ml import get_outcome_tracker
+
+        tracker = get_outcome_tracker()
+        outcomes = tracker.get_all_outcomes()
+
+        if not outcomes:
+            return {
+                "success": True,
+                "data": {
+                    "total_trades": 0,
+                    "message": "No trade outcomes recorded yet. Record trades using /record-entry and /record-outcome",
+                    "quality": "NO_DATA"
+                }
+            }
+
+        wins = sum(1 for o in outcomes if o.is_win())
+        losses = len(outcomes) - wins
+        total_pnl = sum(o.pnl for o in outcomes)
+        avg_pnl = total_pnl / len(outcomes)
+
+        return {
+            "success": True,
+            "data": {
+                "total_trades": len(outcomes),
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(wins / len(outcomes) * 100, 1),
+                "total_pnl": round(total_pnl, 2),
+                "avg_pnl": round(avg_pnl, 2),
+
+                "quality": _assess_data_quality(len(outcomes)),
+                "can_train": len(outcomes) >= 30,
+
+                "recommendation": _get_data_recommendation(len(outcomes), wins / len(outcomes) if outcomes else 0)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Data quality error: {e}")
+        return {
+            "success": True,
+            "data": {
+                "error": str(e),
+                "quality": "UNKNOWN"
+            }
+        }
+
+
+def _assess_data_quality(count: int) -> str:
+    if count < 30:
+        return "INSUFFICIENT"
+    elif count < 50:
+        return "MINIMAL"
+    elif count < 100:
+        return "ADEQUATE"
+    elif count < 200:
+        return "GOOD"
+    else:
+        return "EXCELLENT"
+
+
+def _get_data_recommendation(count: int, win_rate: float) -> str:
+    if count < 30:
+        return f"Need {30 - count} more trades. Keep trading and recording outcomes."
+    elif count < 50:
+        return "Can train ML but results may be unreliable. More data is better."
+    elif win_rate < 0.5:
+        return "Warning: Win rate below 50%. ML might not help a losing strategy. Review your rules first."
+    elif win_rate > 0.85:
+        return "Excellent win rate! ML can help maintain this edge and avoid the occasional bad trade."
+    else:
+        return "Good data quality. Train ML to see if it can improve your already solid results."
