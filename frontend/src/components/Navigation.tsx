@@ -53,6 +53,7 @@ const navItems = [
   { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
   { href: '/trader', label: 'SPY Autonomous Trader', icon: Bot, category: 'Automation' },
   { href: '/wheel', label: 'Wheel Strategy', icon: RotateCcw, category: 'Automation' },
+  { href: '/spx-wheel', label: 'SPX Wheel (ML)', icon: Target, category: 'Automation' },
   { href: '/spx', label: 'SPX Autonomous Trader', icon: TrendingUp, category: 'Automation' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Automation' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Automation' },
