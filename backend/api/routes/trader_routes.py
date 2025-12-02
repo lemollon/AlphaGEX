@@ -200,40 +200,56 @@ async def get_trader_performance():
 
 
 @router.get("/positions")
-async def get_open_positions():
-    """Get all open positions from database with full details for tracking"""
+async def get_open_positions(symbol: str = None):
+    """Get all open positions from database with full details for tracking.
+
+    Args:
+        symbol: Optional - filter by symbol (SPY, SPX, etc). If None, returns ALL symbols.
+    """
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Explicitly select fields including expiration_date and entry_time for tracking - SPY only
-        cursor.execute("""
-            SELECT
-                id,
-                symbol,
-                strategy,
-                strike,
-                option_type,
-                contracts,
-                entry_price,
-                current_price,
-                unrealized_pnl,
-                entry_date,
-                entry_time,
-                expiration_date,
-                contract_symbol,
-                entry_spot_price,
-                current_spot_price,
-                gex_regime,
-                confidence,
-                trade_reasoning,
-                profit_target_pct,
-                stop_loss_pct,
-                created_at
-            FROM autonomous_open_positions
-            WHERE symbol = 'SPY'
-            ORDER BY entry_date DESC, entry_time DESC
-        """)
+        # Support multi-symbol: if symbol provided, filter; otherwise show ALL
+        # NOW INCLUDES: All Greeks (delta, gamma, theta, vega) for full transparency
+        if symbol:
+            cursor.execute("""
+                SELECT
+                    id, symbol, strategy, strike, option_type, contracts,
+                    entry_price, current_price, unrealized_pnl, entry_date,
+                    entry_time, expiration_date, contract_symbol, entry_spot_price,
+                    current_spot_price, gex_regime, confidence, trade_reasoning,
+                    profit_target_pct, stop_loss_pct, created_at,
+                    -- Entry Greeks for analysis
+                    entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
+                    -- Current Greeks for live monitoring
+                    current_iv, current_delta, current_gamma, current_theta, current_vega,
+                    -- Data source verification
+                    is_delayed, data_confidence,
+                    entry_bid, entry_ask
+                FROM autonomous_open_positions
+                WHERE symbol = %s
+                ORDER BY entry_date DESC, entry_time DESC
+            """, (symbol.upper(),))
+        else:
+            # Show ALL symbols for unified portfolio view
+            cursor.execute("""
+                SELECT
+                    id, symbol, strategy, strike, option_type, contracts,
+                    entry_price, current_price, unrealized_pnl, entry_date,
+                    entry_time, expiration_date, contract_symbol, entry_spot_price,
+                    current_spot_price, gex_regime, confidence, trade_reasoning,
+                    profit_target_pct, stop_loss_pct, created_at,
+                    -- Entry Greeks for analysis
+                    entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
+                    -- Current Greeks for live monitoring
+                    current_iv, current_delta, current_gamma, current_theta, current_vega,
+                    -- Data source verification
+                    is_delayed, data_confidence,
+                    entry_bid, entry_ask
+                FROM autonomous_open_positions
+                ORDER BY entry_date DESC, entry_time DESC
+            """)
         positions = cursor.fetchall()
         conn.close()
 
@@ -258,18 +274,31 @@ async def get_open_positions():
 
 
 @router.get("/closed-trades")
-async def get_closed_trades(limit: int = 50):
-    """Get closed trades from database - SPY only"""
+async def get_closed_trades(limit: int = 50, symbol: str = None):
+    """Get closed trades from database.
+
+    Args:
+        limit: Max trades to return (default 50)
+        symbol: Optional - filter by symbol (SPY, SPX, etc). If None, returns ALL symbols.
+    """
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        cursor.execute("""
-            SELECT * FROM autonomous_closed_trades
-            WHERE symbol = 'SPY'
-            ORDER BY exit_date DESC, exit_time DESC
-            LIMIT %s
-        """, (int(limit),))
+        if symbol:
+            cursor.execute("""
+                SELECT * FROM autonomous_closed_trades
+                WHERE symbol = %s
+                ORDER BY exit_date DESC, exit_time DESC
+                LIMIT %s
+            """, (symbol.upper(), int(limit)))
+        else:
+            # Show ALL symbols for unified portfolio view
+            cursor.execute("""
+                SELECT * FROM autonomous_closed_trades
+                ORDER BY exit_date DESC, exit_time DESC
+                LIMIT %s
+            """, (int(limit),))
         trades = cursor.fetchall()
         conn.close()
 
@@ -282,8 +311,13 @@ async def get_closed_trades(limit: int = 50):
 
 
 @router.get("/equity-curve")
-async def get_equity_curve(days: int = 30):
-    """Get historical equity curve from snapshots or trades"""
+async def get_equity_curve(days: int = 30, symbol: str = None):
+    """Get historical equity curve from snapshots or trades.
+
+    Args:
+        days: Number of days of history (default 30)
+        symbol: Optional - filter by symbol (SPY, SPX, etc). If None, returns ALL symbols combined.
+    """
     if not trader_available:
         return {
             "success": False,
@@ -320,15 +354,17 @@ async def get_equity_curve(days: int = 30):
         logger.debug(f"equity-curve: Found {len(snapshots)} snapshots")
 
         if snapshots.empty:
-            # Build from closed trades - SPY only
+            # Build from closed trades - support multi-symbol
+            symbol_filter = f"AND symbol = '{symbol.upper()}'" if symbol else ""
             trades = pd.read_sql_query(f"""
                 SELECT
                     exit_date as trade_date,
                     exit_time as trade_time,
                     realized_pnl,
-                    strategy
+                    strategy,
+                    symbol
                 FROM autonomous_closed_trades
-                WHERE symbol = 'SPY' AND exit_date >= '{start_date_str}'
+                WHERE exit_date >= '{start_date_str}' {symbol_filter}
                 ORDER BY exit_date ASC, exit_time ASC
             """, conn)
 
@@ -469,25 +505,45 @@ async def get_equity_curve(days: int = 30):
 
 
 @router.get("/strategies")
-async def get_strategies():
-    """Get all trading strategies and their performance"""
+async def get_strategies(symbol: str = None):
+    """Get all trading strategies and their performance.
+
+    Args:
+        symbol: Optional - filter by symbol (SPY, SPX, etc). If None, returns ALL symbols combined.
+    """
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        cursor.execute("""
-            SELECT
-                strategy,
-                COUNT(*) as total_trades,
-                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
-                SUM(realized_pnl) as total_pnl,
-                AVG(realized_pnl) as avg_pnl,
-                MAX(exit_date) as last_trade_date
-            FROM autonomous_closed_trades
-            WHERE symbol = 'SPY'
-            GROUP BY strategy
-            ORDER BY total_pnl DESC
-        """)
+        if symbol:
+            cursor.execute("""
+                SELECT
+                    strategy,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(realized_pnl) as avg_pnl,
+                    MAX(exit_date) as last_trade_date
+                FROM autonomous_closed_trades
+                WHERE symbol = %s
+                GROUP BY strategy
+                ORDER BY total_pnl DESC
+            """, (symbol.upper(),))
+        else:
+            # Show ALL symbols with symbol breakdown
+            cursor.execute("""
+                SELECT
+                    strategy,
+                    symbol,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(realized_pnl) as avg_pnl,
+                    MAX(exit_date) as last_trade_date
+                FROM autonomous_closed_trades
+                GROUP BY strategy, symbol
+                ORDER BY total_pnl DESC
+            """)
         strategies = cursor.fetchall()
         conn.close()
 
@@ -681,8 +737,13 @@ async def get_trader_live_status():
 
 
 @router.get("/trades")
-async def get_trader_trades(limit: int = 10):
-    """Get recent trades from autonomous trader - combines open and closed positions"""
+async def get_trader_trades(limit: int = 10, symbol: str = None):
+    """Get recent trades from autonomous trader - combines open and closed positions.
+
+    Args:
+        limit: Max trades to return (default 10, max 100)
+        symbol: Optional - filter by symbol (SPY, SPX, etc). If None, returns ALL symbols.
+    """
     if not trader_available:
         return {
             "success": False,
@@ -699,8 +760,11 @@ async def get_trader_trades(limit: int = 10):
 
         conn = get_connection()
 
-        # Query only columns that are likely to exist - FILTER BY SPY
-        open_trades = pd.read_sql_query("""
+        # Support multi-symbol: if symbol provided, filter; otherwise show ALL
+        symbol_filter_open = f"WHERE symbol = '{symbol.upper()}'" if symbol else ""
+        symbol_filter_closed = f"WHERE symbol = '{symbol.upper()}'" if symbol else ""
+
+        open_trades = pd.read_sql_query(f"""
             SELECT id, symbol, strategy, strike, option_type,
                    contracts, entry_date, entry_time, entry_price,
                    COALESCE(unrealized_pnl, 0) as unrealized_pnl,
@@ -709,19 +773,19 @@ async def get_trader_trades(limit: int = 10):
                    NULL::numeric as exit_price,
                    NULL::numeric as realized_pnl, NULL::text as exit_reason
             FROM autonomous_open_positions
-            WHERE symbol = 'SPY'
+            {symbol_filter_open}
             ORDER BY entry_date DESC, entry_time DESC
             LIMIT %s
         """, conn, params=(int(limit),))
 
-        closed_trades = pd.read_sql_query("""
+        closed_trades = pd.read_sql_query(f"""
             SELECT id, symbol, strategy, strike, option_type,
                    contracts, entry_date, entry_time, entry_price,
                    COALESCE(realized_pnl, 0) as unrealized_pnl,
                    'CLOSED' as status, exit_date, exit_time,
                    exit_price, realized_pnl, exit_reason
             FROM autonomous_closed_trades
-            WHERE symbol = 'SPY'
+            {symbol_filter_closed}
             ORDER BY exit_date DESC, exit_time DESC
             LIMIT %s
         """, conn, params=(int(limit),))
@@ -1013,3 +1077,199 @@ async def get_strategy_configs():
     except Exception as e:
         logger.error(f"Error getting strategy configs: {e}")
         return {"success": False, "data": {}}
+
+
+# ============================================================================
+# UNIFIED PORTFOLIO DASHBOARD - Combined SPY + SPX View
+# ============================================================================
+
+@router.get("/portfolio/unified")
+async def get_unified_portfolio():
+    """
+    Get unified portfolio dashboard combining ALL symbols (SPY, SPX, etc.)
+
+    Returns:
+    - Total positions across all symbols
+    - Aggregate P&L (realized + unrealized)
+    - Per-symbol breakdown
+    - Portfolio Greeks exposure
+    - Risk metrics
+    - Performance summary
+
+    This is the master view for traders managing multiple underlying symbols.
+    """
+    try:
+        import pandas as pd
+        import numpy as np
+        from decimal import Decimal
+
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get all open positions grouped by symbol
+        cursor.execute("""
+            SELECT
+                symbol,
+                COUNT(*) as position_count,
+                SUM(contracts) as total_contracts,
+                SUM(unrealized_pnl) as unrealized_pnl,
+                SUM(COALESCE(current_delta, entry_delta, 0) * contracts * 100) as net_delta,
+                SUM(COALESCE(current_gamma, entry_gamma, 0) * contracts * 100) as net_gamma,
+                SUM(COALESCE(current_theta, entry_theta, 0) * contracts * 100) as net_theta,
+                SUM(COALESCE(current_vega, entry_vega, 0) * contracts * 100) as net_vega
+            FROM autonomous_open_positions
+            GROUP BY symbol
+            ORDER BY symbol
+        """)
+        symbol_positions = cursor.fetchall()
+
+        # Get all positions with full detail
+        cursor.execute("""
+            SELECT
+                id, symbol, strategy, strike, option_type, contracts,
+                entry_price, current_price, unrealized_pnl, entry_date,
+                expiration_date, contract_symbol, gex_regime, confidence,
+                entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
+                current_iv, current_delta, current_gamma, current_theta, current_vega
+            FROM autonomous_open_positions
+            ORDER BY symbol, entry_date DESC
+        """)
+        all_positions = cursor.fetchall()
+
+        # Get realized P&L by symbol
+        cursor.execute("""
+            SELECT
+                symbol,
+                COUNT(*) as trade_count,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winners,
+                SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losers,
+                SUM(realized_pnl) as total_pnl,
+                AVG(realized_pnl) as avg_pnl,
+                MAX(realized_pnl) as best_trade,
+                MIN(realized_pnl) as worst_trade
+            FROM autonomous_closed_trades
+            GROUP BY symbol
+            ORDER BY symbol
+        """)
+        symbol_performance = cursor.fetchall()
+
+        # Get account config
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
+        capital_row = cursor.fetchone()
+        starting_capital = float(capital_row['value']) if capital_row else 1000000.0
+
+        conn.close()
+
+        # Calculate aggregate metrics
+        total_unrealized = sum(float(p.get('unrealized_pnl', 0) or 0) for p in symbol_positions)
+        total_realized = sum(float(p.get('total_pnl', 0) or 0) for p in symbol_performance)
+        total_positions = sum(int(p.get('position_count', 0) or 0) for p in symbol_positions)
+        total_contracts = sum(int(p.get('total_contracts', 0) or 0) for p in symbol_positions)
+
+        # Calculate portfolio Greeks
+        portfolio_delta = sum(float(p.get('net_delta', 0) or 0) for p in symbol_positions)
+        portfolio_gamma = sum(float(p.get('net_gamma', 0) or 0) for p in symbol_positions)
+        portfolio_theta = sum(float(p.get('net_theta', 0) or 0) for p in symbol_positions)
+        portfolio_vega = sum(float(p.get('net_vega', 0) or 0) for p in symbol_positions)
+
+        # Calculate overall performance
+        total_trades = sum(int(p.get('trade_count', 0) or 0) for p in symbol_performance)
+        total_winners = sum(int(p.get('winners', 0) or 0) for p in symbol_performance)
+        win_rate = (total_winners / total_trades * 100) if total_trades > 0 else 0
+
+        current_equity = starting_capital + total_realized + total_unrealized
+        total_return_pct = ((current_equity - starting_capital) / starting_capital * 100) if starting_capital > 0 else 0
+
+        # Format per-symbol data
+        def format_decimal(val):
+            if val is None:
+                return 0
+            if isinstance(val, Decimal):
+                return float(val)
+            return val
+
+        symbols_breakdown = []
+        for sp in symbol_positions:
+            # Find matching performance data
+            perf = next((p for p in symbol_performance if p['symbol'] == sp['symbol']), {})
+            symbols_breakdown.append({
+                'symbol': sp['symbol'],
+                'open_positions': format_decimal(sp.get('position_count', 0)),
+                'total_contracts': format_decimal(sp.get('total_contracts', 0)),
+                'unrealized_pnl': round(format_decimal(sp.get('unrealized_pnl', 0)), 2),
+                'realized_pnl': round(format_decimal(perf.get('total_pnl', 0)), 2),
+                'net_pnl': round(format_decimal(sp.get('unrealized_pnl', 0)) + format_decimal(perf.get('total_pnl', 0)), 2),
+                'trade_count': format_decimal(perf.get('trade_count', 0)),
+                'win_rate': round((format_decimal(perf.get('winners', 0)) / format_decimal(perf.get('trade_count', 1))) * 100, 1) if perf.get('trade_count', 0) > 0 else 0,
+                # Portfolio Greeks for this symbol
+                'net_delta': round(format_decimal(sp.get('net_delta', 0)), 2),
+                'net_gamma': round(format_decimal(sp.get('net_gamma', 0)), 4),
+                'net_theta': round(format_decimal(sp.get('net_theta', 0)), 2),
+                'net_vega': round(format_decimal(sp.get('net_vega', 0)), 2)
+            })
+
+        # Format positions for JSON
+        formatted_positions = []
+        for p in all_positions:
+            formatted_positions.append({
+                'id': p['id'],
+                'symbol': p['symbol'],
+                'strategy': p['strategy'],
+                'strike': float(p['strike']) if p['strike'] else 0,
+                'option_type': p['option_type'],
+                'contracts': p['contracts'],
+                'entry_price': float(p['entry_price']) if p['entry_price'] else 0,
+                'current_price': float(p['current_price']) if p['current_price'] else 0,
+                'unrealized_pnl': round(float(p['unrealized_pnl']) if p['unrealized_pnl'] else 0, 2),
+                'entry_date': str(p['entry_date']) if p['entry_date'] else None,
+                'expiration_date': str(p['expiration_date']) if p['expiration_date'] else None,
+                'greeks': {
+                    'entry': {
+                        'iv': float(p['entry_iv']) if p['entry_iv'] else None,
+                        'delta': float(p['entry_delta']) if p['entry_delta'] else None,
+                        'gamma': float(p['entry_gamma']) if p['entry_gamma'] else None,
+                        'theta': float(p['entry_theta']) if p['entry_theta'] else None,
+                        'vega': float(p['entry_vega']) if p['entry_vega'] else None
+                    },
+                    'current': {
+                        'iv': float(p['current_iv']) if p['current_iv'] else None,
+                        'delta': float(p['current_delta']) if p['current_delta'] else None,
+                        'gamma': float(p['current_gamma']) if p['current_gamma'] else None,
+                        'theta': float(p['current_theta']) if p['current_theta'] else None,
+                        'vega': float(p['current_vega']) if p['current_vega'] else None
+                    }
+                }
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "summary": {
+                    "starting_capital": starting_capital,
+                    "current_equity": round(current_equity, 2),
+                    "total_pnl": round(total_realized + total_unrealized, 2),
+                    "total_return_pct": round(total_return_pct, 2),
+                    "realized_pnl": round(total_realized, 2),
+                    "unrealized_pnl": round(total_unrealized, 2),
+                    "total_positions": total_positions,
+                    "total_contracts": total_contracts,
+                    "total_trades": total_trades,
+                    "win_rate": round(win_rate, 1)
+                },
+                "portfolio_greeks": {
+                    "net_delta": round(portfolio_delta, 2),
+                    "net_gamma": round(portfolio_gamma, 4),
+                    "net_theta": round(portfolio_theta, 2),
+                    "net_vega": round(portfolio_vega, 2),
+                    "description": "Aggregate Greeks exposure across all positions"
+                },
+                "by_symbol": symbols_breakdown,
+                "positions": formatted_positions,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting unified portfolio: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))

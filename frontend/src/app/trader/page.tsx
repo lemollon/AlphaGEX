@@ -69,6 +69,13 @@ interface Trade {
   current_spot_price?: number
   trade_reasoning?: string
   expiration_date?: string
+  // Verifiable trade details - for checking against Tradier
+  contract_symbol?: string  // e.g., "SPY241206C00595000" - the ACTUAL Tradier symbol
+  entry_date?: string       // e.g., "2024-12-06"
+  entry_time?: string       // e.g., "09:35:42"
+  // Data source verification - PROVES where prices came from
+  is_delayed?: boolean      // true = Polygon (15-min delayed), false = Tradier (real-time)
+  data_confidence?: string  // 'high' (Tradier real-time), 'medium' (Polygon), 'low' (fallback)
   // Greeks
   entry_iv?: number
   entry_delta?: number
@@ -190,6 +197,9 @@ interface ClosedTrade {
   exit_reason: string
   hold_duration_minutes: number
   trade_reasoning?: string
+  // Verifiable fields
+  contract_symbol?: string
+  expiration_date?: string
 }
 
 // Backtest interface
@@ -294,6 +304,49 @@ export default function AutonomousTrader() {
   const [tradeFilter, setTradeFilter] = useState<'all' | 'open' | 'closed'>('all')
   const [strategyFilter, setStrategyFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState<string>('')
+
+  // Symbol selector for multi-symbol support (SPY, SPX, or ALL for unified view)
+  const [selectedSymbol, setSelectedSymbol] = useState<'SPY' | 'SPX' | 'ALL'>('SPY')
+
+  // Unified portfolio data (when selectedSymbol is 'ALL')
+  const [unifiedPortfolio, setUnifiedPortfolio] = useState<{
+    spy: { total_trades: number; win_rate: number; total_pnl: number; net_delta: number; net_gamma: number; net_theta: number; net_vega: number };
+    spx: { total_trades: number; win_rate: number; total_pnl: number; net_delta: number; net_gamma: number; net_theta: number; net_vega: number };
+    combined: { total_trades: number; win_rate: number; total_pnl: number; net_delta: number; net_gamma: number; net_theta: number; net_vega: number };
+  } | null>(null)
+
+  // Regime signals and volatility surface for transparency
+  const [regimeSignals, setRegimeSignals] = useState<{
+    timestamp: string;
+    gex_regime: string;
+    mm_state: string;
+    vix_regime: string;
+    net_gex: number;
+    flip_point: number;
+    spot_price: number;
+    action_recommended: string;
+    confidence: number;
+    key_factors: string[];
+  } | null>(null)
+
+  const [volSurfaceData, setVolSurfaceData] = useState<{
+    symbol: string;
+    skew_type: string;
+    term_structure: string;
+    atm_iv: number;
+    iv_percentile: number;
+    trading_signal: string;
+    signal_strength: number;
+  } | null>(null)
+
+  // Background jobs state
+  const [backgroundJobs, setBackgroundJobs] = useState<{
+    job_id: string;
+    job_type: string;
+    status: string;
+    progress: number;
+    message: string;
+  }[]>([])
 
   // Trade Activity Log
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[]>([])
@@ -431,14 +484,22 @@ export default function AutonomousTrader() {
           current_spot_price: trade.current_spot_price,
           trade_reasoning: trade.trade_reasoning,
           expiration_date: trade.expiration_date,
-          // Greeks
+          // Verifiable trade details for Tradier
+          contract_symbol: trade.contract_symbol,
+          entry_date: trade.entry_date,
+          entry_time: trade.entry_time,
+          // Data source verification
+          is_delayed: trade.is_delayed,
+          data_confidence: trade.data_confidence,
+          // Greeks - Entry values
           entry_iv: trade.entry_iv,
           entry_delta: trade.entry_delta,
           current_iv: trade.current_iv,
           current_delta: trade.current_delta,
-          theta: trade.theta,
-          gamma: trade.gamma,
-          vega: trade.vega,
+          // Greeks - Use entry values, fallback to current if available
+          theta: trade.entry_theta || trade.current_theta,
+          gamma: trade.entry_gamma || trade.current_gamma,
+          vega: trade.entry_vega || trade.current_vega,
           // GEX context
           gex_regime: trade.gex_regime,
           entry_net_gex: trade.entry_net_gex,
@@ -605,14 +666,19 @@ export default function AutonomousTrader() {
             current_spot_price: trade.current_spot_price,
             trade_reasoning: trade.trade_reasoning,
             expiration_date: trade.expiration_date,
-            // Greeks
+            // Verifiable trade details for Tradier
+            contract_symbol: trade.contract_symbol,
+            entry_date: trade.entry_date,
+            entry_time: trade.entry_time,
+            // Greeks - Entry values
             entry_iv: trade.entry_iv,
             entry_delta: trade.entry_delta,
             current_iv: trade.current_iv,
             current_delta: trade.current_delta,
-            theta: trade.theta,
-            gamma: trade.gamma,
-            vega: trade.vega,
+            // Greeks - Use entry values, fallback to current if available
+            theta: trade.entry_theta || trade.current_theta,
+            gamma: trade.entry_gamma || trade.current_gamma,
+            vega: trade.entry_vega || trade.current_vega,
             // GEX context
             gex_regime: trade.gex_regime,
             entry_net_gex: trade.entry_net_gex,
@@ -723,6 +789,81 @@ export default function AutonomousTrader() {
     // No auto-refresh - protects API rate limit (20 calls/min shared across all users)
     // Trader background worker updates independently - UI will refresh when user navigates
   }, [chartPeriod])
+
+  // Fetch unified portfolio when selectedSymbol is 'ALL'
+  useEffect(() => {
+    const fetchUnifiedPortfolio = async () => {
+      if (selectedSymbol === 'ALL') {
+        try {
+          const res = await apiClient.getUnifiedPortfolio()
+          if (res.data.success) {
+            setUnifiedPortfolio(res.data.data)
+          }
+        } catch (error) {
+          logger.error('Error fetching unified portfolio:', error)
+        }
+      } else {
+        setUnifiedPortfolio(null)
+      }
+    }
+
+    fetchUnifiedPortfolio()
+  }, [selectedSymbol])
+
+  // Fetch regime signals, vol surface, and background jobs for transparency
+  useEffect(() => {
+    const fetchTransparencyData = async () => {
+      try {
+        // Fetch regime signals, vol surface, and jobs in parallel
+        const [regimeRes, volRes, jobsRes] = await Promise.allSettled([
+          apiClient.getRegimeCurrent(),
+          apiClient.getVolSurfaceTradingSignal(selectedSymbol === 'ALL' ? 'SPY' : selectedSymbol),
+          apiClient.getJobsList()
+        ])
+
+        if (regimeRes.status === 'fulfilled' && regimeRes.value?.data?.success) {
+          const data = regimeRes.value.data.data
+          setRegimeSignals({
+            timestamp: data.timestamp || new Date().toISOString(),
+            gex_regime: data.gex_regime || data.regime || 'Unknown',
+            mm_state: data.mm_state || 'Unknown',
+            vix_regime: data.vix_regime || data.vol_regime || 'Normal',
+            net_gex: data.net_gex || 0,
+            flip_point: data.flip_point || 0,
+            spot_price: data.spot_price || 0,
+            action_recommended: data.action_recommended || data.action || 'HOLD',
+            confidence: data.confidence || 0,
+            key_factors: data.key_factors || data.reasoning?.split('.').slice(0, 3) || []
+          })
+        }
+
+        if (volRes.status === 'fulfilled' && volRes.value?.data?.success) {
+          const data = volRes.value.data.data
+          setVolSurfaceData({
+            symbol: data.symbol || selectedSymbol,
+            skew_type: data.skew_type || 'Normal',
+            term_structure: data.term_structure || 'Normal',
+            atm_iv: data.atm_iv || 0,
+            iv_percentile: data.iv_percentile || 0,
+            trading_signal: data.trading_signal || data.signal || 'Neutral',
+            signal_strength: data.signal_strength || data.confidence || 0
+          })
+        }
+
+        if (jobsRes.status === 'fulfilled' && jobsRes.value?.data?.success) {
+          setBackgroundJobs(jobsRes.value.data.jobs || [])
+        }
+      } catch (error) {
+        logger.error('Error fetching transparency data:', error)
+      }
+    }
+
+    fetchTransparencyData()
+
+    // Refresh every 30 seconds for live data
+    const interval = setInterval(fetchTransparencyData, 30000)
+    return () => clearInterval(interval)
+  }, [selectedSymbol])
 
   // Trader runs automatically as a background worker - no manual control needed
   // It checks every 5 minutes ALL DAY during market hours (8:30 AM - 3:00 PM CT)
@@ -931,8 +1072,32 @@ export default function AutonomousTrader() {
           status: trade.status || 'OPEN',
           pnl: trade.realized_pnl || trade.unrealized_pnl || 0,
           strategy: trade.strategy,
+          entry_bid: trade.entry_bid,
+          entry_ask: trade.entry_ask,
+          entry_spot_price: trade.entry_spot_price,
+          current_price: trade.current_price,
+          current_spot_price: trade.current_spot_price,
           trade_reasoning: trade.trade_reasoning,
           expiration_date: trade.expiration_date,
+          // Verifiable trade details for Tradier
+          contract_symbol: trade.contract_symbol,
+          entry_date: trade.entry_date,
+          entry_time: trade.entry_time,
+          // Data source verification
+          is_delayed: trade.is_delayed,
+          data_confidence: trade.data_confidence,
+          // Greeks - Entry values
+          entry_iv: trade.entry_iv,
+          entry_delta: trade.entry_delta,
+          current_iv: trade.current_iv,
+          current_delta: trade.current_delta,
+          // Greeks - Use entry values, fallback to current if available
+          theta: trade.entry_theta || trade.current_theta,
+          gamma: trade.entry_gamma || trade.current_gamma,
+          vega: trade.entry_vega || trade.current_vega,
+          // GEX context
+          gex_regime: trade.gex_regime,
+          entry_net_gex: trade.entry_net_gex,
         }))
         setRecentTrades(mappedTrades)
       }
@@ -1023,8 +1188,32 @@ export default function AutonomousTrader() {
             {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-text-primary">SPY Autonomous Trader</h1>
-          <p className="text-text-secondary mt-1">$1M capital management for autonomous trading strategies</p>
+          <div className="flex items-center gap-4">
+            <h1 className="text-3xl font-bold text-text-primary">
+              {selectedSymbol === 'ALL' ? 'Unified Portfolio' : `${selectedSymbol} Autonomous Trader`}
+            </h1>
+            {/* Symbol Selector */}
+            <div className="flex rounded-lg bg-background-secondary p-1">
+              {(['SPY', 'SPX', 'ALL'] as const).map((sym) => (
+                <button
+                  key={sym}
+                  onClick={() => setSelectedSymbol(sym)}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    selectedSymbol === sym
+                      ? 'bg-primary text-white shadow-md'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-background-primary'
+                  }`}
+                >
+                  {sym === 'ALL' ? '📊 All' : sym}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-text-secondary mt-1">
+            {selectedSymbol === 'ALL'
+              ? 'Combined SPY + SPX portfolio view with net Greeks'
+              : '$1M capital management for autonomous trading strategies'}
+          </p>
           {lastDataFetch && (
             <p className="text-xs text-text-muted mt-1">
               Data last updated: {lastDataFetch.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
@@ -1087,6 +1276,232 @@ export default function AutonomousTrader() {
           </div>
         </div>
       )}
+
+      {/* Unified Portfolio Summary - Shows when 'ALL' is selected */}
+      {selectedSymbol === 'ALL' && unifiedPortfolio && (
+        <div className="card bg-gradient-to-br from-purple-500/10 via-primary/5 to-success/10 border-purple-500/30">
+          <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-purple-400" />
+            Unified Portfolio Summary
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* SPY Summary */}
+            <div className="p-4 bg-background-primary rounded-lg">
+              <h3 className="font-semibold text-primary mb-3">SPY Trader</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Total P&L</span>
+                  <span className={unifiedPortfolio.spy?.total_pnl >= 0 ? 'text-success' : 'text-danger'}>
+                    ${unifiedPortfolio.spy?.total_pnl?.toLocaleString() || '0'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Win Rate</span>
+                  <span className="text-text-primary">{unifiedPortfolio.spy?.win_rate?.toFixed(1) || '0'}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Net Delta</span>
+                  <span className="text-text-primary">{unifiedPortfolio.spy?.net_delta?.toFixed(2) || '0'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* SPX Summary */}
+            <div className="p-4 bg-background-primary rounded-lg">
+              <h3 className="font-semibold text-warning mb-3">SPX Trader</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Total P&L</span>
+                  <span className={unifiedPortfolio.spx?.total_pnl >= 0 ? 'text-success' : 'text-danger'}>
+                    ${unifiedPortfolio.spx?.total_pnl?.toLocaleString() || '0'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Win Rate</span>
+                  <span className="text-text-primary">{unifiedPortfolio.spx?.win_rate?.toFixed(1) || '0'}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Net Delta</span>
+                  <span className="text-text-primary">{unifiedPortfolio.spx?.net_delta?.toFixed(2) || '0'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Combined Portfolio */}
+            <div className="p-4 bg-gradient-to-br from-success/20 to-success/5 rounded-lg border border-success/30">
+              <h3 className="font-semibold text-success mb-3">Combined Portfolio</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Total P&L</span>
+                  <span className={`text-lg font-bold ${unifiedPortfolio.combined?.total_pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                    ${unifiedPortfolio.combined?.total_pnl?.toLocaleString() || '0'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Total Trades</span>
+                  <span className="text-text-primary">{unifiedPortfolio.combined?.total_trades || 0}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Win Rate</span>
+                  <span className="text-text-primary">{unifiedPortfolio.combined?.win_rate?.toFixed(1) || '0'}%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Net Greeks Section */}
+          <div className="mt-4 pt-4 border-t border-border">
+            <h3 className="font-semibold text-text-primary mb-3 flex items-center gap-2">
+              <Activity className="w-4 h-4" />
+              Net Portfolio Greeks
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-3 bg-background-primary rounded-lg text-center">
+                <div className="text-xs text-text-secondary mb-1">Net Delta (Δ)</div>
+                <div className={`text-xl font-bold ${(unifiedPortfolio.combined?.net_delta || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                  {unifiedPortfolio.combined?.net_delta?.toFixed(2) || '0'}
+                </div>
+              </div>
+              <div className="p-3 bg-background-primary rounded-lg text-center">
+                <div className="text-xs text-text-secondary mb-1">Net Gamma (Γ)</div>
+                <div className="text-xl font-bold text-primary">
+                  {unifiedPortfolio.combined?.net_gamma?.toFixed(4) || '0'}
+                </div>
+              </div>
+              <div className="p-3 bg-background-primary rounded-lg text-center">
+                <div className="text-xs text-text-secondary mb-1">Net Theta (Θ)</div>
+                <div className={`text-xl font-bold ${(unifiedPortfolio.combined?.net_theta || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                  ${unifiedPortfolio.combined?.net_theta?.toFixed(2) || '0'}
+                </div>
+              </div>
+              <div className="p-3 bg-background-primary rounded-lg text-center">
+                <div className="text-xs text-text-secondary mb-1">Net Vega (ν)</div>
+                <div className="text-xl font-bold text-warning">
+                  {unifiedPortfolio.combined?.net_vega?.toFixed(2) || '0'}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Decision Transparency Panel */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Regime Signals */}
+        <div className="card bg-gradient-to-br from-blue-500/10 to-blue-500/5 border-blue-500/20">
+          <h3 className="font-semibold text-text-primary mb-3 flex items-center gap-2">
+            <Brain className="w-4 h-4 text-blue-400" />
+            Market Regime
+          </h3>
+          {regimeSignals ? (
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-text-secondary">GEX Regime</span>
+                <span className={`font-semibold ${regimeSignals.gex_regime?.toLowerCase().includes('positive') ? 'text-success' : regimeSignals.gex_regime?.toLowerCase().includes('negative') ? 'text-danger' : 'text-warning'}`}>
+                  {regimeSignals.gex_regime}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary">MM State</span>
+                <span className="text-text-primary">{regimeSignals.mm_state}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary">VIX Regime</span>
+                <span className={`${regimeSignals.vix_regime?.toLowerCase().includes('elevated') || regimeSignals.vix_regime?.toLowerCase().includes('high') ? 'text-danger' : 'text-success'}`}>
+                  {regimeSignals.vix_regime}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary">AI Action</span>
+                <span className={`font-bold ${regimeSignals.action_recommended?.toUpperCase().includes('BUY') || regimeSignals.action_recommended?.toUpperCase().includes('CALL') ? 'text-success' : regimeSignals.action_recommended?.toUpperCase().includes('SELL') || regimeSignals.action_recommended?.toUpperCase().includes('PUT') ? 'text-danger' : 'text-warning'}`}>
+                  {regimeSignals.action_recommended}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary">Confidence</span>
+                <span className="text-primary font-semibold">{regimeSignals.confidence?.toFixed(0)}%</span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-text-muted text-sm">Loading regime data...</div>
+          )}
+        </div>
+
+        {/* Volatility Surface */}
+        <div className="card bg-gradient-to-br from-purple-500/10 to-purple-500/5 border-purple-500/20">
+          <h3 className="font-semibold text-text-primary mb-3 flex items-center gap-2">
+            <Activity className="w-4 h-4 text-purple-400" />
+            Volatility Surface
+          </h3>
+          {volSurfaceData ? (
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-text-secondary">Skew Type</span>
+                <span className="text-text-primary">{volSurfaceData.skew_type}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary">Term Structure</span>
+                <span className="text-text-primary">{volSurfaceData.term_structure}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary">ATM IV</span>
+                <span className="text-text-primary">{(volSurfaceData.atm_iv * 100).toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary">IV Percentile</span>
+                <span className={`font-semibold ${volSurfaceData.iv_percentile > 70 ? 'text-danger' : volSurfaceData.iv_percentile < 30 ? 'text-success' : 'text-warning'}`}>
+                  {volSurfaceData.iv_percentile?.toFixed(0)}%
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-secondary">Trading Signal</span>
+                <span className={`font-bold ${volSurfaceData.trading_signal?.toLowerCase().includes('buy') ? 'text-success' : volSurfaceData.trading_signal?.toLowerCase().includes('sell') ? 'text-danger' : 'text-warning'}`}>
+                  {volSurfaceData.trading_signal}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-text-muted text-sm">Loading vol surface...</div>
+          )}
+        </div>
+
+        {/* Background Jobs */}
+        <div className="card bg-gradient-to-br from-green-500/10 to-green-500/5 border-green-500/20">
+          <h3 className="font-semibold text-text-primary mb-3 flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-green-400" />
+            Background Jobs
+          </h3>
+          {backgroundJobs.length > 0 ? (
+            <div className="space-y-2">
+              {backgroundJobs.slice(0, 3).map((job) => (
+                <div key={job.job_id} className="p-2 bg-background-primary rounded text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-text-primary font-medium">{job.job_type}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded ${
+                      job.status === 'completed' ? 'bg-success/20 text-success' :
+                      job.status === 'running' ? 'bg-warning/20 text-warning' :
+                      job.status === 'failed' ? 'bg-danger/20 text-danger' :
+                      'bg-text-muted/20 text-text-muted'
+                    }`}>
+                      {job.status}
+                    </span>
+                  </div>
+                  {job.status === 'running' && (
+                    <div className="mt-1">
+                      <div className="w-full bg-background-secondary rounded-full h-1.5">
+                        <div className="bg-warning h-1.5 rounded-full transition-all" style={{ width: `${job.progress}%` }} />
+                      </div>
+                      <div className="text-xs text-text-muted mt-1">{job.message}</div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-text-muted text-sm">No active jobs</div>
+          )}
+        </div>
+      </div>
 
       {/* Trader Control Panel */}
       <div className="card bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
@@ -1821,17 +2236,19 @@ export default function AutonomousTrader() {
                         return (
                           <tr key={idx} className="border-b border-border/50 hover:bg-background-hover transition-colors">
                             <td className="py-2 px-3 text-text-secondary text-xs">
-                              {trade.exit_date || 'N/A'}
-                              {trade.exit_time && <span className="text-text-muted ml-1">{trade.exit_time}</span>}
+                              <div>{trade.exit_date || 'N/A'}</div>
+                              <div className="text-text-muted">{trade.exit_time || ''}</div>
                             </td>
                             <td className="py-2 px-3 text-text-muted text-xs">
-                              {trade.entry_date || 'N/A'}
+                              <div>{trade.entry_date || 'N/A'}</div>
+                              <div>{trade.entry_time || ''}</div>
                             </td>
                             <td className="py-2 px-3 text-text-primary font-semibold text-xs">
                               {trade.strategy || 'Unknown'}
                             </td>
                             <td className="py-2 px-3 text-text-primary text-xs">
-                              {trade.symbol || 'SPY'} ${trade.strike}{trade.option_type?.charAt(0) || 'C'}
+                              <div>{trade.symbol || 'SPY'} ${trade.strike}{trade.option_type?.charAt(0) || 'C'}</div>
+                              <div className="text-text-muted font-mono text-xs">{trade.contract_symbol || ''}</div>
                             </td>
                             <td className="py-2 px-3 text-center text-text-primary text-xs">
                               {trade.contracts || 1}
@@ -2166,8 +2583,13 @@ export default function AutonomousTrader() {
                 const strike = trade.strike || 0;
                 const contractDisplay = strike > 0 ? `${trade.symbol} $${strike}${optionType}` : trade.symbol;
 
-                // Format expiration
-                const expDate = trade.expiration_date ? new Date(trade.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
+                // Format expiration - show full date for verification
+                const expDate = trade.expiration_date || '-';
+
+                // Format entry date/time for display
+                const entryDateTime = trade.entry_date && trade.entry_time
+                  ? `${trade.entry_date} ${trade.entry_time}`
+                  : formatTime(trade.timestamp);
 
                 return (
                 <Fragment key={trade.id}>
@@ -2175,17 +2597,20 @@ export default function AutonomousTrader() {
                     className="border-b border-border/50 hover:bg-background-hover transition-colors cursor-pointer"
                     onClick={() => setExpandedTradeId(expandedTradeId === trade.id ? null : trade.id)}
                   >
-                    <td className="py-3 px-4 text-text-secondary text-sm">{formatTime(trade.timestamp)}</td>
+                    <td className="py-3 px-4 text-text-secondary text-sm">
+                      <div>{trade.entry_date || 'N/A'}</div>
+                      <div className="text-xs">{trade.entry_time || ''}</div>
+                    </td>
                     <td className="py-3 px-4">
                       <div className="font-semibold text-text-primary text-sm">{trade.strategy || trade.action}</div>
                       <div className="text-xs text-text-secondary">{contracts}x contracts</div>
                     </td>
                     <td className="py-3 px-4">
                       <div className="text-text-primary font-medium">{contractDisplay}</div>
-                      <div className="text-xs text-text-secondary">@ {formatCurrency(trade.entry_spot_price || 0)} spot</div>
+                      <div className="text-xs text-text-muted font-mono">{trade.contract_symbol || 'N/A'}</div>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <span className="text-text-primary text-sm">{expDate}</span>
+                      <span className="text-text-primary text-sm font-mono">{expDate}</span>
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className={`font-semibold ${entryPrice > 0 ? 'text-text-primary' : 'text-danger'}`}>
@@ -2249,6 +2674,82 @@ export default function AutonomousTrader() {
                               </div>
                             </>
                           )}
+
+                          {/* VERIFIABLE TRADE DETAILS - For checking against Tradier */}
+                          <h4 className="font-semibold text-success flex items-center gap-2 mt-4">
+                            <CheckCircle className="w-4 h-4" />
+                            Verifiable Trade Details (Check on Tradier)
+                          </h4>
+                          <div className="p-4 bg-success/10 border border-success/30 rounded-lg">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Contract Symbol</div>
+                                <div className="font-mono text-success font-bold text-sm">
+                                  {trade.contract_symbol || `${trade.symbol}${trade.expiration_date?.replace(/-/g, '').slice(2)}${trade.type?.charAt(0).toUpperCase()}${String(Math.round((trade.strike || 0) * 1000)).padStart(8, '0')}`}
+                                </div>
+                                <div className="text-xs text-text-muted mt-1">Use this to verify on Tradier</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Entry Date</div>
+                                <div className="text-text-primary font-semibold">
+                                  {trade.entry_date || 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Entry Time</div>
+                                <div className="text-text-primary font-semibold">
+                                  {trade.entry_time || 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Expiration</div>
+                                <div className="text-text-primary font-semibold">
+                                  {trade.expiration_date || 'N/A'}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-3 pt-3 border-t border-success/20 grid grid-cols-3 gap-4">
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Strike Price</div>
+                                <div className="text-text-primary font-bold text-lg">${trade.strike || 0}</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Option Type</div>
+                                <div className={`font-bold text-lg ${trade.type?.toUpperCase() === 'CALL' || trade.type?.charAt(0).toUpperCase() === 'C' ? 'text-success' : 'text-danger'}`}>
+                                  {trade.type?.toUpperCase() || 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Contracts</div>
+                                <div className="text-text-primary font-bold text-lg">{trade.quantity || 0}</div>
+                              </div>
+                            </div>
+                            {/* DATA SOURCE VERIFICATION - Shows where price data came from */}
+                            <div className="mt-3 pt-3 border-t border-success/20">
+                              <div className="text-xs text-text-secondary mb-2 font-semibold">Data Source Verification</div>
+                              <div className="flex items-center gap-4">
+                                <div className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${
+                                  trade.is_delayed
+                                    ? 'bg-warning/20 text-warning border border-warning/30'
+                                    : 'bg-success/20 text-success border border-success/30'
+                                }`}>
+                                  {trade.is_delayed ? '⏱️ Polygon (15-min delayed)' : '⚡ Tradier (Real-time)'}
+                                </div>
+                                <div className={`px-3 py-1.5 rounded-lg text-sm ${
+                                  trade.data_confidence === 'high'
+                                    ? 'bg-success/20 text-success'
+                                    : trade.data_confidence === 'medium'
+                                    ? 'bg-warning/20 text-warning'
+                                    : 'bg-danger/20 text-danger'
+                                }`}>
+                                  Confidence: {trade.data_confidence?.toUpperCase() || 'UNKNOWN'}
+                                </div>
+                              </div>
+                              <div className="text-xs text-text-muted mt-2">
+                                Entry Bid: ${trade.entry_bid?.toFixed(2) || '0.00'} | Entry Ask: ${trade.entry_ask?.toFixed(2) || '0.00'} | Spread: ${((trade.entry_ask || 0) - (trade.entry_bid || 0)).toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
 
                           {/* Position Details Grid */}
                           <h4 className="font-semibold text-text-primary flex items-center gap-2 mt-4">

@@ -504,9 +504,37 @@ class AutonomousPaperTrader(
                 entry_net_gex DECIMAL(15,2),
                 entry_flip_point DECIMAL(10,2),
                 trade_reasoning TEXT,
+                -- Greeks at entry (for transparency and analysis)
+                entry_iv DECIMAL(8,4),
+                entry_delta DECIMAL(8,4),
+                entry_gamma DECIMAL(8,6),
+                entry_theta DECIMAL(10,4),
+                entry_vega DECIMAL(10,4),
+                -- Current Greeks (updated with position)
+                current_iv DECIMAL(8,4),
+                current_delta DECIMAL(8,4),
+                current_gamma DECIMAL(8,6),
+                current_theta DECIMAL(10,4),
+                current_vega DECIMAL(10,4),
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+
+        # Migration: Add Greeks columns if table already exists without them
+        try:
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_iv DECIMAL(8,4)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_delta DECIMAL(8,4)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_gamma DECIMAL(8,6)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_theta DECIMAL(10,4)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_vega DECIMAL(10,4)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_iv DECIMAL(8,4)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_delta DECIMAL(8,4)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_gamma DECIMAL(8,6)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_theta DECIMAL(10,4)")
+            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_vega DECIMAL(10,4)")
+            conn.commit()
+        except Exception:
+            pass  # Columns already exist or db doesn't support IF NOT EXISTS
 
         # CLOSED TRADES table - historical trades with real P&L
         c.execute("""
@@ -539,9 +567,31 @@ class AutonomousPaperTrader(
                 entry_flip_point DECIMAL(10,2),
                 trade_reasoning TEXT,
                 hold_duration_minutes INTEGER,
+                -- Greeks at entry (for analysis and transparency)
+                entry_iv DECIMAL(8,4),
+                entry_delta DECIMAL(8,4),
+                entry_gamma DECIMAL(8,6),
+                entry_theta DECIMAL(10,4),
+                entry_vega DECIMAL(10,4),
+                -- Greeks at exit
+                exit_iv DECIMAL(8,4),
+                exit_delta DECIMAL(8,4),
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+
+        # Migration: Add Greeks columns to closed trades if table already exists
+        try:
+            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_iv DECIMAL(8,4)")
+            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_delta DECIMAL(8,4)")
+            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_gamma DECIMAL(8,6)")
+            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_theta DECIMAL(10,4)")
+            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_vega DECIMAL(10,4)")
+            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS exit_iv DECIMAL(8,4)")
+            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS exit_delta DECIMAL(8,4)")
+            conn.commit()
+        except Exception:
+            pass  # Columns already exist
 
         # EQUITY SNAPSHOTS table - for P&L time series graphing
         c.execute("""

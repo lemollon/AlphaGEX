@@ -53,6 +53,28 @@ try:
 except ImportError:
     TRADIER_AVAILABLE = False
 
+# Volatility Surface Integration - Skew and Term Structure Analysis
+try:
+    from .volatility_surface_integration import (
+        VolatilitySurfaceAnalyzer,
+        EnhancedVolatilityData,
+        SkewRegime,
+        TermStructureRegime,
+        integrate_with_classifier
+    )
+    VOL_SURFACE_AVAILABLE = True
+except ImportError:
+    VOL_SURFACE_AVAILABLE = False
+    print("Warning: Volatility surface integration not available")
+
+# ML Pattern Learner Integration
+try:
+    from ai.autonomous_ml_pattern_learner import get_pattern_learner, PatternLearner
+    ML_LEARNER_AVAILABLE = True
+except ImportError:
+    ML_LEARNER_AVAILABLE = False
+    print("Warning: ML Pattern Learner not available")
+
 
 class MarketAction(Enum):
     """The ONLY actions the system can take"""
@@ -115,6 +137,20 @@ class RegimeClassification:
 
     vix: float                  # VIX level
     vix_term_structure: str     # "contango" or "backwardation"
+
+    # Volatility Surface Analysis (NEW - provides skew and term structure insight)
+    skew_regime: Optional[str] = None           # From vol surface: EXTREME_PUT_SKEW, HIGH_PUT_SKEW, etc.
+    skew_25d: Optional[float] = None            # 25-delta skew (put IV - call IV)
+    term_structure_regime: Optional[str] = None # STEEP_CONTANGO, BACKWARDATION, etc.
+    vol_surface_bias: Optional[str] = None      # 'bullish', 'neutral', 'bearish' from surface
+    recommended_dte: Optional[int] = None       # Best DTE from term structure analysis
+    should_sell_premium: Optional[bool] = None  # Surface says sell premium?
+
+    # ML Pattern Learner Analysis (enhances decision confidence)
+    ml_win_probability: Optional[float] = None   # 0-1 probability from ML model
+    ml_recommendation: Optional[str] = None      # ML says: STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL
+    ml_confidence_boost: Optional[float] = None  # How much ML adjusts confidence (-20 to +20)
+    ml_model_trained: bool = False               # Is the ML model actually trained?
 
     # THE DECISION
     recommended_action: MarketAction
@@ -343,12 +379,18 @@ class MarketRegimeClassifier:
         trend_regime: TrendRegime,
         iv_hv_ratio: float,
         distance_to_flip_pct: float,
-        vix: float
+        vix: float,
+        vol_surface_data: Optional[Dict] = None,  # Volatility surface analysis
+        ml_prediction_data: Optional[Dict] = None  # ML Pattern Learner prediction
     ) -> Tuple[MarketAction, float, str]:
         """
         THE DECISION MATRIX
 
         This is where we decide SELL_PREMIUM vs BUY_DIRECTIONAL
+
+        Now enhanced with:
+        - VOLATILITY SURFACE analysis (skew, term structure)
+        - ML PATTERN LEARNER predictions (win probability, recommendation)
 
         Returns:
             (action, confidence, reasoning)
@@ -356,9 +398,32 @@ class MarketRegimeClassifier:
         reasons = []
         confidence = 50.0
 
+        # Extract ML insights if available
+        ml_trained = ml_prediction_data.get('model_trained', False) if ml_prediction_data else False
+        ml_win_prob = ml_prediction_data.get('win_probability') if ml_prediction_data else None
+        ml_rec = ml_prediction_data.get('recommendation') if ml_prediction_data else None
+        if ml_trained and ml_win_prob:
+            reasons.append(f"ML: {ml_win_prob:.0%} win prob ({ml_rec})")
+
+        # Extract vol surface insights if available
+        vs_bias = None
+        vs_should_sell = None
+        vs_skew_regime = None
+        vs_term_regime = None
+        if vol_surface_data:
+            vs_bias = vol_surface_data.get('directional_bias')  # 'bullish', 'neutral', 'bearish'
+            vs_should_sell = vol_surface_data.get('should_sell_premium')
+            vs_skew_regime = vol_surface_data.get('skew_regime')
+            vs_term_regime = vol_surface_data.get('term_structure_regime')
+            if vs_bias:
+                reasons.append(f"VOL SURFACE BIAS: {vs_bias.upper()}")
+            if vs_skew_regime:
+                reasons.append(f"Skew regime: {vs_skew_regime}")
+
         # ================================================================
         # SCENARIO 1: SELL PREMIUM CONDITIONS
         # High IV + Positive Gamma + Range-bound = Perfect for selling
+        # NOW ENHANCED: Vol surface confirms with contango + neutral skew
         # ================================================================
         if vol_regime in [VolatilityRegime.EXTREME_HIGH, VolatilityRegime.HIGH]:
             if gamma_regime in [GammaRegime.POSITIVE, GammaRegime.STRONG_POSITIVE]:
@@ -373,6 +438,14 @@ class MarketRegimeClassifier:
                         confidence += 5
                         reasons.append(f"IV/HV ratio {iv_hv_ratio:.2f} = IV overpriced vs realized")
 
+                    # VOL SURFACE ENHANCEMENT
+                    if vs_should_sell is True:
+                        confidence += 5
+                        reasons.append("VOL SURFACE CONFIRMS: Sell premium conditions (skew + term structure)")
+                    if vs_term_regime and 'CONTANGO' in str(vs_term_regime).upper():
+                        confidence += 3
+                        reasons.append(f"Term structure {vs_term_regime} favors theta decay")
+
                     return MarketAction.SELL_PREMIUM, min(95, confidence), "\n".join(reasons)
 
                 # Trending but positive gamma - still can sell, smaller size
@@ -385,6 +458,7 @@ class MarketRegimeClassifier:
         # ================================================================
         # SCENARIO 2: BUY CALLS CONDITIONS
         # Negative Gamma + Below Flip + Any IV = Squeeze potential
+        # NOW ENHANCED: Vol surface skew confirms bullish bias
         # ================================================================
         if gamma_regime in [GammaRegime.NEGATIVE, GammaRegime.STRONG_NEGATIVE]:
             if distance_to_flip_pct < -0.5:  # Below flip point
@@ -407,11 +481,23 @@ class MarketRegimeClassifier:
                     confidence += 5
                     reasons.append(f"VIX {vix:.1f} = fear elevated, squeeze more violent")
 
+                # VOL SURFACE ENHANCEMENT
+                if vs_bias == 'bullish':
+                    confidence += 5
+                    reasons.append("VOL SURFACE: Bullish skew confirms call thesis")
+                elif vs_skew_regime and 'CALL' in str(vs_skew_regime).upper():
+                    confidence += 5
+                    reasons.append(f"Skew {vs_skew_regime} = bullish confirmation")
+                if vs_term_regime and 'BACKWARDATION' in str(vs_term_regime).upper():
+                    confidence += 3
+                    reasons.append("Backwardation = near-term fear, explosive move potential")
+
                 return MarketAction.BUY_CALLS, min(90, confidence), "\n".join(reasons)
 
         # ================================================================
         # SCENARIO 3: BUY PUTS CONDITIONS
         # Negative Gamma + Above Flip + Bearish = Breakdown potential
+        # NOW ENHANCED: Vol surface skew confirms bearish bias
         # ================================================================
         if gamma_regime in [GammaRegime.NEGATIVE, GammaRegime.STRONG_NEGATIVE]:
             if distance_to_flip_pct > 0.5:  # Above flip point
@@ -426,6 +512,17 @@ class MarketRegimeClassifier:
                 if vol_regime in [VolatilityRegime.LOW, VolatilityRegime.EXTREME_LOW]:
                     confidence += 5
                     reasons.append("LOW IV = cheap puts, asymmetric payoff")
+
+                # VOL SURFACE ENHANCEMENT
+                if vs_bias == 'bearish':
+                    confidence += 5
+                    reasons.append("VOL SURFACE: Bearish skew confirms put thesis")
+                elif vs_skew_regime and 'PUT_SKEW' in str(vs_skew_regime).upper():
+                    confidence += 5
+                    reasons.append(f"Skew {vs_skew_regime} = elevated downside protection demand")
+                if vs_term_regime and 'BACKWARDATION' in str(vs_term_regime).upper():
+                    confidence += 3
+                    reasons.append("Backwardation = near-term fear, breakdown potential")
 
                 return MarketAction.BUY_PUTS, min(90, confidence), "\n".join(reasons)
 
@@ -537,7 +634,9 @@ class MarketRegimeClassifier:
         momentum_4h: float,
         above_20ma: bool,
         above_50ma: bool,
-        timestamp: Optional[datetime] = None
+        timestamp: Optional[datetime] = None,
+        vol_surface_data: Optional[Dict] = None,  # Volatility surface analysis
+        ml_prediction_data: Optional[Dict] = None  # ML Pattern Learner prediction
     ) -> RegimeClassification:
         """
         MAIN CLASSIFICATION METHOD
@@ -574,10 +673,47 @@ class MarketRegimeClassifier:
         else:
             self.bars_in_current_regime += 1
 
-        # Determine action
+        # Extract volatility surface data if available
+        skew_regime = None
+        skew_25d = None
+        term_structure_regime = None
+        vol_surface_bias = None
+        recommended_dte = None
+        should_sell = None
+
+        if vol_surface_data:
+            skew_regime = vol_surface_data.get('skew_regime')
+            skew_25d = vol_surface_data.get('skew_25d')
+            term_structure_regime = vol_surface_data.get('term_structure_regime')
+            vol_surface_bias = vol_surface_data.get('directional_bias')
+            recommended_dte = vol_surface_data.get('recommended_dte')
+            should_sell = vol_surface_data.get('should_sell_premium')
+
+        # Extract ML prediction data if available
+        ml_win_prob = None
+        ml_recommendation = None
+        ml_confidence_boost = 0.0
+        ml_model_trained = False
+
+        if ml_prediction_data:
+            ml_win_prob = ml_prediction_data.get('win_probability')
+            ml_recommendation = ml_prediction_data.get('recommendation')
+            ml_model_trained = ml_prediction_data.get('model_trained', False)
+            # Calculate confidence boost from ML: +/-20 based on win probability
+            if ml_win_prob is not None and ml_model_trained:
+                ml_confidence_boost = (ml_win_prob - 0.5) * 40  # Range: -20 to +20
+
+        # Determine action (enhanced with vol surface and ML if available)
         action, confidence, reasoning = self.determine_action(
-            vol_regime, gamma_regime, trend_regime, iv_hv_ratio, distance_to_flip, vix
+            vol_regime, gamma_regime, trend_regime, iv_hv_ratio, distance_to_flip, vix,
+            vol_surface_data=vol_surface_data,
+            ml_prediction_data=ml_prediction_data
         )
+
+        # Apply ML confidence adjustment (only if model is trained)
+        if ml_model_trained and ml_confidence_boost != 0:
+            confidence = min(95, max(10, confidence + ml_confidence_boost))
+            reasoning += f"\n\nML BOOST: {ml_confidence_boost:+.1f} (win prob: {ml_win_prob:.1%})"
 
         # ANTI-WHIPLASH: Don't act until regime is established
         if self.bars_in_current_regime < self.MIN_BARS_FOR_REGIME:
@@ -615,7 +751,7 @@ class MarketRegimeClassifier:
             stop_loss_pct = 0.30
             profit_target_pct = 0.30
 
-        # Build classification
+        # Build classification (including vol surface and ML data if available)
         classification = RegimeClassification(
             timestamp=timestamp,
             symbol=self.symbol,
@@ -633,6 +769,19 @@ class MarketRegimeClassifier:
             distance_to_flip_pct=distance_to_flip,
             vix=vix,
             vix_term_structure=vix_term_structure,
+            # Volatility surface fields
+            skew_regime=skew_regime,
+            skew_25d=skew_25d,
+            term_structure_regime=term_structure_regime,
+            vol_surface_bias=vol_surface_bias,
+            recommended_dte=recommended_dte,
+            should_sell_premium=should_sell,
+            # ML Pattern Learner fields
+            ml_win_probability=ml_win_prob,
+            ml_recommendation=ml_recommendation,
+            ml_confidence_boost=ml_confidence_boost,
+            ml_model_trained=ml_model_trained,
+            # Decision fields
             recommended_action=action,
             confidence=confidence,
             reasoning=reasoning,
