@@ -113,17 +113,19 @@ print("\n2a. Running Backtest")
 try:
     from backtest.spx_premium_backtest import SPXPremiumBacktester
 
-    backtest = SPXPremiumBacktester(initial_capital=100000)
-
     end_date = datetime.now() - timedelta(days=7)
     start_date = end_date - timedelta(days=60)
 
     print(f"    Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
 
-    backtest_results = backtest.run_backtest(
-        start_date.strftime('%Y-%m-%d'),
-        end_date.strftime('%Y-%m-%d')
+    # SPXPremiumBacktester takes dates in constructor, uses run() method
+    backtest = SPXPremiumBacktester(
+        start_date=start_date.strftime('%Y-%m-%d'),
+        end_date=end_date.strftime('%Y-%m-%d'),
+        initial_capital=100000
     )
+
+    backtest_results = backtest.run(save_to_db=False)
 
     if backtest_results:
         trades = backtest_results.get('all_trades', backtest_results.get('trades', []))
