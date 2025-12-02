@@ -5,6 +5,7 @@ import {
   Download, FileSpreadsheet, FileText, ChevronDown,
   TrendingUp, Brain, RotateCcw, FileCheck, Loader2
 } from 'lucide-react'
+import { apiClient } from '@/lib/api'
 
 interface ExportButtonsProps {
   symbol?: string
@@ -17,8 +18,6 @@ type ExportType = 'trades' | 'pnl-attribution' | 'decision-logs' | 'wheel-cycles
 export default function ExportButtons({ symbol = 'SPY', startDate, endDate }: ExportButtonsProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [loading, setLoading] = useState<ExportType | null>(null)
-
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
   const exports: { type: ExportType; label: string; description: string; icon: React.ReactNode }[] = [
     {
@@ -56,22 +55,15 @@ export default function ExportButtons({ symbol = 'SPY', startDate, endDate }: Ex
   const handleExport = async (type: ExportType) => {
     setLoading(type)
     try {
-      // Build query params
-      const params = new URLSearchParams()
-      if (symbol) params.append('symbol', symbol)
-      if (startDate) params.append('start_date', startDate)
-      if (endDate) params.append('end_date', endDate)
+      // Use centralized API client for export
+      const response = await apiClient.exportData(type, {
+        symbol,
+        start_date: startDate,
+        end_date: endDate
+      })
 
-      const url = `${API_URL}/api/export/${type}?${params.toString()}`
-
-      // Trigger download
-      const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error('Export failed')
-      }
-
-      const blob = await response.blob()
-      const contentDisposition = response.headers.get('Content-Disposition')
+      const blob = response.data
+      const contentDisposition = response.headers?.['content-disposition']
       let filename = `${type}_${symbol}_export.xlsx`
 
       if (contentDisposition) {

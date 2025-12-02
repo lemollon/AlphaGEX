@@ -85,18 +85,32 @@ export default function AICopilot() {
         // Handle case where API returns but success is false
         throw new Error('Analysis service returned no data')
       }
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Error getting AI response:', error)
 
-      // Fallback response
-      const aiMessage: Message = {
+      // Show actual error with retry option
+      const errorType = error?.type || 'unknown'
+      const errorMessage = error?.message || 'Unknown error occurred'
+
+      let userFriendlyMessage = ''
+      if (errorType === 'network') {
+        userFriendlyMessage = `**Connection Error**: Unable to reach the analysis service. Please check your internet connection and try again.\n\n_Error: ${errorMessage}_`
+      } else if (errorType === 'server') {
+        userFriendlyMessage = `**Server Error**: The analysis service is temporarily unavailable. Please try again in a few moments.\n\n_Error: ${errorMessage}_`
+      } else if (errorType === 'timeout') {
+        userFriendlyMessage = `**Request Timeout**: The analysis is taking too long. Please try a simpler question or try again later.\n\n_Error: ${errorMessage}_`
+      } else {
+        userFriendlyMessage = `**Analysis Failed**: ${errorMessage}\n\nPlease try rephrasing your question or try again later.`
+      }
+
+      const errorAiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: "I apologize, but I'm having trouble connecting to the analysis service right now. This is a simulated response. In production, I would provide detailed market analysis based on real-time gamma exposure data, market conditions, and trading patterns.",
+        content: userFriendlyMessage,
         timestamp: new Date()
       }
 
-      setMessages(prev => [...prev, aiMessage])
+      setMessages(prev => [...prev, errorAiMessage])
     } finally {
       setLoading(false)
     }

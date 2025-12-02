@@ -9,7 +9,7 @@ import {
 import Navigation from '@/components/Navigation'
 import WheelDashboard from '@/components/trader/WheelDashboard'
 import ExportButtons from '@/components/trader/ExportButtons'
-import { api } from '@/lib/api'
+import { apiClient } from '@/lib/api'
 
 interface WheelPhaseInfo {
   id: string
@@ -53,8 +53,8 @@ export default function WheelPage() {
 
   const fetchPhases = async () => {
     try {
-      const res = await api.get('/api/wheel/phases')
-      setPhases(res.data.data.phases || [])
+      const res = await apiClient.getWheelPhases()
+      setPhases(res.data.data?.phases || [])
     } catch (err) {
       console.error('Error fetching phases:', err)
     }
@@ -66,7 +66,7 @@ export default function WheelPage() {
     setMessage(null)
 
     try {
-      const payload = {
+      const res = await apiClient.startWheelCycle({
         symbol: formData.symbol,
         strike: parseFloat(formData.strike),
         expiration_date: formData.expiration_date,
@@ -74,9 +74,7 @@ export default function WheelPage() {
         premium: parseFloat(formData.premium),
         underlying_price: parseFloat(formData.underlying_price),
         delta: parseFloat(formData.delta)
-      }
-
-      const res = await api.post('/api/wheel/start', payload)
+      })
 
       if (res.data.success) {
         setMessage({ type: 'success', text: `Started wheel cycle #${res.data.data.cycle_id}` })

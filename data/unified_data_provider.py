@@ -454,6 +454,32 @@ class UnifiedDataProvider:
 
         return bars
 
+    # ==================== PRICE HISTORY ALIAS ====================
+
+    def get_price_history(
+        self,
+        symbol: str,
+        days: int = 30,
+        interval: str = 'day',
+        timeframe: str = None
+    ) -> List[HistoricalBar]:
+        """
+        Alias for get_historical_bars() for backwards compatibility.
+
+        Args:
+            symbol: Stock symbol
+            days: Number of days of history
+            interval: 'day', '1min', '5min', '15min'
+            timeframe: Alternative name for interval (for compatibility)
+
+        Returns:
+            List of HistoricalBar objects
+        """
+        # Use timeframe as alias for interval if provided
+        if timeframe and not interval:
+            interval = timeframe
+        return self.get_historical_bars(symbol, days, interval)
+
     # ==================== VIX ====================
 
     def get_vix(self) -> float:

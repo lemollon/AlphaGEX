@@ -1,7 +1,90 @@
 import axios, { AxiosError } from 'axios'
 import { logger } from '@/lib/logger'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// IMPORTANT: In production, NEXT_PUBLIC_API_URL must be set.
+// No localhost fallback to prevent accidental local connections in production.
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+if (!API_URL) {
+  console.warn('[API] NEXT_PUBLIC_API_URL not set. API calls will fail in production.')
+}
+
+// ==================== API RESPONSE TYPES ====================
+
+export interface APIResponse<T = any> {
+  success: boolean
+  data?: T
+  message?: string
+  error?: string
+}
+
+export interface GEXData {
+  symbol: string
+  net_gex: number
+  call_gex: number
+  put_gex: number
+  flip_point: number
+  spot_price: number
+  timestamp: string
+  data_source?: string
+}
+
+export interface TraderPerformance {
+  starting_capital: number
+  current_equity: number
+  total_pnl: number
+  total_return_pct: number
+  win_rate: number
+  total_trades: number
+  winning_trades: number
+  losing_trades: number
+  max_drawdown_pct: number
+  sharpe_ratio: number
+}
+
+export interface Position {
+  id: string
+  symbol: string
+  side: 'long' | 'short'
+  quantity: number
+  entry_price: number
+  current_price: number
+  unrealized_pnl: number
+  entry_time: string
+}
+
+export interface Trade {
+  id: string
+  symbol: string
+  side: string
+  quantity: number
+  entry_price: number
+  exit_price: number
+  pnl: number
+  entry_time: string
+  exit_time: string
+  strategy: string
+}
+
+export interface WheelPhase {
+  id: string
+  name: string
+  description: string
+  next_if_otm?: string
+  next_if_itm?: string
+  cost_basis?: string
+}
+
+export interface BacktestResult {
+  start_date: string
+  end_date: string
+  initial_capital: number
+  final_equity: number
+  total_return_pct: number
+  total_trades: number
+  win_rate: number
+  max_drawdown_pct: number
+  sharpe_ratio: number
+}
 
 // API error response structure
 interface APIErrorResponse {
@@ -326,11 +409,87 @@ export const apiClient = {
   getSPXTrades: (limit?: number) => api.get('/api/spx/trades', { params: { limit: limit || 20 } }),
   getSPXEquityCurve: (days?: number) => api.get('/api/spx/equity-curve', { params: { days: days || 30 } }),
   getSPXTradeLog: () => api.get('/api/spx/trade-log'),
+
+  // Wheel Strategy
+  getWheelPhases: () => api.get('/api/wheel/phases'),
+  startWheelCycle: (data: {
+    symbol: string
+    strike: number
+    expiration_date: string
+    contracts: number
+    premium: number
+    underlying_price: number
+    delta?: number
+  }) => api.post('/api/wheel/start', data),
+  getWheelCycles: (status?: string) => api.get('/api/wheel/cycles', { params: { status } }),
+  updateWheelPhase: (cycleId: number, phase: string, data?: any) =>
+    api.post(`/api/wheel/cycle/${cycleId}/phase`, { phase, ...data }),
+
+  // SPX Wheel Backtest
+  runSPXBacktest: (data: {
+    start_date: string
+    end_date?: string
+    initial_capital?: number
+    put_delta?: number
+    dte_target?: number
+    use_ml_scoring?: boolean
+  }) => api.post('/api/spx-backtest/run', data),
+  getSPXBacktestResults: () => api.get('/api/spx-backtest/results'),
+
+  // Export Routes
+  exportData: async (type: 'trades' | 'pnl-attribution' | 'decision-logs' | 'wheel-cycles' | 'full-audit', params?: {
+    symbol?: string
+    start_date?: string
+    end_date?: string
+  }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.symbol) queryParams.append('symbol', params.symbol)
+    if (params?.start_date) queryParams.append('start_date', params.start_date)
+    if (params?.end_date) queryParams.append('end_date', params.end_date)
+
+    const response = await api.get(`/api/export/${type}?${queryParams.toString()}`, {
+      responseType: 'blob'
+    })
+    return response
+  },
+
+  // Psychology SSE Stream
+  subscribeToPsychologyNotifications: (onMessage: (data: any) => void, onError?: (error: any) => void) => {
+    if (!API_URL) {
+      onError?.({ message: 'API_URL not configured' })
+      return () => {}
+    }
+
+    const eventSource = new EventSource(`${API_URL}/api/psychology/notifications/stream`)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        onMessage(data)
+      } catch (e) {
+        console.error('Failed to parse SSE message:', e)
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error)
+      onError?.(error)
+    }
+
+    // Return cleanup function
+    return () => {
+      eventSource.close()
+    }
+  },
 }
 
 // WebSocket connection
 export const createWebSocket = (symbol: string = 'SPY') => {
-  const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
+  const WS_URL = process.env.NEXT_PUBLIC_WS_URL
+  if (!WS_URL) {
+    console.warn('[WebSocket] NEXT_PUBLIC_WS_URL not set. WebSocket connections will fail.')
+    throw new Error('WebSocket URL not configured')
+  }
   return new WebSocket(`${WS_URL}/ws/market-data?symbol=${symbol}`)
 }
 
