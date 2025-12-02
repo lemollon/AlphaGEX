@@ -1263,6 +1263,85 @@ def fetch_vix_data() -> Dict:
 # Track VIX data availability globally for transparency
 _vix_fetch_stats = {'real': 0, 'fallback': 0, 'errors': []}
 
+# GEX data fetcher (uses TradingVolatilityAPI)
+_gex_api = None
+_gex_fetch_stats = {'real': 0, 'fallback': 0, 'errors': []}
+
+
+def get_gex_data(symbol: str = 'SPY') -> Dict:
+    """
+    Fetch GEX (Gamma Exposure) data from Trading Volatility API.
+
+    This uses the existing TradingVolatilityAPI class that was already built.
+
+    Args:
+        symbol: Stock symbol (default SPY)
+
+    Returns:
+        Dict with net_gex, put_wall, call_wall, or error
+    """
+    global _gex_api, _gex_fetch_stats
+
+    try:
+        # Lazy init the API
+        if _gex_api is None:
+            try:
+                from core_classes_and_engines import TradingVolatilityAPI
+                _gex_api = TradingVolatilityAPI()
+            except ImportError as e:
+                print(f"⚠️ TradingVolatilityAPI not available: {e}")
+                _gex_fetch_stats['errors'].append(str(e))
+                return {'error': 'TradingVolatilityAPI not available'}
+
+        if not _gex_api.api_key:
+            _gex_fetch_stats['fallback'] += 1
+            return {'error': 'No Trading Volatility API key configured'}
+
+        # Fetch GEX data
+        result = _gex_api.get_net_gamma(symbol)
+
+        if 'error' in result:
+            _gex_fetch_stats['fallback'] += 1
+            _gex_fetch_stats['errors'].append(result['error'])
+            return result
+
+        # Extract the important values
+        net_gex = result.get('net_gex', result.get('netGamma', 0))
+        put_wall = result.get('put_wall', 0)
+        call_wall = result.get('call_wall', 0)
+
+        _gex_fetch_stats['real'] += 1
+
+        return {
+            'net_gex': net_gex,
+            'put_wall': put_wall,
+            'call_wall': call_wall,
+            'source': 'TRADING_VOLATILITY'
+        }
+
+    except Exception as e:
+        print(f"❌ GEX fetch failed: {e}")
+        _gex_fetch_stats['fallback'] += 1
+        _gex_fetch_stats['errors'].append(str(e))
+        return {'error': str(e)}
+
+
+def get_gex_data_quality() -> dict:
+    """Get statistics on GEX data availability"""
+    global _gex_fetch_stats
+    total = _gex_fetch_stats['real'] + _gex_fetch_stats['fallback']
+    if total == 0:
+        return {'available': False, 'message': 'No GEX requests made yet'}
+
+    real_pct = _gex_fetch_stats['real'] / total * 100
+    return {
+        'available': _gex_fetch_stats['real'] > 0,
+        'real_pct': round(real_pct, 1),
+        'real_count': _gex_fetch_stats['real'],
+        'fallback_count': _gex_fetch_stats['fallback'],
+        'recent_errors': _gex_fetch_stats['errors'][-5:] if _gex_fetch_stats['errors'] else []
+    }
+
 
 def get_vix_for_date(date_str: str) -> float:
     """
@@ -1286,7 +1365,15 @@ def get_vix_for_date(date_str: str) -> float:
         days_ago = (datetime.now() - target_date).days + 5  # Buffer for weekends
         days_ago = max(5, min(days_ago, 400))  # Limit to ~1 year of data
 
-        df = polygon_fetcher.get_price_history('VIX', days=days_ago, timeframe='day')
+        # CRITICAL FIX: VIX is an index - try multiple ticker formats
+        # Polygon uses I:VIX for indices
+        df = None
+        vix_tickers = ['I:VIX', 'VIX', 'VIXY']  # Try index format first, then fallbacks
+
+        for ticker in vix_tickers:
+            df = polygon_fetcher.get_price_history(ticker, days=days_ago, timeframe='day')
+            if df is not None and not df.empty:
+                break
 
         if df is not None and not df.empty:
             # Find closest date
@@ -1536,13 +1623,47 @@ def get_ml_features_for_trade(
     features['distance_from_high'] = spx_data['distance_from_high']
     features['data_sources']['spx_returns'] = 'POLYGON'
 
-    # 5. Calculate put wall distance (basic - strike relative to underlying)
-    features['put_wall_distance_pct'] = (underlying_price - strike) / underlying_price * 100
-    features['data_sources']['put_wall'] = 'CALCULATED'
+    # 5. Get GEX data from Trading Volatility API
+    try:
+        gex_data = get_gex_data('SPY')
+        if 'error' not in gex_data:
+            features['net_gex'] = gex_data.get('net_gex', 0)
+            features['put_wall'] = gex_data.get('put_wall', 0)
+            features['call_wall'] = gex_data.get('call_wall', 0)
+
+            # Calculate distances from walls
+            if features['put_wall'] > 0:
+                features['put_wall_distance_pct'] = (underlying_price - features['put_wall']) / underlying_price * 100
+            else:
+                features['put_wall_distance_pct'] = (underlying_price - strike) / underlying_price * 100
+
+            if features['call_wall'] > 0:
+                features['call_wall_distance_pct'] = (features['call_wall'] - underlying_price) / underlying_price * 100
+            else:
+                features['call_wall_distance_pct'] = 5  # Default
+
+            features['data_sources']['gex'] = 'TRADING_VOLATILITY'
+        else:
+            # GEX not available - use basic calculation
+            features['net_gex'] = 0
+            features['put_wall_distance_pct'] = (underlying_price - strike) / underlying_price * 100
+            features['call_wall_distance_pct'] = 5
+            features['data_sources']['gex'] = f"UNAVAILABLE: {gex_data.get('error', 'unknown')}"
+    except Exception as e:
+        features['net_gex'] = 0
+        features['put_wall_distance_pct'] = (underlying_price - strike) / underlying_price * 100
+        features['call_wall_distance_pct'] = 5
+        features['data_sources']['gex'] = f"ERROR: {str(e)}"
 
     # 6. VIX percentile (where is VIX relative to history?)
     try:
-        vix_df = polygon_fetcher.get_price_history('VIX', days=252, timeframe='day')
+        # Try I:VIX first (index format), then fallback to VIX
+        vix_df = None
+        for ticker in ['I:VIX', 'VIX']:
+            vix_df = polygon_fetcher.get_price_history(ticker, days=252, timeframe='day')
+            if vix_df is not None and len(vix_df) > 20:
+                break
+
         if vix_df is not None and len(vix_df) > 20:
             vix_values = vix_df['Close'].values
             current_vix = features['vix']
@@ -1558,7 +1679,8 @@ def get_ml_features_for_trade(
         features['data_sources']['vix_percentile'] = 'ESTIMATED'
 
     # 7. Calculate data quality score
-    real_sources = sum(1 for v in features['data_sources'].values() if v in ['POLYGON', 'CALCULATED'])
+    real_sources = sum(1 for v in features['data_sources'].values()
+                       if v in ['POLYGON', 'CALCULATED', 'TRADING_VOLATILITY', 'VIX_PROXY'])
     total_sources = len(features['data_sources'])
     features['data_quality_pct'] = round(real_sources / total_sources * 100, 1) if total_sources > 0 else 0
 

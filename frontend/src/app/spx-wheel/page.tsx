@@ -630,12 +630,13 @@ export default function SPXWheelPage() {
                   </div>
                   {/* Honest data source disclosure */}
                   <div className="text-xs text-gray-500 space-y-1 border-t border-gray-800 pt-2">
-                    <p className="font-semibold text-gray-400">What counts as "real" data:</p>
-                    <p>✓ Option prices: From Polygon.io historical data</p>
-                    <p>✓ VIX levels: From Polygon.io (historical lookup per trade date)</p>
+                    <p className="font-semibold text-gray-400">Data Sources:</p>
+                    <p>✓ Option prices: Polygon.io historical data</p>
+                    <p>✓ VIX levels: Polygon.io (I:VIX index)</p>
                     <p>✓ IV Rank: Calculated from VIX history (252-day lookback)</p>
                     <p>✓ SPX returns: Calculated from Polygon.io price data</p>
-                    <p className="text-yellow-500/80">⚠ GEX/Dealer Gamma: Not available (requires Trading Volatility subscription)</p>
+                    <p>✓ GEX/Dealer Gamma: Trading Volatility API (if configured)</p>
+                    <p className="text-gray-600 italic">Set TRADING_VOLATILITY_API_KEY env var for GEX data</p>
                   </div>
                 </div>
               )}
