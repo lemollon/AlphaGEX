@@ -50,6 +50,9 @@ from backend.api.routes import (
     export_routes,
     ml_routes,
     spx_backtest_routes,
+    jobs_routes,  # Background job system for long-running tasks
+    regime_routes,  # Regime signals - 80+ columns of analysis data
+    volatility_surface_routes,  # Volatility surface analysis (previously orphaned)
 )
 
 # ============================================================================
@@ -259,7 +262,10 @@ app.include_router(wheel_routes.router)
 app.include_router(export_routes.router)
 app.include_router(ml_routes.router)
 app.include_router(spx_backtest_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest")
+app.include_router(jobs_routes.router)
+app.include_router(regime_routes.router)
+app.include_router(volatility_surface_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()

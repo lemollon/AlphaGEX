@@ -114,10 +114,10 @@ class APIConfig:
     POLYGON_API_KEY: Optional[str] = os.getenv('POLYGON_API_KEY')
     POLYGON_BASE_URL: str = 'https://api.polygon.io'
 
-    # Tradier
+    # Tradier - PRODUCTION MODE BY DEFAULT (user requested)
     TRADIER_API_KEY: Optional[str] = os.getenv('TRADIER_API_KEY')
     TRADIER_ACCOUNT_ID: Optional[str] = os.getenv('TRADIER_ACCOUNT_ID')
-    TRADIER_SANDBOX: bool = env_bool('TRADIER_SANDBOX', True)
+    TRADIER_SANDBOX: bool = env_bool('TRADIER_SANDBOX', False)  # Default to PRODUCTION
 
     # Claude AI
     ANTHROPIC_API_KEY: Optional[str] = os.getenv('ANTHROPIC_API_KEY')

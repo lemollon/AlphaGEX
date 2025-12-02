@@ -175,6 +175,7 @@ class TradeExecutorMixin:
             stop_loss_pct = 30.0
 
         # Insert into autonomous_open_positions table
+        # Now includes ALL Greeks (delta, gamma, theta, vega) for full transparency
         c.execute("""
             INSERT INTO autonomous_open_positions (
                 symbol, strategy, action, entry_date, entry_time, strike, option_type,
@@ -184,10 +185,11 @@ class TradeExecutorMixin:
                 trade_reasoning, contract_symbol,
                 theoretical_price, theoretical_bid, theoretical_ask, recommended_entry,
                 price_adjustment, price_adjustment_pct, is_delayed, data_confidence,
-                entry_iv, entry_delta, current_iv, current_delta,
+                entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
+                current_iv, current_delta, current_gamma, current_theta, current_vega,
                 profit_target_pct, stop_loss_pct
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             trade['symbol'],
@@ -220,10 +222,18 @@ class TradeExecutorMixin:
             option_data.get('price_adjustment_pct'),
             option_data.get('is_delayed', False),
             option_data.get('confidence', 'unknown'),
+            # Entry Greeks - stored at time of trade
             option_data.get('iv') or option_data.get('implied_volatility'),
             option_data.get('delta'),
+            option_data.get('gamma'),
+            option_data.get('theta'),
+            option_data.get('vega'),
+            # Current Greeks - initialized same as entry
             option_data.get('iv') or option_data.get('implied_volatility'),
             option_data.get('delta'),
+            option_data.get('gamma'),
+            option_data.get('theta'),
+            option_data.get('vega'),
             profit_target_pct,
             stop_loss_pct
         ))
