@@ -199,6 +199,12 @@ async def get_trader_performance():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/{symbol}/positions")
+async def get_symbol_positions(symbol: str):
+    """Get open positions for a specific symbol (path parameter version)."""
+    return await get_open_positions(symbol=symbol)
+
+
 @router.get("/positions")
 async def get_open_positions(symbol: str = None):
     """Get all open positions from database with full details for tracking.
@@ -1107,33 +1113,74 @@ async def get_unified_portfolio():
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Get all open positions grouped by symbol
-        cursor.execute("""
-            SELECT
-                symbol,
-                COUNT(*) as position_count,
-                SUM(contracts) as total_contracts,
-                SUM(unrealized_pnl) as unrealized_pnl,
-                SUM(COALESCE(current_delta, entry_delta, 0) * contracts * 100) as net_delta,
-                SUM(COALESCE(current_gamma, entry_gamma, 0) * contracts * 100) as net_gamma,
-                SUM(COALESCE(current_theta, entry_theta, 0) * contracts * 100) as net_theta,
-                SUM(COALESCE(current_vega, entry_vega, 0) * contracts * 100) as net_vega
-            FROM autonomous_open_positions
-            GROUP BY symbol
-            ORDER BY symbol
-        """)
+        # Use defensive query that handles missing Greek columns
+        try:
+            cursor.execute("""
+                SELECT
+                    symbol,
+                    COUNT(*) as position_count,
+                    SUM(contracts) as total_contracts,
+                    SUM(unrealized_pnl) as unrealized_pnl,
+                    SUM(COALESCE(current_delta, entry_delta, 0) * contracts * 100) as net_delta,
+                    SUM(COALESCE(current_gamma, entry_gamma, 0) * contracts * 100) as net_gamma,
+                    SUM(COALESCE(current_theta, entry_theta, 0) * contracts * 100) as net_theta,
+                    SUM(COALESCE(current_vega, entry_vega, 0) * contracts * 100) as net_vega
+                FROM autonomous_open_positions
+                GROUP BY symbol
+                ORDER BY symbol
+            """)
+        except Exception as col_error:
+            # Fallback if Greek columns don't exist yet
+            logger.warning(f"Greek columns not available, using basic query: {col_error}")
+            cursor.execute("""
+                SELECT
+                    symbol,
+                    COUNT(*) as position_count,
+                    SUM(contracts) as total_contracts,
+                    SUM(unrealized_pnl) as unrealized_pnl,
+                    0 as net_delta,
+                    0 as net_gamma,
+                    0 as net_theta,
+                    0 as net_vega
+                FROM autonomous_open_positions
+                GROUP BY symbol
+                ORDER BY symbol
+            """)
         symbol_positions = cursor.fetchall()
 
-        # Get all positions with full detail
-        cursor.execute("""
-            SELECT
-                id, symbol, strategy, strike, option_type, contracts,
-                entry_price, current_price, unrealized_pnl, entry_date,
-                expiration_date, contract_symbol, gex_regime, confidence,
-                entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
-                current_iv, current_delta, current_gamma, current_theta, current_vega
-            FROM autonomous_open_positions
-            ORDER BY symbol, entry_date DESC
-        """)
+        # Get all positions with full detail - handle missing columns gracefully
+        try:
+            cursor.execute("""
+                SELECT
+                    id, symbol, strategy, strike, option_type, contracts,
+                    entry_price, current_price, unrealized_pnl, entry_date,
+                    expiration_date, contract_symbol, gex_regime,
+                    COALESCE(entry_iv, 0) as entry_iv,
+                    COALESCE(entry_delta, 0) as entry_delta,
+                    COALESCE(entry_gamma, 0) as entry_gamma,
+                    COALESCE(entry_theta, 0) as entry_theta,
+                    COALESCE(entry_vega, 0) as entry_vega,
+                    COALESCE(current_iv, 0) as current_iv,
+                    COALESCE(current_delta, 0) as current_delta,
+                    COALESCE(current_gamma, 0) as current_gamma,
+                    COALESCE(current_theta, 0) as current_theta,
+                    COALESCE(current_vega, 0) as current_vega
+                FROM autonomous_open_positions
+                ORDER BY symbol, entry_date DESC
+            """)
+        except Exception as col_error:
+            # Fallback if Greek columns don't exist yet
+            logger.warning(f"Greek columns not available for positions detail: {col_error}")
+            cursor.execute("""
+                SELECT
+                    id, symbol, strategy, strike, option_type, contracts,
+                    entry_price, current_price, unrealized_pnl, entry_date,
+                    NULL as expiration_date, NULL as contract_symbol, gex_regime,
+                    0 as entry_iv, 0 as entry_delta, 0 as entry_gamma, 0 as entry_theta, 0 as entry_vega,
+                    0 as current_iv, 0 as current_delta, 0 as current_gamma, 0 as current_theta, 0 as current_vega
+                FROM autonomous_open_positions
+                ORDER BY symbol, entry_date DESC
+            """)
         all_positions = cursor.fetchall()
 
         # Get realized P&L by symbol

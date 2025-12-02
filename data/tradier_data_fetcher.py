@@ -79,6 +79,11 @@ class OptionChain:
     chains: Dict[str, List[OptionContract]] = field(default_factory=dict)  # expiration -> contracts
     last_updated: datetime = field(default_factory=datetime.now)
 
+    @property
+    def symbol(self) -> str:
+        """Alias for underlying for backward compatibility"""
+        return self.underlying
+
 
 @dataclass
 class AccountPosition:

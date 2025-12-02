@@ -256,6 +256,10 @@ class PolygonDataFetcher:
 
         return None
 
+    def get_latest_price(self, symbol: str) -> Optional[float]:
+        """Alias for get_current_price for backward compatibility"""
+        return self.get_current_price(symbol)
+
     def get_options_chain(
         self,
         symbol: str,
@@ -808,6 +812,11 @@ def get_price_history(symbol: str, days: int = 90, timeframe: str = 'day', multi
 
 def get_current_price(symbol: str) -> Optional[float]:
     """Get current price"""
+    return polygon_fetcher.get_current_price(symbol)
+
+
+def get_latest_price(symbol: str) -> Optional[float]:
+    """Get latest price (alias for get_current_price)"""
     return polygon_fetcher.get_current_price(symbol)
 
 

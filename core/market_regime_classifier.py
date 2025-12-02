@@ -138,6 +138,24 @@ class RegimeClassification:
     vix: float                  # VIX level
     vix_term_structure: str     # "contango" or "backwardation"
 
+    # THE DECISION (required fields - must come before optional fields with defaults)
+    recommended_action: MarketAction
+    confidence: float           # 0-100
+    reasoning: str
+
+    # Persistence tracking
+    regime_start_time: datetime
+    bars_in_regime: int         # How many bars we've been in this regime
+    regime_changed: bool        # Did regime just change?
+
+    # Risk parameters
+    max_position_size_pct: float  # Max % of capital for this regime
+    stop_loss_pct: float          # Recommended stop loss %
+    profit_target_pct: float      # Recommended profit target %
+
+    # Optional fields with defaults (must come after required fields)
+    previous_action: Optional[MarketAction] = None
+
     # Volatility Surface Analysis (NEW - provides skew and term structure insight)
     skew_regime: Optional[str] = None           # From vol surface: EXTREME_PUT_SKEW, HIGH_PUT_SKEW, etc.
     skew_25d: Optional[float] = None            # 25-delta skew (put IV - call IV)
@@ -151,22 +169,6 @@ class RegimeClassification:
     ml_recommendation: Optional[str] = None      # ML says: STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL
     ml_confidence_boost: Optional[float] = None  # How much ML adjusts confidence (-20 to +20)
     ml_model_trained: bool = False               # Is the ML model actually trained?
-
-    # THE DECISION
-    recommended_action: MarketAction
-    confidence: float           # 0-100
-    reasoning: str
-
-    # Persistence tracking
-    regime_start_time: datetime
-    bars_in_regime: int         # How many bars we've been in this regime
-    regime_changed: bool        # Did regime just change?
-    previous_action: Optional[MarketAction]
-
-    # Risk parameters
-    max_position_size_pct: float  # Max % of capital for this regime
-    stop_loss_pct: float          # Recommended stop loss %
-    profit_target_pct: float      # Recommended profit target %
 
 
 class MarketRegimeClassifier:
