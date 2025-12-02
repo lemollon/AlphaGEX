@@ -2,9 +2,12 @@
 Autonomous Trader API routes.
 
 Handles trader status, performance, positions, trades, and equity curve.
+
+IMPORTANT: Trade execution endpoints are protected by ENABLE_LIVE_TRADING flag.
 """
 
 import math
+import os
 from datetime import datetime, timedelta
 import logging
 
@@ -19,6 +22,26 @@ from backend.api.logging_config import api_logger, log_trade_entry, log_trade_ex
 
 router = APIRouter(prefix="/api/trader", tags=["Trader"])
 logger = logging.getLogger(__name__)
+
+
+def check_live_trading_enabled() -> bool:
+    """
+    Check if live trading is enabled.
+    Returns True if ENABLE_LIVE_TRADING env var is 'true'.
+    """
+    return os.getenv('ENABLE_LIVE_TRADING', 'false').lower() == 'true'
+
+
+def require_live_trading():
+    """
+    Guard function to block trade execution when live trading is disabled.
+    Raises HTTPException if live trading is not enabled.
+    """
+    if not check_live_trading_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true to enable trade execution."
+        )
 
 # Try to import the autonomous trader
 try:
@@ -811,7 +834,12 @@ async def execute_trader_cycle():
     1. Finds and executes a daily trade (if not already traded today)
     2. Manages existing open positions
     3. Returns the results
+
+    PROTECTED: Requires ENABLE_LIVE_TRADING=true
     """
+    # GUARD: Check if live trading is enabled
+    require_live_trading()
+
     if not trader_available:
         return {
             "success": False,
@@ -907,7 +935,14 @@ async def execute_trader_cycle():
 
 @router.post("/strategies/{strategy_id}/toggle")
 async def toggle_strategy(strategy_id: str, enabled: bool = True):
-    """Toggle a strategy on/off"""
+    """
+    Toggle a strategy on/off
+
+    PROTECTED: Requires ENABLE_LIVE_TRADING=true
+    """
+    # GUARD: Check if live trading is enabled
+    require_live_trading()
+
     if not trader_available:
         return {"success": False, "message": "Trader not configured"}
 

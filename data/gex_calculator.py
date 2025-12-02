@@ -26,6 +26,113 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# OPTIONS DATA VALIDATION
+# =============================================================================
+
+def validate_options_data(
+    options_data: List[Dict],
+    spot_price: float,
+    symbol: str = "UNKNOWN"
+) -> Dict[str, Any]:
+    """
+    Validate options data quality and freshness.
+
+    Returns:
+        Dict with 'valid' bool and 'issues' list
+    """
+    result = {
+        'valid': True,
+        'issues': [],
+        'warnings': [],
+        'stats': {}
+    }
+
+    if not options_data:
+        result['valid'] = False
+        result['issues'].append("No options data provided")
+        return result
+
+    if spot_price <= 0:
+        result['valid'] = False
+        result['issues'].append(f"Invalid spot price: {spot_price}")
+        return result
+
+    # Count contracts with valid data
+    valid_contracts = 0
+    contracts_with_gamma = 0
+    contracts_with_oi = 0
+    total_oi = 0
+    strike_range = []
+
+    for contract in options_data:
+        strike = float(contract.get('strike', 0))
+        gamma = float(contract.get('gamma', 0) or 0)
+        oi = int(contract.get('open_interest', 0) or 0)
+
+        if strike > 0:
+            valid_contracts += 1
+            strike_range.append(strike)
+
+        if gamma > 0:
+            contracts_with_gamma += 1
+
+        if oi > 0:
+            contracts_with_oi += 1
+            total_oi += oi
+
+    result['stats'] = {
+        'total_contracts': len(options_data),
+        'valid_contracts': valid_contracts,
+        'contracts_with_gamma': contracts_with_gamma,
+        'contracts_with_oi': contracts_with_oi,
+        'total_open_interest': total_oi,
+        'strike_range': (min(strike_range), max(strike_range)) if strike_range else (0, 0)
+    }
+
+    # Validation checks
+    if valid_contracts < 10:
+        result['valid'] = False
+        result['issues'].append(f"Too few valid contracts: {valid_contracts} (need at least 10)")
+
+    if contracts_with_gamma < 5:
+        result['valid'] = False
+        result['issues'].append(f"Too few contracts with gamma data: {contracts_with_gamma}")
+
+    if contracts_with_oi < 5:
+        result['valid'] = False
+        result['issues'].append(f"Too few contracts with open interest: {contracts_with_oi}")
+
+    if total_oi < 1000:
+        result['warnings'].append(f"Low total open interest: {total_oi} (may indicate stale data)")
+
+    # Check if strikes span around spot price
+    if strike_range:
+        min_strike, max_strike = min(strike_range), max(strike_range)
+        if spot_price < min_strike or spot_price > max_strike:
+            result['warnings'].append(
+                f"Spot price {spot_price} is outside strike range [{min_strike}, {max_strike}]"
+            )
+
+        # Check for reasonable strike distribution
+        strikes_below_spot = sum(1 for s in strike_range if s < spot_price)
+        strikes_above_spot = sum(1 for s in strike_range if s > spot_price)
+
+        if strikes_below_spot < 3 or strikes_above_spot < 3:
+            result['warnings'].append(
+                f"Unbalanced strike distribution: {strikes_below_spot} below, {strikes_above_spot} above spot"
+            )
+
+    if result['issues']:
+        logger.warning(f"Options data validation failed for {symbol}: {result['issues']}")
+    elif result['warnings']:
+        logger.info(f"Options data warnings for {symbol}: {result['warnings']}")
+    else:
+        logger.debug(f"Options data validated for {symbol}: {result['stats']}")
+
+    return result
+
+
 @dataclass
 class GEXResult:
     """GEX calculation result"""

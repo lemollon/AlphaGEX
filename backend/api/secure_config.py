@@ -23,7 +23,10 @@ from pydantic_settings import BaseSettings
 # =============================================================================
 
 # Trading Capital
-DEFAULT_STARTING_CAPITAL = Decimal('1000000.00')
+# SPY: $1M is sufficient (~$400/contract margin)
+# SPX: $100M required (~$137k/contract margin for index options)
+DEFAULT_STARTING_CAPITAL = Decimal('1000000.00')  # SPY default
+DEFAULT_SPX_STARTING_CAPITAL = Decimal('100000000.00')  # SPX needs $100M for margin
 DEFAULT_MAX_POSITION_SIZE_PCT = Decimal('0.10')  # 10% of capital
 DEFAULT_RISK_PER_TRADE_PCT = Decimal('0.02')     # 2% risk per trade
 
@@ -383,3 +386,28 @@ def is_live_trading() -> bool:
     """Check if live trading is enabled."""
     settings = get_settings()
     return settings.trading_mode == 'live'
+
+
+def get_starting_capital_for_symbol(symbol: str) -> Decimal:
+    """
+    Get appropriate starting capital based on symbol.
+
+    SPX index options require significantly more capital due to:
+    - Higher notional value (~$6000 vs $600 for SPY)
+    - Higher margin requirements (~$137k/contract vs ~$400/contract)
+    - Cash-settled index options
+
+    Args:
+        symbol: Trading symbol (SPX, SPY, etc.)
+
+    Returns:
+        Appropriate starting capital as Decimal
+    """
+    symbol = symbol.upper()
+
+    # SPX and related index products need much more capital
+    if symbol in ('SPX', 'SPXW', 'XSP', 'NDX', 'RUT'):
+        return DEFAULT_SPX_STARTING_CAPITAL  # $100M
+
+    # Standard equity options
+    return DEFAULT_STARTING_CAPITAL  # $1M

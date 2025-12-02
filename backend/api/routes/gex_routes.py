@@ -2,7 +2,7 @@
 GEX (Gamma Exposure) API routes.
 
 Handles all GEX data, levels, history, and regime analysis.
-With fallback to database-stored data if live API fails.
+Data source priority: Tradier (live) -> TradingVolatilityAPI -> Database fallback
 """
 
 import logging
@@ -26,6 +26,15 @@ try:
 except ImportError:
     DATA_COLLECTOR_AVAILABLE = False
 
+# Import Tradier for direct options data
+try:
+    from data.tradier_data_fetcher import TradierClient
+    TRADIER_AVAILABLE = True
+    logger.info("✅ Tradier client available for GEX routes")
+except ImportError:
+    TRADIER_AVAILABLE = False
+    logger.warning("⚠️ Tradier client not available")
+
 router = APIRouter(prefix="/api/gex", tags=["GEX"])
 
 
@@ -37,6 +46,7 @@ def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
     Fallback: Get most recent GEX data from gex_history database.
     Returns None if no data found.
     """
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -54,7 +64,6 @@ def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
         """, (symbol,))
 
         row = cursor.fetchone()
-        conn.close()
 
         if row:
             return {
@@ -74,6 +83,85 @@ def get_gex_from_database(symbol: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.debug(f"Database fallback failed for {symbol}: {e}")
         return None
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def get_gex_from_tradier_direct(symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    PRIMARY: Get GEX data directly from Tradier options chain.
+    Uses real-time options data with Greeks for accurate GEX calculation.
+    """
+    if not TRADIER_AVAILABLE:
+        return None
+
+    try:
+        import os
+        tradier_key = os.getenv('TRADIER_API_KEY')
+        if not tradier_key:
+            logger.debug("Tradier API key not configured")
+            return None
+
+        client = TradierClient()
+
+        # Get current price
+        quote = client.get_quote(symbol)
+        if not quote or 'last' not in quote:
+            logger.debug(f"Could not get quote for {symbol}")
+            return None
+
+        spot_price = float(quote.get('last', 0))
+        if spot_price <= 0:
+            return None
+
+        # Get options chain with Greeks
+        chain = client.get_option_chain(symbol)
+        if not chain or not chain.chains:
+            logger.debug(f"No options chain data for {symbol}")
+            return None
+
+        # Calculate GEX from chain
+        from data.gex_calculator import calculate_gex_from_chain
+        options_data = []
+        for expiration, contracts in chain.chains.items():
+            for contract in contracts:
+                options_data.append({
+                    'strike': contract.strike,
+                    'gamma': contract.gamma,
+                    'open_interest': contract.open_interest,
+                    'option_type': contract.option_type
+                })
+
+        if not options_data:
+            return None
+
+        gex_result = calculate_gex_from_chain(symbol, spot_price, options_data)
+
+        logger.info(f"✅ GEX calculated from Tradier for {symbol}: net_gex={gex_result.net_gex/1e9:.2f}B")
+
+        return {
+            'symbol': symbol,
+            'spot_price': gex_result.spot_price,
+            'net_gex': gex_result.net_gex,
+            'call_gex': gex_result.call_gex,
+            'put_gex': gex_result.put_gex,
+            'call_wall': gex_result.call_wall,
+            'put_wall': gex_result.put_wall,
+            'gamma_flip': gex_result.gamma_flip,
+            'flip_point': gex_result.flip_point,
+            'max_pain': gex_result.max_pain,
+            'data_source': 'tradier_live',
+            'is_cached': False,
+            'timestamp': datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.warning(f"Tradier direct GEX failed for {symbol}: {e}")
+        return None
 
 
 def get_gex_from_tradier_calculation(symbol: str) -> Optional[Dict[str, Any]]:
@@ -85,28 +173,43 @@ def get_gex_from_tradier_calculation(symbol: str) -> Optional[Dict[str, Any]]:
         from data.gex_calculator import get_calculated_gex
         data = get_calculated_gex(symbol)
         if data and 'error' not in data:
-            logger.debug(f" GEX calculated from Tradier options for {symbol}")
+            logger.debug(f"GEX calculated from Tradier options for {symbol}")
             return data
         return None
     except ImportError as e:
-        logger.debug(f" GEX calculator import failed: {e}")
+        logger.debug(f"GEX calculator import failed: {e}")
         return None
     except Exception as e:
-        logger.debug(f" Tradier GEX calculation failed for {symbol}: {e}")
+        logger.debug(f"Tradier GEX calculation failed for {symbol}: {e}")
         return None
 
 
 def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
     """
     Get GEX data with intelligent fallback chain:
-    1. Try TradingVolatilityAPI first (live data from dedicated service)
-    2. Calculate from Tradier options chain (real-time calculation)
-    3. Fallback to gex_history database (cached historical data)
-    4. Return error if nothing available
+    1. Try Tradier direct (real-time live options data)
+    2. Try TradingVolatilityAPI (live data from dedicated service)
+    3. Calculate from Tradier options chain (real-time calculation)
+    4. Fallback to gex_history database (cached historical data)
+    5. Return error if nothing available
     """
     errors = []
 
-    # PRIMARY: Try TradingVolatilityAPI (fastest, pre-calculated)
+    # PRIMARY: Try Tradier direct (real-time live data)
+    logger.debug(f"Trying Tradier direct for {symbol}...")
+    tradier_direct = get_gex_from_tradier_direct(symbol)
+    if tradier_direct:
+        # Store data for ML/AI analysis
+        if DATA_COLLECTOR_AVAILABLE:
+            try:
+                DataCollector.store_gex(tradier_direct, source='tradier_live')
+            except Exception as e:
+                logger.warning(f"Failed to store Tradier GEX data: {e}")
+        return tradier_direct
+    else:
+        errors.append("Tradier direct: Not available or failed")
+
+    # FALLBACK 1: Try TradingVolatilityAPI (fastest, pre-calculated)
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
@@ -120,7 +223,7 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
                 try:
                     DataCollector.store_gex(data, source='tradingvolatility')
                 except Exception as e:
-                    logger.warning(f": Failed to store GEX data: {e}")
+                    logger.warning(f"Failed to store GEX data: {e}")
             return data
         else:
             error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
@@ -130,8 +233,8 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
     except Exception as e:
         errors.append(f"TradingVolatilityAPI error: {e}")
 
-    # FALLBACK 1: Calculate from Tradier options chain (real-time)
-    logger.debug(f" TradingVolatilityAPI failed for {symbol}, trying Tradier calculation...")
+    # FALLBACK 2: Calculate from Tradier options chain (real-time)
+    logger.debug(f"TradingVolatilityAPI failed for {symbol}, trying Tradier calculation...")
     tradier_data = get_gex_from_tradier_calculation(symbol)
     if tradier_data:
         # Store calculated data for ML/AI analysis
@@ -139,16 +242,16 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
             try:
                 DataCollector.store_gex(tradier_data, source='tradier_calculated')
             except Exception as e:
-                logger.warning(f": Failed to store Tradier GEX data: {e}")
+                logger.warning(f"Failed to store Tradier GEX data: {e}")
         return tradier_data
     else:
         errors.append("Tradier calculation: Failed or unavailable")
 
-    # FALLBACK 2: Try database (most recent cached data)
-    logger.debug(f" Tradier calculation failed for {symbol}, trying database fallback...")
+    # FALLBACK 3: Try database (most recent cached data)
+    logger.debug(f"Tradier calculation failed for {symbol}, trying database fallback...")
     db_data = get_gex_from_database(symbol)
     if db_data:
-        logger.debug(f" Using database fallback for {symbol}")
+        logger.debug(f"Using database fallback for {symbol}")
         return db_data
     else:
         errors.append("Database fallback: No recent data found")
@@ -156,7 +259,7 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
     # All sources failed
     return {
         'error': f"All data sources failed: {'; '.join(errors)}",
-        'tried_sources': ['TradingVolatilityAPI', 'Tradier_calculation', 'gex_history_database']
+        'tried_sources': ['Tradier_direct', 'TradingVolatilityAPI', 'Tradier_calculation', 'gex_history_database']
     }
 
 
@@ -328,6 +431,7 @@ async def get_gex_levels(symbol: str):
 async def get_gex_history(symbol: str = "SPY", days: int = 30):
     """Get historical GEX data"""
     symbol = symbol.upper().strip()
+    conn = None
 
     try:
         conn = get_connection()
@@ -363,8 +467,6 @@ async def get_gex_history(symbol: str = "SPY", days: int = 30):
                 "mm_state": row['mm_state'],
                 "regime": row['regime']
             })
-
-        conn.close()
 
         # Add data_source and ensure all fields are present for frontend
         gex_history = []
@@ -403,11 +505,18 @@ async def get_gex_history(symbol: str = "SPY", days: int = 30):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @router.get("/regime-changes")
 async def get_regime_changes(symbol: str = "SPY", days: int = 30):
     """Get historical regime change events"""
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -434,7 +543,6 @@ async def get_regime_changes(symbol: str = "SPY", days: int = 30):
         """, (symbol, start_date))
 
         rows = cursor.fetchall()
-        conn.close()
 
         # Find regime changes
         changes = []
@@ -482,6 +590,12 @@ async def get_regime_changes(symbol: str = "SPY", days: int = 30):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @router.get("/compare/0dte/{symbol}")
