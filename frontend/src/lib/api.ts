@@ -453,6 +453,43 @@ export const apiClient = {
     return response
   },
 
+  // ============================================================================
+  // NEW: Transparency & Analysis Endpoints
+  // ============================================================================
+
+  // Unified Portfolio - Combined SPY + SPX view with Greeks
+  getUnifiedPortfolio: () => api.get('/api/trader/portfolio/unified'),
+
+  // Regime Signals - Full 80+ columns of analysis data
+  getRegimeCurrent: () => api.get('/api/regime/current'),
+  getRegimeHistory: (days: number = 7) => api.get(`/api/regime/history?days=${days}`),
+  getRegimeColumns: () => api.get('/api/regime/columns'),
+  getRegimeRSI: (limit: number = 20) => api.get(`/api/regime/rsi-analysis?limit=${limit}`),
+  getRegimeGammaWalls: (limit: number = 20) => api.get(`/api/regime/gamma-walls?limit=${limit}`),
+  getRegimePsychologyTraps: (limit: number = 20) => api.get(`/api/regime/psychology-traps?limit=${limit}`),
+  getRegimeMonthlyMagnets: (limit: number = 20) => api.get(`/api/regime/monthly-magnets?limit=${limit}`),
+  getRegimeSignalAccuracy: (days: number = 30) => api.get(`/api/regime/signal-accuracy?days=${days}`),
+  getRegimeVIX: (limit: number = 20) => api.get(`/api/regime/vix-analysis?limit=${limit}`),
+  getRegimeTradeReasoning: (limit: number = 10) => api.get(`/api/regime/trade-reasoning?limit=${limit}`),
+
+  // Volatility Surface - Skew, Term Structure, Trading Signals
+  getVolSurfaceStatus: () => api.get('/api/volatility-surface/status'),
+  getVolSurfaceAnalysis: (symbol: string = 'SPY') => api.get(`/api/volatility-surface/analyze/${symbol}`),
+  getVolSurfaceSkew: (symbol: string = 'SPY') => api.get(`/api/volatility-surface/skew/${symbol}`),
+  getVolSurfaceTermStructure: (symbol: string = 'SPY') => api.get(`/api/volatility-surface/term-structure/${symbol}`),
+  getVolSurfaceTradingSignal: (symbol: string = 'SPY') => api.get(`/api/volatility-surface/trading-signal/${symbol}`),
+
+  // Background Jobs - Long-running backtests
+  getJobsList: (status?: string, limit: number = 20) =>
+    api.get('/api/jobs/list', { params: { status, limit } }),
+  getJobStatus: (jobId: string) => api.get(`/api/jobs/${jobId}/status`),
+  getJobResult: (jobId: string) => api.get(`/api/jobs/${jobId}/result`),
+  cancelJob: (jobId: string) => api.post(`/api/jobs/${jobId}/cancel`),
+  startBacktestJob: (type: 'spx' | 'spy' | 'all', params?: any) =>
+    api.post(`/api/jobs/backtest/${type}`, params || {}),
+  startMLTrainingJob: (lookbackDays: number = 180) =>
+    api.post('/api/jobs/ml/train', { lookback_days: lookbackDays }),
+
   // Psychology SSE Stream
   subscribeToPsychologyNotifications: (onMessage: (data: any) => void, onError?: (error: any) => void) => {
     if (!API_URL) {
