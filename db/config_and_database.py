@@ -2077,6 +2077,7 @@ def backfill_ai_intelligence_tables():
                     print(f"     ℹ️ Already backfilled or no new data")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  1. market_data: SKIPPED - gex_history is empty")
 
@@ -2114,6 +2115,7 @@ def backfill_ai_intelligence_tables():
                     print(f"     ℹ️ Already backfilled or no new data")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  2. gex_levels: SKIPPED - gex_history is empty")
 
@@ -2150,6 +2152,7 @@ def backfill_ai_intelligence_tables():
                     print(f"     ℹ️ Already backfilled or no new data")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  3. psychology_analysis: SKIPPED - regime_signals is empty")
 
@@ -2176,6 +2179,7 @@ def backfill_ai_intelligence_tables():
                     print(f"     ⚠️ No 'capital' key found in autonomous_config - SKIPPING (no fake data)")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  4. account_state: SKIPPED - autonomous_config is empty (no fake data)")
 
@@ -2214,6 +2218,7 @@ def backfill_ai_intelligence_tables():
                     print(f"     ℹ️ Already backfilled or no new data")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  5. trades: SKIPPED - autonomous_positions is empty")
 
@@ -2238,13 +2243,14 @@ def backfill_ai_intelligence_tables():
                         SELECT 1 FROM autonomous_closed_trades act
                         WHERE act.symbol = autonomous_positions.symbol
                         AND act.strike = autonomous_positions.strike
-                        AND act.entry_date = autonomous_positions.entry_date
+                        AND act.entry_date::text = autonomous_positions.entry_date::text
                     )
                 """)
                 rows = c.rowcount
                 print(f"     ✅ Inserted {rows} closed trades")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  6. autonomous_closed_trades: SKIPPED - autonomous_positions is empty")
 
@@ -2274,6 +2280,7 @@ def backfill_ai_intelligence_tables():
                 print(f"     ✅ Inserted {rows} open positions")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  7. autonomous_open_positions: SKIPPED - autonomous_positions is empty")
 
@@ -2307,6 +2314,7 @@ def backfill_ai_intelligence_tables():
                 print(f"     ✅ Inserted {rows} notifications")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  8. psychology_notifications: SKIPPED - regime_signals is empty")
 
@@ -2340,6 +2348,7 @@ def backfill_ai_intelligence_tables():
                 print(f"     ✅ Inserted {rows} trade activities")
             except Exception as e:
                 print(f"     ⚠️ Error: {e}")
+                conn.rollback()  # Reset transaction for next step
         else:
             print("\n  9. autonomous_trade_activity: SKIPPED - autonomous_trade_log is empty")
 
