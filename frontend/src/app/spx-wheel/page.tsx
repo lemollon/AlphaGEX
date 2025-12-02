@@ -4,10 +4,24 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Brain, TrendingUp, TrendingDown, AlertTriangle, CheckCircle,
   PlayCircle, RefreshCw, BarChart3, Target, DollarSign,
-  Info, Zap, Clock, Database, ChevronDown, ChevronUp
+  Info, Zap, Clock, Database, ChevronDown, ChevronUp,
+  FileText, Activity
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { api } from '@/lib/api'
+
+interface MLLog {
+  id: number
+  timestamp: string
+  action: string
+  symbol: string
+  details: any
+  ml_score: number | null
+  recommendation: string | null
+  reasoning: string | null
+  trade_id: string | null
+  backtest_id: string | null
+}
 
 interface MLStatus {
   ml_library_available: boolean
@@ -76,6 +90,23 @@ export default function SPXWheelPage() {
   const [showWhyItWorks, setShowWhyItWorks] = useState(true)
   const [showRisks, setShowRisks] = useState(false)
   const [showMLDetails, setShowMLDetails] = useState(false)
+  const [mlLogs, setMlLogs] = useState<MLLog[]>([])
+  const [showLogs, setShowLogs] = useState(true)
+  const [logsLoading, setLogsLoading] = useState(false)
+
+  const fetchLogs = useCallback(async () => {
+    try {
+      setLogsLoading(true)
+      const res = await api.get('/api/ml/logs?limit=50').catch(() => ({ data: { data: null } }))
+      if (res.data?.data?.logs) {
+        setMlLogs(res.data.data.logs)
+      }
+    } catch (err) {
+      console.error('Failed to fetch logs:', err)
+    } finally {
+      setLogsLoading(false)
+    }
+  }, [])
 
   const fetchData = useCallback(async () => {
     try {
@@ -95,12 +126,15 @@ export default function SPXWheelPage() {
         setStrategyExplanation(strategyRes.data.data)
       }
 
+      // Also fetch logs
+      await fetchLogs()
+
     } catch (err: any) {
       setError(err.message || 'Failed to load data')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [fetchLogs])
 
   useEffect(() => {
     fetchData()
@@ -582,6 +616,132 @@ export default function SPXWheelPage() {
               </p>
             </div>
           )}
+
+          {/* ML DECISION LOGS - FULL TRANSPARENCY */}
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <button
+                onClick={() => setShowLogs(!showLogs)}
+                className="flex items-center gap-3"
+              >
+                <FileText className="w-6 h-6 text-cyan-400" />
+                <h2 className="text-xl font-bold">ML Decision Logs</h2>
+                <span className="text-sm text-gray-400">({mlLogs.length} entries)</span>
+                {showLogs ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={fetchLogs}
+                disabled={logsLoading}
+                className="px-3 py-1 bg-gray-800 hover:bg-gray-700 rounded text-sm flex items-center gap-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${logsLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+
+            {showLogs && (
+              <>
+                {mlLogs.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <FileText className="w-12 h-12 mx-auto mb-3 text-gray-600" />
+                    <p>No ML activity logged yet</p>
+                    <p className="text-sm mt-1">Run a backtest to see ML decisions here</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {mlLogs.map((log) => (
+                      <div
+                        key={log.id}
+                        className={`p-3 rounded-lg border ${
+                          log.action === 'AUTO_TRAIN' ? 'bg-purple-500/10 border-purple-500/30' :
+                          log.action === 'SCORE_TRADE' ? 'bg-blue-500/10 border-blue-500/30' :
+                          log.action === 'AUTO_RECORD_TRADE' ? 'bg-green-500/10 border-green-500/30' :
+                          'bg-gray-800 border-gray-700'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                              log.action === 'AUTO_TRAIN' ? 'bg-purple-500/30 text-purple-300' :
+                              log.action === 'SCORE_TRADE' ? 'bg-blue-500/30 text-blue-300' :
+                              log.action === 'AUTO_RECORD_TRADE' ? 'bg-green-500/30 text-green-300' :
+                              'bg-gray-700 text-gray-300'
+                            }`}>
+                              {log.action.replace(/_/g, ' ')}
+                            </span>
+                            {log.recommendation && (
+                              <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                                log.recommendation === 'WIN' || log.recommendation === 'TRADE' || log.recommendation === 'TRAINED' ? 'bg-green-500/30 text-green-300' :
+                                log.recommendation === 'LOSS' || log.recommendation === 'SKIP' ? 'bg-red-500/30 text-red-300' :
+                                'bg-yellow-500/30 text-yellow-300'
+                              }`}>
+                                {log.recommendation}
+                              </span>
+                            )}
+                            {log.ml_score !== null && (
+                              <span className="text-xs text-gray-400">
+                                Score: {(log.ml_score * 100).toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs text-gray-500">
+                            {log.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}
+                          </span>
+                        </div>
+
+                        {log.reasoning && (
+                          <p className="text-sm text-gray-300 mt-2">{log.reasoning}</p>
+                        )}
+
+                        {log.details && (
+                          <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                            {log.details.strike && (
+                              <div className="bg-gray-900/50 rounded px-2 py-1">
+                                <span className="text-gray-500">Strike:</span>{' '}
+                                <span className="text-gray-300">${log.details.strike}</span>
+                              </div>
+                            )}
+                            {log.details.underlying && (
+                              <div className="bg-gray-900/50 rounded px-2 py-1">
+                                <span className="text-gray-500">SPX:</span>{' '}
+                                <span className="text-gray-300">${log.details.underlying}</span>
+                              </div>
+                            )}
+                            {log.details.pnl !== undefined && (
+                              <div className="bg-gray-900/50 rounded px-2 py-1">
+                                <span className="text-gray-500">P&L:</span>{' '}
+                                <span className={log.details.pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                  ${log.details.pnl?.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {log.details.accuracy && (
+                              <div className="bg-gray-900/50 rounded px-2 py-1">
+                                <span className="text-gray-500">Accuracy:</span>{' '}
+                                <span className="text-green-400">{(log.details.accuracy * 100).toFixed(1)}%</span>
+                              </div>
+                            )}
+                            {log.details.samples && (
+                              <div className="bg-gray-900/50 rounded px-2 py-1">
+                                <span className="text-gray-500">Samples:</span>{' '}
+                                <span className="text-gray-300">{log.details.samples}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {log.trade_id && (
+                          <div className="mt-1 text-xs text-gray-500">
+                            Trade: {log.trade_id}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
 
         </div>
       </main>

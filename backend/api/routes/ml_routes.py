@@ -658,3 +658,434 @@ def _get_data_recommendation(count: int, win_rate: float) -> str:
         return "Excellent win rate! ML can help maintain this edge and avoid the occasional bad trade."
     else:
         return "Good data quality. Train ML to see if it can improve your already solid results."
+
+
+# ============================================================================
+# ML DECISION LOGS - FULL TRANSPARENCY
+# ============================================================================
+
+def _ensure_ml_logs_table():
+    """Create ML logs table if not exists"""
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ml_decision_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                action VARCHAR(50) NOT NULL,
+                symbol VARCHAR(20) DEFAULT 'SPX',
+                details JSONB,
+                ml_score DECIMAL(5,4),
+                recommendation VARCHAR(20),
+                reasoning TEXT,
+                trade_id VARCHAR(50),
+                backtest_id VARCHAR(50)
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_ml_logs_ts ON ml_decision_logs(timestamp DESC)')
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Error creating ML logs table: {e}")
+        return False
+
+
+def log_ml_action(action: str, details: dict, ml_score: float = None,
+                  recommendation: str = None, reasoning: str = None,
+                  trade_id: str = None, backtest_id: str = None):
+    """Log an ML action for transparency"""
+    _ensure_ml_logs_table()
+    try:
+        from database_adapter import get_connection
+        import json
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT INTO ml_decision_logs
+            (action, details, ml_score, recommendation, reasoning, trade_id, backtest_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        ''', (
+            action,
+            json.dumps(details),
+            ml_score,
+            recommendation,
+            reasoning,
+            trade_id,
+            backtest_id
+        ))
+
+        log_id = cursor.fetchone()[0]
+        conn.commit()
+        conn.close()
+
+        logger.info(f"ML Log [{log_id}]: {action} - {recommendation or 'N/A'}")
+        return log_id
+    except Exception as e:
+        logger.error(f"Failed to log ML action: {e}")
+        return None
+
+
+@router.get("/logs")
+async def get_ml_logs(limit: int = 100, action_filter: str = None):
+    """
+    Get ML decision logs - SEE EVERYTHING ML DOES.
+
+    Returns chronological log of all ML actions:
+    - Trade scoring
+    - Training events
+    - Predictions made
+    - Recommendations given
+    """
+    _ensure_ml_logs_table()
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        if action_filter:
+            cursor.execute('''
+                SELECT id, timestamp, action, symbol, details, ml_score,
+                       recommendation, reasoning, trade_id, backtest_id
+                FROM ml_decision_logs
+                WHERE action LIKE %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+            ''', (f'%{action_filter}%', limit))
+        else:
+            cursor.execute('''
+                SELECT id, timestamp, action, symbol, details, ml_score,
+                       recommendation, reasoning, trade_id, backtest_id
+                FROM ml_decision_logs
+                ORDER BY timestamp DESC
+                LIMIT %s
+            ''', (limit,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        logs = []
+        for row in rows:
+            logs.append({
+                "id": row[0],
+                "timestamp": row[1].isoformat() if row[1] else None,
+                "action": row[2],
+                "symbol": row[3],
+                "details": row[4],
+                "ml_score": float(row[5]) if row[5] else None,
+                "recommendation": row[6],
+                "reasoning": row[7],
+                "trade_id": row[8],
+                "backtest_id": row[9]
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "logs": logs,
+                "count": len(logs),
+                "showing": f"Last {limit} ML actions"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching ML logs: {e}")
+        return {
+            "success": True,
+            "data": {
+                "logs": [],
+                "count": 0,
+                "message": f"Logs not available: {str(e)}"
+            }
+        }
+
+
+@router.get("/logs/summary")
+async def get_ml_logs_summary():
+    """Get summary of ML activity"""
+    _ensure_ml_logs_table()
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Count by action type
+        cursor.execute('''
+            SELECT action, COUNT(*),
+                   AVG(ml_score) as avg_score,
+                   COUNT(CASE WHEN recommendation = 'TRADE' THEN 1 END) as trade_count,
+                   COUNT(CASE WHEN recommendation = 'SKIP' THEN 1 END) as skip_count
+            FROM ml_decision_logs
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY action
+        ''')
+
+        action_stats = cursor.fetchall()
+
+        # Recent activity
+        cursor.execute('''
+            SELECT COUNT(*) FROM ml_decision_logs
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
+        ''')
+        last_hour = cursor.fetchone()[0]
+
+        cursor.execute('''
+            SELECT COUNT(*) FROM ml_decision_logs
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+        ''')
+        last_24h = cursor.fetchone()[0]
+
+        conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "activity": {
+                    "last_hour": last_hour,
+                    "last_24_hours": last_24h
+                },
+                "by_action": [
+                    {
+                        "action": row[0],
+                        "count": row[1],
+                        "avg_score": round(float(row[2]), 3) if row[2] else None,
+                        "trade_recommendations": row[3],
+                        "skip_recommendations": row[4]
+                    }
+                    for row in action_stats
+                ]
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching ML summary: {e}")
+        return {"success": True, "data": {"activity": {"last_hour": 0, "last_24_hours": 0}, "by_action": []}}
+
+
+# ============================================================================
+# AUTOMATED ML - NO MANUAL INTERVENTION NEEDED
+# ============================================================================
+
+@router.post("/auto-process-backtest")
+async def auto_process_backtest(backtest_id: str, trades: list):
+    """
+    AUTOMATED: Process backtest trades for ML training.
+
+    Called automatically after each backtest:
+    1. Records all trades as ML training data
+    2. Auto-trains if we have enough data
+    3. Logs everything
+    """
+    try:
+        from trading.spx_wheel_ml import (
+            get_spx_wheel_ml_trainer,
+            get_outcome_tracker,
+            SPXWheelFeatures,
+            SPXWheelOutcome
+        )
+
+        tracker = get_outcome_tracker()
+        trainer = get_spx_wheel_ml_trainer()
+
+        recorded = 0
+        for trade in trades:
+            trade_id = f"{backtest_id}_{trade.get('trade_date', 'unknown')}_{trade.get('strike', 0)}"
+
+            # Extract features from trade
+            strike = trade.get('strike', 0)
+            underlying = trade.get('entry_underlying_price', trade.get('underlying_price', 0))
+            pnl = trade.get('total_pnl', trade.get('pnl', 0)) or 0
+
+            if not strike or not underlying:
+                continue
+
+            # Create features (use available data, estimate what's missing)
+            features = SPXWheelFeatures(
+                trade_date=trade.get('trade_date', ''),
+                strike=float(strike),
+                underlying_price=float(underlying),
+                dte=trade.get('dte', 45),
+                delta=trade.get('delta', 0.20),
+                premium=trade.get('premium', trade.get('entry_price', 0)) or 0,
+                iv=trade.get('iv', 0.15),
+                iv_rank=trade.get('iv_rank', 50),
+                vix=trade.get('vix', 15),
+                vix_percentile=trade.get('vix_percentile', 50),
+                vix_term_structure=trade.get('vix_term_structure', 0),
+                put_wall_distance_pct=trade.get('put_wall_distance', 5),
+                call_wall_distance_pct=trade.get('call_wall_distance', 5),
+                net_gex=trade.get('net_gex', 0),
+                spx_20d_return=trade.get('spx_20d_return', 0),
+                spx_5d_return=trade.get('spx_5d_return', 0),
+                spx_distance_from_high=trade.get('distance_from_high', 0),
+                premium_to_strike_pct=float(trade.get('premium', 0) or 0) / float(strike) * 100 if strike else 0,
+                annualized_return=0  # Will be calculated
+            )
+
+            # Determine outcome
+            outcome = 'WIN' if float(pnl) > 0 else 'LOSS'
+
+            # Record for training
+            tracker.record_trade_entry(trade_id, features)
+            tracker.record_trade_outcome(
+                trade_id=trade_id,
+                outcome=outcome,
+                pnl=float(pnl),
+                settlement_price=trade.get('settlement_price', underlying),
+                max_drawdown=trade.get('max_drawdown', 0)
+            )
+
+            recorded += 1
+
+            # Log this
+            log_ml_action(
+                action="AUTO_RECORD_TRADE",
+                details={
+                    "strike": strike,
+                    "underlying": underlying,
+                    "pnl": pnl,
+                    "outcome": outcome
+                },
+                ml_score=None,
+                recommendation=outcome,
+                reasoning=f"Auto-recorded from backtest {backtest_id}",
+                trade_id=trade_id,
+                backtest_id=backtest_id
+            )
+
+        # Check if we can auto-train
+        all_outcomes = tracker.get_all_outcomes()
+        can_train = len(all_outcomes) >= 30
+        trained = False
+
+        if can_train and not trainer.model:
+            # Auto-train!
+            result = trainer.train(all_outcomes)
+            trained = 'error' not in result
+
+            log_ml_action(
+                action="AUTO_TRAIN",
+                details={
+                    "samples": len(all_outcomes),
+                    "success": trained,
+                    "accuracy": result.get('metrics', {}).get('test_accuracy') if trained else None
+                },
+                ml_score=result.get('metrics', {}).get('test_accuracy') if trained else None,
+                recommendation="TRAINED" if trained else "FAILED",
+                reasoning=f"Auto-trained on {len(all_outcomes)} samples from backtest",
+                backtest_id=backtest_id
+            )
+
+        return {
+            "success": True,
+            "data": {
+                "trades_recorded": recorded,
+                "total_training_samples": len(all_outcomes),
+                "can_train": can_train,
+                "auto_trained": trained,
+                "message": f"Recorded {recorded} trades. {'Auto-trained ML model!' if trained else f'Need {30 - len(all_outcomes)} more for training' if not can_train else 'Model already trained'}"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Auto-process error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/score-and-log")
+async def score_trade_and_log(
+    strike: float,
+    underlying_price: float,
+    dte: int,
+    premium: float,
+    iv: float = 0.15,
+    iv_rank: float = 50,
+    vix: float = 15,
+    trade_id: str = None
+):
+    """
+    Score a trade AND log the decision - AUTOMATED TRANSPARENCY.
+
+    Use this for live trading - every decision is logged.
+    """
+    try:
+        from trading.spx_wheel_ml import get_spx_wheel_ml_trainer, SPXWheelFeatures
+
+        trainer = get_spx_wheel_ml_trainer()
+
+        # Build features
+        premium_to_strike = premium / strike * 100
+        annualized_return = premium_to_strike * (365 / dte) if dte > 0 else 0
+
+        features = SPXWheelFeatures(
+            trade_date=datetime.now().strftime('%Y-%m-%d'),
+            strike=strike,
+            underlying_price=underlying_price,
+            dte=dte,
+            delta=0.20,
+            premium=premium,
+            iv=iv,
+            iv_rank=iv_rank,
+            vix=vix,
+            vix_percentile=50,
+            vix_term_structure=0,
+            put_wall_distance_pct=(underlying_price - strike) / underlying_price * 100,
+            call_wall_distance_pct=5,
+            net_gex=0,
+            spx_20d_return=0,
+            spx_5d_return=0,
+            spx_distance_from_high=0,
+            premium_to_strike_pct=premium_to_strike,
+            annualized_return=annualized_return
+        )
+
+        # Get prediction
+        prediction = trainer.predict(features)
+
+        # Log the decision
+        log_id = log_ml_action(
+            action="SCORE_TRADE",
+            details={
+                "strike": strike,
+                "underlying": underlying_price,
+                "dte": dte,
+                "premium": premium,
+                "iv": iv,
+                "iv_rank": iv_rank,
+                "vix": vix,
+                "annualized_return": annualized_return
+            },
+            ml_score=prediction.get('win_probability'),
+            recommendation=prediction.get('recommendation'),
+            reasoning=prediction.get('reasoning'),
+            trade_id=trade_id
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "prediction": prediction,
+                "log_id": log_id,
+                "trade_details": {
+                    "strike": strike,
+                    "underlying": underlying_price,
+                    "otm_pct": round((underlying_price - strike) / underlying_price * 100, 2),
+                    "premium": premium,
+                    "annualized_return": round(annualized_return, 1)
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Score and log error: {e}")
+        return {"success": False, "error": str(e)}
