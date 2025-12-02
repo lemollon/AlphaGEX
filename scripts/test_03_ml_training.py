@@ -101,10 +101,10 @@ except Exception as e:
 print("\n--- Generating Training Data from Backtest ---")
 
 try:
-    from core_classes_and_engines import SPXWheelBacktest
+    from backtest.spx_premium_backtest import SPXPremiumBacktester
 
     # Run a backtest to get trades
-    backtest = SPXWheelBacktest(initial_capital=100000)
+    backtest = SPXPremiumBacktester(initial_capital=100000)
 
     end_date = datetime.now() - timedelta(days=7)
     start_date = end_date - timedelta(days=60)  # 2 months

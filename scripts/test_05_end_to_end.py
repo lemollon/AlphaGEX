@@ -111,9 +111,9 @@ backtest_results = None
 
 print("\n2a. Running Backtest")
 try:
-    from core_classes_and_engines import SPXWheelBacktest
+    from backtest.spx_premium_backtest import SPXPremiumBacktester
 
-    backtest = SPXWheelBacktest(initial_capital=100000)
+    backtest = SPXPremiumBacktester(initial_capital=100000)
 
     end_date = datetime.now() - timedelta(days=7)
     start_date = end_date - timedelta(days=60)
