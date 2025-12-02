@@ -223,7 +223,10 @@ async def get_open_positions(symbol: str = None):
                     -- Entry Greeks for analysis
                     entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
                     -- Current Greeks for live monitoring
-                    current_iv, current_delta, current_gamma, current_theta, current_vega
+                    current_iv, current_delta, current_gamma, current_theta, current_vega,
+                    -- Data source verification
+                    is_delayed, data_confidence,
+                    entry_bid, entry_ask
                 FROM autonomous_open_positions
                 WHERE symbol = %s
                 ORDER BY entry_date DESC, entry_time DESC
@@ -240,7 +243,10 @@ async def get_open_positions(symbol: str = None):
                     -- Entry Greeks for analysis
                     entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
                     -- Current Greeks for live monitoring
-                    current_iv, current_delta, current_gamma, current_theta, current_vega
+                    current_iv, current_delta, current_gamma, current_theta, current_vega,
+                    -- Data source verification
+                    is_delayed, data_confidence,
+                    entry_bid, entry_ask
                 FROM autonomous_open_positions
                 ORDER BY entry_date DESC, entry_time DESC
             """)

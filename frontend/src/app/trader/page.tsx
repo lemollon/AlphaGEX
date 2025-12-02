@@ -73,6 +73,9 @@ interface Trade {
   contract_symbol?: string  // e.g., "SPY241206C00595000" - the ACTUAL Tradier symbol
   entry_date?: string       // e.g., "2024-12-06"
   entry_time?: string       // e.g., "09:35:42"
+  // Data source verification - PROVES where prices came from
+  is_delayed?: boolean      // true = Polygon (15-min delayed), false = Tradier (real-time)
+  data_confidence?: string  // 'high' (Tradier real-time), 'medium' (Polygon), 'low' (fallback)
   // Greeks
   entry_iv?: number
   entry_delta?: number
@@ -485,6 +488,9 @@ export default function AutonomousTrader() {
           contract_symbol: trade.contract_symbol,
           entry_date: trade.entry_date,
           entry_time: trade.entry_time,
+          // Data source verification
+          is_delayed: trade.is_delayed,
+          data_confidence: trade.data_confidence,
           // Greeks - Entry values
           entry_iv: trade.entry_iv,
           entry_delta: trade.entry_delta,
@@ -1077,6 +1083,9 @@ export default function AutonomousTrader() {
           contract_symbol: trade.contract_symbol,
           entry_date: trade.entry_date,
           entry_time: trade.entry_time,
+          // Data source verification
+          is_delayed: trade.is_delayed,
+          data_confidence: trade.data_confidence,
           // Greeks - Entry values
           entry_iv: trade.entry_iv,
           entry_delta: trade.entry_delta,
@@ -2713,6 +2722,31 @@ export default function AutonomousTrader() {
                               <div>
                                 <div className="text-xs text-text-secondary mb-1">Contracts</div>
                                 <div className="text-text-primary font-bold text-lg">{trade.quantity || 0}</div>
+                              </div>
+                            </div>
+                            {/* DATA SOURCE VERIFICATION - Shows where price data came from */}
+                            <div className="mt-3 pt-3 border-t border-success/20">
+                              <div className="text-xs text-text-secondary mb-2 font-semibold">Data Source Verification</div>
+                              <div className="flex items-center gap-4">
+                                <div className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${
+                                  trade.is_delayed
+                                    ? 'bg-warning/20 text-warning border border-warning/30'
+                                    : 'bg-success/20 text-success border border-success/30'
+                                }`}>
+                                  {trade.is_delayed ? '⏱️ Polygon (15-min delayed)' : '⚡ Tradier (Real-time)'}
+                                </div>
+                                <div className={`px-3 py-1.5 rounded-lg text-sm ${
+                                  trade.data_confidence === 'high'
+                                    ? 'bg-success/20 text-success'
+                                    : trade.data_confidence === 'medium'
+                                    ? 'bg-warning/20 text-warning'
+                                    : 'bg-danger/20 text-danger'
+                                }`}>
+                                  Confidence: {trade.data_confidence?.toUpperCase() || 'UNKNOWN'}
+                                </div>
+                              </div>
+                              <div className="text-xs text-text-muted mt-2">
+                                Entry Bid: ${trade.entry_bid?.toFixed(2) || '0.00'} | Entry Ask: ${trade.entry_ask?.toFixed(2) || '0.00'} | Spread: ${((trade.entry_ask || 0) - (trade.entry_bid || 0)).toFixed(2)}
                               </div>
                             </div>
                           </div>
