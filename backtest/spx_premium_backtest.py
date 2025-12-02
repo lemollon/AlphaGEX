@@ -45,6 +45,75 @@ from data.polygon_data_fetcher import polygon_fetcher
 from database_adapter import get_connection
 
 
+def save_backtest_equity_curve_to_db(snapshots: List, backtest_id: str):
+    """
+    Save backtest equity curve to database for dashboard display.
+
+    THIS WAS MISSING - now the dashboard can show backtest equity curve!
+    """
+    if not snapshots:
+        return
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Create equity curve table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS spx_wheel_backtest_equity (
+                id SERIAL PRIMARY KEY,
+                backtest_id VARCHAR(50) NOT NULL,
+                date VARCHAR(20),
+                equity DECIMAL(14,2),
+                cash_balance DECIMAL(14,2),
+                open_position_value DECIMAL(14,2),
+                daily_pnl DECIMAL(12,2),
+                cumulative_pnl DECIMAL(14,2),
+                peak_equity DECIMAL(14,2),
+                drawdown_pct DECIMAL(8,4),
+                open_puts INTEGER,
+                margin_used DECIMAL(14,2)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_backtest_equity_id ON spx_wheel_backtest_equity(backtest_id)
+        ''')
+
+        # Insert snapshots
+        for snap in snapshots:
+            if hasattr(snap, '__dict__') and not isinstance(snap, dict):
+                s = asdict(snap)
+            else:
+                s = snap
+
+            cursor.execute('''
+                INSERT INTO spx_wheel_backtest_equity (
+                    backtest_id, date, equity, cash_balance, open_position_value,
+                    daily_pnl, cumulative_pnl, peak_equity, drawdown_pct, open_puts, margin_used
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                backtest_id,
+                s.get('date'),
+                s.get('total_equity'),
+                s.get('cash_balance'),
+                s.get('open_position_value'),
+                s.get('daily_pnl'),
+                s.get('cumulative_pnl'),
+                s.get('peak_equity'),
+                s.get('drawdown_pct'),
+                s.get('open_puts'),
+                s.get('margin_used')
+            ))
+
+        conn.commit()
+        conn.close()
+        print(f"✓ Saved {len(snapshots)} equity curve points to database")
+
+    except Exception as e:
+        print(f"Warning: Could not save equity curve to DB: {e}")
+
+
 def save_backtest_trades_to_db(trades: List, backtest_id: str, parameters: Dict = None):
     """
     Save backtest trades to database for audit trail and comparison with live trades.
@@ -626,6 +695,10 @@ class SPXPremiumBacktester:
                 'data_quality_pct': real_pct
             }
             save_backtest_trades_to_db(self.all_trades, backtest_id, parameters)
+
+            # === SAVE EQUITY CURVE TO DATABASE (THIS WAS MISSING!) ===
+            if self.daily_snapshots:
+                save_backtest_equity_curve_to_db(self.daily_snapshots, backtest_id)
 
         return results
 

@@ -498,6 +498,43 @@ DASHBOARD_HTML = """
             </div>
         </div>
 
+        <!-- Recent Alerts -->
+        <div class="grid">
+            <div class="card full" style="border-color: #ef4444;">
+                <h2 style="color: #fca5a5;">Recent Alerts & Notifications</h2>
+                <div class="trade-details" style="max-height: 300px;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Level</th>
+                                <th>Type</th>
+                                <th>Subject</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for alert in alerts[:10] %}
+                            <tr style="background: {{ 'rgba(239,68,68,0.1)' if alert.level == 'CRITICAL' else 'rgba(251,191,36,0.1)' if alert.level == 'WARNING' else 'transparent' }};">
+                                <td>{{ alert.timestamp }}</td>
+                                <td style="color: {{ '#f87171' if alert.level == 'CRITICAL' else '#fbbf24' if alert.level == 'WARNING' else '#4ade80' }};">
+                                    {{ alert.level }}
+                                </td>
+                                <td>{{ alert.type }}</td>
+                                <td>{{ alert.subject }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="4" style="text-align:center;color:#666">No recent alerts - run position monitor: ./scripts/run_monitor.sh</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 15px; padding: 10px; background: rgba(239, 68, 68, 0.1); border-radius: 5px; font-size: 14px;">
+                    <strong>Alert Delivery:</strong> shairan2016@gmail.com
+                    <br><small style="color: #888;">Configure SMTP in .env to enable email delivery. Run ./scripts/setup_alerts.sh</small>
+                </div>
+            </div>
+        </div>
+
         <div class="refresh-info">
             Last updated: {{ now }} • Auto-refreshes every 30 seconds
         </div>
@@ -551,6 +588,101 @@ DASHBOARD_HTML = """
 </body>
 </html>
 """
+
+
+def get_recent_alerts():
+    """Fetch recent alerts from database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Check if alerts table exists
+        cursor.execute('''
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'spx_wheel_alerts'
+            )
+        ''')
+        if not cursor.fetchone()[0]:
+            conn.close()
+            return []
+
+        cursor.execute('''
+            SELECT timestamp, alert_type, level, subject, body, acknowledged
+            FROM spx_wheel_alerts
+            ORDER BY timestamp DESC
+            LIMIT 20
+        ''')
+
+        alerts = []
+        for row in cursor.fetchall():
+            alerts.append({
+                'timestamp': str(row[0])[:19] if row[0] else '',
+                'type': row[1],
+                'level': row[2],
+                'subject': row[3],
+                'body': row[4][:200] if row[4] else '',
+                'acknowledged': row[5]
+            })
+
+        conn.close()
+        return alerts
+
+    except Exception as e:
+        print(f"Error fetching alerts: {e}")
+        return []
+
+
+def get_backtest_equity_curve():
+    """Fetch backtest equity curve from database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Check if equity table exists
+        cursor.execute('''
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'spx_wheel_backtest_equity'
+            )
+        ''')
+        if not cursor.fetchone()[0]:
+            conn.close()
+            return []
+
+        # Get most recent backtest's equity curve
+        cursor.execute('''
+            SELECT DISTINCT backtest_id FROM spx_wheel_backtest_equity
+            ORDER BY backtest_id DESC LIMIT 1
+        ''')
+        result = cursor.fetchone()
+        if not result:
+            conn.close()
+            return []
+
+        backtest_id = result[0]
+
+        cursor.execute('''
+            SELECT date, equity, drawdown_pct
+            FROM spx_wheel_backtest_equity
+            WHERE backtest_id = %s
+            ORDER BY date
+        ''', (backtest_id,))
+
+        curve = []
+        for row in cursor.fetchall():
+            curve.append({
+                'date': str(row[0])[:10] if row[0] else '',
+                'equity': float(row[1]) if row[1] else 0,
+                'drawdown': float(row[2]) if row[2] else 0
+            })
+
+        conn.close()
+        return curve
+
+    except Exception as e:
+        print(f"Error fetching backtest equity: {e}")
+        return []
 
 
 def get_backtest_trades():
@@ -743,6 +875,12 @@ def get_dashboard_data():
         # Get backtest trades for comparison
         backtest_trades, backtest_id, backtest_params = get_backtest_trades()
 
+        # Get recent alerts
+        alerts = get_recent_alerts()
+
+        # Get backtest equity curve
+        backtest_equity = get_backtest_equity_curve()
+
         # Calculate backtest summary
         backtest_winners = sum(1 for t in backtest_trades if (t.get('total_pnl') or 0) > 0)
         backtest_closed = sum(1 for t in backtest_trades if t.get('trade_type') in ['EXPIRED_OTM', 'CASH_SETTLE_LOSS'])
@@ -764,6 +902,8 @@ def get_dashboard_data():
             'backtest_win_rate': backtest_win_rate_calc,
             'backtest_total_pnl': backtest_total_pnl,
             'backtest_data_quality': backtest_data_quality,
+            'backtest_equity': backtest_equity,  # Backtest equity curve for comparison
+            'alerts': alerts,  # Recent trading alerts
             'open_positions': len(open_positions_list),
             'total_pnl': total_pnl,
             'total_equity': total_equity,
@@ -794,6 +934,8 @@ def get_dashboard_data():
             'backtest_win_rate': 0,
             'backtest_total_pnl': 0,
             'backtest_data_quality': 0,
+            'backtest_equity': [],
+            'alerts': [],
             'open_positions': 0,
             'total_pnl': 0,
             'total_equity': 1000000,
