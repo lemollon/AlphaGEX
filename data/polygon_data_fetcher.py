@@ -600,6 +600,195 @@ class PolygonDataFetcher:
         self.cache.clear()
         print("✅ Cache cleared")
 
+    def get_historical_option_prices(
+        self,
+        symbol: str,
+        strike: float,
+        expiration: str,
+        option_type: str,
+        start_date: str,
+        end_date: str = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        Get HISTORICAL daily prices for a specific option contract.
+
+        This is CRITICAL for backtesting - gives you the REAL bid/ask/close
+        for an option on any historical date.
+
+        Args:
+            symbol: Underlying symbol (e.g., 'SPY')
+            strike: Strike price
+            expiration: Option expiration date YYYY-MM-DD
+            option_type: 'call' or 'put'
+            start_date: Start date YYYY-MM-DD
+            end_date: End date YYYY-MM-DD (default: today)
+
+        Returns:
+            DataFrame with columns: date, open, high, low, close, volume, vwap
+            Each row = one trading day's option prices
+        """
+        if not self.api_key:
+            raise ValueError("POLYGON_API_KEY not configured")
+
+        try:
+            # Build option ticker symbol
+            # Format: O:SPY241220C00570000
+            exp_str = expiration.replace('-', '')[2:]  # "2024-12-20" -> "241220"
+            type_char = 'C' if option_type.lower() == 'call' else 'P'
+            strike_str = f"{int(strike * 1000):08d}"
+
+            option_ticker = f"O:{symbol}{exp_str}{type_char}{strike_str}"
+
+            if end_date is None:
+                end_date = datetime.now().strftime('%Y-%m-%d')
+
+            # Use aggregates endpoint for historical data
+            url = f"{self.base_url}/v2/aggs/ticker/{option_ticker}/range/1/day/{start_date}/{end_date}"
+            params = {
+                "apiKey": self.api_key,
+                "adjusted": "true",
+                "sort": "asc"
+            }
+
+            print(f"📊 Fetching historical prices for {option_ticker} ({start_date} to {end_date})...")
+            response = requests.get(url, params=params, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get('status') in ['OK', 'DELAYED'] and data.get('results'):
+                    results = data['results']
+
+                    df = pd.DataFrame(results)
+
+                    # Rename columns to standard names
+                    df = df.rename(columns={
+                        't': 'timestamp',
+                        'o': 'open',
+                        'h': 'high',
+                        'l': 'low',
+                        'c': 'close',
+                        'v': 'volume',
+                        'vw': 'vwap',
+                        'n': 'num_trades'
+                    })
+
+                    # Convert timestamp to date
+                    df['date'] = pd.to_datetime(df['timestamp'], unit='ms').dt.date
+
+                    # Add metadata
+                    df['option_ticker'] = option_ticker
+                    df['underlying'] = symbol
+                    df['strike'] = strike
+                    df['expiration'] = expiration
+                    df['option_type'] = option_type
+
+                    print(f"   ✅ Got {len(df)} days of historical option prices")
+                    return df
+
+                else:
+                    print(f"   ⚠️  No historical data for {option_ticker}")
+                    print(f"   Response: {data.get('status')}, count: {data.get('resultsCount', 0)}")
+                    return None
+
+            elif response.status_code == 403:
+                print(f"   ❌ 403 Forbidden - Options historical data requires Options tier")
+                return None
+            else:
+                print(f"   ❌ HTTP {response.status_code}: {response.text[:200]}")
+                return None
+
+        except Exception as e:
+            print(f"❌ Error fetching historical option prices: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def find_option_at_delta(
+        self,
+        symbol: str,
+        expiration: str,
+        option_type: str,
+        target_delta: float,
+        date: str = None
+    ) -> Optional[Dict]:
+        """
+        Find the option closest to a target delta.
+
+        For backtesting wheel strategy, we need to find the ~25 delta put.
+
+        Args:
+            symbol: Underlying symbol
+            expiration: Option expiration YYYY-MM-DD
+            option_type: 'call' or 'put'
+            target_delta: Target delta (e.g., 0.25 for 25-delta)
+            date: Date to check (default: today)
+
+        Returns:
+            Dict with strike, delta, price info for closest match
+        """
+        if not self.api_key:
+            raise ValueError("POLYGON_API_KEY not configured")
+
+        try:
+            # Get all options for this expiration
+            chain = self.get_options_chain(symbol, expiration=expiration)
+
+            if chain is None or len(chain) == 0:
+                return None
+
+            # Filter by option type
+            type_filter = 'call' if option_type.lower() == 'call' else 'put'
+            filtered = chain[chain['contract_type'] == type_filter]
+
+            if len(filtered) == 0:
+                return None
+
+            # For puts, delta is negative, so we need abs comparison
+            if option_type.lower() == 'put':
+                target_delta = -abs(target_delta)  # Make negative for puts
+
+            # Find closest to target delta
+            # Note: Polygon chain may not have Greeks - need to get individual quotes
+            best_match = None
+            best_delta_diff = float('inf')
+
+            for _, row in filtered.iterrows():
+                strike = row.get('strike_price', 0)
+                if strike <= 0:
+                    continue
+
+                # Get quote with Greeks
+                quote = self.get_option_quote(symbol, strike, expiration, option_type)
+                if quote is None:
+                    continue
+
+                delta = quote.get('delta', 0)
+                delta_diff = abs(delta - target_delta)
+
+                if delta_diff < best_delta_diff:
+                    best_delta_diff = delta_diff
+                    best_match = {
+                        'strike': strike,
+                        'delta': delta,
+                        'bid': quote.get('bid', 0),
+                        'ask': quote.get('ask', 0),
+                        'mid': quote.get('mid', 0),
+                        'iv': quote.get('implied_volatility', 0),
+                        'contract_symbol': quote.get('contract_symbol', ''),
+                        'expiration': expiration
+                    }
+
+                # Stop if we found a close enough match
+                if delta_diff < 0.02:  # Within 2 delta
+                    break
+
+            return best_match
+
+        except Exception as e:
+            print(f"❌ Error finding option at delta: {e}")
+            return None
+
 
 # Global singleton instance
 polygon_fetcher = PolygonDataFetcher()

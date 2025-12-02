@@ -46,6 +46,8 @@ from backend.api.routes import (
     autonomous_routes,
     psychology_routes,
     ai_intelligence_routes,
+    wheel_routes,
+    export_routes,
 )
 
 # ============================================================================
@@ -251,6 +253,8 @@ app.include_router(scanner_routes.router)
 app.include_router(autonomous_routes.router)
 app.include_router(psychology_routes.router)
 app.include_router(ai_intelligence_routes.router)
+app.include_router(wheel_routes.router)
+app.include_router(export_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence")
 
 # Initialize existing AlphaGEX components (singleton pattern)

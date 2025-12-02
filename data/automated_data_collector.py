@@ -144,6 +144,33 @@ def run_daily_performance():
         print(f"❌ Daily Performance failed: {e}")
 
 
+def run_option_chain_collection():
+    """
+    Run option chain snapshot collection.
+
+    Collects real option chain data for future backtesting with REAL prices.
+    Stores bid/ask/greeks for strikes within 10% of spot, up to 60 DTE.
+    """
+    if not is_market_hours():
+        print(f"⏸️  Skipping Option Chain Collection - Market closed")
+        return
+
+    print(f"\n{'='*70}")
+    print(f"📋 Running Option Chain Collection - {datetime.now(CENTRAL_TZ).strftime('%H:%M:%S')}")
+    print(f"{'='*70}")
+
+    try:
+        from data.option_chain_collector import collect_all_symbols
+        results = collect_all_symbols()
+
+        total_contracts = sum(r.get('contracts', 0) for r in results)
+        successful = sum(1 for r in results if r.get('status') == 'SUCCESS')
+
+        print(f"✅ Option Chain Collection completed: {total_contracts} contracts across {successful} symbols")
+    except Exception as e:
+        print(f"❌ Option Chain Collection failed: {e}")
+
+
 def setup_schedule():
     """Set up the collection schedule"""
 
@@ -159,6 +186,9 @@ def setup_schedule():
     # Gamma Expiration: Every 30 minutes (increased from 60)
     schedule.every(30).minutes.do(run_gamma_expiration)
 
+    # Option Chain Collection: Every 15 minutes for backtesting data
+    schedule.every(15).minutes.do(run_option_chain_collection)
+
     # Daily Performance: Every 5 minutes (will only run after market close)
     schedule.every(5).minutes.do(run_daily_performance)
 
@@ -170,9 +200,10 @@ def setup_schedule():
     print("  • Liberation Outcomes: Every 10 minutes (market hours) 🎯")
     print("  • Forward Magnets: Every 5 minutes (market hours) 🧲")
     print("  • Gamma Expiration: Every 30 minutes (market hours) 📅")
+    print("  • Option Chain Snapshots: Every 15 minutes (market hours) 📋")
     print("  • Daily Performance: Once at 4:00 PM ET (after close) 📈")
     print("\n⏰ Market Hours: 9:30 AM - 4:00 PM ET (Mon-Fri)")
-    print("💡 Collections run 3-6x more frequently for faster data accumulation")
+    print("💡 Option chain data collected for REAL backtesting")
     print("\n✅ Scheduler started. Press Ctrl+C to stop.\n")
     print("="*70)
 
@@ -188,6 +219,7 @@ def run_scheduler():
         run_liberation_outcomes()
         run_forward_magnets()
         run_gamma_expiration()
+        run_option_chain_collection()
     else:
         print("\n⏸️  Market is closed. Waiting for market open...\n")
 
