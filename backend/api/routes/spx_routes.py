@@ -85,7 +85,7 @@ async def get_spx_trades(limit: int = 20):
                    contracts, entry_price, entry_date, entry_time,
                    NULL::date as exit_date, NULL::time as exit_time, NULL::real as exit_price,
                    unrealized_pnl, NULL::real as realized_pnl, 'OPEN' as status,
-                   strategy, entry_reasoning as trade_reasoning
+                   strategy, COALESCE(trade_reasoning, '') as trade_reasoning
             FROM autonomous_open_positions
             WHERE symbol = 'SPX'
         ''')
@@ -97,7 +97,7 @@ async def get_spx_trades(limit: int = 20):
                    contracts, entry_price, entry_date, entry_time,
                    exit_date, exit_time, exit_price,
                    NULL::real as unrealized_pnl, realized_pnl, 'CLOSED' as status,
-                   strategy, entry_reasoning as trade_reasoning
+                   strategy, COALESCE(trade_reasoning, '') as trade_reasoning
             FROM autonomous_closed_trades
             WHERE symbol = 'SPX'
             ORDER BY exit_date DESC, exit_time DESC
