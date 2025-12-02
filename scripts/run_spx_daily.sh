@@ -5,6 +5,11 @@
 #
 # Run this EVERY TRADING DAY to execute the calibrated strategy.
 #
+# USAGE:
+#   ./run_spx_daily.sh          # Paper trading (default - NO REAL MONEY)
+#   ./run_spx_daily.sh paper    # Paper trading explicitly
+#   ./run_spx_daily.sh live     # LIVE TRADING - REAL MONEY AT RISK!
+#
 # What this script does:
 # 1. Loads your calibrated parameters from the database
 # 2. Checks if market conditions are favorable (VIX filter)
@@ -16,10 +21,25 @@
 # The trader uses EXACTLY the parameters found during calibration.
 # ==========================================================================
 
+MODE="${1:-paper}"  # Default to paper trading
+
 echo "==========================================================================="
 echo "SPX WHEEL - DAILY TRADING CYCLE"
 echo "==========================================================================="
 echo "Time: $(date)"
+echo ""
+
+if [ "$MODE" == "live" ]; then
+    echo "🔴 LIVE TRADING MODE - REAL MONEY AT RISK!"
+    echo ""
+    read -p "Are you sure you want to trade with real money? (yes/no): " CONFIRM
+    if [ "$CONFIRM" != "yes" ]; then
+        echo "Aborting."
+        exit 0
+    fi
+else
+    echo "📝 PAPER TRADING MODE (simulation)"
+fi
 echo ""
 
 # Check environment
@@ -28,21 +48,30 @@ if [ -z "$DATABASE_URL" ]; then
     exit 1
 fi
 
+if [ "$MODE" == "live" ] && [ -z "$TRADIER_API_KEY" ]; then
+    echo "ERROR: TRADIER_API_KEY required for live trading"
+    exit 1
+fi
+
 cd /home/user/AlphaGEX
 
-python3 << 'EOF'
+python3 << EOF
 import sys
 sys.path.insert(0, '/home/user/AlphaGEX')
 
-from trading.spx_wheel_system import SPXWheelTrader
+from trading.spx_wheel_system import SPXWheelTrader, TradingMode
 import json
 
+# Get mode from shell variable
+mode_str = "$MODE"
+trading_mode = TradingMode.LIVE if mode_str == "live" else TradingMode.PAPER
+
 print("="*70)
-print("LOADING CALIBRATED PARAMETERS")
+print(f"LOADING CALIBRATED PARAMETERS - {trading_mode.value.upper()} MODE")
 print("="*70)
 
-# Initialize with saved parameters
-trader = SPXWheelTrader()
+# Initialize with saved parameters and trading mode
+trader = SPXWheelTrader(mode=trading_mode)
 
 print(f"""
 Using parameters from calibration on: {trader.params.calibration_date[:10] if trader.params.calibration_date else 'DEFAULT'}

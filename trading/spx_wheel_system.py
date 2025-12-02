@@ -45,7 +45,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database_adapter import get_connection
 from data.polygon_data_fetcher import polygon_fetcher
 
+# Broker integration - THIS IS WHAT EXECUTES REAL TRADES
+try:
+    from data.tradier_data_fetcher import TradierDataFetcher, OrderSide, OrderType
+    BROKER_AVAILABLE = True
+except ImportError:
+    BROKER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+
+class TradingMode(Enum):
+    """
+    CRITICAL: This determines if REAL money is at risk.
+
+    PAPER - Logs trades to database only. No real orders placed.
+    LIVE  - Executes actual orders via Tradier. REAL MONEY AT RISK.
+    """
+    PAPER = "paper"
+    LIVE = "live"
 
 
 @dataclass
@@ -299,27 +317,56 @@ class SPXWheelOptimizer:
 
 class SPXWheelTrader:
     """
-    LIVE SPX wheel trader using calibrated parameters.
+    SPX wheel trader using calibrated parameters.
+
+    SUPPORTS TWO MODES:
+    - PAPER: Logs trades to database only. No real money.
+    - LIVE:  Executes real orders via Tradier. REAL MONEY AT RISK.
 
     This is STEP 2 of the workflow:
     - Loads parameters from calibration
-    - Executes trades on SPX
+    - Executes trades on SPX (paper or live)
     - Manages positions
     - Tracks performance vs backtest
     """
 
-    def __init__(self, parameters: WheelParameters = None):
+    def __init__(
+        self,
+        parameters: WheelParameters = None,
+        mode: TradingMode = TradingMode.PAPER,
+        initial_capital: float = 1000000
+    ):
         """
         Initialize with calibrated parameters.
 
-        If no parameters provided, loads from database (most recent calibration).
+        Args:
+            parameters: Calibrated WheelParameters (loads from DB if None)
+            mode: PAPER (simulation) or LIVE (real money)
+            initial_capital: Starting capital for paper trading
         """
         self.params = parameters or self._load_parameters()
         self.positions: List[Dict] = []
+        self.mode = mode
+        self.initial_capital = initial_capital
+        self.broker = None
+
+        # Initialize broker for LIVE mode
+        if mode == TradingMode.LIVE:
+            if not BROKER_AVAILABLE:
+                raise RuntimeError(
+                    "LIVE mode requires Tradier broker. "
+                    "Set TRADIER_API_KEY and TRADIER_ACCOUNT_ID."
+                )
+            self.broker = TradierDataFetcher()
+            if self.broker.sandbox:
+                print("⚠️  WARNING: Tradier is in SANDBOX mode (paper trading via broker)")
+            else:
+                print("🔴 LIVE TRADING MODE - REAL MONEY AT RISK!")
+
         self._ensure_tables()
 
         print("\n" + "="*70)
-        print("SPX WHEEL TRADER INITIALIZED")
+        print(f"SPX WHEEL TRADER - {mode.value.upper()} MODE")
         print("="*70)
         print(f"Parameters from: {self.params.calibration_date or 'default'}")
         print(f"Put Delta:       {self.params.put_delta}")
@@ -327,6 +374,10 @@ class SPXWheelTrader:
         print(f"Max Margin:      {self.params.max_margin_pct*100:.0f}%")
         print(f"Backtest Win%:   {self.params.backtest_win_rate:.1f}%")
         print(f"Backtest Return: {self.params.backtest_total_return:+.1f}%")
+        if mode == TradingMode.LIVE and self.broker:
+            balance = self._get_account_balance()
+            print(f"Account Balance: ${balance.get('total_equity', 0):,.2f}")
+            print(f"Buying Power:    ${balance.get('option_buying_power', 0):,.2f}")
         print("="*70)
 
     def _load_parameters(self) -> WheelParameters:
@@ -492,6 +543,94 @@ class SPXWheelTrader:
                 return vix
         return 17.0  # Default
 
+    def _get_account_balance(self) -> Dict:
+        """Get account balance from broker (LIVE mode) or calculate from DB (PAPER mode)"""
+        if self.mode == TradingMode.LIVE and self.broker:
+            return self.broker.get_account_balance()
+
+        # Paper mode: calculate from database
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT
+                    COALESCE(SUM(total_pnl), 0) FILTER (WHERE status = 'CLOSED'),
+                    COALESCE(SUM(premium_received), 0) FILTER (WHERE status = 'OPEN')
+                FROM spx_wheel_positions
+            ''')
+
+            result = cursor.fetchone()
+            realized_pnl = float(result[0] or 0)
+            open_premium = float(result[1] or 0)
+            conn.close()
+
+            total_equity = self.initial_capital + realized_pnl + open_premium
+
+            # Estimate margin used (20% of notional per contract)
+            open_positions = self._get_open_positions()
+            margin_used = sum(
+                pos['strike'] * 100 * pos['contracts'] * 0.20
+                for pos in open_positions
+            )
+
+            return {
+                'total_equity': total_equity,
+                'option_buying_power': total_equity - margin_used,
+                'margin_used': margin_used,
+                'realized_pnl': realized_pnl,
+                'mode': 'PAPER'
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get balance: {e}")
+            return {'total_equity': self.initial_capital, 'option_buying_power': self.initial_capital}
+
+    def _get_real_option_price(self, strike: float, expiration: str) -> Tuple[float, float, str]:
+        """
+        Get REAL option price from broker or Polygon.
+
+        Returns:
+            (bid, ask, source) - prices and data source
+        """
+        exp_str = expiration.replace('-', '')[2:]  # "2024-12-20" -> "241220"
+        option_ticker = f"O:SPX{exp_str}P{int(strike*1000):08d}"
+
+        # Try broker first (most accurate for live trading)
+        if self.mode == TradingMode.LIVE and self.broker:
+            try:
+                # Tradier uses different symbol format
+                tradier_symbol = f"SPXW{exp_str}P{int(strike*1000):08d}"
+                quote = self.broker.get_quote(tradier_symbol)
+                if quote:
+                    bid = float(quote.get('bid', 0) or 0)
+                    ask = float(quote.get('ask', 0) or 0)
+                    if bid > 0:
+                        return bid, ask, "TRADIER_LIVE"
+            except Exception as e:
+                logger.warning(f"Tradier quote failed: {e}")
+
+        # Try Polygon historical/real-time
+        try:
+            df = polygon_fetcher.get_historical_option_prices(
+                'SPX', strike, expiration, 'put',
+                start_date=datetime.now().strftime('%Y-%m-%d'),
+                end_date=datetime.now().strftime('%Y-%m-%d')
+            )
+            if df is not None and len(df) > 0:
+                close = df.iloc[0].get('close', 0)
+                if close > 0:
+                    spread = close * 0.03
+                    return close - spread/2, close + spread/2, "POLYGON"
+        except Exception as e:
+            logger.warning(f"Polygon quote failed: {e}")
+
+        # Fallback to estimation
+        spot = self._get_spx_price() or 5800
+        dte = (datetime.strptime(expiration, '%Y-%m-%d') - datetime.now()).days
+        estimated = spot * 0.015 * (dte / 45) ** 0.5
+        return estimated * 0.97, estimated * 1.03, "ESTIMATED"
+
     def _get_open_positions(self) -> List[Dict]:
         """Get open positions from database"""
         try:
@@ -524,36 +663,115 @@ class SPXWheelTrader:
             return []
 
     def _can_open_position(self, spot: float) -> bool:
-        """Check if we can open a new position"""
+        """
+        Check if we can open a new position.
+
+        Verifies:
+        1. Not at max position limit
+        2. Have enough buying power / margin
+        """
         open_positions = self._get_open_positions()
 
+        # Check position limit
         if len(open_positions) >= self.params.max_open_positions:
+            print(f"  Cannot open: At max positions ({len(open_positions)}/{self.params.max_open_positions})")
             return False
 
-        # Check margin
-        # TODO: Calculate actual margin used
+        # Check margin/buying power
+        balance = self._get_account_balance()
+        buying_power = balance.get('option_buying_power', 0)
+
+        # Estimate margin for new position (20% of notional for SPX)
+        estimated_strike = round((spot * (1 - 0.04 - self.params.put_delta * 0.15)) / 5) * 5
+        margin_required = estimated_strike * 100 * self.params.contracts_per_trade * 0.20
+
+        if buying_power < margin_required:
+            print(f"  Cannot open: Insufficient margin (need ${margin_required:,.0f}, have ${buying_power:,.0f})")
+            return False
+
+        # Check max margin usage
+        total_equity = balance.get('total_equity', self.initial_capital)
+        current_margin = balance.get('margin_used', 0)
+        max_margin = total_equity * self.params.max_margin_pct
+
+        if (current_margin + margin_required) > max_margin:
+            print(f"  Cannot open: Would exceed max margin ({self.params.max_margin_pct*100:.0f}%)")
+            return False
+
         return True
 
     def _open_new_position(self, spot: float) -> bool:
-        """Open a new put position"""
+        """
+        Open a new put position.
+
+        PAPER mode: Logs to database only
+        LIVE mode:  Places actual order via Tradier
+        """
         # Calculate strike
         strike_offset = spot * (0.04 + self.params.put_delta * 0.15)
         strike = round((spot - strike_offset) / 5) * 5
 
-        # Calculate expiration
+        # Calculate expiration (find next Friday)
         target = datetime.now() + timedelta(days=self.params.dte_target)
         days_until_friday = (4 - target.weekday()) % 7
+        if days_until_friday == 0:
+            days_until_friday = 7  # Next Friday, not today
         expiration = (target + timedelta(days=days_until_friday)).date()
+        expiration_str = expiration.strftime('%Y-%m-%d')
 
-        # Get option price
-        option_ticker = f"O:SPX{expiration.strftime('%y%m%d')}P{int(strike*1000):08d}"
+        # Get REAL option price
+        bid, ask, price_source = self._get_real_option_price(strike, expiration_str)
+        entry_price = bid  # Sell at bid
 
-        # For now, estimate price (in real trading, get from broker)
-        estimated_price = spot * 0.015 * (self.params.dte_target / 45) ** 0.5
+        # Build tickers
+        exp_fmt = expiration.strftime('%y%m%d')
+        option_ticker = f"O:SPX{exp_fmt}P{int(strike*1000):08d}"
+        tradier_symbol = f"SPXW{exp_fmt}P{int(strike*1000):08d}"
 
+        order_id = None
+        order_status = "PAPER"
+
+        # === LIVE MODE: PLACE REAL ORDER ===
+        if self.mode == TradingMode.LIVE and self.broker:
+            print(f"\n🔴 PLACING LIVE ORDER:")
+            print(f"   Symbol: {tradier_symbol}")
+            print(f"   Action: SELL TO OPEN")
+            print(f"   Qty:    {self.params.contracts_per_trade}")
+            print(f"   Price:  ${entry_price:.2f} (from {price_source})")
+
+            try:
+                result = self.broker.sell_put(
+                    symbol='SPX',
+                    expiration=expiration_str,
+                    strike=strike,
+                    quantity=self.params.contracts_per_trade,
+                    limit_price=entry_price
+                )
+
+                order_info = result.get('order', {})
+                order_id = order_info.get('id')
+                order_status = order_info.get('status', 'UNKNOWN')
+
+                print(f"   Order ID: {order_id}")
+                print(f"   Status:   {order_status}")
+
+                if order_status not in ['pending', 'open', 'filled', 'partially_filled']:
+                    logger.error(f"Order failed: {result}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"LIVE order failed: {e}")
+                print(f"   ❌ ORDER FAILED: {e}")
+                return False
+
+        # === LOG TO DATABASE ===
         try:
             conn = get_connection()
             cursor = conn.cursor()
+
+            notes = f"Opened at SPX={spot:.2f}, Delta={self.params.put_delta}, Price source={price_source}"
+            if order_id:
+                notes += f", Order ID={order_id}, Status={order_status}"
 
             cursor.execute('''
                 INSERT INTO spx_wheel_positions (
@@ -566,23 +784,34 @@ class SPXWheelTrader:
                 strike,
                 expiration,
                 self.params.contracts_per_trade,
-                estimated_price,
-                estimated_price * 100 * self.params.contracts_per_trade,
-                json.dumps(self.params.to_dict()),
-                f"Opened at SPX={spot:.2f}, Delta={self.params.put_delta}"
+                entry_price,
+                entry_price * 100 * self.params.contracts_per_trade,
+                json.dumps({
+                    **self.params.to_dict(),
+                    'order_id': order_id,
+                    'price_source': price_source,
+                    'mode': self.mode.value
+                }),
+                notes
             ))
 
             position_id = cursor.fetchone()[0]
             conn.commit()
             conn.close()
 
-            print(f"OPENED: {option_ticker} @ ${estimated_price:.2f}")
-            print(f"        Strike: ${strike:.0f}, Exp: {expiration}")
+            mode_str = "🔴 LIVE" if self.mode == TradingMode.LIVE else "📝 PAPER"
+            print(f"\n{mode_str} POSITION OPENED:")
+            print(f"   Ticker:   {option_ticker}")
+            print(f"   Strike:   ${strike:.0f}")
+            print(f"   Exp:      {expiration}")
+            print(f"   Price:    ${entry_price:.2f} ({price_source})")
+            print(f"   Premium:  ${entry_price * 100 * self.params.contracts_per_trade:,.2f}")
+            print(f"   DB ID:    {position_id}")
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to open position: {e}")
+            logger.error(f"Failed to log position: {e}")
             return False
 
     def _process_expirations(self, spot: float) -> int:
@@ -633,9 +862,111 @@ class SPXWheelTrader:
         return closed
 
     def _check_rolls(self, spot: float) -> int:
-        """Check if any positions need to be rolled"""
-        # TODO: Implement roll logic
-        return 0
+        """
+        Check if any positions need to be rolled.
+
+        Roll conditions:
+        1. DTE <= roll_at_dte (e.g., 7 days)
+        2. Position is profitable (option price dropped)
+
+        Roll action:
+        1. Close current position (buy to close)
+        2. Open new position at same delta, further out
+        """
+        rolled = 0
+        today = datetime.now().date()
+
+        for pos in self._get_open_positions():
+            exp_date = pos['expiration']
+            if isinstance(exp_date, str):
+                exp_date = datetime.strptime(exp_date, '%Y-%m-%d').date()
+
+            dte_remaining = (exp_date - today).days
+
+            # Check if needs roll
+            if dte_remaining <= self.params.roll_at_dte:
+                print(f"\n  Position {pos['option_ticker']} has {dte_remaining} DTE - checking for roll...")
+
+                # Get current price
+                bid, ask, source = self._get_real_option_price(pos['strike'], exp_date.strftime('%Y-%m-%d'))
+                current_price = (bid + ask) / 2
+
+                # Calculate P&L if we close now
+                close_cost = ask  # Buy to close at ask
+                open_price = pos['entry_price']
+                profit_pct = ((open_price - close_cost) / open_price) * 100
+
+                if profit_pct >= self.params.profit_target_pct:
+                    print(f"    Profit: {profit_pct:.1f}% >= target {self.params.profit_target_pct}% - ROLLING")
+
+                    # Close current position
+                    if self._close_position(pos, close_cost, "ROLL"):
+                        # Open new position
+                        if self._open_new_position(spot):
+                            rolled += 1
+                            print(f"    ✓ Roll complete")
+                        else:
+                            print(f"    ✗ Failed to open new position")
+                    else:
+                        print(f"    ✗ Failed to close position")
+
+                else:
+                    print(f"    Profit: {profit_pct:.1f}% < target {self.params.profit_target_pct}% - HOLD")
+
+        return rolled
+
+    def _close_position(self, pos: Dict, exit_price: float, reason: str) -> bool:
+        """Close a position (for rolls or early exit)"""
+        try:
+            # In LIVE mode, place buy-to-close order
+            if self.mode == TradingMode.LIVE and self.broker:
+                exp_str = pos['expiration']
+                if hasattr(exp_str, 'strftime'):
+                    exp_str = exp_str.strftime('%Y-%m-%d')
+                exp_fmt = exp_str.replace('-', '')[2:]
+                tradier_symbol = f"SPXW{exp_fmt}P{int(pos['strike']*1000):08d}"
+
+                print(f"  🔴 PLACING BUY-TO-CLOSE ORDER: {tradier_symbol}")
+
+                result = self.broker.place_option_order(
+                    option_symbol=tradier_symbol,
+                    side=OrderSide.BUY_TO_CLOSE,
+                    quantity=pos['contracts'],
+                    order_type=OrderType.LIMIT,
+                    price=exit_price
+                )
+
+                order_id = result.get('order', {}).get('id')
+                print(f"     Order ID: {order_id}")
+
+            # Update database
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            pnl = (pos['entry_price'] - exit_price) * 100 * pos['contracts']
+
+            cursor.execute('''
+                UPDATE spx_wheel_positions SET
+                    status = 'CLOSED',
+                    closed_at = NOW(),
+                    exit_price = %s,
+                    total_pnl = %s,
+                    notes = notes || %s
+                WHERE id = %s
+            ''', (
+                exit_price,
+                pnl,
+                f" | CLOSED ({reason}): Exit=${exit_price:.2f}, P&L=${pnl:.2f}",
+                pos['id']
+            ))
+
+            conn.commit()
+            conn.close()
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to close position: {e}")
+            return False
 
     def _update_performance(self, spot: float):
         """Update performance tracking - store daily equity snapshot"""
