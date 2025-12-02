@@ -8,7 +8,7 @@ import {
   FileText, Activity
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
-import { api } from '@/lib/api'
+import { apiClient, api } from '@/lib/api'
 
 interface MLLog {
   id: number
@@ -96,6 +96,7 @@ export default function SPXWheelPage() {
   // Backtest configuration (user-configurable)
   const [backtestStartDate, setBacktestStartDate] = useState('2024-01-01')
   const [backtestEndDate, setBacktestEndDate] = useState('')
+  const [backtestCapital, setBacktestCapital] = useState('100000000') // $100M default for SPX
   const [showBacktestConfig, setShowBacktestConfig] = useState(false)
 
   const fetchLogs = useCallback(async () => {
@@ -149,10 +150,11 @@ export default function SPXWheelPage() {
     setError(null)
 
     try {
-      const res = await api.post('/api/spx-backtest/run', {
+      const capital = parseInt(backtestCapital) || 100000000
+      const res = await apiClient.runSPXBacktest({
         start_date: backtestStartDate,
-        end_date: backtestEndDate || undefined,  // Use current date if empty
-        initial_capital: 100000000,  // $100M - SPX requires ~$137k margin per contract
+        end_date: backtestEndDate || undefined,
+        initial_capital: capital,
         put_delta: 0.20,
         dte_target: 45,
         use_ml_scoring: true
@@ -277,9 +279,22 @@ export default function SPXWheelPage() {
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
                   />
                 </div>
-                <div className="col-span-2 text-xs text-gray-500 flex items-center">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Initial Capital</label>
+                  <select
+                    value={backtestCapital}
+                    onChange={(e) => setBacktestCapital(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
+                  >
+                    <option value="1000000">$1M (Small)</option>
+                    <option value="10000000">$10M (Medium)</option>
+                    <option value="50000000">$50M (Large)</option>
+                    <option value="100000000">$100M (Institutional)</option>
+                  </select>
+                </div>
+                <div className="text-xs text-gray-500 flex items-center">
                   <Info className="w-4 h-4 mr-2" />
-                  Backtest uses 20-delta puts with 45 DTE, $100K capital
+                  SPX requires ~$137K margin per contract. Uses 20-delta puts, 45 DTE.
                 </div>
               </div>
             </div>
