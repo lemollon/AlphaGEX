@@ -42,23 +42,11 @@ except ImportError as e:
             sys.exit(1)
 
 # =============================================================================
-# 2. Initialize Backtest Engine
-# =============================================================================
-print("\n--- Initializing Backtest Engine ---")
-
-try:
-    backtest = SPXBacktest(initial_capital=100000)
-    print(f"  Initial capital: $100,000")
-    print(f"  Engine initialized: {type(backtest).__name__}")
-except Exception as e:
-    print(f"  Error: {e}")
-    sys.exit(1)
-
-# =============================================================================
-# 3. Run Short Backtest (1 month)
+# 2. Initialize and Run Backtest (1 month)
 # =============================================================================
 print("\n--- Running 1-Month Backtest ---")
 
+results = None
 try:
     end_date = datetime.now() - timedelta(days=7)  # End a week ago
     start_date = end_date - timedelta(days=30)
@@ -67,9 +55,18 @@ try:
     end_str = end_date.strftime('%Y-%m-%d')
 
     print(f"  Date range: {start_str} to {end_str}")
+    print(f"  Initial capital: $100,000")
     print("  Running backtest...")
 
-    results = backtest.run_backtest(start_str, end_str)
+    # SPXPremiumBacktester takes dates in constructor, uses run() method
+    backtest = SPXBacktest(
+        start_date=start_str,
+        end_date=end_str,
+        initial_capital=100000
+    )
+    print(f"  Engine: {type(backtest).__name__}")
+
+    results = backtest.run(save_to_db=False)
 
     if results:
         print(f"  Backtest completed!")
@@ -150,18 +147,18 @@ try:
     for delta in [0.10, 0.16, 0.20]:
         print(f"\n  Testing delta = {delta}:")
 
-        bt = SPXBacktest(initial_capital=100000)
-        # Set delta if the engine supports it
-        if hasattr(bt, 'target_delta'):
-            bt.target_delta = delta
-
         end_date = datetime.now() - timedelta(days=7)
         start_date = end_date - timedelta(days=14)
 
-        results = bt.run_backtest(
-            start_date.strftime('%Y-%m-%d'),
-            end_date.strftime('%Y-%m-%d')
+        # SPXPremiumBacktester uses put_delta parameter
+        bt = SPXBacktest(
+            start_date=start_date.strftime('%Y-%m-%d'),
+            end_date=end_date.strftime('%Y-%m-%d'),
+            initial_capital=100000,
+            put_delta=delta
         )
+
+        results = bt.run(save_to_db=False)
 
         if results:
             trades = results.get('all_trades', results.get('trades', []))

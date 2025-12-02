@@ -103,18 +103,19 @@ print("\n--- Generating Training Data from Backtest ---")
 try:
     from backtest.spx_premium_backtest import SPXPremiumBacktester
 
-    # Run a backtest to get trades
-    backtest = SPXPremiumBacktester(initial_capital=100000)
-
     end_date = datetime.now() - timedelta(days=7)
     start_date = end_date - timedelta(days=60)  # 2 months
 
     print(f"  Running backtest: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
 
-    results = backtest.run_backtest(
-        start_date.strftime('%Y-%m-%d'),
-        end_date.strftime('%Y-%m-%d')
+    # SPXPremiumBacktester takes dates in constructor, uses run() method
+    backtest = SPXPremiumBacktester(
+        start_date=start_date.strftime('%Y-%m-%d'),
+        end_date=end_date.strftime('%Y-%m-%d'),
+        initial_capital=100000
     )
+
+    results = backtest.run(save_to_db=False)
 
     trades = results.get('all_trades', results.get('trades', []))
     print(f"  Trades from backtest: {len(trades)}")
