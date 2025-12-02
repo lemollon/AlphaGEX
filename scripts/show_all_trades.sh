@@ -141,6 +141,66 @@ try:
         print("  Search the ticker on Polygon.io: https://polygon.io/quote/")
         print("  Example: O:SPX241220P05800000 = SPX Put, Dec 20 2024, Strike $5800")
 
+    # ================================================================
+    # BACKTEST TRADES - Show what calibration used
+    # ================================================================
+    print("")
+    print("=" * 100)
+    print("BACKTEST TRADES (Historical simulation used for calibration)")
+    print("=" * 100)
+
+    cursor.execute('''
+        SELECT DISTINCT ON (backtest_id) backtest_id, COUNT(*) as count
+        FROM spx_wheel_backtest_trades
+        GROUP BY backtest_id
+        ORDER BY backtest_id DESC
+        LIMIT 1
+    ''')
+    backtest_info = cursor.fetchone()
+
+    if backtest_info:
+        backtest_id = backtest_info[0]
+        print(f"Backtest ID: {backtest_id}")
+
+        cursor.execute('''
+            SELECT
+                trade_id, trade_date, trade_type, option_ticker, strike,
+                entry_price, total_pnl, price_source
+            FROM spx_wheel_backtest_trades
+            WHERE backtest_id = %s
+            ORDER BY trade_date DESC
+            LIMIT 20
+        ''', (backtest_id,))
+
+        bt_trades = cursor.fetchall()
+        if bt_trades:
+            print(f"Showing latest 20 of {backtest_info[1]} backtest trades:")
+            print("")
+            print(f"{'#':<4} {'DATE':<12} {'TYPE':<18} {'TICKER':<28} {'STRIKE':>10} {'ENTRY':>8} {'P&L':>12} {'SOURCE':<12}")
+            print("-" * 110)
+
+            for t in bt_trades:
+                tid = t[0] or 0
+                tdate = str(t[1])[:10] if t[1] else ''
+                ttype = t[2] or 'SELL_PUT'
+                ticker = t[3] or ''
+                strike = float(t[4] or 0)
+                entry = float(t[5] or 0)
+                pnl = float(t[6]) if t[6] else None
+                source = t[7] or 'ESTIMATED'
+
+                strike_str = f"${strike:,.0f}"
+                entry_str = f"${entry:.2f}"
+                pnl_str = f"${pnl:,.2f}" if pnl else "-"
+
+                source_ind = "✓" if source in ['POLYGON_HISTORICAL', 'POLYGON'] else "⚠️"
+                print(f"{tid:<4} {tdate:<12} {ttype:<18} {ticker:<28} {strike_str:>10} {entry_str:>8} {pnl_str:>12} {source_ind}{source:<11}")
+
+            print("-" * 110)
+    else:
+        print("No backtest trades found.")
+        print("Run calibration first: ./scripts/calibrate_spx_wheel.sh")
+
     conn.close()
 
 except Exception as e:

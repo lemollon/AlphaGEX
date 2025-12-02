@@ -45,6 +45,99 @@ from data.polygon_data_fetcher import polygon_fetcher
 from database_adapter import get_connection
 
 
+def save_backtest_trades_to_db(trades: List, backtest_id: str, parameters: Dict = None):
+    """
+    Save backtest trades to database for audit trail and comparison with live trades.
+
+    This is CRITICAL for transparency - you can now see:
+    1. What the backtest expected
+    2. Compare to what actually happened in live trading
+    """
+    if not trades:
+        return
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Create backtest trades table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS spx_wheel_backtest_trades (
+                id SERIAL PRIMARY KEY,
+                backtest_id VARCHAR(50) NOT NULL,
+                backtest_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                trade_id INTEGER,
+                trade_date VARCHAR(20),
+                trade_type VARCHAR(30),
+                option_ticker VARCHAR(50),
+                strike DECIMAL(10,2),
+                expiration VARCHAR(20),
+                entry_price DECIMAL(10,4),
+                exit_price DECIMAL(10,4),
+                contracts INTEGER,
+                premium_received DECIMAL(12,2),
+                settlement_pnl DECIMAL(12,2),
+                total_pnl DECIMAL(12,2),
+                price_source VARCHAR(30),
+                entry_underlying_price DECIMAL(10,2),
+                exit_underlying_price DECIMAL(10,2),
+                notes TEXT,
+                parameters JSONB
+            )
+        ''')
+
+        # Create index for fast lookups
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_backtest_id ON spx_wheel_backtest_trades(backtest_id)
+        ''')
+
+        # Insert trades
+        for trade in trades:
+            # Handle both dict and dataclass
+            if hasattr(trade, '__dict__') and not isinstance(trade, dict):
+                t = asdict(trade)
+            else:
+                t = trade
+
+            cursor.execute('''
+                INSERT INTO spx_wheel_backtest_trades (
+                    backtest_id, trade_id, trade_date, trade_type, option_ticker,
+                    strike, expiration, entry_price, exit_price, contracts,
+                    premium_received, settlement_pnl, total_pnl, price_source,
+                    entry_underlying_price, exit_underlying_price, notes, parameters
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                backtest_id,
+                t.get('trade_id'),
+                t.get('trade_date') or t.get('entry_date'),
+                t.get('trade_type'),
+                t.get('option_ticker'),
+                t.get('strike'),
+                t.get('expiration'),
+                t.get('entry_price'),
+                t.get('exit_price', 0),
+                t.get('contracts', 1),
+                t.get('premium_received', 0) if isinstance(t.get('premium_received'), (int, float)) else float(t.get('premium_received', 0) or 0) * 100 * t.get('contracts', 1),
+                t.get('settlement_pnl'),
+                t.get('total_pnl'),
+                t.get('price_source').value if hasattr(t.get('price_source'), 'value') else str(t.get('price_source', 'UNKNOWN')),
+                t.get('entry_underlying_price'),
+                t.get('exit_underlying_price'),
+                t.get('notes'),
+                json.dumps(parameters) if parameters else None
+            ))
+
+        conn.commit()
+        conn.close()
+
+        print(f"\n✓ Saved {len(trades)} backtest trades to database (backtest_id: {backtest_id})")
+
+    except Exception as e:
+        print(f"Warning: Could not save backtest trades to DB: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 class DataSource(Enum):
     """Tracks where each piece of data came from - CRITICAL for verification"""
     POLYGON_HISTORICAL = "POLYGON_HISTORICAL"
@@ -163,8 +256,10 @@ class SPXPremiumBacktester:
         # Price data
         self.price_data: pd.DataFrame = None
 
-    def run(self) -> Dict:
+    def run(self, save_to_db: bool = True) -> Dict:
         """Run the backtest with REAL historical data"""
+        self._save_to_db = save_to_db
+
         print("\n" + "="*80)
         print("SPX CASH-SECURED PUT BACKTEST - POLYGON HISTORICAL DATA")
         print("="*80)
@@ -225,7 +320,7 @@ class SPXPremiumBacktester:
                       f"DD: {drawdown:.1f}% | "
                       f"Open: {len(self.open_positions)}")
 
-        return self._generate_results()
+        return self._generate_results(save_to_db=getattr(self, '_save_to_db', True))
 
     def _fetch_price_data(self):
         """Fetch SPX price history"""
@@ -458,7 +553,7 @@ class SPXPremiumBacktester:
         """Calculate total equity"""
         return self.cash + self._mark_to_market(spot_price)
 
-    def _generate_results(self) -> Dict:
+    def _generate_results(self, save_to_db: bool = True) -> Dict:
         """Generate comprehensive results"""
         final_equity = self.cash  # Simplified for now
 
@@ -481,6 +576,9 @@ class SPXPremiumBacktester:
         total_points = self.real_data_count + self.estimated_data_count
         real_pct = (self.real_data_count / total_points * 100) if total_points > 0 else 0
 
+        # Generate unique backtest ID
+        backtest_id = f"BT_{self.start_date}_{self.end_date}_D{self.put_delta}_DTE{self.dte_target}"
+
         results = {
             'summary': {
                 'symbol': 'SPX',
@@ -497,7 +595,8 @@ class SPXPremiumBacktester:
                 'win_rate': (expired_otm / len(self.all_trades) * 100) if self.all_trades else 0,
                 'total_premium_collected': total_premium,
                 'total_settlement_losses': total_settlement_loss,
-                'net_premium': total_premium - total_settlement_loss
+                'net_premium': total_premium - total_settlement_loss,
+                'backtest_id': backtest_id
             },
             'data_quality': {
                 'real_data_points': self.real_data_count,
@@ -514,6 +613,19 @@ class SPXPremiumBacktester:
         # Generate professional Strategy Tester Report
         report = self._generate_strategy_report()
         results['strategy_report'] = report.to_dict() if report else None
+
+        # === SAVE BACKTEST TRADES TO DATABASE ===
+        if save_to_db and self.all_trades:
+            parameters = {
+                'put_delta': self.put_delta,
+                'dte_target': self.dte_target,
+                'max_margin_pct': self.max_margin_pct,
+                'start_date': self.start_date,
+                'end_date': self.end_date,
+                'initial_capital': self.initial_capital,
+                'data_quality_pct': real_pct
+            }
+            save_backtest_trades_to_db(self.all_trades, backtest_id, parameters)
 
         return results
 

@@ -202,9 +202,14 @@ class SPXWheelOptimizer:
         self._print_optimization_results(best)
         self._save_parameters(best.parameters)
 
+        # === SAVE BEST BACKTEST TRADES TO DATABASE ===
+        print("\n[SAVING BEST BACKTEST TRADES TO DATABASE...]")
+        self._run_single_backtest(best.parameters, save_to_db=True)
+        print("✓ Backtest trades saved - view in dashboard!")
+
         return best.parameters
 
-    def _run_single_backtest(self, params: WheelParameters) -> BacktestResult:
+    def _run_single_backtest(self, params: WheelParameters, save_to_db: bool = False) -> BacktestResult:
         """Run backtest with specific parameters"""
         from backtest.spx_premium_backtest import SPXPremiumBacktester
 
@@ -217,12 +222,12 @@ class SPXWheelOptimizer:
             max_margin_pct=params.max_margin_pct
         )
 
-        # Suppress output during optimization
+        # Suppress output during optimization (but still save trades if requested)
         import io
         from contextlib import redirect_stdout
         f = io.StringIO()
         with redirect_stdout(f):
-            results = backtester.run()
+            results = backtester.run(save_to_db=save_to_db)
 
         summary = results['summary']
 
