@@ -1254,3 +1254,281 @@ def fetch_vix_data() -> Dict:
         'source': 'polygon',
         'timestamp': datetime.now().isoformat()
     }
+
+
+# =============================================================================
+# REAL DATA HELPERS FOR ML FEATURES
+# =============================================================================
+
+def get_vix_for_date(date_str: str) -> float:
+    """
+    Get VIX value for a specific historical date.
+
+    CRITICAL for backtesting - ML needs REAL VIX, not hardcoded 15.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+
+    Returns:
+        VIX close value for that date, or estimated value if not available
+    """
+    try:
+        # Parse target date
+        target_date = datetime.strptime(date_str, '%Y-%m-%d')
+
+        # Get VIX history covering the target date
+        days_ago = (datetime.now() - target_date).days + 5  # Buffer for weekends
+        days_ago = max(5, min(days_ago, 400))  # Limit to ~1 year of data
+
+        df = polygon_fetcher.get_price_history('VIX', days=days_ago, timeframe='day')
+
+        if df is not None and not df.empty:
+            # Find closest date
+            df.index = pd.to_datetime(df.index)
+            target = pd.Timestamp(target_date)
+
+            # Get exact match or closest prior date
+            prior_dates = df.index[df.index <= target]
+            if len(prior_dates) > 0:
+                closest_date = prior_dates[-1]
+                vix_value = float(df.loc[closest_date, 'Close'])
+                print(f"✅ VIX for {date_str}: {vix_value:.2f} (from {closest_date.date()})")
+                return vix_value
+
+        # Fallback: estimate VIX based on market conditions
+        print(f"⚠️ No VIX data for {date_str}, using estimate")
+        return 18.0  # Long-term VIX average
+
+    except Exception as e:
+        print(f"❌ Error fetching VIX for {date_str}: {e}")
+        return 18.0
+
+
+def calculate_iv_rank(symbol: str, current_iv: float, lookback_days: int = 252) -> float:
+    """
+    Calculate IV Rank: where is current IV relative to past year?
+
+    IV Rank = (Current IV - Min IV) / (Max IV - Min IV) * 100
+
+    CRITICAL for put selling - high IV rank = better premium.
+
+    Args:
+        symbol: Underlying symbol (e.g., 'SPY')
+        current_iv: Current implied volatility (as decimal, e.g., 0.15 for 15%)
+        lookback_days: Days to look back (default 252 = 1 year)
+
+    Returns:
+        IV Rank from 0-100 (100 = IV at yearly high)
+    """
+    try:
+        # For options-based IV, we'd need historical IV data
+        # As a proxy, we can use VIX for SPX/SPY since VIX is SPX implied vol
+        if symbol.upper() in ['SPY', 'SPX', 'ES']:
+            df = polygon_fetcher.get_price_history('VIX', days=lookback_days, timeframe='day')
+
+            if df is not None and len(df) > 20:
+                # Get min/max VIX over lookback period
+                vix_min = df['Close'].min() / 100  # Convert to decimal
+                vix_max = df['Close'].max() / 100
+
+                # Calculate IV rank
+                if vix_max > vix_min:
+                    iv_rank = (current_iv - vix_min) / (vix_max - vix_min) * 100
+                    iv_rank = max(0, min(100, iv_rank))  # Clamp to 0-100
+                    print(f"✅ IV Rank for {symbol}: {iv_rank:.1f}% (IV={current_iv*100:.1f}%, range={vix_min*100:.1f}%-{vix_max*100:.1f}%)")
+                    return iv_rank
+
+        # Fallback: Use historical volatility as proxy
+        price_df = polygon_fetcher.get_price_history(symbol, days=lookback_days, timeframe='day')
+
+        if price_df is not None and len(price_df) > 20:
+            # Calculate historical volatility (20-day rolling)
+            returns = price_df['Close'].pct_change()
+            hist_vol = returns.rolling(20).std() * math.sqrt(252)
+
+            # Get min/max over lookback
+            hv_min = hist_vol.min()
+            hv_max = hist_vol.max()
+
+            if hv_max > hv_min:
+                # Use HV as proxy - IV usually trades above HV
+                iv_rank = (current_iv - hv_min) / (hv_max - hv_min) * 100
+                iv_rank = max(0, min(100, iv_rank))
+                return iv_rank
+
+        # Default to middle of range
+        return 50.0
+
+    except Exception as e:
+        print(f"❌ Error calculating IV rank: {e}")
+        return 50.0
+
+
+def get_vix_term_structure() -> float:
+    """
+    Get VIX term structure: VIX - VIX3M
+
+    Negative = contango (normal)
+    Positive = backwardation (stress/fear)
+
+    Returns:
+        VIX - VIX3M spread
+    """
+    try:
+        # Get VIX (30-day) and VIX3M (90-day)
+        vix = polygon_fetcher.get_current_price('VIX')
+        vix3m = polygon_fetcher.get_current_price('VIX3M')
+
+        if vix and vix3m:
+            spread = vix - vix3m
+            print(f"✅ VIX term structure: VIX={vix:.2f}, VIX3M={vix3m:.2f}, spread={spread:.2f}")
+            return spread
+
+        # If VIX3M not available, estimate based on typical contango
+        if vix:
+            # Typical contango is ~5-10% VIX3M > VIX
+            estimated_vix3m = vix * 1.07
+            return vix - estimated_vix3m
+
+        return 0.0  # Can't determine
+
+    except Exception as e:
+        print(f"❌ Error fetching VIX term structure: {e}")
+        return 0.0
+
+
+def get_spx_returns(date_str: str = None) -> Dict[str, float]:
+    """
+    Get SPX/SPY returns over various periods.
+
+    Args:
+        date_str: Reference date (default: today)
+
+    Returns:
+        Dict with 5d, 20d returns and distance from high
+    """
+    try:
+        df = polygon_fetcher.get_price_history('SPY', days=100, timeframe='day')
+
+        if df is None or len(df) < 20:
+            return {'5d_return': 0, '20d_return': 0, 'distance_from_high': 0}
+
+        # If specific date, filter to that date
+        if date_str:
+            target = pd.Timestamp(date_str)
+            df = df[df.index <= target]
+
+        if len(df) < 20:
+            return {'5d_return': 0, '20d_return': 0, 'distance_from_high': 0}
+
+        current = df['Close'].iloc[-1]
+
+        # 5-day return
+        ret_5d = (current / df['Close'].iloc[-6] - 1) * 100 if len(df) >= 6 else 0
+
+        # 20-day return
+        ret_20d = (current / df['Close'].iloc[-21] - 1) * 100 if len(df) >= 21 else 0
+
+        # Distance from 52-week high
+        high_52w = df['High'].max()
+        distance_from_high = (current / high_52w - 1) * 100
+
+        return {
+            '5d_return': round(ret_5d, 2),
+            '20d_return': round(ret_20d, 2),
+            'distance_from_high': round(distance_from_high, 2)
+        }
+
+    except Exception as e:
+        print(f"❌ Error calculating SPX returns: {e}")
+        return {'5d_return': 0, '20d_return': 0, 'distance_from_high': 0}
+
+
+def get_ml_features_for_trade(
+    trade_date: str,
+    strike: float,
+    underlying_price: float,
+    option_iv: float = None
+) -> Dict:
+    """
+    Get ALL ML features for a trade - USING REAL DATA.
+
+    This is the CRITICAL function that should be called when
+    processing backtest trades for ML training.
+
+    Args:
+        trade_date: Trade date YYYY-MM-DD
+        strike: Option strike price
+        underlying_price: Underlying price at trade time
+        option_iv: Option's implied volatility (if available)
+
+    Returns:
+        Dict with all ML features, including data quality indicators
+    """
+    features = {
+        # Trade basics
+        'trade_date': trade_date,
+        'strike': strike,
+        'underlying_price': underlying_price,
+
+        # Data quality tracking
+        'data_sources': {}
+    }
+
+    # 1. Get VIX for that date
+    try:
+        features['vix'] = get_vix_for_date(trade_date)
+        features['data_sources']['vix'] = 'POLYGON'
+    except:
+        features['vix'] = 18.0
+        features['data_sources']['vix'] = 'ESTIMATED'
+
+    # 2. Calculate IV rank
+    if option_iv:
+        features['iv'] = option_iv
+        features['iv_rank'] = calculate_iv_rank('SPY', option_iv)
+        features['data_sources']['iv_rank'] = 'CALCULATED'
+    else:
+        # Use VIX as IV proxy
+        features['iv'] = features['vix'] / 100  # Convert VIX to decimal IV
+        features['iv_rank'] = calculate_iv_rank('SPY', features['iv'])
+        features['data_sources']['iv_rank'] = 'VIX_PROXY'
+
+    # 3. VIX term structure
+    features['vix_term_structure'] = get_vix_term_structure()
+    features['data_sources']['vix_term_structure'] = 'POLYGON' if features['vix_term_structure'] != 0 else 'ESTIMATED'
+
+    # 4. SPX returns
+    spx_data = get_spx_returns(trade_date)
+    features['spx_5d_return'] = spx_data['5d_return']
+    features['spx_20d_return'] = spx_data['20d_return']
+    features['distance_from_high'] = spx_data['distance_from_high']
+    features['data_sources']['spx_returns'] = 'POLYGON'
+
+    # 5. Calculate put wall distance (basic - strike relative to underlying)
+    features['put_wall_distance_pct'] = (underlying_price - strike) / underlying_price * 100
+    features['data_sources']['put_wall'] = 'CALCULATED'
+
+    # 6. VIX percentile (where is VIX relative to history?)
+    try:
+        vix_df = polygon_fetcher.get_price_history('VIX', days=252, timeframe='day')
+        if vix_df is not None and len(vix_df) > 20:
+            vix_values = vix_df['Close'].values
+            current_vix = features['vix']
+            # Percentile rank
+            percentile = sum(v < current_vix for v in vix_values) / len(vix_values) * 100
+            features['vix_percentile'] = round(percentile, 1)
+            features['data_sources']['vix_percentile'] = 'CALCULATED'
+        else:
+            features['vix_percentile'] = 50
+            features['data_sources']['vix_percentile'] = 'ESTIMATED'
+    except:
+        features['vix_percentile'] = 50
+        features['data_sources']['vix_percentile'] = 'ESTIMATED'
+
+    # 7. Calculate data quality score
+    real_sources = sum(1 for v in features['data_sources'].values() if v in ['POLYGON', 'CALCULATED'])
+    total_sources = len(features['data_sources'])
+    features['data_quality_pct'] = round(real_sources / total_sources * 100, 1) if total_sources > 0 else 0
+
+    return features

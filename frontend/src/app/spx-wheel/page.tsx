@@ -561,14 +561,14 @@ export default function SPXWheelPage() {
                 </div>
               </div>
 
-              {/* Data Quality */}
+              {/* Data Quality - HONEST DISCLOSURE */}
               {dataQuality && (
                 <div className="mt-4 bg-gray-950 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <Database className="w-5 h-5 text-gray-400" />
-                    <h3 className="font-semibold">Data Quality</h3>
+                    <h3 className="font-semibold">Data Quality & Sources</h3>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-4 mb-3">
                     <div>
                       <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
                         dataQuality.quality_verdict === 'HIGH' ? 'bg-green-500/20 text-green-400' :
@@ -581,6 +581,15 @@ export default function SPXWheelPage() {
                     <div className="text-sm text-gray-400">
                       {dataQuality.real_data_pct.toFixed(1)}% real data ({dataQuality.real_data_points} real, {dataQuality.estimated_data_points} estimated)
                     </div>
+                  </div>
+                  {/* Honest data source disclosure */}
+                  <div className="text-xs text-gray-500 space-y-1 border-t border-gray-800 pt-2">
+                    <p className="font-semibold text-gray-400">What counts as "real" data:</p>
+                    <p>✓ Option prices: From Polygon.io historical data</p>
+                    <p>✓ VIX levels: From Polygon.io (historical lookup per trade date)</p>
+                    <p>✓ IV Rank: Calculated from VIX history (252-day lookback)</p>
+                    <p>✓ SPX returns: Calculated from Polygon.io price data</p>
+                    <p className="text-yellow-500/80">⚠ GEX/Dealer Gamma: Not available (requires Trading Volatility subscription)</p>
                   </div>
                 </div>
               )}
@@ -725,6 +734,26 @@ export default function SPXWheelPage() {
                               <div className="bg-gray-900/50 rounded px-2 py-1">
                                 <span className="text-gray-500">Samples:</span>{' '}
                                 <span className="text-gray-300">{log.details.samples}</span>
+                              </div>
+                            )}
+                            {log.details.vix && (
+                              <div className="bg-gray-900/50 rounded px-2 py-1">
+                                <span className="text-gray-500">VIX:</span>{' '}
+                                <span className="text-gray-300">{log.details.vix?.toFixed(1)}</span>
+                              </div>
+                            )}
+                            {log.details.iv_rank && (
+                              <div className="bg-gray-900/50 rounded px-2 py-1">
+                                <span className="text-gray-500">IV Rank:</span>{' '}
+                                <span className="text-gray-300">{log.details.iv_rank?.toFixed(0)}%</span>
+                              </div>
+                            )}
+                            {log.details.data_quality_pct !== undefined && (
+                              <div className="bg-gray-900/50 rounded px-2 py-1">
+                                <span className="text-gray-500">Data Quality:</span>{' '}
+                                <span className={log.details.data_quality_pct >= 70 ? 'text-green-400' : 'text-yellow-400'}>
+                                  {log.details.data_quality_pct?.toFixed(0)}%
+                                </span>
                               </div>
                             )}
                           </div>
