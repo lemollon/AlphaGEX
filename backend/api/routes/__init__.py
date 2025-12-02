@@ -23,6 +23,10 @@ from . import scanner_routes
 from . import autonomous_routes
 from . import psychology_routes
 from . import ai_intelligence_routes
+from . import wheel_routes
+from . import export_routes
+from . import ml_routes
+from . import spx_backtest_routes
 
 __all__ = [
     'vix_routes',
@@ -45,4 +49,8 @@ __all__ = [
     'autonomous_routes',
     'psychology_routes',
     'ai_intelligence_routes',
+    'wheel_routes',
+    'export_routes',
+    'ml_routes',
+    'spx_backtest_routes',
 ]
