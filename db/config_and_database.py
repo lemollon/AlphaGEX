@@ -867,9 +867,53 @@ def init_database():
             entry_spot_price REAL,
             current_spot_price REAL,
             gex_regime TEXT,
-            created_at TIMESTAMPTZ DEFAULT NOW()
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            -- Greek columns for transparency
+            entry_delta REAL,
+            entry_gamma REAL,
+            entry_theta REAL,
+            entry_vega REAL,
+            entry_iv REAL,
+            current_delta REAL,
+            current_gamma REAL,
+            current_theta REAL,
+            current_vega REAL,
+            current_iv REAL,
+            -- Data source tracking
+            is_delayed BOOLEAN DEFAULT FALSE,
+            data_confidence TEXT DEFAULT 'high',
+            contract_symbol TEXT,
+            expiration_date TEXT,
+            last_updated TIMESTAMPTZ DEFAULT NOW()
         )
     ''')
+
+    # Add missing columns to existing autonomous_open_positions table
+    greek_columns = [
+        ('entry_delta', 'REAL'),
+        ('entry_gamma', 'REAL'),
+        ('entry_theta', 'REAL'),
+        ('entry_vega', 'REAL'),
+        ('entry_iv', 'REAL'),
+        ('current_delta', 'REAL'),
+        ('current_gamma', 'REAL'),
+        ('current_theta', 'REAL'),
+        ('current_vega', 'REAL'),
+        ('current_iv', 'REAL'),
+        ('is_delayed', 'BOOLEAN DEFAULT FALSE'),
+        ('data_confidence', "TEXT DEFAULT 'high'"),
+        ('contract_symbol', 'TEXT'),
+        ('expiration_date', 'TEXT'),
+        ('last_updated', 'TIMESTAMPTZ DEFAULT NOW()'),
+    ]
+    for col_name, col_type in greek_columns:
+        try:
+            c.execute(f'''
+                ALTER TABLE autonomous_open_positions
+                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+            ''')
+        except:
+            pass  # Column may already exist
 
     # Autonomous Equity Snapshots (used by autonomous_routes.py, trader_routes.py)
     c.execute('''

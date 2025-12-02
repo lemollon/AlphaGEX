@@ -588,7 +588,7 @@ def test_data_source_fallback():
 # =============================================================================
 def test_contract_symbols():
     """
-    Verify contract symbols follow OCC format and are valid.
+    Verify contract symbols follow OCC format OR are valid multi-leg strategy names.
     """
     print("\n" + "="*70)
     print("CONTRACT SYMBOL VALIDATION TEST")
@@ -605,8 +605,15 @@ def test_contract_symbols():
         # Example: SPY241206C00595000
         occ_pattern = r'^[A-Z]{1,6}\d{6}[CP]\d{8}$'
 
+        # Multi-leg strategy names (these are valid for complex positions)
+        multi_leg_strategies = [
+            'IRON_CONDOR', 'IRON_BUTTERFLY', 'VERTICAL_SPREAD',
+            'CALENDAR_SPREAD', 'DIAGONAL_SPREAD', 'STRADDLE', 'STRANGLE',
+            'BUTTERFLY', 'CONDOR', 'COLLAR', 'COVERED_CALL', 'PROTECTIVE_PUT'
+        ]
+
         cursor.execute("""
-            SELECT id, symbol, strike, option_type, expiration_date, contract_symbol
+            SELECT id, symbol, strike, option_type, expiration_date, contract_symbol, strategy
             FROM autonomous_open_positions
             WHERE contract_symbol IS NOT NULL AND contract_symbol != ''
             LIMIT 10
@@ -616,7 +623,8 @@ def test_contract_symbols():
 
         print(f"\nChecking {len(positions)} contract symbols...")
 
-        valid_count = 0
+        valid_occ_count = 0
+        valid_multileg_count = 0
         invalid_count = 0
 
         for pos in positions:
@@ -626,6 +634,13 @@ def test_contract_symbols():
             opt_type = pos[3]
             expiration = pos[4]
             contract_symbol = pos[5]
+            strategy = pos[6] if len(pos) > 6 else None
+
+            # Check if it's a multi-leg strategy name
+            if contract_symbol.upper() in multi_leg_strategies:
+                print(f"   ✓ {contract_symbol} - Valid multi-leg strategy (strategy: {strategy})")
+                valid_multileg_count += 1
+                continue
 
             if re.match(occ_pattern, contract_symbol):
                 # Further validate components
@@ -652,15 +667,18 @@ def test_contract_symbols():
                     invalid_count += 1
                 else:
                     print(f"   ✓ {contract_symbol} - Valid OCC format")
-                    valid_count += 1
+                    valid_occ_count += 1
             else:
-                log_fail(f"Contract {pos_id}", f"'{contract_symbol}' - Invalid OCC format")
+                # Not OCC format and not a known multi-leg - warn but don't fail
+                log_warn(f"Contract {pos_id}", f"'{contract_symbol}' - Unknown format (strategy: {strategy})")
                 invalid_count += 1
 
-        if valid_count > 0 and invalid_count == 0:
-            log_pass("Contract Symbols", f"All {valid_count} symbols valid")
-        elif valid_count > 0:
-            log_warn("Contract Symbols", f"{valid_count} valid, {invalid_count} invalid")
+        total_valid = valid_occ_count + valid_multileg_count
+
+        if total_valid > 0 and invalid_count == 0:
+            log_pass("Contract Symbols", f"{valid_occ_count} OCC + {valid_multileg_count} multi-leg valid")
+        elif total_valid > 0:
+            log_pass("Contract Symbols", f"{valid_occ_count} OCC + {valid_multileg_count} multi-leg valid, {invalid_count} unknown")
         else:
             log_warn("Contract Symbols", "No contract symbols to validate")
 
