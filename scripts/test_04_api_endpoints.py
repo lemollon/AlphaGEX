@@ -42,14 +42,14 @@ except ImportError:
 
 try:
     from fastapi.testclient import TestClient
-    from backend.api.main import app
+    from backend.main import app
     client = TestClient(app)
     print("  TestClient initialized")
     test_client_available = True
 except ImportError:
     try:
         from fastapi.testclient import TestClient
-        from api.main import app
+        from main import app
         client = TestClient(app)
         print("  TestClient initialized (alternate path)")
         test_client_available = True

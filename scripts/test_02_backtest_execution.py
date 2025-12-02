@@ -21,17 +21,25 @@ print("="*60)
 # =============================================================================
 print("\n--- Importing Backtest Engine ---")
 
+SPXBacktest = None
 try:
-    from core_classes_and_engines import SPXWheelBacktest
-    print("  SPXWheelBacktest imported")
+    from backtest.spx_premium_backtest import SPXPremiumBacktester
+    SPXBacktest = SPXPremiumBacktester
+    print("  SPXPremiumBacktester imported from backtest.spx_premium_backtest")
 except ImportError as e:
-    print(f"  Trying alternate import...")
+    print(f"  Trying alternate imports...")
     try:
-        from backend.core_classes_and_engines import SPXWheelBacktest
-        print("  SPXWheelBacktest imported from backend")
+        from backtest.wheel_backtest import WheelBacktester
+        SPXBacktest = WheelBacktester
+        print("  WheelBacktester imported from backtest.wheel_backtest")
     except ImportError:
-        print(f"  Could not import SPXWheelBacktest: {e}")
-        sys.exit(1)
+        try:
+            from backtest.real_wheel_backtest import RealWheelBacktester
+            SPXBacktest = RealWheelBacktester
+            print("  RealWheelBacktester imported from backtest.real_wheel_backtest")
+        except ImportError:
+            print(f"  Could not import any backtest engine: {e}")
+            sys.exit(1)
 
 # =============================================================================
 # 2. Initialize Backtest Engine
@@ -39,9 +47,9 @@ except ImportError as e:
 print("\n--- Initializing Backtest Engine ---")
 
 try:
-    backtest = SPXWheelBacktest(initial_capital=100000)
+    backtest = SPXBacktest(initial_capital=100000)
     print(f"  Initial capital: $100,000")
-    print(f"  Engine initialized")
+    print(f"  Engine initialized: {type(backtest).__name__}")
 except Exception as e:
     print(f"  Error: {e}")
     sys.exit(1)
@@ -142,7 +150,7 @@ try:
     for delta in [0.10, 0.16, 0.20]:
         print(f"\n  Testing delta = {delta}:")
 
-        bt = SPXWheelBacktest(initial_capital=100000)
+        bt = SPXBacktest(initial_capital=100000)
         # Set delta if the engine supports it
         if hasattr(bt, 'target_delta'):
             bt.target_delta = delta

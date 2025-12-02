@@ -178,7 +178,13 @@ class PolygonDataFetcher:
                         'v': 'Volume'
                     })
 
-                    result = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+                    # Handle indices (like I:VIX) that don't have Volume data
+                    if 'Volume' in df.columns:
+                        result = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+                    else:
+                        # Index data - no volume, add dummy column
+                        df['Volume'] = 0
+                        result = df[['Open', 'High', 'Low', 'Close', 'Volume']]
 
                     # Cache the result
                     self.cache.set('price_history', cache_key, result)
@@ -1627,18 +1633,21 @@ def get_ml_features_for_trade(
     try:
         gex_data = get_gex_data('SPY')
         if 'error' not in gex_data:
-            features['net_gex'] = gex_data.get('net_gex', 0)
-            features['put_wall'] = gex_data.get('put_wall', 0)
-            features['call_wall'] = gex_data.get('call_wall', 0)
+            features['net_gex'] = gex_data.get('net_gex', 0) or 0
+            features['put_wall'] = gex_data.get('put_wall') or 0
+            features['call_wall'] = gex_data.get('call_wall') or 0
 
-            # Calculate distances from walls
-            if features['put_wall'] > 0:
-                features['put_wall_distance_pct'] = (underlying_price - features['put_wall']) / underlying_price * 100
+            # Calculate distances from walls (handle None values)
+            put_wall = features['put_wall']
+            call_wall = features['call_wall']
+
+            if put_wall and put_wall > 0:
+                features['put_wall_distance_pct'] = (underlying_price - put_wall) / underlying_price * 100
             else:
                 features['put_wall_distance_pct'] = (underlying_price - strike) / underlying_price * 100
 
-            if features['call_wall'] > 0:
-                features['call_wall_distance_pct'] = (features['call_wall'] - underlying_price) / underlying_price * 100
+            if call_wall and call_wall > 0:
+                features['call_wall_distance_pct'] = (call_wall - underlying_price) / underlying_price * 100
             else:
                 features['call_wall_distance_pct'] = 5  # Default
 
