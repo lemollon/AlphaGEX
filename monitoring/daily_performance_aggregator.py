@@ -90,10 +90,16 @@ def aggregate_daily_performance():
 
             # Calculate drawdown (peak to trough)
             historical_pnl = closed_positions[closed_positions['date'] <= date]['realized_pnl'].cumsum()
-            peak = historical_pnl.expanding().max().iloc[-1]
-            current = historical_pnl.iloc[-1]
-            drawdown = peak - current
-            drawdown_pct = (drawdown / starting_capital * 100) if starting_capital > 0 else 0
+            if len(historical_pnl) > 0 and not historical_pnl.empty:
+                peak = historical_pnl.expanding().max().iloc[-1]
+                current = historical_pnl.iloc[-1]
+                drawdown = peak - current
+                drawdown_pct = (drawdown / starting_capital * 100) if starting_capital > 0 else 0
+            else:
+                peak = 0
+                current = 0
+                drawdown = 0
+                drawdown_pct = 0
 
             # Calculate Sharpe ratio (requires multiple days)
             sharpe_ratio = calculate_sharpe_ratio(closed_positions, date, starting_capital)

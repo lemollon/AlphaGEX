@@ -525,25 +525,40 @@ class GEXDataTracker:
                 'confidence': 0
             }
 
-        # Calculate GEX momentum
-        gex_change = df['net_gex'].iloc[-1] - df['net_gex'].iloc[0]
-        gex_acceleration = df['gex_change_rate'].diff().mean()
+        # Safety check for required columns
+        if 'net_gex' not in df.columns or 'gex_change_rate' not in df.columns:
+            return {
+                'momentum': 'unknown',
+                'direction': 'unknown',
+                'driver': 'unknown',
+                'confidence': 0
+            }
+
+        # Calculate GEX momentum (with safe access)
+        try:
+            gex_change = df['net_gex'].iloc[-1] - df['net_gex'].iloc[0]
+            gex_acceleration = df['gex_change_rate'].diff().mean()
+        except (IndexError, KeyError):
+            gex_change = 0
+            gex_acceleration = 0
 
         # Which expiration is driving?
-        if 'gex_0dte' in df.columns:
-            dte_change = df['gex_0dte'].iloc[-1] - df['gex_0dte'].iloc[0]
-            weekly_change = df['gex_weekly'].iloc[-1] - df['gex_weekly'].iloc[0]
-            monthly_change = df['gex_monthly'].iloc[-1] - df['gex_monthly'].iloc[0]
+        driver = 'unknown'
+        if 'gex_0dte' in df.columns and 'gex_weekly' in df.columns and 'gex_monthly' in df.columns:
+            try:
+                dte_change = df['gex_0dte'].iloc[-1] - df['gex_0dte'].iloc[0]
+                weekly_change = df['gex_weekly'].iloc[-1] - df['gex_weekly'].iloc[0]
+                monthly_change = df['gex_monthly'].iloc[-1] - df['gex_monthly'].iloc[0]
 
-            max_change = max(abs(dte_change), abs(weekly_change), abs(monthly_change))
-            if max_change == abs(dte_change):
-                driver = '0DTE'
-            elif max_change == abs(weekly_change):
-                driver = 'WEEKLY'
-            else:
-                driver = 'MONTHLY'
-        else:
-            driver = 'unknown'
+                max_change = max(abs(dte_change), abs(weekly_change), abs(monthly_change))
+                if max_change == abs(dte_change):
+                    driver = '0DTE'
+                elif max_change == abs(weekly_change):
+                    driver = 'WEEKLY'
+                else:
+                    driver = 'MONTHLY'
+            except (IndexError, KeyError):
+                driver = 'unknown'
 
         # Determine momentum
         if gex_acceleration > 0 and gex_change > 0:

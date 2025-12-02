@@ -122,7 +122,7 @@ try:
     backtest = SPXPremiumBacktester(
         start_date=start_date.strftime('%Y-%m-%d'),
         end_date=end_date.strftime('%Y-%m-%d'),
-        initial_capital=100000
+        initial_capital=100000000  # $100M
     )
 
     backtest_results = backtest.run(save_to_db=False)

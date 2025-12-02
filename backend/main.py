@@ -1382,12 +1382,75 @@ init_alerts_database()
 # Startup & Shutdown Events
 # ============================================================================
 
+def validate_required_env_vars():
+    """
+    Validate all required environment variables at startup.
+    Fails fast if critical configuration is missing.
+    """
+    required_vars = {
+        'DATABASE_URL': 'PostgreSQL connection string (required)',
+    }
+
+    recommended_vars = {
+        'TRADING_VOLATILITY_API_KEY': 'GEX data from TradingVolatility',
+        'TRADIER_API_KEY': 'Live options data and trading',
+        'POLYGON_API_KEY': 'Historical market data',
+    }
+
+    errors = []
+    warnings = []
+
+    # Check required vars
+    for var, description in required_vars.items():
+        if not os.getenv(var):
+            errors.append(f"❌ MISSING REQUIRED: {var} - {description}")
+
+    # Check recommended vars
+    for var, description in recommended_vars.items():
+        if not os.getenv(var):
+            warnings.append(f"⚠️  Missing recommended: {var} - {description}")
+
+    # Print results
+    print("\n" + "=" * 60)
+    print("🔐 ENVIRONMENT VARIABLE VALIDATION")
+    print("=" * 60)
+
+    if errors:
+        for error in errors:
+            print(error)
+        print("\n❌ STARTUP BLOCKED: Fix missing required environment variables")
+        raise RuntimeError("Missing required environment variables. Check logs above.")
+
+    print("✅ All required environment variables configured")
+
+    if warnings:
+        for warning in warnings:
+            print(warning)
+    else:
+        print("✅ All recommended environment variables configured")
+
+    # Validate API key formats
+    tradier_key = os.getenv('TRADIER_API_KEY', '')
+    if tradier_key and len(tradier_key) < 10:
+        print("⚠️  TRADIER_API_KEY appears invalid (too short)")
+
+    polygon_key = os.getenv('POLYGON_API_KEY', '')
+    if polygon_key and len(polygon_key) < 10:
+        print("⚠️  POLYGON_API_KEY appears invalid (too short)")
+
+    print("=" * 60 + "\n")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Run on application startup"""
     print("=" * 80)
     print("🚀 AlphaGEX API Starting...")
     print("=" * 80)
+
+    # Validate environment variables FIRST
+    validate_required_env_vars()
+
     print(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
     print(f"Market Open: {is_market_open()}")
     print(f"Current Time (ET): {get_et_time().strftime('%Y-%m-%d %H:%M:%S %Z')}")

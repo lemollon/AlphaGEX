@@ -1126,15 +1126,96 @@ class SmartDTECalculator:
 
     def _get_historical_dte_performance(self, strategy_type: str, gex_regime: str, dte_range: tuple) -> Dict:
         """Query database for historical DTE success rates"""
-        # Note: This assumes we'll start tracking DTE in positions table
-        # For now, return placeholder data. TODO: Add DTE tracking to database schema
+        try:
+            from database_adapter import get_connection
+            import pandas as pd
 
-        return {
-            'sample_size': 0,
-            'optimal_dte': None,
-            'win_rates_by_dte': {},
-            'has_data': False
-        }
+            conn = get_connection()
+
+            # Query closed trades with DTE info
+            # Calculate DTE from entry_date and expiration_date
+            query = """
+                SELECT
+                    strategy,
+                    gex_regime,
+                    expiration_date::date - entry_date::date as dte_at_entry,
+                    CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END as is_winner,
+                    realized_pnl
+                FROM autonomous_closed_trades
+                WHERE strategy = %s
+                  AND expiration_date IS NOT NULL
+                  AND entry_date IS NOT NULL
+                  AND exit_date >= NOW() - INTERVAL '90 days'
+            """
+
+            try:
+                df = pd.read_sql_query(query, conn.raw_connection, params=(strategy_type,))
+            except Exception:
+                # Try without raw_connection for compatibility
+                df = pd.read_sql_query(query, conn, params=(strategy_type,))
+
+            conn.close()
+
+            if df.empty or len(df) < 3:
+                return {
+                    'sample_size': 0,
+                    'optimal_dte': None,
+                    'win_rates_by_dte': {},
+                    'has_data': False
+                }
+
+            # Filter to DTE range if specified
+            if dte_range:
+                df = df[(df['dte_at_entry'] >= dte_range[0]) & (df['dte_at_entry'] <= dte_range[1])]
+
+            if df.empty:
+                return {
+                    'sample_size': 0,
+                    'optimal_dte': None,
+                    'win_rates_by_dte': {},
+                    'has_data': False
+                }
+
+            # Calculate win rates by DTE
+            dte_stats = df.groupby('dte_at_entry').agg({
+                'is_winner': ['sum', 'count'],
+                'realized_pnl': 'sum'
+            }).reset_index()
+
+            dte_stats.columns = ['dte', 'wins', 'total', 'total_pnl']
+            dte_stats['win_rate'] = (dte_stats['wins'] / dte_stats['total'] * 100).round(1)
+
+            # Find optimal DTE (highest win rate with at least 3 samples)
+            valid_dtes = dte_stats[dte_stats['total'] >= 3]
+            optimal_dte = None
+            if not valid_dtes.empty:
+                optimal_dte = int(valid_dtes.loc[valid_dtes['win_rate'].idxmax(), 'dte'])
+
+            win_rates_by_dte = {
+                int(row['dte']): {
+                    'win_rate': float(row['win_rate']),
+                    'sample_size': int(row['total']),
+                    'total_pnl': float(row['total_pnl'])
+                }
+                for _, row in dte_stats.iterrows()
+            }
+
+            return {
+                'sample_size': int(len(df)),
+                'optimal_dte': optimal_dte,
+                'win_rates_by_dte': win_rates_by_dte,
+                'has_data': True
+            }
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"DTE historical query failed: {e}")
+            return {
+                'sample_size': 0,
+                'optimal_dte': None,
+                'win_rates_by_dte': {},
+                'has_data': False
+            }
 
     def _adjust_dte_from_history(self, base_dte: int, historical_analysis: Dict) -> int:
         """Adjust DTE based on historical performance"""

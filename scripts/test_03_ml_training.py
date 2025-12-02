@@ -32,14 +32,17 @@ except ImportError as e:
     ml_imports_ok = False
 
 try:
-    from core_classes_and_engines import SPXPatternLearner
-    print("  SPXPatternLearner imported")
+    from ai.autonomous_ml_pattern_learner import PatternLearner
+    SPXPatternLearner = PatternLearner  # Alias for compatibility
+    print("  PatternLearner imported from ai.autonomous_ml_pattern_learner")
 except ImportError:
     try:
-        from backend.core_classes_and_engines import SPXPatternLearner
-        print("  SPXPatternLearner imported from backend")
+        from autonomous_ml_pattern_learner import PatternLearner
+        SPXPatternLearner = PatternLearner
+        print("  PatternLearner imported (alternate path)")
     except ImportError as e:
-        print(f"  Could not import SPXPatternLearner: {e}")
+        print(f"  Could not import PatternLearner: {e}")
+        SPXPatternLearner = None
         ml_imports_ok = False
 
 if not ml_imports_ok:
@@ -112,7 +115,7 @@ try:
     backtest = SPXPremiumBacktester(
         start_date=start_date.strftime('%Y-%m-%d'),
         end_date=end_date.strftime('%Y-%m-%d'),
-        initial_capital=100000
+        initial_capital=100000000  # $100M
     )
 
     results = backtest.run(save_to_db=False)
@@ -174,19 +177,23 @@ except Exception as e:
 # =============================================================================
 print("\n--- Pattern Learner Initialization ---")
 
+learner = None
 try:
-    learner = SPXPatternLearner()
-    print(f"  SPXPatternLearner initialized")
+    if SPXPatternLearner is not None:
+        learner = SPXPatternLearner()
+        print(f"  PatternLearner initialized")
 
-    # Check what methods are available
-    methods = [m for m in dir(learner) if not m.startswith('_')]
-    print(f"  Available methods: {', '.join(methods[:10])}...")
+        # Check what methods are available
+        methods = [m for m in dir(learner) if not m.startswith('_')]
+        print(f"  Available methods: {', '.join(methods[:10])}...")
 
-    # Check if model exists
-    if hasattr(learner, 'model'):
-        print(f"  Model attribute exists: {type(learner.model)}")
+        # Check if model exists
+        if hasattr(learner, 'model'):
+            print(f"  Model attribute exists: {type(learner.model)}")
+        else:
+            print(f"  No model attribute (needs training)")
     else:
-        print(f"  No model attribute (needs training)")
+        print("  PatternLearner not available (import failed)")
 
 except Exception as e:
     print(f"  Error: {e}")

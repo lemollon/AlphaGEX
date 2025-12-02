@@ -55,14 +55,14 @@ try:
     end_str = end_date.strftime('%Y-%m-%d')
 
     print(f"  Date range: {start_str} to {end_str}")
-    print(f"  Initial capital: $100,000")
+    print(f"  Initial capital: $100,000,000")
     print("  Running backtest...")
 
     # SPXPremiumBacktester takes dates in constructor, uses run() method
     backtest = SPXBacktest(
         start_date=start_str,
         end_date=end_str,
-        initial_capital=100000
+        initial_capital=100000000  # $100M
     )
     print(f"  Engine: {type(backtest).__name__}")
 
@@ -154,7 +154,7 @@ try:
         bt = SPXBacktest(
             start_date=start_date.strftime('%Y-%m-%d'),
             end_date=end_date.strftime('%Y-%m-%d'),
-            initial_capital=100000,
+            initial_capital=100000000,  # $100M
             put_delta=delta
         )
 

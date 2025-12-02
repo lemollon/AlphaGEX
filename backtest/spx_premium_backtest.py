@@ -44,6 +44,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.polygon_data_fetcher import polygon_fetcher
 from database_adapter import get_connection
 
+# Try to use unified data provider (Tradier) for live data
+try:
+    from data.unified_data_provider import UnifiedDataProvider
+    unified_provider = UnifiedDataProvider()
+    USE_UNIFIED = True
+    print("✅ Using Unified Data Provider (Tradier) for SPX data")
+except ImportError:
+    USE_UNIFIED = False
+    print("⚠️ Unified Data Provider not available, using Polygon only")
+
 
 def save_backtest_equity_curve_to_db(snapshots: List, backtest_id: str):
     """
@@ -392,36 +402,74 @@ class SPXPremiumBacktester:
         return self._generate_results(save_to_db=getattr(self, '_save_to_db', True))
 
     def _fetch_price_data(self):
-        """Fetch SPX price history"""
+        """Fetch SPX price history - tries Tradier first, then Polygon"""
         start = datetime.strptime(self.start_date, '%Y-%m-%d')
         end = datetime.strptime(self.end_date, '%Y-%m-%d')
         days = (end - start).days + 30
 
-        # Try SPX index format first (I:SPX for Polygon), then fallbacks
-        for symbol in ['I:SPX', 'SPX', '^SPX', '$SPX.X']:
-            self.price_data = polygon_fetcher.get_price_history(
-                symbol,
-                days=days,
-                timeframe='day'
-            )
-            if self.price_data is not None and len(self.price_data) > 0:
-                print(f"Using {symbol} for SPX price data")
-                break
+        # Try Unified Data Provider (Tradier) first for live data
+        if USE_UNIFIED:
+            try:
+                # Tradier uses $SPX.X for SPX index
+                for symbol in ['$SPX.X', 'SPX']:
+                    bars = unified_provider.get_price_history(symbol, days=days, interval='day')
+                    if bars and len(bars) > 0:
+                        # Convert bars to DataFrame
+                        self.price_data = pd.DataFrame([{
+                            'Open': b.open,
+                            'High': b.high,
+                            'Low': b.low,
+                            'Close': b.close,
+                            'Volume': b.volume
+                        } for b in bars])
+                        self.price_data.index = pd.to_datetime([b.timestamp for b in bars])
+                        print(f"✅ Using Tradier {symbol} for SPX price data ({len(bars)} bars)")
+                        break
+            except Exception as e:
+                print(f"⚠️ Tradier SPX fetch failed: {e}")
+
+        # Fallback to Polygon if Tradier didn't work
+        if self.price_data is None or len(self.price_data) == 0:
+            # Try SPX index format first (I:SPX for Polygon), then fallbacks
+            for symbol in ['I:SPX', 'SPX', '^SPX', '$SPX.X']:
+                self.price_data = polygon_fetcher.get_price_history(
+                    symbol,
+                    days=days,
+                    timeframe='day'
+                )
+                if self.price_data is not None and len(self.price_data) > 0:
+                    print(f"Using Polygon {symbol} for SPX price data")
+                    break
 
         # If SPX not available, use SPY as proxy (SPX ≈ SPY * 10)
         if self.price_data is None or len(self.price_data) == 0:
             print("SPX index data not available, using SPY as proxy (scaled by 10x)")
-            self.price_data = polygon_fetcher.get_price_history(
-                'SPY',
-                days=days,
-                timeframe='day'
-            )
-            if self.price_data is not None and len(self.price_data) > 0:
-                # Scale SPY prices to approximate SPX (SPX ≈ SPY * 10)
-                self.price_data = self.price_data.copy()
-                for col in ['Open', 'High', 'Low', 'Close']:
-                    if col in self.price_data.columns:
-                        self.price_data[col] = self.price_data[col] * 10
+
+            # Try Tradier for SPY first
+            if USE_UNIFIED:
+                try:
+                    bars = unified_provider.get_price_history('SPY', days=days, interval='day')
+                    if bars and len(bars) > 0:
+                        self.price_data = pd.DataFrame([{
+                            'Open': b.open * 10,
+                            'High': b.high * 10,
+                            'Low': b.low * 10,
+                            'Close': b.close * 10,
+                            'Volume': b.volume
+                        } for b in bars])
+                        self.price_data.index = pd.to_datetime([b.timestamp for b in bars])
+                        print(f"✅ Using Tradier SPY*10 for SPX proxy ({len(bars)} bars)")
+                except Exception as e:
+                    print(f"⚠️ Tradier SPY fetch failed: {e}")
+
+            # Final fallback to Polygon SPY
+            if self.price_data is None or len(self.price_data) == 0:
+                self.price_data = polygon_fetcher.get_price_history('SPY', days=days, timeframe='day')
+                if self.price_data is not None and len(self.price_data) > 0:
+                    self.price_data = self.price_data.copy()
+                    for col in ['Open', 'High', 'Low', 'Close']:
+                        if col in self.price_data.columns:
+                            self.price_data[col] = self.price_data[col] * 10
 
         if self.price_data is not None:
             self.price_data = self.price_data[

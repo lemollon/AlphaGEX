@@ -87,14 +87,16 @@ if test_client_available:
         payload = {
             "start_date": start_date.strftime('%Y-%m-%d'),
             "end_date": end_date.strftime('%Y-%m-%d'),
-            "initial_capital": 100000,
-            "delta_target": 0.16
+            "initial_capital": 100000000,  # $100M for SPX margin
+            "put_delta": 0.16,
+            "dte_target": 45,
+            "use_ml_scoring": True
         }
 
-        print(f"  POST /api/spx-wheel/backtest")
+        print(f"  POST /api/spx-backtest/run")
         print(f"    Payload: {json.dumps(payload)}")
 
-        response = client.post("/api/spx-wheel/backtest", json=payload)
+        response = client.post("/api/spx-backtest/run", json=payload)
         print(f"    Status: {response.status_code}")
 
         if response.status_code == 200:
@@ -321,10 +323,10 @@ if test_client_available:
         payload = {
             "start_date": "2025-01-01",  # Future date
             "end_date": "2025-12-31",
-            "initial_capital": 100000
+            "initial_capital": 100000000
         }
 
-        response = client.post("/api/spx-wheel/backtest", json=payload)
+        response = client.post("/api/spx-backtest/run", json=payload)
         print(f"  Future dates: {response.status_code}")
 
         # Test with invalid capital
@@ -334,11 +336,11 @@ if test_client_available:
             "initial_capital": -1000  # Invalid
         }
 
-        response = client.post("/api/spx-wheel/backtest", json=payload)
+        response = client.post("/api/spx-backtest/run", json=payload)
         print(f"  Negative capital: {response.status_code}")
 
         # Test with missing fields
-        response = client.post("/api/spx-wheel/backtest", json={})
+        response = client.post("/api/spx-backtest/run", json={})
         print(f"  Missing fields: {response.status_code}")
 
     except Exception as e:
