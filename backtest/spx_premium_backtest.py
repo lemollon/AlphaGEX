@@ -510,7 +510,64 @@ class SPXPremiumBacktester:
         }
 
         self._print_summary(results)
+
+        # Generate professional Strategy Tester Report
+        report = self._generate_strategy_report()
+        results['strategy_report'] = report.to_dict() if report else None
+
         return results
+
+    def _generate_strategy_report(self):
+        """Generate MT4-style Strategy Tester Report"""
+        try:
+            from backtest.strategy_report import StrategyReportGenerator, print_strategy_report, export_report_to_html
+
+            gen = StrategyReportGenerator(
+                strategy_name="SPX Cash-Secured Puts",
+                symbol=self.symbol,
+                initial_capital=self.initial_capital,
+                start_date=self.start_date,
+                end_date=self.end_date
+            )
+
+            # Add all trades
+            for trade in self.all_trades:
+                gen.add_trade(
+                    trade_id=trade.trade_id,
+                    entry_date=trade.entry_date,
+                    exit_date=trade.exit_date or trade.expiration,
+                    direction="SHORT_PUT",
+                    entry_price=trade.entry_price,
+                    exit_price=trade.exit_price,
+                    contracts=trade.contracts,
+                    pnl=trade.total_pnl,
+                    price_source=trade.price_source.value if hasattr(trade.price_source, 'value') else str(trade.price_source)
+                )
+
+            # Add equity curve from daily snapshots
+            for snap in self.daily_snapshots:
+                gen.add_equity_point(
+                    date=snap.date,
+                    equity=snap.total_equity,
+                    drawdown_pct=snap.drawdown_pct
+                )
+
+            report = gen.generate()
+
+            # Print console report
+            print_strategy_report(report)
+
+            # Export HTML report
+            html_path = f"strategy_report_{self.start_date}_{self.end_date}.html"
+            export_report_to_html(report, html_path)
+
+            return report
+
+        except Exception as e:
+            print(f"Could not generate strategy report: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def _print_summary(self, results: Dict):
         """Print formatted summary"""

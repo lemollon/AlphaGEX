@@ -42,5 +42,26 @@ python3 backtest/spx_premium_backtest.py \
 echo ""
 echo "=============================================="
 echo "Backtest complete!"
-echo "Check the Excel file for full audit trail."
+echo "=============================================="
+echo ""
+echo "Generated files:"
+echo "  - strategy_report_*.html  (MT4-style report with equity curve)"
+echo "  - *.xlsx                  (Full audit trail)"
+echo ""
+
+# Find and display the HTML report path
+REPORT_FILE=$(ls -t strategy_report_*.html 2>/dev/null | head -1)
+if [ -n "$REPORT_FILE" ]; then
+    echo "Opening Strategy Tester Report: $REPORT_FILE"
+    echo ""
+    # Try to open in browser
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$REPORT_FILE" 2>/dev/null &
+    elif command -v open &> /dev/null; then
+        open "$REPORT_FILE" 2>/dev/null &
+    else
+        echo "Open this file in your browser: $(pwd)/$REPORT_FILE"
+    fi
+fi
+
 echo "=============================================="
