@@ -2319,15 +2319,19 @@ def backfill_ai_intelligence_tables():
                 c.execute("""
                     INSERT INTO autonomous_trade_activity (timestamp, action, reason, success)
                     SELECT
-                        (date || ' ' || time)::timestamp,
+                        CASE
+                            WHEN date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN (date || ' ' || COALESCE(time, '00:00:00'))::timestamp
+                            ELSE NOW()
+                        END,
                         action,
                         details,
                         CASE WHEN success = 1 THEN TRUE ELSE FALSE END
                     FROM autonomous_trade_log
-                    WHERE NOT EXISTS (
+                    WHERE date IS NOT NULL
+                    AND NOT EXISTS (
                         SELECT 1 FROM autonomous_trade_activity ata
                         WHERE ata.action = autonomous_trade_log.action
-                        AND DATE(ata.timestamp) = autonomous_trade_log.date::date
+                        AND DATE(ata.timestamp)::text = autonomous_trade_log.date
                     )
                     ORDER BY date DESC, time DESC
                     LIMIT 500

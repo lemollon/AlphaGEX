@@ -459,21 +459,44 @@ def test_regime_classification():
             print(f"      VIX: {scenario['vix']}")
 
             try:
+                # Extract values from scenario for proper classify() call
+                gex = scenario['gex_data']
+                spot_price = gex.get('spot_price', 500)
+                net_gex = gex.get('net_gex', 0)
+                flip_point = gex.get('flip_point', spot_price)
+                vix = scenario['vix']
+
+                # Create reasonable defaults for required params
+                current_iv = vix * 0.8  # Approximate IV from VIX
+                iv_history = [current_iv] * 30
+                historical_vol = current_iv * 0.9
+
                 result = classifier.classify(
-                    gex_data=scenario['gex_data'],
-                    vix_current=scenario['vix']
+                    spot_price=spot_price,
+                    net_gex=net_gex,
+                    flip_point=flip_point,
+                    current_iv=current_iv,
+                    iv_history=iv_history,
+                    historical_vol=historical_vol,
+                    vix=vix,
+                    vix_term_structure='contango',
+                    momentum_1h=0.1 if spot_price > flip_point else -0.1,
+                    momentum_4h=0.1 if spot_price > flip_point else -0.1,
+                    above_20ma=spot_price > flip_point,
+                    above_50ma=spot_price > flip_point
                 )
 
                 if result:
-                    regime = result.gex_regime if hasattr(result, 'gex_regime') else 'unknown'
-                    action = result.action if hasattr(result, 'action') else 'unknown'
+                    regime = getattr(result, 'gamma_regime', getattr(result, 'gex_regime', 'unknown'))
+                    action = getattr(result, 'recommended_action', getattr(result, 'action', 'unknown'))
                     confidence = result.confidence if hasattr(result, 'confidence') else 0
 
                     print(f"      Result: Regime={regime}, Action={action}, Confidence={confidence}%")
 
                     # Check if matches expected
-                    regime_match = scenario['expected_regime'] == 'any' or scenario['expected_regime'].lower() in regime.lower()
-                    action_match = scenario['expected_action'].lower() in action.lower()
+                    regime_str = str(regime).lower()
+                    expected = scenario['expected_regime'].lower()
+                    regime_match = expected == 'any' or expected in regime_str
 
                     if regime_match:
                         log_pass(f"Regime - {scenario['name']}", f"{regime}")
@@ -510,16 +533,44 @@ def test_regime_classification():
 
                 print(f"      VIX: {vix:.2f}")
 
-                # Classify
-                result = classifier.classify(gex_data=gex_data, vix_current=vix)
+                # Extract values from gex_data for classify() call
+                spot_price = gex_data.get('spot_price', gex_data.get('underlying_price', 500))
+                net_gex = gex_data.get('net_gex', 0)
+                flip_point = gex_data.get('flip_point', spot_price)
+                current_iv = gex_data.get('iv', gex_data.get('current_iv', 20))
+                iv_history = gex_data.get('iv_history', [current_iv] * 30)
+                historical_vol = gex_data.get('historical_vol', current_iv * 0.8)
+                vix_term = gex_data.get('vix_term_structure', 'contango')
+                momentum_1h = gex_data.get('momentum_1h', 0)
+                momentum_4h = gex_data.get('momentum_4h', 0)
+                above_20ma = gex_data.get('above_20ma', True)
+                above_50ma = gex_data.get('above_50ma', True)
+
+                # Classify using proper method signature
+                result = classifier.classify(
+                    spot_price=spot_price,
+                    net_gex=net_gex,
+                    flip_point=flip_point,
+                    current_iv=current_iv,
+                    iv_history=iv_history,
+                    historical_vol=historical_vol,
+                    vix=vix,
+                    vix_term_structure=vix_term,
+                    momentum_1h=momentum_1h,
+                    momentum_4h=momentum_4h,
+                    above_20ma=above_20ma,
+                    above_50ma=above_50ma
+                )
 
                 if result:
                     print(f"\n   Live Classification:")
-                    print(f"      Regime: {result.gex_regime if hasattr(result, 'gex_regime') else 'N/A'}")
-                    print(f"      Action: {result.action if hasattr(result, 'action') else 'N/A'}")
+                    regime = getattr(result, 'gamma_regime', getattr(result, 'gex_regime', 'N/A'))
+                    action = getattr(result, 'recommended_action', getattr(result, 'action', 'N/A'))
+                    print(f"      Regime: {regime}")
+                    print(f"      Action: {action}")
                     print(f"      Confidence: {result.confidence if hasattr(result, 'confidence') else 0}%")
 
-                    log_pass("Live Regime Classification", f"{result.gex_regime if hasattr(result, 'gex_regime') else 'Complete'}")
+                    log_pass("Live Regime Classification", f"{regime}")
             else:
                 log_warn("Live GEX Data", "Could not retrieve")
 
