@@ -69,6 +69,10 @@ interface Trade {
   current_spot_price?: number
   trade_reasoning?: string
   expiration_date?: string
+  // Verifiable trade details - for checking against Tradier
+  contract_symbol?: string  // e.g., "SPY241206C00595000" - the ACTUAL Tradier symbol
+  entry_date?: string       // e.g., "2024-12-06"
+  entry_time?: string       // e.g., "09:35:42"
   // Greeks
   entry_iv?: number
   entry_delta?: number
@@ -190,6 +194,9 @@ interface ClosedTrade {
   exit_reason: string
   hold_duration_minutes: number
   trade_reasoning?: string
+  // Verifiable fields
+  contract_symbol?: string
+  expiration_date?: string
 }
 
 // Backtest interface
@@ -474,6 +481,10 @@ export default function AutonomousTrader() {
           current_spot_price: trade.current_spot_price,
           trade_reasoning: trade.trade_reasoning,
           expiration_date: trade.expiration_date,
+          // Verifiable trade details for Tradier
+          contract_symbol: trade.contract_symbol,
+          entry_date: trade.entry_date,
+          entry_time: trade.entry_time,
           // Greeks - Entry values
           entry_iv: trade.entry_iv,
           entry_delta: trade.entry_delta,
@@ -649,6 +660,10 @@ export default function AutonomousTrader() {
             current_spot_price: trade.current_spot_price,
             trade_reasoning: trade.trade_reasoning,
             expiration_date: trade.expiration_date,
+            // Verifiable trade details for Tradier
+            contract_symbol: trade.contract_symbol,
+            entry_date: trade.entry_date,
+            entry_time: trade.entry_time,
             // Greeks - Entry values
             entry_iv: trade.entry_iv,
             entry_delta: trade.entry_delta,
@@ -1058,6 +1073,10 @@ export default function AutonomousTrader() {
           current_spot_price: trade.current_spot_price,
           trade_reasoning: trade.trade_reasoning,
           expiration_date: trade.expiration_date,
+          // Verifiable trade details for Tradier
+          contract_symbol: trade.contract_symbol,
+          entry_date: trade.entry_date,
+          entry_time: trade.entry_time,
           // Greeks - Entry values
           entry_iv: trade.entry_iv,
           entry_delta: trade.entry_delta,
@@ -2208,17 +2227,19 @@ export default function AutonomousTrader() {
                         return (
                           <tr key={idx} className="border-b border-border/50 hover:bg-background-hover transition-colors">
                             <td className="py-2 px-3 text-text-secondary text-xs">
-                              {trade.exit_date || 'N/A'}
-                              {trade.exit_time && <span className="text-text-muted ml-1">{trade.exit_time}</span>}
+                              <div>{trade.exit_date || 'N/A'}</div>
+                              <div className="text-text-muted">{trade.exit_time || ''}</div>
                             </td>
                             <td className="py-2 px-3 text-text-muted text-xs">
-                              {trade.entry_date || 'N/A'}
+                              <div>{trade.entry_date || 'N/A'}</div>
+                              <div>{trade.entry_time || ''}</div>
                             </td>
                             <td className="py-2 px-3 text-text-primary font-semibold text-xs">
                               {trade.strategy || 'Unknown'}
                             </td>
                             <td className="py-2 px-3 text-text-primary text-xs">
-                              {trade.symbol || 'SPY'} ${trade.strike}{trade.option_type?.charAt(0) || 'C'}
+                              <div>{trade.symbol || 'SPY'} ${trade.strike}{trade.option_type?.charAt(0) || 'C'}</div>
+                              <div className="text-text-muted font-mono text-xs">{trade.contract_symbol || ''}</div>
                             </td>
                             <td className="py-2 px-3 text-center text-text-primary text-xs">
                               {trade.contracts || 1}
@@ -2553,8 +2574,13 @@ export default function AutonomousTrader() {
                 const strike = trade.strike || 0;
                 const contractDisplay = strike > 0 ? `${trade.symbol} $${strike}${optionType}` : trade.symbol;
 
-                // Format expiration
-                const expDate = trade.expiration_date ? new Date(trade.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-';
+                // Format expiration - show full date for verification
+                const expDate = trade.expiration_date || '-';
+
+                // Format entry date/time for display
+                const entryDateTime = trade.entry_date && trade.entry_time
+                  ? `${trade.entry_date} ${trade.entry_time}`
+                  : formatTime(trade.timestamp);
 
                 return (
                 <Fragment key={trade.id}>
@@ -2562,17 +2588,20 @@ export default function AutonomousTrader() {
                     className="border-b border-border/50 hover:bg-background-hover transition-colors cursor-pointer"
                     onClick={() => setExpandedTradeId(expandedTradeId === trade.id ? null : trade.id)}
                   >
-                    <td className="py-3 px-4 text-text-secondary text-sm">{formatTime(trade.timestamp)}</td>
+                    <td className="py-3 px-4 text-text-secondary text-sm">
+                      <div>{trade.entry_date || 'N/A'}</div>
+                      <div className="text-xs">{trade.entry_time || ''}</div>
+                    </td>
                     <td className="py-3 px-4">
                       <div className="font-semibold text-text-primary text-sm">{trade.strategy || trade.action}</div>
                       <div className="text-xs text-text-secondary">{contracts}x contracts</div>
                     </td>
                     <td className="py-3 px-4">
                       <div className="text-text-primary font-medium">{contractDisplay}</div>
-                      <div className="text-xs text-text-secondary">@ {formatCurrency(trade.entry_spot_price || 0)} spot</div>
+                      <div className="text-xs text-text-muted font-mono">{trade.contract_symbol || 'N/A'}</div>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <span className="text-text-primary text-sm">{expDate}</span>
+                      <span className="text-text-primary text-sm font-mono">{expDate}</span>
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className={`font-semibold ${entryPrice > 0 ? 'text-text-primary' : 'text-danger'}`}>
@@ -2636,6 +2665,57 @@ export default function AutonomousTrader() {
                               </div>
                             </>
                           )}
+
+                          {/* VERIFIABLE TRADE DETAILS - For checking against Tradier */}
+                          <h4 className="font-semibold text-success flex items-center gap-2 mt-4">
+                            <CheckCircle className="w-4 h-4" />
+                            Verifiable Trade Details (Check on Tradier)
+                          </h4>
+                          <div className="p-4 bg-success/10 border border-success/30 rounded-lg">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Contract Symbol</div>
+                                <div className="font-mono text-success font-bold text-sm">
+                                  {trade.contract_symbol || `${trade.symbol}${trade.expiration_date?.replace(/-/g, '').slice(2)}${trade.type?.charAt(0).toUpperCase()}${String(Math.round((trade.strike || 0) * 1000)).padStart(8, '0')}`}
+                                </div>
+                                <div className="text-xs text-text-muted mt-1">Use this to verify on Tradier</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Entry Date</div>
+                                <div className="text-text-primary font-semibold">
+                                  {trade.entry_date || 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Entry Time</div>
+                                <div className="text-text-primary font-semibold">
+                                  {trade.entry_time || 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Expiration</div>
+                                <div className="text-text-primary font-semibold">
+                                  {trade.expiration_date || 'N/A'}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-3 pt-3 border-t border-success/20 grid grid-cols-3 gap-4">
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Strike Price</div>
+                                <div className="text-text-primary font-bold text-lg">${trade.strike || 0}</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Option Type</div>
+                                <div className={`font-bold text-lg ${trade.type?.toUpperCase() === 'CALL' || trade.type?.charAt(0).toUpperCase() === 'C' ? 'text-success' : 'text-danger'}`}>
+                                  {trade.type?.toUpperCase() || 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-text-secondary mb-1">Contracts</div>
+                                <div className="text-text-primary font-bold text-lg">{trade.quantity || 0}</div>
+                              </div>
+                            </div>
+                          </div>
 
                           {/* Position Details Grid */}
                           <h4 className="font-semibold text-text-primary flex items-center gap-2 mt-4">
