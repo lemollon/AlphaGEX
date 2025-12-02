@@ -5,6 +5,7 @@ Core trading components including:
 - Mixins: Position sizing, trade execution, position management, performance tracking
 - Config: Centralized trading and strategy configuration
 - Strategies: Iron condor, spreads, directional trades
+- Decision Logging: Full transparency audit trail for all trading decisions
 - Factory functions for creating traders
 """
 
@@ -13,6 +14,23 @@ from .mixins import (
     TradeExecutorMixin,
     PositionManagerMixin,
     PerformanceTrackerMixin,
+)
+
+# Decision transparency logging
+from .decision_logger import (
+    DecisionLogger,
+    TradeDecision,
+    DecisionType,
+    DataSource,
+    PriceSnapshot,
+    MarketContext,
+    BacktestReference,
+    DecisionReasoning,
+)
+
+from .autonomous_decision_bridge import (
+    DecisionBridge,
+    get_decision_bridge,
 )
 
 
@@ -65,6 +83,17 @@ __all__ = [
     'TradeExecutorMixin',
     'PositionManagerMixin',
     'PerformanceTrackerMixin',
+    # Decision logging
+    'DecisionLogger',
+    'TradeDecision',
+    'DecisionType',
+    'DataSource',
+    'PriceSnapshot',
+    'MarketContext',
+    'BacktestReference',
+    'DecisionReasoning',
+    'DecisionBridge',
+    'get_decision_bridge',
     # Factory functions
     'get_trader',
     'get_spy_trader',
