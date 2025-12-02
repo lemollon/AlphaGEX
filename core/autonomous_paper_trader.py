@@ -45,6 +45,14 @@ from trading.mixins import (
     RiskManagerMixin
 )
 
+# Import decision transparency bridge for full audit trail
+try:
+    from trading.autonomous_decision_bridge import DecisionBridge, get_decision_bridge
+    DECISION_BRIDGE_AVAILABLE = True
+except ImportError:
+    DECISION_BRIDGE_AVAILABLE = False
+    logger.warning("Decision bridge not available - trades won't be logged with full transparency")
+
 # Configure structured logging for autonomous trader
 logger = logging.getLogger('autonomous_paper_trader')
 if not logger.handlers:
@@ -399,6 +407,14 @@ class AutonomousPaperTrader(
         # Initialize trading costs calculator for realistic P&L
         self.costs_calculator = get_costs_calculator(self.symbol, 'paper')
         print(f"✅ Trading costs calculator initialized for {self.symbol} (slippage + commission modeling)")
+
+        # Initialize decision transparency bridge for full audit trail
+        if DECISION_BRIDGE_AVAILABLE:
+            self.decision_bridge = get_decision_bridge()
+            print("✅ Decision transparency bridge initialized - full audit trail enabled")
+        else:
+            self.decision_bridge = None
+            print("⚠️ Decision bridge not available - limited audit trail")
 
         # CRITICAL: Initialize UNIFIED Market Regime Classifier
         # This is the SINGLE source of truth - NO more whiplash decisions
@@ -1058,6 +1074,18 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 decision='Already traded today or market closed'
             )
             self.log_action('SKIP', 'Already traded today or market closed', success=True)
+
+            # Log the no-trade decision for audit trail
+            if self.decision_bridge:
+                try:
+                    self.decision_bridge.log_no_trade(
+                        symbol=self.symbol,
+                        spot_price=0,  # Don't have it yet
+                        reason='Already traded today or market closed'
+                    )
+                except Exception:
+                    pass  # Don't fail on logging
+
             return None
 
         self.log_action('START', 'Beginning daily trade search')
@@ -1512,6 +1540,30 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             if position_id:
                 # Update last trade date
                 self.set_config('last_trade_date', datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'))
+
+                # CRITICAL: Log trade with full transparency via decision bridge
+                if self.decision_bridge:
+                    try:
+                        decision_id = self.decision_bridge.log_trade_execution(
+                            trade_data={
+                                'symbol': self.symbol,
+                                'strike': trade.get('strike', 0),
+                                'dte': trade.get('dte', 0),
+                                'option_type': trade.get('option_type', ''),
+                                'strategy': trade.get('strategy', 'Unknown'),
+                                'signal_reason': trade.get('signal_reason', 'Automated signal'),
+                                'confidence': trade.get('confidence', 70),
+                                'expiration': exp_date
+                            },
+                            gex_data=gex_data,
+                            option_data=option_price_data,
+                            contracts=contracts,
+                            entry_price=entry_price,
+                            regime=trade.get('regime')
+                        )
+                        self.log_action('TRANSPARENCY', f'Decision logged: {decision_id}', success=True)
+                    except Exception as e:
+                        self.log_action('TRANSPARENCY_ERROR', f'Failed to log decision: {e}', success=False)
 
                 # Update live status with successful trade
                 self.update_live_status(
