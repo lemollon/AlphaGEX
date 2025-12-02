@@ -119,8 +119,20 @@ DASHBOARD_HTML = """
         .status-closed { color: #888; }
 
         .source-polygon { color: #4ade80; }
+        .source-polygon-historical, .source-polygon_historical { color: #4ade80; }
         .source-tradier { color: #60a5fa; }
+        .source-tradier-live, .source-tradier_live { color: #60a5fa; }
         .source-estimated { color: #fbbf24; }
+
+        .backtest-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #6366f1;
+            color: white;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-left: 5px;
+        }
 
         .chart-container { height: 300px; }
 
@@ -322,10 +334,10 @@ DASHBOARD_HTML = """
             </div>
         </div>
 
-        <!-- Trade Log -->
+        <!-- Trade Log - Live/Paper Trades -->
         <div class="grid">
             <div class="card full">
-                <h2>Complete Trade Log - Every Trade with Full Details</h2>
+                <h2>Live/Paper Trade Log - Actual Trades Executed</h2>
                 <div class="trade-details">
                     <table>
                         <thead>
@@ -365,10 +377,160 @@ DASHBOARD_HTML = """
                                 <td class="status-{{ trade.status|lower }}">{{ trade.status }}</td>
                             </tr>
                             {% else %}
-                            <tr><td colspan="11" style="text-align:center;color:#666">No trades yet</td></tr>
+                            <tr><td colspan="11" style="text-align:center;color:#666">No live/paper trades yet - run calibration and daily trading first</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Backtest Trade Log -->
+        <div class="grid">
+            <div class="card full" style="border-color: #6366f1;">
+                <h2 style="color: #a5b4fc;">Backtest Trade Log - Historical Simulation Used for Calibration</h2>
+                <div style="margin-bottom: 15px; padding: 10px; background: rgba(99, 102, 241, 0.1); border-radius: 5px;">
+                    <span style="color: #a5b4fc;">Backtest ID:</span> {{ backtest_id or 'No backtest run yet' }} |
+                    <span style="color: #a5b4fc;">Trades:</span> {{ backtest_total_trades }} |
+                    <span style="color: #a5b4fc;">Win Rate:</span> {{ "%.1f"|format(backtest_win_rate) }}% |
+                    <span style="color: #a5b4fc;">Total P&L:</span> ${{ "{:,.2f}".format(backtest_total_pnl) }} |
+                    <span style="color: #a5b4fc;">Data Quality:</span>
+                    <span class="{{ 'positive' if backtest_data_quality >= 80 else 'warning' if backtest_data_quality >= 50 else 'negative' }}">
+                        {{ "%.1f"|format(backtest_data_quality) }}%
+                    </span>
+                </div>
+                <div class="trade-details" style="max-height: 500px;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Date</th>
+                                <th>Type</th>
+                                <th>Ticker</th>
+                                <th>Strike</th>
+                                <th>Entry</th>
+                                <th>SPX Price</th>
+                                <th>Premium</th>
+                                <th>P&L</th>
+                                <th>Source</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for trade in backtest_trades[:100] %}
+                            <tr style="background: rgba(99, 102, 241, 0.05);">
+                                <td>{{ trade.trade_id }}</td>
+                                <td>{{ trade.trade_date[:10] if trade.trade_date else '' }}</td>
+                                <td style="color: {{ '#4ade80' if trade.trade_type == 'EXPIRED_OTM' else '#f87171' if trade.trade_type == 'CASH_SETTLE_LOSS' else '#fbbf24' }}">
+                                    {{ trade.trade_type or 'SELL_PUT' }}
+                                </td>
+                                <td><strong>{{ trade.option_ticker }}</strong></td>
+                                <td>${{ "{:,.0f}".format(trade.strike) }}</td>
+                                <td>${{ "{:.2f}".format(trade.entry_price) }}</td>
+                                <td>${{ "{:,.0f}".format(trade.entry_underlying) if trade.entry_underlying else '-' }}</td>
+                                <td>${{ "{:,.2f}".format(trade.premium_received) }}</td>
+                                <td class="{{ 'positive' if trade.total_pnl and trade.total_pnl > 0 else 'negative' if trade.total_pnl and trade.total_pnl < 0 else '' }}">
+                                    {{ "$%,.2f"|format(trade.total_pnl) if trade.total_pnl else '-' }}
+                                </td>
+                                <td class="source-{{ trade.price_source|lower|replace('_', '-') if trade.price_source else 'estimated' }}">
+                                    {{ trade.price_source or '?' }}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="10" style="text-align:center;color:#666">No backtest trades yet - run calibration: ./scripts/calibrate_spx_wheel.sh</td></tr>
+                            {% endfor %}
+                            {% if backtest_trades|length > 100 %}
+                            <tr><td colspan="10" style="text-align:center;color:#a5b4fc;">... and {{ backtest_trades|length - 100 }} more trades (showing first 100)</td></tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- How Backtest Impacts Live Trading -->
+        <div class="grid">
+            <div class="card full" style="border-color: #10b981;">
+                <h2 style="color: #6ee7b7;">How Backtest Impacts Your Live Trading Decisions</h2>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; padding: 15px 0;">
+                    <div style="background: rgba(16, 185, 129, 0.1); padding: 15px; border-radius: 8px;">
+                        <h3 style="color: #6ee7b7; margin-bottom: 10px;">1. Parameter Selection</h3>
+                        <p style="color: #888; font-size: 14px;">
+                            Backtest tested multiple delta/DTE combinations and found:
+                        </p>
+                        <div style="margin-top: 10px;">
+                            <strong>Delta: {{ params.put_delta }}</strong> - {{ "aggressive (higher premium, more risk)" if params.put_delta >= 0.25 else "conservative (lower premium, safer)" if params.put_delta <= 0.15 else "balanced" }}<br>
+                            <strong>DTE: {{ params.dte_target }} days</strong> - {{ "longer duration (more theta, more risk)" if params.dte_target >= 50 else "shorter duration (less exposure)" if params.dte_target <= 35 else "standard" }}
+                        </div>
+                    </div>
+                    <div style="background: rgba(16, 185, 129, 0.1); padding: 15px; border-radius: 8px;">
+                        <h3 style="color: #6ee7b7; margin-bottom: 10px;">2. Performance Expectations</h3>
+                        <p style="color: #888; font-size: 14px;">
+                            Based on {{ backtest_total_trades }} historical trades:
+                        </p>
+                        <div style="margin-top: 10px;">
+                            <strong>Expected Win Rate:</strong> {{ "%.1f"|format(backtest_win_rate) }}%<br>
+                            <strong>Backtest P&L:</strong> ${{ "{:,.0f}".format(backtest_total_pnl) }}<br>
+                            <strong>Data Quality:</strong> {{ "%.0f"|format(backtest_data_quality) }}% real data
+                        </div>
+                    </div>
+                    <div style="background: rgba(16, 185, 129, 0.1); padding: 15px; border-radius: 8px;">
+                        <h3 style="color: #6ee7b7; margin-bottom: 10px;">3. Live vs Backtest Check</h3>
+                        <p style="color: #888; font-size: 14px;">
+                            Current live performance divergence:
+                        </p>
+                        <div style="margin-top: 10px;">
+                            <strong>Live Win Rate:</strong> {{ "%.1f"|format(win_rate) }}%<br>
+                            <strong>Divergence:</strong>
+                            <span class="{{ 'positive' if divergence|abs < 5 else 'warning' if divergence|abs < 10 else 'negative' }}">
+                                {{ "%+.1f"|format(divergence) }}%
+                            </span><br>
+                            <strong>Status:</strong>
+                            {% if divergence|abs < 5 %}
+                            <span class="positive">Tracking as expected</span>
+                            {% elif divergence|abs < 10 %}
+                            <span class="warning">Minor divergence - monitor</span>
+                            {% else %}
+                            <span class="negative">Consider recalibrating</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Alerts -->
+        <div class="grid">
+            <div class="card full" style="border-color: #ef4444;">
+                <h2 style="color: #fca5a5;">Recent Alerts & Notifications</h2>
+                <div class="trade-details" style="max-height: 300px;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Level</th>
+                                <th>Type</th>
+                                <th>Subject</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for alert in alerts[:10] %}
+                            <tr style="background: {{ 'rgba(239,68,68,0.1)' if alert.level == 'CRITICAL' else 'rgba(251,191,36,0.1)' if alert.level == 'WARNING' else 'transparent' }};">
+                                <td>{{ alert.timestamp }}</td>
+                                <td style="color: {{ '#f87171' if alert.level == 'CRITICAL' else '#fbbf24' if alert.level == 'WARNING' else '#4ade80' }};">
+                                    {{ alert.level }}
+                                </td>
+                                <td>{{ alert.type }}</td>
+                                <td>{{ alert.subject }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="4" style="text-align:center;color:#666">No recent alerts - run position monitor: ./scripts/run_monitor.sh</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 15px; padding: 10px; background: rgba(239, 68, 68, 0.1); border-radius: 5px; font-size: 14px;">
+                    <strong>Alert Delivery:</strong> shairan2016@gmail.com
+                    <br><small style="color: #888;">Configure SMTP in .env to enable email delivery. Run ./scripts/setup_alerts.sh</small>
                 </div>
             </div>
         </div>
@@ -426,6 +588,168 @@ DASHBOARD_HTML = """
 </body>
 </html>
 """
+
+
+def get_recent_alerts():
+    """Fetch recent alerts from database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Check if alerts table exists
+        cursor.execute('''
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'spx_wheel_alerts'
+            )
+        ''')
+        if not cursor.fetchone()[0]:
+            conn.close()
+            return []
+
+        cursor.execute('''
+            SELECT timestamp, alert_type, level, subject, body, acknowledged
+            FROM spx_wheel_alerts
+            ORDER BY timestamp DESC
+            LIMIT 20
+        ''')
+
+        alerts = []
+        for row in cursor.fetchall():
+            alerts.append({
+                'timestamp': str(row[0])[:19] if row[0] else '',
+                'type': row[1],
+                'level': row[2],
+                'subject': row[3],
+                'body': row[4][:200] if row[4] else '',
+                'acknowledged': row[5]
+            })
+
+        conn.close()
+        return alerts
+
+    except Exception as e:
+        print(f"Error fetching alerts: {e}")
+        return []
+
+
+def get_backtest_equity_curve():
+    """Fetch backtest equity curve from database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Check if equity table exists
+        cursor.execute('''
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'spx_wheel_backtest_equity'
+            )
+        ''')
+        if not cursor.fetchone()[0]:
+            conn.close()
+            return []
+
+        # Get most recent backtest's equity curve
+        cursor.execute('''
+            SELECT DISTINCT backtest_id FROM spx_wheel_backtest_equity
+            ORDER BY backtest_id DESC LIMIT 1
+        ''')
+        result = cursor.fetchone()
+        if not result:
+            conn.close()
+            return []
+
+        backtest_id = result[0]
+
+        cursor.execute('''
+            SELECT date, equity, drawdown_pct
+            FROM spx_wheel_backtest_equity
+            WHERE backtest_id = %s
+            ORDER BY date
+        ''', (backtest_id,))
+
+        curve = []
+        for row in cursor.fetchall():
+            curve.append({
+                'date': str(row[0])[:10] if row[0] else '',
+                'equity': float(row[1]) if row[1] else 0,
+                'drawdown': float(row[2]) if row[2] else 0
+            })
+
+        conn.close()
+        return curve
+
+    except Exception as e:
+        print(f"Error fetching backtest equity: {e}")
+        return []
+
+
+def get_backtest_trades():
+    """Fetch backtest trades from database for comparison"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get the most recent backtest (used for calibration)
+        cursor.execute('''
+            SELECT DISTINCT ON (backtest_id) backtest_id, backtest_date, parameters
+            FROM spx_wheel_backtest_trades
+            ORDER BY backtest_id, backtest_date DESC
+            LIMIT 1
+        ''')
+
+        backtest_info = cursor.fetchone()
+        if not backtest_info:
+            conn.close()
+            return [], None, {}
+
+        backtest_id = backtest_info[0]
+        backtest_date = backtest_info[1]
+        params = backtest_info[2] or {}
+        if isinstance(params, str):
+            params = json.loads(params)
+
+        # Get all trades from this backtest
+        cursor.execute('''
+            SELECT
+                trade_id, trade_date, trade_type, option_ticker, strike,
+                expiration, entry_price, exit_price, contracts,
+                premium_received, settlement_pnl, total_pnl, price_source,
+                entry_underlying_price, notes
+            FROM spx_wheel_backtest_trades
+            WHERE backtest_id = %s
+            ORDER BY trade_date DESC
+        ''', (backtest_id,))
+
+        trades = []
+        for row in cursor.fetchall():
+            trades.append({
+                'trade_id': row[0],
+                'trade_date': str(row[1]) if row[1] else '',
+                'trade_type': row[2],
+                'option_ticker': row[3],
+                'strike': float(row[4] or 0),
+                'expiration': str(row[5]) if row[5] else '',
+                'entry_price': float(row[6] or 0),
+                'exit_price': float(row[7]) if row[7] else None,
+                'contracts': row[8] or 1,
+                'premium_received': float(row[9] or 0),
+                'settlement_pnl': float(row[10]) if row[10] else None,
+                'total_pnl': float(row[11]) if row[11] else None,
+                'price_source': row[12] or 'UNKNOWN',
+                'entry_underlying': float(row[13] or 0),
+                'notes': row[14],
+                'source': 'BACKTEST'
+            })
+
+        conn.close()
+
+        return trades, backtest_id, params
+
+    except Exception as e:
+        print(f"Error fetching backtest trades: {e}")
+        return [], None, {}
 
 
 def get_dashboard_data():
@@ -548,9 +872,38 @@ def get_dashboard_data():
         # Calculate divergence
         divergence = win_rate - params.get('backtest_win_rate', 0) if closed_positions else 0
 
+        # Get backtest trades for comparison
+        backtest_trades, backtest_id, backtest_params = get_backtest_trades()
+
+        # Get recent alerts
+        alerts = get_recent_alerts()
+
+        # Get backtest equity curve
+        backtest_equity = get_backtest_equity_curve()
+
+        # Calculate backtest summary
+        backtest_winners = sum(1 for t in backtest_trades if (t.get('total_pnl') or 0) > 0)
+        backtest_closed = sum(1 for t in backtest_trades if t.get('trade_type') in ['EXPIRED_OTM', 'CASH_SETTLE_LOSS'])
+        backtest_win_rate_calc = (backtest_winners / backtest_closed * 100) if backtest_closed > 0 else 0
+        backtest_total_pnl = sum(t.get('total_pnl') or 0 for t in backtest_trades)
+
+        # Calculate backtest data quality
+        backtest_real = sum(1 for t in backtest_trades if t.get('price_source') in ['POLYGON_HISTORICAL', 'POLYGON'])
+        backtest_estimated = len(backtest_trades) - backtest_real
+        backtest_data_quality = (backtest_real / len(backtest_trades) * 100) if backtest_trades else 0
+
         return {
             'positions': positions,
-            'all_trades': positions,  # Same data for trade log
+            'all_trades': positions,  # Live/paper trades
+            'backtest_trades': backtest_trades,  # Historical backtest trades
+            'backtest_id': backtest_id,
+            'backtest_params': backtest_params,
+            'backtest_total_trades': len(backtest_trades),
+            'backtest_win_rate': backtest_win_rate_calc,
+            'backtest_total_pnl': backtest_total_pnl,
+            'backtest_data_quality': backtest_data_quality,
+            'backtest_equity': backtest_equity,  # Backtest equity curve for comparison
+            'alerts': alerts,  # Recent trading alerts
             'open_positions': len(open_positions_list),
             'total_pnl': total_pnl,
             'total_equity': total_equity,
@@ -574,6 +927,15 @@ def get_dashboard_data():
         return {
             'positions': [],
             'all_trades': [],
+            'backtest_trades': [],
+            'backtest_id': None,
+            'backtest_params': {},
+            'backtest_total_trades': 0,
+            'backtest_win_rate': 0,
+            'backtest_total_pnl': 0,
+            'backtest_data_quality': 0,
+            'backtest_equity': [],
+            'alerts': [],
             'open_positions': 0,
             'total_pnl': 0,
             'total_equity': 1000000,

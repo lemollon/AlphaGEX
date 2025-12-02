@@ -52,6 +52,20 @@ try:
 except ImportError:
     BROKER_AVAILABLE = False
 
+# Market calendar for earnings check - THIS WAS MISSING!
+try:
+    from trading.market_calendar import get_calendar, should_trade_today
+    CALENDAR_AVAILABLE = True
+except ImportError:
+    CALENDAR_AVAILABLE = False
+
+# Alert system - THIS WAS MISSING!
+try:
+    from trading.alerts import get_alerts, AlertLevel
+    ALERTS_AVAILABLE = True
+except ImportError:
+    ALERTS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -202,9 +216,14 @@ class SPXWheelOptimizer:
         self._print_optimization_results(best)
         self._save_parameters(best.parameters)
 
+        # === SAVE BEST BACKTEST TRADES TO DATABASE ===
+        print("\n[SAVING BEST BACKTEST TRADES TO DATABASE...]")
+        self._run_single_backtest(best.parameters, save_to_db=True)
+        print("✓ Backtest trades saved - view in dashboard!")
+
         return best.parameters
 
-    def _run_single_backtest(self, params: WheelParameters) -> BacktestResult:
+    def _run_single_backtest(self, params: WheelParameters, save_to_db: bool = False) -> BacktestResult:
         """Run backtest with specific parameters"""
         from backtest.spx_premium_backtest import SPXPremiumBacktester
 
@@ -217,12 +236,12 @@ class SPXWheelOptimizer:
             max_margin_pct=params.max_margin_pct
         )
 
-        # Suppress output during optimization
+        # Suppress output during optimization (but still save trades if requested)
         import io
         from contextlib import redirect_stdout
         f = io.StringIO()
         with redirect_stdout(f):
-            results = backtester.run()
+            results = backtester.run(save_to_db=save_to_db)
 
         summary = results['summary']
 
@@ -509,20 +528,45 @@ class SPXWheelTrader:
         return result
 
     def _should_trade_today(self) -> bool:
-        """Check if we should trade based on market conditions"""
+        """
+        Check if we should trade based on market conditions.
+
+        NOW IMPLEMENTS ALL THE MISSING CHECKS:
+        - VIX filter (was working)
+        - Market open check (was partial)
+        - Earnings check (WAS NOT IMPLEMENTED!)
+        - FOMC check (WAS NOT IMPLEMENTED!)
+        """
+        # Check market calendar (includes earnings & FOMC)
+        if CALENDAR_AVAILABLE and self.params.avoid_earnings:
+            can_trade, reason = should_trade_today()
+            if not can_trade:
+                print(f"  {reason}")
+                return False
+
+        # Check VIX levels
         vix = self._get_vix()
 
         if vix < self.params.min_vix:
-            print(f"VIX ({vix:.1f}) below minimum ({self.params.min_vix})")
+            print(f"  VIX ({vix:.1f}) below minimum ({self.params.min_vix})")
             return False
 
         if vix > self.params.max_vix:
-            print(f"VIX ({vix:.1f}) above maximum ({self.params.max_vix})")
+            print(f"  VIX ({vix:.1f}) above maximum ({self.params.max_vix})")
             return False
 
         # Check if market is open
         now = datetime.now()
         if now.weekday() > 4:  # Weekend
+            print("  Weekend - market closed")
+            return False
+
+        # Market hours check (simplified - 9:30 AM to 4 PM ET)
+        if now.hour < 9 or now.hour >= 16:
+            print(f"  Outside market hours")
+            return False
+        if now.hour == 9 and now.minute < 30:
+            print(f"  Market not open yet")
             return False
 
         return True
@@ -807,6 +851,24 @@ class SPXWheelTrader:
             print(f"   Price:    ${entry_price:.2f} ({price_source})")
             print(f"   Premium:  ${entry_price * 100 * self.params.contracts_per_trade:,.2f}")
             print(f"   DB ID:    {position_id}")
+
+            # Send alert for new trade
+            if ALERTS_AVAILABLE:
+                alerts = get_alerts()
+                alerts.alert_trade_executed(
+                    "SELL_PUT",
+                    {
+                        'id': position_id,
+                        'option_ticker': option_ticker,
+                        'strike': strike,
+                        'expiration': str(expiration),
+                        'contracts': self.params.contracts_per_trade,
+                        'entry_price': entry_price,
+                        'premium_received': entry_price * 100 * self.params.contracts_per_trade,
+                        'price_source': price_source
+                    },
+                    self.mode.value
+                )
 
             return True
 
