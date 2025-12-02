@@ -67,6 +67,14 @@ except ImportError:
     VOL_SURFACE_AVAILABLE = False
     print("Warning: Volatility surface integration not available")
 
+# ML Pattern Learner Integration
+try:
+    from ai.autonomous_ml_pattern_learner import get_pattern_learner, PatternLearner
+    ML_LEARNER_AVAILABLE = True
+except ImportError:
+    ML_LEARNER_AVAILABLE = False
+    print("Warning: ML Pattern Learner not available")
+
 
 class MarketAction(Enum):
     """The ONLY actions the system can take"""
@@ -137,6 +145,12 @@ class RegimeClassification:
     vol_surface_bias: Optional[str] = None      # 'bullish', 'neutral', 'bearish' from surface
     recommended_dte: Optional[int] = None       # Best DTE from term structure analysis
     should_sell_premium: Optional[bool] = None  # Surface says sell premium?
+
+    # ML Pattern Learner Analysis (enhances decision confidence)
+    ml_win_probability: Optional[float] = None   # 0-1 probability from ML model
+    ml_recommendation: Optional[str] = None      # ML says: STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL
+    ml_confidence_boost: Optional[float] = None  # How much ML adjusts confidence (-20 to +20)
+    ml_model_trained: bool = False               # Is the ML model actually trained?
 
     # THE DECISION
     recommended_action: MarketAction
@@ -366,23 +380,30 @@ class MarketRegimeClassifier:
         iv_hv_ratio: float,
         distance_to_flip_pct: float,
         vix: float,
-        vol_surface_data: Optional[Dict] = None  # NEW: Volatility surface analysis
+        vol_surface_data: Optional[Dict] = None,  # Volatility surface analysis
+        ml_prediction_data: Optional[Dict] = None  # ML Pattern Learner prediction
     ) -> Tuple[MarketAction, float, str]:
         """
         THE DECISION MATRIX
 
         This is where we decide SELL_PREMIUM vs BUY_DIRECTIONAL
 
-        Now enhanced with VOLATILITY SURFACE analysis:
-        - Skew regime (put skew = bearish sentiment, call skew = bullish)
-        - Term structure (backwardation = near-term fear)
-        - IV surface recommendations
+        Now enhanced with:
+        - VOLATILITY SURFACE analysis (skew, term structure)
+        - ML PATTERN LEARNER predictions (win probability, recommendation)
 
         Returns:
             (action, confidence, reasoning)
         """
         reasons = []
         confidence = 50.0
+
+        # Extract ML insights if available
+        ml_trained = ml_prediction_data.get('model_trained', False) if ml_prediction_data else False
+        ml_win_prob = ml_prediction_data.get('win_probability') if ml_prediction_data else None
+        ml_rec = ml_prediction_data.get('recommendation') if ml_prediction_data else None
+        if ml_trained and ml_win_prob:
+            reasons.append(f"ML: {ml_win_prob:.0%} win prob ({ml_rec})")
 
         # Extract vol surface insights if available
         vs_bias = None
@@ -614,7 +635,8 @@ class MarketRegimeClassifier:
         above_20ma: bool,
         above_50ma: bool,
         timestamp: Optional[datetime] = None,
-        vol_surface_data: Optional[Dict] = None  # NEW: Volatility surface analysis
+        vol_surface_data: Optional[Dict] = None,  # Volatility surface analysis
+        ml_prediction_data: Optional[Dict] = None  # ML Pattern Learner prediction
     ) -> RegimeClassification:
         """
         MAIN CLASSIFICATION METHOD
@@ -667,11 +689,31 @@ class MarketRegimeClassifier:
             recommended_dte = vol_surface_data.get('recommended_dte')
             should_sell = vol_surface_data.get('should_sell_premium')
 
-        # Determine action (enhanced with vol surface if available)
+        # Extract ML prediction data if available
+        ml_win_prob = None
+        ml_recommendation = None
+        ml_confidence_boost = 0.0
+        ml_model_trained = False
+
+        if ml_prediction_data:
+            ml_win_prob = ml_prediction_data.get('win_probability')
+            ml_recommendation = ml_prediction_data.get('recommendation')
+            ml_model_trained = ml_prediction_data.get('model_trained', False)
+            # Calculate confidence boost from ML: +/-20 based on win probability
+            if ml_win_prob is not None and ml_model_trained:
+                ml_confidence_boost = (ml_win_prob - 0.5) * 40  # Range: -20 to +20
+
+        # Determine action (enhanced with vol surface and ML if available)
         action, confidence, reasoning = self.determine_action(
             vol_regime, gamma_regime, trend_regime, iv_hv_ratio, distance_to_flip, vix,
-            vol_surface_data=vol_surface_data
+            vol_surface_data=vol_surface_data,
+            ml_prediction_data=ml_prediction_data
         )
+
+        # Apply ML confidence adjustment (only if model is trained)
+        if ml_model_trained and ml_confidence_boost != 0:
+            confidence = min(95, max(10, confidence + ml_confidence_boost))
+            reasoning += f"\n\nML BOOST: {ml_confidence_boost:+.1f} (win prob: {ml_win_prob:.1%})"
 
         # ANTI-WHIPLASH: Don't act until regime is established
         if self.bars_in_current_regime < self.MIN_BARS_FOR_REGIME:
@@ -709,7 +751,7 @@ class MarketRegimeClassifier:
             stop_loss_pct = 0.30
             profit_target_pct = 0.30
 
-        # Build classification (including vol surface data if available)
+        # Build classification (including vol surface and ML data if available)
         classification = RegimeClassification(
             timestamp=timestamp,
             symbol=self.symbol,
@@ -727,13 +769,18 @@ class MarketRegimeClassifier:
             distance_to_flip_pct=distance_to_flip,
             vix=vix,
             vix_term_structure=vix_term_structure,
-            # NEW: Volatility surface fields
+            # Volatility surface fields
             skew_regime=skew_regime,
             skew_25d=skew_25d,
             term_structure_regime=term_structure_regime,
             vol_surface_bias=vol_surface_bias,
             recommended_dte=recommended_dte,
             should_sell_premium=should_sell,
+            # ML Pattern Learner fields
+            ml_win_probability=ml_win_prob,
+            ml_recommendation=ml_recommendation,
+            ml_confidence_boost=ml_confidence_boost,
+            ml_model_trained=ml_model_trained,
             # Decision fields
             recommended_action=action,
             confidence=confidence,
