@@ -153,7 +153,13 @@ class WheelStrategyManager:
 
     def __init__(self):
         self.tz = ZoneInfo("America/New_York")
-        self._init_database()
+        self._db_initialized = False
+
+    def _ensure_db_initialized(self):
+        """Lazy database initialization - only when first needed"""
+        if not self._db_initialized:
+            self._init_database()
+            self._db_initialized = True
 
     def _init_database(self):
         """Initialize wheel-specific database tables"""
@@ -283,6 +289,7 @@ class WheelStrategyManager:
         Returns:
             cycle_id: ID of the new wheel cycle
         """
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -345,6 +352,7 @@ class WheelStrategyManager:
         Returns:
             Dict with action taken and new status
         """
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -483,6 +491,7 @@ class WheelStrategyManager:
         Returns:
             leg_id: ID of the new covered call leg
         """
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -555,6 +564,7 @@ class WheelStrategyManager:
         Returns:
             Dict with action taken and new status
         """
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -705,6 +715,7 @@ class WheelStrategyManager:
         Returns:
             Dict with roll details
         """
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -809,6 +820,7 @@ class WheelStrategyManager:
         Returns:
             Dict with close details
         """
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -855,6 +867,7 @@ class WheelStrategyManager:
 
     def get_active_cycles(self, symbol: str = None) -> List[Dict[str, Any]]:
         """Get all active wheel cycles, optionally filtered by symbol"""
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -884,6 +897,7 @@ class WheelStrategyManager:
 
     def get_cycle_details(self, cycle_id: int) -> Dict[str, Any]:
         """Get full details of a wheel cycle including all legs"""
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -919,6 +933,7 @@ class WheelStrategyManager:
 
     def get_wheel_summary(self, symbol: str = None) -> Dict[str, Any]:
         """Get summary statistics for wheel strategy"""
+        self._ensure_db_initialized()
         conn = get_connection()
         cursor = conn.cursor()
 
