@@ -217,45 +217,56 @@ async def get_open_positions(symbol: str = None):
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Support multi-symbol: if symbol provided, filter; otherwise show ALL
-        # NOW INCLUDES: All Greeks (delta, gamma, theta, vega) for full transparency
-        if symbol:
-            cursor.execute("""
-                SELECT
-                    id, symbol, strategy, strike, option_type, contracts,
-                    entry_price, current_price, unrealized_pnl, entry_date,
-                    entry_time, expiration_date, contract_symbol, entry_spot_price,
-                    current_spot_price, gex_regime, confidence, trade_reasoning,
-                    profit_target_pct, stop_loss_pct, created_at,
-                    -- Entry Greeks for analysis
-                    entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
-                    -- Current Greeks for live monitoring
-                    current_iv, current_delta, current_gamma, current_theta, current_vega,
-                    -- Data source verification
-                    is_delayed, data_confidence,
-                    entry_bid, entry_ask
-                FROM autonomous_open_positions
-                WHERE symbol = %s
-                ORDER BY entry_date DESC, entry_time DESC
-            """, (symbol.upper(),))
-        else:
-            # Show ALL symbols for unified portfolio view
-            cursor.execute("""
-                SELECT
-                    id, symbol, strategy, strike, option_type, contracts,
-                    entry_price, current_price, unrealized_pnl, entry_date,
-                    entry_time, expiration_date, contract_symbol, entry_spot_price,
-                    current_spot_price, gex_regime, confidence, trade_reasoning,
-                    profit_target_pct, stop_loss_pct, created_at,
-                    -- Entry Greeks for analysis
-                    entry_iv, entry_delta, entry_gamma, entry_theta, entry_vega,
-                    -- Current Greeks for live monitoring
-                    current_iv, current_delta, current_gamma, current_theta, current_vega,
-                    -- Data source verification
-                    is_delayed, data_confidence,
-                    entry_bid, entry_ask
-                FROM autonomous_open_positions
-                ORDER BY entry_date DESC, entry_time DESC
-            """)
+        # Use defensive query that handles missing Greek columns gracefully
+        base_query = """
+            SELECT
+                id, symbol, strategy, strike, option_type, contracts,
+                entry_price, current_price, unrealized_pnl, entry_date,
+                entry_time, entry_spot_price, current_spot_price, gex_regime, created_at
+            FROM autonomous_open_positions
+        """
+
+        full_query = """
+            SELECT
+                id, symbol, strategy, strike, option_type, contracts,
+                entry_price, current_price, unrealized_pnl, entry_date,
+                entry_time, expiration_date, contract_symbol, entry_spot_price,
+                current_spot_price, gex_regime,
+                COALESCE(confidence, 0) as confidence,
+                trade_reasoning,
+                profit_target_pct, stop_loss_pct, created_at,
+                COALESCE(entry_iv, 0) as entry_iv,
+                COALESCE(entry_delta, 0) as entry_delta,
+                COALESCE(entry_gamma, 0) as entry_gamma,
+                COALESCE(entry_theta, 0) as entry_theta,
+                COALESCE(entry_vega, 0) as entry_vega,
+                COALESCE(current_iv, 0) as current_iv,
+                COALESCE(current_delta, 0) as current_delta,
+                COALESCE(current_gamma, 0) as current_gamma,
+                COALESCE(current_theta, 0) as current_theta,
+                COALESCE(current_vega, 0) as current_vega,
+                COALESCE(is_delayed, false) as is_delayed,
+                COALESCE(data_confidence, 'unknown') as data_confidence,
+                COALESCE(entry_bid, 0) as entry_bid,
+                COALESCE(entry_ask, 0) as entry_ask
+            FROM autonomous_open_positions
+        """
+
+        # Try full query first, fall back to basic if columns missing
+        try:
+            if symbol:
+                cursor.execute(full_query + " WHERE symbol = %s ORDER BY entry_date DESC, entry_time DESC", (symbol.upper(),))
+            else:
+                cursor.execute(full_query + " ORDER BY entry_date DESC, entry_time DESC")
+        except Exception as col_error:
+            # Fallback to basic query if Greek columns don't exist
+            logger.warning(f"Full query failed, using basic: {col_error}")
+            conn.rollback()  # Reset transaction after error
+            if symbol:
+                cursor.execute(base_query + " WHERE symbol = %s ORDER BY entry_date DESC, entry_time DESC", (symbol.upper(),))
+            else:
+                cursor.execute(base_query + " ORDER BY entry_date DESC, entry_time DESC")
+
         positions = cursor.fetchall()
         conn.close()
 
