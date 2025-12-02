@@ -1382,6 +1382,13 @@ def init_database():
 
     # ===== INDEXES FOR NEW ML TABLES =====
 
+    # Helper function to safely create indexes (define BEFORE first use)
+    def safe_index(sql):
+        try:
+            c.execute(sql)
+        except Exception:
+            pass  # Column or table may not exist in older schema
+
     # Price history indexes
     safe_index("CREATE INDEX IF NOT EXISTS idx_price_history_symbol_timeframe ON price_history(symbol, timeframe)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp)")
@@ -1722,14 +1729,7 @@ def init_database():
     ''')
 
     # Performance optimization: Add indexes for frequently queried columns
-    # These indexes significantly speed up queries by symbol, date, and status
-    # Helper function to safely create indexes (some columns may not exist in older schemas)
-    def safe_index(sql):
-        try:
-            c.execute(sql)
-        except Exception:
-            pass  # Column or table may not exist in older schema
-
+    # (safe_index function defined earlier in this function)
     safe_index("CREATE INDEX IF NOT EXISTS idx_gex_history_symbol ON gex_history(symbol)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_gex_history_timestamp ON gex_history(timestamp)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_recommendations_symbol ON recommendations(symbol)")

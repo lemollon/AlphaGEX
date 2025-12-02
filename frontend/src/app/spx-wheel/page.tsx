@@ -152,7 +152,7 @@ export default function SPXWheelPage() {
       const res = await api.post('/api/spx-backtest/run', {
         start_date: backtestStartDate,
         end_date: backtestEndDate || undefined,  // Use current date if empty
-        initial_capital: 100000,
+        initial_capital: 100000000,  // $100M - SPX requires ~$137k margin per contract
         put_delta: 0.20,
         dte_target: 45,
         use_ml_scoring: true
