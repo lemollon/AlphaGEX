@@ -147,27 +147,28 @@ def test_commission_calculations():
     try:
         # Try multiple import paths for costs calculator
         try:
-            from trading_costs import TradingCostsCalculator
+            from trading_costs import TradingCostsCalculator, PAPER_TRADING_COSTS
         except ImportError:
             try:
-                from trading.costs_calculator import TradingCostsCalculator
+                from trading.costs_calculator import TradingCostsCalculator, PAPER_TRADING_COSTS
             except ImportError:
-                from utils.trading_costs import TradingCostsCalculator
+                from utils.trading_costs import TradingCostsCalculator, PAPER_TRADING_COSTS
 
         calc = TradingCostsCalculator()
 
-        # Tradier fee structure
-        TRADIER_PER_CONTRACT = 0.35
+        # Get actual per-contract cost from calculator (commission + regulatory fees)
+        # Paper trading uses $0.50 commission + $0.03 regulatory = $0.53/contract
+        per_contract_cost = calc.config.commission_per_contract + calc.config.regulatory_fee_per_contract
 
         test_cases = [
-            (1, 0.35, "1 contract"),
-            (5, 1.75, "5 contracts"),
-            (10, 3.50, "10 contracts"),
-            (50, 17.50, "50 contracts"),
-            (100, 35.00, "100 contracts"),
+            (1, per_contract_cost * 1, "1 contract"),
+            (5, per_contract_cost * 5, "5 contracts"),
+            (10, per_contract_cost * 10, "10 contracts"),
+            (50, per_contract_cost * 50, "50 contracts"),
+            (100, per_contract_cost * 100, "100 contracts"),
         ]
 
-        print("\nTesting commission calculations (Tradier: $0.35/contract):")
+        print(f"\nTesting commission calculations (${per_contract_cost:.2f}/contract incl. fees):")
 
         all_correct = True
         for contracts, expected, description in test_cases:
@@ -205,7 +206,7 @@ def test_commission_calculations():
             exit_cost = exit_commission
 
         total_commission = entry_cost + exit_cost
-        expected_roundtrip = contracts * TRADIER_PER_CONTRACT * 2
+        expected_roundtrip = contracts * per_contract_cost * 2
 
         print(f"   10 contracts round-trip:")
         print(f"      Entry: ${entry_cost:.2f}")
@@ -246,7 +247,7 @@ def test_commission_calculations():
                     gross_pnl = (exit_p - entry) * contracts * 100
 
                     # Expected commission impact
-                    expected_commission = contracts * TRADIER_PER_CONTRACT * 2
+                    expected_commission = contracts * per_contract_cost * 2
 
                     # Actual commission (difference between gross and net)
                     actual_commission = gross_pnl - pnl
