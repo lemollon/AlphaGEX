@@ -93,6 +93,10 @@ export default function SPXWheelPage() {
   const [mlLogs, setMlLogs] = useState<MLLog[]>([])
   const [showLogs, setShowLogs] = useState(true)
   const [logsLoading, setLogsLoading] = useState(false)
+  // Backtest configuration (user-configurable)
+  const [backtestStartDate, setBacktestStartDate] = useState('2024-01-01')
+  const [backtestEndDate, setBacktestEndDate] = useState('')
+  const [showBacktestConfig, setShowBacktestConfig] = useState(false)
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -146,7 +150,8 @@ export default function SPXWheelPage() {
 
     try {
       const res = await api.post('/api/spx-backtest/run', {
-        start_date: '2024-01-01',
+        start_date: backtestStartDate,
+        end_date: backtestEndDate || undefined,  // Use current date if empty
         initial_capital: 100000,
         put_delta: 0.20,
         dte_target: 45,
@@ -218,7 +223,14 @@ export default function SPXWheelPage() {
                 Cash-secured put selling on S&P 500 Index with ML optimization
               </p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-3 items-center">
+              <button
+                onClick={() => setShowBacktestConfig(!showBacktestConfig)}
+                className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm flex items-center gap-2"
+              >
+                <Clock className="w-4 h-4" />
+                {showBacktestConfig ? 'Hide' : 'Config'}
+              </button>
               <button
                 onClick={runBacktest}
                 disabled={runningBacktest}
@@ -238,6 +250,40 @@ export default function SPXWheelPage() {
               </button>
             </div>
           </div>
+
+          {/* Backtest Date Configuration */}
+          {showBacktestConfig && (
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <h3 className="font-semibold mb-3 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-blue-400" />
+                Backtest Configuration
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={backtestStartDate}
+                    onChange={(e) => setBacktestStartDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">End Date (empty = today)</label>
+                  <input
+                    type="date"
+                    value={backtestEndDate}
+                    onChange={(e) => setBacktestEndDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
+                  />
+                </div>
+                <div className="col-span-2 text-xs text-gray-500 flex items-center">
+                  <Info className="w-4 h-4 mr-2" />
+                  Backtest uses 20-delta puts with 45 DTE, $100K capital
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Error Display */}
           {error && (

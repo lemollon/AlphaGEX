@@ -105,7 +105,35 @@ async def run_spx_backtest(config: RunBacktestRequest = RunBacktestRequest()):
 
         summary = results.get('summary', {})
         data_quality = results.get('data_quality', {})
-        trades = results.get('trades', [])
+        # CRITICAL FIX: Backtest returns 'all_trades', not 'trades'
+        trades = results.get('all_trades', results.get('trades', []))
+
+        # Map backtest summary fields to API expected fields
+        # Backtest uses: expired_otm, cash_settled_itm
+        # API expects: winning_trades, losing_trades
+        if 'winning_trades' not in summary and 'expired_otm' in summary:
+            summary['winning_trades'] = summary.get('expired_otm', 0)
+        if 'losing_trades' not in summary and 'cash_settled_itm' in summary:
+            summary['losing_trades'] = summary.get('cash_settled_itm', 0)
+
+        # Calculate Sharpe ratio if not present (requires equity curve)
+        if 'sharpe_ratio' not in summary:
+            daily_snapshots = results.get('daily_snapshots', [])
+            if len(daily_snapshots) > 1:
+                import numpy as np
+                # Extract daily returns from equity curve
+                equities = [s.get('total_equity', s.get('equity', 0)) if isinstance(s, dict) else getattr(s, 'total_equity', 0) for s in daily_snapshots]
+                if len(equities) > 1:
+                    returns = np.diff(equities) / equities[:-1]
+                    returns = returns[~np.isnan(returns)]  # Remove NaN
+                    if len(returns) > 0 and np.std(returns) > 0:
+                        summary['sharpe_ratio'] = (np.mean(returns) / np.std(returns)) * np.sqrt(252)
+                    else:
+                        summary['sharpe_ratio'] = 0
+                else:
+                    summary['sharpe_ratio'] = 0
+            else:
+                summary['sharpe_ratio'] = 0
 
         # If ML scoring is enabled, score each trade
         ml_results = None

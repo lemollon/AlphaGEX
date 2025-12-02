@@ -1260,6 +1260,10 @@ def fetch_vix_data() -> Dict:
 # REAL DATA HELPERS FOR ML FEATURES
 # =============================================================================
 
+# Track VIX data availability globally for transparency
+_vix_fetch_stats = {'real': 0, 'fallback': 0, 'errors': []}
+
+
 def get_vix_for_date(date_str: str) -> float:
     """
     Get VIX value for a specific historical date.
@@ -1272,6 +1276,8 @@ def get_vix_for_date(date_str: str) -> float:
     Returns:
         VIX close value for that date, or estimated value if not available
     """
+    global _vix_fetch_stats
+
     try:
         # Parse target date
         target_date = datetime.strptime(date_str, '%Y-%m-%d')
@@ -1292,16 +1298,41 @@ def get_vix_for_date(date_str: str) -> float:
             if len(prior_dates) > 0:
                 closest_date = prior_dates[-1]
                 vix_value = float(df.loc[closest_date, 'Close'])
-                print(f"✅ VIX for {date_str}: {vix_value:.2f} (from {closest_date.date()})")
+                _vix_fetch_stats['real'] += 1
                 return vix_value
 
         # Fallback: estimate VIX based on market conditions
-        print(f"⚠️ No VIX data for {date_str}, using estimate")
+        print(f"⚠️ WARNING: No VIX data for {date_str}, using estimate 18.0 (ML quality degraded)")
+        _vix_fetch_stats['fallback'] += 1
+        _vix_fetch_stats['errors'].append(f"No data for {date_str}")
         return 18.0  # Long-term VIX average
 
     except Exception as e:
-        print(f"❌ Error fetching VIX for {date_str}: {e}")
+        print(f"❌ VIX fetch failed for {date_str}: {e}")
+        _vix_fetch_stats['fallback'] += 1
+        _vix_fetch_stats['errors'].append(str(e))
         return 18.0
+
+
+def get_vix_data_quality() -> dict:
+    """Get statistics on VIX data availability"""
+    global _vix_fetch_stats
+    total = _vix_fetch_stats['real'] + _vix_fetch_stats['fallback']
+    if total == 0:
+        return {'real_pct': 100, 'total': 0, 'warning': None}
+
+    real_pct = _vix_fetch_stats['real'] / total * 100
+    warning = None
+    if real_pct < 80:
+        warning = f"Only {real_pct:.0f}% of VIX data from Polygon. ML features degraded."
+    return {
+        'real_pct': round(real_pct, 1),
+        'real_count': _vix_fetch_stats['real'],
+        'fallback_count': _vix_fetch_stats['fallback'],
+        'total': total,
+        'warning': warning,
+        'recent_errors': _vix_fetch_stats['errors'][-5:] if _vix_fetch_stats['errors'] else []
+    }
 
 
 def calculate_iv_rank(symbol: str, current_iv: float, lookback_days: int = 252) -> float:
