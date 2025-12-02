@@ -397,15 +397,31 @@ class SPXPremiumBacktester:
         end = datetime.strptime(self.end_date, '%Y-%m-%d')
         days = (end - start).days + 30
 
-        # Try SPX first, then ^SPX
-        for symbol in ['SPX', '^SPX', '$SPX.X']:
+        # Try SPX index format first (I:SPX for Polygon), then fallbacks
+        for symbol in ['I:SPX', 'SPX', '^SPX', '$SPX.X']:
             self.price_data = polygon_fetcher.get_price_history(
                 symbol,
                 days=days,
                 timeframe='day'
             )
             if self.price_data is not None and len(self.price_data) > 0:
+                print(f"Using {symbol} for SPX price data")
                 break
+
+        # If SPX not available, use SPY as proxy (SPX ≈ SPY * 10)
+        if self.price_data is None or len(self.price_data) == 0:
+            print("SPX index data not available, using SPY as proxy (scaled by 10x)")
+            self.price_data = polygon_fetcher.get_price_history(
+                'SPY',
+                days=days,
+                timeframe='day'
+            )
+            if self.price_data is not None and len(self.price_data) > 0:
+                # Scale SPY prices to approximate SPX (SPX ≈ SPY * 10)
+                self.price_data = self.price_data.copy()
+                for col in ['Open', 'High', 'Low', 'Close']:
+                    if col in self.price_data.columns:
+                        self.price_data[col] = self.price_data[col] * 10
 
         if self.price_data is not None:
             self.price_data = self.price_data[
