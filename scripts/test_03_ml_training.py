@@ -109,10 +109,11 @@ try:
     print(f"  Running backtest: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
 
     # SPXPremiumBacktester takes dates in constructor, uses run() method
+    # SPX requires high capital (~$137k margin per contract)
     backtest = SPXPremiumBacktester(
         start_date=start_date.strftime('%Y-%m-%d'),
         end_date=end_date.strftime('%Y-%m-%d'),
-        initial_capital=100000
+        initial_capital=1000000  # $1M for SPX
     )
 
     results = backtest.run(save_to_db=False)

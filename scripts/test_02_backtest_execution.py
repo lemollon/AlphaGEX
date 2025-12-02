@@ -55,14 +55,15 @@ try:
     end_str = end_date.strftime('%Y-%m-%d')
 
     print(f"  Date range: {start_str} to {end_str}")
-    print(f"  Initial capital: $100,000")
+    print(f"  Initial capital: $1,000,000 (SPX requires high capital)")
     print("  Running backtest...")
 
     # SPXPremiumBacktester takes dates in constructor, uses run() method
+    # SPX requires ~$137k margin per contract, so need at least $500k+ capital
     backtest = SPXBacktest(
         start_date=start_str,
         end_date=end_str,
-        initial_capital=100000
+        initial_capital=1000000  # $1M for SPX (each contract ~$137k margin)
     )
     print(f"  Engine: {type(backtest).__name__}")
 
@@ -151,10 +152,11 @@ try:
         start_date = end_date - timedelta(days=14)
 
         # SPXPremiumBacktester uses put_delta parameter
+        # SPX requires high capital (~$137k margin per contract)
         bt = SPXBacktest(
             start_date=start_date.strftime('%Y-%m-%d'),
             end_date=end_date.strftime('%Y-%m-%d'),
-            initial_capital=100000,
+            initial_capital=1000000,
             put_delta=delta
         )
 
