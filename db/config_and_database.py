@@ -247,6 +247,8 @@ STRATEGIES = {
 def init_database():
     """Initialize comprehensive database schema"""
     conn = get_connection()
+    # Enable autocommit to prevent transaction abort cascading
+    conn._conn.autocommit = True
     c = conn.cursor()
 
     # GEX History
