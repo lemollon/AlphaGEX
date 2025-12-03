@@ -18,12 +18,13 @@ This document is the **single source of truth** for all database tables in Alpha
 | Core Trading | 18 | Active |
 | Market Data | 16 | Active |
 | AI/ML | 10 | Active |
-| Backtest | 11 | Active |
+| Backtest | 14 | Active |
 | User Features | 12 | User-Activated |
 | System | 8 | Active |
+| SPX Wheel | 12 | Active |
 | Validation/Debug | 5 | Development |
 | Planned (Orphaned) | 4 | Not Yet Wired |
-| **Total** | **84** | |
+| **Total** | **95** | |
 
 ---
 
@@ -555,6 +556,82 @@ These tables have INSERT methods in `services/data_collector.py` but need to be 
 
 ---
 
+## SPX Wheel System Tables
+
+### spx_wheel_parameters
+- **Purpose:** SPX wheel strategy parameters configuration
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `trading/spx_wheel_system.py`
+- **Frequency:** Per calibration
+
+### spx_wheel_positions
+- **Purpose:** SPX wheel open/closed positions
+- **Timestamp Column:** `opened_at`, `closed_at`
+- **Insert Source:** `trading/spx_wheel_system.py`
+- **Frequency:** Per trade
+
+### spx_wheel_performance
+- **Purpose:** Daily SPX wheel performance tracking
+- **Timestamp Column:** `date`
+- **Insert Source:** `trading/spx_wheel_system.py`
+- **Frequency:** Daily
+
+### spx_wheel_greeks
+- **Purpose:** Position Greeks snapshots
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `trading/risk_management.py`
+- **Frequency:** Per update
+
+### spx_wheel_reconciliation
+- **Purpose:** Broker reconciliation logs
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `trading/risk_management.py`
+- **Frequency:** Per reconciliation
+
+### spx_wheel_alerts
+- **Purpose:** SPX wheel trading alerts
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `trading/alerts.py`
+- **Frequency:** Per alert
+
+### spx_wheel_multileg_positions
+- **Purpose:** Multi-leg strategy positions
+- **Timestamp Column:** `opened_at`
+- **Insert Source:** `trading/multi_leg_strategies.py`
+- **Frequency:** Per position
+
+### spx_wheel_ml_outcomes
+- **Purpose:** ML prediction outcomes tracking
+- **Timestamp Column:** `created_at`
+- **Insert Source:** `trading/spx_wheel_ml.py`
+- **Frequency:** Per outcome
+
+### spx_wheel_backtest_runs
+- **Purpose:** SPX backtest run metadata
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `backend/api/routes/spx_backtest_routes.py`
+- **Frequency:** Per backtest
+
+### spx_wheel_backtest_equity
+- **Purpose:** SPX backtest equity curve
+- **Timestamp Column:** `date`
+- **Insert Source:** `backtest/spx_premium_backtest.py`
+- **Frequency:** Per snapshot
+
+### spx_wheel_backtest_trades
+- **Purpose:** SPX backtest trade details
+- **Timestamp Column:** `backtest_date`
+- **Insert Source:** `backtest/spx_premium_backtest.py`
+- **Frequency:** Per trade
+
+### ml_decision_logs
+- **Purpose:** ML decision audit trail
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `backend/api/routes/ml_routes.py`
+- **Frequency:** Per ML action
+
+---
+
 ## Planned Tables (Orphaned - Not Yet Wired)
 
 > **Note:** These tables are defined in the schema but have no INSERT/SELECT statements yet.
@@ -615,5 +692,6 @@ These tables have INSERT methods in `services/data_collector.py` but need to be 
 
 | Date | Change | Author |
 |------|--------|--------|
+| 2025-12-03 | Added 12 SPX wheel tables, total now 95 tables | Claude |
 | 2025-12-03 | Updated to 84 tables, documented orphaned tables | Claude |
 | 2025-12-03 | Initial consolidation - 56 tables | Claude |
