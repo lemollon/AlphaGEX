@@ -1249,7 +1249,9 @@ export default function AutonomousTrader() {
           <p className="text-text-secondary mt-1">
             {selectedSymbol === 'ALL'
               ? 'Combined SPY + SPX portfolio view with net Greeks'
-              : '$1M capital management for autonomous trading strategies'}
+              : performance?.starting_capital
+                ? `${formatCurrency(performance.starting_capital)} capital management for autonomous trading strategies`
+                : 'Autonomous trading strategies'}
           </p>
           {lastDataFetch && (
             <p className="text-xs text-text-muted mt-1">

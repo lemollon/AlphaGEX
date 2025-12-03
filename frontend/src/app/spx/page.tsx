@@ -232,7 +232,9 @@ export default function SPXInstitutionalTrader() {
                   <Building2 className="w-8 h-8 text-primary" />
                   <h1 className="text-3xl font-bold text-text-primary">SPX Autonomous Trader</h1>
                 </div>
-                <p className="text-text-secondary mt-1">$100M capital management for SPX index options</p>
+                <p className="text-text-secondary mt-1">
+                  {status?.starting_capital ? `${formatCurrency(status.starting_capital)} capital management` : 'Institutional capital management'} for SPX index options
+                </p>
               </div>
               <div className="flex items-center gap-3">
                 {/* Live Countdown Timer */}
@@ -267,8 +269,9 @@ export default function SPXInstitutionalTrader() {
                 <div>
                   <p className="font-semibold text-primary mb-1">Institutional-Grade SPX Trading</p>
                   <p className="text-sm text-text-secondary">
-                    This trader manages $100M in capital for SPX index options with institutional risk limits:
-                    5% max position size, 15% max delta exposure, 2% daily loss limit.
+                    This trader manages {status?.starting_capital ? formatCurrency(status.starting_capital) : 'institutional capital'} for SPX index options with risk limits:
+                    {status?.max_position_pct ? ` ${(status.max_position_pct * 100).toFixed(0)}%` : ' 5%'} max position size,
+                    {status?.max_delta_exposure ? ` ${(status.max_delta_exposure * 100).toFixed(0)}%` : ' 15%'} max delta exposure, 2% daily loss limit.
                     Benefits from 60/40 tax treatment (Section 1256 contracts).
                   </p>
                 </div>
@@ -299,7 +302,7 @@ export default function SPXInstitutionalTrader() {
                       <div>
                         <p className="text-text-secondary text-sm">Starting Capital</p>
                         <p className="text-2xl font-bold text-text-primary mt-1">
-                          {status ? formatCurrency(status.starting_capital) : '$100M'}
+                          {status?.starting_capital ? formatCurrency(status.starting_capital) : '--'}
                         </p>
                       </div>
                       <Briefcase className="text-primary w-8 h-8" />
@@ -518,7 +521,9 @@ export default function SPXInstitutionalTrader() {
                           <span className="text-text-secondary">Daily Loss Limit</span>
                           <span className="text-danger font-bold">2%</span>
                         </div>
-                        <p className="text-xs text-text-muted mt-1">$2M max daily loss on $100M</p>
+                        <p className="text-xs text-text-muted mt-1">
+                          {status?.starting_capital ? `${formatCurrency(status.starting_capital * 0.02)} max daily loss on ${formatCurrency(status.starting_capital)}` : '2% of starting capital'}
+                        </p>
                       </div>
                     </div>
                   </div>
