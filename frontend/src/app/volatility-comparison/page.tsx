@@ -634,27 +634,27 @@ export default function VolatilityComparison() {
                   </div>
                 </div>
 
-                {/* All Expirations Gamma Comparison Charts */}
+                {/* OPEX Net Gamma Charts - All Expirations Comparison */}
                 {(comparisonData?.trading_volatility || comparisonData?.tradier_all_expirations) && (
                   <>
                     <div className="card bg-gradient-to-r from-primary/10 to-transparent">
                       <div className="flex items-center gap-2 mb-2">
                         <Target className="w-5 h-5 text-primary" />
-                        <h2 className="text-xl font-semibold text-text-primary">All Expirations Gamma Comparison</h2>
+                        <h2 className="text-xl font-semibold text-text-primary">OPEX Net Gamma Charts</h2>
                       </div>
                       <p className="text-text-secondary text-sm">
-                        Apples-to-apples comparison of ALL expirations NET gamma from TradingVolatility API vs Tradier calculation.
-                        Both charts should look similar if calculations are correct.
+                        All expirations NET gamma comparison. TradingVolatility API (left) vs Tradier calculated (right).
+                        Both charts should show similar patterns if calculations are accurate.
                       </p>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {/* TradingVolatility API Chart - All Expirations */}
+                      {/* TradingVolatility API Chart - OPEX Net Gamma */}
                       <div className="card">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center gap-2">
                             <BarChart3 className="w-5 h-5 text-blue-400" />
-                            <h3 className="font-semibold text-text-primary">TradingVol API - All Exp</h3>
+                            <h3 className="font-semibold text-text-primary">OPEX Net Gamma (TradingVol API)</h3>
                           </div>
                           {comparisonData?.trading_volatility ? (
                             <span className="text-xs text-text-muted">
@@ -700,12 +700,12 @@ export default function VolatilityComparison() {
                         )}
                       </div>
 
-                      {/* Tradier All Expirations Chart */}
+                      {/* Tradier OPEX Net Gamma Chart */}
                       <div className="card">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center gap-2">
                             <BarChart3 className="w-5 h-5 text-green-400" />
-                            <h3 className="font-semibold text-text-primary">Tradier Calc - All Exp</h3>
+                            <h3 className="font-semibold text-text-primary">OPEX Net Gamma (Tradier)</h3>
                           </div>
                           {comparisonData?.tradier_all_expirations ? (
                             <span className="text-xs text-text-muted">
@@ -826,16 +826,16 @@ export default function VolatilityComparison() {
                   </>
                 )}
 
-                {/* 0DTE Chart - Tradier Only (below the comparison) */}
+                {/* 0DTE NET GEX Chart - Tradier Only */}
                 {comparisonData?.tradier_0dte && (
                   <>
                     <div className="card bg-gradient-to-r from-yellow-500/10 to-transparent">
                       <div className="flex items-center gap-2 mb-2">
                         <Clock className="w-5 h-5 text-yellow-400" />
-                        <h2 className="text-xl font-semibold text-text-primary">0DTE Gamma (Tradier)</h2>
+                        <h2 className="text-xl font-semibold text-text-primary">Tradier 0DTE NET GEX</h2>
                       </div>
                       <p className="text-text-secondary text-sm">
-                        Zero Days to Expiration gamma profile from Tradier calculation only.
+                        Zero Days to Expiration NET gamma exposure from Tradier.
                         Expiration: {comparisonData.tradier_0dte.expiration}
                       </p>
                     </div>
@@ -844,7 +844,7 @@ export default function VolatilityComparison() {
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
                           <BarChart3 className="w-5 h-5 text-yellow-400" />
-                          <h3 className="font-semibold text-text-primary">Tradier 0DTE Gamma</h3>
+                          <h3 className="font-semibold text-text-primary">Tradier 0DTE NET GEX Chart</h3>
                         </div>
                         <span className="text-xs text-text-muted">
                           {comparisonData.tradier_0dte.expiration} | {comparisonData.tradier_0dte.strikes_count} strikes
