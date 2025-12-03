@@ -375,10 +375,23 @@ def run_continuous_scheduler(check_interval_minutes: int = 5, symbols: list = No
                         print(f"❌ Error in {symbol} cycle: {e}")
                         traceback.print_exc()
 
-                # Wait specified interval before next check
-                print(f"⏳ Waiting {check_interval_minutes} minutes until next cycle...")
-                print(f"   Next check at: {(ct_now + timedelta(seconds=check_interval_seconds)).strftime('%I:%M %p CT')}")
-                time.sleep(check_interval_seconds)
+                # Wait until the next 5-minute clock mark (synced with frontend countdown)
+                # This ensures the backend runs exactly when the frontend timer hits 0:00
+                now = datetime.now(CT_TZ)
+                current_minute = now.minute
+                current_second = now.second
+
+                # Calculate seconds until next 5-minute mark
+                minutes_to_next = (5 - (current_minute % 5)) % 5
+                if minutes_to_next == 0:
+                    minutes_to_next = 5  # If we're exactly on a 5-min mark, wait for the next one
+
+                seconds_to_next = (minutes_to_next * 60) - current_second
+
+                next_run_time = now + timedelta(seconds=seconds_to_next)
+                print(f"⏳ Waiting until next 5-minute mark...")
+                print(f"   Next check at: {next_run_time.strftime('%I:%M:%S %p CT')} (in {seconds_to_next} seconds)")
+                time.sleep(seconds_to_next)
 
             else:
                 # Market is closed - calculate wait time
