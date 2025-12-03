@@ -1913,6 +1913,585 @@ def init_database():
     safe_index("CREATE INDEX IF NOT EXISTS idx_ml_predictions_timestamp ON ml_predictions(timestamp)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_ml_predictions_model_id ON ml_predictions(model_id)")
 
+    # =========================================================================
+    # CONSOLIDATED TABLES - Previously scattered across multiple files
+    # All CREATE TABLE statements must be in THIS FILE ONLY
+    # =========================================================================
+
+    # ----- From gamma/gamma_tracking_database.py -----
+    # gamma_history - Historical gamma snapshots (multi-day storage)
+    # NOTE: This is DIFFERENT from gex_history - gamma_history has more fields
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gamma_history (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            timestamp TIMESTAMP NOT NULL,
+            date DATE NOT NULL,
+            time_of_day TEXT,
+            spot_price REAL NOT NULL,
+            net_gex REAL NOT NULL,
+            flip_point REAL NOT NULL,
+            call_wall REAL,
+            put_wall REAL,
+            implied_volatility REAL,
+            put_call_ratio REAL,
+            distance_to_flip_pct REAL,
+            regime TEXT,
+            UNIQUE(symbol, timestamp)
+        )
+    ''')
+
+    # gamma_daily_summary - Daily aggregated gamma data
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gamma_daily_summary (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            date DATE NOT NULL,
+            open_gex REAL,
+            close_gex REAL,
+            high_gex REAL,
+            low_gex REAL,
+            gex_change REAL,
+            gex_change_pct REAL,
+            open_flip REAL,
+            close_flip REAL,
+            flip_change REAL,
+            flip_change_pct REAL,
+            open_price REAL,
+            close_price REAL,
+            price_change_pct REAL,
+            avg_iv REAL,
+            snapshots_count INTEGER,
+            UNIQUE(symbol, date)
+        )
+    ''')
+
+    # spy_correlation - SPY correlation tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spy_correlation (
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL,
+            symbol TEXT NOT NULL,
+            spy_gex_change_pct REAL,
+            symbol_gex_change_pct REAL,
+            spy_price_change_pct REAL,
+            symbol_price_change_pct REAL,
+            correlation_score REAL,
+            UNIQUE(symbol, date)
+        )
+    ''')
+
+    # ----- From trading/wheel_strategy.py -----
+    # wheel_cycles - Wheel strategy cycle tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS wheel_cycles (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'CSP',
+            start_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            end_date TIMESTAMPTZ,
+            shares_owned INTEGER DEFAULT 0,
+            share_cost_basis REAL DEFAULT 0.0,
+            total_csp_premium REAL DEFAULT 0.0,
+            total_cc_premium REAL DEFAULT 0.0,
+            total_premium_collected REAL DEFAULT 0.0,
+            assignment_date TIMESTAMPTZ,
+            assignment_price REAL,
+            called_away_date TIMESTAMPTZ,
+            called_away_price REAL,
+            realized_pnl REAL DEFAULT 0.0,
+            unrealized_pnl REAL DEFAULT 0.0,
+            target_delta_csp REAL DEFAULT 0.30,
+            target_delta_cc REAL DEFAULT 0.30,
+            min_premium_pct REAL DEFAULT 1.0,
+            max_dte INTEGER DEFAULT 45,
+            min_dte INTEGER DEFAULT 21,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # wheel_legs - Individual option legs in wheel strategy
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS wheel_legs (
+            id SERIAL PRIMARY KEY,
+            cycle_id INTEGER REFERENCES wheel_cycles(id),
+            leg_type TEXT NOT NULL,
+            action TEXT NOT NULL,
+            strike REAL NOT NULL,
+            expiration_date DATE NOT NULL,
+            contracts INTEGER NOT NULL DEFAULT 1,
+            premium_received REAL DEFAULT 0.0,
+            premium_paid REAL DEFAULT 0.0,
+            open_date TIMESTAMPTZ NOT NULL,
+            close_date TIMESTAMPTZ,
+            close_reason TEXT,
+            underlying_price_at_open REAL,
+            underlying_price_at_close REAL,
+            iv_at_open REAL,
+            delta_at_open REAL,
+            dte_at_open INTEGER,
+            contract_symbol TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # wheel_activity_log - Wheel strategy action log
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS wheel_activity_log (
+            id SERIAL PRIMARY KEY,
+            cycle_id INTEGER REFERENCES wheel_cycles(id),
+            leg_id INTEGER REFERENCES wheel_legs(id),
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            action TEXT NOT NULL,
+            description TEXT,
+            premium_impact REAL DEFAULT 0.0,
+            pnl_impact REAL DEFAULT 0.0,
+            underlying_price REAL,
+            option_price REAL,
+            details JSONB
+        )
+    ''')
+
+    # ----- From trading/decision_logger.py -----
+    # trading_decisions - Complete decision audit trail
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS trading_decisions (
+            id SERIAL PRIMARY KEY,
+            decision_id VARCHAR(50) UNIQUE NOT NULL,
+            timestamp TIMESTAMPTZ NOT NULL,
+            decision_type VARCHAR(50) NOT NULL,
+            action VARCHAR(20) NOT NULL,
+            symbol VARCHAR(20) NOT NULL,
+            strategy VARCHAR(100),
+            spot_price DECIMAL(12,4),
+            spot_source VARCHAR(50),
+            option_price DECIMAL(10,4),
+            strike DECIMAL(10,2),
+            expiration DATE,
+            vix DECIMAL(8,2),
+            net_gex DECIMAL(20,2),
+            gex_regime VARCHAR(20),
+            market_regime VARCHAR(50),
+            trend VARCHAR(20),
+            backtest_strategy VARCHAR(100),
+            backtest_win_rate DECIMAL(5,2),
+            backtest_expectancy DECIMAL(8,4),
+            backtest_uses_real_data BOOLEAN,
+            primary_reason TEXT,
+            supporting_factors JSONB,
+            risk_factors JSONB,
+            position_size_dollars DECIMAL(12,2),
+            position_size_contracts INTEGER,
+            max_risk_dollars DECIMAL(12,2),
+            target_profit_pct DECIMAL(6,2),
+            stop_loss_pct DECIMAL(6,2),
+            prob_profit DECIMAL(5,2),
+            passed_risk_checks BOOLEAN DEFAULT TRUE,
+            risk_check_details JSONB,
+            full_decision JSONB,
+            actual_entry_price DECIMAL(10,4),
+            actual_exit_price DECIMAL(10,4),
+            actual_pnl DECIMAL(12,2),
+            actual_hold_days INTEGER,
+            outcome_notes TEXT,
+            outcome_updated_at TIMESTAMPTZ
+        )
+    ''')
+
+    # ----- From core/vix_hedge_manager.py -----
+    # vix_hedge_signals - VIX hedge signal tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS vix_hedge_signals (
+            id SERIAL PRIMARY KEY,
+            signal_date DATE NOT NULL,
+            signal_time TIME,
+            signal_type TEXT NOT NULL,
+            confidence REAL,
+            vol_regime TEXT,
+            vix_spot REAL,
+            vix_futures_m1 REAL,
+            vix_futures_m2 REAL,
+            term_structure_pct REAL,
+            iv_percentile REAL,
+            realized_vol_20d REAL,
+            iv_rv_spread REAL,
+            spy_spot REAL,
+            reasoning TEXT,
+            recommended_action TEXT,
+            risk_warning TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # vix_hedge_positions - VIX hedge position tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS vix_hedge_positions (
+            id SERIAL PRIMARY KEY,
+            position_type TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            strike REAL,
+            expiration DATE,
+            contracts INTEGER DEFAULT 1,
+            entry_date DATE NOT NULL,
+            entry_price REAL NOT NULL,
+            current_price REAL,
+            exit_date DATE,
+            exit_price REAL,
+            realized_pnl REAL,
+            status TEXT DEFAULT 'OPEN',
+            hedge_ratio REAL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ----- From core/autonomous_strategy_competition.py -----
+    # strategy_competition - Strategy competition tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS strategy_competition (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            competition_id TEXT UNIQUE,
+            strategy_name TEXT NOT NULL,
+            strategy_params JSONB,
+            paper_capital REAL DEFAULT 100000,
+            current_equity REAL,
+            total_trades INTEGER DEFAULT 0,
+            winning_trades INTEGER DEFAULT 0,
+            win_rate REAL,
+            total_pnl REAL DEFAULT 0,
+            max_drawdown REAL DEFAULT 0,
+            sharpe_ratio REAL,
+            status TEXT DEFAULT 'active',
+            last_trade_date DATE
+        )
+    ''')
+
+    # ----- From unified_trading_engine.py -----
+    # unified_positions - Unified trading engine positions
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS unified_positions (
+            id SERIAL PRIMARY KEY,
+            position_id TEXT UNIQUE NOT NULL,
+            symbol TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            entry_date TIMESTAMPTZ NOT NULL,
+            contracts INTEGER DEFAULT 1,
+            strike REAL,
+            expiration DATE,
+            option_type TEXT,
+            current_price REAL,
+            unrealized_pnl REAL,
+            status TEXT DEFAULT 'OPEN',
+            regime_at_entry TEXT,
+            signal_confidence REAL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # unified_trades - Unified trading engine closed trades
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS unified_trades (
+            id SERIAL PRIMARY KEY,
+            trade_id TEXT UNIQUE NOT NULL,
+            position_id TEXT,
+            symbol TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            entry_date TIMESTAMPTZ NOT NULL,
+            exit_price REAL NOT NULL,
+            exit_date TIMESTAMPTZ NOT NULL,
+            contracts INTEGER DEFAULT 1,
+            realized_pnl REAL NOT NULL,
+            pnl_pct REAL,
+            hold_time_hours REAL,
+            exit_reason TEXT,
+            regime_at_entry TEXT,
+            regime_at_exit TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # regime_classifications - Market regime classification history
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS regime_classifications (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            regime_type TEXT NOT NULL,
+            sub_regime TEXT,
+            confidence REAL,
+            spot_price REAL,
+            net_gex REAL,
+            vix REAL,
+            momentum_1h REAL,
+            momentum_4h REAL,
+            trend TEXT,
+            signal TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ----- From backend/jobs/background_jobs.py -----
+    # background_jobs - Background job tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS background_jobs (
+            id SERIAL PRIMARY KEY,
+            job_id TEXT UNIQUE NOT NULL,
+            job_type TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            progress INTEGER DEFAULT 0,
+            message TEXT,
+            params JSONB,
+            result JSONB,
+            error TEXT,
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ----- From ai/ai_trade_advisor.py -----
+    # ai_predictions - AI model predictions
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ai_predictions (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            prediction_date DATE NOT NULL,
+            symbol TEXT DEFAULT 'SPY',
+            prediction_type TEXT NOT NULL,
+            predicted_direction TEXT,
+            predicted_magnitude REAL,
+            confidence REAL,
+            features_used JSONB,
+            actual_direction TEXT,
+            actual_magnitude REAL,
+            correct BOOLEAN,
+            evaluated_at TIMESTAMPTZ
+        )
+    ''')
+
+    # pattern_learning - Pattern learning history
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pattern_learning (
+            id SERIAL PRIMARY KEY,
+            pattern_name TEXT NOT NULL,
+            pattern_data JSONB,
+            occurrences INTEGER DEFAULT 1,
+            success_rate REAL,
+            avg_return REAL,
+            last_seen TIMESTAMPTZ DEFAULT NOW(),
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ai_performance - AI model performance tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ai_performance (
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL UNIQUE,
+            model_version TEXT,
+            predictions_made INTEGER DEFAULT 0,
+            correct_predictions INTEGER DEFAULT 0,
+            accuracy REAL,
+            avg_confidence REAL,
+            features_importance JSONB,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ai_recommendations - AI trade recommendations
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ai_recommendations (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            recommendation_type TEXT NOT NULL,
+            action TEXT NOT NULL,
+            strike REAL,
+            expiration DATE,
+            confidence REAL,
+            reasoning TEXT,
+            risk_level TEXT,
+            expected_return REAL,
+            followed BOOLEAN DEFAULT FALSE,
+            outcome REAL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ----- From data/option_chain_collector.py -----
+    # options_chain_snapshots - Full options chain snapshots
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS options_chain_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT NOT NULL,
+            expiration DATE NOT NULL,
+            strike REAL NOT NULL,
+            option_type TEXT NOT NULL,
+            bid REAL,
+            ask REAL,
+            last REAL,
+            volume INTEGER,
+            open_interest INTEGER,
+            implied_volatility REAL,
+            delta REAL,
+            gamma REAL,
+            theta REAL,
+            vega REAL,
+            underlying_price REAL,
+            UNIQUE(timestamp, symbol, expiration, strike, option_type)
+        )
+    ''')
+
+    # options_collection_log - Options data collection tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS options_collection_log (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT NOT NULL,
+            expirations_collected INTEGER,
+            strikes_collected INTEGER,
+            duration_ms INTEGER,
+            success BOOLEAN DEFAULT TRUE,
+            error_message TEXT
+        )
+    ''')
+
+    # ----- From validation/quant_validation.py -----
+    # paper_signals - Paper trading signals
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS paper_signals (
+            id SERIAL PRIMARY KEY,
+            signal_id TEXT UNIQUE NOT NULL,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            signal_type TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            entry_price REAL,
+            target_price REAL,
+            stop_price REAL,
+            confidence REAL,
+            regime TEXT,
+            status TEXT DEFAULT 'pending'
+        )
+    ''')
+
+    # paper_outcomes - Paper trading outcomes
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS paper_outcomes (
+            id SERIAL PRIMARY KEY,
+            signal_id TEXT REFERENCES paper_signals(signal_id),
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            exit_price REAL,
+            pnl REAL,
+            pnl_pct REAL,
+            hold_time_hours REAL,
+            exit_reason TEXT,
+            correct BOOLEAN
+        )
+    ''')
+
+    # ----- From gamma/gex_data_tracker.py -----
+    # gex_snapshots_detailed - Detailed GEX snapshots with strike data
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gex_snapshots_detailed (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT NOT NULL,
+            spot_price REAL NOT NULL,
+            net_gex REAL,
+            flip_point REAL,
+            call_wall REAL,
+            call_wall_gamma REAL,
+            put_wall REAL,
+            put_wall_gamma REAL,
+            zero_gamma_level REAL,
+            total_call_gamma REAL,
+            total_put_gamma REAL,
+            data_source TEXT,
+            strike_data JSONB
+        )
+    ''')
+
+    # gex_change_log - GEX change events
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gex_change_log (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT NOT NULL,
+            change_type TEXT NOT NULL,
+            previous_value REAL,
+            new_value REAL,
+            change_pct REAL,
+            trigger_event TEXT,
+            spot_price REAL
+        )
+    ''')
+
+    # gamma_strike_history - Strike-level gamma history
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gamma_strike_history (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT NOT NULL,
+            strike REAL NOT NULL,
+            expiration DATE NOT NULL,
+            call_gamma REAL,
+            put_gamma REAL,
+            net_gamma REAL,
+            call_oi INTEGER,
+            put_oi INTEGER,
+            spot_price REAL
+        )
+    ''')
+
+    # ----- From gamma/gamma_correlation_tracker.py -----
+    # gamma_correlation - Multi-symbol gamma correlation
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gamma_correlation (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            base_symbol TEXT DEFAULT 'SPY',
+            compare_symbol TEXT NOT NULL,
+            correlation_30d REAL,
+            correlation_7d REAL,
+            gex_ratio REAL,
+            price_beta REAL,
+            notes TEXT
+        )
+    ''')
+
+    # ----- Indexes for consolidated tables -----
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_history_symbol_date ON gamma_history(symbol, date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_history_timestamp_main ON gamma_history(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_daily_summary_symbol_date ON gamma_daily_summary(symbol, date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_spy_correlation_symbol_date ON spy_correlation(symbol, date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_wheel_cycles_symbol ON wheel_cycles(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_wheel_cycles_status ON wheel_cycles(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_wheel_legs_cycle_id ON wheel_legs(cycle_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_wheel_activity_cycle ON wheel_activity_log(cycle_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_wheel_activity_timestamp ON wheel_activity_log(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_trading_decisions_timestamp ON trading_decisions(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_trading_decisions_symbol ON trading_decisions(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_vix_hedge_signals_date ON vix_hedge_signals(signal_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_vix_hedge_positions_status ON vix_hedge_positions(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_strategy_competition_name ON strategy_competition(strategy_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_unified_positions_status ON unified_positions(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_unified_trades_date ON unified_trades(entry_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_regime_classifications_timestamp ON regime_classifications(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_background_jobs_job_id ON background_jobs(job_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ai_predictions_date ON ai_predictions(prediction_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ai_performance_date ON ai_performance(date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_options_chain_snapshots_symbol ON options_chain_snapshots(symbol, expiration)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_paper_signals_status ON paper_signals(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gex_snapshots_detailed_symbol ON gex_snapshots_detailed(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gex_change_log_symbol ON gex_change_log(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_strike_history_symbol ON gamma_strike_history(symbol, strike)")
+
     # ===== DATABASE MIGRATIONS =====
 
     # Helper function to get table columns (PostgreSQL)

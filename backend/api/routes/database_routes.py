@@ -553,22 +553,100 @@ async def get_table_freshness():
         "tables": {}
     }
 
-    # Tables and their timestamp columns
+    # Tables and their timestamp columns - COMPREHENSIVE LIST
+    # Each tuple: (table_name, timestamp_column, expected_frequency_minutes)
+    # expected_frequency: None = user-activated, 5 = every 5 min, 1440 = daily
     table_configs = [
-        ("gex_history", "timestamp"),
-        ("autonomous_open_positions", "entry_date"),
-        ("autonomous_closed_trades", "exit_date"),
-        ("autonomous_trade_log", "date"),  # Uses 'date' column, not 'timestamp'
-        ("backtest_results", "timestamp"),  # Uses 'timestamp', not 'created_at'
-        ("regime_signals", "timestamp"),
-        ("recommendations", "timestamp"),  # Uses 'timestamp', not 'created_at'
+        # Core Trading Tables
+        ("autonomous_config", None, None),  # No timestamp - static config
+        ("autonomous_open_positions", "created_at", 5),
+        ("autonomous_closed_trades", "created_at", None),  # Per trade
+        ("autonomous_trade_log", "date", None),  # Per trade
+        ("autonomous_trade_activity", "timestamp", None),  # Per trade
+        ("autonomous_live_status", "timestamp", 5),
+        ("autonomous_equity_snapshots", "timestamp", 5),
+        ("trading_decisions", "timestamp", None),  # Per decision
+        ("trades", "timestamp", None),  # Per trade
+        ("positions", "timestamp", None),  # Per position
+
+        # Market Data Tables
+        ("gex_history", "timestamp", 5),
+        ("gamma_history", "timestamp", 5),
+        ("gamma_daily_summary", "date", 1440),
+        ("gex_levels", "timestamp", 5),
+        ("gex_snapshots_detailed", "timestamp", 5),
+        ("gamma_strike_history", "timestamp", 5),
+        ("market_data", "timestamp", 5),
+        ("historical_open_interest", "date", 1440),
+        ("regime_signals", "timestamp", 5),
+        ("regime_classifications", "timestamp", 5),
+        ("spy_correlation", "date", 1440),
+        ("gamma_correlation", "timestamp", 1440),
+        ("gex_change_log", "timestamp", None),
+
+        # AI/ML Tables
+        ("ai_predictions", "timestamp", None),
+        ("ai_performance", "date", 1440),
+        ("ai_recommendations", "timestamp", None),
+        ("pattern_learning", "last_seen", None),
+        ("ml_predictions", "timestamp", None),
+        ("probability_predictions", "timestamp", None),
+        ("ai_analysis_history", "timestamp", None),
+
+        # Backtest Tables
+        ("backtest_results", "timestamp", None),  # Weekly + on-demand
+        ("backtest_summary", "timestamp", None),
+        ("backtest_trades", "timestamp", None),
+        ("spx_wheel_backtest_runs", "created_at", None),
+        ("spx_wheel_backtest_equity", "backtest_date", None),
+        ("spx_wheel_backtest_trades", "backtest_date", None),
+        ("sucker_statistics", "created_at", None),
+        ("psychology_analysis", "timestamp", 5),
+
+        # User-Activated Feature Tables
+        ("alerts", "created_at", None),
+        ("alert_history", "triggered_at", None),
+        ("trade_setups", "timestamp", None),
+        ("conversations", "timestamp", None),
+        ("push_subscriptions", "created_at", None),
+        ("wheel_cycles", "created_at", None),
+        ("wheel_legs", "created_at", None),
+        ("wheel_activity_log", "timestamp", None),
+        ("vix_hedge_signals", "created_at", None),
+        ("vix_hedge_positions", "created_at", None),
+
+        # System Tables
+        ("background_jobs", "started_at", None),
+        ("scheduler_state", "updated_at", 5),
+        ("data_collection_log", "timestamp", 5),
+        ("performance", "date", 1440),
+        ("recommendations", "timestamp", None),
+
+        # Unified Engine Tables
+        ("unified_positions", "created_at", None),
+        ("unified_trades", "created_at", None),
+        ("strategy_competition", "timestamp", None),
+
+        # Validation Tables
+        ("paper_signals", "timestamp", None),
+        ("paper_outcomes", "timestamp", None),
+
+        # Data Collection Tables (need wiring)
+        ("greeks_snapshots", "timestamp", None),
+        ("vix_term_structure", "timestamp", None),
+        ("options_flow", "timestamp", None),
+        ("market_snapshots", "timestamp", None),
+        ("position_sizing_history", "timestamp", None),
+        ("price_history", "timestamp", None),
+        ("options_chain_snapshots", "timestamp", None),
+        ("options_collection_log", "timestamp", None),
     ]
 
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        for table_name, ts_column in table_configs:
+        for table_name, ts_column, expected_freq in table_configs:
             try:
                 # Check if table exists
                 cursor.execute("""
@@ -582,7 +660,25 @@ async def get_table_freshness():
                     freshness["tables"][table_name] = {
                         "status": "not_found",
                         "last_record": None,
-                        "age_minutes": None
+                        "age_minutes": None,
+                        "expected_frequency": expected_freq
+                    }
+                    continue
+
+                # Handle tables without timestamp column
+                if ts_column is None:
+                    # Just get row count for tables without timestamps
+                    count_query = sql.SQL("SELECT COUNT(*) as cnt FROM {}").format(
+                        sql.Identifier(table_name)
+                    )
+                    cursor.execute(count_query)
+                    count = cursor.fetchone()['cnt']
+                    freshness["tables"][table_name] = {
+                        "status": "configured" if count > 0 else "empty",
+                        "last_record": "N/A (no timestamp column)",
+                        "row_count": count,
+                        "age_minutes": None,
+                        "expected_frequency": expected_freq
                     }
                     continue
 
@@ -621,17 +717,26 @@ async def get_table_freshness():
                     else:
                         status = "stale"
 
+                    # Check if data is stale based on expected frequency
+                    is_stale = False
+                    if expected_freq and age_minutes > expected_freq * 2:
+                        is_stale = True
+                        status = "stale"
+
                     freshness["tables"][table_name] = {
                         "status": status,
                         "last_record": latest_central.strftime("%Y-%m-%d %I:%M:%S %p CT"),
                         "age_minutes": age_minutes,
-                        "age_human": f"{age_minutes // 60}h {age_minutes % 60}m" if age_minutes >= 60 else f"{age_minutes}m"
+                        "age_human": f"{age_minutes // 60}h {age_minutes % 60}m" if age_minutes >= 60 else f"{age_minutes}m",
+                        "expected_frequency": expected_freq,
+                        "is_stale": is_stale
                     }
                 else:
                     freshness["tables"][table_name] = {
                         "status": "empty",
                         "last_record": None,
-                        "age_minutes": None
+                        "age_minutes": None,
+                        "expected_frequency": expected_freq
                     }
 
             except Exception as e:
