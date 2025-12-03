@@ -1556,6 +1556,20 @@ class TradingVolatilityAPI:
                 'raw_data': ticker_data
             }
 
+            # If walls are 0/None, try to get them from the gammaOI profile endpoint
+            if not result.get('call_wall') or not result.get('put_wall'):
+                try:
+                    profile = self.get_gex_profile(symbol)
+                    if profile and 'error' not in profile:
+                        if profile.get('call_wall') and not result.get('call_wall'):
+                            result['call_wall'] = float(profile['call_wall'])
+                        if profile.get('put_wall') and not result.get('put_wall'):
+                            result['put_wall'] = float(profile['put_wall'])
+                        if result.get('call_wall') and result.get('put_wall'):
+                            print(f"✅ Got walls from gammaOI profile: Call ${result['call_wall']:.2f}, Put ${result['put_wall']:.2f}")
+                except Exception as profile_err:
+                    print(f"⚠️ Could not get walls from profile: {profile_err}")
+
             return result
 
         except Exception as e:

@@ -85,7 +85,7 @@ async def get_spx_trades(limit: int = 20):
                    contracts, entry_price, entry_date, entry_time,
                    NULL::date as exit_date, NULL::time as exit_time, NULL::real as exit_price,
                    unrealized_pnl, NULL::real as realized_pnl, 'OPEN' as status,
-                   strategy, entry_reasoning as trade_reasoning
+                   strategy, COALESCE(trade_reasoning, '') as trade_reasoning
             FROM autonomous_open_positions
             WHERE symbol = 'SPX'
         ''')
@@ -97,7 +97,7 @@ async def get_spx_trades(limit: int = 20):
                    contracts, entry_price, entry_date, entry_time,
                    exit_date, exit_time, exit_price,
                    NULL::real as unrealized_pnl, realized_pnl, 'CLOSED' as status,
-                   strategy, entry_reasoning as trade_reasoning
+                   strategy, COALESCE(trade_reasoning, '') as trade_reasoning
             FROM autonomous_closed_trades
             WHERE symbol = 'SPX'
             ORDER BY exit_date DESC, exit_time DESC
@@ -125,7 +125,8 @@ async def get_spx_trades(limit: int = 20):
 
         return {"success": True, "count": len(trades), "data": trades}
     except Exception as e:
-        return {"success": True, "count": 0, "data": [], "message": f"No SPX trades available: {str(e)}"}
+        logger.error(f"SPX trades query failed: {e}")
+        return {"success": False, "count": 0, "data": [], "error": f"Database error: {str(e)}"}
 
 
 @router.get("/equity-curve")
@@ -176,11 +177,11 @@ async def get_spx_equity_curve(days: int = 30):
 
         return {"success": True, "data": equity_data}
     except Exception as e:
+        logger.error(f"SPX equity curve query failed: {e}")
         return {
-            "success": True,
-            "data": [{"date": datetime.now().strftime('%Y-%m-%d'), "timestamp": int(datetime.now().timestamp()),
-                     "pnl": 0, "equity": 100_000_000, "daily_pnl": 0}],
-            "message": str(e)
+            "success": False,
+            "data": [],
+            "error": f"Database error: {str(e)}"
         }
 
 

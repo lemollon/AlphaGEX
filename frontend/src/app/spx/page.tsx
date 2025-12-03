@@ -64,6 +64,7 @@ export default function SPXInstitutionalTrader() {
   const [status, setStatus] = useState<SPXStatus | null>(null)
   const [performance, setPerformance] = useState<SPXPerformance | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [failedEndpoints, setFailedEndpoints] = useState<string[]>([])
   const [countdown, setCountdown] = useState<string>('--:--')
 
   // P&L Chart state
@@ -104,16 +105,26 @@ export default function SPXInstitutionalTrader() {
     return () => clearInterval(interval)
   }, [])
 
+  // Helper for API calls with error logging
+  const fetchWithLogging = async (name: string, apiCall: Promise<any>) => {
+    try {
+      const res = await apiCall
+      if (res?.data?.success === false && res?.data?.error) {
+        logger.warn(`SPX ${name}: API returned error:`, res.data.error)
+      }
+      return res
+    } catch (err) {
+      logger.error(`SPX ${name}: API call failed:`, err)
+      return { data: { success: false, data: null, error: String(err) } }
+    }
+  }
+
   // Fetch equity curve when period changes
   useEffect(() => {
     const fetchEquityCurve = async () => {
-      try {
-        const res = await apiClient.getSPXEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
-        if (res.data.success && res.data.data) {
-          setEquityCurve(res.data.data)
-        }
-      } catch (err) {
-        logger.error('Failed to fetch equity curve:', err)
+      const res = await fetchWithLogging('Equity Curve', apiClient.getSPXEquityCurve(chartPeriod))
+      if (res.data.success && res.data.data) {
+        setEquityCurve(res.data.data)
       }
     }
     fetchEquityCurve()
@@ -123,12 +134,25 @@ export default function SPXInstitutionalTrader() {
   const fetchData = async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true)
+      const failed: string[] = []
+
       const [statusRes, perfRes, tradeLogRes, equityCurveRes] = await Promise.all([
-        apiClient.getSPXStatus().catch(() => ({ data: { success: false } })),
-        apiClient.getSPXPerformance().catch(() => ({ data: { success: false } })),
-        apiClient.getSPXTradeLog().catch(() => ({ data: { success: false, data: [] } })),
-        apiClient.getSPXEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
+        fetchWithLogging('Status', apiClient.getSPXStatus()),
+        fetchWithLogging('Performance', apiClient.getSPXPerformance()),
+        fetchWithLogging('Trade Log', apiClient.getSPXTradeLog()),
+        fetchWithLogging('Equity Curve', apiClient.getSPXEquityCurve(chartPeriod))
       ])
+
+      // Track failures
+      if (!statusRes.data?.success) failed.push('Status')
+      if (!perfRes.data?.success) failed.push('Performance')
+      if (!tradeLogRes.data?.success) failed.push('Trade Log')
+      if (!equityCurveRes.data?.success) failed.push('Equity Curve')
+
+      setFailedEndpoints(failed)
+      if (failed.length > 0) {
+        logger.warn(`SPX data fetch had ${failed.length} failures:`, failed)
+      }
 
       if (statusRes.data.success) {
         setStatus(statusRes.data.data)
@@ -144,6 +168,7 @@ export default function SPXInstitutionalTrader() {
       }
       setError(null)
     } catch (err: any) {
+      logger.error('SPX trader data fetch failed:', err)
       setError(err.message || 'Failed to load SPX trader data')
     } finally {
       setLoading(false)
@@ -207,7 +232,9 @@ export default function SPXInstitutionalTrader() {
                   <Building2 className="w-8 h-8 text-primary" />
                   <h1 className="text-3xl font-bold text-text-primary">SPX Autonomous Trader</h1>
                 </div>
-                <p className="text-text-secondary mt-1">$100M capital management for SPX index options</p>
+                <p className="text-text-secondary mt-1">
+                  {status?.starting_capital ? `${formatCurrency(status.starting_capital)} capital management` : 'Institutional capital management'} for SPX index options
+                </p>
               </div>
               <div className="flex items-center gap-3">
                 {/* Live Countdown Timer */}
@@ -227,6 +254,14 @@ export default function SPXInstitutionalTrader() {
               </div>
             </div>
 
+            {/* Data fetch failures indicator for transparency */}
+            {failedEndpoints.length > 0 && (
+              <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-warning/10 border border-warning/30 text-warning">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-sm">Some data unavailable: {failedEndpoints.join(', ')}</span>
+              </div>
+            )}
+
             {/* Info Banner */}
             <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">
               <div className="flex items-start gap-3">
@@ -234,8 +269,9 @@ export default function SPXInstitutionalTrader() {
                 <div>
                   <p className="font-semibold text-primary mb-1">Institutional-Grade SPX Trading</p>
                   <p className="text-sm text-text-secondary">
-                    This trader manages $100M in capital for SPX index options with institutional risk limits:
-                    5% max position size, 15% max delta exposure, 2% daily loss limit.
+                    This trader manages {status?.starting_capital ? formatCurrency(status.starting_capital) : 'institutional capital'} for SPX index options with risk limits:
+                    {status?.max_position_pct ? ` ${(status.max_position_pct * 100).toFixed(0)}%` : ' 5%'} max position size,
+                    {status?.max_delta_exposure ? ` ${(status.max_delta_exposure * 100).toFixed(0)}%` : ' 15%'} max delta exposure, 2% daily loss limit.
                     Benefits from 60/40 tax treatment (Section 1256 contracts).
                   </p>
                 </div>
@@ -266,7 +302,7 @@ export default function SPXInstitutionalTrader() {
                       <div>
                         <p className="text-text-secondary text-sm">Starting Capital</p>
                         <p className="text-2xl font-bold text-text-primary mt-1">
-                          {status ? formatCurrency(status.starting_capital) : '$100M'}
+                          {status?.starting_capital ? formatCurrency(status.starting_capital) : '--'}
                         </p>
                       </div>
                       <Briefcase className="text-primary w-8 h-8" />
@@ -485,7 +521,9 @@ export default function SPXInstitutionalTrader() {
                           <span className="text-text-secondary">Daily Loss Limit</span>
                           <span className="text-danger font-bold">2%</span>
                         </div>
-                        <p className="text-xs text-text-muted mt-1">$2M max daily loss on $100M</p>
+                        <p className="text-xs text-text-muted mt-1">
+                          {status?.starting_capital ? `${formatCurrency(status.starting_capital * 0.02)} max daily loss on ${formatCurrency(status.starting_capital)}` : '2% of starting capital'}
+                        </p>
                       </div>
                     </div>
                   </div>

@@ -86,16 +86,30 @@ interface TraderUpdate {
   error?: string
 }
 
+// Helper to fetch with error logging
+async function fetchWithLogging(url: string): Promise<any> {
+  try {
+    const response = await fetch(url)
+    if (!response.ok) {
+      logger.warn(`API ${url} returned ${response.status}: ${response.statusText}`)
+    }
+    return await response.json()
+  } catch (err) {
+    logger.error(`API fetch failed for ${url}:`, err)
+    return null
+  }
+}
+
 // Fetch data from REST API as fallback
 async function fetchTraderData(): Promise<TraderUpdate | null> {
   try {
     const [statusRes, perfRes, positionsRes, tradesRes, logsRes, gexRes] = await Promise.all([
-      fetch(`${API_BASE}/api/trader/status`).then(r => r.json()).catch(() => null),
-      fetch(`${API_BASE}/api/trader/performance`).then(r => r.json()).catch(() => null),
-      fetch(`${API_BASE}/api/trader/positions`).then(r => r.json()).catch(() => null),
-      fetch(`${API_BASE}/api/trader/closed-trades`).then(r => r.json()).catch(() => null),
-      fetch(`${API_BASE}/api/autonomous/logs?limit=20`).then(r => r.json()).catch(() => null),
-      fetch(`${API_BASE}/api/gex/SPY`).then(r => r.json()).catch(() => null)
+      fetchWithLogging(`${API_BASE}/api/trader/status`),
+      fetchWithLogging(`${API_BASE}/api/trader/performance`),
+      fetchWithLogging(`${API_BASE}/api/trader/positions`),
+      fetchWithLogging(`${API_BASE}/api/trader/closed-trades`),
+      fetchWithLogging(`${API_BASE}/api/autonomous/logs?limit=20`),
+      fetchWithLogging(`${API_BASE}/api/gex/SPY`)
     ])
 
     const statusData = statusRes?.data || statusRes

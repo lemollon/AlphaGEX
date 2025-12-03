@@ -87,6 +87,230 @@ async def health_check():
     }
 
 
+@router.get("/api/system-health")
+async def comprehensive_system_health():
+    """
+    COMPREHENSIVE SYSTEM HEALTH CHECK
+    Shows the real status of ALL components - database, traders, data collection, etc.
+    Run this to verify the entire system is working properly.
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    health = {
+        "timestamp": datetime.now().isoformat(),
+        "overall_status": "healthy",
+        "issues": [],
+        "warnings": [],
+        "components": {}
+    }
+
+    # 1. DATABASE CONNECTION
+    try:
+        if get_connection:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            conn.close()
+            health["components"]["database"] = {"status": "connected", "message": "PostgreSQL connection successful"}
+        else:
+            health["components"]["database"] = {"status": "error", "message": "get_connection not available"}
+            health["issues"].append("Database adapter not loaded")
+    except Exception as e:
+        health["components"]["database"] = {"status": "error", "message": str(e)}
+        health["issues"].append(f"Database connection failed: {str(e)}")
+
+    # 2. GEX HISTORY DATA (Critical for frontend charts)
+    try:
+        if get_connection:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Check total records
+            cursor.execute("SELECT COUNT(*) FROM gex_history")
+            total_gex = cursor.fetchone()[0]
+
+            # Check records from today
+            today = datetime.now(ZoneInfo("America/New_York")).strftime('%Y-%m-%d')
+            cursor.execute("SELECT COUNT(*) FROM gex_history WHERE DATE(timestamp) = %s", (today,))
+            today_gex = cursor.fetchone()[0]
+
+            # Check most recent record
+            cursor.execute("SELECT timestamp FROM gex_history ORDER BY timestamp DESC LIMIT 1")
+            last_gex = cursor.fetchone()
+            last_gex_time = last_gex[0] if last_gex else None
+
+            conn.close()
+
+            if total_gex == 0:
+                health["components"]["gex_history"] = {
+                    "status": "empty",
+                    "total_records": 0,
+                    "today_records": 0,
+                    "message": "NO DATA - Data collector may not be running"
+                }
+                health["issues"].append("gex_history table is EMPTY - historical charts will be blank")
+            else:
+                health["components"]["gex_history"] = {
+                    "status": "has_data",
+                    "total_records": total_gex,
+                    "today_records": today_gex,
+                    "last_update": last_gex_time.isoformat() if last_gex_time else None,
+                    "message": f"{total_gex} total records, {today_gex} from today"
+                }
+                if today_gex == 0:
+                    health["warnings"].append(f"No GEX data for today ({today}) - market may be closed or data collector not running")
+    except Exception as e:
+        health["components"]["gex_history"] = {"status": "error", "message": str(e)}
+        health["issues"].append(f"Could not check gex_history: {str(e)}")
+
+    # 3. REGIME SIGNALS DATA
+    try:
+        if get_connection:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT COUNT(*) FROM regime_signals")
+            total_regime = cursor.fetchone()[0]
+
+            cursor.execute("SELECT timestamp FROM regime_signals ORDER BY timestamp DESC LIMIT 1")
+            last_regime = cursor.fetchone()
+
+            conn.close()
+
+            if total_regime == 0:
+                health["components"]["regime_signals"] = {
+                    "status": "empty",
+                    "total_records": 0,
+                    "message": "NO DATA - Psychology pages will be blank"
+                }
+                health["warnings"].append("regime_signals table is empty")
+            else:
+                health["components"]["regime_signals"] = {
+                    "status": "has_data",
+                    "total_records": total_regime,
+                    "last_update": last_regime[0].isoformat() if last_regime else None
+                }
+    except Exception as e:
+        health["components"]["regime_signals"] = {"status": "error", "message": str(e)}
+
+    # 4. AUTONOMOUS TRADER DATA
+    try:
+        if get_connection:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Open positions
+            cursor.execute("SELECT COUNT(*) FROM autonomous_open_positions")
+            open_positions = cursor.fetchone()[0]
+
+            # Closed trades
+            cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades")
+            closed_trades = cursor.fetchone()[0]
+
+            # Check for $0 entry prices (data integrity issue)
+            cursor.execute("""
+                SELECT COUNT(*) FROM autonomous_closed_trades
+                WHERE entry_price IS NULL OR entry_price = 0
+            """)
+            zero_entry_count = cursor.fetchone()[0]
+
+            # Last trade date
+            cursor.execute("SELECT MAX(exit_date) FROM autonomous_closed_trades")
+            last_trade = cursor.fetchone()[0]
+
+            conn.close()
+
+            health["components"]["autonomous_trader"] = {
+                "status": "active" if (open_positions > 0 or closed_trades > 0) else "no_trades",
+                "open_positions": open_positions,
+                "closed_trades": closed_trades,
+                "last_trade_date": str(last_trade) if last_trade else None,
+                "data_integrity": {
+                    "zero_entry_price_count": zero_entry_count,
+                    "status": "clean" if zero_entry_count == 0 else "has_legacy_issues"
+                }
+            }
+
+            if zero_entry_count > 0:
+                health["warnings"].append(f"{zero_entry_count} closed trades have $0 entry price (legacy data issue)")
+    except Exception as e:
+        health["components"]["autonomous_trader"] = {"status": "error", "message": str(e)}
+
+    # 5. TRADING VOLATILITY API
+    try:
+        if TradingVolatilityAPI:
+            circuit_breaker_active = getattr(TradingVolatilityAPI, '_shared_circuit_breaker_active', False)
+            calls_this_minute = getattr(TradingVolatilityAPI, '_shared_api_call_count_minute', 0)
+
+            health["components"]["trading_volatility_api"] = {
+                "status": "rate_limited" if circuit_breaker_active else "available",
+                "calls_this_minute": calls_this_minute,
+                "limit_per_minute": 20,
+                "circuit_breaker": circuit_breaker_active
+            }
+
+            if circuit_breaker_active:
+                health["warnings"].append("Trading Volatility API circuit breaker is ACTIVE - API calls are blocked")
+        else:
+            health["components"]["trading_volatility_api"] = {"status": "not_loaded"}
+            health["issues"].append("TradingVolatilityAPI not loaded")
+    except Exception as e:
+        health["components"]["trading_volatility_api"] = {"status": "error", "message": str(e)}
+
+    # 6. BACKTEST RESULTS
+    try:
+        if get_connection:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT COUNT(*) FROM backtest_results")
+            backtest_count = cursor.fetchone()[0]
+
+            conn.close()
+
+            health["components"]["backtest_results"] = {
+                "status": "has_data" if backtest_count > 0 else "empty",
+                "total_results": backtest_count
+            }
+    except Exception as e:
+        health["components"]["backtest_results"] = {"status": "error", "message": str(e)}
+
+    # 7. MARKET STATUS
+    try:
+        et_now = get_et_time()
+        is_open = is_market_open()
+
+        health["components"]["market"] = {
+            "status": "open" if is_open else "closed",
+            "current_time_et": et_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "day_of_week": et_now.strftime("%A"),
+            "is_weekend": et_now.weekday() >= 5
+        }
+    except Exception as e:
+        health["components"]["market"] = {"status": "error", "message": str(e)}
+
+    # OVERALL STATUS CALCULATION
+    if len(health["issues"]) > 0:
+        health["overall_status"] = "critical" if any("EMPTY" in i or "failed" in i.lower() for i in health["issues"]) else "degraded"
+    elif len(health["warnings"]) > 0:
+        health["overall_status"] = "warnings"
+
+    # RECOMMENDATIONS
+    health["recommendations"] = []
+
+    if health["components"].get("gex_history", {}).get("status") == "empty":
+        health["recommendations"].append("Run data collector to populate gex_history: The automated data collector should be running")
+
+    if health["components"].get("regime_signals", {}).get("status") == "empty":
+        health["recommendations"].append("Run backtests to populate regime_signals: python -c 'from backtest.autonomous_backtest_engine import get_backtester; get_backtester().backtest_all_patterns_and_save()'")
+
+    if health["components"].get("autonomous_trader", {}).get("data_integrity", {}).get("zero_entry_price_count", 0) > 0:
+        health["recommendations"].append("Legacy trades with $0 entry price exist - these are historical data issues that won't affect new trades")
+
+    return health
+
+
 @router.get("/api/rate-limit-status")
 async def get_rate_limit_status():
     """Get current Trading Volatility API rate limit status and health"""

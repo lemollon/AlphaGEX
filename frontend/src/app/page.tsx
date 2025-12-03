@@ -29,7 +29,8 @@ import {
   Shield,
   Flame,
   Clock,
-  TrendingUpIcon
+  TrendingUpIcon,
+  AlertTriangle
 } from 'lucide-react'
 
 interface Position {
@@ -67,19 +68,43 @@ export default function Dashboard() {
   const [performanceData, setPerformanceData] = useState<LineData[]>([])
   const [positions, setPositions] = useState<Position[]>([])
   const [performance, setPerformance] = useState<any>(null)
+  const [failedEndpoints, setFailedEndpoints] = useState<string[]>([])
   const { data: wsData, isConnected } = useWebSocket('SPY')
 
-  // Fetch all dashboard data
+  // Fetch all dashboard data with error tracking
   const fetchData = async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true)
+      const failed: string[] = []
+
+      // Helper to track API failures
+      const fetchWithLogging = async (name: string, apiCall: Promise<any>) => {
+        try {
+          const res = await apiCall
+          if (res?.data?.success === false && res?.data?.error) {
+            logger.warn(`Dashboard ${name}: API returned error:`, res.data.error)
+            failed.push(name)
+          }
+          return res
+        } catch (err) {
+          logger.error(`Dashboard ${name}: API call failed:`, err)
+          failed.push(name)
+          return { data: { success: false, data: null } }
+        }
+      }
 
       const [gexRes, perfRes, positionsRes, equityCurveRes] = await Promise.all([
-        apiClient.getGEX('SPY').catch(() => ({ data: { success: false } })),
-        apiClient.getTraderPerformance().catch(() => ({ data: { success: false } })),
-        apiClient.getOpenPositions().catch(() => ({ data: { success: false, data: [] } })),
-        apiClient.getEquityCurve(30).catch(() => ({ data: { success: false, data: [] } }))
+        fetchWithLogging('GEX', apiClient.getGEX('SPY')),
+        fetchWithLogging('Performance', apiClient.getTraderPerformance()),
+        fetchWithLogging('Positions', apiClient.getOpenPositions()),
+        fetchWithLogging('Equity Curve', apiClient.getEquityCurve(30))
       ])
+
+      // Track failures for transparency
+      setFailedEndpoints(failed)
+      if (failed.length > 0) {
+        logger.warn(`Dashboard data fetch had ${failed.length} failures:`, failed)
+      }
 
       if (gexRes.data.success) {
         setGexData(gexRes.data.data)
@@ -91,7 +116,7 @@ export default function Dashboard() {
         setPerformance(perfRes.data.data)
       }
 
-      if (equityCurveRes.data.success && equityCurveRes.data.data.length > 0) {
+      if (equityCurveRes.data.success && equityCurveRes.data.data?.length > 0) {
         const perfData: LineData[] = equityCurveRes.data.data.map((point: any) => ({
           time: point.timestamp as any,
           value: point.equity
@@ -210,6 +235,14 @@ export default function Dashboard() {
 
       <main className="pt-16 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        {/* Data fetch failures indicator for transparency */}
+        {failedEndpoints.length > 0 && (
+          <div className="mb-4 flex items-center gap-2 px-4 py-2 rounded-lg bg-warning/10 border border-warning/30 text-warning">
+            <AlertTriangle className="w-4 h-4" />
+            <span className="text-sm">Some data unavailable: {failedEndpoints.join(', ')}</span>
+          </div>
+        )}
 
         {/* Hero Performance Card */}
         <div className="mb-8 relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary/10 via-background-card to-background-card border-2 border-primary/20 shadow-2xl">

@@ -155,7 +155,11 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
                 total_call_gamma += strike.get('call_gamma', 0)
                 total_put_gamma += strike.get('put_gamma', 0)
 
+        # Track if gamma values are estimated (no real strike-level data available)
+        gamma_is_estimated = False
         if total_call_gamma == 0 and total_put_gamma == 0:
+            gamma_is_estimated = True
+            logger.info(f"Estimating gamma split for {symbol} - no strike-level data available")
             net_gex = gex_data.get('net_gex', 0)
             if net_gex > 0:
                 total_call_gamma = abs(net_gex) * 0.6
@@ -211,6 +215,7 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
                 "total_gamma": total_gamma,
                 "call_gamma": total_call_gamma,
                 "put_gamma": total_put_gamma,
+                "gamma_is_estimated": gamma_is_estimated,  # True if gamma split is estimated (no strike data)
                 "gamma_exposure_ratio": gamma_exposure_ratio,
                 "risk_reversal": risk_reversal,
                 "skew_index": gamma_exposure_ratio,
