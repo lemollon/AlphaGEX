@@ -1572,6 +1572,61 @@ async def startup_event():
         print(f"⚠️ Warning: Could not start Notification Monitor: {e}")
         print("   (Notifications will not be sent)")
         print("=" * 80 + "\n")
+
+    # =========================================================================
+    # START AUTOMATED DATA COLLECTOR (CRITICAL - Populates gex_history table)
+    # =========================================================================
+    try:
+        import threading
+        print("📊 Starting Automated Data Collector...")
+        print("⏰ GEX snapshots: Every 5 minutes during market hours")
+        print("🎯 Liberation outcomes: Every 10 minutes")
+        print("🧲 Forward magnets: Every 5 minutes")
+        print("📅 Gamma expiration: Every 30 minutes")
+
+        # Import and run the data collector in background thread
+        from data.automated_data_collector import run_scheduler as run_data_collector
+
+        data_collector_thread = threading.Thread(
+            target=run_data_collector,
+            daemon=True,
+            name="AutomatedDataCollector"
+        )
+        data_collector_thread.start()
+
+        print("✅ Automated Data Collector started successfully!")
+        print("   📈 Historical data will now be saved to gex_history table")
+        print("=" * 80 + "\n")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not start Automated Data Collector: {e}")
+        print("   (Historical GEX data will NOT be collected)")
+        import traceback
+        traceback.print_exc()
+        print("=" * 80 + "\n")
+
+    # =========================================================================
+    # STARTUP SUMMARY - Show what's running
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("🎯 ALPHAGEX AUTONOMOUS SYSTEM STATUS")
+    print("=" * 80)
+    print("✅ Autonomous Trader: RUNNING (checks every 5 min)")
+    print("✅ Data Collector: RUNNING (GEX snapshots every 5 min)")
+    print("✅ Notification Monitor: RUNNING (checks every 60 sec)")
+    print("✅ Database: INITIALIZED")
+    print("")
+    print("📊 The system will now:")
+    print("   • Collect GEX data every 5 minutes during market hours")
+    print("   • Execute trades automatically when opportunities arise")
+    print("   • Save all data to PostgreSQL for historical analysis")
+    print("   • Send notifications for critical market events")
+    print("")
+    print("🔍 Frontend pages will show:")
+    print("   • Live GEX data from Trading Volatility API")
+    print("   • Historical charts from gex_history table")
+    print("   • Trade performance from autonomous_closed_trades")
+    print("   • Psychology regime signals from regime_signals")
+    print("=" * 80 + "\n")
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown"""
