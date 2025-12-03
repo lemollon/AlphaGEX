@@ -3,6 +3,24 @@
 import React, { useState, useEffect } from 'react'
 import { apiClient } from '@/lib/api'
 
+interface TradeLeg {
+  leg_id: number
+  action: string
+  option_type: string
+  strike: number
+  expiration: string
+  entry_price: number
+  exit_price: number
+  contracts: number
+  premium_per_contract: number
+  delta: number
+  gamma: number
+  theta: number
+  iv: number
+  order_id: string
+  realized_pnl: number
+}
+
 interface DecisionLog {
   id: number
   bot_name: string
@@ -13,8 +31,23 @@ interface DecisionLog {
   why: string
   how: string
   outcome: string
-  data: Record<string, unknown>
   timestamp: string
+  // Trade details
+  strike?: number
+  expiration?: string
+  spot_price?: number
+  vix?: number
+  actual_pnl?: number
+  // Full decision data including legs
+  full_decision?: {
+    legs?: TradeLeg[]
+    underlying_price_at_entry?: number
+    underlying_price_at_exit?: number
+    order_id?: string
+    position_size_contracts?: number
+    position_size_dollars?: number
+  }
+  data?: Record<string, unknown>
 }
 
 interface DecisionSummary {
@@ -71,13 +104,15 @@ export default function DecisionLogViewer() {
       ])
 
       if (logsRes.data?.success) {
-        setLogs(logsRes.data.data || [])
+        // Backend returns { data: { decisions: [...] } }
+        setLogs(logsRes.data.data?.decisions || logsRes.data.data || [])
       }
       if (summaryRes.data?.success) {
-        setSummary(summaryRes.data.data)
+        // Backend returns { data: { summary: {...} } }
+        setSummary(summaryRes.data.data?.summary || summaryRes.data.data)
       }
       if (botsRes.data?.success) {
-        setBots(botsRes.data.data.bots || {})
+        setBots(botsRes.data.data?.bots || {})
       }
     } catch (error) {
       console.error('Error loading decision logs:', error)
@@ -244,6 +279,74 @@ export default function DecisionLogViewer() {
                     <span className="text-text-secondary text-sm">{log.how || 'Not specified'}</span>
                   </div>
 
+                  {/* Trade Details - Strike, Entry, Exit, Expiration */}
+                  {(log.strike || log.spot_price || log.vix) && (
+                    <div className="bg-background-secondary rounded p-2 mt-2">
+                      <span className="text-accent-primary text-xs font-medium">TRADE DETAILS:</span>
+                      <div className="grid grid-cols-4 gap-2 mt-1 text-xs">
+                        {log.strike && (
+                          <div>
+                            <span className="text-text-muted">Strike:</span>
+                            <span className="text-text-primary ml-1">${log.strike}</span>
+                          </div>
+                        )}
+                        {log.expiration && (
+                          <div>
+                            <span className="text-text-muted">Exp:</span>
+                            <span className="text-text-primary ml-1">{log.expiration}</span>
+                          </div>
+                        )}
+                        {log.spot_price && (
+                          <div>
+                            <span className="text-text-muted">Spot:</span>
+                            <span className="text-text-primary ml-1">${log.spot_price?.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {log.vix && (
+                          <div>
+                            <span className="text-text-muted">VIX:</span>
+                            <span className="text-text-primary ml-1">{log.vix?.toFixed(1)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Trade Legs - ALL leg data for multi-leg strategies */}
+                  {log.full_decision?.legs && log.full_decision.legs.length > 0 && (
+                    <div className="bg-background-secondary rounded p-2 mt-2">
+                      <span className="text-purple-400 text-xs font-medium">
+                        TRADE LEGS ({log.full_decision.legs.length}):
+                      </span>
+                      <div className="mt-2 space-y-2">
+                        {log.full_decision.legs.map((leg, idx) => (
+                          <div key={idx} className="bg-background-tertiary rounded p-2 text-xs">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="font-medium text-text-primary">
+                                Leg {leg.leg_id}: {leg.action} {leg.option_type?.toUpperCase()}
+                              </span>
+                              {leg.realized_pnl !== 0 && (
+                                <span className={leg.realized_pnl > 0 ? 'text-green-400' : 'text-red-400'}>
+                                  P&L: ${leg.realized_pnl?.toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-4 gap-2 text-text-secondary">
+                              <div><span className="text-text-muted">Strike:</span> ${leg.strike}</div>
+                              <div><span className="text-text-muted">Exp:</span> {leg.expiration}</div>
+                              <div><span className="text-text-muted">Entry:</span> ${leg.entry_price?.toFixed(2)}</div>
+                              <div><span className="text-text-muted">Exit:</span> ${leg.exit_price?.toFixed(2) || '-'}</div>
+                              <div><span className="text-text-muted">Contracts:</span> {leg.contracts}</div>
+                              <div><span className="text-text-muted">Delta:</span> {leg.delta?.toFixed(2)}</div>
+                              <div><span className="text-text-muted">IV:</span> {(leg.iv * 100)?.toFixed(1)}%</div>
+                              <div><span className="text-text-muted">Order:</span> {leg.order_id || '-'}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Outcome */}
                   {log.outcome && (
                     <div>
@@ -252,14 +355,26 @@ export default function DecisionLogViewer() {
                     </div>
                   )}
 
-                  {/* Data */}
+                  {/* P&L if available */}
+                  {log.actual_pnl !== undefined && log.actual_pnl !== 0 && (
+                    <div>
+                      <span className="text-text-muted text-xs font-medium">REALIZED P&L: </span>
+                      <span className={`text-sm font-bold ${log.actual_pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${log.actual_pnl?.toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Raw Data - collapsed by default */}
                   {log.data && Object.keys(log.data).length > 0 && (
-                    <div className="bg-background-secondary rounded p-2 mt-2">
-                      <span className="text-text-muted text-xs font-medium">DATA:</span>
+                    <details className="bg-background-secondary rounded p-2 mt-2">
+                      <summary className="text-text-muted text-xs font-medium cursor-pointer">
+                        RAW DATA (click to expand)
+                      </summary>
                       <pre className="text-text-secondary text-xs mt-1 overflow-x-auto">
                         {JSON.stringify(log.data, null, 2)}
                       </pre>
-                    </div>
+                    </details>
                   )}
                 </div>
               )}
