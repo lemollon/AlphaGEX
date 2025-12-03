@@ -125,7 +125,8 @@ async def get_spx_trades(limit: int = 20):
 
         return {"success": True, "count": len(trades), "data": trades}
     except Exception as e:
-        return {"success": True, "count": 0, "data": [], "message": f"No SPX trades available: {str(e)}"}
+        logger.error(f"SPX trades query failed: {e}")
+        return {"success": False, "count": 0, "data": [], "error": f"Database error: {str(e)}"}
 
 
 @router.get("/equity-curve")
@@ -176,11 +177,11 @@ async def get_spx_equity_curve(days: int = 30):
 
         return {"success": True, "data": equity_data}
     except Exception as e:
+        logger.error(f"SPX equity curve query failed: {e}")
         return {
-            "success": True,
-            "data": [{"date": datetime.now().strftime('%Y-%m-%d'), "timestamp": int(datetime.now().timestamp()),
-                     "pnl": 0, "equity": 100_000_000, "daily_pnl": 0}],
-            "message": str(e)
+            "success": False,
+            "data": [],
+            "error": f"Database error: {str(e)}"
         }
 
 

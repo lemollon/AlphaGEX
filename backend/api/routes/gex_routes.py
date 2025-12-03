@@ -320,8 +320,9 @@ async def get_gex_data(symbol: str):
             else:
                 data_date = now.strftime('%Y-%m-%d')
 
-        # Get VIX for response
-        vix_value = 18.0  # Default
+        # Get VIX for response - DO NOT use hardcoded default without indication
+        vix_value = None
+        vix_is_estimated = False
         try:
             from data.unified_data_provider import get_vix
             vix_result = get_vix()
@@ -329,9 +330,15 @@ async def get_gex_data(symbol: str):
                 if isinstance(vix_result, (int, float)):
                     vix_value = float(vix_result)
                 elif isinstance(vix_result, dict):
-                    vix_value = float(vix_result.get('value', vix_result.get('current', 18.0)))
-        except Exception:
-            pass
+                    vix_value = float(vix_result.get('value', vix_result.get('current', 0)))
+        except Exception as e:
+            logger.warning(f"Could not fetch VIX: {e}")
+
+        # Only use fallback if we couldn't get real data, and mark it as estimated
+        if vix_value is None or vix_value == 0:
+            vix_value = 18.0
+            vix_is_estimated = True
+            logger.info("Using estimated VIX value (18.0) - real VIX data unavailable")
 
         # Calculate MM state
         flip_point = data.get('flip_point', 0) or data.get('gamma_flip', 0) or 0
@@ -358,6 +365,7 @@ async def get_gex_data(symbol: str):
                 "max_pain": safe_round(data.get('max_pain', 0)),
                 "spot_price": safe_round(spot_price),
                 "vix": safe_round(vix_value, 1),
+                "vix_is_estimated": vix_is_estimated,  # True if VIX is fallback value, not real data
                 "mm_state": mm_state,
                 "regime": regime,
                 "data_date": data_date,

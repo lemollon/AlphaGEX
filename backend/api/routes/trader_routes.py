@@ -140,8 +140,9 @@ async def get_trader_performance():
                 current_equity = float(snapshot[0])
                 if current_equity < starting_capital:
                     max_drawdown = ((starting_capital - current_equity) / starting_capital * 100)
-        except Exception:
+        except Exception as e:
             # Rollback on error to clear aborted transaction state
+            logger.warning(f"Could not fetch equity snapshot: {e}")
             conn.rollback()
 
         # Get today's P&L
@@ -164,7 +165,8 @@ async def get_trader_performance():
             today_unrealized = cursor.fetchone()[0] or 0
 
             today_pnl = float(today_realized) + float(today_unrealized)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Could not fetch today's P&L: {e}")
             conn.rollback()
 
         conn.close()
