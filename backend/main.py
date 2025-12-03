@@ -879,109 +879,113 @@ async def internal_error_handler(request, exc):
 # Position Sizing Endpoints
 # ============================================================================
 
+from pydantic import BaseModel
+from typing import Optional
+
+class PositionSizingRequest(BaseModel):
+    """Request body for position sizing calculation - matches frontend"""
+    account_size: float
+    win_rate: float  # decimal (0.65 = 65%)
+    avg_win: float
+    avg_loss: float
+    current_price: float  # option premium per share
+    risk_per_trade_pct: float
+
 @app.post("/api/position-sizing/calculate")
-async def calculate_position_sizing(
-    account_size: float,
-    risk_percent: float,
-    win_rate: float,
-    risk_reward: float,
-    option_premium: float,
-    max_loss_per_contract: float = None
-):
+async def calculate_position_sizing(request: PositionSizingRequest):
     """
     Calculate optimal position size using Kelly Criterion and Risk of Ruin
 
-    Returns:
-    - Kelly Criterion sizing
-    - Optimal F sizing
-    - Risk of Ruin probability
-    - Recommended contracts
+    Accepts JSON body matching frontend's PositionSizingRequest
     """
     try:
+        account_size = request.account_size
+        win_rate = request.win_rate  # already decimal
+        avg_win = request.avg_win
+        avg_loss = request.avg_loss
+        current_price = request.current_price
+        risk_per_trade_pct = request.risk_per_trade_pct
+
+        # Reward to risk ratio
+        risk_reward = avg_win / avg_loss if avg_loss > 0 else 1
+
         # Kelly Criterion: f* = (p*b - q) / b
         # where p = win probability, q = loss probability, b = win/loss ratio
-        p = win_rate / 100  # Convert percentage to decimal
+        p = win_rate
         q = 1 - p
-        b = risk_reward  # win/loss ratio
+        b = risk_reward
 
         kelly_pct = ((p * b) - q) / b if b > 0 else 0
         kelly_pct = max(0, min(kelly_pct, 1))  # Clamp between 0 and 1
 
+        # Capped Kelly (never risk more than 25%)
+        kelly_capped = min(kelly_pct, 0.25)
+
         # Half Kelly (more conservative, recommended)
         half_kelly_pct = kelly_pct / 2
 
-        # Quarter Kelly (very conservative)
-        quarter_kelly_pct = kelly_pct / 4
+        # Expected value calculation
+        expected_value = (p * avg_win) - (q * avg_loss)
+        expected_value_pct = expected_value / avg_loss * 100 if avg_loss > 0 else 0
 
         # Calculate actual dollar amounts
         kelly_dollars = account_size * kelly_pct
         half_kelly_dollars = account_size * half_kelly_pct
-        quarter_kelly_dollars = account_size * quarter_kelly_pct
 
-        # User's current risk amount
-        user_risk_dollars = account_size * (risk_percent / 100)
+        # Fixed risk based on user's risk_per_trade_pct
+        fixed_risk_dollars = account_size * (risk_per_trade_pct / 100)
 
-        # Calculate contracts based on different methods
-        max_loss = max_loss_per_contract if max_loss_per_contract else (option_premium * 100)
+        # Calculate contracts (assuming 100 shares per contract)
+        max_loss_per_contract = current_price * 100
 
-        kelly_contracts = max(1, int(kelly_dollars / max_loss))
-        half_kelly_contracts = max(1, int(half_kelly_dollars / max_loss))
-        quarter_kelly_contracts = max(1, int(quarter_kelly_dollars / max_loss))
-        user_contracts = max(1, int(user_risk_dollars / max_loss))
+        full_kelly_contracts = max(1, int(kelly_dollars / max_loss_per_contract)) if max_loss_per_contract > 0 else 1
+        half_kelly_contracts = max(1, int(half_kelly_dollars / max_loss_per_contract)) if max_loss_per_contract > 0 else 1
+        fixed_risk_contracts = max(1, int(fixed_risk_dollars / max_loss_per_contract)) if max_loss_per_contract > 0 else 1
 
-        # Risk of Ruin calculation (simplified)
-        # Probability of losing entire account with given win rate and risk per trade
-        risk_of_ruin_kelly = calculate_risk_of_ruin(p, kelly_pct)
-        risk_of_ruin_half_kelly = calculate_risk_of_ruin(p, half_kelly_pct)
-        risk_of_ruin_user = calculate_risk_of_ruin(p, risk_percent / 100)
+        # Determine recommendation
+        if kelly_pct > 0.15:
+            recommendation = "HALF KELLY"
+        elif kelly_pct > 0:
+            recommendation = "FULL KELLY"
+        else:
+            recommendation = "NO EDGE - PASS"
 
-        # Optimal F (Ralph Vince method)
-        # Simplified: f = 1 / biggest_loss_percentage
-        # For options, assume biggest loss = 100% of premium
-        optimal_f_pct = 1 / (max_loss / account_size) if max_loss > 0 else 0
-        optimal_f_pct = min(optimal_f_pct, kelly_pct)  # Never exceed Kelly
-        optimal_f_contracts = max(1, int((account_size * optimal_f_pct) / max_loss))
+        # Money making guide
+        guide = f"With a {win_rate*100:.0f}% win rate and {risk_reward:.1f}:1 reward/risk, "
+        if expected_value > 0:
+            guide += f"you have positive expectancy of ${expected_value:.2f} per trade. "
+            guide += f"Half Kelly ({half_kelly_pct*100:.1f}% risk) is recommended for steady growth."
+        else:
+            guide += "the math doesn't favor this trade. Consider passing or adjusting your strategy."
 
         return {
             "success": True,
-            "kelly_criterion": {
-                "full_kelly_pct": round(kelly_pct * 100, 2),
-                "half_kelly_pct": round(half_kelly_pct * 100, 2),
-                "quarter_kelly_pct": round(quarter_kelly_pct * 100, 2),
-                "full_kelly_dollars": round(kelly_dollars, 2),
-                "half_kelly_dollars": round(half_kelly_dollars, 2),
-                "quarter_kelly_dollars": round(quarter_kelly_dollars, 2),
-                "full_kelly_contracts": kelly_contracts,
-                "half_kelly_contracts": half_kelly_contracts,
-                "quarter_kelly_contracts": quarter_kelly_contracts,
-                "risk_of_ruin": round(risk_of_ruin_kelly * 100, 2)
+            "calculations": {
+                "kelly_percentage": round(kelly_pct * 100, 2),
+                "kelly_percentage_capped": round(kelly_capped * 100, 2),
+                "reward_to_risk_ratio": round(risk_reward, 2),
+                "expected_value": round(expected_value, 2),
+                "expected_value_pct": round(expected_value_pct, 2),
+                "recommendation": recommendation
             },
-            "optimal_f": {
-                "optimal_f_pct": round(optimal_f_pct * 100, 2),
-                "optimal_f_contracts": optimal_f_contracts,
-                "optimal_f_dollars": round(account_size * optimal_f_pct, 2)
+            "positions": {
+                "full_kelly": {
+                    "dollars": round(kelly_dollars, 2),
+                    "contracts": full_kelly_contracts,
+                    "percentage": round(kelly_pct * 100, 2)
+                },
+                "half_kelly": {
+                    "dollars": round(half_kelly_dollars, 2),
+                    "contracts": half_kelly_contracts,
+                    "percentage": round(half_kelly_pct * 100, 2)
+                },
+                "fixed_risk": {
+                    "dollars": round(fixed_risk_dollars, 2),
+                    "contracts": fixed_risk_contracts,
+                    "percentage": risk_per_trade_pct
+                }
             },
-            "user_sizing": {
-                "user_risk_pct": risk_percent,
-                "user_risk_dollars": round(user_risk_dollars, 2),
-                "user_contracts": user_contracts,
-                "risk_of_ruin": round(risk_of_ruin_user * 100, 2)
-            },
-            "recommendation": {
-                "recommended_method": "Half Kelly" if half_kelly_pct < risk_percent / 100 else "Quarter Kelly",
-                "recommended_contracts": half_kelly_contracts if half_kelly_pct < risk_percent / 100 else quarter_kelly_contracts,
-                "recommended_dollars": round(half_kelly_dollars if half_kelly_pct < risk_percent / 100 else quarter_kelly_dollars, 2),
-                "recommended_pct": round((half_kelly_pct if half_kelly_pct < risk_percent / 100 else quarter_kelly_pct) * 100, 2),
-                "reasoning": "Half Kelly balances growth with safety" if half_kelly_pct < risk_percent / 100 else "Quarter Kelly recommended for higher risk setups"
-            },
-            "parameters": {
-                "account_size": account_size,
-                "risk_percent": risk_percent,
-                "win_rate": win_rate,
-                "risk_reward": risk_reward,
-                "option_premium": option_premium,
-                "max_loss_per_contract": max_loss
-            }
+            "money_making_guide": guide
         }
 
     except Exception as e:
