@@ -35,6 +35,12 @@ ALLOWED_SCHEMA_FILES = {
     "db/config_and_database.py",
     "scripts/validate_schema.py",  # This file (for testing)
 }
+# Files that may contain example CREATE TABLE statements (documentation/migration guides)
+DOCUMENTATION_FILES = {
+    "scripts/postgresql_migration_guide.py",
+    "scripts/databricks_migration_guide.py",
+    "validation/quant_validation.py",  # SQLite for local testing
+}
 EXCLUDED_DIRS = {
     "__pycache__", ".git", "node_modules", "venv", ".venv",
     "env", ".env", "dist", "build", ".pytest_cache"
@@ -200,15 +206,21 @@ class SchemaValidator:
     def _validate_no_external_creates(self):
         """Ensure no CREATE TABLE statements outside main schema"""
         for table, files in self.external_tables.items():
+            # Check if all files are documentation-only (migration guides, etc.)
+            non_doc_files = [f for f in files if f not in DOCUMENTATION_FILES]
+            doc_files = [f for f in files if f in DOCUMENTATION_FILES]
+
             # Check if also in main schema (duplicate) vs only external (missing)
             if table in self.main_schema_tables:
                 self.warnings.append(
                     f"DUPLICATE: '{table}' defined in main schema AND in: {', '.join(files)}"
                 )
-            else:
+            elif non_doc_files:
+                # Only report as error if there are non-documentation files
                 self.errors.append(
-                    f"EXTERNAL: '{table}' only defined in: {', '.join(files)} - must be in {MAIN_SCHEMA_FILE}"
+                    f"EXTERNAL: '{table}' only defined in: {', '.join(non_doc_files)} - must be in {MAIN_SCHEMA_FILE}"
                 )
+            # Tables only in documentation files are fine - they're examples, not real tables
 
     def _validate_no_orphaned_tables(self):
         """Check for tables defined but never used"""
