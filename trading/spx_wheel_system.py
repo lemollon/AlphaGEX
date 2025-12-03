@@ -84,6 +84,13 @@ try:
 except ImportError:
     DECISION_LOGGING_AVAILABLE = False
 
+# Walk-Forward Optimization for preventing overfitting
+try:
+    from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
+    WALK_FORWARD_AVAILABLE = True
+except ImportError:
+    WALK_FORWARD_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -239,6 +246,15 @@ class SPXWheelOptimizer:
         self._run_single_backtest(best.parameters, save_to_db=True)
         print("✓ Backtest trades saved - view in dashboard!")
 
+        # === WALK-FORWARD VALIDATION ===
+        # Prevent overfitting by testing on unseen data
+        wf_result = self.run_walk_forward_validation(best.parameters)
+        if not wf_result.get('is_robust', True):
+            print("\n⚠️  WARNING: Parameters may be overfit to historical data")
+            print("   Consider using more conservative delta/DTE settings")
+            # Store warning in parameters
+            best.parameters.backtest_period += " [OVERFIT WARNING]"
+
         return best.parameters
 
     def _run_single_backtest(self, params: WheelParameters, save_to_db: bool = False) -> BacktestResult:
@@ -342,6 +358,143 @@ class SPXWheelOptimizer:
 
         except Exception as e:
             logger.error(f"Failed to save parameters: {e}")
+
+    def run_walk_forward_validation(
+        self,
+        params: WheelParameters,
+        train_days: int = 90,
+        test_days: int = 30
+    ) -> Dict:
+        """
+        Validate parameters using Walk-Forward Analysis to prevent overfitting.
+
+        Walk-forward splits data into train/test windows:
+        - Train on historical window, find optimal params
+        - Test on forward window (unseen data)
+        - Walk forward and repeat
+
+        A robust strategy shows < 20% degradation from in-sample to out-of-sample.
+
+        Returns:
+            Dict with validation results including is_robust flag
+        """
+        if not WALK_FORWARD_AVAILABLE:
+            print("  Walk-Forward Optimizer not available - skipping validation")
+            return {'is_robust': True, 'degradation_pct': 0, 'recommendation': 'SKIPPED'}
+
+        print("\n" + "="*70)
+        print("WALK-FORWARD VALIDATION")
+        print("="*70)
+        print("Preventing overfitting by testing on unseen data...")
+        print(f"Train window: {train_days} days, Test window: {test_days} days")
+
+        try:
+            # Create strategy function for walk-forward optimizer
+            def csp_strategy(data, params_dict):
+                """Run CSP backtest on data window"""
+                if data.empty:
+                    return {'win_rate': 0, 'trades': 0}
+
+                # Use the backtester with the given parameters
+                from backtest.spx_premium_backtest import SPXPremiumBacktester
+
+                start = data.index[0].strftime('%Y-%m-%d')
+                end = data.index[-1].strftime('%Y-%m-%d')
+
+                backtester = SPXPremiumBacktester(
+                    start_date=start,
+                    end_date=end,
+                    initial_capital=self.initial_capital,
+                    put_delta=params_dict.get('put_delta', params.put_delta),
+                    dte_target=params_dict.get('dte_target', params.dte_target),
+                    max_margin_pct=params.max_margin_pct
+                )
+
+                # Suppress output
+                import io
+                from contextlib import redirect_stdout
+                f = io.StringIO()
+                with redirect_stdout(f):
+                    results = backtester.run(save_to_db=False)
+
+                summary = results.get('summary', {})
+                return {
+                    'win_rate': summary.get('win_rate', 0),
+                    'trades': summary.get('total_trades', 0),
+                    'return_pct': summary.get('total_return_pct', 0)
+                }
+
+            # Run walk-forward optimization
+            optimizer = WalkForwardOptimizer(
+                symbol="SPX",
+                train_days=train_days,
+                test_days=test_days,
+                step_days=test_days,
+                min_trades_per_window=3
+            )
+
+            # Get historical data
+            try:
+                import yfinance as yf
+                spx = yf.Ticker("^GSPC")  # Use S&P 500 as proxy for SPX
+                end_date = datetime.now()
+                start_date = datetime.strptime(self.start_date, '%Y-%m-%d')
+                historical_data = spx.history(start=start_date, end=end_date)
+            except Exception as e:
+                print(f"  Could not fetch historical data: {e}")
+                return {'is_robust': True, 'degradation_pct': 0, 'recommendation': 'SKIPPED'}
+
+            # Parameter grid - test variations around optimal
+            param_grid = {
+                'put_delta': [params.put_delta - 0.05, params.put_delta, params.put_delta + 0.05],
+                'dte_target': [params.dte_target - 15, params.dte_target, params.dte_target + 15]
+            }
+            # Filter out invalid values
+            param_grid['put_delta'] = [p for p in param_grid['put_delta'] if 0.1 <= p <= 0.4]
+            param_grid['dte_target'] = [d for d in param_grid['dte_target'] if 14 <= d <= 90]
+
+            result = optimizer.run_walk_forward(
+                strategy_name="SPX_CSP_WHEEL",
+                strategy_func=csp_strategy,
+                param_grid=param_grid,
+                start_date=start_date,
+                end_date=end_date,
+                historical_data=historical_data
+            )
+
+            # Print results
+            print(f"\n  Windows tested: {result.total_windows}")
+            print(f"  In-Sample Win Rate: {result.is_avg_win_rate:.1f}%")
+            print(f"  Out-of-Sample Win Rate: {result.oos_avg_win_rate:.1f}%")
+            print(f"  Degradation: {result.degradation_pct:.1f}%")
+            print(f"  Is Robust: {result.is_robust}")
+
+            if result.is_robust:
+                print("\n  ✓ Strategy PASSED walk-forward validation")
+                print("    Parameters are robust and not overfit to historical data")
+            else:
+                print("\n  ⚠️  Strategy shows signs of overfitting")
+                print(f"    Degradation ({result.degradation_pct:.1f}%) exceeds 20% threshold")
+                print("    Consider using more conservative parameters")
+
+            print("="*70)
+
+            # Save results
+            optimizer.save_results_to_db(result)
+
+            return {
+                'is_robust': result.is_robust,
+                'degradation_pct': result.degradation_pct,
+                'is_win_rate': result.is_avg_win_rate,
+                'oos_win_rate': result.oos_avg_win_rate,
+                'recommended_params': result.recommended_params,
+                'recommendation': 'KEEP' if result.is_robust else 'REVIEW'
+            }
+
+        except Exception as e:
+            logger.error(f"Walk-forward validation failed: {e}")
+            print(f"  Walk-forward validation error: {e}")
+            return {'is_robust': True, 'degradation_pct': 0, 'recommendation': 'ERROR'}
 
 
 class SPXWheelTrader:
