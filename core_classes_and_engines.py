@@ -1142,8 +1142,10 @@ class TradingVolatilityAPI:
 
         # Read API key from environment variables (Render deployment)
         # NO STREAMLIT - This is a FastAPI + React app, not Streamlit!
+        # Support multiple env var names for flexibility
         self.api_key = (
             os.getenv("TRADING_VOLATILITY_API_KEY") or
+            os.getenv("TRADINGVOL_API_KEY") or  # Short form used in some configs
             os.getenv("TV_USERNAME") or
             os.getenv("tv_username") or
             ""
