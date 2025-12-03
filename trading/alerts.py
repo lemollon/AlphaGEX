@@ -396,19 +396,7 @@ def save_alert_to_db(alert_type: str, level: str, subject: str, body: str, posit
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create alerts table if not exists
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS spx_wheel_alerts (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                alert_type VARCHAR(50),
-                level VARCHAR(20),
-                subject VARCHAR(200),
-                body TEXT,
-                position_id INTEGER,
-                acknowledged BOOLEAN DEFAULT FALSE
-            )
-        ''')
+        # NOTE: Table 'spx_wheel_alerts' is defined in db/config_and_database.py (single source of truth)
 
         cursor.execute('''
             INSERT INTO spx_wheel_alerts (alert_type, level, subject, body, position_id)

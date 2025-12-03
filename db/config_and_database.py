@@ -2464,6 +2464,231 @@ def init_database():
         )
     ''')
 
+    # =========================================================================
+    # SPX WHEEL SYSTEM TABLES (from trading/spx_wheel_system.py, etc.)
+    # =========================================================================
+
+    # SPX wheel parameters configuration
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_parameters (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            parameters JSONB NOT NULL,
+            is_active BOOLEAN DEFAULT TRUE
+        )
+    ''')
+
+    # SPX wheel positions
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_positions (
+            id SERIAL PRIMARY KEY,
+            opened_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            closed_at TIMESTAMPTZ,
+            status VARCHAR(20) DEFAULT 'OPEN',
+            option_ticker VARCHAR(50),
+            strike DECIMAL(10,2),
+            expiration DATE,
+            contracts INTEGER,
+            entry_price DECIMAL(10,4),
+            exit_price DECIMAL(10,4),
+            premium_received DECIMAL(12,2),
+            settlement_pnl DECIMAL(12,2),
+            total_pnl DECIMAL(12,2),
+            parameters_used JSONB,
+            notes TEXT
+        )
+    ''')
+
+    # SPX wheel performance tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_performance (
+            id SERIAL PRIMARY KEY,
+            date DATE UNIQUE,
+            equity DECIMAL(14,2),
+            daily_pnl DECIMAL(12,2),
+            cumulative_pnl DECIMAL(12,2),
+            open_positions INTEGER,
+            backtest_expected_equity DECIMAL(14,2),
+            divergence_pct DECIMAL(8,4)
+        )
+    ''')
+
+    # SPX wheel Greeks snapshots
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_greeks (
+            id SERIAL PRIMARY KEY,
+            position_id INTEGER,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            delta DECIMAL(8,6),
+            gamma DECIMAL(8,6),
+            theta DECIMAL(8,4),
+            vega DECIMAL(8,4),
+            iv DECIMAL(8,6),
+            underlying_price DECIMAL(10,2),
+            option_price DECIMAL(10,4)
+        )
+    ''')
+
+    # SPX wheel reconciliation logs
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_reconciliation (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            db_count INTEGER,
+            broker_count INTEGER,
+            matched_count INTEGER,
+            is_reconciled BOOLEAN,
+            details JSONB
+        )
+    ''')
+
+    # SPX wheel alerts
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_alerts (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            alert_type VARCHAR(50),
+            level VARCHAR(20),
+            subject VARCHAR(200),
+            body TEXT,
+            position_id INTEGER,
+            acknowledged BOOLEAN DEFAULT FALSE
+        )
+    ''')
+
+    # SPX wheel multi-leg positions
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_multileg_positions (
+            id SERIAL PRIMARY KEY,
+            opened_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            closed_at TIMESTAMPTZ,
+            status VARCHAR(20) DEFAULT 'OPEN',
+            strategy_type VARCHAR(30),
+            expiration DATE,
+            contracts INTEGER,
+            legs JSONB,
+            max_profit DECIMAL(12,2),
+            max_loss DECIMAL(12,2),
+            breakeven DECIMAL(10,2),
+            credit_received DECIMAL(12,2),
+            margin_required DECIMAL(12,2),
+            entry_underlying_price DECIMAL(10,2),
+            exit_pnl DECIMAL(12,2),
+            notes TEXT
+        )
+    ''')
+
+    # SPX wheel ML outcomes tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_ml_outcomes (
+            id SERIAL PRIMARY KEY,
+            trade_id VARCHAR(50) UNIQUE NOT NULL,
+            trade_date VARCHAR(20),
+            strike DECIMAL(10,2),
+            underlying_price DECIMAL(10,2),
+            dte INTEGER,
+            delta DECIMAL(6,4),
+            premium DECIMAL(10,4),
+            iv DECIMAL(6,4),
+            iv_rank DECIMAL(5,2),
+            vix DECIMAL(6,2),
+            vix_percentile DECIMAL(5,2),
+            vix_term_structure DECIMAL(6,2),
+            put_wall_distance_pct DECIMAL(6,2),
+            call_wall_distance_pct DECIMAL(6,2),
+            net_gex DECIMAL(20,2),
+            spx_20d_return DECIMAL(6,2),
+            spx_5d_return DECIMAL(6,2),
+            spx_distance_from_high DECIMAL(6,2),
+            premium_to_strike_pct DECIMAL(6,4),
+            outcome VARCHAR(10),
+            pnl DECIMAL(12,2),
+            settlement_price DECIMAL(10,2),
+            max_drawdown DECIMAL(12,2),
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # =========================================================================
+    # SPX WHEEL BACKTEST TABLES (from backtest/spx_premium_backtest.py)
+    # =========================================================================
+
+    # SPX backtest runs metadata
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_backtest_runs (
+            id SERIAL PRIMARY KEY,
+            backtest_id VARCHAR(50) UNIQUE NOT NULL,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            config JSONB,
+            summary JSONB,
+            data_quality JSONB,
+            ml_results JSONB
+        )
+    ''')
+
+    # SPX backtest equity curve
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_backtest_equity (
+            id SERIAL PRIMARY KEY,
+            backtest_id VARCHAR(50) NOT NULL,
+            date VARCHAR(20),
+            equity DECIMAL(14,2),
+            cash_balance DECIMAL(14,2),
+            open_position_value DECIMAL(14,2),
+            daily_pnl DECIMAL(12,2),
+            cumulative_pnl DECIMAL(14,2),
+            peak_equity DECIMAL(14,2),
+            drawdown_pct DECIMAL(8,4),
+            open_puts INTEGER,
+            margin_used DECIMAL(14,2)
+        )
+    ''')
+
+    # SPX backtest trades
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS spx_wheel_backtest_trades (
+            id SERIAL PRIMARY KEY,
+            backtest_id VARCHAR(50) NOT NULL,
+            backtest_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            trade_id INTEGER,
+            trade_date VARCHAR(20),
+            trade_type VARCHAR(30),
+            option_ticker VARCHAR(50),
+            strike DECIMAL(10,2),
+            expiration VARCHAR(20),
+            entry_price DECIMAL(10,4),
+            exit_price DECIMAL(10,4),
+            contracts INTEGER,
+            premium_received DECIMAL(12,2),
+            settlement_pnl DECIMAL(12,2),
+            total_pnl DECIMAL(12,2),
+            price_source VARCHAR(30),
+            entry_underlying_price DECIMAL(10,2),
+            exit_underlying_price DECIMAL(10,2),
+            notes TEXT,
+            parameters JSONB
+        )
+    ''')
+
+    # =========================================================================
+    # ML DECISION LOGS TABLE (from backend/api/routes/ml_routes.py)
+    # =========================================================================
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ml_decision_logs (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            action VARCHAR(50) NOT NULL,
+            symbol VARCHAR(20) DEFAULT 'SPX',
+            details JSONB,
+            ml_score DECIMAL(5,4),
+            recommendation VARCHAR(20),
+            reasoning TEXT,
+            trade_id VARCHAR(50),
+            backtest_id VARCHAR(50)
+        )
+    ''')
+
     # ----- Indexes for consolidated tables -----
     safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_history_symbol_date ON gamma_history(symbol, date)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_history_timestamp_main ON gamma_history(timestamp)")

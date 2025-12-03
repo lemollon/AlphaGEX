@@ -497,38 +497,7 @@ class SPXWheelOutcomeTracker:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Create table if not exists
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS spx_wheel_ml_outcomes (
-                    id SERIAL PRIMARY KEY,
-                    trade_id VARCHAR(50) UNIQUE NOT NULL,
-                    trade_date VARCHAR(20),
-                    strike DECIMAL(10,2),
-                    underlying_price DECIMAL(10,2),
-                    dte INTEGER,
-                    delta DECIMAL(6,4),
-                    premium DECIMAL(10,4),
-                    iv DECIMAL(6,4),
-                    iv_rank DECIMAL(5,2),
-                    vix DECIMAL(6,2),
-                    vix_percentile DECIMAL(5,2),
-                    vix_term_structure DECIMAL(6,2),
-                    put_wall_distance_pct DECIMAL(6,2),
-                    call_wall_distance_pct DECIMAL(6,2),
-                    net_gex DECIMAL(20,2),
-                    spx_20d_return DECIMAL(6,2),
-                    spx_5d_return DECIMAL(6,2),
-                    spx_distance_from_high DECIMAL(6,2),
-                    premium_to_strike_pct DECIMAL(6,4),
-                    annualized_return DECIMAL(8,2),
-                    outcome VARCHAR(10),
-                    pnl DECIMAL(12,2),
-                    max_drawdown DECIMAL(12,2),
-                    settlement_price DECIMAL(10,2),
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+            # NOTE: Table 'spx_wheel_ml_outcomes' is defined in db/config_and_database.py (single source of truth)
 
             cursor.execute('''
                 INSERT INTO spx_wheel_ml_outcomes (

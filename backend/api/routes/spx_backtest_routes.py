@@ -889,18 +889,7 @@ def _save_backtest_run(backtest_id: str, config: dict, summary: dict, data_quali
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create backtest runs table if not exists
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS spx_wheel_backtest_runs (
-                id SERIAL PRIMARY KEY,
-                backtest_id VARCHAR(50) UNIQUE NOT NULL,
-                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                config JSONB,
-                summary JSONB,
-                data_quality JSONB,
-                ml_results JSONB
-            )
-        ''')
+        # NOTE: Table 'spx_wheel_backtest_runs' is defined in db/config_and_database.py (single source of truth)
 
         cursor.execute('''
             INSERT INTO spx_wheel_backtest_runs (backtest_id, config, summary, data_quality, ml_results)
