@@ -64,6 +64,7 @@ export default function SPXInstitutionalTrader() {
   const [status, setStatus] = useState<SPXStatus | null>(null)
   const [performance, setPerformance] = useState<SPXPerformance | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [failedEndpoints, setFailedEndpoints] = useState<string[]>([])
   const [countdown, setCountdown] = useState<string>('--:--')
 
   // P&L Chart state
@@ -104,16 +105,26 @@ export default function SPXInstitutionalTrader() {
     return () => clearInterval(interval)
   }, [])
 
+  // Helper for API calls with error logging
+  const fetchWithLogging = async (name: string, apiCall: Promise<any>) => {
+    try {
+      const res = await apiCall
+      if (res?.data?.success === false && res?.data?.error) {
+        logger.warn(`SPX ${name}: API returned error:`, res.data.error)
+      }
+      return res
+    } catch (err) {
+      logger.error(`SPX ${name}: API call failed:`, err)
+      return { data: { success: false, data: null, error: String(err) } }
+    }
+  }
+
   // Fetch equity curve when period changes
   useEffect(() => {
     const fetchEquityCurve = async () => {
-      try {
-        const res = await apiClient.getSPXEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
-        if (res.data.success && res.data.data) {
-          setEquityCurve(res.data.data)
-        }
-      } catch (err) {
-        logger.error('Failed to fetch equity curve:', err)
+      const res = await fetchWithLogging('Equity Curve', apiClient.getSPXEquityCurve(chartPeriod))
+      if (res.data.success && res.data.data) {
+        setEquityCurve(res.data.data)
       }
     }
     fetchEquityCurve()
@@ -123,12 +134,25 @@ export default function SPXInstitutionalTrader() {
   const fetchData = async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true)
+      const failed: string[] = []
+
       const [statusRes, perfRes, tradeLogRes, equityCurveRes] = await Promise.all([
-        apiClient.getSPXStatus().catch(() => ({ data: { success: false } })),
-        apiClient.getSPXPerformance().catch(() => ({ data: { success: false } })),
-        apiClient.getSPXTradeLog().catch(() => ({ data: { success: false, data: [] } })),
-        apiClient.getSPXEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } }))
+        fetchWithLogging('Status', apiClient.getSPXStatus()),
+        fetchWithLogging('Performance', apiClient.getSPXPerformance()),
+        fetchWithLogging('Trade Log', apiClient.getSPXTradeLog()),
+        fetchWithLogging('Equity Curve', apiClient.getSPXEquityCurve(chartPeriod))
       ])
+
+      // Track failures
+      if (!statusRes.data?.success) failed.push('Status')
+      if (!perfRes.data?.success) failed.push('Performance')
+      if (!tradeLogRes.data?.success) failed.push('Trade Log')
+      if (!equityCurveRes.data?.success) failed.push('Equity Curve')
+
+      setFailedEndpoints(failed)
+      if (failed.length > 0) {
+        logger.warn(`SPX data fetch had ${failed.length} failures:`, failed)
+      }
 
       if (statusRes.data.success) {
         setStatus(statusRes.data.data)
@@ -144,6 +168,7 @@ export default function SPXInstitutionalTrader() {
       }
       setError(null)
     } catch (err: any) {
+      logger.error('SPX trader data fetch failed:', err)
       setError(err.message || 'Failed to load SPX trader data')
     } finally {
       setLoading(false)
@@ -226,6 +251,14 @@ export default function SPXInstitutionalTrader() {
                 </div>
               </div>
             </div>
+
+            {/* Data fetch failures indicator for transparency */}
+            {failedEndpoints.length > 0 && (
+              <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-warning/10 border border-warning/30 text-warning">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-sm">Some data unavailable: {failedEndpoints.join(', ')}</span>
+              </div>
+            )}
 
             {/* Info Banner */}
             <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">

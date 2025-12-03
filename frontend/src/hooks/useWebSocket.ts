@@ -13,7 +13,7 @@ interface WebSocketData {
 // REST fallback to fetch GEX data when WebSocket is unavailable
 async function fetchMarketData(symbol: string): Promise<WebSocketData | null> {
   try {
-    const response = await apiClient.getGEX(symbol).catch(() => null)
+    const response = await apiClient.getGEX(symbol)
     if (response?.data?.success && response.data.data) {
       return {
         type: 'market_update',
@@ -22,9 +22,12 @@ async function fetchMarketData(symbol: string): Promise<WebSocketData | null> {
         timestamp: new Date().toISOString()
       }
     }
+    if (!response?.data?.success) {
+      logger.warn(`GEX API returned unsuccessful response for ${symbol}:`, response?.data?.error || 'Unknown error')
+    }
     return null
   } catch (err) {
-    logger.error('Failed to fetch market data via REST:', err)
+    logger.error(`Failed to fetch market data for ${symbol} via REST:`, err)
     return null
   }
 }

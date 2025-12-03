@@ -417,6 +417,10 @@ export default function AutonomousTrader() {
   // Countdown timer state
   const [countdown, setCountdown] = useState<string>('--:--')
 
+  // Data fetch failures tracking - for transparency
+  const [failedEndpoints, setFailedEndpoints] = useState<string[]>([])
+  const [dataWarnings, setDataWarnings] = useState<string[]>([])
+
   // WebSocket connection for real-time updates
   const { data: wsData, isConnected: wsConnected, error: wsError } = useTraderWebSocket()
 
@@ -582,34 +586,52 @@ export default function AutonomousTrader() {
     const fetchData = async () => {
       try {
         setLoading(true)
+        const failed: string[] = []
+        const warnings: string[] = []
 
-        // Fetch all data in parallel, but handle failures gracefully with Promise.allSettled
-        // This ensures one failed endpoint doesn't break the entire page
-        const results = await Promise.allSettled([
-          apiClient.getTraderStatus(),
-          apiClient.getTraderPerformance(),
-          apiClient.getTraderTrades(10),
-          apiClient.getStrategies(),
-          apiClient.getStrategyConfigs().catch(() => ({ data: { success: false, data: {} } })),
-          apiClient.getAutonomousLogs({ limit: 20 }).catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getCompetitionLeaderboard().catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getAllPatternBacktests(90).catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getLiberationAccuracy(90).catch(() => ({ data: { success: false, data: null } })),
-          apiClient.getFalseFloorEffectiveness(90).catch(() => ({ data: { success: false, data: null } })),
-          apiClient.getRiskStatus().catch(() => ({ data: { success: false, data: null } })),
-          apiClient.getTradeLog(),
-          apiClient.getEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getClosedTrades(20).catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getMLModelStatus().catch(() => ({ data: { success: false, data: null } })),
-          apiClient.getRecentMLPredictions(10).catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getRiskMetrics(30).catch(() => ({ data: { success: false, data: [] } })),
-          apiClient.getTraderDiagnostics().catch(() => ({ data: { success: false, data: null } }))
+        // Helper to wrap API calls with error logging
+        const fetchWithLogging = async (name: string, apiCall: Promise<any>) => {
+          try {
+            const result = await apiCall
+            if (result?.data?.success === false && result?.data?.error) {
+              logger.warn(`${name}: API returned error:`, result.data.error)
+              failed.push(name)
+            }
+            return result
+          } catch (err) {
+            logger.error(`${name}: API call failed:`, err)
+            failed.push(name)
+            return { data: { success: false, data: null, error: String(err) } }
+          }
+        }
+
+        // Fetch all data in parallel with error tracking
+        const [statusRes, perfRes, tradesRes, strategiesRes, strategyConfigsRes, logsRes, leaderboardRes, backtestsRes, liberationRes, falseFloorRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = await Promise.all([
+          fetchWithLogging('Trader Status', apiClient.getTraderStatus()),
+          fetchWithLogging('Performance', apiClient.getTraderPerformance()),
+          fetchWithLogging('Trades', apiClient.getTraderTrades(10)),
+          fetchWithLogging('Strategies', apiClient.getStrategies()),
+          fetchWithLogging('Strategy Configs', apiClient.getStrategyConfigs()),
+          fetchWithLogging('Autonomous Logs', apiClient.getAutonomousLogs({ limit: 20 })),
+          fetchWithLogging('Leaderboard', apiClient.getCompetitionLeaderboard()),
+          fetchWithLogging('Backtests', apiClient.getAllPatternBacktests(90)),
+          fetchWithLogging('Liberation Accuracy', apiClient.getLiberationAccuracy(90)),
+          fetchWithLogging('False Floor', apiClient.getFalseFloorEffectiveness(90)),
+          fetchWithLogging('Risk Status', apiClient.getRiskStatus()),
+          fetchWithLogging('Trade Log', apiClient.getTradeLog()),
+          fetchWithLogging('Equity Curve', apiClient.getEquityCurve(chartPeriod)),
+          fetchWithLogging('Closed Trades', apiClient.getClosedTrades(20)),
+          fetchWithLogging('ML Model Status', apiClient.getMLModelStatus()),
+          fetchWithLogging('ML Predictions', apiClient.getRecentMLPredictions(10)),
+          fetchWithLogging('Risk Metrics', apiClient.getRiskMetrics(30)),
+          fetchWithLogging('Diagnostics', apiClient.getTraderDiagnostics())
         ])
 
-        // Extract results (fulfilled promises only)
-        const [statusRes, perfRes, tradesRes, strategiesRes, strategyConfigsRes, logsRes, leaderboardRes, backtestsRes, liberationRes, falseFloorRes, riskRes, tradeLogRes, equityCurveRes, closedTradesRes, mlStatusRes, mlPredictionsRes, riskMetricsRes, diagnosticsRes] = results.map(result =>
-          result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
-        )
+        // Track failed endpoints for transparency
+        setFailedEndpoints(failed)
+        if (failed.length > 0) {
+          logger.warn(`Data fetch had ${failed.length} failures:`, failed)
+        }
 
         if (statusRes.data.success) {
           setTraderStatus(statusRes.data.data)
@@ -1041,20 +1063,35 @@ export default function AutonomousTrader() {
   // Refresh all page data without full reload
   const refreshPageData = async () => {
     try {
+      const refreshFailed: string[] = []
+
+      // Helper to track refresh failures
+      const refreshWithLogging = async (name: string, apiCall: Promise<any>) => {
+        try {
+          return await apiCall
+        } catch (err) {
+          logger.error(`Refresh ${name} failed:`, err)
+          refreshFailed.push(name)
+          return { data: { success: false, data: null } }
+        }
+      }
+
       // Fetch key data in parallel for quick refresh
-      const results = await Promise.allSettled([
-        apiClient.getTraderStatus(),
-        apiClient.getTraderPerformance(),
-        apiClient.getTraderTrades(10),
-        apiClient.getAutonomousLogs({ limit: 20 }).catch(() => ({ data: { success: false, data: [] } })),
-        apiClient.getTradeLog(),
-        apiClient.getEquityCurve(chartPeriod).catch(() => ({ data: { success: false, data: [] } })),
-        apiClient.getClosedTrades(20).catch(() => ({ data: { success: false, data: [] } }))
+      const [statusRes, perfRes, tradesRes, logsRes, tradeLogRes, equityCurveRes, closedTradesRes] = await Promise.all([
+        refreshWithLogging('Status', apiClient.getTraderStatus()),
+        refreshWithLogging('Performance', apiClient.getTraderPerformance()),
+        refreshWithLogging('Trades', apiClient.getTraderTrades(10)),
+        refreshWithLogging('Logs', apiClient.getAutonomousLogs({ limit: 20 })),
+        refreshWithLogging('Trade Log', apiClient.getTradeLog()),
+        refreshWithLogging('Equity Curve', apiClient.getEquityCurve(chartPeriod)),
+        refreshWithLogging('Closed Trades', apiClient.getClosedTrades(20))
       ])
 
-      const [statusRes, perfRes, tradesRes, logsRes, tradeLogRes, equityCurveRes, closedTradesRes] = results.map(result =>
-        result.status === 'fulfilled' ? result.value : { data: { success: false, data: null } }
-      )
+      // Update failed endpoints if refresh had issues
+      if (refreshFailed.length > 0) {
+        logger.warn(`Refresh had ${refreshFailed.length} failures:`, refreshFailed)
+        setFailedEndpoints(prev => [...new Set([...prev, ...refreshFailed])])
+      }
 
       if (statusRes.data?.success) setTraderStatus(statusRes.data.data)
       if (perfRes.data?.success) setPerformance(perfRes.data.data)
@@ -1218,6 +1255,13 @@ export default function AutonomousTrader() {
             <p className="text-xs text-text-muted mt-1">
               Data last updated: {lastDataFetch.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </p>
+          )}
+          {/* Data fetch failures indicator for transparency */}
+          {failedEndpoints.length > 0 && (
+            <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded bg-warning/10 text-warning text-xs">
+              <AlertTriangle className="w-3 h-3" />
+              <span>Some data unavailable: {failedEndpoints.slice(0, 3).join(', ')}{failedEndpoints.length > 3 ? ` (+${failedEndpoints.length - 3} more)` : ''}</span>
+            </div>
           )}
         </div>
         <div className="flex items-center gap-3">
