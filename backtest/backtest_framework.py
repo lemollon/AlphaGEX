@@ -446,30 +446,7 @@ class BacktestBase:
         conn = get_connection()
         c = conn.cursor()
 
-        # Create backtest_results table if not exists (PostgreSQL syntax)
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS backtest_results (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP DEFAULT NOW(),
-                strategy_name VARCHAR(200),
-                symbol VARCHAR(20),
-                start_date VARCHAR(20),
-                end_date VARCHAR(20),
-                total_trades INTEGER,
-                winning_trades INTEGER,
-                losing_trades INTEGER,
-                win_rate DECIMAL(8,4),
-                avg_win_pct DECIMAL(8,4),
-                avg_loss_pct DECIMAL(8,4),
-                largest_win_pct DECIMAL(8,4),
-                largest_loss_pct DECIMAL(8,4),
-                expectancy_pct DECIMAL(8,4),
-                total_return_pct DECIMAL(10,4),
-                max_drawdown_pct DECIMAL(8,4),
-                sharpe_ratio DECIMAL(8,4),
-                avg_trade_duration_days DECIMAL(8,2)
-            )
-        ''')
+        # NOTE: Table 'backtest_results' defined in db/config_and_database.py (single source of truth)
 
         # Insert results (PostgreSQL %s placeholders)
         c.execute('''

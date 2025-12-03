@@ -162,103 +162,15 @@ class WheelStrategyManager:
             self._db_initialized = True
 
     def _init_database(self):
-        """Initialize wheel-specific database tables"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        # Wheel cycles table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS wheel_cycles (
-                id SERIAL PRIMARY KEY,
-                symbol TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'CSP',
-                start_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                end_date TIMESTAMPTZ,
-
-                -- Share position
-                shares_owned INTEGER DEFAULT 0,
-                share_cost_basis REAL DEFAULT 0.0,
-
-                -- Premium tracking
-                total_csp_premium REAL DEFAULT 0.0,
-                total_cc_premium REAL DEFAULT 0.0,
-                total_premium_collected REAL DEFAULT 0.0,
-
-                -- Assignment/call tracking
-                assignment_date TIMESTAMPTZ,
-                assignment_price REAL,
-                called_away_date TIMESTAMPTZ,
-                called_away_price REAL,
-
-                -- P&L
-                realized_pnl REAL DEFAULT 0.0,
-                unrealized_pnl REAL DEFAULT 0.0,
-
-                -- Config
-                target_delta_csp REAL DEFAULT 0.30,
-                target_delta_cc REAL DEFAULT 0.30,
-                min_premium_pct REAL DEFAULT 1.0,
-                max_dte INTEGER DEFAULT 45,
-                min_dte INTEGER DEFAULT 21,
-
-                -- Metadata
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        ''')
-
-        # Wheel legs table (individual option trades)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS wheel_legs (
-                id SERIAL PRIMARY KEY,
-                cycle_id INTEGER NOT NULL REFERENCES wheel_cycles(id),
-                leg_type TEXT NOT NULL,  -- 'CSP' or 'CC'
-                action TEXT NOT NULL,    -- 'SELL_TO_OPEN', 'BUY_TO_CLOSE', etc.
-                strike REAL NOT NULL,
-                expiration_date DATE NOT NULL,
-                contracts INTEGER NOT NULL DEFAULT 1,
-                premium_received REAL DEFAULT 0.0,
-                premium_paid REAL DEFAULT 0.0,
-                open_date TIMESTAMPTZ NOT NULL,
-                close_date TIMESTAMPTZ,
-                close_reason TEXT,
-                underlying_price_at_open REAL,
-                underlying_price_at_close REAL,
-                iv_at_open REAL,
-                delta_at_open REAL,
-                dte_at_open INTEGER,
-                contract_symbol TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        ''')
-
-        # Wheel activity log (for transparency/export)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS wheel_activity_log (
-                id SERIAL PRIMARY KEY,
-                cycle_id INTEGER REFERENCES wheel_cycles(id),
-                leg_id INTEGER REFERENCES wheel_legs(id),
-                timestamp TIMESTAMPTZ DEFAULT NOW(),
-                action TEXT NOT NULL,
-                description TEXT,
-                premium_impact REAL DEFAULT 0.0,
-                pnl_impact REAL DEFAULT 0.0,
-                underlying_price REAL,
-                option_price REAL,
-                details JSONB
-            )
-        ''')
-
-        # Indexes for performance
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_wheel_cycles_symbol ON wheel_cycles(symbol)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_wheel_cycles_status ON wheel_cycles(status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_wheel_legs_cycle_id ON wheel_legs(cycle_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_wheel_activity_cycle ON wheel_activity_log(cycle_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_wheel_activity_timestamp ON wheel_activity_log(timestamp)')
-
-        conn.commit()
-        conn.close()
-        logger.info("Wheel strategy database tables initialized")
+        """
+        Verify wheel-specific database tables exist.
+        NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+        This method just verifies they exist.
+        """
+        # Tables wheel_cycles, wheel_legs, wheel_activity_log are created by
+        # db/config_and_database.py init_database() on app startup.
+        # No need to create them here - just log that we're ready.
+        logger.info("Wheel strategy tables expected from main schema (db/config_and_database.py)")
 
     def start_wheel_cycle(
         self,

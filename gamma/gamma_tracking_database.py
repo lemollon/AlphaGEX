@@ -24,79 +24,13 @@ class GammaTrackingDB:
         self._ensure_gamma_tables()
 
     def _ensure_gamma_tables(self):
-        """Create gamma tracking tables (PostgreSQL)"""
-        conn = get_connection()
-        c = conn.cursor()
-
-        # Historical gamma snapshots (multi-day storage)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS gamma_history (
-                id SERIAL PRIMARY KEY,
-                symbol TEXT NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                date DATE NOT NULL,
-                time_of_day TEXT,
-                spot_price REAL NOT NULL,
-                net_gex REAL NOT NULL,
-                flip_point REAL NOT NULL,
-                call_wall REAL,
-                put_wall REAL,
-                implied_volatility REAL,
-                put_call_ratio REAL,
-                distance_to_flip_pct REAL,
-                regime TEXT,
-                UNIQUE(symbol, timestamp)
-            )
-        """)
-
-        # Daily gamma summaries
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS gamma_daily_summary (
-                id SERIAL PRIMARY KEY,
-                symbol TEXT NOT NULL,
-                date DATE NOT NULL,
-                open_gex REAL,
-                close_gex REAL,
-                high_gex REAL,
-                low_gex REAL,
-                gex_change REAL,
-                gex_change_pct REAL,
-                open_flip REAL,
-                close_flip REAL,
-                flip_change REAL,
-                flip_change_pct REAL,
-                open_price REAL,
-                close_price REAL,
-                price_change_pct REAL,
-                avg_iv REAL,
-                snapshots_count INTEGER,
-                UNIQUE(symbol, date)
-            )
-        """)
-
-        # SPY correlation tracking
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS spy_correlation (
-                id SERIAL PRIMARY KEY,
-                date DATE NOT NULL,
-                symbol TEXT NOT NULL,
-                spy_gex_change_pct REAL,
-                symbol_gex_change_pct REAL,
-                spy_price_change_pct REAL,
-                symbol_price_change_pct REAL,
-                correlation_score REAL,
-                UNIQUE(symbol, date)
-            )
-        """)
-
-        # Performance optimization: Add indexes for frequently queried columns
-        c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_history_symbol_date ON gamma_history(symbol, date)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_gamma_history_timestamp ON gamma_history(timestamp)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_daily_summary_symbol_date ON gamma_daily_summary(symbol, date)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_spy_correlation_symbol_date ON spy_correlation(symbol, date)")
-
-        conn.commit()
-        conn.close()
+        """
+        Verify gamma tracking tables exist.
+        NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+        """
+        # Tables gamma_history, gamma_daily_summary, spy_correlation are created by
+        # db/config_and_database.py init_database() on app startup.
+        pass
 
     def store_gamma_snapshot(self, symbol: str, gex_data: Dict, skew_data: Dict = None):
         """

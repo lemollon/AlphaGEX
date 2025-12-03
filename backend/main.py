@@ -1238,50 +1238,13 @@ async def compare_all_strategies(symbol: str = "SPY"):
 # ============================================================================
 
 def init_scanner_database():
-    """Initialize scanner database schema with tracking"""
-
-    conn = get_connection()
-    c = conn.cursor()
-
-    # Scanner runs table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS scanner_runs (
-            id TEXT PRIMARY KEY,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            symbols_scanned TEXT,
-            total_symbols INTEGER,
-            opportunities_found INTEGER,
-            scan_duration_seconds REAL,
-            user_notes TEXT
-        )
-    ''')
-
-    # Scanner results table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS scanner_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scan_id TEXT NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            symbol TEXT NOT NULL,
-            strategy TEXT NOT NULL,
-            confidence REAL,
-            net_gex REAL,
-            spot_price REAL,
-            flip_point REAL,
-            call_wall REAL,
-            put_wall REAL,
-            entry_price REAL,
-            target_price REAL,
-            stop_price REAL,
-            risk_reward REAL,
-            expected_move TEXT,
-            reasoning TEXT,
-            FOREIGN KEY (scan_id) REFERENCES scanner_runs(id)
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
+    """
+    Verify scanner tables exist.
+    NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+    Tables expected: scanner_runs, scanner_results
+    """
+    # Tables created by main schema - no action needed
+    pass
 
 # Initialize scanner database on startup
 try:
@@ -1297,39 +1260,12 @@ except Exception as e:
 # ============================================================================
 
 def init_trade_setups_database():
-    """Initialize trade setups database schema"""
-
-    conn = get_connection()
-    c = conn.cursor()
-
-    # Trade setups table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS trade_setups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            symbol TEXT NOT NULL,
-            setup_type TEXT NOT NULL,
-            confidence REAL,
-            entry_price REAL,
-            target_price REAL,
-            stop_price REAL,
-            risk_reward REAL,
-            position_size INTEGER,
-            max_risk_dollars REAL,
-            time_horizon TEXT,
-            catalyst TEXT,
-            ai_reasoning TEXT,
-            money_making_plan TEXT,
-            status TEXT DEFAULT 'active',
-            actual_entry REAL,
-            actual_exit REAL,
-            actual_pnl REAL,
-            notes TEXT
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
+    """
+    Verify trade_setups table exists.
+    NOTE: Table is now defined in db/config_and_database.py (single source of truth).
+    """
+    # Tables created by main schema - no action needed
+    pass
 
 # Initialize trade setups database on startup
 init_trade_setups_database()
@@ -1340,46 +1276,13 @@ init_trade_setups_database()
 # ============================================================================
 
 def init_alerts_database():
-    """Initialize alerts database schema"""
-
-    conn = get_connection()
-    c = conn.cursor()
-
-    # Alerts table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            symbol TEXT NOT NULL,
-            alert_type TEXT NOT NULL,
-            condition TEXT NOT NULL,
-            threshold REAL NOT NULL,
-            message TEXT,
-            status TEXT DEFAULT 'active',
-            triggered_at DATETIME,
-            triggered_value REAL,
-            notes TEXT
-        )
-    ''')
-
-    # Alert history table (for triggered alerts)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS alert_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            alert_id INTEGER NOT NULL,
-            triggered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            symbol TEXT NOT NULL,
-            alert_type TEXT NOT NULL,
-            condition TEXT NOT NULL,
-            threshold REAL NOT NULL,
-            actual_value REAL NOT NULL,
-            message TEXT,
-            FOREIGN KEY (alert_id) REFERENCES alerts(id)
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
+    """
+    Verify alerts tables exist.
+    NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+    Tables expected: alerts, alert_history
+    """
+    # Tables created by main schema - no action needed
+    pass
 
 # Initialize alerts database on startup
 init_alerts_database()

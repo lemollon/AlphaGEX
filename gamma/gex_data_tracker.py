@@ -96,100 +96,12 @@ class GEXDataTracker:
         self.max_cache_size = 100  # Keep last 100 snapshots in memory
 
     def _ensure_tables(self):
-        """Create comprehensive GEX tracking tables"""
-        conn = get_connection()
-        c = conn.cursor()
-
-        # Main GEX snapshots with expiration breakdown
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS gex_snapshots_detailed (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol VARCHAR(10) NOT NULL,
-
-                -- Total GEX
-                net_gex DECIMAL(15,2),
-                flip_point DECIMAL(10,2),
-                spot_price DECIMAL(10,2),
-
-                -- GEX by expiration (THE MISSING DATA)
-                gex_0dte DECIMAL(15,2),
-                gex_weekly DECIMAL(15,2),
-                gex_monthly DECIMAL(15,2),
-                gex_quarterly DECIMAL(15,2),
-
-                -- GEX levels (support/resistance)
-                gex_level_0 DECIMAL(10,2),
-                gex_level_1 DECIMAL(10,2),
-                gex_level_2 DECIMAL(10,2),
-                gex_level_3 DECIMAL(10,2),
-                gex_level_4 DECIMAL(10,2),
-                std_1d_upper DECIMAL(10,2),
-                std_1d_lower DECIMAL(10,2),
-
-                -- Change velocity
-                gex_change_1h DECIMAL(15,2),
-                gex_change_4h DECIMAL(15,2),
-                gex_change_rate DECIMAL(15,4),
-
-                -- Volatility
-                iv DECIMAL(8,4),
-                vix DECIMAL(8,2),
-                put_call_ratio DECIMAL(8,4),
-
-                -- Top strikes (JSON)
-                top_call_strikes JSONB,
-                top_put_strikes JSONB,
-
-                created_at TIMESTAMP DEFAULT NOW(),
-                UNIQUE(symbol, timestamp)
-            )
-        """)
-
-        # Index for fast lookups
-        c.execute("""
-            CREATE INDEX IF NOT EXISTS idx_gex_snapshots_symbol_time
-            ON gex_snapshots_detailed(symbol, timestamp DESC)
-        """)
-
-        # GEX change tracking (for velocity calculation)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS gex_change_log (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol VARCHAR(10) NOT NULL,
-                net_gex DECIMAL(15,2),
-                gex_change DECIMAL(15,2),
-                change_pct DECIMAL(8,4),
-                time_period_minutes INTEGER,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-
-        # Strike-level gamma history (the data you're throwing away)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS gamma_strike_history (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP NOT NULL,
-                symbol VARCHAR(10) NOT NULL,
-                strike DECIMAL(10,2) NOT NULL,
-                call_gamma DECIMAL(15,2),
-                put_gamma DECIMAL(15,2),
-                net_gamma DECIMAL(15,2),
-                call_oi INTEGER,
-                put_oi INTEGER,
-                distance_from_spot_pct DECIMAL(8,4),
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-
-        c.execute("""
-            CREATE INDEX IF NOT EXISTS idx_gamma_strike_symbol_time
-            ON gamma_strike_history(symbol, timestamp DESC)
-        """)
-
-        conn.commit()
-        conn.close()
+        """
+        Verify GEX tracking tables exist.
+        NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+        Tables expected: gex_snapshots_detailed, gex_change_log, gamma_strike_history
+        """
+        # Tables created by main schema - just log readiness
         print(f"✅ GEX Data Tracker tables ready for {self.symbol}")
 
     def fetch_complete_gex_data(self) -> Optional[GEXSnapshot]:

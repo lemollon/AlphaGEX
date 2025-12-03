@@ -61,11 +61,14 @@ interface TableFreshness {
   timestamp: string
   tables: {
     [key: string]: {
-      status: 'fresh' | 'recent' | 'stale' | 'empty' | 'error' | 'not_found'
+      status: 'fresh' | 'recent' | 'stale' | 'empty' | 'error' | 'not_found' | 'configured'
       last_record?: string
       age_minutes?: number
       age_human?: string
       error?: string
+      expected_frequency?: number | null
+      is_stale?: boolean
+      row_count?: number
     }
   }
 }
@@ -623,27 +626,79 @@ export default function DatabaseAdminPage() {
               <div className="space-y-4">
                 <div className="text-sm text-text-secondary mb-4">
                   Shows when data was last updated for each table. Stale data may indicate collection issues.
+                  <span className="ml-2 text-xs text-text-muted">
+                    Tracking {Object.keys(freshness.tables).length} tables
+                  </span>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {Object.entries(freshness.tables).map(([table, info]) => (
-                    <div key={table} className={`rounded-lg p-4 border ${getStatusBg(info.status)}`}>
+
+                {/* Summary Stats */}
+                <div className="grid grid-cols-4 gap-3 mb-4">
+                  <div className="bg-success/10 border border-success/30 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-success">
+                      {Object.values(freshness.tables).filter(t => t.status === 'fresh').length}
+                    </div>
+                    <div className="text-xs text-success">Fresh</div>
+                  </div>
+                  <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-warning">
+                      {Object.values(freshness.tables).filter(t => t.status === 'recent').length}
+                    </div>
+                    <div className="text-xs text-warning">Recent</div>
+                  </div>
+                  <div className="bg-danger/10 border border-danger/30 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-danger">
+                      {Object.values(freshness.tables).filter(t => t.status === 'stale' || t.is_stale).length}
+                    </div>
+                    <div className="text-xs text-danger">Stale</div>
+                  </div>
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-text-secondary">
+                      {Object.values(freshness.tables).filter(t => t.status === 'empty').length}
+                    </div>
+                    <div className="text-xs text-text-muted">Empty</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {Object.entries(freshness.tables)
+                    .sort((a, b) => {
+                      // Sort by status priority: stale first, then fresh, then empty
+                      const priority: Record<string, number> = { stale: 0, recent: 1, fresh: 2, configured: 3, empty: 4, error: 5, not_found: 6 }
+                      return (priority[a[1].status] || 99) - (priority[b[1].status] || 99)
+                    })
+                    .map(([table, info]) => (
+                    <div key={table} className={`rounded-lg p-3 border ${getStatusBg(info.status)} ${info.is_stale ? 'ring-2 ring-danger' : ''}`}>
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <Clock className="w-5 h-5" />
-                          <span className="font-mono font-semibold">{table}</span>
+                          <Table2 className="w-4 h-4" />
+                          <span className="font-mono text-sm font-semibold truncate">{table}</span>
                         </div>
-                        <span className={`text-sm font-semibold ${getStatusColor(info.status)}`}>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${getStatusColor(info.status)} bg-black/20`}>
                           {info.status.toUpperCase()}
                         </span>
                       </div>
-                      {info.last_record ? (
-                        <div className="text-sm text-text-secondary">
-                          <div>Last record: {new Date(info.last_record).toLocaleString()}</div>
-                          <div className="text-xs text-text-muted mt-1">Age: {info.age_human}</div>
+                      {info.last_record && info.last_record !== 'N/A (no timestamp column)' ? (
+                        <div className="text-xs text-text-secondary space-y-1">
+                          <div className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            <span className="font-mono">{info.last_record}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-text-muted">Age: {info.age_human}</span>
+                            {info.expected_frequency && (
+                              <span className="text-text-muted">
+                                Expected: every {info.expected_frequency >= 60 ? `${info.expected_frequency / 60}h` : `${info.expected_frequency}m`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ) : info.row_count !== undefined ? (
+                        <div className="text-xs text-text-muted">
+                          {info.row_count} rows · No timestamp tracking
                         </div>
                       ) : (
-                        <div className="text-sm text-text-muted">
-                          {info.status === 'empty' ? 'No records' : info.error || 'Table not found'}
+                        <div className="text-xs text-text-muted">
+                          {info.status === 'empty' ? 'No records yet' : info.error || 'Not found'}
                         </div>
                       )}
                     </div>

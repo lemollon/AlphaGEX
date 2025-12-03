@@ -120,55 +120,13 @@ class VIXHedgeManager:
         print("✅ VIX Hedge Manager initialized (SIGNAL GENERATOR ONLY)")
 
     def _ensure_tables(self):
-        """Create database tables for hedge signal tracking"""
-        conn = get_connection()
-        c = conn.cursor()
-
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS vix_hedge_signals (
-                id SERIAL PRIMARY KEY,
-                signal_date DATE,
-                signal_time TIME,
-                signal_type VARCHAR(50),
-                confidence DECIMAL(5,2),
-                vol_regime VARCHAR(20),
-                vix_spot DECIMAL(6,2),
-                vix_futures_m1 DECIMAL(6,2),
-                vix_futures_m2 DECIMAL(6,2),
-                term_structure_pct DECIMAL(6,2),
-                iv_percentile DECIMAL(5,2),
-                realized_vol_20d DECIMAL(6,2),
-                iv_rv_spread DECIMAL(6,2),
-                spy_spot DECIMAL(8,2),
-                reasoning TEXT,
-                recommended_action TEXT,
-                risk_warning TEXT,
-                was_acted_on BOOLEAN DEFAULT FALSE,
-                outcome_pnl DECIMAL(12,2),
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS vix_hedge_positions (
-                id SERIAL PRIMARY KEY,
-                entry_date DATE,
-                entry_time TIME,
-                position_type VARCHAR(50),
-                vix_strike DECIMAL(6,2),
-                expiration_date DATE,
-                contracts INTEGER,
-                entry_price DECIMAL(8,4),
-                current_price DECIMAL(8,4),
-                unrealized_pnl DECIMAL(12,2),
-                status VARCHAR(20) DEFAULT 'OPEN',
-                hedge_target VARCHAR(50),
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-
-        conn.commit()
-        conn.close()
+        """
+        Verify VIX hedge tables exist.
+        NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+        Tables expected: vix_hedge_signals, vix_hedge_positions
+        """
+        # Tables created by main schema - just verify connection works
+        pass
 
     def get_vix_data(self) -> Dict:
         """

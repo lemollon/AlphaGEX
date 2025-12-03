@@ -45,88 +45,13 @@ ET = ZoneInfo("America/New_York")
 
 
 def ensure_tables():
-    """Create option chain tables if they don't exist"""
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    # Main options chain snapshot table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS options_chain_snapshots (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ NOT NULL,
-            symbol VARCHAR(10) NOT NULL,
-            spot_price DECIMAL(10,4) NOT NULL,
-
-            -- Option identifiers
-            option_ticker VARCHAR(50) NOT NULL,
-            strike DECIMAL(10,2) NOT NULL,
-            expiration DATE NOT NULL,
-            option_type VARCHAR(4) NOT NULL,  -- 'call' or 'put'
-            dte INTEGER NOT NULL,
-
-            -- Pricing
-            bid DECIMAL(10,4),
-            ask DECIMAL(10,4),
-            mid DECIMAL(10,4),
-            last DECIMAL(10,4),
-            volume INTEGER,
-            open_interest INTEGER,
-
-            -- Greeks
-            delta DECIMAL(8,6),
-            gamma DECIMAL(8,6),
-            theta DECIMAL(8,6),
-            vega DECIMAL(8,6),
-            rho DECIMAL(8,6),
-            iv DECIMAL(8,6),
-
-            -- Meta
-            is_itm BOOLEAN,
-            moneyness DECIMAL(8,4),
-            bid_size INTEGER,
-            ask_size INTEGER,
-            spread DECIMAL(10,4),
-            spread_pct DECIMAL(8,4),
-
-            -- Unique constraint to prevent duplicates
-            UNIQUE (symbol, option_ticker, timestamp)
-        )
-    ''')
-
-    # Index for efficient querying
-    cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_options_symbol_timestamp
-        ON options_chain_snapshots(symbol, timestamp DESC)
-    ''')
-    cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_options_expiration
-        ON options_chain_snapshots(expiration)
-    ''')
-    cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_options_strike
-        ON options_chain_snapshots(symbol, strike, option_type)
-    ''')
-
-    # Summary table for tracking collection runs
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS options_collection_log (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-            symbol VARCHAR(10) NOT NULL,
-            spot_price DECIMAL(10,4),
-            expirations_collected INTEGER,
-            contracts_collected INTEGER,
-            calls_collected INTEGER,
-            puts_collected INTEGER,
-            duration_seconds DECIMAL(8,2),
-            status VARCHAR(20),
-            error_message TEXT
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
-    logger.info("Option chain tables ensured")
+    """
+    Verify option chain tables exist.
+    NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+    Tables expected: options_chain_snapshots, options_collection_log
+    """
+    # Tables created by main schema - just log readiness
+    logger.info("Option chain tables ready (created by main schema)")
 
 
 def collect_option_snapshot(

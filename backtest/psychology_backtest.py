@@ -450,24 +450,7 @@ class PsychologyBacktester:
         conn = get_connection()
         c = conn.cursor()
 
-        # Create backtest results table if it doesn't exist
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS backtest_results (
-                id SERIAL PRIMARY KEY,
-                symbol TEXT,
-                backtest_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                signal_date DATE,
-                regime_type TEXT,
-                trade_direction TEXT,
-                confidence REAL,
-                risk_level TEXT,
-                signal_price REAL,
-                target_price REAL,
-                price_change_pct REAL,
-                outcome TEXT,
-                lookforward_days INTEGER
-            )
-        ''')
+        # NOTE: Table 'backtest_results' defined in db/config_and_database.py (single source of truth)
 
         # Insert signals
         for signal in signals:

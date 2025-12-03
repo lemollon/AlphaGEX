@@ -81,50 +81,13 @@ class SPXDebugLogger:
         self.log_info(f"SPX Debug Logger initialized - Session: {self.session_id}")
 
     def _ensure_debug_table(self):
-        """Ensure the debug log table exists."""
+        """
+        Verify debug log table exists.
+        NOTE: Table 'spx_debug_logs' is defined in db/config_and_database.py (single source of truth).
+        """
         if not DB_AVAILABLE:
             return
-
-        try:
-            conn = get_connection()
-            c = conn.cursor()
-
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS spx_debug_logs (
-                    id SERIAL PRIMARY KEY,
-                    timestamp TIMESTAMP DEFAULT NOW(),
-                    session_id VARCHAR(50),
-                    scan_cycle INTEGER,
-                    log_level VARCHAR(20),
-                    category VARCHAR(50),
-                    subcategory VARCHAR(50),
-                    message TEXT,
-                    data JSONB,
-                    duration_ms INTEGER,
-                    success BOOLEAN DEFAULT TRUE,
-                    error_message TEXT,
-                    stack_trace TEXT
-                )
-            """)
-
-            # Create index for efficient querying
-            c.execute("""
-                CREATE INDEX IF NOT EXISTS idx_spx_debug_timestamp
-                ON spx_debug_logs(timestamp DESC)
-            """)
-            c.execute("""
-                CREATE INDEX IF NOT EXISTS idx_spx_debug_session
-                ON spx_debug_logs(session_id)
-            """)
-            c.execute("""
-                CREATE INDEX IF NOT EXISTS idx_spx_debug_category
-                ON spx_debug_logs(category)
-            """)
-
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            self.logger.error(f"Failed to create debug table: {e}")
+        # Tables created by main schema - no action needed
 
     def _log_to_db(
         self,

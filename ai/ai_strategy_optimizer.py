@@ -329,20 +329,7 @@ class StrategyOptimizerAgent:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Create recommendations table if not exists (PostgreSQL syntax)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS ai_recommendations (
-                    id SERIAL PRIMARY KEY,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    strategy_name TEXT,
-                    recommendation TEXT,
-                    reasoning TEXT,
-                    expected_improvement REAL,
-                    implemented INTEGER DEFAULT 0,
-                    actual_improvement REAL,
-                    status TEXT DEFAULT 'pending'
-                )
-            """)
+            # NOTE: Table 'ai_recommendations' defined in db/config_and_database.py (single source of truth)
 
             cursor.execute("""
                 INSERT INTO ai_recommendations (

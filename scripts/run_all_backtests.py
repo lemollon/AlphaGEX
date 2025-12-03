@@ -179,36 +179,7 @@ class MasterBacktestRunner:
         conn = get_connection()
         c = conn.cursor()
 
-        # Check if table exists with old schema and drop it
-        c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename='backtest_summary'")
-        if c.fetchone():
-            # Check schema
-            c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='backtest_summary'")
-            columns = [row[0] for row in c.fetchall()]
-            # If old schema (missing 'symbol' column), drop and recreate
-            if 'symbol' not in columns:
-                print("🔄 Dropping old backtest_summary table (wrong schema)")
-                c.execute("DROP TABLE backtest_summary")
-                conn.commit()
-
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS backtest_summary (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                symbol TEXT,
-                start_date TEXT,
-                end_date TEXT,
-                psychology_trades INTEGER,
-                psychology_win_rate REAL,
-                psychology_expectancy REAL,
-                gex_trades INTEGER,
-                gex_win_rate REAL,
-                gex_expectancy REAL,
-                options_trades INTEGER,
-                options_win_rate REAL,
-                options_expectancy REAL
-            )
-        ''')
+        # NOTE: Table 'backtest_summary' defined in db/config_and_database.py (single source of truth)
 
         c.execute('''
             INSERT INTO backtest_summary (
