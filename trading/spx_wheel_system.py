@@ -66,6 +66,24 @@ try:
 except ImportError:
     ALERTS_AVAILABLE = False
 
+# Decision logging for transparency
+try:
+    from trading.decision_logger import (
+        DecisionLogger,
+        TradeDecision,
+        DecisionType,
+        DataSource,
+        PriceSnapshot,
+        MarketContext,
+        DecisionReasoning,
+        BacktestReference,
+        BotName,
+        TradeLeg
+    )
+    DECISION_LOGGING_AVAILABLE = True
+except ImportError:
+    DECISION_LOGGING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -374,6 +392,11 @@ class SPXWheelTrader:
             else:
                 print("🔴 LIVE TRADING MODE - REAL MONEY AT RISK!")
 
+        # Initialize decision logger for transparency
+        self.decision_logger = None
+        if DECISION_LOGGING_AVAILABLE:
+            self.decision_logger = DecisionLogger()
+
         self._ensure_tables()
 
         print("\n" + "="*70)
@@ -425,6 +448,199 @@ class SPXWheelTrader:
         # Tables are created by main schema - no action needed
         logger.info("SPX wheel tables expected from main schema (db/config_and_database.py)")
 
+    def _log_decision(
+        self,
+        decision_type: str,
+        action: str,
+        what: str,
+        why: str,
+        how: str,
+        spot_price: float = 0,
+        vix: float = 0,
+        strike: float = 0,
+        expiration: str = "",
+        entry_price: float = 0,
+        exit_price: float = 0,
+        bid: float = 0,
+        ask: float = 0,
+        premium: float = 0,
+        contracts: int = 0,
+        delta: float = 0,
+        pnl: float = None,
+        order_id: str = ""
+    ) -> str:
+        """
+        Log a trading decision with full transparency (What, Why, How).
+
+        LOGS ALL CRITICAL TRADE DATA:
+        - Strike, entry_price, exit_price, expiration
+        - Contracts, premium per contract
+        - Delta (for CSP)
+        - Order ID and execution details
+        - Underlying price, VIX
+
+        Returns decision_id for tracking.
+        """
+        if not self.decision_logger:
+            return ""
+
+        try:
+            now = datetime.now()
+            per_share_price = entry_price if entry_price > 0 else (premium / 100 / max(contracts, 1) if premium > 0 else 0)
+
+            # =====================================================================
+            # BUILD TRADE LEG with ALL critical data
+            # =====================================================================
+            trade_leg = None
+            if strike > 0:
+                trade_leg = TradeLeg(
+                    leg_id=1,
+                    action=action,
+                    option_type="put",  # ATLAS is CSP only
+
+                    # REQUIRED: Strike and expiration
+                    strike=strike,
+                    expiration=expiration,
+
+                    # Entry prices
+                    entry_price=per_share_price,
+                    entry_bid=bid,
+                    entry_ask=ask,
+                    entry_mid=(bid + ask) / 2 if bid > 0 else per_share_price,
+
+                    # Exit price (if exiting)
+                    exit_price=exit_price,
+
+                    # Position sizing
+                    contracts=contracts,
+                    premium_per_contract=per_share_price * 100,
+
+                    # Greeks at entry (delta for CSP)
+                    delta=delta if delta else -self.params.put_delta,  # Short put = negative delta
+
+                    # Order execution
+                    order_id=order_id,
+                    fill_price=per_share_price,
+                    fill_timestamp=now.isoformat(),
+                    order_status="filled",
+
+                    # P&L
+                    realized_pnl=pnl if pnl is not None else 0
+                )
+
+            # Build underlying price snapshot
+            underlying_snapshot = PriceSnapshot(
+                symbol="SPX",
+                price=spot_price,
+                timestamp=now.isoformat(),
+                source=DataSource.POLYGON_REALTIME
+            )
+
+            # Build option snapshot (legacy support)
+            option_snapshot = None
+            if strike > 0:
+                option_snapshot = PriceSnapshot(
+                    symbol="SPX",
+                    price=per_share_price,
+                    bid=bid,
+                    ask=ask,
+                    timestamp=now.isoformat(),
+                    source=DataSource.POLYGON_REALTIME,
+                    strike=strike,
+                    expiration=expiration,
+                    option_type="PUT",
+                    delta=delta if delta else -self.params.put_delta
+                )
+
+            # Build market context
+            market_context = MarketContext(
+                timestamp=now.isoformat(),
+                spot_price=spot_price,
+                spot_source=DataSource.POLYGON_REALTIME,
+                vix=vix,
+                regime=f"VIX Range: {self.params.min_vix}-{self.params.max_vix}"
+            )
+
+            # Build backtest reference from calibrated parameters
+            backtest_ref = None
+            if self.params.backtest_win_rate > 0:
+                backtest_ref = BacktestReference(
+                    strategy_name="SPX_WHEEL_CSP",
+                    backtest_date=self.params.calibration_date or datetime.now().strftime('%Y-%m-%d'),
+                    win_rate=self.params.backtest_win_rate,
+                    expectancy=self.params.backtest_expectancy,
+                    max_drawdown=self.params.backtest_max_drawdown,
+                    backtest_period=self.params.backtest_period,
+                    uses_real_data=True,
+                    data_source="polygon",
+                    date_range=self.params.backtest_period
+                )
+
+            # Build reasoning
+            supporting = [
+                f"Delta target: {self.params.put_delta}",
+                f"DTE target: {self.params.dte_target} days",
+                f"Backtest win rate: {self.params.backtest_win_rate:.1f}%"
+            ]
+            risks = []
+            if vix > 25:
+                risks.append(f"Elevated VIX: {vix:.1f}")
+            if vix < self.params.min_vix:
+                risks.append(f"VIX below minimum: {vix:.1f} < {self.params.min_vix}")
+
+            reasoning = DecisionReasoning(
+                primary_reason=why.split('.')[0] if '.' in why else why,
+                supporting_factors=supporting,
+                risk_factors=risks
+            )
+
+            # Map string decision type to enum
+            dt_map = {
+                'ENTRY': DecisionType.ENTRY_SIGNAL,
+                'EXIT': DecisionType.EXIT_SIGNAL,
+                'ROLL': DecisionType.ROLL_DECISION,
+                'NO_TRADE': DecisionType.NO_TRADE,
+                'EXPIRATION': DecisionType.EXIT_SIGNAL
+            }
+            decision_type_enum = dt_map.get(decision_type, DecisionType.NO_TRADE)
+
+            # Build the decision with legs array
+            decision = TradeDecision(
+                decision_id="",
+                timestamp=now.isoformat(),
+                decision_type=decision_type_enum,
+                bot_name=BotName.ATLAS,
+                what=what,
+                why=why,
+                how=how,
+                action=action,
+                symbol="SPX",
+                strategy="SPX_WHEEL_CSP",
+                legs=[trade_leg] if trade_leg else [],
+                underlying_snapshot=underlying_snapshot,
+                option_snapshot=option_snapshot,
+                underlying_price_at_entry=spot_price,
+                market_context=market_context,
+                backtest_reference=backtest_ref,
+                reasoning=reasoning,
+                position_size_dollars=premium if premium > 0 else 0,
+                position_size_contracts=contracts,
+                position_size_method="calibrated_kelly",
+                max_risk_dollars=strike * 100 * contracts if strike > 0 else 0,
+                target_profit_pct=self.params.profit_target_pct,
+                stop_loss_pct=self.params.stop_loss_pct,
+                actual_pnl=pnl,
+                order_id=order_id
+            )
+
+            decision_id = self.decision_logger.log_decision(decision)
+            logger.info(f"ATLAS logged decision: {decision_id} - {action}")
+            return decision_id
+
+        except Exception as e:
+            logger.error(f"Failed to log ATLAS decision: {e}")
+            return ""
+
     def run_daily_cycle(self) -> Dict:
         """
         Run the daily trading cycle.
@@ -443,8 +659,9 @@ class SPXWheelTrader:
         }
 
         # 1. Check market conditions
-        if not self._should_trade_today():
-            result['actions'].append('SKIP: Market conditions not favorable')
+        can_trade, reason = self._should_trade_today()
+        if not can_trade:
+            result['actions'].append(f'SKIP: {reason}')
             return result
 
         # 2. Get current SPX price
@@ -483,7 +700,7 @@ class SPXWheelTrader:
 
         return result
 
-    def _should_trade_today(self) -> bool:
+    def _should_trade_today(self) -> Tuple[bool, str]:
         """
         Check if we should trade based on market conditions.
 
@@ -492,40 +709,76 @@ class SPXWheelTrader:
         - Market open check (was partial)
         - Earnings check (WAS NOT IMPLEMENTED!)
         - FOMC check (WAS NOT IMPLEMENTED!)
+
+        Returns:
+            (can_trade, reason) - tuple of bool and explanation
         """
+        spot = self._get_spx_price() or 0
+        vix = self._get_vix()
+
         # Check market calendar (includes earnings & FOMC)
         if CALENDAR_AVAILABLE and self.params.avoid_earnings:
             can_trade, reason = should_trade_today()
             if not can_trade:
                 print(f"  {reason}")
-                return False
+                self._log_decision(
+                    decision_type="NO_TRADE",
+                    action="SKIP",
+                    what=f"NO TRADE for SPX - Calendar restriction",
+                    why=f"Market calendar blocked trading. {reason}",
+                    how="Checked market calendar for earnings/FOMC events. Trade blocked.",
+                    spot_price=spot,
+                    vix=vix
+                )
+                return False, reason
 
         # Check VIX levels
-        vix = self._get_vix()
-
         if vix < self.params.min_vix:
-            print(f"  VIX ({vix:.1f}) below minimum ({self.params.min_vix})")
-            return False
+            reason = f"VIX ({vix:.1f}) below minimum ({self.params.min_vix})"
+            print(f"  {reason}")
+            self._log_decision(
+                decision_type="NO_TRADE",
+                action="SKIP",
+                what=f"NO TRADE for SPX - VIX too low",
+                why=f"VIX at {vix:.1f} is below minimum threshold of {self.params.min_vix}. Low VIX = low premium = bad risk/reward for CSP sellers.",
+                how=f"Checked VIX level against calibrated range {self.params.min_vix}-{self.params.max_vix}. Trade skipped.",
+                spot_price=spot,
+                vix=vix
+            )
+            return False, reason
 
         if vix > self.params.max_vix:
-            print(f"  VIX ({vix:.1f}) above maximum ({self.params.max_vix})")
-            return False
+            reason = f"VIX ({vix:.1f}) above maximum ({self.params.max_vix})"
+            print(f"  {reason}")
+            self._log_decision(
+                decision_type="NO_TRADE",
+                action="SKIP",
+                what=f"NO TRADE for SPX - VIX too high",
+                why=f"VIX at {vix:.1f} exceeds maximum threshold of {self.params.max_vix}. High VIX = excessive assignment risk.",
+                how=f"Checked VIX level against calibrated range {self.params.min_vix}-{self.params.max_vix}. Trade skipped.",
+                spot_price=spot,
+                vix=vix
+            )
+            return False, reason
 
         # Check if market is open
         now = datetime.now()
         if now.weekday() > 4:  # Weekend
-            print("  Weekend - market closed")
-            return False
+            reason = "Weekend - market closed"
+            print(f"  {reason}")
+            return False, reason
 
         # Market hours check (simplified - 9:30 AM to 4 PM ET)
         if now.hour < 9 or now.hour >= 16:
-            print(f"  Outside market hours")
-            return False
+            reason = "Outside market hours"
+            print(f"  {reason}")
+            return False, reason
         if now.hour == 9 and now.minute < 30:
-            print(f"  Market not open yet")
-            return False
+            reason = "Market not open yet"
+            print(f"  {reason}")
+            return False, reason
 
-        return True
+        return True, "Market conditions favorable"
 
     def _get_spx_price(self) -> Optional[float]:
         """Get current SPX price"""
@@ -826,6 +1079,30 @@ class SPXWheelTrader:
                     self.mode.value
                 )
 
+            # Log decision for transparency with COMPLETE trade data
+            vix = self._get_vix()
+            premium_received = entry_price * 100 * self.params.contracts_per_trade
+            dte = (expiration - datetime.now().date()).days
+
+            self._log_decision(
+                decision_type="ENTRY",
+                action="SELL_CSP",
+                what=f"SELL {self.params.contracts_per_trade}x SPX ${strike}P exp {expiration_str} ({dte}d) @ ${entry_price:.2f}",
+                why=f"Cash-secured put at {self.params.put_delta} delta. VIX at {vix:.1f} within target range {self.params.min_vix}-{self.params.max_vix}. Backtest win rate: {self.params.backtest_win_rate:.1f}%. SPX at ${spot:.2f}, selling {100*(spot-strike)/spot:.1f}% OTM.",
+                how=f"Calibrated parameters from {self.params.backtest_period}. Premium: ${premium_received:,.2f}. Margin ~${strike*100*self.params.contracts_per_trade*0.20:,.0f}. Bid/Ask: ${bid:.2f}/${ask:.2f}. Source: {price_source}. Mode: {self.mode.value}.",
+                spot_price=spot,
+                vix=vix,
+                strike=strike,
+                expiration=expiration_str,
+                entry_price=entry_price,
+                bid=bid,
+                ask=ask,
+                premium=premium_received,
+                contracts=self.params.contracts_per_trade,
+                delta=-self.params.put_delta,  # Short put = negative delta
+                order_id=str(order_id) if order_id else ""
+            )
+
             return True
 
         except Exception as e:
@@ -873,6 +1150,33 @@ class SPXWheelTrader:
                     closed += 1
 
                     print(f"CLOSED: {pos['option_ticker']} | P&L: ${total_pnl:.2f}")
+
+                    # Log expiration decision with COMPLETE trade data
+                    outcome = "WIN (OTM)" if settlement_pnl >= 0 else "LOSS (ITM)"
+                    exp_date_str = pos['expiration'].strftime('%Y-%m-%d') if hasattr(pos['expiration'], 'strftime') else str(pos['expiration'])
+                    # Exit price = 0 for OTM (worthless), or intrinsic value for ITM
+                    exit_value = max(0, pos['strike'] - spot) if spot < pos['strike'] else 0
+                    pos_strike = pos['strike']
+
+                    expiry_why = f"Position expired worthless (kept full premium). Settlement P&L: ${settlement_pnl:+,.2f}." if settlement_pnl >= 0 else f"Position expired ITM at SPX=${spot:.2f} vs strike ${pos_strike:.0f}. Settlement P&L: ${settlement_pnl:+,.2f}."
+                    entry_price_val = pos['entry_price']
+                    premium_received_val = pos['premium_received']
+
+                    self._log_decision(
+                        decision_type="EXPIRATION",
+                        action="EXPIRED",
+                        what=f"EXPIRED {pos['option_ticker']} - {outcome}",
+                        why=expiry_why,
+                        how=f"Cash settlement applied. Entry: ${entry_price_val:.2f}/sh. Exit: ${exit_value:.2f}/sh. Premium received: ${premium_received_val:,.2f}. Settlement loss: ${abs(settlement_pnl):,.2f}. Net P&L: ${total_pnl:+,.2f}.",
+                        spot_price=spot,
+                        strike=pos_strike,
+                        expiration=exp_date_str,
+                        entry_price=entry_price_val,
+                        exit_price=exit_value,
+                        premium=premium_received_val,
+                        contracts=pos['contracts'],
+                        pnl=total_pnl
+                    )
 
                 except Exception as e:
                     logger.error(f"Failed to close position: {e}")
@@ -935,6 +1239,7 @@ class SPXWheelTrader:
 
     def _close_position(self, pos: Dict, exit_price: float, reason: str) -> bool:
         """Close a position (for rolls or early exit)"""
+        order_id = None
         try:
             # In LIVE mode, place buy-to-close order
             if self.mode == TradingMode.LIVE and self.broker:
@@ -980,6 +1285,31 @@ class SPXWheelTrader:
 
             conn.commit()
             conn.close()
+
+            # Log decision with COMPLETE trade data
+            spot = self._get_spx_price() or 0
+            exp_str = pos['expiration']
+            if hasattr(exp_str, 'strftime'):
+                exp_str = exp_str.strftime('%Y-%m-%d')
+
+            decision_type = "ROLL" if "ROLL" in reason.upper() else "EXIT"
+            self._log_decision(
+                decision_type=decision_type,
+                action="BUY_TO_CLOSE",
+                what=f"CLOSE {pos['option_ticker']} - {reason}",
+                why=f"Early close ({reason}). Entry: ${pos['entry_price']:.2f}, Exit: ${exit_price:.2f}. Profit: ${pnl:+,.2f} ({100*(pos['entry_price']-exit_price)/pos['entry_price']:.1f}%).",
+                how=f"Buy-to-close order at ${exit_price:.2f}. Entry was ${pos['entry_price']:.2f}. Contracts: {pos['contracts']}. Premium collected: ${pos['premium_received']:,.2f}. Net P&L: ${pnl:+,.2f}.",
+                spot_price=spot,
+                strike=pos['strike'],
+                expiration=exp_str,
+                entry_price=pos['entry_price'],
+                exit_price=exit_price,
+                premium=pos['premium_received'],
+                contracts=pos['contracts'],
+                pnl=pnl,
+                order_id=str(order_id) if order_id else ""
+            )
+
             return True
 
         except Exception as e:

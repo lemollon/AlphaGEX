@@ -78,6 +78,57 @@ class DataSource(Enum):
 
 
 @dataclass
+class TradeLeg:
+    """
+    Complete data for ONE leg of a trade.
+    For multi-leg strategies (spreads, condors), use multiple TradeLeg objects.
+    """
+    # Core identification
+    leg_id: int = 1  # Leg 1, 2, 3, etc.
+    action: str = ""  # BUY or SELL
+    option_type: str = ""  # 'call' or 'put'
+
+    # Strike and expiration (REQUIRED for every trade)
+    strike: float = 0
+    expiration: str = ""  # YYYY-MM-DD
+
+    # Prices at entry (REQUIRED)
+    entry_price: float = 0  # Per-share price at entry
+    entry_bid: float = 0
+    entry_ask: float = 0
+    entry_mid: float = 0
+
+    # Prices at exit (filled when position closes)
+    exit_price: float = 0
+    exit_bid: float = 0
+    exit_ask: float = 0
+    exit_timestamp: str = ""
+
+    # Position sizing
+    contracts: int = 0
+    premium_per_contract: float = 0  # entry_price * 100
+
+    # Greeks at entry (important for risk)
+    delta: float = 0
+    gamma: float = 0
+    theta: float = 0
+    vega: float = 0
+    iv: float = 0
+
+    # Order execution details
+    order_id: str = ""
+    fill_price: float = 0  # Actual fill (may differ from limit)
+    fill_timestamp: str = ""
+    order_status: str = ""  # filled, partial, rejected
+
+    # P&L for this leg
+    realized_pnl: float = 0
+
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+
+@dataclass
 class PriceSnapshot:
     """Exact price data used for a decision"""
     symbol: str
@@ -133,20 +184,22 @@ class MarketContext:
 class BacktestReference:
     """Link to backtest that informed this decision"""
     strategy_name: str
-    backtest_date: str
+    backtest_date: str = ""
 
     # Stats from backtest
-    win_rate: float
-    expectancy: float
-    avg_win: float
-    avg_loss: float
-    sharpe_ratio: float
-    total_trades: int
+    win_rate: float = 0
+    expectancy: float = 0
+    avg_win: float = 0
+    avg_loss: float = 0
+    sharpe_ratio: float = 0
+    total_trades: int = 0
+    max_drawdown: float = 0
+    backtest_period: str = ""
 
     # Data quality
-    uses_real_data: bool
-    data_source: str
-    date_range: str
+    uses_real_data: bool = True
+    data_source: str = "polygon"
+    date_range: str = ""
 
 
 @dataclass
@@ -178,9 +231,21 @@ class TradeDecision:
     symbol: str
     strategy: str
 
-    # Prices used
-    underlying_snapshot: PriceSnapshot
+    # =========================================================================
+    # TRADE LEGS - Complete data for each leg of the trade
+    # For single-leg: 1 TradeLeg in the list
+    # For spreads: 2 TradeLeg objects (long + short)
+    # For condors: 4 TradeLeg objects
+    # =========================================================================
+    legs: List[TradeLeg] = field(default_factory=list)
+
+    # Prices used (legacy - use legs for complete data)
+    underlying_snapshot: PriceSnapshot = None
     option_snapshot: Optional[PriceSnapshot] = None
+
+    # Underlying price at entry and exit
+    underlying_price_at_entry: float = 0
+    underlying_price_at_exit: float = 0
 
     # Market context
     market_context: MarketContext = None
@@ -213,6 +278,10 @@ class TradeDecision:
     actual_pnl: float = 0
     actual_hold_days: int = 0
     outcome_notes: str = ""
+
+    # Order execution (broker details)
+    order_id: str = ""
+    fill_timestamp: str = ""
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON/database storage"""
@@ -707,38 +776,86 @@ def export_decisions_csv(
     """
     Export decision logs as CSV string for download.
 
-    Returns CSV with key columns for analysis.
+    Returns CSV with ALL critical trade fields:
+    - Strike, entry_price, exit_price, expiration for each leg
+    - Contracts, premium, P&L
+    - Greeks, VIX, underlying price
+    - Order execution details
     """
     decisions = export_decisions_json(bot_name, start_date, end_date, symbol=symbol, limit=10000)
 
     if not decisions:
-        return "timestamp,bot,decision_type,action,symbol,strategy,spot_price,vix,net_gex,regime,reason,position_size,pnl\n"
+        return "timestamp,bot,decision_type,action,symbol,strategy,underlying_price,leg_num,option_type,strike,expiration,entry_price,exit_price,contracts,premium,delta,gamma,theta,iv,vix,order_id,pnl,reason\n"
 
-    lines = ["timestamp,bot,decision_type,action,symbol,strategy,spot_price,vix,net_gex,regime,reason,position_size,pnl"]
+    lines = ["timestamp,bot,decision_type,action,symbol,strategy,underlying_price,leg_num,option_type,strike,expiration,entry_price,exit_price,contracts,premium,delta,gamma,theta,iv,vix,order_id,pnl,reason"]
 
     for d in decisions:
-        # Extract bot name from full_decision if available
+        # Extract from full_decision if available
         full_dec = d.get('full_decision') or {}
         bot = full_dec.get('bot_name', 'PHOENIX') if isinstance(full_dec, dict) else 'PHOENIX'
-
         reason = (d.get('primary_reason') or '')[:100].replace(',', ';').replace('\n', ' ')
 
-        line = ','.join([
-            str(d.get('timestamp', '')),
-            bot,
-            str(d.get('decision_type', '')),
-            str(d.get('action', '')),
-            str(d.get('symbol', '')),
-            str(d.get('strategy', '')),
-            str(d.get('spot_price', '')),
-            str(d.get('vix', '')),
-            str(d.get('net_gex', '')),
-            str(d.get('market_regime', '')),
-            f'"{reason}"',
-            str(d.get('position_size_dollars', '')),
-            str(d.get('actual_pnl', ''))
-        ])
-        lines.append(line)
+        # Get legs array from full_decision
+        legs = full_dec.get('legs', []) if isinstance(full_dec, dict) else []
+
+        if legs:
+            # Output one row per leg
+            for leg in legs:
+                line = ','.join([
+                    str(d.get('timestamp', '')),
+                    bot,
+                    str(d.get('decision_type', '')),
+                    str(leg.get('action', d.get('action', ''))),
+                    str(d.get('symbol', '')),
+                    str(d.get('strategy', '')),
+                    str(full_dec.get('underlying_price_at_entry', d.get('spot_price', ''))),
+                    str(leg.get('leg_id', 1)),
+                    str(leg.get('option_type', '')),
+                    str(leg.get('strike', '')),
+                    str(leg.get('expiration', '')),
+                    str(leg.get('entry_price', '')),
+                    str(leg.get('exit_price', '')),
+                    str(leg.get('contracts', '')),
+                    str(leg.get('premium_per_contract', '')),
+                    str(leg.get('delta', '')),
+                    str(leg.get('gamma', '')),
+                    str(leg.get('theta', '')),
+                    str(leg.get('iv', '')),
+                    str(d.get('vix', '')),
+                    str(leg.get('order_id', full_dec.get('order_id', ''))),
+                    str(leg.get('realized_pnl', d.get('actual_pnl', ''))),
+                    f'"{reason}"'
+                ])
+                lines.append(line)
+        else:
+            # Legacy format - single row with option_snapshot data
+            opt = full_dec.get('option_snapshot', {}) if isinstance(full_dec, dict) else {}
+            line = ','.join([
+                str(d.get('timestamp', '')),
+                bot,
+                str(d.get('decision_type', '')),
+                str(d.get('action', '')),
+                str(d.get('symbol', '')),
+                str(d.get('strategy', '')),
+                str(d.get('spot_price', '')),
+                "1",  # leg_num
+                str(opt.get('option_type', '')),
+                str(d.get('strike', opt.get('strike', ''))),
+                str(d.get('expiration', opt.get('expiration', ''))),
+                str(opt.get('price', '')),  # entry_price
+                str(d.get('actual_exit_price', '')),
+                str(d.get('position_size_contracts', '')),
+                str(d.get('position_size_dollars', '')),
+                str(opt.get('delta', '')),
+                str(opt.get('gamma', '')),
+                str(opt.get('theta', '')),
+                str(opt.get('iv', '')),
+                str(d.get('vix', '')),
+                str(full_dec.get('order_id', '')),
+                str(d.get('actual_pnl', '')),
+                f'"{reason}"'
+            ])
+            lines.append(line)
 
     return "\n".join(lines)
 
