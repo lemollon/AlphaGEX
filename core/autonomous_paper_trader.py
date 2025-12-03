@@ -45,6 +45,9 @@ from trading.mixins import (
     RiskManagerMixin
 )
 
+# Configure structured logging for autonomous trader
+logger = logging.getLogger('autonomous_paper_trader')
+
 # Import decision transparency bridge for full audit trail
 try:
     from trading.autonomous_decision_bridge import DecisionBridge, get_decision_bridge
@@ -52,9 +55,6 @@ try:
 except ImportError:
     DECISION_BRIDGE_AVAILABLE = False
     logger.warning("Decision bridge not available - trades won't be logged with full transparency")
-
-# Configure structured logging for autonomous trader
-logger = logging.getLogger('autonomous_paper_trader')
 if not logger.handlers:
     handler = logging.StreamHandler()
     formatter = logging.Formatter(
