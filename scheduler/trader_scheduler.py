@@ -2,7 +2,31 @@
 Autonomous Trading Scheduler for Render Deployment
 Uses APScheduler to run trading logic during market hours
 Integrates seamlessly with Streamlit web service
+
+CAPITAL ALLOCATION:
+==================
+Total Capital: $1,000,000
+├── PHOENIX (0DTE SPY/SPX): $400,000 (40%)
+├── ATLAS (SPX Wheel):      $500,000 (50%)
+└── Reserve:                $100,000 (10%)
+
+This partitioning provides:
+- Aggressive short-term trading via PHOENIX
+- Steady premium collection via ATLAS wheel
+- Reserve for margin calls and opportunities
 """
+
+# ============================================================================
+# CAPITAL ALLOCATION CONFIGURATION
+# ============================================================================
+CAPITAL_ALLOCATION = {
+    'PHOENIX': 400_000,   # 0DTE options trading
+    'ATLAS': 500_000,     # SPX wheel strategy
+    'RESERVE': 100_000,   # Emergency reserve
+    'TOTAL': 1_000_000,
+}
+
+# ============================================================================
 
 # Try to import APScheduler, but make it optional
 try:
@@ -74,18 +98,34 @@ class AutonomousTraderScheduler:
         self.scheduler = None
 
         # PHOENIX - 0DTE SPY/SPX Options Trader
-        self.trader = AutonomousPaperTrader()  # PHOENIX
+        # Capital: $400,000 (40% of total)
+        self.trader = AutonomousPaperTrader(
+            symbol='SPY',
+            capital=CAPITAL_ALLOCATION['PHOENIX']
+        )
         self.api_client = TradingVolatilityAPI()
+        logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital")
 
         # ATLAS - SPX Cash-Secured Put Wheel Trader
+        # Capital: $500,000 (50% of total)
         self.atlas_trader = None
         if ATLAS_AVAILABLE:
             try:
-                self.atlas_trader = SPXWheelTrader(mode=TradingMode.PAPER)
-                logger.info("✅ ATLAS (SPX Wheel Trader) initialized")
+                self.atlas_trader = SPXWheelTrader(
+                    mode=TradingMode.PAPER,
+                    initial_capital=CAPITAL_ALLOCATION['ATLAS']
+                )
+                logger.info(f"✅ ATLAS initialized with ${CAPITAL_ALLOCATION['ATLAS']:,} capital")
             except Exception as e:
                 logger.warning(f"ATLAS initialization failed: {e}")
                 self.atlas_trader = None
+
+        # Log capital allocation summary
+        logger.info(f"📊 CAPITAL ALLOCATION:")
+        logger.info(f"   PHOENIX: ${CAPITAL_ALLOCATION['PHOENIX']:,}")
+        logger.info(f"   ATLAS:   ${CAPITAL_ALLOCATION['ATLAS']:,}")
+        logger.info(f"   RESERVE: ${CAPITAL_ALLOCATION['RESERVE']:,}")
+        logger.info(f"   TOTAL:   ${CAPITAL_ALLOCATION['TOTAL']:,}")
 
         self.is_running = False
         self.last_trade_check = None

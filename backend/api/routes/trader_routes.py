@@ -1978,38 +1978,52 @@ async def get_all_bots_status():
     try:
         from trading.decision_logger import get_bot_decision_summary
 
+        # Capital allocation configuration
+        TOTAL_CAPITAL = 1_000_000
+        RESERVE_CAPITAL = 100_000
+
         bots = {
             "PHOENIX": {
                 "name": "PHOENIX",
                 "description": "0DTE SPY/SPX Options Trader",
                 "type": "autonomous",
                 "scheduled": True,
-                "capital_allocation": 400000,
-                "strategy": "0DTE directional + premium selling"
+                "schedule": "Every 5min during market hours (8:30 AM - 3:00 PM CT)",
+                "capital_allocation": 400_000,
+                "capital_pct": 40,
+                "strategy": "0DTE directional + premium selling",
+                "data_sources": ["GEX", "IV Surface", "Psychology Rules", "ML Regime"]
             },
             "ATLAS": {
                 "name": "ATLAS",
                 "description": "SPX Cash-Secured Put Wheel",
                 "type": "autonomous",
-                "scheduled": False,  # Not yet scheduled
-                "capital_allocation": 500000,
-                "strategy": "Weekly CSP wheel with ML"
+                "scheduled": True,  # Now scheduled!
+                "schedule": "Daily at 10:05 AM ET (Mon-Fri)",
+                "capital_allocation": 500_000,
+                "capital_pct": 50,
+                "strategy": "Weekly CSP wheel with ML optimization",
+                "data_sources": ["Backtester", "VIX", "Delta Targeting", "Walk-Forward"]
             },
             "HERMES": {
                 "name": "HERMES",
                 "description": "Manual Wheel Strategy Manager",
                 "type": "manual",
                 "scheduled": False,
+                "schedule": "User-initiated",
                 "capital_allocation": 0,
-                "strategy": "User-initiated wheel trades"
+                "capital_pct": 0,
+                "strategy": "User-initiated wheel trades via UI"
             },
             "ORACLE": {
                 "name": "ORACLE",
                 "description": "Strategy Recommendation Engine",
                 "type": "advisory",
                 "scheduled": False,
+                "schedule": "On-demand",
                 "capital_allocation": 0,
-                "strategy": "12-strategy comparison"
+                "capital_pct": 0,
+                "strategy": "12-strategy comparison with ensemble weighting"
             }
         }
 
@@ -2026,8 +2040,18 @@ async def get_all_bots_status():
             "success": True,
             "data": {
                 "bots": bots,
+                "capital_summary": {
+                    "total_capital": TOTAL_CAPITAL,
+                    "allocated_capital": sum(b["capital_allocation"] for b in bots.values()),
+                    "reserve_capital": RESERVE_CAPITAL,
+                    "allocation": {
+                        "PHOENIX": {"amount": 400_000, "pct": 40},
+                        "ATLAS": {"amount": 500_000, "pct": 50},
+                        "RESERVE": {"amount": 100_000, "pct": 10}
+                    }
+                },
                 "active_count": sum(1 for b in bots.values() if b["scheduled"]),
-                "total_capital": sum(b["capital_allocation"] for b in bots.values()),
+                "autonomous_bots": ["PHOENIX", "ATLAS"],
                 "timestamp": datetime.now().isoformat()
             }
         }
