@@ -250,11 +250,14 @@ class PositionSizerMixin:
         """
         Calculate position size using Kelly Criterion from backtest data.
 
+        ENHANCED with Monte Carlo stress testing for safe Kelly sizing.
+
         This mirrors the SPX trader's Kelly-based sizing:
         1. Look up backtest stats for strategy
         2. Calculate Kelly fraction
-        3. Apply adjustments (half-Kelly for proven, quarter-Kelly for unproven)
-        4. Return contracts and sizing details
+        3. Run Monte Carlo stress test to find SAFE Kelly (not just optimal)
+        4. Apply adjustments (half-Kelly for proven, quarter-Kelly for unproven)
+        5. Return contracts and sizing details
 
         Args:
             strategy_name: Name of strategy for backtest lookup
@@ -274,6 +277,7 @@ class PositionSizerMixin:
         avg_win = params['avg_win']
         avg_loss = params['avg_loss']
         is_proven = params['is_proven']
+        sample_size = params.get('total_trades', 20)
 
         # Calculate Kelly
         if avg_loss <= 0:
@@ -287,6 +291,43 @@ class PositionSizerMixin:
             logger.warning(f"Invalid risk/reward ratio ({risk_reward:.2f}) - blocking trade")
         else:
             kelly = win_rate - ((1 - win_rate) / risk_reward)
+
+        # ========================================================================
+        # MONTE CARLO STRESS TEST (NEW - validates Kelly is actually safe)
+        # ========================================================================
+        mc_safe_kelly = None
+        mc_prob_ruin = None
+        mc_uncertainty = 'unknown'
+
+        try:
+            from quant.monte_carlo_kelly import get_safe_position_size
+            mc_result = get_safe_position_size(
+                win_rate=win_rate,
+                avg_win=avg_win,
+                avg_loss=avg_loss,
+                sample_size=sample_size,
+                account_size=total_capital,
+                max_risk_pct=20.0
+            )
+            mc_safe_kelly = mc_result['kelly_safe'] / 100  # Convert from % to decimal
+            mc_prob_ruin = mc_result['prob_ruin']
+            mc_uncertainty = mc_result['uncertainty_level']
+
+            # Use SAFE Kelly instead of optimal if available
+            if mc_safe_kelly is not None and mc_safe_kelly > 0:
+                # Cap raw kelly at safe kelly from Monte Carlo
+                if kelly > mc_safe_kelly:
+                    logger.warning(f"Monte Carlo: Capping Kelly from {kelly:.2%} to safe {mc_safe_kelly:.2%} "
+                                 f"(prob_ruin={mc_prob_ruin:.1f}%, uncertainty={mc_uncertainty})")
+                    kelly = mc_safe_kelly
+
+            logger.info(f"Monte Carlo validation: optimal={mc_result['kelly_optimal']:.1f}%, "
+                       f"safe={mc_result['kelly_safe']:.1f}%, prob_ruin={mc_prob_ruin:.1f}%")
+
+        except ImportError:
+            logger.debug("Monte Carlo Kelly not available - using standard Kelly")
+        except Exception as e:
+            logger.warning(f"Monte Carlo Kelly failed: {e} - using standard Kelly")
 
         # If Kelly is negative, expected value is negative - DO NOT TRADE
         if kelly <= 0:
@@ -377,7 +418,7 @@ class PositionSizerMixin:
             contracts = min(raw_contracts, 10)
 
         sizing_details = {
-            'methodology': 'Kelly-Backtest-Confidence-VIX (SPY)',
+            'methodology': 'Kelly-Backtest-MonteCarlo-VIX (SPY)',
             'available_capital': available,
             'kelly_pct': final_kelly * 100,
             'raw_kelly': kelly,
@@ -394,7 +435,14 @@ class PositionSizerMixin:
             'cost_per_contract': cost_per_contract,
             'raw_contracts': raw_contracts,
             'final_contracts': contracts,
-            'backtest_params': params
+            'backtest_params': params,
+            # Monte Carlo stress test results (NEW)
+            'monte_carlo': {
+                'safe_kelly_pct': mc_safe_kelly * 100 if mc_safe_kelly else None,
+                'prob_ruin_pct': mc_prob_ruin,
+                'uncertainty_level': mc_uncertainty,
+                'stress_tested': mc_safe_kelly is not None
+            }
         }
 
         logger.info(f"Kelly sizing for {strategy_name}: {contracts} contracts "

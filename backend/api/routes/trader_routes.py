@@ -1327,3 +1327,485 @@ async def get_unified_portfolio():
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# QUANT MODULE ENDPOINTS - Expose ML/Monte Carlo/Ensemble metrics to UI
+# =============================================================================
+
+@router.get("/quant/status")
+async def get_quant_status():
+    """
+    Get overall status of quant modules.
+    Shows which modules are available and their current state.
+    """
+    status = {
+        "ml_classifier": {"available": False, "trained": False, "last_prediction": None},
+        "monte_carlo_kelly": {"available": False, "simulations": 0},
+        "ensemble_strategy": {"available": False, "active_strategies": 0},
+        "walk_forward": {"available": False, "last_validation": None},
+    }
+
+    try:
+        from quant import _DEPENDENCIES_AVAILABLE
+        if not _DEPENDENCIES_AVAILABLE:
+            return {
+                "success": True,
+                "data": {
+                    "quant_available": False,
+                    "message": "Quant modules require numpy, pandas, scipy. Install with: pip install numpy pandas scipy scikit-learn",
+                    "modules": status
+                }
+            }
+    except ImportError:
+        return {
+            "success": True,
+            "data": {
+                "quant_available": False,
+                "message": "Quant module not installed",
+                "modules": status
+            }
+        }
+
+    # Check ML Classifier
+    try:
+        from quant.ml_regime_classifier import MLRegimeClassifier
+        classifier = MLRegimeClassifier("SPY")
+        status["ml_classifier"] = {
+            "available": True,
+            "trained": classifier.is_trained,
+            "model_version": getattr(classifier, 'model_version', 'rule-based'),
+            "features_count": len(classifier.feature_names) if hasattr(classifier, 'feature_names') else 17
+        }
+    except Exception as e:
+        logger.debug(f"ML classifier not available: {e}")
+
+    # Check Monte Carlo Kelly
+    try:
+        from quant.monte_carlo_kelly import MonteCarloKelly
+        mc = MonteCarloKelly()
+        status["monte_carlo_kelly"] = {
+            "available": True,
+            "simulations": mc.num_simulations,
+            "trades_per_sim": mc.num_trades_per_sim
+        }
+    except Exception as e:
+        logger.debug(f"Monte Carlo Kelly not available: {e}")
+
+    # Check Ensemble Strategy
+    try:
+        from quant.ensemble_strategy import EnsembleStrategyWeighter
+        weighter = EnsembleStrategyWeighter("SPY")
+        status["ensemble_strategy"] = {
+            "available": True,
+            "active_strategies": len(weighter.strategies) if hasattr(weighter, 'strategies') else 5,
+            "default_weights": weighter.default_weights if hasattr(weighter, 'default_weights') else {}
+        }
+    except Exception as e:
+        logger.debug(f"Ensemble strategy not available: {e}")
+
+    # Check Walk Forward
+    try:
+        from quant.walk_forward_optimizer import WalkForwardOptimizer
+        status["walk_forward"] = {
+            "available": True,
+            "default_train_days": 60,
+            "default_test_days": 20
+        }
+    except Exception as e:
+        logger.debug(f"Walk forward not available: {e}")
+
+    return {
+        "success": True,
+        "data": {
+            "quant_available": True,
+            "modules": status,
+            "timestamp": datetime.now().isoformat()
+        }
+    }
+
+
+@router.get("/quant/ml-prediction/{symbol}")
+async def get_ml_prediction(symbol: str):
+    """
+    Get current ML regime prediction for a symbol.
+    Returns predicted action, confidence, and feature importance.
+    """
+    try:
+        from quant.ml_regime_classifier import get_ml_regime_prediction
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Quant ML module not available. Install dependencies: pip install numpy pandas scipy scikit-learn"
+        )
+
+    # Get current market data for the symbol
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get latest GEX data
+        cursor.execute("""
+            SELECT gex_percentile, iv_rank, distance_to_flip_pct, vix
+            FROM gex_analysis
+            WHERE symbol = %s
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (symbol.upper(),))
+        gex_data = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        if not gex_data:
+            # Use default values if no data
+            gex_data = {
+                'gex_percentile': 50,
+                'iv_rank': 50,
+                'distance_to_flip_pct': 0,
+                'vix': 20
+            }
+
+        # Get prediction
+        prediction = get_ml_regime_prediction(
+            symbol=symbol.upper(),
+            gex_percentile=float(gex_data.get('gex_percentile', 50)),
+            iv_rank=float(gex_data.get('iv_rank', 50)),
+            distance_to_flip=float(gex_data.get('distance_to_flip_pct', 0)),
+            vix=float(gex_data.get('vix', 20))
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol.upper(),
+                "predicted_action": prediction.predicted_action.value,
+                "confidence": prediction.confidence,
+                "is_ml_trained": prediction.is_trained,
+                "model_version": prediction.model_version,
+                "probabilities": prediction.probabilities,
+                "feature_importance": prediction.feature_importance if hasattr(prediction, 'feature_importance') else {},
+                "input_features": {
+                    "gex_percentile": gex_data.get('gex_percentile'),
+                    "iv_rank": gex_data.get('iv_rank'),
+                    "distance_to_flip": gex_data.get('distance_to_flip_pct'),
+                    "vix": gex_data.get('vix')
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting ML prediction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quant/kelly-stress-test/{symbol}")
+async def get_kelly_stress_test(symbol: str):
+    """
+    Get Monte Carlo Kelly stress test results for a symbol.
+    Returns optimal, safe, and conservative Kelly percentages with ruin probabilities.
+    """
+    try:
+        from quant.monte_carlo_kelly import get_safe_position_size
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Quant Monte Carlo module not available. Install dependencies: pip install numpy pandas scipy"
+        )
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get strategy performance stats
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_trades,
+                COUNT(CASE WHEN pnl > 0 THEN 1 END) as winners,
+                AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
+                AVG(CASE WHEN pnl < 0 THEN ABS(pnl) END) as avg_loss
+            FROM trades
+            WHERE symbol = %s AND exit_price IS NOT NULL
+        """, (symbol.upper(),))
+        stats = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        if not stats or stats['total_trades'] < 5:
+            # Not enough trades for meaningful stress test
+            return {
+                "success": True,
+                "data": {
+                    "symbol": symbol.upper(),
+                    "status": "insufficient_data",
+                    "message": f"Need at least 5 closed trades for stress test (have {stats['total_trades'] if stats else 0})",
+                    "recommendation": "Continue paper trading to build sample size"
+                }
+            }
+
+        win_rate = stats['winners'] / stats['total_trades'] if stats['total_trades'] > 0 else 0.5
+        avg_win = float(stats['avg_win']) if stats['avg_win'] else 10
+        avg_loss = float(stats['avg_loss']) if stats['avg_loss'] else 10
+
+        # Run stress test
+        result = get_safe_position_size(
+            win_rate=win_rate,
+            avg_win=avg_win,
+            avg_loss=avg_loss,
+            sample_size=stats['total_trades'],
+            account_size=100000,  # Normalized to 100k
+            max_risk_pct=25.0
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol.upper(),
+                "input_stats": {
+                    "total_trades": stats['total_trades'],
+                    "win_rate": round(win_rate * 100, 1),
+                    "avg_win": round(avg_win, 2),
+                    "avg_loss": round(avg_loss, 2),
+                    "payoff_ratio": round(avg_win / avg_loss, 2) if avg_loss > 0 else 0
+                },
+                "kelly_results": {
+                    "kelly_optimal_pct": result.get('kelly_optimal', 0),
+                    "kelly_safe_pct": result.get('kelly_safe', 0),
+                    "kelly_conservative_pct": result.get('kelly_conservative', 0),
+                    "recommended_pct": result.get('position_size_pct', 0)
+                },
+                "risk_metrics": {
+                    "prob_ruin_optimal": result.get('prob_ruin_optimal', 0),
+                    "prob_ruin_safe": result.get('prob_ruin_safe', 0),
+                    "prob_50pct_drawdown": result.get('prob_50pct_drawdown_safe', 0),
+                    "uncertainty_level": result.get('uncertainty_level', 'unknown')
+                },
+                "recommendation": result.get('recommendation', ''),
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running Kelly stress test: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quant/ensemble-signal/{symbol}")
+async def get_ensemble_signal_endpoint(symbol: str):
+    """
+    Get current ensemble signal combining multiple strategies.
+    Returns weighted signal from GEX, ML, RSI, volatility surface, etc.
+    """
+    try:
+        from quant.ensemble_strategy import get_ensemble_signal
+        from quant.ml_regime_classifier import get_ml_regime_prediction
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Quant ensemble module not available. Install dependencies: pip install numpy pandas scipy scikit-learn"
+        )
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get GEX data
+        cursor.execute("""
+            SELECT gex_percentile, iv_rank, distance_to_flip_pct, vix,
+                   recommended_action, confidence
+            FROM gex_analysis
+            WHERE symbol = %s
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (symbol.upper(),))
+        gex_data = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        if not gex_data:
+            return {
+                "success": True,
+                "data": {
+                    "symbol": symbol.upper(),
+                    "status": "no_data",
+                    "message": "No GEX data available for this symbol"
+                }
+            }
+
+        # Get ML prediction
+        ml_pred = get_ml_regime_prediction(
+            symbol=symbol.upper(),
+            gex_percentile=float(gex_data.get('gex_percentile', 50)),
+            iv_rank=float(gex_data.get('iv_rank', 50)),
+            distance_to_flip=float(gex_data.get('distance_to_flip_pct', 0)),
+            vix=float(gex_data.get('vix', 20))
+        )
+
+        # Get ensemble signal
+        ensemble = get_ensemble_signal(
+            symbol=symbol.upper(),
+            gex_data={
+                'recommended_action': gex_data.get('recommended_action', 'NEUTRAL'),
+                'confidence': gex_data.get('confidence', 50)
+            },
+            ml_prediction={
+                'predicted_action': ml_pred.predicted_action.value,
+                'confidence': ml_pred.confidence,
+                'is_trained': ml_pred.is_trained
+            }
+        )
+
+        # Format component signals for response
+        component_signals = []
+        for sig in ensemble.component_signals:
+            component_signals.append({
+                'strategy': sig.strategy_name,
+                'signal': sig.signal.value if hasattr(sig.signal, 'value') else str(sig.signal),
+                'confidence': sig.confidence,
+                'weight': sig.weight,
+                'reason': sig.reason
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol.upper(),
+                "final_signal": ensemble.final_signal.value if hasattr(ensemble.final_signal, 'value') else str(ensemble.final_signal),
+                "confidence": ensemble.confidence,
+                "should_trade": ensemble.should_trade,
+                "weights": {
+                    "bullish": round(ensemble.bullish_weight, 2),
+                    "bearish": round(ensemble.bearish_weight, 2),
+                    "neutral": round(ensemble.neutral_weight, 2)
+                },
+                "component_signals": component_signals,
+                "agreement_score": round(max(ensemble.bullish_weight, ensemble.bearish_weight, ensemble.neutral_weight) * 100, 1),
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting ensemble signal: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quant/recommendation/{symbol}")
+async def get_quant_recommendation(symbol: str):
+    """
+    Get full quant recommendation combining all modules.
+    This is the primary endpoint for trading decisions informed by quant analysis.
+    """
+    try:
+        from quant.integration import get_quant_recommendation as get_recommendation
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Quant integration module not available"
+        )
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get current market data
+        cursor.execute("""
+            SELECT gex_percentile, iv_rank, distance_to_flip_pct, vix,
+                   recommended_action, confidence, net_gex
+            FROM gex_analysis
+            WHERE symbol = %s
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (symbol.upper(),))
+        gex_data = cursor.fetchone()
+
+        # Get strategy stats
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_trades,
+                COUNT(CASE WHEN pnl > 0 THEN 1 END) as winners,
+                AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
+                AVG(CASE WHEN pnl < 0 THEN ABS(pnl) END) as avg_loss
+            FROM trades
+            WHERE symbol = %s AND exit_price IS NOT NULL
+        """, (symbol.upper(),))
+        trade_stats = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        if not gex_data:
+            return {
+                "success": True,
+                "data": {
+                    "symbol": symbol.upper(),
+                    "status": "no_data",
+                    "message": "No market data available"
+                }
+            }
+
+        # Build market data dict
+        market_data = {
+            'gex_percentile': float(gex_data.get('gex_percentile', 50)),
+            'iv_rank': float(gex_data.get('iv_rank', 50)),
+            'distance_to_flip': float(gex_data.get('distance_to_flip_pct', 0)),
+            'vix': float(gex_data.get('vix', 20)),
+            'gex_action': gex_data.get('recommended_action', 'NEUTRAL'),
+            'gex_confidence': gex_data.get('confidence', 50)
+        }
+
+        # Build strategy stats
+        stats = None
+        if trade_stats and trade_stats['total_trades'] >= 5:
+            win_rate = trade_stats['winners'] / trade_stats['total_trades']
+            stats = {
+                'win_rate': win_rate,
+                'avg_win': float(trade_stats['avg_win']) if trade_stats['avg_win'] else 10,
+                'avg_loss': float(trade_stats['avg_loss']) if trade_stats['avg_loss'] else 10,
+                'sample_size': trade_stats['total_trades']
+            }
+
+        # Get recommendation
+        recommendation = get_recommendation(
+            symbol=symbol.upper(),
+            market_data=market_data,
+            strategy_stats=stats
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol.upper(),
+                "action": recommendation.action,
+                "confidence": recommendation.confidence,
+                "should_trade": recommendation.should_trade,
+                "position_size_pct": recommendation.position_size_pct,
+                "reasoning": recommendation.reasoning,
+                "ml_prediction": {
+                    "action": recommendation.ml_prediction.predicted_action.value if recommendation.ml_prediction else None,
+                    "confidence": recommendation.ml_prediction.confidence if recommendation.ml_prediction else None,
+                    "is_trained": recommendation.ml_prediction.is_trained if recommendation.ml_prediction else False
+                },
+                "ensemble_signal": {
+                    "signal": recommendation.ensemble_signal.final_signal.value if recommendation.ensemble_signal else None,
+                    "confidence": recommendation.ensemble_signal.confidence if recommendation.ensemble_signal else None,
+                    "agreement": recommendation.ensemble_signal.bullish_weight if recommendation.ensemble_signal else None
+                },
+                "kelly_sizing": {
+                    "safe_pct": recommendation.kelly_result.get('kelly_safe', 0) if recommendation.kelly_result else None,
+                    "optimal_pct": recommendation.kelly_result.get('kelly_optimal', 0) if recommendation.kelly_result else None,
+                    "uncertainty": recommendation.kelly_result.get('uncertainty_level', 'unknown') if recommendation.kelly_result else None
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting quant recommendation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
