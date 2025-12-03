@@ -1097,20 +1097,12 @@ def get_tradier_portfolio(symbol: str = "SPY") -> dict:
 
 
 # ============================================================================
-# DATABASE SCHEMA FOR REGIME TRACKING
+# DATABASE SCHEMA FOR REGIME TRACKING - DEPRECATED
 # ============================================================================
-
-CREATE_REGIME_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS regime_classifications (
-    id SERIAL PRIMARY KEY,
-    symbol VARCHAR(10) NOT NULL,
-    regime_data JSONB NOT NULL,
-    recommended_action VARCHAR(50) NOT NULL,
-    confidence FLOAT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    INDEX idx_regime_symbol_time (symbol, created_at)
-);
-"""
+# NOTE: Table 'regime_classifications' is now defined in db/config_and_database.py
+# (single source of truth). Do NOT add CREATE TABLE statements here.
+# ============================================================================
+CREATE_REGIME_TABLE_SQL = ""  # Deprecated - schema in main file
 
 
 if __name__ == "__main__":

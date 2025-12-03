@@ -472,249 +472,28 @@ class AutonomousPaperTrader(
         conn.close()
 
     def _ensure_tables(self):
-        """Create database tables for autonomous trading - NEW SCHEMA"""
+        """
+        Verify autonomous trader tables exist and initialize live status.
+        NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+        Tables expected: autonomous_open_positions, autonomous_closed_trades, autonomous_equity_snapshots,
+                        autonomous_trade_activity, autonomous_trade_log, autonomous_config, autonomous_live_status
+        """
         conn = get_connection()
         c = conn.cursor()
 
-        # OPEN POSITIONS table - currently active trades
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_open_positions (
-                id SERIAL PRIMARY KEY,
-                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
-                strategy VARCHAR(100) NOT NULL,
-                action VARCHAR(50) NOT NULL,
-                strike DECIMAL(10,2) NOT NULL,
-                option_type VARCHAR(20) NOT NULL,
-                expiration_date DATE NOT NULL,
-                contracts INTEGER NOT NULL DEFAULT 1,
-                contract_symbol VARCHAR(50),
-                entry_date DATE NOT NULL,
-                entry_time TIME NOT NULL,
-                entry_price DECIMAL(10,4) NOT NULL,
-                entry_bid DECIMAL(10,4),
-                entry_ask DECIMAL(10,4),
-                entry_spot_price DECIMAL(10,2),
-                current_price DECIMAL(10,4),
-                current_spot_price DECIMAL(10,2),
-                last_updated TIMESTAMP DEFAULT NOW(),
-                unrealized_pnl DECIMAL(12,2) DEFAULT 0,
-                unrealized_pnl_pct DECIMAL(8,4) DEFAULT 0,
-                confidence INTEGER,
-                gex_regime VARCHAR(100),
-                entry_net_gex DECIMAL(15,2),
-                entry_flip_point DECIMAL(10,2),
-                trade_reasoning TEXT,
-                -- Greeks at entry (for transparency and analysis)
-                entry_iv DECIMAL(8,4),
-                entry_delta DECIMAL(8,4),
-                entry_gamma DECIMAL(8,6),
-                entry_theta DECIMAL(10,4),
-                entry_vega DECIMAL(10,4),
-                -- Current Greeks (updated with position)
-                current_iv DECIMAL(8,4),
-                current_delta DECIMAL(8,4),
-                current_gamma DECIMAL(8,6),
-                current_theta DECIMAL(10,4),
-                current_vega DECIMAL(10,4),
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-
-        # Migration: Add Greeks columns if table already exists without them
+        # Initialize live status if not exists (one-time setup)
         try:
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_iv DECIMAL(8,4)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_delta DECIMAL(8,4)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_gamma DECIMAL(8,6)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_theta DECIMAL(10,4)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS entry_vega DECIMAL(10,4)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_iv DECIMAL(8,4)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_delta DECIMAL(8,4)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_gamma DECIMAL(8,6)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_theta DECIMAL(10,4)")
-            c.execute("ALTER TABLE autonomous_open_positions ADD COLUMN IF NOT EXISTS current_vega DECIMAL(10,4)")
-            conn.commit()
-        except Exception:
-            pass  # Columns already exist or db doesn't support IF NOT EXISTS
+            c.execute("SELECT COUNT(*) FROM autonomous_live_status WHERE id = 1")
+            result = c.fetchone()
+            if result is None or result[0] == 0:
+                c.execute("""
+                    INSERT INTO autonomous_live_status (id, timestamp, status, current_action, is_working)
+                    VALUES (1, %s, 'INITIALIZING', 'System starting up...', 1)
+                """, (datetime.now(CENTRAL_TZ).isoformat(),))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Could not initialize live status: {e}")
 
-        # CLOSED TRADES table - historical trades with real P&L
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_closed_trades (
-                id SERIAL PRIMARY KEY,
-                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
-                strategy VARCHAR(100) NOT NULL,
-                action VARCHAR(50) NOT NULL,
-                strike DECIMAL(10,2) NOT NULL,
-                option_type VARCHAR(20) NOT NULL,
-                expiration_date DATE NOT NULL,
-                contracts INTEGER NOT NULL DEFAULT 1,
-                contract_symbol VARCHAR(50),
-                entry_date DATE NOT NULL,
-                entry_time TIME NOT NULL,
-                entry_price DECIMAL(10,4) NOT NULL,
-                entry_bid DECIMAL(10,4),
-                entry_ask DECIMAL(10,4),
-                entry_spot_price DECIMAL(10,2),
-                exit_date DATE NOT NULL,
-                exit_time TIME NOT NULL,
-                exit_price DECIMAL(10,4) NOT NULL,
-                exit_spot_price DECIMAL(10,2),
-                exit_reason VARCHAR(100),
-                realized_pnl DECIMAL(12,2) NOT NULL,
-                realized_pnl_pct DECIMAL(8,4) NOT NULL,
-                confidence INTEGER,
-                gex_regime VARCHAR(100),
-                entry_net_gex DECIMAL(15,2),
-                entry_flip_point DECIMAL(10,2),
-                trade_reasoning TEXT,
-                hold_duration_minutes INTEGER,
-                -- Greeks at entry (for analysis and transparency)
-                entry_iv DECIMAL(8,4),
-                entry_delta DECIMAL(8,4),
-                entry_gamma DECIMAL(8,6),
-                entry_theta DECIMAL(10,4),
-                entry_vega DECIMAL(10,4),
-                -- Greeks at exit
-                exit_iv DECIMAL(8,4),
-                exit_delta DECIMAL(8,4),
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-
-        # Migration: Add Greeks columns to closed trades if table already exists
-        try:
-            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_iv DECIMAL(8,4)")
-            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_delta DECIMAL(8,4)")
-            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_gamma DECIMAL(8,6)")
-            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_theta DECIMAL(10,4)")
-            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS entry_vega DECIMAL(10,4)")
-            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS exit_iv DECIMAL(8,4)")
-            c.execute("ALTER TABLE autonomous_closed_trades ADD COLUMN IF NOT EXISTS exit_delta DECIMAL(8,4)")
-            conn.commit()
-        except Exception:
-            pass  # Columns already exist
-
-        # EQUITY SNAPSHOTS table - for P&L time series graphing
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_equity_snapshots (
-                id SERIAL PRIMARY KEY,
-                snapshot_date DATE NOT NULL,
-                snapshot_time TIME NOT NULL,
-                snapshot_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
-                starting_capital DECIMAL(12,2) NOT NULL DEFAULT 1000000,
-                total_realized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
-                total_unrealized_pnl DECIMAL(12,2) NOT NULL DEFAULT 0,
-                account_value DECIMAL(12,2) NOT NULL,
-                daily_pnl DECIMAL(12,2) DEFAULT 0,
-                daily_return_pct DECIMAL(8,4) DEFAULT 0,
-                total_return_pct DECIMAL(8,4) DEFAULT 0,
-                max_drawdown_pct DECIMAL(8,4) DEFAULT 0,
-                sharpe_ratio DECIMAL(8,4) DEFAULT 0,
-                open_positions_count INTEGER DEFAULT 0,
-                total_trades INTEGER DEFAULT 0,
-                winning_trades INTEGER DEFAULT 0,
-                losing_trades INTEGER DEFAULT 0,
-                win_rate DECIMAL(6,4) DEFAULT 0
-            )
-        """)
-
-        # TRADE ACTIVITY table - all trader actions/decisions
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_trade_activity (
-                id SERIAL PRIMARY KEY,
-                activity_date DATE NOT NULL,
-                activity_time TIME NOT NULL,
-                activity_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
-                action_type VARCHAR(50) NOT NULL,
-                symbol VARCHAR(10) DEFAULT 'SPY',
-                details TEXT,
-                position_id INTEGER,
-                pnl_impact DECIMAL(12,2),
-                success BOOLEAN DEFAULT TRUE,
-                error_message TEXT
-            )
-        """)
-
-        # Trade log (daily summaries)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_trade_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                time TEXT NOT NULL,
-                action TEXT NOT NULL,
-                details TEXT,
-                position_id INTEGER,
-                success INTEGER DEFAULT 1
-            )
-        """)
-
-        # Config table
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_config (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        """)
-
-        # Live status table - what the trader is thinking RIGHT NOW
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS autonomous_live_status (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                timestamp TEXT NOT NULL,
-                status TEXT NOT NULL,
-                current_action TEXT,
-                market_analysis TEXT,
-                next_check_time TEXT,
-                last_decision TEXT,
-                is_working INTEGER DEFAULT 1
-            )
-        """)
-
-        # Initialize live status if not exists
-        c.execute("SELECT COUNT(*) FROM autonomous_live_status WHERE id = 1")
-        result = c.fetchone()
-        if result is None or result[0] == 0:
-            c.execute("""
-                INSERT INTO autonomous_live_status (id, timestamp, status, current_action, is_working)
-                VALUES (1, %s, 'INITIALIZING', 'System starting up...', 1)
-            """, (datetime.now(CENTRAL_TZ).isoformat(),))
-
-        # Add theoretical pricing columns (Black-Scholes) if they don't exist
-        theoretical_columns = [
-            ('theoretical_price', 'DECIMAL(10,4)'),
-            ('theoretical_bid', 'DECIMAL(10,4)'),
-            ('theoretical_ask', 'DECIMAL(10,4)'),
-            ('recommended_entry', 'DECIMAL(10,4)'),
-            ('price_adjustment', 'DECIMAL(10,4)'),
-            ('price_adjustment_pct', 'DECIMAL(8,4)'),
-            ('is_delayed', 'BOOLEAN'),
-            ('data_confidence', 'VARCHAR(20)'),
-        ]
-
-        # Whitelist of allowed column names and types for security
-        ALLOWED_COLUMNS = {
-            'theoretical_price', 'theoretical_bid', 'theoretical_ask', 'recommended_entry',
-            'price_adjustment', 'price_adjustment_pct', 'is_delayed', 'data_confidence'
-        }
-        ALLOWED_TYPES = {'DECIMAL(10,4)', 'DECIMAL(8,4)', 'BOOLEAN', 'VARCHAR(20)'}
-
-        for col_name, col_type in theoretical_columns:
-            # Validate column name and type to prevent SQL injection
-            if col_name not in ALLOWED_COLUMNS or col_type not in ALLOWED_TYPES:
-                print(f"⚠️ Skipping invalid column: {col_name} {col_type}")
-                continue
-
-            try:
-                # Safe to use string formatting since values are validated against whitelist
-                c.execute(f"ALTER TABLE autonomous_open_positions ADD COLUMN {col_name} {col_type}")
-            except Exception as e:
-                pass  # Column already exists
-
-            try:
-                c.execute(f"ALTER TABLE autonomous_closed_trades ADD COLUMN {col_name} {col_type}")
-            except Exception as e:
-                pass  # Column already exists
-
-        conn.commit()
         conn.close()
 
     def get_config(self, key: str) -> str:

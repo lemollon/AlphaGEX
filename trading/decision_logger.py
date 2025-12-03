@@ -235,101 +235,13 @@ class DecisionLogger:
             self._db_initialized = True
 
     def _ensure_tables(self):
-        """Create decision log tables if they don't exist"""
-        conn = get_db_connection()
-        if not conn:
-            logger.warning("Database not available for decision logging")
-            return
-
-        try:
-            cursor = conn.cursor()
-
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS trading_decisions (
-                    id SERIAL PRIMARY KEY,
-                    decision_id VARCHAR(50) UNIQUE NOT NULL,
-                    timestamp TIMESTAMPTZ NOT NULL,
-                    decision_type VARCHAR(50) NOT NULL,
-                    action VARCHAR(20) NOT NULL,
-                    symbol VARCHAR(20) NOT NULL,
-                    strategy VARCHAR(100),
-
-                    -- Price data
-                    spot_price DECIMAL(12,4),
-                    spot_source VARCHAR(50),
-                    option_price DECIMAL(10,4),
-                    strike DECIMAL(10,2),
-                    expiration DATE,
-
-                    -- Market context
-                    vix DECIMAL(8,2),
-                    net_gex DECIMAL(20,2),
-                    gex_regime VARCHAR(20),
-                    market_regime VARCHAR(50),
-                    trend VARCHAR(20),
-
-                    -- Backtest reference
-                    backtest_strategy VARCHAR(100),
-                    backtest_win_rate DECIMAL(5,2),
-                    backtest_expectancy DECIMAL(8,4),
-                    backtest_uses_real_data BOOLEAN,
-
-                    -- Reasoning
-                    primary_reason TEXT,
-                    supporting_factors JSONB,
-                    risk_factors JSONB,
-
-                    -- Position
-                    position_size_dollars DECIMAL(12,2),
-                    position_size_contracts INTEGER,
-                    max_risk_dollars DECIMAL(12,2),
-
-                    -- Expected outcome
-                    target_profit_pct DECIMAL(6,2),
-                    stop_loss_pct DECIMAL(6,2),
-                    prob_profit DECIMAL(5,2),
-
-                    -- Risk checks
-                    passed_risk_checks BOOLEAN DEFAULT TRUE,
-                    risk_check_details JSONB,
-
-                    -- Full decision JSON
-                    full_decision JSONB,
-
-                    -- Outcome (updated later)
-                    actual_entry_price DECIMAL(10,4),
-                    actual_exit_price DECIMAL(10,4),
-                    actual_pnl DECIMAL(12,2),
-                    actual_hold_days INTEGER,
-                    outcome_notes TEXT,
-                    outcome_updated_at TIMESTAMPTZ
-                )
-            ''')
-
-            # Index for quick lookups
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_decisions_timestamp
-                ON trading_decisions(timestamp DESC)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_decisions_symbol
-                ON trading_decisions(symbol)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_decisions_strategy
-                ON trading_decisions(strategy)
-            ''')
-
-            conn.commit()
-            conn.close()
-            logger.info("Decision logging tables initialized")
-
-        except Exception as e:
-            logger.error(f"Failed to create decision tables: {e}")
-            try:
-                conn.close()
-            except:
-                pass
+        """
+        Verify decision log tables exist.
+        NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+        """
+        # Table trading_decisions is created by db/config_and_database.py init_database()
+        # on app startup. No need to create it here.
+        logger.info("Decision logging tables expected from main schema (db/config_and_database.py)")
 
     def _generate_decision_id(self) -> str:
         """Generate unique decision ID"""

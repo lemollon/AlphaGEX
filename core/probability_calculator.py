@@ -49,93 +49,13 @@ class ProbabilityCalculator:
         self._init_database()
 
     def _init_database(self):
-        """Initialize database tables for predictions, outcomes, and weights"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        # Predictions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS probability_predictions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                symbol TEXT NOT NULL,
-                prediction_type TEXT NOT NULL,  -- 'EOD' or 'NEXT_DAY'
-                target_date DATE NOT NULL,
-                current_price REAL,
-
-                -- Probability ranges
-                range_low REAL,
-                range_high REAL,
-                prob_in_range REAL,
-                prob_above REAL,
-                prob_below REAL,
-                confidence_level TEXT,  -- 'HIGH', 'MEDIUM', 'LOW'
-
-                -- Input data (for debugging/analysis)
-                net_gex REAL,
-                flip_point REAL,
-                call_wall REAL,
-                put_wall REAL,
-                vix_level REAL,
-                implied_vol REAL,
-                psychology_state TEXT,
-                fomo_level REAL,
-                fear_level REAL,
-                mm_state TEXT,
-
-                -- Outcome (filled later)
-                actual_close_price REAL,
-                prediction_correct BOOLEAN,
-                recorded_at DATETIME
-            )
-        ''')
-
-        # Outcomes table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS probability_outcomes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                prediction_id INTEGER,
-                actual_close_price REAL,
-                prediction_correct BOOLEAN,
-                error_pct REAL,
-                recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (prediction_id) REFERENCES probability_predictions(id)
-            )
-        ''')
-
-        # Weights table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS probability_weights (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                gex_wall_strength REAL,
-                volatility_impact REAL,
-                psychology_signal REAL,
-                mm_positioning REAL,
-                historical_pattern REAL,
-                accuracy_score REAL,  -- Overall accuracy with these weights
-                active BOOLEAN DEFAULT TRUE
-            )
-        ''')
-
-        # Calibration history
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS calibration_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                predictions_analyzed INTEGER,
-                overall_accuracy REAL,
-                eod_accuracy REAL,
-                next_day_accuracy REAL,
-                high_conf_accuracy REAL,
-                medium_conf_accuracy REAL,
-                low_conf_accuracy REAL,
-                adjustments_made TEXT  -- JSON of weight changes
-            )
-        ''')
-
-        conn.commit()
-        conn.close()
+        """
+        Verify probability tables exist.
+        NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+        Tables expected: probability_predictions, probability_outcomes, probability_weights, calibration_history
+        """
+        # Tables created by main schema - no action needed
+        pass
 
     def _load_weights(self) -> ProbabilityWeights:
         """Load active weights from database or use defaults"""

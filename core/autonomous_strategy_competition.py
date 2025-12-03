@@ -142,39 +142,20 @@ class StrategyCompetition:
         self._initialize_competition()
 
     def _initialize_competition(self):
-        """Initialize competition in database"""
+        """
+        Initialize competition in database.
+        NOTE: Table 'strategy_competition' is now defined in db/config_and_database.py (single source of truth).
+        """
         conn = get_connection()
         c = conn.cursor()
 
-        # Create competition table if not exists
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS strategy_competition (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                strategy_id TEXT NOT NULL,
-                strategy_name TEXT NOT NULL,
-                starting_capital REAL NOT NULL,
-                current_capital REAL NOT NULL,
-                total_trades INTEGER DEFAULT 0,
-                winning_trades INTEGER DEFAULT 0,
-                losing_trades INTEGER DEFAULT 0,
-                total_pnl REAL DEFAULT 0,
-                win_rate REAL DEFAULT 0,
-                sharpe_ratio REAL DEFAULT 0,
-                max_drawdown_pct REAL DEFAULT 0,
-                profit_factor REAL DEFAULT 0,
-                last_trade_date TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(strategy_id)
-            )
-        """)
-
-        # Initialize each strategy
+        # Initialize each strategy (table already exists from main schema)
         for strategy_id, strategy in self.strategies.items():
             c.execute("""
-                INSERT OR IGNORE INTO strategy_competition (
+                INSERT INTO strategy_competition (
                     strategy_id, strategy_name, starting_capital, current_capital
-                ) VALUES (?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT (strategy_id) DO NOTHING
             """, (strategy_id, strategy['name'], self.starting_capital, self.starting_capital))
 
         conn.commit()

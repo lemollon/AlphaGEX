@@ -1033,13 +1033,7 @@ async def toggle_strategy(strategy_id: str, enabled: bool = True):
         conn = get_connection()
         c = conn.cursor()
 
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS strategy_config (
-                strategy_name VARCHAR(100) PRIMARY KEY,
-                enabled BOOLEAN DEFAULT TRUE,
-                updated_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
+        # NOTE: Table 'strategy_config' defined in db/config_and_database.py (single source of truth)
 
         strategy_name = strategy_id.replace('_', ' ').title()
 

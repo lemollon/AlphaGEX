@@ -56,61 +56,13 @@ class SmartTradeAdvisor:
         self._init_learning_database()
 
     def _init_learning_database(self):
-        """Create tables for learning system (PostgreSQL)"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        # AI predictions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ai_predictions (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                pattern_type TEXT,
-                trade_direction TEXT,
-                predicted_outcome TEXT,
-                confidence_score REAL,
-                reasoning TEXT,
-                market_context TEXT,
-                vix_level REAL,
-                volatility_regime TEXT,
-                actual_outcome TEXT,
-                outcome_pnl REAL,
-                prediction_correct INTEGER,
-                feedback_timestamp TIMESTAMP
-            )
-        """)
-
-        # Pattern learning table (what conditions favor which patterns)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pattern_learning (
-                id SERIAL PRIMARY KEY,
-                pattern_type TEXT,
-                market_condition TEXT,
-                historical_win_rate REAL,
-                sample_size INTEGER,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(pattern_type, market_condition)
-            )
-        """)
-
-        # AI performance tracking
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ai_performance (
-                id SERIAL PRIMARY KEY,
-                date DATE DEFAULT CURRENT_DATE,
-                total_predictions INTEGER,
-                correct_predictions INTEGER,
-                accuracy_rate REAL,
-                avg_confidence REAL,
-                profitable_trades INTEGER,
-                losing_trades INTEGER,
-                net_pnl REAL,
-                UNIQUE(date)
-            )
-        """)
-
-        conn.commit()
-        conn.close()
+        """
+        Verify AI learning tables exist.
+        NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+        Tables expected: ai_predictions, pattern_learning, ai_performance
+        """
+        # Tables created by main schema - no action needed
+        pass
 
     def get_similar_historical_trades(self, current_pattern: str, current_vix: float,
                                       current_regime: str) -> List[Dict]:

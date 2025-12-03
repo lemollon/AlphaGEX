@@ -17,54 +17,12 @@ class GammaCorrelationTracker:
         self._init_database()
 
     def _init_database(self):
-        """Create correlation tracking table"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS gamma_correlation (
-            id SERIAL PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            symbol TEXT NOT NULL,
-            day_of_week TEXT,
-
-            -- Gamma metrics (captured at market close)
-            gamma_decay_pct REAL,
-            weekly_decay_pct REAL,
-            risk_level TEXT,
-            vix REAL,
-            today_total_gamma REAL,
-            tomorrow_total_gamma REAL,
-            expiring_gamma REAL,
-
-            -- Actual outcomes (filled next trading day)
-            next_day_open REAL,
-            next_day_close REAL,
-            next_day_high REAL,
-            next_day_low REAL,
-            actual_price_move_pct REAL,
-            actual_intraday_range_pct REAL,
-            actual_realized_vol REAL,
-
-            -- Trading outcome (if we traded)
-            strategy_taken TEXT,
-            pnl REAL,
-            pnl_pct REAL,
-
-            -- Status
-            filled BOOLEAN DEFAULT FALSE,
-            notes TEXT,
-
-            UNIQUE(symbol, timestamp)
-        )
-        ''')
-
-        # Index for fast queries
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_symbol_date ON gamma_correlation(symbol, timestamp)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_filled ON gamma_correlation(filled)')
-
-        conn.commit()
-        conn.close()
+        """
+        Verify gamma_correlation table exists.
+        NOTE: Table is now defined in db/config_and_database.py (single source of truth).
+        """
+        # Tables created by main schema - no action needed
+        pass
 
     def log_gamma_metrics(self, gamma_intel: Dict, symbol: str, current_price: float, vix: float = 0):
         """

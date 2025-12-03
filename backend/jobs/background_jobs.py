@@ -72,37 +72,12 @@ class JobManager:
         self._load_running_jobs()
 
     def _ensure_table(self):
-        """Create background_jobs table if not exists"""
-        try:
-            conn = get_connection()
-            c = conn.cursor()
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS background_jobs (
-                    job_id VARCHAR(64) PRIMARY KEY,
-                    job_type VARCHAR(50) NOT NULL,
-                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
-                    progress INT DEFAULT 0,
-                    message TEXT,
-                    params JSONB,
-                    result JSONB,
-                    error TEXT,
-                    started_at TIMESTAMP,
-                    completed_at TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Create index for status queries
-            c.execute("""
-                CREATE INDEX IF NOT EXISTS idx_background_jobs_status
-                ON background_jobs(status)
-            """)
-
-            conn.commit()
-            conn.close()
-            logger.info("Background jobs table ready")
-        except Exception as e:
-            logger.error(f"Error creating background_jobs table: {e}")
+        """
+        Verify background_jobs table exists.
+        NOTE: Table is now defined in db/config_and_database.py (single source of truth).
+        """
+        # Tables created by main schema - just log readiness
+        logger.info("Background jobs table ready (created by main schema)")
 
     def _load_running_jobs(self):
         """Load any jobs that were running when app restarted"""

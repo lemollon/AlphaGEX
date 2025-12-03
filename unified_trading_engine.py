@@ -1094,66 +1094,15 @@ class UnifiedTradingEngine:
 
 
 # ============================================================================
-# DATABASE SCHEMA
+# DATABASE SCHEMA - DEPRECATED
 # ============================================================================
-
-CREATE_UNIFIED_TABLES_SQL = """
--- Regime classifications (from classifier)
-CREATE TABLE IF NOT EXISTS regime_classifications (
-    id SERIAL PRIMARY KEY,
-    symbol VARCHAR(10) NOT NULL,
-    regime_data JSONB NOT NULL,
-    recommended_action VARCHAR(50) NOT NULL,
-    confidence FLOAT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_regime_symbol_time ON regime_classifications(symbol, created_at);
-
--- Unified positions (both live and backtest)
-CREATE TABLE IF NOT EXISTS unified_positions (
-    id SERIAL PRIMARY KEY,
-    symbol VARCHAR(10) NOT NULL,
-    strategy VARCHAR(100) NOT NULL,
-    action VARCHAR(50) NOT NULL,
-    option_type VARCHAR(20),
-    strike FLOAT,
-    expiration DATE,
-    entry_price FLOAT NOT NULL,
-    entry_time TIMESTAMP NOT NULL,
-    contracts INTEGER NOT NULL,
-    stop_loss_pct FLOAT,
-    profit_target_pct FLOAT,
-    entry_regime JSONB,
-    is_backtest BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Unified closed trades (both live and backtest)
-CREATE TABLE IF NOT EXISTS unified_trades (
-    id SERIAL PRIMARY KEY,
-    symbol VARCHAR(10) NOT NULL,
-    strategy VARCHAR(100) NOT NULL,
-    action VARCHAR(50) NOT NULL,
-    option_type VARCHAR(20),
-    strike FLOAT,
-    expiration DATE,
-    entry_price FLOAT NOT NULL,
-    entry_time TIMESTAMP NOT NULL,
-    exit_price FLOAT NOT NULL,
-    exit_time TIMESTAMP NOT NULL,
-    exit_reason VARCHAR(50),
-    contracts INTEGER NOT NULL,
-    realized_pnl FLOAT,
-    realized_pnl_pct FLOAT,
-    duration_minutes INTEGER,
-    is_backtest BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_trades_symbol_time ON unified_trades(symbol, exit_time);
-CREATE INDEX IF NOT EXISTS idx_trades_action ON unified_trades(action);
-"""
+# NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
+# The following tables are managed centrally:
+#   - regime_classifications
+#   - unified_positions
+#   - unified_trades
+# Do NOT add CREATE TABLE statements here - modify db/config_and_database.py instead.
+# ============================================================================
 
 
 if __name__ == "__main__":
