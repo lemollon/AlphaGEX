@@ -7,6 +7,7 @@ import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity,
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
 import ExportButtons from '@/components/trader/ExportButtons'
+import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
 import { useTraderWebSocket } from '@/hooks/useTraderWebSocket'
 
@@ -3075,6 +3076,9 @@ export default function AutonomousTrader() {
           </button>
         </div>
       </div>
+
+      {/* Decision Transparency Log - What/Why/How for all bot decisions */}
+      <DecisionLogViewer />
 
       {/* Strategy Performance Comparison Chart */}
       {strategies.length > 0 && (
