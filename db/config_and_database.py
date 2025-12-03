@@ -2396,6 +2396,116 @@ def init_database():
         )
     ''')
 
+    # ----- From quant/ module - Quant Enhancements -----
+
+    # walk_forward_results - Walk-forward optimization validation results
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS walk_forward_results (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            strategy_name TEXT NOT NULL,
+            symbol TEXT DEFAULT 'SPY',
+            total_windows INTEGER,
+            is_avg_win_rate REAL,
+            oos_avg_win_rate REAL,
+            degradation_pct REAL,
+            is_robust BOOLEAN DEFAULT FALSE,
+            recommended_params JSONB,
+            analysis_date TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ml_regime_models - ML regime classifier models and metrics
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ml_regime_models (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT DEFAULT 'SPY',
+            model_version TEXT NOT NULL,
+            accuracy REAL,
+            precision_score REAL,
+            recall_score REAL,
+            f1_score REAL,
+            samples_trained INTEGER,
+            samples_validated INTEGER,
+            feature_importances JSONB,
+            training_date TIMESTAMPTZ DEFAULT NOW(),
+            is_active BOOLEAN DEFAULT TRUE,
+            model_path TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ensemble_signals - Ensemble strategy combination signals
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ensemble_signals (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            final_signal TEXT NOT NULL,
+            confidence REAL,
+            bullish_weight REAL,
+            bearish_weight REAL,
+            neutral_weight REAL,
+            should_trade BOOLEAN DEFAULT FALSE,
+            position_size_multiplier REAL,
+            component_signals JSONB,
+            reasoning TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # monte_carlo_kelly - Monte Carlo Kelly stress test results
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS monte_carlo_kelly (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            strategy_name TEXT,
+            kelly_optimal REAL,
+            kelly_safe REAL,
+            kelly_conservative REAL,
+            prob_ruin_optimal REAL,
+            prob_ruin_safe REAL,
+            prob_50pct_drawdown_optimal REAL,
+            prob_50pct_drawdown_safe REAL,
+            var_95_safe REAL,
+            cvar_95_safe REAL,
+            estimated_win_rate REAL,
+            estimated_avg_win REAL,
+            estimated_avg_loss REAL,
+            sample_size INTEGER,
+            uncertainty_level TEXT,
+            recommendation TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # quant_recommendations - Complete quant-enhanced trading recommendations
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS quant_recommendations (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT DEFAULT 'SPY',
+            action TEXT NOT NULL,
+            confidence REAL,
+            should_trade BOOLEAN DEFAULT FALSE,
+            position_size_pct REAL,
+            position_value REAL,
+            kelly_safe REAL,
+            kelly_optimal REAL,
+            prob_ruin REAL,
+            var_95 REAL,
+            uncertainty_level TEXT,
+            ml_prediction JSONB,
+            ensemble_signal JSONB,
+            walk_forward_valid BOOLEAN DEFAULT TRUE,
+            reasoning TEXT,
+            warnings JSONB,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
     # ----- From gamma/gex_data_tracker.py -----
     # gex_snapshots_detailed - Detailed GEX snapshots with strike data
     c.execute('''
