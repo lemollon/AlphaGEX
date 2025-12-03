@@ -266,6 +266,7 @@ export const apiClient = {
   getAutonomousHealth: () => api.get('/api/autonomous/health'),
 
   // Decision Transparency Logs - What/Why/How for all bot decisions
+  // NOTE: These endpoints are at /api/trader not /api/autonomous
   getDecisionLogs: (params?: {
     bot?: string,
     start_date?: string,
@@ -273,22 +274,26 @@ export const apiClient = {
     decision_type?: string,
     symbol?: string,
     limit?: number
-  }) => api.get('/api/autonomous/logs/decisions', { params }),
+  }) => api.get('/api/trader/logs/decisions', { params }),
 
   exportDecisionLogsCSV: (params?: {
     bot?: string,
     start_date?: string,
     end_date?: string,
     symbol?: string
-  }) => api.get('/api/autonomous/logs/decisions/export', { params, responseType: 'blob' }),
+  }) => api.get('/api/trader/logs/decisions/export', { params, responseType: 'blob' }),
 
   getDecisionSummary: (params?: { bot?: string, days?: number }) =>
-    api.get('/api/autonomous/logs/summary', { params }),
+    api.get('/api/trader/logs/summary', { params }),
 
   getRecentDecisions: (params?: { bot?: string, limit?: number }) =>
-    api.get('/api/autonomous/logs/recent', { params }),
+    api.get('/api/trader/logs/recent', { params }),
 
-  getBotsStatus: () => api.get('/api/autonomous/bots/status'),
+  getBotsStatus: () => api.get('/api/trader/bots/status'),
+
+  // Reset bots to start fresh
+  resetBotData: (params?: { bot?: string, confirm?: boolean }) =>
+    api.post('/api/trader/bots/reset', null, { params }),
 
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {

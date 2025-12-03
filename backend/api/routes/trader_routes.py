@@ -2058,3 +2058,102 @@ async def get_all_bots_status():
     except Exception as e:
         logger.error(f"Error getting bots status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bots/reset")
+async def reset_bot_data(bot: str = None, confirm: bool = False):
+    """
+    Reset bot data to start fresh with proper tracking.
+
+    Args:
+        bot: Bot name to reset (PHOENIX, ATLAS) or None for all
+        confirm: Must be True to actually delete data
+
+    DANGEROUS: This deletes all historical trade data for the bot(s).
+    Only use when you want to start fresh with proper tracking.
+    """
+    if not confirm:
+        return {
+            "success": False,
+            "error": "Must set confirm=true to reset data. This action cannot be undone.",
+            "warning": "This will delete ALL historical trades, positions, and decisions for the bot(s)."
+        }
+
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        deleted_counts = {
+            "open_positions": 0,
+            "closed_trades": 0,
+            "decision_logs": 0,
+            "equity_snapshots": 0
+        }
+
+        # Build WHERE clause for bot filter
+        bot_filter = ""
+        bot_params = []
+        if bot:
+            bot_filter = " WHERE bot_name = %s" if "bot_name" in "bot_name" else ""
+            bot_params = [bot]
+
+        # Delete open positions
+        try:
+            if bot:
+                c.execute("DELETE FROM autonomous_open_positions WHERE symbol LIKE %s",
+                         ('%SPY%' if bot == 'PHOENIX' else '%SPX%',))
+            else:
+                c.execute("DELETE FROM autonomous_open_positions")
+            deleted_counts["open_positions"] = c.rowcount
+        except Exception:
+            pass
+
+        # Delete closed trades
+        try:
+            if bot:
+                c.execute("DELETE FROM autonomous_closed_trades WHERE symbol LIKE %s",
+                         ('%SPY%' if bot == 'PHOENIX' else '%SPX%',))
+            else:
+                c.execute("DELETE FROM autonomous_closed_trades")
+            deleted_counts["closed_trades"] = c.rowcount
+        except Exception:
+            pass
+
+        # Delete decision logs
+        try:
+            c.execute("DELETE FROM decision_logs" + (" WHERE bot_name = %s" if bot else ""),
+                     (bot,) if bot else ())
+            deleted_counts["decision_logs"] = c.rowcount
+        except Exception:
+            pass
+
+        # Delete equity snapshots (reset equity curve)
+        try:
+            c.execute("DELETE FROM autonomous_equity_snapshots")
+            deleted_counts["equity_snapshots"] = c.rowcount
+        except Exception:
+            pass
+
+        # Reset capital to starting value
+        try:
+            c.execute("""
+                INSERT INTO autonomous_config (key, value, updated_at)
+                VALUES ('capital', '1000000', NOW())
+                ON CONFLICT (key) DO UPDATE SET value = '1000000', updated_at = NOW()
+            """)
+        except Exception:
+            pass
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": f"Bot data reset successfully{' for ' + bot if bot else ' for all bots'}",
+            "deleted": deleted_counts,
+            "note": "Bots will start fresh with proper tracking on next run"
+        }
+
+    except Exception as e:
+        logger.error(f"Error resetting bot data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
