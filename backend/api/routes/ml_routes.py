@@ -665,33 +665,12 @@ def _get_data_recommendation(count: int, win_rate: float) -> str:
 # ============================================================================
 
 def _ensure_ml_logs_table():
-    """Create ML logs table if not exists"""
-    try:
-        from database_adapter import get_connection
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS ml_decision_logs (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                action VARCHAR(50) NOT NULL,
-                symbol VARCHAR(20) DEFAULT 'SPX',
-                details JSONB,
-                ml_score DECIMAL(5,4),
-                recommendation VARCHAR(20),
-                reasoning TEXT,
-                trade_id VARCHAR(50),
-                backtest_id VARCHAR(50)
-            )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_ml_logs_ts ON ml_decision_logs(timestamp DESC)')
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"Error creating ML logs table: {e}")
-        return False
+    """
+    Verify ML logs table exists.
+    NOTE: Table 'ml_decision_logs' is now defined in db/config_and_database.py (single source of truth).
+    """
+    # Table is created by main schema - just return True
+    return True
 
 
 def log_ml_action(action: str, details: dict, ml_score: float = None,

@@ -307,15 +307,7 @@ class SPXWheelOptimizer:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Ensure table exists
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS spx_wheel_parameters (
-                    id SERIAL PRIMARY KEY,
-                    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    parameters JSONB NOT NULL,
-                    is_active BOOLEAN DEFAULT TRUE
-                )
-            ''')
+            # NOTE: Table 'spx_wheel_parameters' is defined in db/config_and_database.py (single source of truth)
 
             # Deactivate old parameters
             cursor.execute("UPDATE spx_wheel_parameters SET is_active = FALSE")
@@ -425,49 +417,13 @@ class SPXWheelTrader:
         return WheelParameters()
 
     def _ensure_tables(self):
-        """Create required tables"""
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS spx_wheel_positions (
-                    id SERIAL PRIMARY KEY,
-                    opened_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    closed_at TIMESTAMPTZ,
-                    status VARCHAR(20) DEFAULT 'OPEN',
-                    option_ticker VARCHAR(50),
-                    strike DECIMAL(10,2),
-                    expiration DATE,
-                    contracts INTEGER,
-                    entry_price DECIMAL(10,4),
-                    exit_price DECIMAL(10,4),
-                    premium_received DECIMAL(12,2),
-                    settlement_pnl DECIMAL(12,2),
-                    total_pnl DECIMAL(12,2),
-                    parameters_used JSONB,
-                    notes TEXT
-                )
-            ''')
-
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS spx_wheel_performance (
-                    id SERIAL PRIMARY KEY,
-                    date DATE UNIQUE,
-                    equity DECIMAL(14,2),
-                    daily_pnl DECIMAL(12,2),
-                    cumulative_pnl DECIMAL(12,2),
-                    open_positions INTEGER,
-                    backtest_expected_equity DECIMAL(14,2),
-                    divergence_pct DECIMAL(8,4)
-                )
-            ''')
-
-            conn.commit()
-            conn.close()
-
-        except Exception as e:
-            logger.error(f"Failed to create tables: {e}")
+        """
+        Verify required tables exist.
+        NOTE: Tables 'spx_wheel_positions' and 'spx_wheel_performance' are now
+        defined in db/config_and_database.py (single source of truth).
+        """
+        # Tables are created by main schema - no action needed
+        logger.info("SPX wheel tables expected from main schema (db/config_and_database.py)")
 
     def run_daily_cycle(self) -> Dict:
         """

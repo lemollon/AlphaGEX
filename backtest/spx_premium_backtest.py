@@ -68,27 +68,7 @@ def save_backtest_equity_curve_to_db(snapshots: List, backtest_id: str):
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create equity curve table if not exists
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS spx_wheel_backtest_equity (
-                id SERIAL PRIMARY KEY,
-                backtest_id VARCHAR(50) NOT NULL,
-                date VARCHAR(20),
-                equity DECIMAL(14,2),
-                cash_balance DECIMAL(14,2),
-                open_position_value DECIMAL(14,2),
-                daily_pnl DECIMAL(12,2),
-                cumulative_pnl DECIMAL(14,2),
-                peak_equity DECIMAL(14,2),
-                drawdown_pct DECIMAL(8,4),
-                open_puts INTEGER,
-                margin_used DECIMAL(14,2)
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_backtest_equity_id ON spx_wheel_backtest_equity(backtest_id)
-        ''')
+        # NOTE: Table 'spx_wheel_backtest_equity' is defined in db/config_and_database.py (single source of truth)
 
         # Insert snapshots
         for snap in snapshots:
@@ -139,36 +119,7 @@ def save_backtest_trades_to_db(trades: List, backtest_id: str, parameters: Dict 
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create backtest trades table if not exists
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS spx_wheel_backtest_trades (
-                id SERIAL PRIMARY KEY,
-                backtest_id VARCHAR(50) NOT NULL,
-                backtest_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                trade_id INTEGER,
-                trade_date VARCHAR(20),
-                trade_type VARCHAR(30),
-                option_ticker VARCHAR(50),
-                strike DECIMAL(10,2),
-                expiration VARCHAR(20),
-                entry_price DECIMAL(10,4),
-                exit_price DECIMAL(10,4),
-                contracts INTEGER,
-                premium_received DECIMAL(12,2),
-                settlement_pnl DECIMAL(12,2),
-                total_pnl DECIMAL(12,2),
-                price_source VARCHAR(30),
-                entry_underlying_price DECIMAL(10,2),
-                exit_underlying_price DECIMAL(10,2),
-                notes TEXT,
-                parameters JSONB
-            )
-        ''')
-
-        # Create index for fast lookups
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_backtest_id ON spx_wheel_backtest_trades(backtest_id)
-        ''')
+        # NOTE: Table 'spx_wheel_backtest_trades' is defined in db/config_and_database.py (single source of truth)
 
         # Insert trades
         for trade in trades:

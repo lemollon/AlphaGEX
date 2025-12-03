@@ -360,27 +360,7 @@ def save_multi_leg_position(position: MultiLegPosition) -> int:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create multi-leg positions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS spx_wheel_multileg_positions (
-                id SERIAL PRIMARY KEY,
-                opened_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                closed_at TIMESTAMPTZ,
-                status VARCHAR(20) DEFAULT 'OPEN',
-                strategy_type VARCHAR(30),
-                expiration DATE,
-                contracts INTEGER,
-                legs JSONB,
-                max_profit DECIMAL(12,2),
-                max_loss DECIMAL(12,2),
-                breakeven DECIMAL(10,2),
-                credit_received DECIMAL(12,2),
-                margin_required DECIMAL(12,2),
-                entry_underlying_price DECIMAL(10,2),
-                exit_pnl DECIMAL(12,2),
-                notes TEXT
-            )
-        ''')
+        # NOTE: Table 'spx_wheel_multileg_positions' is defined in db/config_and_database.py (single source of truth)
 
         # Serialize legs
         legs_json = [asdict(leg) for leg in position.legs]

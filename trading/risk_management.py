@@ -215,21 +215,7 @@ def save_greeks_to_db(greeks: PositionGreeks):
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create Greeks table if not exists
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS spx_wheel_greeks (
-                id SERIAL PRIMARY KEY,
-                position_id INTEGER,
-                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                delta DECIMAL(8,6),
-                gamma DECIMAL(8,6),
-                theta DECIMAL(8,4),
-                vega DECIMAL(8,4),
-                iv DECIMAL(8,6),
-                underlying_price DECIMAL(10,2),
-                option_price DECIMAL(10,4)
-            )
-        ''')
+        # NOTE: Table 'spx_wheel_greeks' is defined in db/config_and_database.py (single source of truth)
 
         cursor.execute('''
             INSERT INTO spx_wheel_greeks (
@@ -511,17 +497,7 @@ def save_reconciliation_to_db(result: Dict):
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS spx_wheel_reconciliation (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                db_count INTEGER,
-                broker_count INTEGER,
-                matched_count INTEGER,
-                is_reconciled BOOLEAN,
-                details JSONB
-            )
-        ''')
+        # NOTE: Table 'spx_wheel_reconciliation' is defined in db/config_and_database.py (single source of truth)
 
         cursor.execute('''
             INSERT INTO spx_wheel_reconciliation (
