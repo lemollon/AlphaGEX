@@ -229,3 +229,66 @@ async def get_recent_ml_predictions():
 
     except Exception as e:
         return {"success": False, "error": str(e), "data": []}
+
+
+@router.get("/positions")
+async def get_autonomous_positions(status: str = "open"):
+    """Get positions (open, closed, or all)"""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        positions = []
+
+        if status in ("open", "all"):
+            c.execute("""
+                SELECT id, symbol, strategy, strike, option_type, contracts,
+                       entry_price, current_price, unrealized_pnl, entry_date,
+                       'open' as status
+                FROM autonomous_open_positions
+                ORDER BY entry_date DESC
+            """)
+            for row in c.fetchall():
+                positions.append({
+                    'id': row[0],
+                    'symbol': row[1],
+                    'strategy': row[2],
+                    'strike': float(row[3]) if row[3] else 0,
+                    'option_type': row[4],
+                    'contracts': row[5],
+                    'entry_price': float(row[6]) if row[6] else 0,
+                    'current_price': float(row[7]) if row[7] else 0,
+                    'pnl': float(row[8]) if row[8] else 0,
+                    'entry_date': str(row[9]) if row[9] else None,
+                    'status': 'open'
+                })
+
+        if status in ("closed", "all"):
+            c.execute("""
+                SELECT id, symbol, strategy, strike, option_type, contracts,
+                       entry_price, exit_price, realized_pnl, entry_date,
+                       'closed' as status
+                FROM autonomous_closed_trades
+                ORDER BY exit_date DESC
+                LIMIT 50
+            """)
+            for row in c.fetchall():
+                positions.append({
+                    'id': row[0],
+                    'symbol': row[1],
+                    'strategy': row[2],
+                    'strike': float(row[3]) if row[3] else 0,
+                    'option_type': row[4],
+                    'contracts': row[5],
+                    'entry_price': float(row[6]) if row[6] else 0,
+                    'exit_price': float(row[7]) if row[7] else 0,
+                    'pnl': float(row[8]) if row[8] else 0,
+                    'entry_date': str(row[9]) if row[9] else None,
+                    'status': 'closed'
+                })
+
+        conn.close()
+        return {"success": True, "data": positions, "positions": positions}
+
+    except Exception as e:
+        return {"success": False, "error": str(e), "positions": []}

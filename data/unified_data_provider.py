@@ -38,7 +38,7 @@ except ImportError:
     logger.warning("Polygon not available - some historical features may be limited")
 
 try:
-    from trading_volatility_api import TradingVolatilityAPI
+    from core_classes_and_engines import TradingVolatilityAPI
     TRADING_VOL_AVAILABLE = True
 except ImportError:
     logger.warning("Trading Volatility API not available - GEX data will be unavailable")
