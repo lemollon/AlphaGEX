@@ -39,6 +39,14 @@ def get_db_connection():
     return _db_connection()
 
 
+class BotName(Enum):
+    """Names for each trading bot"""
+    PHOENIX = "PHOENIX"  # AutonomousPaperTrader - 0DTE SPY/SPX
+    ATLAS = "ATLAS"      # SPXWheelTrader - SPX Cash-Secured Put Wheel
+    HERMES = "HERMES"    # WheelStrategyManager - Manual Wheel via UI
+    ORACLE = "ORACLE"    # MultiStrategyOptimizer - Advisory/Recommendations
+
+
 class DecisionType(Enum):
     """Types of trading decisions"""
     ENTRY_SIGNAL = "ENTRY_SIGNAL"
@@ -49,6 +57,13 @@ class DecisionType(Enum):
     RISK_CHECK = "RISK_CHECK"
     NO_TRADE = "NO_TRADE"
     ADJUSTMENT = "ADJUSTMENT"
+    STAY_FLAT = "STAY_FLAT"
+    RISK_BLOCKED = "RISK_BLOCKED"
+    ML_PREDICTION = "ML_PREDICTION"
+    ENSEMBLE_SIGNAL = "ENSEMBLE_SIGNAL"
+    KELLY_CALCULATION = "KELLY_CALCULATION"
+    ROLL_DECISION = "ROLL_DECISION"
+    CALIBRATION = "CALIBRATION"
 
 
 class DataSource(Enum):
@@ -151,6 +166,12 @@ class TradeDecision:
     decision_id: str
     timestamp: str
     decision_type: DecisionType
+    bot_name: BotName = BotName.PHOENIX  # Which bot made this decision
+
+    # The Three Keys: What, Why, How (human-readable summary)
+    what: str = ""  # Brief: "BUY 2x SPY $590C expiring today"
+    why: str = ""   # Full reasoning chain
+    how: str = ""   # Calculation details (Kelly, Monte Carlo, etc.)
 
     # What was decided
     action: str  # 'BUY', 'SELL', 'HOLD', 'SKIP'
@@ -586,3 +607,324 @@ def get_decision_logger() -> DecisionLogger:
     if _decision_logger is None:
         _decision_logger = DecisionLogger()
     return _decision_logger
+
+
+# =============================================================================
+# EXPORT FUNCTIONS - For monitoring, analysis, and optimization
+# =============================================================================
+
+def export_decisions_json(
+    bot_name: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    decision_type: str = None,
+    symbol: str = None,
+    limit: int = 1000
+) -> List[Dict]:
+    """
+    Export decision logs as JSON list.
+
+    Args:
+        bot_name: Filter by bot (PHOENIX, ATLAS, HERMES, ORACLE)
+        start_date: Filter from date (YYYY-MM-DD)
+        end_date: Filter to date (YYYY-MM-DD)
+        decision_type: Filter by type (ENTRY_SIGNAL, STAY_FLAT, etc.)
+        symbol: Filter by symbol (SPY, SPX)
+        limit: Max records to return
+
+    Returns:
+        List of decision dictionaries with full details
+    """
+    conn = get_db_connection()
+    if not conn:
+        return []
+
+    try:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT
+                decision_id, timestamp, decision_type, action, symbol, strategy,
+                spot_price, vix, net_gex, gex_regime, market_regime, trend,
+                backtest_win_rate, backtest_expectancy, backtest_uses_real_data,
+                primary_reason, supporting_factors, risk_factors,
+                position_size_dollars, position_size_contracts, max_risk_dollars,
+                target_profit_pct, stop_loss_pct, prob_profit,
+                passed_risk_checks, actual_pnl, outcome_notes,
+                full_decision
+            FROM trading_decisions
+            WHERE 1=1
+        """
+        params = []
+
+        if bot_name:
+            # Bot name stored in full_decision JSON
+            query += " AND full_decision->>'bot_name' = %s"
+            params.append(bot_name)
+        if start_date:
+            query += " AND DATE(timestamp) >= %s"
+            params.append(start_date)
+        if end_date:
+            query += " AND DATE(timestamp) <= %s"
+            params.append(end_date)
+        if decision_type:
+            query += " AND decision_type = %s"
+            params.append(decision_type)
+        if symbol:
+            query += " AND symbol = %s"
+            params.append(symbol)
+
+        query += " ORDER BY timestamp DESC LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(query, params)
+        columns = [desc[0] for desc in cursor.description]
+        results = []
+
+        for row in cursor.fetchall():
+            record = dict(zip(columns, row))
+            # Convert datetime to string
+            if record.get('timestamp'):
+                record['timestamp'] = record['timestamp'].isoformat() if hasattr(record['timestamp'], 'isoformat') else str(record['timestamp'])
+            results.append(record)
+
+        cursor.close()
+        conn.close()
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Failed to export decisions: {e}")
+        return []
+
+
+def export_decisions_csv(
+    bot_name: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    symbol: str = None
+) -> str:
+    """
+    Export decision logs as CSV string for download.
+
+    Returns CSV with key columns for analysis.
+    """
+    decisions = export_decisions_json(bot_name, start_date, end_date, symbol=symbol, limit=10000)
+
+    if not decisions:
+        return "timestamp,bot,decision_type,action,symbol,strategy,spot_price,vix,net_gex,regime,reason,position_size,pnl\n"
+
+    lines = ["timestamp,bot,decision_type,action,symbol,strategy,spot_price,vix,net_gex,regime,reason,position_size,pnl"]
+
+    for d in decisions:
+        # Extract bot name from full_decision if available
+        full_dec = d.get('full_decision') or {}
+        bot = full_dec.get('bot_name', 'PHOENIX') if isinstance(full_dec, dict) else 'PHOENIX'
+
+        reason = (d.get('primary_reason') or '')[:100].replace(',', ';').replace('\n', ' ')
+
+        line = ','.join([
+            str(d.get('timestamp', '')),
+            bot,
+            str(d.get('decision_type', '')),
+            str(d.get('action', '')),
+            str(d.get('symbol', '')),
+            str(d.get('strategy', '')),
+            str(d.get('spot_price', '')),
+            str(d.get('vix', '')),
+            str(d.get('net_gex', '')),
+            str(d.get('market_regime', '')),
+            f'"{reason}"',
+            str(d.get('position_size_dollars', '')),
+            str(d.get('actual_pnl', ''))
+        ])
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def get_bot_decision_summary(bot_name: str = None, days: int = 7) -> Dict:
+    """
+    Get summary statistics for bot decisions.
+
+    Returns:
+        {
+            'total_decisions': int,
+            'trades_executed': int,
+            'stay_flat_count': int,
+            'blocked_count': int,
+            'by_type': {'ENTRY_SIGNAL': 10, ...},
+            'by_bot': {'PHOENIX': 50, 'ATLAS': 20},
+            'avg_confidence': float,
+            'win_count': int,
+            'loss_count': int,
+            'total_pnl': float,
+            'avg_position_size': float
+        }
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {}
+
+    try:
+        cursor = conn.cursor()
+
+        params = [days]
+        bot_filter = ""
+        if bot_name:
+            bot_filter = "AND full_decision->>'bot_name' = %s"
+            params.append(bot_name)
+
+        # Main stats
+        cursor.execute(f"""
+            SELECT
+                COUNT(*) as total,
+                COUNT(CASE WHEN action IN ('BUY', 'SELL') THEN 1 END) as trades,
+                COUNT(CASE WHEN decision_type = 'NO_TRADE' THEN 1 END) as stay_flat,
+                COUNT(CASE WHEN decision_type = 'RISK_CHECK' AND passed_risk_checks = false THEN 1 END) as blocked,
+                AVG(prob_profit) as avg_confidence,
+                COUNT(CASE WHEN actual_pnl > 0 THEN 1 END) as wins,
+                COUNT(CASE WHEN actual_pnl < 0 THEN 1 END) as losses,
+                SUM(COALESCE(actual_pnl, 0)) as total_pnl,
+                AVG(position_size_dollars) as avg_position
+            FROM trading_decisions
+            WHERE timestamp >= NOW() - INTERVAL '%s days'
+            {bot_filter}
+        """, params)
+
+        row = cursor.fetchone()
+
+        # By decision type
+        cursor.execute(f"""
+            SELECT decision_type, COUNT(*)
+            FROM trading_decisions
+            WHERE timestamp >= NOW() - INTERVAL '%s days'
+            {bot_filter}
+            GROUP BY decision_type
+        """, params)
+        by_type = dict(cursor.fetchall())
+
+        # By bot (if not filtered)
+        by_bot = {}
+        if not bot_name:
+            cursor.execute("""
+                SELECT
+                    COALESCE(full_decision->>'bot_name', 'PHOENIX') as bot,
+                    COUNT(*)
+                FROM trading_decisions
+                WHERE timestamp >= NOW() - INTERVAL '%s days'
+                GROUP BY COALESCE(full_decision->>'bot_name', 'PHOENIX')
+            """, [days])
+            by_bot = dict(cursor.fetchall())
+
+        cursor.close()
+        conn.close()
+
+        return {
+            'total_decisions': row[0] or 0,
+            'trades_executed': row[1] or 0,
+            'stay_flat_count': row[2] or 0,
+            'blocked_count': row[3] or 0,
+            'avg_confidence': round(row[4] or 0, 1),
+            'win_count': row[5] or 0,
+            'loss_count': row[6] or 0,
+            'total_pnl': round(row[7] or 0, 2),
+            'avg_position_size': round(row[8] or 0, 2),
+            'by_type': by_type,
+            'by_bot': by_bot
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get decision summary: {e}")
+        return {}
+
+
+def get_recent_decisions(bot_name: str = None, limit: int = 20) -> List[Dict]:
+    """
+    Get recent decisions for dashboard display.
+
+    Returns simplified records with key fields for quick viewing.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return []
+
+    try:
+        cursor = conn.cursor()
+
+        params = []
+        bot_filter = ""
+        if bot_name:
+            bot_filter = "WHERE full_decision->>'bot_name' = %s"
+            params.append(bot_name)
+
+        cursor.execute(f"""
+            SELECT
+                decision_id,
+                timestamp,
+                decision_type,
+                action,
+                symbol,
+                strategy,
+                spot_price,
+                primary_reason,
+                position_size_dollars,
+                actual_pnl,
+                COALESCE(full_decision->>'bot_name', 'PHOENIX') as bot_name,
+                COALESCE(full_decision->>'what', '') as what_summary,
+                COALESCE(full_decision->>'why', '') as why_summary
+            FROM trading_decisions
+            {bot_filter}
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, params + [limit])
+
+        columns = [desc[0] for desc in cursor.description]
+        results = []
+
+        for row in cursor.fetchall():
+            record = dict(zip(columns, row))
+            if record.get('timestamp'):
+                record['timestamp'] = record['timestamp'].isoformat() if hasattr(record['timestamp'], 'isoformat') else str(record['timestamp'])
+            results.append(record)
+
+        cursor.close()
+        conn.close()
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Failed to get recent decisions: {e}")
+        return []
+
+
+# Bot-specific loggers for convenience
+_bot_loggers: Dict[str, DecisionLogger] = {}
+
+
+def get_phoenix_logger() -> DecisionLogger:
+    """Get logger for PHOENIX bot (0DTE)"""
+    if 'PHOENIX' not in _bot_loggers:
+        _bot_loggers['PHOENIX'] = DecisionLogger()
+    return _bot_loggers['PHOENIX']
+
+
+def get_atlas_logger() -> DecisionLogger:
+    """Get logger for ATLAS bot (Wheel)"""
+    if 'ATLAS' not in _bot_loggers:
+        _bot_loggers['ATLAS'] = DecisionLogger()
+    return _bot_loggers['ATLAS']
+
+
+def get_hermes_logger() -> DecisionLogger:
+    """Get logger for HERMES (Manual Wheel)"""
+    if 'HERMES' not in _bot_loggers:
+        _bot_loggers['HERMES'] = DecisionLogger()
+    return _bot_loggers['HERMES']
+
+
+def get_oracle_logger() -> DecisionLogger:
+    """Get logger for ORACLE (Advisor)"""
+    if 'ORACLE' not in _bot_loggers:
+        _bot_loggers['ORACLE'] = DecisionLogger()
+    return _bot_loggers['ORACLE']

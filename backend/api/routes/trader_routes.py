@@ -1809,3 +1809,228 @@ async def get_quant_recommendation(symbol: str):
     except Exception as e:
         logger.error(f"Error getting quant recommendation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# BOT DECISION LOG ENDPOINTS - Export and monitor what/why/how for each trade
+# =============================================================================
+
+@router.get("/logs/decisions")
+async def get_decision_logs(
+    bot: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    decision_type: str = None,
+    symbol: str = None,
+    limit: int = 100
+):
+    """
+    Get decision logs for all bots or a specific bot.
+
+    Args:
+        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        start_date: Filter from date (YYYY-MM-DD)
+        end_date: Filter to date (YYYY-MM-DD)
+        decision_type: Filter by type (ENTRY_SIGNAL, STAY_FLAT, etc.)
+        symbol: Filter by symbol (SPY, SPX)
+        limit: Max records (default 100)
+
+    Returns detailed decision logs with what/why/how for each decision.
+    """
+    try:
+        from trading.decision_logger import export_decisions_json
+
+        decisions = export_decisions_json(
+            bot_name=bot,
+            start_date=start_date,
+            end_date=end_date,
+            decision_type=decision_type,
+            symbol=symbol,
+            limit=min(limit, 1000)
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "count": len(decisions),
+                "decisions": decisions,
+                "filters": {
+                    "bot": bot,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "decision_type": decision_type,
+                    "symbol": symbol
+                }
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting decision logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/logs/decisions/export")
+async def export_decision_logs_csv(
+    bot: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    symbol: str = None
+):
+    """
+    Export decision logs as CSV for download.
+
+    Returns CSV with columns:
+    timestamp, bot, decision_type, action, symbol, strategy, spot_price,
+    vix, net_gex, regime, reason, position_size, pnl
+    """
+    try:
+        from trading.decision_logger import export_decisions_csv
+        from fastapi.responses import Response
+
+        csv_content = export_decisions_csv(
+            bot_name=bot,
+            start_date=start_date,
+            end_date=end_date,
+            symbol=symbol
+        )
+
+        filename = f"alphagex_decisions_{bot or 'all'}_{datetime.now().strftime('%Y%m%d')}.csv"
+
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error exporting decision logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/logs/summary")
+async def get_decision_summary(bot: str = None, days: int = 7):
+    """
+    Get summary statistics for bot decisions.
+
+    Args:
+        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        days: Number of days to look back (default 7)
+
+    Returns:
+        Summary with total decisions, trades, wins/losses, P&L by bot
+    """
+    try:
+        from trading.decision_logger import get_bot_decision_summary
+
+        summary = get_bot_decision_summary(bot_name=bot, days=days)
+
+        return {
+            "success": True,
+            "data": {
+                "period_days": days,
+                "bot_filter": bot or "all",
+                "summary": summary,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting decision summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/logs/recent")
+async def get_recent_decision_logs(bot: str = None, limit: int = 20):
+    """
+    Get recent decisions for dashboard display.
+
+    Args:
+        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        limit: Number of recent decisions (default 20)
+
+    Returns simplified decision records for quick viewing.
+    """
+    try:
+        from trading.decision_logger import get_recent_decisions
+
+        decisions = get_recent_decisions(bot_name=bot, limit=min(limit, 100))
+
+        return {
+            "success": True,
+            "data": {
+                "count": len(decisions),
+                "bot_filter": bot or "all",
+                "decisions": decisions,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting recent decisions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/bots/status")
+async def get_all_bots_status():
+    """
+    Get status of all trading bots.
+
+    Returns status for: PHOENIX, ATLAS, HERMES, ORACLE
+    """
+    try:
+        from trading.decision_logger import get_bot_decision_summary
+
+        bots = {
+            "PHOENIX": {
+                "name": "PHOENIX",
+                "description": "0DTE SPY/SPX Options Trader",
+                "type": "autonomous",
+                "scheduled": True,
+                "capital_allocation": 400000,
+                "strategy": "0DTE directional + premium selling"
+            },
+            "ATLAS": {
+                "name": "ATLAS",
+                "description": "SPX Cash-Secured Put Wheel",
+                "type": "autonomous",
+                "scheduled": False,  # Not yet scheduled
+                "capital_allocation": 500000,
+                "strategy": "Weekly CSP wheel with ML"
+            },
+            "HERMES": {
+                "name": "HERMES",
+                "description": "Manual Wheel Strategy Manager",
+                "type": "manual",
+                "scheduled": False,
+                "capital_allocation": 0,
+                "strategy": "User-initiated wheel trades"
+            },
+            "ORACLE": {
+                "name": "ORACLE",
+                "description": "Strategy Recommendation Engine",
+                "type": "advisory",
+                "scheduled": False,
+                "capital_allocation": 0,
+                "strategy": "12-strategy comparison"
+            }
+        }
+
+        # Get decision counts for each bot
+        for bot_name in bots:
+            summary = get_bot_decision_summary(bot_name=bot_name, days=7)
+            bots[bot_name]["last_7_days"] = {
+                "decisions": summary.get("total_decisions", 0),
+                "trades": summary.get("trades_executed", 0),
+                "pnl": summary.get("total_pnl", 0)
+            }
+
+        return {
+            "success": True,
+            "data": {
+                "bots": bots,
+                "active_count": sum(1 for b in bots.values() if b["scheduled"]),
+                "total_capital": sum(b["capital_allocation"] for b in bots.values()),
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting bots status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
