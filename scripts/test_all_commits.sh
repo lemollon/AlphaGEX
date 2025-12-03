@@ -24,7 +24,8 @@
 #   ./scripts/test_all_commits.sh --python  # Only Python verification
 # =============================================================================
 
-set -e
+# Don't exit on first error - we want to run all tests
+set +e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -43,9 +44,9 @@ PASSED=0
 FAILED=0
 WARNINGS=0
 
-log_pass() { echo -e "  ${GREEN}✓${NC} $1"; ((PASSED++)); }
-log_fail() { echo -e "  ${RED}✗${NC} $1"; ((FAILED++)); }
-log_warn() { echo -e "  ${YELLOW}⚠${NC} $1"; ((WARNINGS++)); }
+log_pass() { echo -e "  ${GREEN}✓${NC} $1"; PASSED=$((PASSED+1)); }
+log_fail() { echo -e "  ${RED}✗${NC} $1"; FAILED=$((FAILED+1)); }
+log_warn() { echo -e "  ${YELLOW}⚠${NC} $1"; WARNINGS=$((WARNINGS+1)); }
 log_info() { echo -e "  ${BLUE}ℹ${NC} $1"; }
 
 echo ""
