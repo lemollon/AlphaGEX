@@ -227,9 +227,9 @@ class TradeDecision:
     how: str = ""   # Calculation details (Kelly, Monte Carlo, etc.)
 
     # What was decided
-    action: str  # 'BUY', 'SELL', 'HOLD', 'SKIP'
-    symbol: str
-    strategy: str
+    action: str = ""  # 'BUY', 'SELL', 'HOLD', 'SKIP'
+    symbol: str = ""
+    strategy: str = ""
 
     # =========================================================================
     # TRADE LEGS - Complete data for each leg of the trade
