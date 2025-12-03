@@ -15,13 +15,15 @@ This document is the **single source of truth** for all database tables in Alpha
 
 | Category | Tables | Status |
 |----------|--------|--------|
-| Core Trading | 15 | Active |
-| Market Data | 12 | Active |
-| AI/ML | 6 | Active |
-| Backtest | 8 | Active |
-| User Features | 10 | User-Activated |
-| System | 5 | Active |
-| **Total** | **56** | |
+| Core Trading | 18 | Active |
+| Market Data | 16 | Active |
+| AI/ML | 10 | Active |
+| Backtest | 11 | Active |
+| User Features | 12 | User-Activated |
+| System | 8 | Active |
+| Validation/Debug | 5 | Development |
+| Planned (Orphaned) | 4 | Not Yet Wired |
+| **Total** | **84** | |
 
 ---
 
@@ -409,6 +411,181 @@ These tables have INSERT methods in `services/data_collector.py` but need to be 
 
 ---
 
+## Additional Core Trading Tables
+
+### autonomous_positions
+- **Purpose:** Raw autonomous positions table (internal)
+- **Timestamp Column:** `created_at`
+- **Insert Source:** `core/autonomous_paper_trader.py`
+- **Frequency:** Per position
+
+### autonomous_trader_logs
+- **Purpose:** Detailed trader action logs
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `core/autonomous_paper_trader.py`
+- **Frequency:** Per action
+
+### account_state
+- **Purpose:** Account state snapshots
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** Trading engine
+- **Frequency:** Per update
+
+---
+
+## Additional Market Data Tables
+
+### gamma_expiration_timeline
+- **Purpose:** Gamma expiration timeline tracking
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `gamma/gamma_tracking_database.py`
+- **Frequency:** Daily
+
+### forward_magnets
+- **Purpose:** Forward magnet levels
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `gamma/gex_data_tracker.py`
+- **Frequency:** Per calculation
+
+### options_chain_snapshots
+- **Purpose:** Full options chain snapshots
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `data/option_chain_collector.py`
+- **Frequency:** Per collection
+
+### options_collection_log
+- **Purpose:** Options collection audit log
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `data/option_chain_collector.py`
+- **Frequency:** Per collection
+
+---
+
+## Additional AI/ML Tables
+
+### ml_models
+- **Purpose:** ML model registry
+- **Timestamp Column:** `created_at`
+- **Insert Source:** ML pipeline
+- **Frequency:** Per model training
+
+### calibration_history
+- **Purpose:** Probability calibration history
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `core/probability_calculator.py`
+- **Frequency:** Per calibration
+
+### probability_outcomes
+- **Purpose:** Probability prediction outcomes
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `core/probability_calculator.py`
+- **Frequency:** Per prediction
+
+### probability_weights
+- **Purpose:** Probability weight factors
+- **Timestamp Column:** `updated_at`
+- **Insert Source:** `core/probability_calculator.py`
+- **Frequency:** Per weight update
+
+---
+
+## Additional Backtest Tables
+
+### dte_performance
+- **Purpose:** DTE (Days to Expiration) performance tracking
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** Backtest engine
+- **Frequency:** Per backtest
+
+### strike_performance
+- **Purpose:** Strike-level performance tracking
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** Backtest engine
+- **Frequency:** Per backtest
+
+### spread_width_performance
+- **Purpose:** Spread width performance analysis
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** Backtest engine
+- **Frequency:** Per backtest
+
+### greeks_performance
+- **Purpose:** Greeks-based performance tracking
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** Backtest engine
+- **Frequency:** Per backtest
+
+---
+
+## Additional User Feature Tables
+
+### scanner_history
+- **Purpose:** Scanner run history
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `backend/api/routes/scanner_routes.py`
+- **Frequency:** Per scan
+
+### strategy_config
+- **Purpose:** Strategy configuration storage
+- **Timestamp Column:** `updated_at`
+- **Insert Source:** `backend/api/routes/trader_routes.py`
+- **Frequency:** Per config change
+
+### psychology_notifications
+- **Purpose:** Psychology alert notifications
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `core/psychology_trap_detector.py`
+- **Frequency:** Per notification
+
+### liberation_outcomes
+- **Purpose:** Liberation trade outcome tracking
+- **Timestamp Column:** `created_at`
+- **Insert Source:** `core/psychology_trap_detector.py`
+- **Frequency:** Per liberation event
+
+---
+
+## Debug/Development Tables
+
+### spx_debug_logs
+- **Purpose:** SPX system debug logging
+- **Timestamp Column:** `timestamp`
+- **Insert Source:** `utils/spx_debug_logger.py`
+- **Frequency:** Development only
+
+---
+
+## Planned Tables (Orphaned - Not Yet Wired)
+
+> **Note:** These tables are defined in the schema but have no INSERT/SELECT statements yet.
+> They represent planned features and should NOT be deleted.
+
+### backtest_runs
+- **Purpose:** Backtest run metadata and tracking
+- **Timestamp Column:** `started_at`
+- **Status:** ⚠️ Planned - INSERT not yet wired
+- **Future Use:** Will track individual backtest executions
+
+### gex_change_log
+- **Purpose:** GEX change event logging
+- **Timestamp Column:** `timestamp`
+- **Status:** ⚠️ Planned - INSERT not yet wired
+- **Future Use:** Will log significant GEX changes for analysis
+
+### spx_institutional_positions
+- **Purpose:** SPX institutional position tracking
+- **Timestamp Column:** `timestamp`
+- **Status:** ⚠️ Planned - INSERT not yet wired
+- **Future Use:** Will track institutional SPX positions
+
+### strategy_comparison_history
+- **Purpose:** Strategy comparison results storage
+- **Timestamp Column:** `timestamp`
+- **Status:** ⚠️ Planned - INSERT not yet wired
+- **Future Use:** Will store strategy comparison analysis
+
+---
+
 ## Schema Rules
 
 ### DO:
@@ -438,4 +615,5 @@ These tables have INSERT methods in `services/data_collector.py` but need to be 
 
 | Date | Change | Author |
 |------|--------|--------|
+| 2025-12-03 | Updated to 84 tables, documented orphaned tables | Claude |
 | 2025-12-03 | Initial consolidation - 56 tables | Claude |
