@@ -265,6 +265,31 @@ export const apiClient = {
   initializeAutonomousSystem: () => api.post('/api/autonomous/initialize'),
   getAutonomousHealth: () => api.get('/api/autonomous/health'),
 
+  // Decision Transparency Logs - What/Why/How for all bot decisions
+  getDecisionLogs: (params?: {
+    bot?: string,
+    start_date?: string,
+    end_date?: string,
+    decision_type?: string,
+    symbol?: string,
+    limit?: number
+  }) => api.get('/api/autonomous/logs/decisions', { params }),
+
+  exportDecisionLogsCSV: (params?: {
+    bot?: string,
+    start_date?: string,
+    end_date?: string,
+    symbol?: string
+  }) => api.get('/api/autonomous/logs/decisions/export', { params, responseType: 'blob' }),
+
+  getDecisionSummary: (params?: { bot?: string, days?: number }) =>
+    api.get('/api/autonomous/logs/summary', { params }),
+
+  getRecentDecisions: (params?: { bot?: string, limit?: number }) =>
+    api.get('/api/autonomous/logs/recent', { params }),
+
+  getBotsStatus: () => api.get('/api/autonomous/bots/status'),
+
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {
     symbol: string,

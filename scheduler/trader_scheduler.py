@@ -2,7 +2,31 @@
 Autonomous Trading Scheduler for Render Deployment
 Uses APScheduler to run trading logic during market hours
 Integrates seamlessly with Streamlit web service
+
+CAPITAL ALLOCATION:
+==================
+Total Capital: $1,000,000
+├── PHOENIX (0DTE SPY/SPX): $400,000 (40%)
+├── ATLAS (SPX Wheel):      $500,000 (50%)
+└── Reserve:                $100,000 (10%)
+
+This partitioning provides:
+- Aggressive short-term trading via PHOENIX
+- Steady premium collection via ATLAS wheel
+- Reserve for margin calls and opportunities
 """
+
+# ============================================================================
+# CAPITAL ALLOCATION CONFIGURATION
+# ============================================================================
+CAPITAL_ALLOCATION = {
+    'PHOENIX': 400_000,   # 0DTE options trading
+    'ATLAS': 500_000,     # SPX wheel strategy
+    'RESERVE': 100_000,   # Emergency reserve
+    'TOTAL': 1_000_000,
+}
+
+# ============================================================================
 
 # Try to import APScheduler, but make it optional
 try:
@@ -24,6 +48,24 @@ import logging
 import traceback
 from pathlib import Path
 import json
+
+# Import ATLAS (SPX Wheel Trader)
+try:
+    from trading.spx_wheel_system import SPXWheelTrader, TradingMode
+    ATLAS_AVAILABLE = True
+except ImportError:
+    ATLAS_AVAILABLE = False
+    SPXWheelTrader = None
+    TradingMode = None
+    print("Warning: SPXWheelTrader not available. ATLAS bot will be disabled.")
+
+# Import decision logger for comprehensive logging
+try:
+    from trading.decision_logger import get_phoenix_logger, get_atlas_logger, BotName
+    DECISION_LOGGER_AVAILABLE = True
+except ImportError:
+    DECISION_LOGGER_AVAILABLE = False
+    print("Warning: Decision logger not available.")
 
 # Setup logging
 LOG_DIR = Path("logs")
@@ -54,13 +96,44 @@ class AutonomousTraderScheduler:
             return
 
         self.scheduler = None
-        self.trader = AutonomousPaperTrader()
+
+        # PHOENIX - 0DTE SPY/SPX Options Trader
+        # Capital: $400,000 (40% of total)
+        self.trader = AutonomousPaperTrader(
+            symbol='SPY',
+            capital=CAPITAL_ALLOCATION['PHOENIX']
+        )
         self.api_client = TradingVolatilityAPI()
+        logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital")
+
+        # ATLAS - SPX Cash-Secured Put Wheel Trader
+        # Capital: $500,000 (50% of total)
+        self.atlas_trader = None
+        if ATLAS_AVAILABLE:
+            try:
+                self.atlas_trader = SPXWheelTrader(
+                    mode=TradingMode.PAPER,
+                    initial_capital=CAPITAL_ALLOCATION['ATLAS']
+                )
+                logger.info(f"✅ ATLAS initialized with ${CAPITAL_ALLOCATION['ATLAS']:,} capital")
+            except Exception as e:
+                logger.warning(f"ATLAS initialization failed: {e}")
+                self.atlas_trader = None
+
+        # Log capital allocation summary
+        logger.info(f"📊 CAPITAL ALLOCATION:")
+        logger.info(f"   PHOENIX: ${CAPITAL_ALLOCATION['PHOENIX']:,}")
+        logger.info(f"   ATLAS:   ${CAPITAL_ALLOCATION['ATLAS']:,}")
+        logger.info(f"   RESERVE: ${CAPITAL_ALLOCATION['RESERVE']:,}")
+        logger.info(f"   TOTAL:   ${CAPITAL_ALLOCATION['TOTAL']:,}")
+
         self.is_running = False
         self.last_trade_check = None
         self.last_position_check = None
+        self.last_atlas_check = None
         self.last_error = None
         self.execution_count = 0
+        self.atlas_execution_count = 0
 
         # Load saved state from database
         self._load_state()
@@ -254,6 +327,72 @@ class AutonomousTraderScheduler:
             logger.info("Scheduler will continue despite error")
             logger.info(f"=" * 80)
 
+    def scheduled_atlas_logic(self):
+        """
+        ATLAS (SPX Wheel) trading logic - runs daily at 10:00 AM ET
+
+        The wheel strategy operates on a weekly basis:
+        - Sells cash-secured puts on SPX
+        - Manages positions through expiration
+        - Rolls when needed
+        - Tracks performance vs backtest
+        """
+        ny_tz = pytz.timezone('America/New_York')
+        now = datetime.now(ny_tz)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ATLAS (SPX Wheel) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.atlas_trader:
+            logger.warning("ATLAS trader not available - skipping")
+            return
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping ATLAS logic.")
+            return
+
+        logger.info("Market is OPEN. Running ATLAS wheel strategy...")
+
+        try:
+            self.last_atlas_check = now
+
+            # Run the daily wheel cycle
+            # This handles: new positions, expiration processing, roll checks
+            result = self.atlas_trader.run_daily_cycle()
+
+            if result:
+                logger.info(f"ATLAS daily cycle completed:")
+                logger.info(f"  SPX Price: ${result.get('spx_price', 0):,.2f}")
+                logger.info(f"  Open Positions: {result.get('open_positions', 0)}")
+                logger.info(f"  Actions taken: {result.get('actions', [])}")
+
+                # Log any new positions
+                if result.get('new_position'):
+                    logger.info(f"  NEW POSITION: {result.get('new_position')}")
+
+                # Log any rolls
+                if result.get('rolls'):
+                    for roll in result.get('rolls', []):
+                        logger.info(f"  ROLLED: {roll}")
+
+                # Log any expirations
+                if result.get('expirations'):
+                    for exp in result.get('expirations', []):
+                        logger.info(f"  EXPIRED: {exp}")
+            else:
+                logger.info("ATLAS: No actions taken today")
+
+            self.atlas_execution_count += 1
+            logger.info(f"ATLAS cycle #{self.atlas_execution_count} completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in ATLAS trading logic: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("ATLAS will continue despite error")
+            logger.info(f"=" * 80)
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -267,17 +406,19 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
+        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel)")
         logger.info(f"Timezone: America/New_York (Eastern Time)")
-        logger.info(f"Schedule: Every hour from 10:00 AM - 3:00 PM ET, Monday-Friday")
+        logger.info(f"PHOENIX Schedule: Every hour 10:00 AM - 3:00 PM ET, Mon-Fri")
+        logger.info(f"ATLAS Schedule: Daily at 10:00 AM ET, Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
         # Create scheduler with NY timezone
         self.scheduler = BackgroundScheduler(timezone='America/New_York')
 
-        # Add job: Run every hour from 10 AM to 3 PM ET, Monday-Friday
-        # This gives us: 10 AM, 11 AM, 12 PM, 1 PM, 2 PM, 3 PM (6 checks per day)
-        # We skip 9 AM (market just opened) and 4 PM (too close to close)
+        # =================================================================
+        # PHOENIX JOB: 0DTE Options - runs every hour 10 AM to 3 PM ET
+        # =================================================================
         self.scheduler.add_job(
             self.scheduled_trade_logic,
             trigger=CronTrigger(
@@ -286,10 +427,30 @@ class AutonomousTraderScheduler:
                 day_of_week='mon-fri',
                 timezone='America/New_York'
             ),
-            id='autonomous_trading',
-            name='Autonomous Trading Logic',
+            id='phoenix_trading',
+            name='PHOENIX - 0DTE Options Trading',
             replace_existing=True
         )
+
+        # =================================================================
+        # ATLAS JOB: SPX Wheel - runs once daily at 10:00 AM ET
+        # =================================================================
+        if self.atlas_trader:
+            self.scheduler.add_job(
+                self.scheduled_atlas_logic,
+                trigger=CronTrigger(
+                    hour=10,       # 10:00 AM - after market settles
+                    minute=5,      # 10:05 AM to avoid conflict with PHOENIX
+                    day_of_week='mon-fri',
+                    timezone='America/New_York'
+                ),
+                id='atlas_trading',
+                name='ATLAS - SPX Wheel Trading',
+                replace_existing=True
+            )
+            logger.info("✅ ATLAS job scheduled (10:05 AM ET daily)")
+        else:
+            logger.warning("⚠️ ATLAS not available - wheel trading disabled")
 
         self.scheduler.start()
         self.is_running = True
