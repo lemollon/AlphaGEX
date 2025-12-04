@@ -36,6 +36,9 @@ services:
           property: connectionString
 
   # SERVICE 2: Autonomous Trader (Background Worker)
+  # Runs BOTH bots:
+  #   - PHOENIX: 0DTE SPY/SPX options (hourly during market hours)
+  #   - ATLAS: SPX Wheel strategy (daily at 10:05 AM ET)
   - type: worker
     name: alphagex-trader
     runtime: python
@@ -43,7 +46,7 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: python scheduler/autonomous_scheduler.py --mode continuous
+    startCommand: python scheduler/trader_scheduler.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
