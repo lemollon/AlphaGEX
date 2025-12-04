@@ -27,7 +27,7 @@ from psychology_trap_detector import (
     analyze_current_market_complete,
     calculate_mtf_rsi_score
 )
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 from database_adapter import get_connection
 
 # CRITICAL: Import strategy_stats for unified backtest integration

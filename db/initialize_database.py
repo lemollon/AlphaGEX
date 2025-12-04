@@ -4,7 +4,7 @@ Initialize AlphaGEX Database
 Creates all required tables for the system
 """
 import sys
-from config_and_database import init_database
+from db.config_and_database import init_database
 from autonomous_paper_trader import AutonomousPaperTrader
 from database_adapter import get_connection
 

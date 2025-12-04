@@ -12,7 +12,7 @@ Usage:
 
 import sqlite3
 import sys
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 
 def enable_wal_mode():
     """Enable WAL mode on the database"""
