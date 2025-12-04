@@ -2,8 +2,8 @@
 
 import { logger } from '@/lib/logger'
 
-import { useState, useEffect } from 'react'
-import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle, Calendar, Clock } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle, Calendar, Clock, Loader2, CheckCircle, XCircle } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import SmartStrategyPicker from '@/components/SmartStrategyPicker'
 import { apiClient } from '@/lib/api'
@@ -30,6 +30,20 @@ interface BacktestResult {
   avg_trade_duration_days: number
 }
 
+interface BacktestJob {
+  job_id: string
+  job_type: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  progress_message: string | null
+  result: any | null
+  error: string | null
+  created_at: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number | null
+}
+
 export default function BacktestingPage() {
   const [results, setResults] = useState<BacktestResult[]>([])
   const [loading, setLoading] = useState(true)
@@ -37,14 +51,102 @@ export default function BacktestingPage() {
   const [error, setError] = useState<string | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
 
+  // Job tracking for async backtests
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [jobStatus, setJobStatus] = useState<BacktestJob | null>(null)
+
   // Filter states
   const [minExpectancy, setMinExpectancy] = useState<number>(0)
   const [showFilters, setShowFilters] = useState(false)
+
+  // Poll for job status when we have an active job
+  const pollJobStatus = useCallback(async (jobId: string) => {
+    try {
+      const response = await apiClient.getBacktestJobStatus(jobId)
+      if (response.data?.job) {
+        const job = response.data.job as BacktestJob
+        setJobStatus(job)
+
+        // If completed or failed, stop polling and refresh results
+        if (job.status === 'completed') {
+          setRunning(false)
+          setCurrentJobId(null)
+          await fetchResults()
+        } else if (job.status === 'failed') {
+          setRunning(false)
+          setCurrentJobId(null)
+          setRunError(job.error || 'Backtest failed')
+        }
+
+        return job.status
+      }
+    } catch (err) {
+      logger.error('Failed to poll job status:', err)
+    }
+    return null
+  }, [])
+
+  // Set up polling interval when job is active
+  useEffect(() => {
+    if (!currentJobId || !running) return
+
+    const intervalId = setInterval(async () => {
+      const status = await pollJobStatus(currentJobId)
+      if (status === 'completed' || status === 'failed') {
+        clearInterval(intervalId)
+      }
+    }, 2000) // Poll every 2 seconds
+
+    return () => clearInterval(intervalId)
+  }, [currentJobId, running, pollJobStatus])
 
   useEffect(() => {
     fetchResults()
   }, [])
 
+  const runBacktestsHandler = async () => {
+    setRunning(true)
+    setRunError(null)
+    setJobStatus(null)
+
+    try {
+      // Use async mode - job will be processed by background worker
+      const response = await apiClient.runBacktests({ async_mode: true })
+
+      if (response.data?.async && response.data?.job_id) {
+        // Async mode - start polling for status
+        setCurrentJobId(response.data.job_id)
+        setJobStatus({
+          job_id: response.data.job_id,
+          job_type: 'backtest',
+          status: 'pending',
+          progress: 0,
+          progress_message: 'Job queued...',
+          result: null,
+          error: null,
+          created_at: new Date().toISOString(),
+          started_at: null,
+          completed_at: null,
+          duration_seconds: null
+        })
+        // Polling will be handled by useEffect
+      } else if (response.data.success !== false) {
+        // Sync mode completed - refresh results
+        await fetchResults()
+        setRunning(false)
+      } else {
+        const data = response.data
+        setRunError(data.error || data.message || 'Failed to run backtests')
+        setRunning(false)
+      }
+    } catch (err: any) {
+      logger.error('Failed to run backtests:', err)
+      setRunError(err.message || 'Failed to connect to API')
+      setRunning(false)
+    }
+  }
+
+  // Fetch results function needs to be defined before the useCallback
   const fetchResults = async () => {
     try {
       setLoading(true)
@@ -63,27 +165,6 @@ export default function BacktestingPage() {
       setError('Failed to connect to API')
     } finally {
       setLoading(false)
-    }
-  }
-
-  const runBacktestsHandler = async () => {
-    setRunning(true)
-    setRunError(null)
-
-    try {
-      const response = await apiClient.runBacktests({})
-
-      if (response.data.success !== false) {
-        await fetchResults()
-      } else {
-        const data = response.data
-        setRunError(data.error || data.message || 'Failed to run backtests')
-      }
-    } catch (err: any) {
-      logger.error('Failed to run backtests:', err)
-      setRunError(err.message || 'Failed to connect to API')
-    } finally {
-      setRunning(false)
     }
   }
 
@@ -175,16 +256,41 @@ export default function BacktestingPage() {
             </div>
           )}
 
-          {/* Running State */}
+          {/* Running State with Progress */}
           {running && (
             <div className="bg-purple-500/10 border border-purple-500 rounded-lg p-6">
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-5 h-5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-                <div className="text-lg font-semibold text-purple-400">Running Comprehensive Backtests...</div>
+                <Loader2 className="w-5 h-5 text-purple-400 animate-spin" />
+                <div className="text-lg font-semibold text-purple-400">
+                  {jobStatus?.status === 'pending' ? 'Queued - Waiting for worker...' :
+                   jobStatus?.status === 'running' ? 'Running Backtests...' :
+                   'Processing...'}
+                </div>
               </div>
+
+              {/* Progress Bar */}
+              {jobStatus && (
+                <div className="mb-4">
+                  <div className="flex justify-between text-sm text-gray-400 mb-1">
+                    <span>{jobStatus.progress_message || 'Initializing...'}</span>
+                    <span>{jobStatus.progress}%</span>
+                  </div>
+                  <div className="w-full bg-gray-800 rounded-full h-2">
+                    <div
+                      className="bg-purple-500 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${jobStatus.progress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <p className="text-gray-300 text-sm">
                 Testing 29+ strategies across Psychology (13), GEX (5), and Options (11) with historical data.
-                This may take 2-5 minutes depending on date range.
+                {jobStatus?.job_id && (
+                  <span className="block mt-2 text-xs text-gray-500 font-mono">
+                    Job ID: {jobStatus.job_id}
+                  </span>
+                )}
               </p>
             </div>
           )}

@@ -550,3 +550,83 @@ def get_scheduler() -> AutonomousTraderScheduler:
     if _scheduler_instance is None:
         _scheduler_instance = AutonomousTraderScheduler()
     return _scheduler_instance
+
+
+# ============================================================================
+# STANDALONE EXECUTION MODE (for Render Background Worker)
+# ============================================================================
+def run_standalone():
+    """
+    Run the scheduler as a standalone process (for Render deployment).
+
+    This runs BOTH bots:
+    - PHOENIX: 0DTE SPY/SPX options (hourly during market hours)
+    - ATLAS: SPX Wheel strategy (daily at 10:05 AM ET)
+
+    The scheduler will:
+    - Auto-start on launch
+    - Run continuously during market hours
+    - Auto-restart on errors
+    - Persist state to database
+    """
+    import signal
+    import time
+
+    logger.info("=" * 80)
+    logger.info("ALPHAGEX AUTONOMOUS TRADER - STANDALONE MODE")
+    logger.info("=" * 80)
+    logger.info(f"PHOENIX (0DTE): ${CAPITAL_ALLOCATION['PHOENIX']:,}")
+    logger.info(f"ATLAS (Wheel):  ${CAPITAL_ALLOCATION['ATLAS']:,}")
+    logger.info(f"RESERVE:        ${CAPITAL_ALLOCATION['RESERVE']:,}")
+    logger.info("=" * 80)
+
+    # Create and start scheduler
+    scheduler = get_scheduler()
+
+    # Handle graceful shutdown
+    shutdown_requested = False
+
+    def signal_handler(signum, frame):
+        nonlocal shutdown_requested
+        logger.info(f"Received signal {signum}, requesting shutdown...")
+        shutdown_requested = True
+        if scheduler.is_running:
+            scheduler.stop()
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Start the scheduler
+    scheduler.start()
+
+    logger.info("Scheduler started. Running continuously...")
+    logger.info("Press Ctrl+C to stop (or send SIGTERM)")
+
+    # Keep the process alive
+    try:
+        while not shutdown_requested:
+            time.sleep(60)  # Check every minute
+
+            # Log status periodically
+            status = scheduler.get_status()
+            if status['market_open']:
+                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}")
+            else:
+                logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
+
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
+    finally:
+        if scheduler.is_running:
+            scheduler.stop()
+        logger.info("Autonomous trader shutdown complete")
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--standalone":
+        run_standalone()
+    else:
+        # Default: run standalone mode (for Render)
+        run_standalone()
