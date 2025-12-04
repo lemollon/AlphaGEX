@@ -10,6 +10,7 @@ py_vollib>=1.0.1
 twilio>=8.10.0
 pytz>=2023.3
 apscheduler>=3.10.0
+schedule>=1.2.0
 
 # Database
 psycopg2-binary>=2.9.9
