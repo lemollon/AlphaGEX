@@ -492,3 +492,243 @@ async def get_strategy_stats_endpoint():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class CombinedStrategyConfig(BaseModel):
+    """Configuration for Combined Diagonal + CSP Wheel backtest"""
+    start_date: str = "2020-01-01"
+    end_date: Optional[str] = None
+    initial_capital: float = 500000
+    csp_allocation_pct: float = 0.60
+    diagonal_allocation_pct: float = 0.25
+    csp_delta_target: float = 0.20
+    csp_dte_target: int = 45
+    generate_report: bool = True
+
+
+@router.post("/run-combined")
+async def run_combined_strategy_backtest(config: CombinedStrategyConfig = CombinedStrategyConfig()):
+    """
+    Run Combined Strategy Backtest: Diagonal Put Spread + Cash-Secured Put Wheel
+
+    This is the investor-grade backtest that combines:
+    1. Cash-Secured Put Wheel (60% allocation) - Primary income
+    2. Diagonal Put Spread (25% allocation) - Hedge in high IV
+
+    Returns comprehensive investor report with:
+    - Executive summary
+    - Performance metrics (Sharpe, Sortino, Calmar)
+    - Income analysis (monthly income, yield)
+    - Risk analysis (drawdown, stress scenarios)
+    - Yearly/monthly breakdowns
+    """
+    try:
+        from backtest.combined_strategy_backtester import CombinedStrategyBacktester
+        from reports.investor_report_generator import InvestorReportGenerator
+
+        logger.info(f"Running combined strategy backtest: {config.start_date} to {config.end_date}")
+
+        # Create backtester with config
+        backtester = CombinedStrategyBacktester(
+            initial_capital=config.initial_capital,
+            csp_allocation_pct=config.csp_allocation_pct,
+            diagonal_allocation_pct=config.diagonal_allocation_pct,
+            csp_delta_target=config.csp_delta_target,
+            csp_dte_target=config.csp_dte_target
+        )
+
+        # Run backtest
+        result = backtester.run_backtest(
+            start_date=config.start_date,
+            end_date=config.end_date
+        )
+
+        # Generate investor report
+        report = None
+        if config.generate_report:
+            generator = InvestorReportGenerator()
+            report = generator.generate_from_backtest(result)
+
+        return {
+            "success": True,
+            "message": f"Combined strategy backtest complete: {result.total_trades} trades over {config.start_date} to {result.end_date}",
+            "summary": {
+                "initial_capital": result.initial_capital,
+                "final_equity": result.final_equity,
+                "total_return_pct": result.total_return_pct,
+                "cagr_pct": result.cagr_pct,
+                "sharpe_ratio": result.sharpe_ratio,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "win_rate_pct": result.win_rate_pct,
+                "total_trades": result.total_trades,
+                "avg_monthly_income": result.avg_monthly_income,
+                "income_consistency_pct": result.income_consistency_pct
+            },
+            "investor_report": report,
+            "yearly_returns": result.yearly_returns
+        }
+
+    except ImportError as e:
+        logger.error(f"Import error: {e}")
+        raise HTTPException(status_code=500, detail=f"Module not found: {e}")
+    except Exception as e:
+        logger.error(f"Backtest error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/investor-report-sample")
+async def get_sample_investor_report():
+    """
+    Get a sample investor report structure for UI development.
+
+    Returns the full report schema without running a backtest.
+    """
+    sample_report = {
+        "meta": {
+            "report_version": "2.0",
+            "generated_at": datetime.now().isoformat(),
+            "report_type": "sample_investor_report"
+        },
+        "header": {
+            "title": "Combined Options Income Strategy",
+            "subtitle": "Diagonal Put Spread + Cash-Secured Put Wheel",
+            "period": "2020-01-01 to 2024-12-01",
+            "initial_investment": 500000,
+            "final_value": 687500
+        },
+        "executive_summary": {
+            "headline": "$500,000 grew to $687,500 (+37.5%)",
+            "key_metrics": {
+                "total_return": {"value": 37.5, "format": "percent", "label": "Total Return"},
+                "cagr": {"value": 8.2, "format": "percent", "label": "CAGR"},
+                "sharpe_ratio": {"value": 1.45, "format": "decimal", "label": "Sharpe Ratio"},
+                "max_drawdown": {"value": 12.3, "format": "percent", "label": "Max Drawdown"},
+                "win_rate": {"value": 82, "format": "percent", "label": "Win Rate"},
+                "monthly_income": {"value": 4250, "format": "currency", "label": "Avg Monthly Income"}
+            },
+            "period_years": 4.9,
+            "strategy_type": "Income Generation + Downside Protection"
+        },
+        "strategy_overview": {
+            "strategy_name": "Combined Diagonal Put + CSP Wheel",
+            "objective": "Generate consistent monthly income with limited downside risk",
+            "components": [
+                {
+                    "name": "Cash-Secured Put Wheel",
+                    "allocation_pct": 60,
+                    "description": "Sells OTM puts on SPY/SPX to collect premium.",
+                    "mechanics": [
+                        "Sell puts at 20 delta (80% win probability)",
+                        "Target 45 days to expiration",
+                        "If assigned, sell covered calls"
+                    ],
+                    "risk_profile": "Moderate"
+                },
+                {
+                    "name": "Diagonal Put Spread",
+                    "allocation_pct": 25,
+                    "description": "Calendar spread hedge in high IV.",
+                    "mechanics": [
+                        "Buy 75 DTE OTM put",
+                        "Sell 10 DTE OTM put",
+                        "Net credit entry"
+                    ],
+                    "risk_profile": "Conservative"
+                },
+                {
+                    "name": "Cash Reserve",
+                    "allocation_pct": 15,
+                    "description": "Liquidity buffer for margin.",
+                    "mechanics": ["Buffer for assignments"],
+                    "risk_profile": "Low"
+                }
+            ],
+            "market_conditions": {
+                "best_environment": "Sideways to slightly bullish with elevated IV",
+                "challenging_environment": "Sharp sudden declines",
+                "adaptation": "Diagonal spreads provide hedge"
+            }
+        },
+        "performance_analysis": {
+            "returns": {
+                "total_return_pct": 37.5,
+                "cagr_pct": 8.2,
+                "total_dollar_gain": 187500
+            },
+            "risk_adjusted": {
+                "sharpe_ratio": 1.45,
+                "sharpe_interpretation": "Excellent - significantly outperforms on risk-adjusted basis",
+                "sortino_ratio": 2.1,
+                "calmar_ratio": 0.67
+            },
+            "drawdown_analysis": {
+                "max_drawdown_pct": 12.3,
+                "max_drawdown_duration_days": 45,
+                "context": "Income generation aids faster recovery"
+            }
+        },
+        "income_analysis": {
+            "income_summary": {
+                "total_premium_collected": 245000,
+                "avg_monthly_income": 4250,
+                "annual_yield_pct": 10.2
+            },
+            "income_consistency": {
+                "profitable_months_pct": 85,
+                "interpretation": "Good consistency - occasional losing months"
+            }
+        },
+        "trade_statistics": {
+            "overall": {
+                "total_trades": 156,
+                "winning_trades": 128,
+                "losing_trades": 28,
+                "win_rate_pct": 82
+            },
+            "trade_quality": {
+                "profit_factor": 2.3,
+                "expectancy_pct": 1.8,
+                "avg_trade_duration_days": 32
+            }
+        },
+        "yearly_breakdown": {
+            "yearly_returns": {
+                "2020": {"return_pct": 15.2, "status": "positive"},
+                "2021": {"return_pct": 12.1, "status": "positive"},
+                "2022": {"return_pct": -3.5, "status": "negative"},
+                "2023": {"return_pct": 8.7, "status": "positive"},
+                "2024": {"return_pct": 6.2, "status": "positive"}
+            },
+            "best_year": ["2020", 15.2],
+            "worst_year": ["2022", -3.5],
+            "positive_years": 4,
+            "total_years": 5
+        },
+        "key_observations": [
+            "Strong CAGR of 8.2% with lower volatility than equities",
+            "Exceptional 82% win rate demonstrates strategy edge",
+            "85% of months profitable - highly consistent income",
+            "Maximum drawdown of 12.3% shows excellent risk management",
+            "Sharpe ratio of 1.45 beats most active strategies"
+        ],
+        "disclosures": {
+            "backtest_limitations": [
+                "Past performance does not guarantee future results",
+                "Backtest uses historical data which may not reflect future conditions",
+                "Actual trading involves slippage and execution costs",
+                "Bid-ask spreads may differ from backtest assumptions"
+            ],
+            "strategy_risks": [
+                "Selling options involves risk of assignment",
+                "Strategy may underperform in strong bull markets",
+                "Margin requirements may increase during stress",
+                "Early assignment risk on American-style options"
+            ],
+            "legal": "This report is for informational purposes only and does not constitute investment advice."
+        }
+    }
+
+    return {
+        "success": True,
+        "sample_report": sample_report
+    }
