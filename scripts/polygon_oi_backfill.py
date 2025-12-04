@@ -28,7 +28,7 @@ import time
 from datetime import datetime, timedelta, date
 from typing import List, Dict, Optional
 from database_adapter import get_connection
-from polygon_data_fetcher import polygon_fetcher
+from data.polygon_data_fetcher import polygon_fetcher
 
 
 class OIBackfillJob:
