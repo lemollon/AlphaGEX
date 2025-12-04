@@ -31,6 +31,7 @@ import {
   RotateCcw
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
+import BuildVersion from './BuildVersion'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
@@ -217,6 +218,9 @@ export default function Navigation() {
             <ChevronLeft className="w-4 h-4" />
             <span className="text-sm">Collapse</span>
           </button>
+
+          {/* Build Version - helps verify deployments */}
+          <BuildVersion />
         </div>
       </aside>
 
