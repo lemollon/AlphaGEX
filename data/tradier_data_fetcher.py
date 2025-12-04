@@ -831,7 +831,9 @@ class TradierDataFetcher:
         exp_str = exp_date.strftime('%y%m%d')
 
         # Format strike (multiply by 1000, pad to 8 digits)
-        strike_str = f"{int(strike * 1000):08d}"
+        # Ensure strike is a number (might be passed as string from API/database)
+        strike_num = float(strike) if isinstance(strike, str) else strike
+        strike_str = f"{int(strike_num * 1000):08d}"
 
         # Build symbol
         root = underlying.upper()
