@@ -38,7 +38,6 @@ const navItems = [
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
   { href: '/gamma', label: 'Gamma Intelligence', icon: Zap, category: 'Analysis' },
   { href: '/gamma/0dte', label: '0DTE Tracker', icon: Clock, category: 'Analysis' },
-  { href: '/oi/trends', label: 'OI Trends', icon: BarChart3, category: 'Analysis' },
   { href: '/psychology', label: 'Psychology Traps', icon: Brain, category: 'Analysis' },
   { href: '/psychology/performance', label: 'Psychology Performance', icon: BarChart3, category: 'Analysis' },
   { href: '/optimizer', label: 'Strategy Optimizer', icon: TrendingUp, category: 'Trading' },

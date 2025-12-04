@@ -1438,33 +1438,61 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️  Could not check backtest results: {e}")
 
-    # Start Autonomous Trader in background thread
+    # =========================================================================
+    # START THREAD WATCHDOG - Auto-restarts crashed background threads
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("🐕 STARTING THREAD WATCHDOG")
+    print("=" * 80)
+    print("Watchdog monitors all background threads and auto-restarts them if they crash")
+    print("Check interval: 30 seconds | Max restarts: 10/hour per thread")
+    print("")
+
     try:
-        import threading
-        from scheduler.autonomous_scheduler import run_continuous_scheduler
+        from services.thread_watchdog import get_watchdog
 
-        print("\n🤖 Starting Autonomous Trader...")
-        print("⏰ Check interval: 5 minutes (optimized for max responsiveness)")
-        print("📈 Will trade daily during market hours (9:30am-4pm ET, Mon-Fri)")
-        print("🎯 GUARANTEED: Makes at least 1 trade per day (directional or Iron Condor)")
+        watchdog = get_watchdog()
 
-        # Start autonomous trader in daemon thread
-        trader_thread = threading.Thread(
-            target=run_continuous_scheduler,
-            kwargs={'check_interval_minutes': 5},
-            daemon=True,
-            name="AutonomousTrader"
-        )
-        trader_thread.start()
+        # Register Autonomous Trader
+        try:
+            from scheduler.autonomous_scheduler import run_continuous_scheduler
+            watchdog.register(
+                name="AutonomousTrader",
+                target=run_continuous_scheduler,
+                kwargs={'check_interval_minutes': 5},
+                max_restarts=10
+            )
+            print("✅ Registered: AutonomousTrader (trades every 5 min during market hours)")
+        except ImportError as e:
+            print(f"⚠️  Could not register AutonomousTrader: {e}")
 
-        print("✅ Autonomous Trader started successfully!")
+        # Register Automated Data Collector
+        try:
+            from data.automated_data_collector import run_scheduler as run_data_collector
+            watchdog.register(
+                name="AutomatedDataCollector",
+                target=run_data_collector,
+                kwargs={},
+                max_restarts=10
+            )
+            print("✅ Registered: AutomatedDataCollector (GEX snapshots every 5 min)")
+        except ImportError as e:
+            print(f"⚠️  Could not register AutomatedDataCollector: {e}")
+
+        # Start the watchdog (this starts all registered threads + monitoring)
+        watchdog.start()
+
+        print("")
+        print("🐕 Watchdog started! All threads are now monitored and will auto-restart.")
         print("=" * 80 + "\n")
+
     except Exception as e:
-        print(f"⚠️ Warning: Could not start Autonomous Trader: {e}")
-        print("   (Trader can still be run manually via autonomous_scheduler.py)")
+        print(f"❌ Failed to start watchdog: {e}")
+        import traceback
+        traceback.print_exc()
         print("=" * 80 + "\n")
 
-    # Start Psychology Trap Notification Monitor
+    # Start Psychology Trap Notification Monitor (async task, not thread)
     try:
         print("🔔 Starting Psychology Trap Notification Monitor...")
         print("⚡ Critical patterns: GAMMA_SQUEEZE_CASCADE, FLIP_POINT_CRITICAL")
@@ -1481,44 +1509,14 @@ async def startup_event():
         print("=" * 80 + "\n")
 
     # =========================================================================
-    # START AUTOMATED DATA COLLECTOR (CRITICAL - Populates gex_history table)
-    # =========================================================================
-    try:
-        import threading
-        print("📊 Starting Automated Data Collector...")
-        print("⏰ GEX snapshots: Every 5 minutes during market hours")
-        print("🎯 Liberation outcomes: Every 10 minutes")
-        print("🧲 Forward magnets: Every 5 minutes")
-        print("📅 Gamma expiration: Every 30 minutes")
-
-        # Import and run the data collector in background thread
-        from data.automated_data_collector import run_scheduler as run_data_collector
-
-        data_collector_thread = threading.Thread(
-            target=run_data_collector,
-            daemon=True,
-            name="AutomatedDataCollector"
-        )
-        data_collector_thread.start()
-
-        print("✅ Automated Data Collector started successfully!")
-        print("   📈 Historical data will now be saved to gex_history table")
-        print("=" * 80 + "\n")
-    except Exception as e:
-        print(f"⚠️ Warning: Could not start Automated Data Collector: {e}")
-        print("   (Historical GEX data will NOT be collected)")
-        import traceback
-        traceback.print_exc()
-        print("=" * 80 + "\n")
-
-    # =========================================================================
     # STARTUP SUMMARY - Show what's running
     # =========================================================================
     print("\n" + "=" * 80)
     print("🎯 ALPHAGEX AUTONOMOUS SYSTEM STATUS")
     print("=" * 80)
-    print("✅ Autonomous Trader: RUNNING (checks every 5 min)")
-    print("✅ Data Collector: RUNNING (GEX snapshots every 5 min)")
+    print("✅ Thread Watchdog: ACTIVE (auto-restarts crashed threads)")
+    print("✅ Autonomous Trader: MONITORED (checks every 5 min)")
+    print("✅ Data Collector: MONITORED (GEX snapshots every 5 min)")
     print("✅ Notification Monitor: RUNNING (checks every 60 sec)")
     print("✅ Database: INITIALIZED")
     print("")
@@ -1527,6 +1525,7 @@ async def startup_event():
     print("   • Execute trades automatically when opportunities arise")
     print("   • Save all data to PostgreSQL for historical analysis")
     print("   • Send notifications for critical market events")
+    print("   • AUTO-RESTART any crashed threads within 30 seconds")
     print("")
     print("🔍 Frontend pages will show:")
     print("   • Live GEX data from Trading Volatility API")

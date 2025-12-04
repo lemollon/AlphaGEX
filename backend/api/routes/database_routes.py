@@ -779,5 +779,259 @@ async def clear_system_cache():
         }
 
 
+# ============================================================================
+# Data Collection Diagnostics & Manual Trigger
+# ============================================================================
+
+@router.get("/api/data-collection/status")
+async def get_data_collection_status():
+    """
+    Get status of data collection threads and last collection times.
+    Helps diagnose why data might not be collecting.
+    """
+    import threading
+    from zoneinfo import ZoneInfo
+
+    status = {
+        "timestamp": datetime.now().isoformat(),
+        "threads": {},
+        "watchdog": {},
+        "last_collections": {},
+        "api_status": {},
+        "diagnostics": []
+    }
+
+    # Check watchdog status first (preferred method)
+    try:
+        from services.thread_watchdog import get_watchdog_status
+        watchdog_status = get_watchdog_status()
+        status["watchdog"] = watchdog_status
+
+        if watchdog_status.get("watchdog_running"):
+            status["diagnostics"].append("OK: Thread Watchdog is ACTIVE and monitoring threads")
+            # Get detailed thread info from watchdog
+            for name, thread_info in watchdog_status.get("threads", {}).items():
+                status["threads"][name] = {
+                    "alive": thread_info.get("alive", False),
+                    "restart_count": thread_info.get("restart_count", 0),
+                    "restarts_last_hour": thread_info.get("restarts_last_hour", 0),
+                    "last_restart": thread_info.get("last_restart"),
+                    "can_restart": thread_info.get("can_restart", True),
+                    "monitored": True
+                }
+                if not thread_info.get("alive"):
+                    status["diagnostics"].append(f"WARNING: {name} is dead but watchdog will restart it")
+        else:
+            status["diagnostics"].append("WARNING: Thread Watchdog is NOT running - threads won't auto-restart")
+    except ImportError:
+        status["diagnostics"].append("WARNING: Thread Watchdog module not available")
+
+    # Also check running threads directly (fallback)
+    for thread in threading.enumerate():
+        if thread.name in ["AutomatedDataCollector", "AutonomousTrader", "PsychologyNotificationMonitor", "ThreadWatchdog"]:
+            if thread.name not in status["threads"]:
+                status["threads"][thread.name] = {}
+            status["threads"][thread.name]["alive"] = thread.is_alive()
+            status["threads"][thread.name]["daemon"] = thread.daemon
+
+    # Check if expected threads exist
+    expected_threads = ["AutomatedDataCollector", "AutonomousTrader"]
+    for expected in expected_threads:
+        if expected not in status["threads"] or not status["threads"].get(expected, {}).get("alive"):
+            if not status.get("watchdog", {}).get("watchdog_running"):
+                status["diagnostics"].append(f"CRITICAL: {expected} not running and watchdog is inactive")
+
+    # Check last collection times from database
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Check gex_history
+        c.execute("SELECT MAX(timestamp) FROM gex_history WHERE symbol = 'SPY'")
+        result = c.fetchone()
+        if result and result[0]:
+            last_gex = result[0]
+            status["last_collections"]["gex_history"] = str(last_gex)
+            age_hours = (datetime.now() - last_gex).total_seconds() / 3600 if isinstance(last_gex, datetime) else None
+            if age_hours and age_hours > 1:
+                status["diagnostics"].append(f"STALE: gex_history last updated {age_hours:.1f} hours ago")
+
+        # Check scheduler_state
+        c.execute("SELECT updated_at, is_running FROM scheduler_state WHERE id = 1")
+        result = c.fetchone()
+        if result:
+            status["last_collections"]["scheduler_state"] = str(result[0])
+            status["last_collections"]["scheduler_is_running"] = result[1]
+
+        # Check data_collection_log
+        c.execute("SELECT MAX(timestamp), COUNT(*) FROM data_collection_log WHERE timestamp > NOW() - INTERVAL '1 day'")
+        result = c.fetchone()
+        if result:
+            status["last_collections"]["data_collection_log_last"] = str(result[0]) if result[0] else "Never"
+            status["last_collections"]["collections_last_24h"] = result[1]
+
+        conn.close()
+
+    except Exception as e:
+        status["diagnostics"].append(f"DATABASE ERROR: {str(e)}")
+
+    # Check TradingVolatility API status
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        api = TradingVolatilityAPI()
+        status["api_status"]["trading_volatility"] = {
+            "api_key_configured": bool(api.api_key),
+            "endpoint": api.endpoint,
+            "circuit_breaker_active": TradingVolatilityAPI._shared_circuit_breaker_active,
+            "calls_this_minute": TradingVolatilityAPI._shared_api_call_count_minute
+        }
+        if not api.api_key:
+            status["diagnostics"].append("CONFIG ERROR: TRADING_VOLATILITY_API_KEY not set")
+    except Exception as e:
+        status["api_status"]["trading_volatility"] = {"error": str(e)}
+        status["diagnostics"].append(f"API IMPORT ERROR: {str(e)}")
+
+    # Check market hours
+    try:
+        et_tz = ZoneInfo("America/New_York")
+        now_et = datetime.now(et_tz)
+        is_market_hours = (
+            now_et.weekday() < 5 and
+            ((now_et.hour == 9 and now_et.minute >= 30) or (now_et.hour > 9 and now_et.hour < 16))
+        )
+        status["market_status"] = {
+            "current_time_et": now_et.strftime("%Y-%m-%d %H:%M:%S ET"),
+            "is_market_hours": is_market_hours,
+            "day_of_week": now_et.strftime("%A")
+        }
+        if not is_market_hours:
+            status["diagnostics"].append("INFO: Market is closed - data collection only runs during market hours (9:30 AM - 4:00 PM ET)")
+    except Exception as e:
+        status["diagnostics"].append(f"TIMEZONE ERROR: {str(e)}")
+
+    return {"success": True, "data": status}
+
+
+@router.post("/api/data-collection/trigger")
+async def trigger_data_collection():
+    """
+    Manually trigger data collection.
+    Useful for testing or when automatic collection has stopped.
+    """
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "collections": {}
+    }
+
+    # Try to collect GEX data
+    try:
+        from gamma.gex_history_snapshot_job import save_gex_snapshot
+        success = save_gex_snapshot('SPY')
+        results["collections"]["gex_snapshot"] = {
+            "success": success,
+            "message": "GEX snapshot saved" if success else "Failed to save GEX snapshot"
+        }
+    except Exception as e:
+        results["collections"]["gex_snapshot"] = {
+            "success": False,
+            "error": str(e)
+        }
+
+    # Try to update scheduler state
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("""
+            UPDATE scheduler_state
+            SET updated_at = CURRENT_TIMESTAMP,
+                last_trade_check = CURRENT_TIMESTAMP
+            WHERE id = 1
+        """)
+        conn.commit()
+        conn.close()
+        results["collections"]["scheduler_state"] = {"success": True}
+    except Exception as e:
+        results["collections"]["scheduler_state"] = {"success": False, "error": str(e)}
+
+    # Log the manual trigger
+    log_activity_event("manual_data_collection", results)
+
+    return {"success": True, "data": results}
+
+
+# ============================================================================
+# Thread Watchdog Management
+# ============================================================================
+
+@router.get("/api/watchdog/status")
+async def get_watchdog_status_endpoint():
+    """
+    Get detailed status of the thread watchdog and all monitored threads.
+    """
+    try:
+        from services.thread_watchdog import get_watchdog_status
+        status = get_watchdog_status()
+        return {"success": True, "data": status}
+    except ImportError:
+        return {
+            "success": False,
+            "error": "Thread watchdog module not available",
+            "data": {"watchdog_running": False}
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/api/watchdog/restart-thread/{thread_name}")
+async def restart_thread(thread_name: str):
+    """
+    Force restart a specific thread.
+    Useful when a thread is stuck but not technically dead.
+    """
+    try:
+        from services.thread_watchdog import get_watchdog
+
+        watchdog = get_watchdog()
+
+        if thread_name not in watchdog.threads:
+            return {
+                "success": False,
+                "error": f"Thread '{thread_name}' not registered with watchdog",
+                "available_threads": list(watchdog.threads.keys())
+            }
+
+        # Get thread info and restart
+        info = watchdog.threads[thread_name]
+
+        # Kill old thread if running (it's a daemon, will die when we lose reference)
+        if info.thread and info.thread.is_alive():
+            # Can't kill threads in Python, but we can start a new one
+            # The old daemon thread will eventually die
+            pass
+
+        # Start new thread
+        success = watchdog._start_thread(info)
+
+        if success:
+            info.restart_count += 1
+            watchdog._restart_timestamps[thread_name].append(datetime.now())
+
+        log_activity_event("manual_thread_restart", {
+            "thread": thread_name,
+            "success": success
+        })
+
+        return {
+            "success": success,
+            "message": f"Thread '{thread_name}' restart {'successful' if success else 'failed'}",
+            "restart_count": info.restart_count
+        }
+
+    except ImportError:
+        return {"success": False, "error": "Thread watchdog not available"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 # Export the logging functions for use by other modules
 __all__ = ['router', 'log_error_event', 'log_activity_event', 'ERROR_LOG_BUFFER', 'ACTIVITY_LOG_BUFFER']

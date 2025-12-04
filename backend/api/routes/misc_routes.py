@@ -1,5 +1,5 @@
 """
-Miscellaneous API routes - OI trends, recommendations, and other small endpoints.
+Miscellaneous API routes - recommendations and other small endpoints.
 """
 
 from fastapi import APIRouter
@@ -7,110 +7,6 @@ from fastapi import APIRouter
 from database_adapter import get_connection
 
 router = APIRouter(tags=["Miscellaneous"])
-
-
-# ============================================================================
-# Open Interest Trends APIs
-# ============================================================================
-
-@router.get("/api/oi/trends")
-async def get_oi_trends(symbol: str = "SPY", days: int = 30):
-    """Get historical open interest trends"""
-    try:
-        conn = get_connection()
-        c = conn.cursor()
-
-        c.execute('''
-            SELECT
-                date,
-                strike,
-                expiration_date,
-                call_oi,
-                put_oi,
-                COALESCE(call_oi, 0) + COALESCE(put_oi, 0) as total_oi,
-                call_volume,
-                put_volume,
-                CASE WHEN call_oi > 0 THEN ROUND(put_oi::numeric / call_oi::numeric, 2) ELSE 0 END as put_call_ratio
-            FROM historical_open_interest
-            WHERE symbol = %s
-            AND date >= CURRENT_DATE - INTERVAL '1 day' * %s
-            ORDER BY date DESC, (COALESCE(call_oi, 0) + COALESCE(put_oi, 0)) DESC
-        ''', (symbol, days))
-
-        trends = []
-        for row in c.fetchall():
-            trends.append({
-                'date': row[0],
-                'strike': row[1],
-                'expiration_date': row[2],
-                'call_oi': row[3],
-                'put_oi': row[4],
-                'total_oi': row[5],
-                'call_volume': row[6],
-                'put_volume': row[7],
-                'put_call_ratio': float(row[8]) if row[8] else 0
-            })
-
-        conn.close()
-
-        return {
-            "success": True,
-            "oi_history": trends,  # Frontend expects oi_history
-            "trends": trends,      # Keep for backwards compatibility
-            "symbol": symbol
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@router.get("/api/oi/unusual-activity")
-async def get_unusual_oi_activity(symbol: str = "SPY", days: int = 7):
-    """Detect unusual open interest changes"""
-    try:
-        conn = get_connection()
-        c = conn.cursor()
-
-        c.execute('''
-            SELECT
-                h1.date,
-                h1.strike,
-                h1.expiration_date,
-                (COALESCE(h1.call_oi, 0) + COALESCE(h1.put_oi, 0)) as total_oi,
-                (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0)) as prev_oi,
-                ROUND((((COALESCE(h1.call_oi, 0) + COALESCE(h1.put_oi, 0)) - (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) * 100.0 / NULLIF(COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0), 0))::numeric, 2) as oi_change_pct
-            FROM historical_open_interest h1
-            LEFT JOIN historical_open_interest h2
-                ON h1.strike = h2.strike
-                AND h1.expiration_date = h2.expiration_date
-                AND h1.symbol = h2.symbol
-                AND h2.date = h1.date - INTERVAL '1 day'
-            WHERE h1.symbol = %s
-            AND h1.date >= CURRENT_DATE - INTERVAL '1 day' * %s
-            AND (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0)) > 0
-            AND abs(((COALESCE(h1.call_oi, 0) + COALESCE(h1.put_oi, 0)) - (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) * 100.0 / (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) > 20
-            ORDER BY abs(((COALESCE(h1.call_oi, 0) + COALESCE(h1.put_oi, 0)) - (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) * 100.0 / (COALESCE(h2.call_oi, 0) + COALESCE(h2.put_oi, 0))) DESC
-            LIMIT 50
-        ''', (symbol, days))
-
-        unusual = []
-        for row in c.fetchall():
-            unusual.append({
-                'date': row[0],
-                'strike': row[1],
-                'expiration_date': row[2],
-                'current_oi': row[3],
-                'previous_oi': row[4],
-                'change_pct': float(row[5]) if row[5] else 0
-            })
-
-        conn.close()
-
-        return {
-            "success": True,
-            "unusual_activity": unusual
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 
 # ============================================================================
