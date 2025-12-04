@@ -1476,8 +1476,10 @@ async def startup_event():
                 max_restarts=10
             )
             print("✅ Registered: AutomatedDataCollector (GEX snapshots every 5 min)")
-        except ImportError as e:
+        except Exception as e:
             print(f"⚠️  Could not register AutomatedDataCollector: {e}")
+            import traceback
+            traceback.print_exc()
 
         # Start the watchdog (this starts all registered threads + monitoring)
         watchdog.start()
