@@ -2,13 +2,22 @@
 Backtesting API routes.
 
 Handles backtest results, strategy analysis, and smart recommendations.
+
+ASYNC PROCESSING:
+Long-running backtests are now queued and processed by a background worker.
+This prevents browser timeouts and crashes.
+
+Usage:
+    POST /api/backtests/run      -> Enqueues job, returns job_id immediately
+    GET /api/backtests/job/{id}  -> Check job status and progress
+    GET /api/backtests/jobs      -> List recent jobs
 """
 
 import logging
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 import psycopg2.extras
 
@@ -19,6 +28,21 @@ class BacktestRunConfig(BaseModel):
     """Configuration for running backtests"""
     lookback_days: int = 90
     strategies: Optional[List[str]] = None
+    async_mode: bool = True  # NEW: Default to async processing
+
+
+class SPXBacktestConfig(BaseModel):
+    """Configuration for SPX wheel backtests"""
+    start_date: str = "2024-01-01"
+    end_date: Optional[str] = None
+    initial_capital: float = 100000
+    put_delta: float = 0.20
+    dte_target: int = 45
+    max_margin_pct: float = 0.50
+    use_ml_scoring: bool = True
+    ml_min_score: float = 0.40
+    async_mode: bool = True  # NEW: Default to async processing
+
 
 # Import centralized utilities
 from backend.api.utils import safe_round, clean_dict_for_json
@@ -178,16 +202,46 @@ async def run_backtests(config: BacktestRunConfig = BacktestRunConfig()):
     """
     Run backtests for all pattern strategies.
 
-    This triggers the autonomous_backtest_engine which:
-    1. Queries historical regime_signals from database
-    2. Calculates win rates, expectancy, etc.
-    3. Saves results to backtest_results table
-    4. Updates strategy_stats.json for Kelly sizing
+    ASYNC MODE (default):
+    - Enqueues job to background worker
+    - Returns job_id immediately
+    - Use GET /api/backtests/job/{job_id} to check progress
+
+    SYNC MODE (async_mode=false):
+    - Runs backtest synchronously (may timeout on large datasets)
+    - Returns results directly
 
     Accepts JSON body with:
     - lookback_days: int (default 90)
     - strategies: list of strategy names (optional, runs all if not specified)
+    - async_mode: bool (default true) - use background processing
     """
+    # ASYNC MODE: Enqueue job and return immediately
+    if config.async_mode:
+        try:
+            from backend.services.job_queue import enqueue_backtest_job
+
+            job_config = {
+                "lookback_days": config.lookback_days,
+                "strategies": config.strategies
+            }
+
+            job_id = enqueue_backtest_job(job_config)
+
+            return {
+                "success": True,
+                "async": True,
+                "job_id": job_id,
+                "message": "Backtest job queued. Check progress with GET /api/backtests/job/{job_id}",
+                "status_url": f"/api/backtests/job/{job_id}"
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to enqueue job: {e}")
+            # Fall through to sync mode
+            logger.info("Falling back to sync mode")
+
+    # SYNC MODE: Run directly (legacy behavior)
     try:
         from backtest.autonomous_backtest_engine import get_backtester
 
@@ -203,6 +257,7 @@ async def run_backtests(config: BacktestRunConfig = BacktestRunConfig()):
 
         return {
             "success": True,
+            "async": False,
             "message": f"Backtest complete - {patterns_with_data} patterns with signals",
             "data": {
                 "total_patterns": len(results),
@@ -225,9 +280,10 @@ async def run_backtests(config: BacktestRunConfig = BacktestRunConfig()):
         try:
             from multi_strategy_backtester import MultiStrategyBacktester
             backtester = MultiStrategyBacktester()
-            results = backtester.run_all_backtests(lookback_days=lookback_days, save_to_db=True)
+            results = backtester.run_all_backtests(lookback_days=config.lookback_days, save_to_db=True)
             return {
                 "success": True,
+                "async": False,
                 "message": f"Ran {len(results)} strategy backtests (fallback mode)",
                 "data": {
                     "strategies_tested": len(results),
@@ -237,6 +293,110 @@ async def run_backtests(config: BacktestRunConfig = BacktestRunConfig()):
         except ImportError:
             raise HTTPException(status_code=500, detail=f"No backtester available: {e}")
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/run-spx")
+async def run_spx_backtest(config: SPXBacktestConfig = SPXBacktestConfig()):
+    """
+    Run SPX wheel backtest with ML scoring.
+
+    ASYNC MODE (default):
+    - Enqueues job to background worker (no timeout!)
+    - Returns job_id immediately
+    - Use GET /api/backtests/job/{job_id} to check progress
+
+    This is the heavy operation that was crashing browsers.
+    """
+    if config.async_mode:
+        try:
+            from backend.services.job_queue import enqueue_spx_backtest_job
+
+            job_config = {
+                "start_date": config.start_date,
+                "end_date": config.end_date,
+                "initial_capital": config.initial_capital,
+                "put_delta": config.put_delta,
+                "dte_target": config.dte_target,
+                "max_margin_pct": config.max_margin_pct,
+                "use_ml_scoring": config.use_ml_scoring,
+                "ml_min_score": config.ml_min_score
+            }
+
+            job_id = enqueue_spx_backtest_job(job_config)
+
+            return {
+                "success": True,
+                "async": True,
+                "job_id": job_id,
+                "message": "SPX backtest job queued. This may take several minutes.",
+                "status_url": f"/api/backtests/job/{job_id}"
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to enqueue SPX job: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to queue job: {e}")
+
+    # Sync mode not recommended for SPX backtests
+    raise HTTPException(
+        status_code=400,
+        detail="SPX backtests require async_mode=true to prevent timeouts. "
+               "Use GET /api/backtests/job/{job_id} to check progress."
+    )
+
+
+@router.get("/job/{job_id}")
+async def get_job_status(job_id: str):
+    """
+    Get status and progress of a background backtest job.
+
+    Returns:
+    - status: pending | running | completed | failed
+    - progress: 0-100
+    - progress_message: Human-readable status
+    - result: Full results when completed
+    - error: Error message if failed
+    """
+    try:
+        from backend.services.job_queue import get_job_status as get_status
+
+        status = get_status(job_id)
+
+        if not status:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        return {
+            "success": True,
+            "job": status
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting job status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/jobs")
+async def list_recent_jobs(limit: int = Query(default=20, le=100)):
+    """
+    List recent backtest jobs.
+
+    Shows job status, progress, and timing information.
+    """
+    try:
+        from backend.services.job_queue import get_recent_jobs
+
+        jobs = get_recent_jobs(limit=limit)
+
+        return {
+            "success": True,
+            "jobs": jobs,
+            "count": len(jobs)
+        }
+
+    except Exception as e:
+        logger.error(f"Error listing jobs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

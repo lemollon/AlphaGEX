@@ -426,8 +426,21 @@ export const apiClient = {
   // Backtesting & Smart Recommendations
   getSmartRecommendations: () => api.get('/api/backtests/smart-recommendations'),
   getBacktestResults: () => api.get('/api/backtests/results'),
-  runBacktests: (config?: { lookback_days?: number, strategies?: string[] }) =>
-    api.post('/api/backtests/run', config || {}),
+  runBacktests: (config?: { lookback_days?: number, strategies?: string[], async_mode?: boolean }) =>
+    api.post('/api/backtests/run', { async_mode: true, ...config }),
+
+  // Background Job Management (for async backtests)
+  getBacktestJobStatus: (jobId: string) => api.get(`/api/backtests/job/${jobId}`),
+  getRecentBacktestJobs: (limit?: number) => api.get('/api/backtests/jobs', { params: { limit: limit || 20 } }),
+  runSPXBacktestAsync: (config?: {
+    start_date?: string
+    end_date?: string
+    initial_capital?: number
+    put_delta?: number
+    dte_target?: number
+    use_ml_scoring?: boolean
+    async_mode?: boolean
+  }) => api.post('/api/backtests/run-spx', { async_mode: true, ...config }),
 
   // SPX Institutional Trader
   getSPXStatus: () => api.get('/api/spx/status'),
