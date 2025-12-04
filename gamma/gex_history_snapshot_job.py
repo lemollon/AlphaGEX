@@ -7,7 +7,7 @@ Run this as a cron job or background task to accumulate GEX history over time.
 """
 
 from datetime import datetime
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 from database_adapter import get_connection
 from typing import Dict, Optional
 
