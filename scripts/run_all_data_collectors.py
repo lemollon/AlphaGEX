@@ -35,7 +35,7 @@ def run_all_collectors():
     print("📊 JOB 1/5: GEX History Snapshot")
     print("="*70)
     try:
-        from gex_history_snapshot_job import save_gex_snapshot
+        from gamma.gex_history_snapshot_job import save_gex_snapshot
         save_gex_snapshot('SPY')
         results['successful'].append('GEX History')
     except Exception as e:
@@ -47,7 +47,7 @@ def run_all_collectors():
     print("🎯 JOB 2/5: Liberation Outcomes Tracker")
     print("="*70)
     try:
-        from liberation_outcomes_tracker import check_liberation_outcomes
+        from gamma.liberation_outcomes_tracker import check_liberation_outcomes
         check_liberation_outcomes()
         results['successful'].append('Liberation Outcomes')
     except Exception as e:
@@ -59,7 +59,7 @@ def run_all_collectors():
     print("🧲 JOB 3/5: Forward Magnets Detector")
     print("="*70)
     try:
-        from forward_magnets_detector import detect_forward_magnets
+        from gamma.forward_magnets_detector import detect_forward_magnets
         detect_forward_magnets()
         results['successful'].append('Forward Magnets')
     except Exception as e:
@@ -71,7 +71,7 @@ def run_all_collectors():
     print("📅 JOB 4/5: Gamma Expiration Timeline")
     print("="*70)
     try:
-        from gamma_expiration_timeline import track_gamma_expiration_timeline
+        from gamma.gamma_expiration_timeline import track_gamma_expiration_timeline
         track_gamma_expiration_timeline()
         results['successful'].append('Gamma Expiration Timeline')
     except Exception as e:
@@ -83,7 +83,7 @@ def run_all_collectors():
     print("📈 JOB 5/5: Daily Performance Aggregator")
     print("="*70)
     try:
-        from daily_performance_aggregator import aggregate_daily_performance
+        from monitoring.daily_performance_aggregator import aggregate_daily_performance
         aggregate_daily_performance()
         results['successful'].append('Daily Performance')
     except Exception as e:

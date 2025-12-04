@@ -6,7 +6,7 @@ Validates if psychology trap predictions actually worked by tracking outcomes
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from zoneinfo import ZoneInfo
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 from database_adapter import get_connection
 import pandas as pd
 

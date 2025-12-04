@@ -2,7 +2,7 @@
 Test edge cases that could produce NaN in realistic pricing
 """
 
-from realistic_option_pricing import create_bullish_call_spread, SpreadPricer
+from utils.realistic_option_pricing import create_bullish_call_spread, SpreadPricer
 
 print("Testing Edge Cases for NaN Prevention")
 print("=" * 60)

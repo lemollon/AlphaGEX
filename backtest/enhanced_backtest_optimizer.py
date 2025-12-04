@@ -26,7 +26,7 @@ from typing import List, Dict, Optional, Tuple
 import pandas as pd
 import numpy as np
 from database_adapter import get_connection
-from polygon_data_fetcher import polygon_fetcher
+from data.polygon_data_fetcher import polygon_fetcher
 
 
 class StrategyOptimizer:

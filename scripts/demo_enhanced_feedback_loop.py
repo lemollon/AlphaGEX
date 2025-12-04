@@ -15,11 +15,11 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from core_classes_and_engines import GEXAnalyzer
-from psychology_trap_detector import (
+from core.psychology_trap_detector import (
     analyze_dealer_feedback_loop_mechanics,
     calculate_breakout_rejection_probability
 )
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 from database_adapter import get_connection
 
 

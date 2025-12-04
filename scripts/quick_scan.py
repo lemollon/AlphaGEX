@@ -8,7 +8,7 @@ Usage:
 
 import sys
 from core_classes_and_engines import TradingVolatilityAPI
-from config_and_database import STRATEGIES
+from db.config_and_database import STRATEGIES
 
 def quick_scan(symbols):
     """Scan symbols and print results"""

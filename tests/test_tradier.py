@@ -32,7 +32,7 @@ print(f"✓ Sandbox mode: {os.getenv('TRADIER_SANDBOX', 'true')}")
 print()
 
 try:
-    from tradier_data_fetcher import TradierDataFetcher
+    from data.tradier_data_fetcher import TradierDataFetcher
 
     tradier = TradierDataFetcher()
     print(f"Mode: {'SANDBOX (paper)' if tradier.sandbox else 'LIVE (real money)'}")

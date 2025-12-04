@@ -1188,7 +1188,7 @@ Be conservative. Only recommend trades with >70% historical win rate in similar 
             Dict with optimization results and auto-update status
         """
         try:
-            from strategy_stats import get_strategy_stats, get_recent_changes
+            from core.strategy_stats import get_strategy_stats, get_recent_changes
 
             # Get live strategy stats
             live_stats = get_strategy_stats()

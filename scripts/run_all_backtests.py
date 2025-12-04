@@ -13,9 +13,9 @@ Usage:
 
 import argparse
 from datetime import datetime
-from backtest_gex_strategies import GEXBacktester
-from backtest_options_strategies import OptionsBacktester
-from psychology_backtest import PsychologyBacktester
+from backtest.backtest_gex_strategies import GEXBacktester
+from backtest.backtest_options_strategies import OptionsBacktester
+from backtest.psychology_backtest import PsychologyBacktester
 from database_adapter import get_connection
 
 

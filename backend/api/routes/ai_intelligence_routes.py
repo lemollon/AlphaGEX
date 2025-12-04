@@ -34,7 +34,7 @@ except ImportError:
     AITradeAdvisor = None
 
 try:
-    from langchain_prompts import (
+    from ai.langchain_prompts import (
         get_market_analysis_prompt,
         get_trade_recommendation_prompt,
         get_educational_prompt

@@ -70,7 +70,7 @@ def test_psychology_detector():
     print("=" * 80)
 
     try:
-        from psychology_trap_detector import (
+        from core.psychology_trap_detector import (
             calculate_rsi,
             calculate_mtf_rsi_score,
             analyze_current_gamma_walls,

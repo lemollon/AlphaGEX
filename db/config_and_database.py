@@ -3337,7 +3337,7 @@ def get_dynamic_mm_states():
     Confidence is calculated based on actual GEX data, not hardcoded.
     """
     try:
-        from strategy_stats import get_mm_states
+        from core.strategy_stats import get_mm_states
         return get_mm_states()
     except Exception as e:
         print(f"⚠️  Could not load dynamic MM states: {e}")
@@ -3349,7 +3349,7 @@ def get_dynamic_strategies():
     Win rates auto-update when backtests run.
     """
     try:
-        from strategy_stats import get_strategy_stats
+        from core.strategy_stats import get_strategy_stats
         live_stats = get_strategy_stats()
         
         # Merge live stats into static configuration
@@ -3375,7 +3375,7 @@ def get_dynamic_strategies():
 
 # Print info on import
 try:
-    from strategy_stats import get_recent_changes
+    from core.strategy_stats import get_recent_changes
     recent = get_recent_changes(limit=3)
     if recent:
         print("\n" + "="*70)

@@ -21,13 +21,13 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 import pandas as pd
 import numpy as np
-from polygon_data_fetcher import polygon_fetcher
+from data.polygon_data_fetcher import polygon_fetcher
 
-from psychology_trap_detector import (
+from core.psychology_trap_detector import (
     analyze_current_market_complete,
     calculate_mtf_rsi_score
 )
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 from database_adapter import get_connection
 
 # CRITICAL: Import strategy_stats for unified backtest integration

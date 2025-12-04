@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import time
 from database_adapter import get_connection
-from polygon_data_fetcher import polygon_fetcher
+from data.polygon_data_fetcher import polygon_fetcher
 
 # Default symbols to track
 DEFAULT_SYMBOLS = [

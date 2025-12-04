@@ -7,7 +7,7 @@ Helps understand dealer hedging behavior at different DTEs
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 from database_adapter import get_connection
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")

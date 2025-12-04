@@ -26,7 +26,7 @@ from backtest.backtest_framework import BacktestBase, BacktestResults, Trade, Da
 
 # Try to import Black-Scholes pricing
 try:
-    from realistic_option_pricing import BlackScholesOption
+    from utils.realistic_option_pricing import BlackScholesOption
     BS_AVAILABLE = True
 except ImportError:
     BS_AVAILABLE = False

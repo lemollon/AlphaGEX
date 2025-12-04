@@ -25,7 +25,7 @@ print("📊 STEP 1: Running Backtests on All Patterns")
 print("-" * 80)
 
 try:
-    from autonomous_backtest_engine import get_backtester
+    from backtest.autonomous_backtest_engine import get_backtester
 
     backtester = get_backtester()
 
@@ -85,7 +85,7 @@ print("🤖 STEP 2: Training ML Model on Historical Data")
 print("-" * 80)
 
 try:
-    from autonomous_ml_pattern_learner import get_pattern_learner
+    from ai.autonomous_ml_pattern_learner import get_pattern_learner
 
     ml_learner = get_pattern_learner()
 
@@ -127,7 +127,7 @@ print("🏆 STEP 3: Initializing Strategy Competition")
 print("-" * 80)
 
 try:
-    from autonomous_strategy_competition import get_competition
+    from core.autonomous_strategy_competition import get_competition
 
     competition = get_competition()
 

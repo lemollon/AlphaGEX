@@ -48,7 +48,7 @@ except ImportError:
 
 # Tradier for live options data and execution
 try:
-    from tradier_data_fetcher import TradierDataFetcher, TradierExecutor
+    from data.tradier_data_fetcher import TradierDataFetcher, TradierExecutor
     TRADIER_AVAILABLE = True
 except ImportError:
     TRADIER_AVAILABLE = False

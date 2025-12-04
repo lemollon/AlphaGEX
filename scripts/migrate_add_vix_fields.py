@@ -17,7 +17,7 @@ Run this script ONCE to upgrade your database schema.
 """
 
 import sqlite3
-from config_and_database import DB_PATH
+from db.config_and_database import DB_PATH
 
 def migrate_database():
     """Add VIX and volatility fields to regime_signals table"""

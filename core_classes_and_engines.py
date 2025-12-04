@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 
 # Import intelligent rate limiter
 try:
-    from rate_limiter import trading_volatility_limiter
+    from utils.rate_limiter import trading_volatility_limiter
     RATE_LIMITER_AVAILABLE = True
 except ImportError:
     RATE_LIMITER_AVAILABLE = False
