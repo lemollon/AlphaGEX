@@ -795,24 +795,51 @@ async def get_data_collection_status():
     status = {
         "timestamp": datetime.now().isoformat(),
         "threads": {},
+        "watchdog": {},
         "last_collections": {},
         "api_status": {},
         "diagnostics": []
     }
 
-    # Check running threads
+    # Check watchdog status first (preferred method)
+    try:
+        from services.thread_watchdog import get_watchdog_status
+        watchdog_status = get_watchdog_status()
+        status["watchdog"] = watchdog_status
+
+        if watchdog_status.get("watchdog_running"):
+            status["diagnostics"].append("OK: Thread Watchdog is ACTIVE and monitoring threads")
+            # Get detailed thread info from watchdog
+            for name, thread_info in watchdog_status.get("threads", {}).items():
+                status["threads"][name] = {
+                    "alive": thread_info.get("alive", False),
+                    "restart_count": thread_info.get("restart_count", 0),
+                    "restarts_last_hour": thread_info.get("restarts_last_hour", 0),
+                    "last_restart": thread_info.get("last_restart"),
+                    "can_restart": thread_info.get("can_restart", True),
+                    "monitored": True
+                }
+                if not thread_info.get("alive"):
+                    status["diagnostics"].append(f"WARNING: {name} is dead but watchdog will restart it")
+        else:
+            status["diagnostics"].append("WARNING: Thread Watchdog is NOT running - threads won't auto-restart")
+    except ImportError:
+        status["diagnostics"].append("WARNING: Thread Watchdog module not available")
+
+    # Also check running threads directly (fallback)
     for thread in threading.enumerate():
-        if thread.name in ["AutomatedDataCollector", "AutonomousTrader", "PsychologyNotificationMonitor"]:
-            status["threads"][thread.name] = {
-                "alive": thread.is_alive(),
-                "daemon": thread.daemon
-            }
+        if thread.name in ["AutomatedDataCollector", "AutonomousTrader", "PsychologyNotificationMonitor", "ThreadWatchdog"]:
+            if thread.name not in status["threads"]:
+                status["threads"][thread.name] = {}
+            status["threads"][thread.name]["alive"] = thread.is_alive()
+            status["threads"][thread.name]["daemon"] = thread.daemon
 
     # Check if expected threads exist
     expected_threads = ["AutomatedDataCollector", "AutonomousTrader"]
     for expected in expected_threads:
-        if expected not in status["threads"]:
-            status["diagnostics"].append(f"MISSING: {expected} thread not found - may have crashed or failed to start")
+        if expected not in status["threads"] or not status["threads"].get(expected, {}).get("alive"):
+            if not status.get("watchdog", {}).get("watchdog_running"):
+                status["diagnostics"].append(f"CRITICAL: {expected} not running and watchdog is inactive")
 
     # Check last collection times from database
     try:
@@ -930,6 +957,80 @@ async def trigger_data_collection():
     log_activity_event("manual_data_collection", results)
 
     return {"success": True, "data": results}
+
+
+# ============================================================================
+# Thread Watchdog Management
+# ============================================================================
+
+@router.get("/api/watchdog/status")
+async def get_watchdog_status_endpoint():
+    """
+    Get detailed status of the thread watchdog and all monitored threads.
+    """
+    try:
+        from services.thread_watchdog import get_watchdog_status
+        status = get_watchdog_status()
+        return {"success": True, "data": status}
+    except ImportError:
+        return {
+            "success": False,
+            "error": "Thread watchdog module not available",
+            "data": {"watchdog_running": False}
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/api/watchdog/restart-thread/{thread_name}")
+async def restart_thread(thread_name: str):
+    """
+    Force restart a specific thread.
+    Useful when a thread is stuck but not technically dead.
+    """
+    try:
+        from services.thread_watchdog import get_watchdog
+
+        watchdog = get_watchdog()
+
+        if thread_name not in watchdog.threads:
+            return {
+                "success": False,
+                "error": f"Thread '{thread_name}' not registered with watchdog",
+                "available_threads": list(watchdog.threads.keys())
+            }
+
+        # Get thread info and restart
+        info = watchdog.threads[thread_name]
+
+        # Kill old thread if running (it's a daemon, will die when we lose reference)
+        if info.thread and info.thread.is_alive():
+            # Can't kill threads in Python, but we can start a new one
+            # The old daemon thread will eventually die
+            pass
+
+        # Start new thread
+        success = watchdog._start_thread(info)
+
+        if success:
+            info.restart_count += 1
+            watchdog._restart_timestamps[thread_name].append(datetime.now())
+
+        log_activity_event("manual_thread_restart", {
+            "thread": thread_name,
+            "success": success
+        })
+
+        return {
+            "success": success,
+            "message": f"Thread '{thread_name}' restart {'successful' if success else 'failed'}",
+            "restart_count": info.restart_count
+        }
+
+    except ImportError:
+        return {"success": False, "error": "Thread watchdog not available"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 # Export the logging functions for use by other modules
