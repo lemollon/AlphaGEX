@@ -5,7 +5,7 @@ Creates all required tables for the system
 """
 import sys
 from db.config_and_database import init_database
-from autonomous_paper_trader import AutonomousPaperTrader
+from core.autonomous_paper_trader import AutonomousPaperTrader
 from database_adapter import get_connection
 
 print("=" * 80)
