@@ -37,8 +37,8 @@ try:
     print("  PatternLearner imported from ai.autonomous_ml_pattern_learner")
 except ImportError:
     try:
-        from autonomous_ml_pattern_learner import PatternLearner
-        SPXPatternLearner = PatternLearner
+        from ai.autonomous_ml_pattern_learner import PatternLearner as PatternLearnerAlt
+        SPXPatternLearner = PatternLearnerAlt
         print("  PatternLearner imported (alternate path)")
     except ImportError as e:
         print(f"  Could not import PatternLearner: {e}")

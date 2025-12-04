@@ -15,7 +15,7 @@ print("=" * 80)
 # Step 1: Import the save function
 print("\n1️⃣  Importing save_regime_signal_to_db...")
 try:
-    from psychology_trap_detector import save_regime_signal_to_db
+    from core.psychology_trap_detector import save_regime_signal_to_db
     from db.config_and_database import DB_PATH
     print(f"✅ Import successful")
     print(f"   Database: {DB_PATH}")

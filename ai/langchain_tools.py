@@ -19,7 +19,7 @@ try:
         MarketRegimeAnalyzer,
         RiskManager
     )
-    from intelligence_and_strategies import (
+    from core.intelligence_and_strategies import (
         RealOptionsChainFetcher,
         GreeksCalculator,
         PositionSizingCalculator,

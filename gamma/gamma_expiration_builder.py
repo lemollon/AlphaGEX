@@ -29,7 +29,7 @@ except ImportError:
 
 # Try to import Polygon fetcher as backup
 try:
-    from polygon_data_fetcher import polygon_fetcher
+    from data.polygon_data_fetcher import polygon_fetcher
     POLYGON_AVAILABLE = True
 except ImportError:
     POLYGON_AVAILABLE = False

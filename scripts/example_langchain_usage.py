@@ -6,9 +6,9 @@ This script demonstrates key features of the new LangChain-powered intelligence 
 
 import os
 from datetime import datetime
-from langchain_intelligence import LangChainIntelligence, get_quick_market_analysis, get_trade_recommendation
-from langchain_models import TradeRecommendation, OptionType
-from langchain_tools import (
+from ai.langchain_intelligence import LangChainIntelligence, get_quick_market_analysis, get_trade_recommendation
+from ai.langchain_models import TradeRecommendation, OptionType
+from ai.langchain_tools import (
     get_gex_data,
     analyze_gex_regime,
     calculate_position_size,

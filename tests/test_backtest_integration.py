@@ -21,7 +21,7 @@ print("=" * 80)
 # Step 1: Test imports
 print("\n1️⃣  Testing imports...")
 try:
-    from psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
+    from core.psychology_trap_detector import analyze_current_market_complete, save_regime_signal_to_db
     from backtest.autonomous_backtest_engine import PatternBacktester
     from data.polygon_data_fetcher import PolygonDataFetcher as PolygonHelper
     print("✅ All imports successful")

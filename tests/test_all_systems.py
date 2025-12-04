@@ -63,7 +63,7 @@ print("3. TRADIER API (Live Options Data)")
 print("=" * 60)
 
 try:
-    from tradier_data_fetcher import TradierDataFetcher
+    from data.tradier_data_fetcher import TradierDataFetcher
     tradier = TradierDataFetcher()
 
     mode = "SANDBOX" if tradier.sandbox else "PRODUCTION"
@@ -293,7 +293,7 @@ print("10. AI REASONING ENGINE (Optional)")
 print("=" * 60)
 
 try:
-    from autonomous_ai_reasoning import get_ai_reasoning
+    from ai.autonomous_ai_reasoning import get_ai_reasoning
     ai = get_ai_reasoning()
     if ai.llm:
         print("  ✓ LangChain + Claude: Ready")

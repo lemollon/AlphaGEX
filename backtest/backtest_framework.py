@@ -31,7 +31,7 @@ except:
 
 # UNIFIED Data Provider (Tradier primary, Polygon fallback)
 try:
-    from unified_data_provider import get_data_provider, UnifiedDataProvider
+    from data.unified_data_provider import get_data_provider, UnifiedDataProvider
     UNIFIED_DATA_AVAILABLE = True
     print("✅ Backtester: Unified Data Provider (Tradier) integrated")
 except ImportError:
@@ -39,7 +39,7 @@ except ImportError:
 
 # Legacy Polygon fallback
 try:
-    from polygon_data_fetcher import polygon_fetcher
+    from data.polygon_data_fetcher import polygon_fetcher
     POLYGON_AVAILABLE = True
 except ImportError:
     POLYGON_AVAILABLE = False
