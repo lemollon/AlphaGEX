@@ -373,10 +373,6 @@ export const apiClient = {
   getConversations: (limit?: number) => api.get('/api/ai/conversations', { params: { limit: limit || 50 } }),
   getConversation: (id: number) => api.get(`/api/ai/conversation/${id}`),
 
-  // Open Interest Trends
-  getOITrends: (symbol?: string, days?: number) => api.get('/api/oi/trends', { params: { symbol: symbol || 'SPY', days: days || 90 } }),
-  getUnusualOIActivity: (symbol?: string, days?: number) => api.get('/api/oi/unusual-activity', { params: { symbol: symbol || 'SPY', days: days || 14 } }),
-
   // Recommendations History
   getRecommendationsHistory: (days?: number) => api.get('/api/recommendations/history', { params: { days: days || 90 } }),
   getRecommendationPerformance: () => api.get('/api/recommendations/performance'),
