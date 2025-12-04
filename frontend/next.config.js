@@ -1,10 +1,18 @@
 /** @type {import('next').NextConfig} */
+
+// Generate build ID at build time
+const buildId = new Date().toISOString().slice(0, 16).replace('T', ' ')
+const gitCommit = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'local'
+
 const nextConfig = {
   reactStrictMode: true,
   env: {
     // No localhost fallbacks - these MUST be set in production
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
     NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL,
+    // Build version tracking - baked in at build time
+    NEXT_PUBLIC_BUILD_TIME: buildId,
+    NEXT_PUBLIC_BUILD_COMMIT: gitCommit,
   },
   async headers() {
     return [
