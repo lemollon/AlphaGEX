@@ -14,6 +14,12 @@ schedule>=1.2.0
 python-dotenv>=1.0.0
 aiohttp>=3.9.0
 
+# Machine Learning (for pattern recognition and regime classification)
+scikit-learn>=1.3.0
+
+# Legacy Dashboard (dashboard/app.py)
+flask>=3.0.0
+
 # Database
 psycopg2-binary>=2.9.9
 
