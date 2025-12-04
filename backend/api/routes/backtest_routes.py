@@ -496,14 +496,15 @@ async def get_strategy_stats_endpoint():
 
 class CombinedStrategyConfig(BaseModel):
     """Configuration for Combined Diagonal + CSP Wheel backtest"""
-    start_date: str = "2020-01-01"
+    symbol: str = "SPY"
+    start_date: str = "2022-01-01"
     end_date: Optional[str] = None
-    initial_capital: float = 500000
-    csp_allocation_pct: float = 0.60
-    diagonal_allocation_pct: float = 0.25
-    csp_delta_target: float = 0.20
-    csp_dte_target: int = 45
-    generate_report: bool = True
+    initial_capital: float = 50000
+    enable_diagonal_hedge: bool = True
+    iv_threshold: float = 0.50
+    csp_delta: float = 0.25
+    csp_dte: int = 30
+    generate_investor_report: bool = True
 
 
 @router.post("/run-combined")
@@ -511,61 +512,102 @@ async def run_combined_strategy_backtest(config: CombinedStrategyConfig = Combin
     """
     Run Combined Strategy Backtest: Diagonal Put Spread + Cash-Secured Put Wheel
 
-    This is the investor-grade backtest that combines:
-    1. Cash-Secured Put Wheel (60% allocation) - Primary income
-    2. Diagonal Put Spread (25% allocation) - Hedge in high IV
+    Uses the existing WheelBacktester extended with diagonal put spread overlay.
+    Generates investor-grade report using StrategyReport infrastructure.
 
-    Returns comprehensive investor report with:
-    - Executive summary
-    - Performance metrics (Sharpe, Sortino, Calmar)
-    - Income analysis (monthly income, yield)
-    - Risk analysis (drawdown, stress scenarios)
-    - Yearly/monthly breakdowns
+    Returns:
+    - Backtest results with trade statistics
+    - Investor report with executive summary
+    - Data quality metrics
     """
     try:
-        from backtest.combined_strategy_backtester import CombinedStrategyBacktester
+        from backtest.diagonal_wheel_backtest import DiagonalWheelBacktester
+        from backtest.strategy_report import print_strategy_report
         from reports.investor_report_generator import InvestorReportGenerator
 
-        logger.info(f"Running combined strategy backtest: {config.start_date} to {config.end_date}")
+        logger.info(f"Running combined strategy backtest: {config.symbol} {config.start_date} to {config.end_date}")
 
-        # Create backtester with config
-        backtester = CombinedStrategyBacktester(
+        # Create backtester using existing infrastructure
+        backtester = DiagonalWheelBacktester(
+            symbol=config.symbol,
+            start_date=config.start_date,
+            end_date=config.end_date or datetime.now().strftime("%Y-%m-%d"),
             initial_capital=config.initial_capital,
-            csp_allocation_pct=config.csp_allocation_pct,
-            diagonal_allocation_pct=config.diagonal_allocation_pct,
-            csp_delta_target=config.csp_delta_target,
-            csp_dte_target=config.csp_dte_target
+            enable_diagonal_hedge=config.enable_diagonal_hedge,
+            iv_threshold=config.iv_threshold,
+            csp_delta=config.csp_delta,
+            csp_dte=config.csp_dte,
+            position_size_pct=100,
+            commission_pct=0.10,
+            slippage_pct=0.15
         )
 
         # Run backtest
-        result = backtester.run_backtest(
-            start_date=config.start_date,
-            end_date=config.end_date
-        )
+        results = backtester.run_backtest()
+
+        # Generate strategy report using existing infrastructure
+        strategy_report = backtester.generate_strategy_report()
 
         # Generate investor report
-        report = None
-        if config.generate_report:
+        investor_report = None
+        if config.generate_investor_report:
             generator = InvestorReportGenerator()
-            report = generator.generate_from_backtest(result)
+            investor_report = generator.from_strategy_report(
+                strategy_report,
+                strategy_description="Combined wheel strategy with diagonal put spread hedge for downside protection",
+                strategy_components=[
+                    {
+                        "name": "Cash-Secured Put Wheel",
+                        "allocation_pct": 60,
+                        "description": "Sells OTM puts on SPY to collect premium",
+                        "mechanics": [
+                            f"Sell puts at {config.csp_delta*100:.0f} delta",
+                            f"{config.csp_dte} DTE target",
+                            "If assigned, sell covered calls",
+                            "Repeat wheel cycle"
+                        ],
+                        "risk_profile": "Moderate"
+                    },
+                    {
+                        "name": "Diagonal Put Spread",
+                        "allocation_pct": 25,
+                        "description": "Calendar spread hedge activated in high IV",
+                        "mechanics": [
+                            f"Activated when IV rank > {config.iv_threshold*100:.0f}%",
+                            "Buy longer-dated OTM put",
+                            "Sell shorter-dated OTM put",
+                            "Net credit entry"
+                        ],
+                        "risk_profile": "Conservative"
+                    },
+                    {
+                        "name": "Cash Reserve",
+                        "allocation_pct": 15,
+                        "description": "Liquidity buffer for margin requirements",
+                        "mechanics": ["Buffer for assignments", "Opportunistic deployment"],
+                        "risk_profile": "Low"
+                    }
+                ]
+            )
 
         return {
             "success": True,
-            "message": f"Combined strategy backtest complete: {result.total_trades} trades over {config.start_date} to {result.end_date}",
+            "message": f"Combined backtest complete: {strategy_report.total_trades} trades",
             "summary": {
-                "initial_capital": result.initial_capital,
-                "final_equity": result.final_equity,
-                "total_return_pct": result.total_return_pct,
-                "cagr_pct": result.cagr_pct,
-                "sharpe_ratio": result.sharpe_ratio,
-                "max_drawdown_pct": result.max_drawdown_pct,
-                "win_rate_pct": result.win_rate_pct,
-                "total_trades": result.total_trades,
-                "avg_monthly_income": result.avg_monthly_income,
-                "income_consistency_pct": result.income_consistency_pct
+                "symbol": config.symbol,
+                "period": strategy_report.period,
+                "initial_capital": strategy_report.initial_capital,
+                "final_equity": strategy_report.final_equity,
+                "total_return_pct": round(((strategy_report.final_equity / strategy_report.initial_capital) - 1) * 100, 2),
+                "profit_factor": round(strategy_report.profit_factor, 2),
+                "sharpe_ratio": round(strategy_report.sharpe_ratio, 2),
+                "max_drawdown_pct": round(strategy_report.maximal_drawdown_pct, 2),
+                "win_rate_pct": round(strategy_report.win_rate_pct, 1),
+                "total_trades": strategy_report.total_trades,
+                "data_quality_pct": round(strategy_report.data_quality_pct, 1)
             },
-            "investor_report": report,
-            "yearly_returns": result.yearly_returns
+            "strategy_report": strategy_report.to_dict(),
+            "investor_report": investor_report
         }
 
     except ImportError as e:
@@ -573,6 +615,8 @@ async def run_combined_strategy_backtest(config: CombinedStrategyConfig = Combin
         raise HTTPException(status_code=500, detail=f"Module not found: {e}")
     except Exception as e:
         logger.error(f"Backtest error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -580,151 +624,120 @@ async def run_combined_strategy_backtest(config: CombinedStrategyConfig = Combin
 async def get_sample_investor_report():
     """
     Get a sample investor report structure for UI development.
-
     Returns the full report schema without running a backtest.
     """
     sample_report = {
         "meta": {
             "report_version": "2.0",
             "generated_at": datetime.now().isoformat(),
-            "report_type": "sample_investor_report"
+            "report_type": "sample_investor_report",
+            "data_quality_pct": 85.0
         },
         "header": {
-            "title": "Combined Options Income Strategy",
-            "subtitle": "Diagonal Put Spread + Cash-Secured Put Wheel",
-            "period": "2020-01-01 to 2024-12-01",
-            "initial_investment": 500000,
-            "final_value": 687500
+            "title": "Combined Wheel + Diagonal Put Spread",
+            "subtitle": "SPY Options Income Strategy",
+            "period": "2022-01-01 to 2024-12-01",
+            "initial_investment": 50000,
+            "final_value": 68750
         },
         "executive_summary": {
-            "headline": "$500,000 grew to $687,500 (+37.5%)",
+            "headline": "$50,000 grew to $68,750 (+37.5%)",
             "key_metrics": {
                 "total_return": {"value": 37.5, "format": "percent", "label": "Total Return"},
-                "cagr": {"value": 8.2, "format": "percent", "label": "CAGR"},
+                "cagr": {"value": 11.8, "format": "percent", "label": "CAGR"},
                 "sharpe_ratio": {"value": 1.45, "format": "decimal", "label": "Sharpe Ratio"},
                 "max_drawdown": {"value": 12.3, "format": "percent", "label": "Max Drawdown"},
-                "win_rate": {"value": 82, "format": "percent", "label": "Win Rate"},
-                "monthly_income": {"value": 4250, "format": "currency", "label": "Avg Monthly Income"}
+                "win_rate": {"value": 78, "format": "percent", "label": "Win Rate"},
+                "monthly_income": {"value": 625, "format": "currency", "label": "Avg Monthly Income"}
             },
-            "period_years": 4.9,
-            "strategy_type": "Income Generation + Downside Protection"
+            "period_years": 2.9,
+            "strategy_type": "Options Income Strategy"
         },
         "strategy_overview": {
-            "strategy_name": "Combined Diagonal Put + CSP Wheel",
-            "objective": "Generate consistent monthly income with limited downside risk",
+            "strategy_name": "Combined Wheel + Diagonal Put Spread",
+            "objective": "Generate consistent income through options premium collection with downside protection",
             "components": [
                 {
                     "name": "Cash-Secured Put Wheel",
                     "allocation_pct": 60,
-                    "description": "Sells OTM puts on SPY/SPX to collect premium.",
-                    "mechanics": [
-                        "Sell puts at 20 delta (80% win probability)",
-                        "Target 45 days to expiration",
-                        "If assigned, sell covered calls"
-                    ],
+                    "description": "Sells OTM puts on SPY to collect premium",
+                    "mechanics": ["Sell at 25 delta", "30 DTE target", "Covered calls if assigned"],
                     "risk_profile": "Moderate"
                 },
                 {
                     "name": "Diagonal Put Spread",
                     "allocation_pct": 25,
-                    "description": "Calendar spread hedge in high IV.",
-                    "mechanics": [
-                        "Buy 75 DTE OTM put",
-                        "Sell 10 DTE OTM put",
-                        "Net credit entry"
-                    ],
+                    "description": "Calendar spread hedge in high IV",
+                    "mechanics": ["Activated when IV rank > 50%", "Net credit entry"],
                     "risk_profile": "Conservative"
                 },
                 {
                     "name": "Cash Reserve",
                     "allocation_pct": 15,
-                    "description": "Liquidity buffer for margin.",
+                    "description": "Liquidity buffer",
                     "mechanics": ["Buffer for assignments"],
                     "risk_profile": "Low"
                 }
-            ],
-            "market_conditions": {
-                "best_environment": "Sideways to slightly bullish with elevated IV",
-                "challenging_environment": "Sharp sudden declines",
-                "adaptation": "Diagonal spreads provide hedge"
-            }
+            ]
         },
         "performance_analysis": {
             "returns": {
                 "total_return_pct": 37.5,
-                "cagr_pct": 8.2,
-                "total_dollar_gain": 187500
+                "cagr_pct": 11.8,
+                "total_dollar_gain": 18750
             },
             "risk_adjusted": {
                 "sharpe_ratio": 1.45,
                 "sharpe_interpretation": "Excellent - significantly outperforms on risk-adjusted basis",
                 "sortino_ratio": 2.1,
-                "calmar_ratio": 0.67
+                "calmar_ratio": 0.96
             },
             "drawdown_analysis": {
                 "max_drawdown_pct": 12.3,
                 "max_drawdown_duration_days": 45,
-                "context": "Income generation aids faster recovery"
-            }
-        },
-        "income_analysis": {
-            "income_summary": {
-                "total_premium_collected": 245000,
-                "avg_monthly_income": 4250,
-                "annual_yield_pct": 10.2
-            },
-            "income_consistency": {
-                "profitable_months_pct": 85,
-                "interpretation": "Good consistency - occasional losing months"
+                "context": "Moderate - typical for income strategies"
             }
         },
         "trade_statistics": {
             "overall": {
-                "total_trades": 156,
-                "winning_trades": 128,
-                "losing_trades": 28,
-                "win_rate_pct": 82
+                "total_trades": 48,
+                "winning_trades": 37,
+                "losing_trades": 11,
+                "win_rate_pct": 78
             },
             "trade_quality": {
                 "profit_factor": 2.3,
                 "expectancy_pct": 1.8,
-                "avg_trade_duration_days": 32
+                "avg_trade_duration_days": 28
             }
         },
-        "yearly_breakdown": {
-            "yearly_returns": {
-                "2020": {"return_pct": 15.2, "status": "positive"},
-                "2021": {"return_pct": 12.1, "status": "positive"},
-                "2022": {"return_pct": -3.5, "status": "negative"},
-                "2023": {"return_pct": 8.7, "status": "positive"},
-                "2024": {"return_pct": 6.2, "status": "positive"}
-            },
-            "best_year": ["2020", 15.2],
-            "worst_year": ["2022", -3.5],
-            "positive_years": 4,
-            "total_years": 5
-        },
         "key_observations": [
-            "Strong CAGR of 8.2% with lower volatility than equities",
-            "Exceptional 82% win rate demonstrates strategy edge",
-            "85% of months profitable - highly consistent income",
+            "Strong CAGR of 11.8% exceeds typical market returns",
+            "78% win rate demonstrates strategy edge",
             "Maximum drawdown of 12.3% shows excellent risk management",
-            "Sharpe ratio of 1.45 beats most active strategies"
+            "Sharpe ratio of 1.45 beats most active strategies",
+            "Data quality of 85% - results are trustworthy"
         ],
         "disclosures": {
+            "data_quality": {
+                "quality_pct": 85,
+                "real_data_points": 42,
+                "estimated_data_points": 6,
+                "data_source": "POLYGON_HISTORICAL",
+                "warning": None
+            },
             "backtest_limitations": [
                 "Past performance does not guarantee future results",
                 "Backtest uses historical data which may not reflect future conditions",
                 "Actual trading involves slippage and execution costs",
-                "Bid-ask spreads may differ from backtest assumptions"
+                "Bid-ask spreads in live trading may differ from backtest assumptions"
             ],
             "strategy_risks": [
                 "Selling options involves risk of assignment",
                 "Strategy may underperform in strong bull markets",
-                "Margin requirements may increase during stress",
-                "Early assignment risk on American-style options"
+                "Margin requirements may increase during stress"
             ],
-            "legal": "This report is for informational purposes only and does not constitute investment advice."
+            "legal": "This report is for informational purposes only."
         }
     }
 
