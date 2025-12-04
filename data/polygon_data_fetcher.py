@@ -350,7 +350,9 @@ class PolygonDataFetcher:
             # Format: O:SPY241220C00570000 (for SPY $570 Call expiring 2024-12-20)
             exp_str = expiration.replace('-', '')[2:]  # "2024-12-20" -> "241220"
             type_char = 'C' if option_type.lower() == 'call' else 'P'
-            strike_str = f"{int(strike * 1000):08d}"  # $570 -> "00570000"
+            # Ensure strike is a number (might be passed as string from API/database)
+            strike_num = float(strike) if isinstance(strike, str) else strike
+            strike_str = f"{int(strike_num * 1000):08d}"  # $570 -> "00570000"
 
             option_ticker = f"O:{symbol}{exp_str}{type_char}{strike_str}"
 
@@ -645,7 +647,9 @@ class PolygonDataFetcher:
             # Format: O:SPY241220C00570000
             exp_str = expiration.replace('-', '')[2:]  # "2024-12-20" -> "241220"
             type_char = 'C' if option_type.lower() == 'call' else 'P'
-            strike_str = f"{int(strike * 1000):08d}"
+            # Ensure strike is a number (might be passed as string from API/database)
+            strike_num = float(strike) if isinstance(strike, str) else strike
+            strike_str = f"{int(strike_num * 1000):08d}"
 
             option_ticker = f"O:{symbol}{exp_str}{type_char}{strike_str}"
 

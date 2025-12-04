@@ -377,7 +377,7 @@ def run_continuous_scheduler(check_interval_minutes: int = 5, symbols: list = No
 
                 # Wait until the next 5-minute clock mark (synced with frontend countdown)
                 # This ensures the backend runs exactly when the frontend timer hits 0:00
-                now = datetime.now(CT_TZ)
+                now = get_central_time()
                 current_minute = now.minute
                 current_second = now.second
 
