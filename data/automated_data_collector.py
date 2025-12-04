@@ -63,17 +63,23 @@ def is_after_market_close() -> bool:
     return after_close <= current_time <= end_window
 
 
-def log_collection(job_name: str, table_name: str, success: bool, error: str = None):
+def log_collection(job_name: str, table_name: str, success: bool, error: str = None, stack_trace: str = None):
     """Log data collection event to data_collection_log table"""
     try:
         from database_adapter import get_connection
         conn = get_connection()
         c = conn.cursor()
+
+        # Include stack trace in error message if available
+        full_error = error
+        if stack_trace:
+            full_error = f"{error}\n\nStack trace:\n{stack_trace}"
+
         c.execute("""
             INSERT INTO data_collection_log
             (collection_type, source, records_collected, success, error_message)
             VALUES (%s, %s, %s, %s, %s)
-        """, (job_name, table_name, 1 if success else 0, success, error))
+        """, (job_name, table_name, 1 if success else 0, success, full_error[:2000] if full_error else None))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -102,8 +108,11 @@ def run_gex_history():
             print(f"  ⚠️ gex_history - no data returned")
             log_collection('gex_history_snapshot', 'gex_history', False, 'No data')
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         print(f"  ❌ gex_history failed: {e}")
-        log_collection('gex_history_snapshot', 'gex_history', False, str(e))
+        print(f"     {tb}")
+        log_collection('gex_history_snapshot', 'gex_history', False, str(e), tb)
 
 
 def run_gamma_history():
@@ -131,8 +140,10 @@ def run_gamma_history():
             print(f"  ⚠️ gamma_history - no GEX data available")
             log_collection('gamma_history_snapshot', 'gamma_history', False, 'No GEX data')
     except Exception as e:
-        print(f"  ❌ gamma_history failed: {e}")
-        log_collection('gamma_history_snapshot', 'gamma_history', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ gamma_history failed: {e}\n{tb}")
+        log_collection('gamma_history_snapshot', 'gamma_history', False, str(e), tb)
 
 
 def run_detailed_gex_snapshot():
@@ -158,8 +169,10 @@ def run_detailed_gex_snapshot():
             print(f"  ⚠️ detailed GEX - no data")
             log_collection('detailed_gex', 'gex_snapshots_detailed', False, 'No data')
     except Exception as e:
-        print(f"  ❌ detailed GEX failed: {e}")
-        log_collection('detailed_gex', 'gex_snapshots_detailed', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ detailed GEX failed: {e}\n{tb}")
+        log_collection('detailed_gex', 'gex_snapshots_detailed', False, str(e), tb)
 
 
 # =============================================================================
@@ -235,8 +248,10 @@ def run_regime_signals():
             print(f"  ❌ regime_signals fallback failed: {e2}")
             log_collection('regime_detection', 'regime_signals', False, str(e2))
     except Exception as e:
-        print(f"  ❌ regime_signals failed: {e}")
-        log_collection('regime_detection', 'regime_signals', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ regime_signals failed: {e}\n{tb}")
+        log_collection('regime_detection', 'regime_signals', False, str(e), tb)
 
 
 def run_market_data():
@@ -281,8 +296,10 @@ def run_market_data():
             print(f"  ⚠️ market_data - no GEX data")
             log_collection('market_data', 'market_data', False, 'No GEX data')
     except Exception as e:
-        print(f"  ❌ market_data failed: {e}")
-        log_collection('market_data', 'market_data', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ market_data failed: {e}\n{tb}")
+        log_collection('market_data', 'market_data', False, str(e), tb)
 
 
 # =============================================================================
@@ -302,8 +319,10 @@ def run_forward_magnets():
         print(f"  ✅ forward_magnets updated")
         log_collection('forward_magnets', 'forward_magnets', True)
     except Exception as e:
-        print(f"  ❌ forward_magnets failed: {e}")
-        log_collection('forward_magnets', 'forward_magnets', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ forward_magnets failed: {e}\n{tb}")
+        log_collection('forward_magnets', 'forward_magnets', False, str(e), tb)
 
 
 def run_liberation_outcomes():
@@ -319,8 +338,10 @@ def run_liberation_outcomes():
         print(f"  ✅ liberation_outcomes updated")
         log_collection('liberation_outcomes', 'liberation_outcomes', True)
     except Exception as e:
-        print(f"  ❌ liberation_outcomes failed: {e}")
-        log_collection('liberation_outcomes', 'liberation_outcomes', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ liberation_outcomes failed: {e}\n{tb}")
+        log_collection('liberation_outcomes', 'liberation_outcomes', False, str(e), tb)
 
 
 def run_gamma_expiration():
@@ -336,8 +357,10 @@ def run_gamma_expiration():
         print(f"  ✅ gamma_expiration_timeline updated")
         log_collection('gamma_expiration', 'gamma_expiration_timeline', True)
     except Exception as e:
-        print(f"  ❌ gamma_expiration failed: {e}")
-        log_collection('gamma_expiration', 'gamma_expiration_timeline', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ gamma_expiration failed: {e}\n{tb}")
+        log_collection('gamma_expiration', 'gamma_expiration_timeline', False, str(e), tb)
 
 
 # =============================================================================
@@ -361,8 +384,10 @@ def run_option_chain_collection():
         print(f"  ✅ options_chain_snapshots: {total_contracts} contracts, {successful} symbols")
         log_collection('option_chains', 'options_chain_snapshots', True)
     except Exception as e:
-        print(f"  ❌ option_chains failed: {e}")
-        log_collection('option_chains', 'options_chain_snapshots', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ option_chains failed: {e}\n{tb}")
+        log_collection('option_chains', 'options_chain_snapshots', False, str(e), tb)
 
 
 def run_vix_term_structure():
@@ -407,8 +432,10 @@ def run_vix_term_structure():
             print(f"  ⚠️ vix_term_structure - no data")
             log_collection('vix_term_structure', 'vix_term_structure', False, 'No data')
     except Exception as e:
-        print(f"  ❌ vix_term_structure failed: {e}")
-        log_collection('vix_term_structure', 'vix_term_structure', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ vix_term_structure failed: {e}\n{tb}")
+        log_collection('vix_term_structure', 'vix_term_structure', False, str(e), tb)
 
 
 # =============================================================================
@@ -428,8 +455,10 @@ def run_daily_performance():
         print(f"  ✅ performance updated")
         log_collection('daily_performance', 'performance', True)
     except Exception as e:
-        print(f"  ❌ daily_performance failed: {e}")
-        log_collection('daily_performance', 'performance', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ daily_performance failed: {e}\n{tb}")
+        log_collection('daily_performance', 'performance', False, str(e), tb)
 
 
 def run_gamma_daily_summary():
@@ -448,8 +477,10 @@ def run_gamma_daily_summary():
         print(f"  ✅ gamma_daily_summary updated for {today}")
         log_collection('gamma_daily_summary', 'gamma_daily_summary', True)
     except Exception as e:
-        print(f"  ❌ gamma_daily_summary failed: {e}")
-        log_collection('gamma_daily_summary', 'gamma_daily_summary', False, str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ gamma_daily_summary failed: {e}\n{tb}")
+        log_collection('gamma_daily_summary', 'gamma_daily_summary', False, str(e), tb)
 
 
 # =============================================================================
