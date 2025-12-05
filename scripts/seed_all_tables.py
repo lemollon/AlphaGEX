@@ -834,6 +834,222 @@ def seed_all_tables():
             results["failed"] += 1
 
     # =========================================================================
+    # GROUP 11: CORE DATA TABLES (Previously scheduler-only)
+    # =========================================================================
+    print("\n📊 GROUP 11: Core Data Tables")
+
+    core_tables = [
+        ('gex_history', """
+            INSERT INTO gex_history
+            (symbol, net_gex, flip_point, spot_price, call_wall, put_wall)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, ('SPY', 0.0, 600.0, 600.0, 610.0, 590.0)),
+
+        ('gamma_history', """
+            INSERT INTO gamma_history
+            (symbol, net_gamma, spot_price, call_gamma, put_gamma)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('SPY', 0.0, 600.0, 0.0, 0.0)),
+
+        ('gamma_daily_summary', """
+            INSERT INTO gamma_daily_summary
+            (date, symbol, avg_net_gamma, max_net_gamma, min_net_gamma)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (today, 'SPY', 0.0, 0.0, 0.0)),
+
+        ('gamma_expiration_timeline', """
+            INSERT INTO gamma_expiration_timeline
+            (symbol, expiration_date, gamma_at_expiry, days_to_expiry)
+            VALUES (%s, %s, %s, %s)
+        """, ('SPY', today, 0.0, 0)),
+
+        ('gamma_strike_history', """
+            INSERT INTO gamma_strike_history
+            (symbol, strike, gamma_value, call_gamma, put_gamma)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('SPY', 600.0, 0.0, 0.0, 0.0)),
+
+        ('forward_magnets', """
+            INSERT INTO forward_magnets
+            (symbol, magnet_price, magnet_strength, distance_pct)
+            VALUES (%s, %s, %s, %s)
+        """, ('SPY', 600.0, 0.0, 0.0)),
+
+        ('historical_open_interest', """
+            INSERT INTO historical_open_interest
+            (date, symbol, strike, expiration_date, call_oi, put_oi)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (today, 'SPY', 600.0, today, 0, 0)),
+
+        ('market_data', """
+            INSERT INTO market_data
+            (symbol, spot_price, vix, net_gex, data_source)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('SPY', 600.0, 17.0, 0.0, 'seed')),
+
+        ('gex_levels', """
+            INSERT INTO gex_levels
+            (symbol, level_type, price, gamma_value, significance)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('SPY', 'seed', 600.0, 0.0, 0.5)),
+
+        ('price_history', """
+            INSERT INTO price_history
+            (symbol, date, open, high, low, close, volume)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, ('SPY', today, 600.0, 601.0, 599.0, 600.0, 0)),
+
+        ('spy_correlation', """
+            INSERT INTO spy_correlation
+            (symbol, correlation_type, correlation_value, lookback_days)
+            VALUES (%s, %s, %s, %s)
+        """, ('SPY', 'seed', 0.0, 20)),
+
+        ('data_collection_log', """
+            INSERT INTO data_collection_log
+            (collection_type, source, records_collected, success)
+            VALUES (%s, %s, %s, %s)
+        """, ('seed', 'seed_script', 0, True)),
+
+        ('ml_decision_logs', """
+            INSERT INTO ml_decision_logs
+            (model_name, decision_type, input_features, output, confidence)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('seed_model', 'initialization', '{}', 'initialized', 1.0)),
+
+        ('recommendations', """
+            INSERT INTO recommendations
+            (symbol, recommendation_type, action, confidence, reasoning)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('SPY', 'seed', 'HOLD', 0.5, 'System initialized')),
+
+        ('account_state', """
+            INSERT INTO account_state
+            (account_value, cash_balance, buying_power)
+            VALUES (%s, %s, %s)
+        """, (100000, 100000, 100000)),
+
+        ('strategy_config', """
+            INSERT INTO strategy_config
+            (strategy_name, config_json, is_active)
+            VALUES (%s, %s, %s)
+        """, ('SEED', '{}', False)),
+
+        ('background_jobs', """
+            INSERT INTO background_jobs
+            (job_name, status, last_run)
+            VALUES (%s, %s, %s)
+        """, ('seed_job', 'idle', timestamp))
+    ]
+
+    for table_name, sql, params in core_tables:
+        if seed_table(table_name, sql, params):
+            print(f"    ✅ {table_name}")
+            results["success"] += 1
+        else:
+            results["failed"] += 1
+
+    # =========================================================================
+    # GROUP 12: WHEEL SYSTEM TABLES
+    # =========================================================================
+    print("\n🎡 GROUP 12: Wheel System Tables")
+
+    wheel_tables = [
+        ('wheel_cycles', """
+            INSERT INTO wheel_cycles
+            (symbol, cycle_type, status, start_date)
+            VALUES (%s, %s, %s, %s)
+        """, ('SPY', 'seed', 'inactive', today)),
+
+        ('wheel_legs', """
+            INSERT INTO wheel_legs
+            (cycle_id, leg_type, strike, expiration, premium)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (0, 'seed', 600.0, today, 0.0)),
+
+        ('wheel_activity_log', """
+            INSERT INTO wheel_activity_log
+            (activity_type, description, details)
+            VALUES (%s, %s, %s)
+        """, ('seed', 'System initialized', '{}'))
+    ]
+
+    for table_name, sql, params in wheel_tables:
+        if seed_table(table_name, sql, params):
+            print(f"    ✅ {table_name}")
+            results["success"] += 1
+        else:
+            results["failed"] += 1
+
+    # =========================================================================
+    # GROUP 13: AUTONOMOUS TRADER TABLES
+    # =========================================================================
+    print("\n🤖 GROUP 13: Autonomous Trader Tables")
+
+    autonomous_tables = [
+        ('autonomous_config', """
+            INSERT INTO autonomous_config
+            (config_name, config_value)
+            VALUES (%s, %s)
+        """, ('seed', '{}')),
+
+        ('autonomous_positions', """
+            INSERT INTO autonomous_positions
+            (symbol, quantity, entry_price, current_price, unrealized_pnl)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('SPY', 0, 600.0, 600.0, 0.0)),
+
+        ('autonomous_trade_log', """
+            INSERT INTO autonomous_trade_log
+            (symbol, action, quantity, price, reason)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('SPY', 'seed', 0, 600.0, 'System initialized')),
+
+        ('autonomous_trader_logs', """
+            INSERT INTO autonomous_trader_logs
+            (log_level, message, details)
+            VALUES (%s, %s, %s)
+        """, ('INFO', 'System initialized', '{}')),
+
+        ('autonomous_closed_trades', """
+            INSERT INTO autonomous_closed_trades
+            (symbol, entry_price, exit_price, quantity, pnl, reason)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, ('SPY', 600.0, 600.0, 0, 0.0, 'seed')),
+
+        ('autonomous_open_positions', """
+            INSERT INTO autonomous_open_positions
+            (symbol, quantity, entry_price, current_price, unrealized_pnl)
+            VALUES (%s, %s, %s, %s, %s)
+        """, ('SPY', 0, 600.0, 600.0, 0.0)),
+
+        ('autonomous_equity_snapshots', """
+            INSERT INTO autonomous_equity_snapshots
+            (equity, cash, positions_value)
+            VALUES (%s, %s, %s)
+        """, (100000, 100000, 0)),
+
+        ('autonomous_live_status', """
+            INSERT INTO autonomous_live_status
+            (status, equity, open_positions, last_trade)
+            VALUES (%s, %s, %s, %s)
+        """, ('idle', 100000, 0, None)),
+
+        ('autonomous_trade_activity', """
+            INSERT INTO autonomous_trade_activity
+            (activity_type, symbol, details)
+            VALUES (%s, %s, %s)
+        """, ('seed', 'SPY', '{}'))
+    ]
+
+    for table_name, sql, params in autonomous_tables:
+        if seed_table(table_name, sql, params):
+            print(f"    ✅ {table_name}")
+            results["success"] += 1
+        else:
+            results["failed"] += 1
+
+    # =========================================================================
     # SUMMARY
     # =========================================================================
     print("\n" + "=" * 70)
