@@ -43,6 +43,12 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 from functools import lru_cache
 from scipy.stats import norm
+from pathlib import Path
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
 
 # Data collection hook for ML storage
 try:

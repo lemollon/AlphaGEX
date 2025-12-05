@@ -17,9 +17,15 @@ import sys
 import json
 from datetime import datetime, timedelta
 import traceback
+from pathlib import Path
 
 # Add parent directory for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
 
 try:
     from database_adapter import get_connection

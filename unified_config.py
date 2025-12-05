@@ -22,6 +22,12 @@ import os
 from typing import Dict, List, Optional, Any, TypedDict
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
+
+# Load environment variables from .env file BEFORE any os.getenv() calls
+from dotenv import load_dotenv
+env_path = Path(__file__).parent / '.env'
+load_dotenv(env_path)
 
 # Import existing configs (for backward compatibility)
 from config import (

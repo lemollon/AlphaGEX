@@ -47,6 +47,21 @@ import traceback
 from datetime import datetime, time as dt_time
 from zoneinfo import ZoneInfo
 import sys
+import os
+from pathlib import Path
+
+# CRITICAL: Load environment variables from .env file FIRST
+# This is required for API keys to be available
+from dotenv import load_dotenv
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
+
+# Verify critical API keys are loaded
+if not os.getenv('TRADING_VOLATILITY_API_KEY') and not os.getenv('TV_USERNAME'):
+    print("⚠️  WARNING: TRADING_VOLATILITY_API_KEY not loaded from .env")
+    print(f"   Checked: {env_path}")
+if not os.getenv('POLYGON_API_KEY'):
+    print("⚠️  WARNING: POLYGON_API_KEY not loaded from .env")
 
 # Timezones
 ET = ZoneInfo("America/New_York")
