@@ -4,6 +4,7 @@ Core Classes and Engines for AlphaGEX Trading System
 Handles GEX calculations, data fetching, and trading strategy logic
 """
 
+import os
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -14,7 +15,13 @@ from scipy import stats
 from dataclasses import dataclass
 import time
 import warnings
+from pathlib import Path
 warnings.filterwarnings('ignore')
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+env_path = Path(__file__).parent / '.env'
+load_dotenv(env_path)
 
 # Import intelligent rate limiter
 try:
