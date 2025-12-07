@@ -40,6 +40,12 @@ Thumbs.db
 *.xlsx
 *.db
 *.sqlite
+*.zip
+
+# ORAT Historical Data (large files - process locally)
+data/orat_raw/
+data/orat_processed/
+data/prices/
 
 # Strategy Stats (auto-generated, don't commit)
 .strategy_stats/
