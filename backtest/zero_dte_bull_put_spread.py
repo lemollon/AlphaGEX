@@ -439,8 +439,17 @@ class ZeroDTEBullPutSpreadBacktester:
         print(f"Found {len(trading_days)} trading days with 0DTE data")
 
         # Process each day
+        total_days = len(trading_days)
         for i, trade_date in enumerate(trading_days):
             self.days_with_data += 1
+
+            # Progress bar every 10 days
+            if i % 10 == 0:
+                pct = (i / total_days) * 100
+                bar_len = 30
+                filled = int(bar_len * i / total_days)
+                bar = "=" * filled + "-" * (bar_len - filled)
+                print(f"\r[{bar}] {pct:5.1f}% ({i}/{total_days}) | Trades: {len(self.all_trades)} | Equity: ${self.equity:,.0f}", end="", flush=True)
 
             # Get options for this day
             options = self.get_options_for_date(trade_date)
@@ -461,15 +470,6 @@ class ZeroDTEBullPutSpreadBacktester:
                 self.settle_trade(trade, underlying_price)
                 self.all_trades.append(trade)
                 self.days_traded += 1
-
-                # Progress output
-                if i % 50 == 0 or trade.outcome in ["MAX_LOSS", "PARTIAL_LOSS"]:
-                    status = "+" if trade.total_pnl > 0 else "-"
-                    print(f"[{trade_date}] {status} {trade.outcome}: "
-                          f"${trade.total_pnl:+,.2f} | "
-                          f"Equity: ${self.equity:,.2f} | "
-                          f"Short: {trade.short_strike} | "
-                          f"Settlement: {underlying_price:.2f}")
             else:
                 self.days_skipped += 1
 
@@ -492,6 +492,10 @@ class ZeroDTEBullPutSpreadBacktester:
                 win_rate_cumulative=win_rate
             )
             self.daily_equity.append(daily)
+
+        # Final progress
+        print(f"\r[{'=' * 30}] 100.0% ({total_days}/{total_days}) | Trades: {len(self.all_trades)} | Equity: ${self.equity:,.0f}")
+        print()
 
         return self._generate_results()
 
