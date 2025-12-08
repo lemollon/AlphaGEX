@@ -1553,5 +1553,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=True,  # Auto-reload on code changes
-        log_level="info"
+        log_level="info",
+        ws="none"  # Disable websockets to avoid version conflicts
     )
