@@ -234,9 +234,14 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
 # Add custom CORS middleware - handles everything including wildcards
 app.add_middleware(CORSHeaderMiddleware)
 
-# NOTE: We removed the built-in CORSMiddleware as it doesn't support wildcards
-# and conflicts with our custom middleware. The CORSHeaderMiddleware above
-# handles all CORS functionality including preflight OPTIONS requests.
+# Also add FastAPI's built-in CORS as backup for reliability
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Include route modules (modular API structure)
 app.include_router(vix_routes.router)
