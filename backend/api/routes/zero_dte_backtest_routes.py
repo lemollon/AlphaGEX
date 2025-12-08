@@ -96,6 +96,69 @@ class BacktestJobStatus(BaseModel):
 _jobs: Dict[str, Dict] = {}
 
 
+# ============================================================================
+# Health Check Endpoint - Use this to debug KRONOS issues
+# ============================================================================
+
+@router.get("/health")
+async def health_check():
+    """
+    Health check endpoint for KRONOS debugging.
+
+    Returns detailed status about:
+    - Backend connectivity
+    - Database connectivity
+    - Active jobs
+    - ORAT data availability
+
+    Use this to verify everything is working before running a backtest.
+    """
+    health = {
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+        "backend": "running",
+        "database": "unknown",
+        "orat_data": "unknown",
+        "active_jobs": len([j for j in _jobs.values() if j.get('status') == 'running']),
+        "total_jobs": len(_jobs),
+    }
+
+    # Check database connectivity
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        health["database"] = "connected"
+
+        # Check ORAT data
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_rows,
+                COUNT(DISTINCT ticker) as tickers,
+                MIN(trade_date) as earliest_date,
+                MAX(trade_date) as latest_date
+            FROM orat_options_eod
+        """)
+        row = cursor.fetchone()
+        if row and row[0] > 0:
+            health["orat_data"] = {
+                "status": "available",
+                "total_rows": row[0],
+                "tickers": row[1],
+                "date_range": f"{row[2]} to {row[3]}"
+            }
+        else:
+            health["orat_data"] = {"status": "empty", "total_rows": 0}
+
+        conn.close()
+    except Exception as e:
+        health["database"] = f"error: {str(e)}"
+        health["orat_data"] = "unavailable"
+        health["status"] = "degraded"
+
+    return health
+
+
 def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
     """Run the hybrid fixed backtest in background"""
     try:
