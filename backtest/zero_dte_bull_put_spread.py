@@ -131,6 +131,10 @@ class ZeroDTEBullPutSpreadBacktester:
         max_daily_trades: int = 1,  # 1 trade per day
         ticker: str = "SPXW",  # SPXW for weeklies (0DTE)
         monthly_return_target: float = 10.0,  # 10% monthly target
+        trading_days_of_week: List[int] = None,  # Days to trade: 0=Mon, 1=Tue, etc.
+        max_vix: float = 30.0,  # Don't trade when VIX > this (crash protection)
+        stop_loss_multiplier: float = 2.0,  # Exit if loss hits 2x credit received
+        profit_target_pct: float = 50.0,  # Take profits at 50% of max profit
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -141,6 +145,11 @@ class ZeroDTEBullPutSpreadBacktester:
         self.max_daily_trades = max_daily_trades
         self.ticker = ticker
         self.monthly_return_target = monthly_return_target
+        # Default to Monday and Tuesday only
+        self.trading_days_of_week = trading_days_of_week if trading_days_of_week is not None else [0, 1]
+        self.max_vix = max_vix  # VIX threshold - don't trade above this
+        self.stop_loss_multiplier = stop_loss_multiplier  # Exit at X times credit
+        self.profit_target_pct = profit_target_pct  # Take profit at X% of max
 
         # State
         self.cash = initial_capital
@@ -156,9 +165,13 @@ class ZeroDTEBullPutSpreadBacktester:
         self.days_traded = 0
         self.days_with_data = 0
         self.days_skipped = 0
+        self.days_skipped_vix = 0  # Days skipped due to high VIX
 
         # Cache for SPX OHLC data (loaded once at start)
         self.spx_ohlc: Dict[str, Dict] = {}
+
+        # Cache for VIX data (for crash protection)
+        self.vix_data: Dict[str, float] = {}
 
     def load_spx_ohlc_data(self):
         """
@@ -205,15 +218,69 @@ class ZeroDTEBullPutSpreadBacktester:
             print(f"  Warning: Failed to load SPX data from Yahoo: {e}")
             print("  Will use simulated settlement prices")
 
-    def get_spx_prices(self, trade_date: str) -> Tuple[Optional[float], Optional[float]]:
+    def get_spx_prices(self, trade_date: str) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
         """
-        Get SPX open and close prices for a given date.
-        Returns (open_price, close_price) or (None, None) if not available.
+        Get SPX OHLC prices for a given date.
+        Returns (open, high, low, close) or (None, None, None, None) if not available.
         """
         if trade_date in self.spx_ohlc:
             data = self.spx_ohlc[trade_date]
-            return data['open'], data['close']
-        return None, None
+            return data['open'], data['high'], data['low'], data['close']
+        return None, None, None, None
+
+    def load_vix_data(self):
+        """
+        Load VIX data from Yahoo Finance for crash protection.
+        When VIX is above threshold, we skip trading that day.
+        """
+        if not YFINANCE_AVAILABLE:
+            print("  VIX filter disabled - yfinance not available")
+            return
+
+        print("  Loading VIX data from Yahoo Finance...")
+
+        try:
+            ticker = yf.Ticker("^VIX")
+
+            start = datetime.strptime(self.start_date, '%Y-%m-%d') - timedelta(days=5)
+            end = datetime.strptime(self.end_date, '%Y-%m-%d') + timedelta(days=5)
+
+            df = ticker.history(start=start, end=end)
+
+            if df.empty:
+                print("  Warning: No VIX data from Yahoo Finance")
+                return
+
+            for idx, row in df.iterrows():
+                date_str = idx.strftime('%Y-%m-%d')
+                # Use the close price as the VIX level
+                self.vix_data[date_str] = float(row['Close'])
+
+            print(f"  Loaded {len(self.vix_data)} days of VIX data")
+
+        except Exception as e:
+            print(f"  Warning: Failed to load VIX data: {e}")
+            print("  VIX filter will be disabled")
+
+    def get_vix(self, trade_date: str) -> Optional[float]:
+        """Get VIX level for a given date."""
+        return self.vix_data.get(trade_date)
+
+    def should_trade(self, trade_date: str) -> Tuple[bool, str]:
+        """
+        Check if we should trade on this date based on VIX filter.
+        Returns (should_trade, reason)
+        """
+        vix = self.get_vix(trade_date)
+
+        if vix is None:
+            # No VIX data - trade anyway
+            return True, ""
+
+        if vix > self.max_vix:
+            return False, f"VIX={vix:.1f} > {self.max_vix}"
+
+        return True, ""
 
     def get_connection(self):
         """Get database connection"""
@@ -487,10 +554,71 @@ class ZeroDTEBullPutSpreadBacktester:
 
         return trade
 
-    def settle_trade(self, trade: BullPutSpreadTrade, settlement_price: float):
-        """Settle trade at expiration"""
+    def settle_trade(self, trade: BullPutSpreadTrade, settlement_price: float,
+                     daily_low: float = None, daily_high: float = None):
+        """
+        Settle trade with stop loss and profit target logic.
 
-        # Calculate settlement P&L
+        Using daily HIGH/LOW from Yahoo Finance to simulate intraday exits:
+        - If daily LOW breaches stop loss level → stopped out
+        - If spread would hit profit target → take early profit
+        """
+        credit = trade.credit_received
+
+        # Calculate stop loss price level
+        # Stop triggers when spread value = stop_loss_multiplier * credit
+        # For bull put spread: this happens when underlying drops to a certain level
+        # Loss at stop = (stop_loss_multiplier - 1) * credit (since we keep original credit)
+        stop_loss_price = trade.short_strike - (credit * self.stop_loss_multiplier)
+
+        # Check if stop loss was hit (using daily low)
+        if daily_low is not None and daily_low < stop_loss_price:
+            # Stopped out - assume we got out at stop level
+            loss_per_spread = credit * self.stop_loss_multiplier
+            net_pnl_per_spread = credit - loss_per_spread  # Net loss
+
+            total_pnl = net_pnl_per_spread * 100 * trade.contracts
+            pnl_percent = (total_pnl / trade.total_risk * 100) if trade.total_risk > 0 else 0
+
+            trade.settlement_price = stop_loss_price
+            trade.pnl_per_spread = net_pnl_per_spread
+            trade.total_pnl = total_pnl
+            trade.pnl_percent = pnl_percent
+            trade.outcome = "STOPPED_OUT"
+            trade.short_breached = True
+            trade.long_breached = daily_low < trade.long_strike
+
+            self.cash += total_pnl
+            self.equity = self.cash
+            return trade
+
+        # Check if profit target was hit
+        # Profit target: close when we've captured X% of max profit (credit)
+        # This happens when spread value drops to (1 - profit_target_pct/100) * credit
+        # For simplicity: if settlement > short_strike + buffer, assume we hit profit target
+        profit_target_credit = credit * (self.profit_target_pct / 100)
+
+        # If the underlying never threatened our short strike, we likely hit profit target
+        if daily_low is not None and daily_low > trade.short_strike:
+            # Never in danger - take profit target
+            net_pnl_per_spread = profit_target_credit
+
+            total_pnl = net_pnl_per_spread * 100 * trade.contracts
+            pnl_percent = (total_pnl / trade.total_risk * 100) if trade.total_risk > 0 else 0
+
+            trade.settlement_price = settlement_price
+            trade.pnl_per_spread = net_pnl_per_spread
+            trade.total_pnl = total_pnl
+            trade.pnl_percent = pnl_percent
+            trade.outcome = "PROFIT_TARGET"
+            trade.short_breached = False
+            trade.long_breached = False
+
+            self.cash += total_pnl
+            self.equity = self.cash
+            return trade
+
+        # No stop or profit target hit - settle normally at expiration
         pnl_per_spread, outcome = self.calculate_settlement(
             trade.short_strike,
             trade.long_strike,
@@ -521,6 +649,9 @@ class ZeroDTEBullPutSpreadBacktester:
 
     def run(self) -> Dict:
         """Run the backtest"""
+        day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        trading_days_str = ', '.join([day_names[d] for d in self.trading_days_of_week])
+
         print("\n" + "=" * 80)
         print("0DTE BULL PUT SPREAD BACKTESTER - USING ORAT DATA")
         print("=" * 80)
@@ -531,6 +662,10 @@ class ZeroDTEBullPutSpreadBacktester:
         print(f"Max Risk/Trade:   {self.max_risk_per_trade_pct}%")
         print(f"Monthly Target:   {self.monthly_return_target}%")
         print(f"Ticker:           {self.ticker}")
+        print(f"Trading Days:     {trading_days_str}")
+        print(f"VIX Filter:       Skip when VIX > {self.max_vix}")
+        print(f"Stop Loss:        Exit at {self.stop_loss_multiplier}x credit ({self.stop_loss_multiplier - 1:.0f}x loss)")
+        print(f"Profit Target:    Take profit at {self.profit_target_pct}% of max")
         print("=" * 80)
 
         # Get trading days
@@ -543,6 +678,18 @@ class ZeroDTEBullPutSpreadBacktester:
 
         print(f"Found {len(trading_days)} trading days with 0DTE data")
 
+        # Filter by day of week (0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri)
+        day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        selected_days = [day_names[d] for d in self.trading_days_of_week]
+        print(f"Filtering to trade only on: {', '.join(selected_days)}")
+
+        original_count = len(trading_days)
+        trading_days = [
+            d for d in trading_days
+            if datetime.strptime(d, '%Y-%m-%d').weekday() in self.trading_days_of_week
+        ]
+        print(f"Filtered to {len(trading_days)} days (from {original_count})")
+
         # Load real SPX OHLC data from Yahoo Finance
         self.load_spx_ohlc_data()
         use_real_data = len(self.spx_ohlc) > 0
@@ -550,6 +697,14 @@ class ZeroDTEBullPutSpreadBacktester:
             print("  Using REAL SPX close prices for settlement")
         else:
             print("  Using SIMULATED settlement prices (install yfinance for real data)")
+
+        # Load VIX data for crash protection
+        self.load_vix_data()
+        use_vix_filter = len(self.vix_data) > 0
+        if use_vix_filter:
+            print(f"  VIX filter ENABLED - will skip trading when VIX > {self.max_vix}")
+        else:
+            print("  VIX filter disabled - no VIX data available")
 
         # Process each day
         total_days = len(trading_days)
@@ -564,6 +719,14 @@ class ZeroDTEBullPutSpreadBacktester:
                 bar = "=" * filled + "-" * (bar_len - filled)
                 print(f"\r[{bar}] {pct:5.1f}% ({i}/{total_days}) | Trades: {len(self.all_trades)} | Equity: ${self.equity:,.0f}", end="", flush=True)
 
+            # Check VIX filter - skip high volatility days (crash protection)
+            if use_vix_filter:
+                should_trade, skip_reason = self.should_trade(trade_date)
+                if not should_trade:
+                    self.days_skipped_vix += 1
+                    self.days_skipped += 1
+                    continue
+
             # Get options for this day
             options = self.get_options_for_date(trade_date)
 
@@ -575,20 +738,25 @@ class ZeroDTEBullPutSpreadBacktester:
             trade = self.execute_trade(trade_date, options)
 
             if trade:
-                # Get settlement price using REAL intraday movement
+                # Get settlement price and HIGH/LOW for stop loss using REAL data
+                daily_low = None
+                daily_high = None
+
                 if use_real_data:
-                    open_price, close_price = self.get_spx_prices(trade_date)
+                    open_price, high_price, low_price, close_price = self.get_spx_prices(trade_date)
                     if open_price and close_price:
                         # Calculate REAL intraday move from Yahoo
-                        # This is the actual Open -> Close movement for the day
                         intraday_move = close_price - open_price
 
                         # Apply intraday move to ORAT's underlying
-                        # ORAT underlying_price represents entry level
-                        # Settlement = entry + actual daily movement
                         settlement_price = trade.underlying_price + intraday_move
+
+                        # Calculate adjusted high/low for stop loss checks
+                        # Scale the high/low range relative to our entry price
+                        daily_range = high_price - low_price
+                        daily_low = trade.underlying_price + (low_price - open_price)
+                        daily_high = trade.underlying_price + (high_price - open_price)
                     else:
-                        # Fallback to ORAT's underlying_price
                         settlement_price = trade.underlying_price
                 else:
                     # Simulate settlement based on IV (fallback)
@@ -596,8 +764,13 @@ class ZeroDTEBullPutSpreadBacktester:
                     settlement_price = self.simulate_settlement(
                         trade.underlying_price, iv, trade_date
                     )
+                    # Simulate daily range for stop loss (roughly 2x the expected move)
+                    daily_vol = iv * math.sqrt(1/252)
+                    expected_move = trade.underlying_price * daily_vol
+                    daily_low = settlement_price - expected_move
+                    daily_high = settlement_price + expected_move
 
-                self.settle_trade(trade, settlement_price)
+                self.settle_trade(trade, settlement_price, daily_low, daily_high)
                 self.all_trades.append(trade)
                 self.days_traded += 1
             else:
@@ -747,6 +920,7 @@ class ZeroDTEBullPutSpreadBacktester:
                 'days_with_data': self.days_with_data,
                 'days_traded': self.days_traded,
                 'days_skipped': self.days_skipped,
+                'days_skipped_vix': self.days_skipped_vix,
             },
             'parameters': {
                 'target_delta': self.target_delta,
@@ -838,6 +1012,16 @@ class ZeroDTEBullPutSpreadBacktester:
         for outcome, count in o.items():
             pct = count / t['total_trades'] * 100 if t['total_trades'] > 0 else 0
             print(f"  {outcome}: {count} ({pct:.1f}%)")
+
+        print("-" * 80)
+
+        # Risk management stats
+        dq = results['data_quality']
+        print(f"\nRISK MANAGEMENT:")
+        print(f"  Days with data:         {dq['days_with_data']}")
+        print(f"  Days traded:            {dq['days_traded']}")
+        print(f"  Days skipped (VIX):     {dq['days_skipped_vix']} (VIX > {self.max_vix})")
+        print(f"  Days skipped (other):   {dq['days_skipped'] - dq['days_skipped_vix']}")
 
         print("-" * 80)
 
@@ -982,13 +1166,20 @@ def main():
     parser.add_argument('--start', default='2020-01-01', help='Start date YYYY-MM-DD')
     parser.add_argument('--end', default='2025-12-01', help='End date YYYY-MM-DD')
     parser.add_argument('--capital', type=float, default=1_000_000, help='Initial capital')
-    parser.add_argument('--delta', type=float, default=0.15, help='Target delta (e.g., 0.15 for 15 delta)')
+    parser.add_argument('--delta', type=float, default=0.10, help='Target delta (default: 0.10 for 10 delta)')
     parser.add_argument('--width', type=float, default=10.0, help='Spread width in dollars')
     parser.add_argument('--risk', type=float, default=2.0, help='Max risk per trade (percent)')
     parser.add_argument('--ticker', default='SPXW', help='Ticker (SPXW for weeklies)')
+    parser.add_argument('--days', default='0,1', help='Days to trade: 0=Mon,1=Tue,2=Wed,3=Thu,4=Fri (default: 0,1 for Mon-Tue)')
+    parser.add_argument('--maxvix', type=float, default=30.0, help='Max VIX to trade (skip days above this, default: 30)')
+    parser.add_argument('--stoploss', type=float, default=2.0, help='Stop loss multiplier (exit at Nx credit, default: 2.0)')
+    parser.add_argument('--profit', type=float, default=50.0, help='Profit target percent (take profit at N%%, default: 50)')
     parser.add_argument('--export', action='store_true', help='Export trades to CSV')
 
     args = parser.parse_args()
+
+    # Parse trading days
+    trading_days = [int(d.strip()) for d in args.days.split(',')]
 
     backtester = ZeroDTEBullPutSpreadBacktester(
         start_date=args.start,
@@ -997,7 +1188,11 @@ def main():
         target_delta=args.delta,
         spread_width=args.width,
         max_risk_per_trade_pct=args.risk,
-        ticker=args.ticker
+        ticker=args.ticker,
+        trading_days_of_week=trading_days,
+        max_vix=args.maxvix,
+        stop_loss_multiplier=args.stoploss,
+        profit_target_pct=args.profit
     )
 
     results = backtester.run()
