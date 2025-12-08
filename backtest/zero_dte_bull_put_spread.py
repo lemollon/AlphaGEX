@@ -44,22 +44,23 @@ except ImportError:
 
 
 @dataclass
-class BullPutSpreadTrade:
-    """Single 0DTE Bull Put Spread trade"""
+class SpreadTrade:
+    """Single 0DTE Credit Spread trade (Bull Put or Bear Call)"""
     trade_date: str
     trade_number: int
+    strategy_type: str  # "BULL_PUT" or "BEAR_CALL"
 
     # Underlying
     underlying_price: float
 
-    # Short put (sold)
+    # Short option (sold)
     short_strike: float
     short_bid: float
     short_ask: float
     short_delta: float
     short_iv: float
 
-    # Long put (bought)
+    # Long option (bought for protection)
     long_strike: float
     long_bid: float
     long_ask: float
@@ -86,13 +87,20 @@ class BullPutSpreadTrade:
     pnl_percent: float = 0.0
 
     # Classification
-    outcome: str = ""  # "MAX_PROFIT", "PARTIAL_WIN", "PARTIAL_LOSS", "MAX_LOSS"
+    outcome: str = ""  # "MAX_PROFIT", "PARTIAL_WIN", "PARTIAL_LOSS", "MAX_LOSS", "STOPPED_OUT", "PROFIT_TARGET"
     short_breached: bool = False
     long_breached: bool = False
 
     # Timing
     expiration_date: str = ""
     dte: int = 0
+
+    # VIX at entry (for tracking)
+    vix_at_entry: float = 0.0
+
+
+# Alias for backwards compatibility
+BullPutSpreadTrade = SpreadTrade
 
 
 @dataclass
@@ -161,7 +169,7 @@ class ZeroDTEBullPutSpreadBacktester:
         self.high_water_mark = initial_capital
 
         # Tracking
-        self.all_trades: List[BullPutSpreadTrade] = []
+        self.all_trades: List[SpreadTrade] = []
         self.daily_equity: List[DailyEquity] = []
         self.trade_counter = 0
 
@@ -169,7 +177,8 @@ class ZeroDTEBullPutSpreadBacktester:
         self.days_traded = 0
         self.days_with_data = 0
         self.days_skipped = 0
-        self.days_skipped_vix = 0  # Days skipped due to high VIX
+        self.days_bear_call = 0  # Days traded bear call spreads (VIX > threshold)
+        self.days_bull_put = 0  # Days traded bull put spreads (VIX <= threshold)
 
         # Cache for SPX OHLC data (loaded once at start)
         self.spx_ohlc: Dict[str, Dict] = {}
@@ -270,21 +279,25 @@ class ZeroDTEBullPutSpreadBacktester:
         """Get VIX level for a given date."""
         return self.vix_data.get(trade_date)
 
-    def should_trade(self, trade_date: str) -> Tuple[bool, str]:
+    def get_strategy_for_date(self, trade_date: str) -> Tuple[str, float]:
         """
-        Check if we should trade on this date based on VIX filter.
-        Returns (should_trade, reason)
+        Determine which strategy to use based on VIX level.
+        Returns (strategy_type, vix_level)
+
+        - VIX <= max_vix: Bull Put Spread (bullish/neutral)
+        - VIX > max_vix: Bear Call Spread (bearish - profits from downside during crashes)
         """
         vix = self.get_vix(trade_date)
 
         if vix is None:
-            # No VIX data - trade anyway
-            return True, ""
+            # No VIX data - default to bull put spread
+            return "BULL_PUT", 0.0
 
         if vix > self.max_vix:
-            return False, f"VIX={vix:.1f} > {self.max_vix}"
+            # High VIX = high fear = sell bear call spreads
+            return "BEAR_CALL", vix
 
-        return True, ""
+        return "BULL_PUT", vix
 
     def get_connection(self):
         """Get database connection"""
@@ -313,11 +326,11 @@ class ZeroDTEBullPutSpreadBacktester:
         return days
 
     def get_options_for_date(self, trade_date: str) -> List[Dict]:
-        """Get all 0DTE options for a given date"""
+        """Get all 0DTE options for a given date (puts and calls)"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # Get 0DTE puts with bid/ask/delta
+        # Get 0DTE options with bid/ask/delta for both puts and calls
         cursor.execute("""
             SELECT
                 trade_date,
@@ -328,28 +341,32 @@ class ZeroDTEBullPutSpreadBacktester:
                 put_bid,
                 put_ask,
                 put_mid,
+                call_bid,
+                call_ask,
+                call_mid,
                 delta,
                 put_iv,
+                call_iv,
                 dte
             FROM orat_options_eod
             WHERE ticker = %s
               AND trade_date = %s
               AND dte <= 1
-              AND put_bid > 0
-              AND put_ask > 0
             ORDER BY strike DESC
         """, (self.ticker, trade_date))
 
         columns = ['trade_date', 'ticker', 'expiration_date', 'strike',
                    'underlying_price', 'put_bid', 'put_ask', 'put_mid',
-                   'delta', 'put_iv', 'dte']
+                   'call_bid', 'call_ask', 'call_mid',
+                   'delta', 'put_iv', 'call_iv', 'dte']
 
         options = []
         for row in cursor.fetchall():
             opt = dict(zip(columns, row))
             # Convert to float for calculations
             for key in ['strike', 'underlying_price', 'put_bid', 'put_ask',
-                       'put_mid', 'delta', 'put_iv']:
+                       'put_mid', 'call_bid', 'call_ask', 'call_mid',
+                       'delta', 'put_iv', 'call_iv']:
                 if opt[key] is not None:
                     opt[key] = float(opt[key])
             options.append(opt)
@@ -452,6 +469,98 @@ class ZeroDTEBullPutSpreadBacktester:
             return None
 
         return (short_put, long_put)
+
+    def find_call_spread_by_strike(self, options: List[Dict], target_strike: float, spread_width: float) -> Optional[Tuple[Dict, Dict]]:
+        """
+        Find bear call spread based on target strike price (for SD-based selection).
+
+        Bear Call Spread (credit spread, profits when price falls):
+        - Short call at strike closest to target_strike (1 SD ABOVE open)
+        - Long call at (short_strike + spread_width) for protection
+
+        Returns (short_call, long_call) or None if no valid spread found
+        """
+        if not options:
+            return None
+
+        # Find all OTM calls (strikes above current price) with valid bids
+        underlying = options[0]['underlying_price'] if options else 0
+        otm_calls = [
+            opt for opt in options
+            if opt['strike'] > underlying
+            and opt.get('call_bid') and opt['call_bid'] > 0
+        ]
+
+        if not otm_calls:
+            return None
+
+        # Find strike closest to target
+        short_call = min(otm_calls, key=lambda x: abs(x['strike'] - target_strike))
+
+        # Find long call at spread_width ABOVE (for protection)
+        long_strike = short_call['strike'] + spread_width
+
+        # Find exact or closest strike
+        long_candidates = [
+            opt for opt in options
+            if abs(opt['strike'] - long_strike) < 1
+            and opt.get('call_ask') and opt['call_ask'] > 0
+        ]
+
+        if not long_candidates:
+            # Try to find any strike above with valid ask
+            long_candidates = [
+                opt for opt in options
+                if opt['strike'] > short_call['strike']
+                and opt.get('call_ask') and opt['call_ask'] > 0
+            ]
+            if not long_candidates:
+                return None
+            long_call = min(long_candidates, key=lambda x: x['strike'])
+        else:
+            long_call = min(long_candidates, key=lambda x: abs(x['strike'] - long_strike))
+
+        # Validate spread (long call must be ABOVE short call for bear call spread)
+        if long_call['strike'] <= short_call['strike']:
+            return None
+
+        return (short_call, long_call)
+
+    def calculate_call_credit(self, short_call: Dict, long_call: Dict) -> float:
+        """
+        Calculate credit received for bear call spread.
+        Sell short call at bid, buy long call at ask (realistic fills)
+        """
+        short_bid = short_call.get('call_bid', 0) or 0
+        long_ask = long_call.get('call_ask', 0) or 0
+        credit = short_bid - long_ask
+        return max(0, credit)  # Should always be positive for valid spread
+
+    def calculate_call_settlement(self, short_strike: float, long_strike: float,
+                                  settlement_price: float) -> Tuple[float, str]:
+        """
+        Calculate P&L at expiration for BEAR CALL SPREAD.
+
+        Returns: (pnl_per_spread, outcome)
+
+        SPX is cash-settled:
+        - If settlement < short_strike: Both OTM, keep full credit (MAX PROFIT)
+        - If short_strike < settlement < long_strike: Partial loss
+        - If settlement > long_strike: Max loss = width - credit
+        """
+        if settlement_price <= short_strike:
+            # Both OTM - keep full credit
+            return 0, "MAX_PROFIT"
+        elif settlement_price < long_strike:
+            # Short call ITM, long call OTM
+            # Loss = settlement - short_strike
+            loss = settlement_price - short_strike
+            return -loss, "PARTIAL_LOSS"
+        else:
+            # Both ITM - max loss
+            # Loss = long_strike - short_strike = spread_width
+            loss = long_strike - short_strike
+            return -loss, "MAX_LOSS"
 
     def calculate_expected_move(self, underlying_price: float, iv: float) -> float:
         """
@@ -556,7 +665,8 @@ class ZeroDTEBullPutSpreadBacktester:
         return contracts, total_credit, total_risk
 
     def execute_trade(self, trade_date: str, options: List[Dict],
-                      open_price: float = None, iv: float = None) -> Optional[BullPutSpreadTrade]:
+                      open_price: float = None, iv: float = None,
+                      vix: float = 0.0) -> Optional[SpreadTrade]:
         """
         Execute a single bull put spread trade.
 
@@ -604,9 +714,10 @@ class ZeroDTEBullPutSpreadBacktester:
         self.trade_counter += 1
 
         # Create trade
-        trade = BullPutSpreadTrade(
+        trade = SpreadTrade(
             trade_date=trade_date,
             trade_number=self.trade_counter,
+            strategy_type="BULL_PUT",
             underlying_price=short_put['underlying_price'],
             short_strike=short_put['strike'],
             short_bid=short_put['put_bid'],
@@ -627,81 +738,218 @@ class ZeroDTEBullPutSpreadBacktester:
             total_risk=total_risk,
             margin_required=total_risk,  # Simplified
             expiration_date=str(short_put['expiration_date']),
-            dte=short_put['dte']
+            dte=short_put['dte'],
+            vix_at_entry=vix
         )
 
         return trade
 
-    def settle_trade(self, trade: BullPutSpreadTrade, settlement_price: float,
+    def execute_bear_call_trade(self, trade_date: str, options: List[Dict],
+                                open_price: float = None, iv: float = None,
+                                vix: float = 0.0) -> Optional[SpreadTrade]:
+        """
+        Execute a single bear call spread trade (for high VIX environments).
+
+        Bear Call Spread profits when the market goes DOWN or stays flat.
+        Used when VIX > threshold as a crash protection strategy.
+
+        Strike = Open + (SD_multiple × Expected_Move) → 1 SD ABOVE open
+        """
+        if not options:
+            return None
+
+        # Calculate target strike: 1 SD ABOVE open (for calls)
+        if open_price is not None and iv is not None and iv > 0:
+            expected_move = self.calculate_expected_move(open_price, iv)
+            target_strike = open_price + (self.sd_multiple * expected_move)
+
+            # Round to nearest $5 strike (SPX has $5 strikes)
+            target_strike = round(target_strike / 5) * 5
+
+            # Find bear call spread by target strike
+            spread = self.find_call_spread_by_strike(options, target_strike, self.spread_width)
+        else:
+            return None  # Need open price and IV for SD-based selection
+
+        if not spread:
+            return None
+
+        short_call, long_call = spread
+
+        # Calculate credit
+        credit = self.calculate_call_credit(short_call, long_call)
+        if credit <= 0:
+            return None
+
+        # Calculate actual spread width (long is ABOVE short for bear call)
+        actual_width = long_call['strike'] - short_call['strike']
+
+        # Size position
+        contracts, total_credit, total_risk = self.size_position(
+            credit, actual_width, short_call['underlying_price']
+        )
+
+        if contracts == 0:
+            return None
+
+        self.trade_counter += 1
+
+        # Create trade
+        trade = SpreadTrade(
+            trade_date=trade_date,
+            trade_number=self.trade_counter,
+            strategy_type="BEAR_CALL",
+            underlying_price=short_call['underlying_price'],
+            short_strike=short_call['strike'],
+            short_bid=short_call.get('call_bid', 0) or 0,
+            short_ask=short_call.get('call_ask', 0) or 0,
+            short_delta=short_call['delta'],
+            short_iv=short_call.get('call_iv', 0) or 0,
+            long_strike=long_call['strike'],
+            long_bid=long_call.get('call_bid', 0) or 0,
+            long_ask=long_call.get('call_ask', 0) or 0,
+            long_delta=long_call['delta'],
+            long_iv=long_call.get('call_iv', 0) or 0,
+            spread_width=actual_width,
+            credit_received=credit,
+            max_loss=actual_width - credit,
+            max_profit=credit,
+            contracts=contracts,
+            total_credit=total_credit,
+            total_risk=total_risk,
+            margin_required=total_risk,
+            expiration_date=str(short_call['expiration_date']),
+            dte=short_call['dte'],
+            vix_at_entry=vix
+        )
+
+        return trade
+
+    def settle_trade(self, trade: SpreadTrade, settlement_price: float,
                      daily_low: float = None, daily_high: float = None):
         """
         Settle trade with stop loss and profit target logic.
 
         Using daily HIGH/LOW from Yahoo Finance to simulate intraday exits:
-        - If daily LOW breaches stop loss level → stopped out
-        - If spread would hit profit target → take early profit
+        - Bull Put: Stop if LOW < stop_loss_price; profit if LOW > short_strike
+        - Bear Call: Stop if HIGH > stop_loss_price; profit if HIGH < short_strike
         """
         credit = trade.credit_received
+        is_bear_call = trade.strategy_type == "BEAR_CALL"
 
-        # Calculate stop loss price level
-        # Stop triggers when spread value = stop_loss_multiplier * credit
-        # For bull put spread: this happens when underlying drops to a certain level
-        # Loss at stop = (stop_loss_multiplier - 1) * credit (since we keep original credit)
-        stop_loss_price = trade.short_strike - (credit * self.stop_loss_multiplier)
+        if is_bear_call:
+            # BEAR CALL SPREAD - profits when price goes DOWN or stays flat
+            # Stop loss triggers when price goes UP too much
+            stop_loss_price = trade.short_strike + (credit * self.stop_loss_multiplier)
 
-        # Check if stop loss was hit (using daily low)
-        if daily_low is not None and daily_low < stop_loss_price:
-            # Stopped out - assume we got out at stop level
-            loss_per_spread = credit * self.stop_loss_multiplier
-            net_pnl_per_spread = credit - loss_per_spread  # Net loss
+            # Check if stop loss was hit (using daily HIGH for bear call)
+            if daily_high is not None and daily_high > stop_loss_price:
+                loss_per_spread = credit * self.stop_loss_multiplier
+                net_pnl_per_spread = credit - loss_per_spread  # Net loss
 
-            total_pnl = net_pnl_per_spread * 100 * trade.contracts
-            pnl_percent = (total_pnl / trade.total_risk * 100) if trade.total_risk > 0 else 0
+                total_pnl = net_pnl_per_spread * 100 * trade.contracts
+                pnl_percent = (total_pnl / trade.total_risk * 100) if trade.total_risk > 0 else 0
 
-            trade.settlement_price = stop_loss_price
-            trade.pnl_per_spread = net_pnl_per_spread
-            trade.total_pnl = total_pnl
-            trade.pnl_percent = pnl_percent
-            trade.outcome = "STOPPED_OUT"
-            trade.short_breached = True
-            trade.long_breached = daily_low < trade.long_strike
+                trade.settlement_price = stop_loss_price
+                trade.pnl_per_spread = net_pnl_per_spread
+                trade.total_pnl = total_pnl
+                trade.pnl_percent = pnl_percent
+                trade.outcome = "STOPPED_OUT"
+                trade.short_breached = True
+                trade.long_breached = daily_high > trade.long_strike
 
-            self.cash += total_pnl
-            self.equity = self.cash
-            return trade
+                self.cash += total_pnl
+                self.equity = self.cash
+                return trade
 
-        # Check if profit target was hit
-        # Profit target: close when we've captured X% of max profit (credit)
-        # This happens when spread value drops to (1 - profit_target_pct/100) * credit
-        # For simplicity: if settlement > short_strike + buffer, assume we hit profit target
-        profit_target_credit = credit * (self.profit_target_pct / 100)
+            # Profit target: underlying never threatened short call (stayed below)
+            profit_target_credit = credit * (self.profit_target_pct / 100)
 
-        # If the underlying never threatened our short strike, we likely hit profit target
-        if daily_low is not None and daily_low > trade.short_strike:
-            # Never in danger - take profit target
-            net_pnl_per_spread = profit_target_credit
+            if daily_high is not None and daily_high < trade.short_strike:
+                net_pnl_per_spread = profit_target_credit
 
-            total_pnl = net_pnl_per_spread * 100 * trade.contracts
-            pnl_percent = (total_pnl / trade.total_risk * 100) if trade.total_risk > 0 else 0
+                total_pnl = net_pnl_per_spread * 100 * trade.contracts
+                pnl_percent = (total_pnl / trade.total_risk * 100) if trade.total_risk > 0 else 0
 
-            trade.settlement_price = settlement_price
-            trade.pnl_per_spread = net_pnl_per_spread
-            trade.total_pnl = total_pnl
-            trade.pnl_percent = pnl_percent
-            trade.outcome = "PROFIT_TARGET"
-            trade.short_breached = False
-            trade.long_breached = False
+                trade.settlement_price = settlement_price
+                trade.pnl_per_spread = net_pnl_per_spread
+                trade.total_pnl = total_pnl
+                trade.pnl_percent = pnl_percent
+                trade.outcome = "PROFIT_TARGET"
+                trade.short_breached = False
+                trade.long_breached = False
 
-            self.cash += total_pnl
-            self.equity = self.cash
-            return trade
+                self.cash += total_pnl
+                self.equity = self.cash
+                return trade
 
-        # No stop or profit target hit - settle normally at expiration
-        pnl_per_spread, outcome = self.calculate_settlement(
-            trade.short_strike,
-            trade.long_strike,
-            settlement_price
-        )
+            # Settle at expiration using CALL settlement logic
+            pnl_per_spread, outcome = self.calculate_call_settlement(
+                trade.short_strike,
+                trade.long_strike,
+                settlement_price
+            )
+
+            # Breach logic for bear call (short breached if settlement > short strike)
+            trade.short_breached = settlement_price > trade.short_strike
+            trade.long_breached = settlement_price > trade.long_strike
+
+        else:
+            # BULL PUT SPREAD - profits when price goes UP or stays flat
+            # Stop loss triggers when price goes DOWN too much
+            stop_loss_price = trade.short_strike - (credit * self.stop_loss_multiplier)
+
+            # Check if stop loss was hit (using daily LOW for bull put)
+            if daily_low is not None and daily_low < stop_loss_price:
+                loss_per_spread = credit * self.stop_loss_multiplier
+                net_pnl_per_spread = credit - loss_per_spread  # Net loss
+
+                total_pnl = net_pnl_per_spread * 100 * trade.contracts
+                pnl_percent = (total_pnl / trade.total_risk * 100) if trade.total_risk > 0 else 0
+
+                trade.settlement_price = stop_loss_price
+                trade.pnl_per_spread = net_pnl_per_spread
+                trade.total_pnl = total_pnl
+                trade.pnl_percent = pnl_percent
+                trade.outcome = "STOPPED_OUT"
+                trade.short_breached = True
+                trade.long_breached = daily_low < trade.long_strike
+
+                self.cash += total_pnl
+                self.equity = self.cash
+                return trade
+
+            # Profit target: underlying never threatened short put (stayed above)
+            profit_target_credit = credit * (self.profit_target_pct / 100)
+
+            if daily_low is not None and daily_low > trade.short_strike:
+                net_pnl_per_spread = profit_target_credit
+
+                total_pnl = net_pnl_per_spread * 100 * trade.contracts
+                pnl_percent = (total_pnl / trade.total_risk * 100) if trade.total_risk > 0 else 0
+
+                trade.settlement_price = settlement_price
+                trade.pnl_per_spread = net_pnl_per_spread
+                trade.total_pnl = total_pnl
+                trade.pnl_percent = pnl_percent
+                trade.outcome = "PROFIT_TARGET"
+                trade.short_breached = False
+                trade.long_breached = False
+
+                self.cash += total_pnl
+                self.equity = self.cash
+                return trade
+
+            # Settle at expiration using PUT settlement logic
+            pnl_per_spread, outcome = self.calculate_settlement(
+                trade.short_strike,
+                trade.long_strike,
+                settlement_price
+            )
+
+            # Breach logic for bull put (short breached if settlement < short strike)
+            trade.short_breached = settlement_price < trade.short_strike
+            trade.long_breached = settlement_price < trade.long_strike
 
         # Add credit to P&L
         net_pnl_per_spread = trade.credit_received + pnl_per_spread
@@ -716,8 +964,6 @@ class ZeroDTEBullPutSpreadBacktester:
         trade.total_pnl = total_pnl
         trade.pnl_percent = pnl_percent
         trade.outcome = outcome
-        trade.short_breached = settlement_price < trade.short_strike
-        trade.long_breached = settlement_price < trade.long_strike
 
         # Update account
         self.cash += total_pnl
@@ -731,20 +977,20 @@ class ZeroDTEBullPutSpreadBacktester:
         trading_days_str = ', '.join([day_names[d] for d in self.trading_days_of_week])
 
         print("\n" + "=" * 80)
-        print("0DTE BULL PUT SPREAD BACKTESTER - USING ORAT DATA")
+        print("0DTE CREDIT SPREAD BACKTESTER - USING ORAT DATA")
         print("=" * 80)
         print(f"Period:           {self.start_date} to {self.end_date}")
         print(f"Initial Capital:  ${self.initial_capital:,.2f}")
         if self.use_sd_strike:
-            print(f"Strike Selection: {self.sd_multiple} SD below OPEN (standard deviation)")
+            print(f"Strike Selection: {self.sd_multiple} SD from OPEN (standard deviation)")
         else:
-            print(f"Strike Selection: {self.target_delta} ({self.target_delta*100:.0f} delta puts)")
+            print(f"Strike Selection: {self.target_delta} ({self.target_delta*100:.0f} delta)")
         print(f"Spread Width:     ${self.spread_width:.0f}")
         print(f"Max Risk/Trade:   {self.max_risk_per_trade_pct}%")
         print(f"Monthly Target:   {self.monthly_return_target}%")
         print(f"Ticker:           {self.ticker}")
         print(f"Trading Days:     {trading_days_str}")
-        print(f"VIX Filter:       Skip when VIX > {self.max_vix}")
+        print(f"VIX Strategy:     Bull Put when VIX <= {self.max_vix}, Bear Call when VIX > {self.max_vix}")
         print(f"Stop Loss:        Exit at {self.stop_loss_multiplier}x credit ({self.stop_loss_multiplier - 1:.0f}x loss)")
         print(f"Profit Target:    Take profit at {self.profit_target_pct}% of max")
         print("=" * 80)
@@ -779,13 +1025,15 @@ class ZeroDTEBullPutSpreadBacktester:
         else:
             print("  Using SIMULATED settlement prices (install yfinance for real data)")
 
-        # Load VIX data for crash protection
+        # Load VIX data for strategy selection
         self.load_vix_data()
-        use_vix_filter = len(self.vix_data) > 0
-        if use_vix_filter:
-            print(f"  VIX filter ENABLED - will skip trading when VIX > {self.max_vix}")
+        use_vix_strategy = len(self.vix_data) > 0
+        if use_vix_strategy:
+            print(f"  VIX-based strategy ENABLED:")
+            print(f"    - VIX <= {self.max_vix}: Bull Put Spread (1 SD below open)")
+            print(f"    - VIX > {self.max_vix}:  Bear Call Spread (1 SD above open)")
         else:
-            print("  VIX filter disabled - no VIX data available")
+            print("  VIX strategy disabled - no VIX data, using Bull Put only")
 
         # Process each day
         total_days = len(trading_days)
@@ -800,13 +1048,8 @@ class ZeroDTEBullPutSpreadBacktester:
                 bar = "=" * filled + "-" * (bar_len - filled)
                 print(f"\r[{bar}] {pct:5.1f}% ({i}/{total_days}) | Trades: {len(self.all_trades)} | Equity: ${self.equity:,.0f}", end="", flush=True)
 
-            # Check VIX filter - skip high volatility days (crash protection)
-            if use_vix_filter:
-                should_trade, skip_reason = self.should_trade(trade_date)
-                if not should_trade:
-                    self.days_skipped_vix += 1
-                    self.days_skipped += 1
-                    continue
+            # Determine strategy based on VIX level
+            strategy_type, vix_level = self.get_strategy_for_date(trade_date)
 
             # Get options for this day
             options = self.get_options_for_date(trade_date)
@@ -821,11 +1064,16 @@ class ZeroDTEBullPutSpreadBacktester:
                 open_price, high_price, low_price, close_price = self.get_spx_prices(trade_date)
 
             # Get average IV from options for expected move calculation
-            ivs = [opt['put_iv'] for opt in options if opt['put_iv'] and opt['put_iv'] > 0]
+            ivs = [opt['put_iv'] for opt in options if opt.get('put_iv') and opt['put_iv'] > 0]
+            if not ivs:
+                ivs = [opt['call_iv'] for opt in options if opt.get('call_iv') and opt['call_iv'] > 0]
             avg_iv = sum(ivs) / len(ivs) if ivs else 0.20  # Default 20% IV
 
-            # Execute trade (passing open price and IV for SD-based strike selection)
-            trade = self.execute_trade(trade_date, options, open_price, avg_iv)
+            # Execute trade based on strategy type
+            if strategy_type == "BEAR_CALL":
+                trade = self.execute_bear_call_trade(trade_date, options, open_price, avg_iv, vix_level)
+            else:
+                trade = self.execute_trade(trade_date, options, open_price, avg_iv, vix_level)
 
             if trade:
                 # Get settlement price and HIGH/LOW for stop loss using REAL data
@@ -858,6 +1106,12 @@ class ZeroDTEBullPutSpreadBacktester:
                 self.settle_trade(trade, settlement_price, daily_low, daily_high)
                 self.all_trades.append(trade)
                 self.days_traded += 1
+
+                # Track strategy type usage
+                if trade.strategy_type == "BEAR_CALL":
+                    self.days_bear_call += 1
+                else:
+                    self.days_bull_put += 1
             else:
                 self.days_skipped += 1
 
@@ -963,12 +1217,22 @@ class ZeroDTEBullPutSpreadBacktester:
             outcomes[t.outcome] = outcomes.get(t.outcome, 0) + 1
 
         # Generate backtest ID
-        backtest_id = f"0DTE_BPS_{self.start_date}_{self.end_date}_{uuid.uuid4().hex[:8]}"
+        backtest_id = f"0DTE_CS_{self.start_date}_{self.end_date}_{uuid.uuid4().hex[:8]}"
+
+        # Strategy breakdown
+        bull_put_trades = [t for t in self.all_trades if t.strategy_type == "BULL_PUT"]
+        bear_call_trades = [t for t in self.all_trades if t.strategy_type == "BEAR_CALL"]
+
+        bull_put_pnl = sum(t.total_pnl for t in bull_put_trades)
+        bear_call_pnl = sum(t.total_pnl for t in bear_call_trades)
+
+        bull_put_wins = len([t for t in bull_put_trades if t.total_pnl > 0])
+        bear_call_wins = len([t for t in bear_call_trades if t.total_pnl > 0])
 
         results = {
             'summary': {
                 'backtest_id': backtest_id,
-                'strategy': '0DTE Bull Put Spread',
+                'strategy': '0DTE Credit Spread (Bull Put + Bear Call)',
                 'ticker': self.ticker,
                 'start_date': self.start_date,
                 'end_date': self.end_date,
@@ -997,6 +1261,16 @@ class ZeroDTEBullPutSpreadBacktester:
                 'max_consec_losses': max_consec_losses,
                 'max_consec_loss_amount': max_consec_loss_amount,
             },
+            'strategy_breakdown': {
+                'bull_put_trades': len(bull_put_trades),
+                'bull_put_wins': bull_put_wins,
+                'bull_put_win_rate': (bull_put_wins / len(bull_put_trades) * 100) if bull_put_trades else 0,
+                'bull_put_pnl': bull_put_pnl,
+                'bear_call_trades': len(bear_call_trades),
+                'bear_call_wins': bear_call_wins,
+                'bear_call_win_rate': (bear_call_wins / len(bear_call_trades) * 100) if bear_call_trades else 0,
+                'bear_call_pnl': bear_call_pnl,
+            },
             'outcomes': outcomes,
             'monthly_returns': monthly_returns,
             'avg_monthly_return_pct': avg_monthly,
@@ -1005,12 +1279,15 @@ class ZeroDTEBullPutSpreadBacktester:
                 'days_with_data': self.days_with_data,
                 'days_traded': self.days_traded,
                 'days_skipped': self.days_skipped,
-                'days_skipped_vix': self.days_skipped_vix,
+                'days_bull_put': self.days_bull_put,
+                'days_bear_call': self.days_bear_call,
             },
             'parameters': {
                 'target_delta': self.target_delta,
                 'spread_width': self.spread_width,
                 'max_risk_per_trade_pct': self.max_risk_per_trade_pct,
+                'vix_threshold': self.max_vix,
+                'sd_multiple': self.sd_multiple,
             }
         }
 
@@ -1052,9 +1329,10 @@ class ZeroDTEBullPutSpreadBacktester:
         s = results['summary']
         t = results['trades']
         o = results['outcomes']
+        sb = results.get('strategy_breakdown', {})
 
         print("\n" + "=" * 80)
-        print("0DTE BULL PUT SPREAD BACKTEST RESULTS")
+        print("0DTE CREDIT SPREAD BACKTEST RESULTS")
         print("=" * 80)
 
         # Period info
@@ -1092,6 +1370,15 @@ class ZeroDTEBullPutSpreadBacktester:
 
         print("-" * 80)
 
+        # Strategy breakdown
+        if sb:
+            print(f"\nSTRATEGY BREAKDOWN:")
+            print(f"  Bull Put Spreads (VIX <= {self.max_vix}):")
+            print(f"    Trades: {sb['bull_put_trades']}  |  Wins: {sb['bull_put_wins']}  |  Win Rate: {sb['bull_put_win_rate']:.1f}%  |  P&L: ${sb['bull_put_pnl']:,.2f}")
+            print(f"  Bear Call Spreads (VIX > {self.max_vix}):")
+            print(f"    Trades: {sb['bear_call_trades']}  |  Wins: {sb['bear_call_wins']}  |  Win Rate: {sb['bear_call_win_rate']:.1f}%  |  P&L: ${sb['bear_call_pnl']:,.2f}")
+            print("-" * 80)
+
         # Outcome breakdown
         print(f"\nOUTCOME BREAKDOWN:")
         for outcome, count in o.items():
@@ -1102,11 +1389,12 @@ class ZeroDTEBullPutSpreadBacktester:
 
         # Risk management stats
         dq = results['data_quality']
-        print(f"\nRISK MANAGEMENT:")
+        print(f"\nTRADING DAYS:")
         print(f"  Days with data:         {dq['days_with_data']}")
         print(f"  Days traded:            {dq['days_traded']}")
-        print(f"  Days skipped (VIX):     {dq['days_skipped_vix']} (VIX > {self.max_vix})")
-        print(f"  Days skipped (other):   {dq['days_skipped'] - dq['days_skipped_vix']}")
+        print(f"    - Bull Put days:      {dq.get('days_bull_put', 0)}")
+        print(f"    - Bear Call days:     {dq.get('days_bear_call', 0)}")
+        print(f"  Days skipped:           {dq['days_skipped']}")
 
         print("-" * 80)
 
