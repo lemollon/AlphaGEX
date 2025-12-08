@@ -475,6 +475,33 @@ export const apiClient = {
   }) => api.post('/api/spx-backtest/run', data),
   getSPXBacktestResults: () => api.get('/api/spx-backtest/results'),
 
+  // 0DTE Iron Condor Backtest
+  runZeroDTEBacktest: (config: {
+    start_date?: string
+    end_date?: string
+    initial_capital?: number
+    spread_width?: number
+    sd_multiplier?: number
+    risk_per_trade_pct?: number
+    ticker?: string
+    strategy?: string
+  }) => api.post('/api/zero-dte/run', config),
+  getZeroDTEJobStatus: (jobId: string) => api.get(`/api/zero-dte/job/${jobId}`),
+  getZeroDTEResults: () => api.get('/api/zero-dte/results'),
+  getZeroDTEStrategies: () => api.get('/api/zero-dte/strategies'),
+  getZeroDTETiers: () => api.get('/api/zero-dte/tiers'),
+  getZeroDTEStrategyTypes: () => api.get('/api/zero-dte/strategy-types'),
+  getZeroDTEDataSources: () => api.get('/api/zero-dte/data-sources'),
+  getZeroDTEStoredDataStatus: () => api.get('/api/zero-dte/stored-data-status'),
+  backfillZeroDTEMarketData: (startDate: string = '2020-01-01') =>
+    api.post(`/api/zero-dte/backfill-all?start_date=${startDate}`),
+  storeZeroDTEMarketData: (ticker: string, days: number = 1825) =>
+    api.post(`/api/zero-dte/store-market-data?ticker=${ticker}&days=${days}`),
+  exportZeroDTETrades: (jobId: string) => api.get(`/api/zero-dte/export/trades/${jobId}`, { responseType: 'blob' }),
+  exportZeroDTESummary: (jobId: string) => api.get(`/api/zero-dte/export/summary/${jobId}`, { responseType: 'blob' }),
+  exportZeroDTEEquityCurve: (jobId: string) => api.get(`/api/zero-dte/export/equity-curve/${jobId}`, { responseType: 'blob' }),
+  compareZeroDTEBacktests: (jobIds: string[]) => api.get(`/api/zero-dte/compare?job_ids=${jobIds.join(',')}`),
+
   // Export Routes
   exportData: async (type: 'trades' | 'pnl-attribution' | 'decision-logs' | 'wheel-cycles' | 'full-audit', params?: {
     symbol?: string

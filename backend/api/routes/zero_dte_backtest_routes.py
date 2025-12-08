@@ -1,0 +1,1073 @@
+"""
+0DTE Iron Condor Backtest API Routes
+
+Handles the hybrid scaling Iron Condor strategy with:
+- Configurable parameters (risk %, SD multiplier, spread width)
+- Automatic tier scaling based on account size
+- Real-time progress tracking
+- Async job processing for long backtests
+- Multi-leg strategy support (Iron Condor, Bull Put, Bear Call)
+- VIX filtering and stop loss
+- CSV/Excel export
+- Equity curve and risk metrics
+"""
+
+import logging
+import sys
+import os
+import csv
+import json
+import io
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+import psycopg2.extras
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+from database_adapter import get_connection
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/zero-dte", tags=["0DTE Backtest"])
+
+
+class ZeroDTEBacktestConfig(BaseModel):
+    """Configuration for 0DTE hybrid backtest - ENHANCED"""
+    # Basic settings
+    start_date: str = Field(default="2021-01-01", description="Start date YYYY-MM-DD")
+    end_date: str = Field(default="2025-12-01", description="End date YYYY-MM-DD")
+    initial_capital: float = Field(default=1_000_000, description="Starting capital")
+    spread_width: float = Field(default=10.0, description="Spread width in dollars")
+    sd_multiplier: float = Field(default=1.0, description="Standard deviation multiplier for strike selection")
+    risk_per_trade_pct: float = Field(default=5.0, description="Risk per trade as % of equity")
+    ticker: str = Field(default="SPX", description="Ticker symbol")
+    strategy: str = Field(default="hybrid_fixed", description="Strategy: hybrid_fixed, aggressive, realistic")
+
+    # Multi-leg strategy type
+    strategy_type: str = Field(default="iron_condor", description="iron_condor, bull_put, bear_call, iron_butterfly, strangle")
+
+    # VIX filtering
+    min_vix: Optional[float] = Field(default=None, description="Minimum VIX to trade (None = no filter)")
+    max_vix: Optional[float] = Field(default=None, description="Maximum VIX to trade (None = no filter)")
+
+    # Risk management
+    stop_loss_pct: Optional[float] = Field(default=None, description="Stop loss as % of max loss (None = no stop)")
+    profit_target_pct: Optional[float] = Field(default=None, description="Profit target as % of credit (None = let expire)")
+
+    # Trading days
+    trade_monday: bool = Field(default=True, description="Trade on Monday")
+    trade_tuesday: bool = Field(default=True, description="Trade on Tuesday")
+    trade_wednesday: bool = Field(default=True, description="Trade on Wednesday")
+    trade_thursday: bool = Field(default=True, description="Trade on Thursday")
+    trade_friday: bool = Field(default=True, description="Trade on Friday")
+
+    # Position limits override
+    max_contracts_override: Optional[int] = Field(default=None, description="Override max contracts (None = use tier default)")
+
+    # Transaction costs override
+    commission_per_leg: Optional[float] = Field(default=None, description="Override commission (None = use tier default)")
+    slippage_per_spread: Optional[float] = Field(default=None, description="Override slippage (None = use tier default)")
+
+
+class BacktestJobStatus(BaseModel):
+    """Status of a running backtest job"""
+    job_id: str
+    status: str  # pending, running, completed, failed
+    progress: float
+    progress_message: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    created_at: str
+    completed_at: Optional[str] = None
+
+
+# In-memory job storage (in production, use Redis or database)
+_jobs: Dict[str, Dict] = {}
+
+
+def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
+    """Run the hybrid fixed backtest in background"""
+    try:
+        _jobs[job_id]['status'] = 'running'
+        _jobs[job_id]['progress_message'] = 'Initializing backtest...'
+
+        # Import the backtest module
+        from backtest.zero_dte_hybrid_fixed import HybridFixedBacktester
+
+        # Build trade_days list from config
+        trade_days = []
+        if config.trade_monday: trade_days.append(0)
+        if config.trade_tuesday: trade_days.append(1)
+        if config.trade_wednesday: trade_days.append(2)
+        if config.trade_thursday: trade_days.append(3)
+        if config.trade_friday: trade_days.append(4)
+
+        # Create backtester with all enhanced parameters
+        backtester = HybridFixedBacktester(
+            start_date=config.start_date,
+            end_date=config.end_date,
+            initial_capital=config.initial_capital,
+            spread_width=config.spread_width,
+            sd_multiplier=config.sd_multiplier,
+            risk_per_trade_pct=config.risk_per_trade_pct,
+            ticker=config.ticker,
+            # New enhanced parameters
+            strategy_type=config.strategy_type,
+            min_vix=config.min_vix,
+            max_vix=config.max_vix,
+            stop_loss_pct=config.stop_loss_pct,
+            profit_target_pct=config.profit_target_pct,
+            trade_days=trade_days if trade_days else None,
+            max_contracts_override=config.max_contracts_override,
+            commission_per_leg_override=config.commission_per_leg,
+            slippage_per_spread_override=config.slippage_per_spread,
+        )
+
+        _jobs[job_id]['progress'] = 10
+        _jobs[job_id]['progress_message'] = 'Loading market data...'
+
+        # Run backtest
+        results = backtester.run()
+
+        # Store results
+        _jobs[job_id]['status'] = 'completed'
+        _jobs[job_id]['progress'] = 100
+        _jobs[job_id]['progress_message'] = 'Backtest completed!'
+        _jobs[job_id]['completed_at'] = datetime.now().isoformat()
+        _jobs[job_id]['result'] = results
+
+        # Save to database
+        save_backtest_results(results, config, job_id)
+
+    except Exception as e:
+        logger.error(f"Backtest failed: {e}")
+        import traceback
+        traceback.print_exc()
+        _jobs[job_id]['status'] = 'failed'
+        _jobs[job_id]['error'] = str(e)
+        _jobs[job_id]['progress_message'] = f'Error: {str(e)}'
+
+
+def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: str):
+    """Save backtest results to database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Check if table exists, create if not
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS zero_dte_backtest_results (
+                id SERIAL PRIMARY KEY,
+                job_id VARCHAR(100) UNIQUE,
+                created_at TIMESTAMP DEFAULT NOW(),
+                strategy VARCHAR(100),
+                ticker VARCHAR(20),
+                start_date DATE,
+                end_date DATE,
+                initial_capital DECIMAL(15,2),
+                final_equity DECIMAL(15,2),
+                total_pnl DECIMAL(15,2),
+                total_return_pct DECIMAL(10,2),
+                avg_monthly_return_pct DECIMAL(10,2),
+                max_drawdown_pct DECIMAL(10,2),
+                total_trades INTEGER,
+                win_rate DECIMAL(10,2),
+                profit_factor DECIMAL(10,2),
+                avg_win DECIMAL(15,2),
+                avg_loss DECIMAL(15,2),
+                total_costs DECIMAL(15,2),
+                config JSONB,
+                tier_stats JSONB,
+                monthly_returns JSONB
+            )
+        """)
+
+        s = results.get('summary', {})
+        t = results.get('trades', {})
+        c = results.get('costs', {})
+
+        cursor.execute("""
+            INSERT INTO zero_dte_backtest_results (
+                job_id, strategy, ticker, start_date, end_date,
+                initial_capital, final_equity, total_pnl, total_return_pct,
+                avg_monthly_return_pct, max_drawdown_pct, total_trades,
+                win_rate, profit_factor, avg_win, avg_loss, total_costs,
+                config, tier_stats, monthly_returns
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s::jsonb, %s::jsonb, %s::jsonb
+            )
+            ON CONFLICT (job_id) DO UPDATE SET
+                final_equity = EXCLUDED.final_equity,
+                total_pnl = EXCLUDED.total_pnl,
+                total_return_pct = EXCLUDED.total_return_pct
+        """, (
+            job_id,
+            config.strategy,
+            config.ticker,
+            config.start_date,
+            config.end_date,
+            s.get('initial_capital', config.initial_capital),
+            s.get('final_equity', 0),
+            s.get('total_pnl', 0),
+            s.get('total_return_pct', 0),
+            s.get('avg_monthly_return_pct', 0),
+            s.get('max_drawdown_pct', 0),
+            t.get('total', 0),
+            t.get('win_rate', 0),
+            t.get('profit_factor', 0) if t.get('profit_factor') != float('inf') else 999,
+            t.get('avg_win', 0),
+            t.get('avg_loss', 0),
+            c.get('total_costs', 0),
+            str(config.dict()).replace("'", '"'),
+            str(results.get('tier_stats', {})).replace("'", '"'),
+            str(results.get('monthly_returns', {})).replace("'", '"'),
+        ))
+
+        conn.commit()
+        conn.close()
+        logger.info(f"Saved backtest results for job {job_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to save results: {e}")
+
+
+@router.post("/run")
+async def run_zero_dte_backtest(
+    config: ZeroDTEBacktestConfig,
+    background_tasks: BackgroundTasks
+):
+    """
+    Run a 0DTE Iron Condor backtest.
+
+    Returns immediately with job_id for tracking progress.
+    """
+    import uuid
+    job_id = f"zero_dte_{uuid.uuid4().hex[:8]}"
+
+    # Initialize job
+    _jobs[job_id] = {
+        'job_id': job_id,
+        'status': 'pending',
+        'progress': 0,
+        'progress_message': 'Job queued...',
+        'result': None,
+        'error': None,
+        'created_at': datetime.now().isoformat(),
+        'completed_at': None,
+        'config': config.dict(),
+    }
+
+    # Run in background
+    background_tasks.add_task(run_hybrid_fixed_backtest, config, job_id)
+
+    return {
+        "success": True,
+        "async": True,
+        "job_id": job_id,
+        "message": "Backtest job started"
+    }
+
+
+@router.get("/job/{job_id}")
+async def get_job_status(job_id: str):
+    """Get status of a backtest job"""
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    return {
+        "success": True,
+        "job": job
+    }
+
+
+@router.get("/results")
+async def get_backtest_results(limit: int = 20):
+    """Get saved backtest results from database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT * FROM zero_dte_backtest_results
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (limit,))
+
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'id': row['id'],
+                'job_id': row['job_id'],
+                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                'strategy': row['strategy'],
+                'ticker': row['ticker'],
+                'start_date': str(row['start_date']),
+                'end_date': str(row['end_date']),
+                'initial_capital': float(row['initial_capital'] or 0),
+                'final_equity': float(row['final_equity'] or 0),
+                'total_pnl': float(row['total_pnl'] or 0),
+                'total_return_pct': float(row['total_return_pct'] or 0),
+                'avg_monthly_return_pct': float(row['avg_monthly_return_pct'] or 0),
+                'max_drawdown_pct': float(row['max_drawdown_pct'] or 0),
+                'total_trades': row['total_trades'],
+                'win_rate': float(row['win_rate'] or 0),
+                'profit_factor': float(row['profit_factor'] or 0),
+                'total_costs': float(row['total_costs'] or 0),
+                'config': row.get('config'),
+                'tier_stats': row.get('tier_stats'),
+                'monthly_returns': row.get('monthly_returns'),
+            })
+
+        conn.close()
+        return {"success": True, "results": results}
+
+    except Exception as e:
+        logger.error(f"Failed to get results: {e}")
+        return {"success": True, "results": []}  # Return empty if table doesn't exist
+
+
+@router.get("/strategies")
+async def get_available_strategies():
+    """Get list of available 0DTE strategies"""
+    return {
+        "success": True,
+        "strategies": [
+            {
+                "id": "hybrid_fixed",
+                "name": "Hybrid Fixed (Recommended)",
+                "description": "Automatically scales DTE based on account size. Uses correct SD calculations for each tier. All trades are day trades.",
+                "features": [
+                    "Auto-scaling tiers ($0-$2M → $2M-$5M → $5M-$15M → $15M+)",
+                    "Correct SD for each DTE (1-day, 7-day, 30-day)",
+                    "Day trades only (enter open, exit close)",
+                    "Liquidity-aware position limits",
+                    "Realistic transaction costs"
+                ],
+                "recommended_settings": {
+                    "risk_per_trade_pct": 5.0,
+                    "sd_multiplier": 1.0,
+                    "spread_width": 10.0
+                }
+            },
+            {
+                "id": "aggressive",
+                "name": "Aggressive (High Risk)",
+                "description": "Trades every day with 10% risk per trade. No position limits. For small accounts seeking maximum growth.",
+                "features": [
+                    "10% risk per trade",
+                    "Daily Iron Condors",
+                    "No stop loss (let theta work)",
+                    "Maximum compounding"
+                ],
+                "recommended_settings": {
+                    "risk_per_trade_pct": 10.0,
+                    "sd_multiplier": 1.0,
+                    "spread_width": 10.0
+                }
+            },
+            {
+                "id": "realistic",
+                "name": "Realistic (Conservative)",
+                "description": "Includes full transaction costs and 100 contract limit. Shows what's actually achievable.",
+                "features": [
+                    "$0.65/leg commission",
+                    "$0.10 slippage per spread",
+                    "100 contract max (liquidity)",
+                    "Honest returns"
+                ],
+                "recommended_settings": {
+                    "risk_per_trade_pct": 10.0,
+                    "sd_multiplier": 1.0,
+                    "spread_width": 10.0
+                }
+            }
+        ]
+    }
+
+
+@router.get("/tiers")
+async def get_scaling_tiers():
+    """Get tier configuration for hybrid strategy"""
+    return {
+        "success": True,
+        "tiers": [
+            {
+                "name": "TIER_1_0DTE",
+                "equity_range": "$0 - $2M",
+                "options_dte": "0-1 DTE (0DTE)",
+                "sd_days": 1,
+                "max_contracts": 100,
+                "trades_per_week": 5,
+                "description": "Fast compounding with 0DTE options"
+            },
+            {
+                "name": "TIER_2_WEEKLY",
+                "equity_range": "$2M - $5M",
+                "options_dte": "5-7 DTE (Weekly)",
+                "sd_days": 7,
+                "max_contracts": 300,
+                "trades_per_week": 5,
+                "description": "More liquidity with weekly options"
+            },
+            {
+                "name": "TIER_3_MONTHLY",
+                "equity_range": "$5M - $15M",
+                "options_dte": "21-35 DTE (Monthly)",
+                "sd_days": 30,
+                "max_contracts": 500,
+                "trades_per_week": 3,
+                "description": "Maximum liquidity, reduced frequency"
+            },
+            {
+                "name": "TIER_4_LARGE",
+                "equity_range": "$15M+",
+                "options_dte": "30-45 DTE",
+                "sd_days": 30,
+                "max_contracts": 1000,
+                "trades_per_week": 2,
+                "description": "Institutional-level with volume discounts"
+            }
+        ]
+    }
+
+
+@router.get("/strategy-types")
+async def get_strategy_types():
+    """Get available multi-leg strategy types"""
+    return {
+        "success": True,
+        "strategy_types": [
+            {
+                "id": "iron_condor",
+                "name": "Iron Condor",
+                "description": "Bull Put Spread + Bear Call Spread. Profit if price stays between strikes.",
+                "legs": 4,
+                "direction": "neutral",
+                "credit": True
+            },
+            {
+                "id": "bull_put",
+                "name": "Bull Put Spread",
+                "description": "Sell put, buy lower put. Profit if price stays above short strike.",
+                "legs": 2,
+                "direction": "bullish",
+                "credit": True
+            },
+            {
+                "id": "bear_call",
+                "name": "Bear Call Spread",
+                "description": "Sell call, buy higher call. Profit if price stays below short strike.",
+                "legs": 2,
+                "direction": "bearish",
+                "credit": True
+            },
+            {
+                "id": "iron_butterfly",
+                "name": "Iron Butterfly",
+                "description": "ATM short straddle + OTM wings. Maximum profit at center strike.",
+                "legs": 4,
+                "direction": "neutral",
+                "credit": True
+            },
+            {
+                "id": "strangle",
+                "name": "Short Strangle",
+                "description": "Sell OTM put + OTM call. Undefined risk, use with caution.",
+                "legs": 2,
+                "direction": "neutral",
+                "credit": True,
+                "warning": "Undefined risk - not recommended for beginners"
+            }
+        ]
+    }
+
+
+@router.get("/export/trades/{job_id}")
+async def export_trades_csv(job_id: str):
+    """Export trades from a backtest to CSV"""
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+    trades = result.get('all_trades', [])
+
+    if not trades:
+        raise HTTPException(status_code=404, detail="No trades found")
+
+    # Create CSV in memory
+    output = io.StringIO()
+    if trades:
+        fieldnames = trades[0].keys() if isinstance(trades[0], dict) else []
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for trade in trades:
+            writer.writerow(trade if isinstance(trade, dict) else trade.__dict__)
+
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=trades_{job_id}.csv"}
+    )
+
+
+@router.get("/export/summary/{job_id}")
+async def export_summary_csv(job_id: str):
+    """Export backtest summary to CSV"""
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+
+    # Flatten summary data
+    summary_data = []
+
+    # Add main metrics
+    s = result.get('summary', {})
+    t = result.get('trades', {})
+    c = result.get('costs', {})
+    r = result.get('risk_metrics', {})
+
+    summary_data.append({'metric': 'Initial Capital', 'value': s.get('initial_capital', 0)})
+    summary_data.append({'metric': 'Final Equity', 'value': s.get('final_equity', 0)})
+    summary_data.append({'metric': 'Total P&L', 'value': s.get('total_pnl', 0)})
+    summary_data.append({'metric': 'Total Return %', 'value': s.get('total_return_pct', 0)})
+    summary_data.append({'metric': 'Avg Monthly Return %', 'value': s.get('avg_monthly_return_pct', 0)})
+    summary_data.append({'metric': 'Max Drawdown %', 'value': s.get('max_drawdown_pct', 0)})
+    summary_data.append({'metric': 'Total Trades', 'value': t.get('total', 0)})
+    summary_data.append({'metric': 'Win Rate %', 'value': t.get('win_rate', 0)})
+    summary_data.append({'metric': 'Profit Factor', 'value': t.get('profit_factor', 0)})
+    summary_data.append({'metric': 'Total Costs', 'value': c.get('total_costs', 0)})
+    summary_data.append({'metric': 'Sharpe Ratio', 'value': r.get('sharpe_ratio', 0)})
+    summary_data.append({'metric': 'Sortino Ratio', 'value': r.get('sortino_ratio', 0)})
+    summary_data.append({'metric': 'Max Consecutive Losses', 'value': r.get('max_consecutive_losses', 0)})
+
+    # Create CSV
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=['metric', 'value'])
+    writer.writeheader()
+    writer.writerows(summary_data)
+
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=summary_{job_id}.csv"}
+    )
+
+
+@router.get("/export/equity-curve/{job_id}")
+async def export_equity_curve_csv(job_id: str):
+    """Export equity curve data to CSV"""
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+    equity_curve = result.get('equity_curve', [])
+
+    if not equity_curve:
+        raise HTTPException(status_code=404, detail="No equity curve data")
+
+    # Create CSV
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=['date', 'equity', 'drawdown_pct', 'daily_pnl'])
+    writer.writeheader()
+    writer.writerows(equity_curve)
+
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=equity_curve_{job_id}.csv"}
+    )
+
+
+@router.get("/compare")
+async def compare_backtests(job_ids: str):
+    """Compare multiple backtests side by side
+
+    Args:
+        job_ids: Comma-separated list of job IDs to compare
+    """
+    ids = [j.strip() for j in job_ids.split(',')]
+
+    comparisons = []
+    for job_id in ids:
+        if job_id in _jobs and _jobs[job_id]['status'] == 'completed':
+            job = _jobs[job_id]
+            result = job.get('result', {})
+            config = job.get('config', {})
+
+            s = result.get('summary', {})
+            t = result.get('trades', {})
+            r = result.get('risk_metrics', {})
+
+            comparisons.append({
+                'job_id': job_id,
+                'config': config,
+                'metrics': {
+                    'initial_capital': s.get('initial_capital', 0),
+                    'final_equity': s.get('final_equity', 0),
+                    'total_return_pct': s.get('total_return_pct', 0),
+                    'avg_monthly_return_pct': s.get('avg_monthly_return_pct', 0),
+                    'max_drawdown_pct': s.get('max_drawdown_pct', 0),
+                    'total_trades': t.get('total', 0),
+                    'win_rate': t.get('win_rate', 0),
+                    'profit_factor': t.get('profit_factor', 0),
+                    'sharpe_ratio': r.get('sharpe_ratio', 0),
+                    'sortino_ratio': r.get('sortino_ratio', 0),
+                }
+            })
+
+    return {"success": True, "comparisons": comparisons}
+
+
+@router.get("/data-sources")
+async def get_data_sources():
+    """Get information about available data sources and their limitations"""
+    return {
+        "success": True,
+        "data_sources": {
+            "orat": {
+                "name": "ORAT Historical Options Data",
+                "description": "End-of-day options data including Greeks, IV, bid/ask",
+                "data_available": {
+                    "tickers": ["SPX", "SPXW", "SPY"],
+                    "date_range": "2021-01-01 to present",
+                    "fields": ["strike", "expiration", "bid", "ask", "delta", "gamma", "theta", "vega", "IV", "underlying_price"]
+                },
+                "limitations": [
+                    "EOD data only - no intraday prices",
+                    "No tick-by-tick data for backtesting intraday stops",
+                    "Settlement uses daily OHLC from Yahoo Finance",
+                    "Greeks are EOD snapshot, not intraday"
+                ],
+                "stored_in_db": True
+            },
+            "yahoo_finance": {
+                "name": "Yahoo Finance",
+                "description": "Free OHLC data for underlying and VIX",
+                "data_available": {
+                    "tickers": ["^GSPC (S&P 500)", "^VIX"],
+                    "date_range": "Historical to present",
+                    "fields": ["open", "high", "low", "close", "volume"]
+                },
+                "limitations": [
+                    "Data fetched on-demand (not stored)",
+                    "Rate limits may apply",
+                    "No options data"
+                ],
+                "stored_in_db": False,
+                "recommendation": "Should store for faster backtests"
+            },
+            "polygon_io": {
+                "name": "Polygon.io",
+                "description": "Real-time and historical market data API",
+                "data_available": {
+                    "tickers": "All US equities and options",
+                    "date_range": "Depends on subscription",
+                    "fields": ["trades", "quotes", "aggregates", "options flow"]
+                },
+                "limitations": [
+                    "Requires paid subscription for historical",
+                    "Free tier has delays and limits",
+                    "Not currently integrated"
+                ],
+                "stored_in_db": False,
+                "recommendation": "Integrate for real-time data and better options data"
+            }
+        },
+        "recommendations": [
+            "Store Yahoo Finance daily OHLC for SPX and VIX to speed up backtests",
+            "Store Polygon.io options data if you have a subscription",
+            "Consider adding intraday data for stop-loss simulation",
+            "Add IV surface data for better premium estimation"
+        ]
+    }
+
+
+def fetch_yahoo_finance_direct(symbol: str, start_date: str, end_date: str) -> List[Dict]:
+    """
+    Fetch historical data directly from Yahoo Finance API (no yfinance library).
+
+    Args:
+        symbol: Yahoo Finance symbol (e.g., ^GSPC for S&P 500, ^VIX for VIX)
+        start_date: Start date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format
+
+    Returns:
+        List of daily OHLC records
+    """
+    import requests
+
+    # Convert dates to Unix timestamps
+    start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
+    end_ts = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp())
+
+    # Yahoo Finance API URL
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+
+    params = {
+        "period1": start_ts,
+        "period2": end_ts,
+        "interval": "1d",
+        "events": "history",
+        "includeAdjustedClose": "true"
+    }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    logger.info(f"Fetching {symbol} from {start_date} to {end_date}...")
+
+    response = requests.get(url, params=params, headers=headers)
+
+    if response.status_code != 200:
+        logger.error(f"Error fetching {symbol}: HTTP {response.status_code}")
+        return []
+
+    data = response.json()
+
+    # Parse the response
+    result = data.get("chart", {}).get("result", [])
+    if not result:
+        logger.error(f"No data returned for {symbol}")
+        return []
+
+    chart_data = result[0]
+    timestamps = chart_data.get("timestamp", [])
+    quote = chart_data.get("indicators", {}).get("quote", [{}])[0]
+    adjclose = chart_data.get("indicators", {}).get("adjclose", [{}])[0].get("adjclose", [])
+
+    records = []
+    for i, ts in enumerate(timestamps):
+        try:
+            date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+            open_price = quote.get("open", [])[i]
+            high_price = quote.get("high", [])[i]
+            low_price = quote.get("low", [])[i]
+            close_price = quote.get("close", [])[i]
+            volume = quote.get("volume", [])[i]
+            adj_close = adjclose[i] if i < len(adjclose) else close_price
+
+            # Skip if any price is None
+            if any(p is None for p in [open_price, high_price, low_price, close_price]):
+                continue
+
+            records.append({
+                "date": date,
+                "open": round(float(open_price), 2),
+                "high": round(float(high_price), 2),
+                "low": round(float(low_price), 2),
+                "close": round(float(close_price), 2),
+                "adj_close": round(float(adj_close), 2) if adj_close else round(float(close_price), 2),
+                "volume": int(volume) if volume else 0
+            })
+        except (IndexError, TypeError):
+            continue
+
+    logger.info(f"Retrieved {len(records)} records for {symbol}")
+    return records
+
+
+@router.post("/store-market-data")
+async def store_market_data(ticker: str = "^GSPC", days: int = 365 * 5):
+    """Store Yahoo Finance data in database for faster backtests (no yfinance dependency)"""
+    try:
+        from datetime import timedelta
+
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+
+        # Fetch data directly from Yahoo
+        records = fetch_yahoo_finance_direct(ticker, start_str, end_str)
+
+        if not records:
+            return {"success": False, "error": "No data returned from Yahoo Finance"}
+
+        # Normalize symbol for storage
+        symbol_map = {
+            "^GSPC": "SPX",
+            "^VIX": "VIX"
+        }
+        normalized_symbol = symbol_map.get(ticker, ticker)
+
+        # Store in database
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Create table if not exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS market_data_daily (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(20) NOT NULL,
+                date DATE NOT NULL,
+                open DECIMAL(12,4),
+                high DECIMAL(12,4),
+                low DECIMAL(12,4),
+                close DECIMAL(12,4),
+                adj_close DECIMAL(12,4),
+                volume BIGINT,
+                source VARCHAR(50) DEFAULT 'yahoo',
+                created_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(symbol, date)
+            )
+        """)
+
+        # Create index
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_market_data_daily_symbol_date
+            ON market_data_daily(symbol, date)
+        """)
+
+        # Insert data
+        rows_inserted = 0
+        for record in records:
+            try:
+                cursor.execute("""
+                    INSERT INTO market_data_daily (symbol, date, open, high, low, close, adj_close, volume, source)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (symbol, date) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        adj_close = EXCLUDED.adj_close,
+                        volume = EXCLUDED.volume,
+                        source = EXCLUDED.source
+                """, (
+                    normalized_symbol,
+                    record["date"],
+                    record["open"],
+                    record["high"],
+                    record["low"],
+                    record["close"],
+                    record.get("adj_close", record["close"]),
+                    record.get("volume", 0),
+                    "yahoo"
+                ))
+                rows_inserted += 1
+            except Exception as e:
+                logger.warning(f"Failed to insert row for {record['date']}: {e}")
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "ticker": ticker,
+            "symbol": normalized_symbol,
+            "rows_inserted": rows_inserted,
+            "date_range": {
+                "start": records[0]["date"] if records else start_str,
+                "end": records[-1]["date"] if records else end_str
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to store market data: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/backfill-all")
+async def backfill_all_market_data(start_date: str = "2020-01-01"):
+    """Backfill all required market data (SPX and VIX) from Yahoo Finance"""
+    results = []
+
+    # Symbols to backfill: (yahoo_symbol, normalized_symbol)
+    symbols = [
+        ("^GSPC", "SPX"),
+        ("^VIX", "VIX"),
+    ]
+
+    end_date = datetime.now().strftime('%Y-%m-%d')
+
+    for yahoo_symbol, normalized_symbol in symbols:
+        try:
+            # Fetch data
+            records = fetch_yahoo_finance_direct(yahoo_symbol, start_date, end_date)
+
+            if not records:
+                results.append({
+                    "symbol": normalized_symbol,
+                    "success": False,
+                    "error": "No data returned"
+                })
+                continue
+
+            # Store in database
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Ensure table exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS market_data_daily (
+                    id SERIAL PRIMARY KEY,
+                    symbol VARCHAR(20) NOT NULL,
+                    date DATE NOT NULL,
+                    open DECIMAL(12,4),
+                    high DECIMAL(12,4),
+                    low DECIMAL(12,4),
+                    close DECIMAL(12,4),
+                    adj_close DECIMAL(12,4),
+                    volume BIGINT,
+                    source VARCHAR(50) DEFAULT 'yahoo',
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(symbol, date)
+                )
+            """)
+
+            rows_inserted = 0
+            for record in records:
+                try:
+                    cursor.execute("""
+                        INSERT INTO market_data_daily (symbol, date, open, high, low, close, adj_close, volume, source)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (symbol, date) DO UPDATE SET
+                            open = EXCLUDED.open,
+                            high = EXCLUDED.high,
+                            low = EXCLUDED.low,
+                            close = EXCLUDED.close,
+                            adj_close = EXCLUDED.adj_close,
+                            volume = EXCLUDED.volume
+                    """, (
+                        normalized_symbol,
+                        record["date"],
+                        record["open"],
+                        record["high"],
+                        record["low"],
+                        record["close"],
+                        record.get("adj_close", record["close"]),
+                        record.get("volume", 0),
+                        "yahoo"
+                    ))
+                    rows_inserted += 1
+                except Exception as e:
+                    logger.warning(f"Failed to insert {normalized_symbol} row for {record['date']}: {e}")
+
+            conn.commit()
+            conn.close()
+
+            results.append({
+                "symbol": normalized_symbol,
+                "success": True,
+                "rows_inserted": rows_inserted,
+                "date_range": {
+                    "start": records[0]["date"],
+                    "end": records[-1]["date"]
+                }
+            })
+
+        except Exception as e:
+            results.append({
+                "symbol": normalized_symbol,
+                "success": False,
+                "error": str(e)
+            })
+
+    return {
+        "success": all(r["success"] for r in results),
+        "results": results
+    }
+
+
+@router.get("/stored-data-status")
+async def get_stored_data_status():
+    """Get status of stored market data"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        market_data = []
+        orat_data = []
+
+        # Check market_data_daily table (new schema with symbol/date columns)
+        try:
+            cursor.execute("""
+                SELECT
+                    symbol,
+                    COUNT(*) as row_count,
+                    MIN(date) as earliest_date,
+                    MAX(date) as latest_date,
+                    source
+                FROM market_data_daily
+                GROUP BY symbol, source
+                ORDER BY symbol
+            """)
+
+            for row in cursor.fetchall():
+                market_data.append({
+                    'symbol': row['symbol'],
+                    'row_count': row['row_count'],
+                    'earliest_date': str(row['earliest_date']),
+                    'latest_date': str(row['latest_date']),
+                    'source': row.get('source', 'unknown')
+                })
+        except Exception as e:
+            logger.warning(f"market_data_daily table not found or error: {e}")
+
+        # Check ORAT options data
+        try:
+            cursor.execute("""
+                SELECT
+                    ticker,
+                    COUNT(*) as row_count,
+                    MIN(trade_date) as earliest_date,
+                    MAX(trade_date) as latest_date
+                FROM orat_options_eod
+                GROUP BY ticker
+                ORDER BY ticker
+            """)
+
+            for row in cursor.fetchall():
+                orat_data.append({
+                    'ticker': row['ticker'],
+                    'row_count': row['row_count'],
+                    'earliest_date': str(row['earliest_date']),
+                    'latest_date': str(row['latest_date'])
+                })
+        except Exception as e:
+            logger.warning(f"orat_options_eod table not found or error: {e}")
+
+        conn.close()
+
+        return {
+            "success": True,
+            "market_data_daily": market_data,
+            "orat_options_eod": orat_data
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get data status: {e}")
+        return {"success": False, "error": str(e), "market_data_daily": [], "orat_options_eod": []}
