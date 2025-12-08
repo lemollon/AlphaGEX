@@ -131,6 +131,7 @@ class ZeroDTEBullPutSpreadBacktester:
         max_daily_trades: int = 1,  # 1 trade per day
         ticker: str = "SPXW",  # SPXW for weeklies (0DTE)
         monthly_return_target: float = 10.0,  # 10% monthly target
+        trading_days_of_week: List[int] = None,  # Days to trade: 0=Mon, 1=Tue, etc.
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -141,6 +142,8 @@ class ZeroDTEBullPutSpreadBacktester:
         self.max_daily_trades = max_daily_trades
         self.ticker = ticker
         self.monthly_return_target = monthly_return_target
+        # Default to Monday and Tuesday only
+        self.trading_days_of_week = trading_days_of_week if trading_days_of_week is not None else [0, 1]
 
         # State
         self.cash = initial_capital
@@ -521,6 +524,9 @@ class ZeroDTEBullPutSpreadBacktester:
 
     def run(self) -> Dict:
         """Run the backtest"""
+        day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        trading_days_str = ', '.join([day_names[d] for d in self.trading_days_of_week])
+
         print("\n" + "=" * 80)
         print("0DTE BULL PUT SPREAD BACKTESTER - USING ORAT DATA")
         print("=" * 80)
@@ -531,6 +537,7 @@ class ZeroDTEBullPutSpreadBacktester:
         print(f"Max Risk/Trade:   {self.max_risk_per_trade_pct}%")
         print(f"Monthly Target:   {self.monthly_return_target}%")
         print(f"Ticker:           {self.ticker}")
+        print(f"Trading Days:     {trading_days_str}")
         print("=" * 80)
 
         # Get trading days
@@ -542,6 +549,18 @@ class ZeroDTEBullPutSpreadBacktester:
             return {}
 
         print(f"Found {len(trading_days)} trading days with 0DTE data")
+
+        # Filter by day of week (0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri)
+        day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        selected_days = [day_names[d] for d in self.trading_days_of_week]
+        print(f"Filtering to trade only on: {', '.join(selected_days)}")
+
+        original_count = len(trading_days)
+        trading_days = [
+            d for d in trading_days
+            if datetime.strptime(d, '%Y-%m-%d').weekday() in self.trading_days_of_week
+        ]
+        print(f"Filtered to {len(trading_days)} days (from {original_count})")
 
         # Load real SPX OHLC data from Yahoo Finance
         self.load_spx_ohlc_data()
@@ -986,9 +1005,13 @@ def main():
     parser.add_argument('--width', type=float, default=10.0, help='Spread width in dollars')
     parser.add_argument('--risk', type=float, default=2.0, help='Max risk per trade (percent)')
     parser.add_argument('--ticker', default='SPXW', help='Ticker (SPXW for weeklies)')
+    parser.add_argument('--days', default='0,1', help='Days to trade: 0=Mon,1=Tue,2=Wed,3=Thu,4=Fri (default: 0,1 for Mon-Tue)')
     parser.add_argument('--export', action='store_true', help='Export trades to CSV')
 
     args = parser.parse_args()
+
+    # Parse trading days
+    trading_days = [int(d.strip()) for d in args.days.split(',')]
 
     backtester = ZeroDTEBullPutSpreadBacktester(
         start_date=args.start,
@@ -997,7 +1020,8 @@ def main():
         target_delta=args.delta,
         spread_width=args.width,
         max_risk_per_trade_pct=args.risk,
-        ticker=args.ticker
+        ticker=args.ticker,
+        trading_days_of_week=trading_days
     )
 
     results = backtester.run()
