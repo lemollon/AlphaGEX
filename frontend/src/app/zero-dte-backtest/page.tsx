@@ -152,6 +152,7 @@ export default function ZeroDTEBacktestPage() {
 
   // Job state
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [completedJobId, setCompletedJobId] = useState<string | null>(null)  // Keep job_id for exports
   const [jobStatus, setJobStatus] = useState<BacktestJob | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -188,6 +189,7 @@ export default function ZeroDTEBacktestPage() {
 
           if (data.job.status === 'completed') {
             setRunning(false)
+            setCompletedJobId(currentJobId)  // Save for export buttons
             setCurrentJobId(null)
             setLiveJobResult(data.job.result)
             loadResults()
@@ -261,6 +263,7 @@ export default function ZeroDTEBacktestPage() {
     setError(null)
     setJobStatus(null)
     setLiveJobResult(null)
+    setCompletedJobId(null)  // Clear old completed job
 
     try {
       const response = await fetch(`${API_URL}/api/zero-dte/run`, {
@@ -318,6 +321,20 @@ export default function ZeroDTEBacktestPage() {
 
   // Get current result (live or selected)
   const currentResult = liveJobResult || selectedResult
+
+  // Helper to check if result has valid data
+  const hasValidResult = (result: any): boolean => {
+    if (!result) return false
+    // Check for live job result structure
+    if (result.summary && result.trades) {
+      return result.trades.total > 0
+    }
+    // Check for saved result structure
+    if (result.total_trades !== undefined) {
+      return result.total_trades > 0
+    }
+    return false
+  }
 
   // Format monthly returns for chart
   const monthlyChartData = currentResult?.monthly_returns
@@ -839,7 +856,7 @@ export default function ZeroDTEBacktestPage() {
           </div>
 
           {/* Results Section */}
-          {(liveJobResult || results.length > 0) && (
+          {(hasValidResult(liveJobResult) || results.length > 0) && (
             <>
               {/* Tabs */}
               <div className="flex gap-2 border-b border-gray-800 pb-2">
@@ -859,7 +876,7 @@ export default function ZeroDTEBacktestPage() {
               </div>
 
               {/* Overview Tab */}
-              {activeTab === 'overview' && currentResult && (
+              {activeTab === 'overview' && hasValidResult(currentResult) && (
                 <>
                   {/* Summary Cards */}
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
@@ -932,24 +949,24 @@ export default function ZeroDTEBacktestPage() {
                   )}
 
                   {/* Export Buttons */}
-                  {currentJobId && (
+                  {completedJobId && liveJobResult && (
                     <div className="flex gap-4">
                       <button
-                        onClick={() => exportTrades(currentJobId)}
+                        onClick={() => exportTrades(completedJobId)}
                         className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
                       >
                         <FileSpreadsheet className="w-4 h-4" />
                         Export Trades CSV
                       </button>
                       <button
-                        onClick={() => exportSummary(currentJobId)}
+                        onClick={() => exportSummary(completedJobId)}
                         className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
                       >
                         <Download className="w-4 h-4" />
                         Export Summary CSV
                       </button>
                       <button
-                        onClick={() => exportEquityCurve(currentJobId)}
+                        onClick={() => exportEquityCurve(completedJobId)}
                         className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
                       >
                         <LineChart className="w-4 h-4" />
@@ -1273,7 +1290,7 @@ export default function ZeroDTEBacktestPage() {
           )}
 
           {/* Empty State */}
-          {!liveJobResult && results.length === 0 && !running && (
+          {!hasValidResult(liveJobResult) && results.length === 0 && !running && (
             <div className="bg-gray-900 border-2 border-dashed border-gray-700 rounded-xl p-12 text-center">
               <TestTube className="w-16 h-16 mx-auto mb-4 text-gray-600" />
               <h2 className="text-2xl font-bold mb-2">No Backtest Results Yet</h2>
@@ -1281,6 +1298,12 @@ export default function ZeroDTEBacktestPage() {
                 Configure your strategy parameters above and click "Run Backtest" to analyze the
                 0DTE Iron Condor hybrid scaling strategy with your ORAT historical data.
               </p>
+              {error && (
+                <div className="mt-4 p-4 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-sm max-w-lg mx-auto">
+                  <AlertTriangle className="w-5 h-5 inline mr-2" />
+                  {error}
+                </div>
+              )}
             </div>
           )}
 

@@ -285,6 +285,9 @@ class HybridFixedBacktester:
         # VIX filter skip count
         self.vix_filter_skips = 0
 
+        # Progress callback (set by caller for UI updates)
+        self.progress_callback = None
+
         # Cache
         self.spx_ohlc: Dict[str, Dict] = {}
         self.vix_data: Dict[str, float] = {}
@@ -1397,21 +1400,31 @@ class HybridFixedBacktester:
 
         # Load data
         print("\nLoading market data...")
+        if self.progress_callback:
+            self.progress_callback(5, 'Loading market data...')
         self.load_market_data()
 
         if not self.spx_ohlc:
             print("Failed to load market data")
+            if self.progress_callback:
+                self.progress_callback(100, 'Failed to load market data')
             return {}
 
         # Get trading days
         print("Fetching trading days...")
+        if self.progress_callback:
+            self.progress_callback(10, 'Fetching trading days from database...')
         trading_days = self.get_trading_days()
 
         if not trading_days:
             print("No options data found")
+            if self.progress_callback:
+                self.progress_callback(100, 'No options data found in database')
             return {}
 
         print(f"Found {len(trading_days)} trading days")
+        if self.progress_callback:
+            self.progress_callback(15, f'Processing {len(trading_days)} trading days...')
 
         # Track tier transitions
         current_tier_name = None
@@ -1419,9 +1432,10 @@ class HybridFixedBacktester:
 
         # Process each day
         total_days = len(trading_days)
+        last_progress_report = 0
         for i, trade_date in enumerate(trading_days):
 
-            # Progress bar
+            # Progress bar and callback
             if i % 20 == 0 or i == total_days - 1:
                 pct = ((i + 1) / total_days) * 100
                 tier = self.get_current_tier()
@@ -1429,6 +1443,12 @@ class HybridFixedBacktester:
                 filled = int(bar_len * (i + 1) / total_days)
                 bar = "█" * filled + "░" * (bar_len - filled)
                 print(f"\r  [{bar}] {pct:5.1f}% | {tier.name} | Equity: ${self.equity:,.0f}", end="", flush=True)
+
+                # Report progress via callback (scale 15-95%)
+                if self.progress_callback and pct - last_progress_report >= 5:
+                    scaled_pct = int(15 + (pct * 0.80))
+                    self.progress_callback(scaled_pct, f'Processing: {i+1}/{total_days} days ({len(self.all_trades)} trades)')
+                    last_progress_report = pct
 
             # Get current tier
             tier = self.get_current_tier()

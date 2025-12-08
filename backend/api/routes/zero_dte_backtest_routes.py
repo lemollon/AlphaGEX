@@ -100,6 +100,7 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
     """Run the hybrid fixed backtest in background"""
     try:
         _jobs[job_id]['status'] = 'running'
+        _jobs[job_id]['progress'] = 5
         _jobs[job_id]['progress_message'] = 'Initializing backtest...'
 
         # Import the backtest module
@@ -112,6 +113,9 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
         if config.trade_wednesday: trade_days.append(2)
         if config.trade_thursday: trade_days.append(3)
         if config.trade_friday: trade_days.append(4)
+
+        _jobs[job_id]['progress'] = 10
+        _jobs[job_id]['progress_message'] = 'Creating backtester...'
 
         # Create backtester with all enhanced parameters
         backtester = HybridFixedBacktester(
@@ -138,16 +142,39 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
             target_delta=config.target_delta,
         )
 
-        _jobs[job_id]['progress'] = 10
+        _jobs[job_id]['progress'] = 15
         _jobs[job_id]['progress_message'] = 'Loading market data...'
+
+        # Provide progress callback to backtester
+        def update_progress(pct: int, message: str):
+            # Scale progress from 15-95 (leave 5% at start and end)
+            scaled_pct = 15 + int(pct * 0.80)
+            _jobs[job_id]['progress'] = scaled_pct
+            _jobs[job_id]['progress_message'] = message
+
+        # Attach progress callback to backtester
+        backtester.progress_callback = update_progress
 
         # Run backtest
         results = backtester.run()
 
+        _jobs[job_id]['progress'] = 95
+        _jobs[job_id]['progress_message'] = 'Finalizing results...'
+
+        # Check if results are valid (not empty)
+        if not results or not results.get('trades') or results.get('trades', {}).get('total', 0) == 0:
+            # No trades found - this is an error condition
+            _jobs[job_id]['status'] = 'failed'
+            _jobs[job_id]['progress'] = 100
+            _jobs[job_id]['error'] = f'No trades found for {config.ticker} between {config.start_date} and {config.end_date}. Check that ORAT data exists for this ticker and date range.'
+            _jobs[job_id]['progress_message'] = 'No trades found'
+            _jobs[job_id]['completed_at'] = datetime.now().isoformat()
+            return
+
         # Store results
         _jobs[job_id]['status'] = 'completed'
         _jobs[job_id]['progress'] = 100
-        _jobs[job_id]['progress_message'] = 'Backtest completed!'
+        _jobs[job_id]['progress_message'] = f'Completed! {results["trades"]["total"]} trades analyzed.'
         _jobs[job_id]['completed_at'] = datetime.now().isoformat()
         _jobs[job_id]['result'] = results
 
@@ -159,8 +186,10 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
         import traceback
         traceback.print_exc()
         _jobs[job_id]['status'] = 'failed'
+        _jobs[job_id]['progress'] = 100
         _jobs[job_id]['error'] = str(e)
         _jobs[job_id]['progress_message'] = f'Error: {str(e)}'
+        _jobs[job_id]['completed_at'] = datetime.now().isoformat()
 
 
 def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: str):
