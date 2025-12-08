@@ -6,9 +6,9 @@ echo ========================================
 :: Set the database URL
 set DATABASE_URL=postgresql://alphagex_user:e5DSVWnKceA16V5ysssLZCbqNE9ELRKi@dpg-d4quq1u3jp1c739oijb0-a.oregon-postgres.render.com/alphagex_backtest
 
-:: Start the backend API in a new window
+:: Start the backend API in a new window (from backend folder)
 echo Starting Backend API...
-start "AlphaGEX Backend" cmd /k "cd /d %~dp0 && set DATABASE_URL=%DATABASE_URL% && python main.py"
+start "AlphaGEX Backend" cmd /k "cd /d %~dp0backend && set DATABASE_URL=%DATABASE_URL% && python main.py"
 
 :: Wait a few seconds for backend to initialize
 timeout /t 3 /nobreak > nul
