@@ -13,6 +13,7 @@ import os
 import sys
 import csv
 import argparse
+import psycopg2
 from datetime import datetime
 from pathlib import Path
 from io import StringIO
@@ -24,14 +25,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / '.env')
 
+
+def get_raw_connection():
+    """Get raw psycopg2 connection (not wrapped)"""
+    database_url = os.getenv('DATABASE_URL')
+    if not database_url:
+        raise Exception("DATABASE_URL not set")
+    conn = psycopg2.connect(database_url)
+    return conn
+
 # Paths
 ORAT_PROCESSED_DIR = Path(__file__).parent.parent / 'data' / 'orat_processed'
 
 
 def import_csv_with_copy(csv_path: Path) -> int:
     """Import a single CSV file using PostgreSQL COPY (fastest method)"""
-    from database_adapter import get_connection
-
     # Parse trade date from filename
     date_str = csv_path.stem.replace('orat_spx_', '')
     trade_date = datetime.strptime(date_str, '%Y%m%d').date()
@@ -90,7 +98,7 @@ def import_csv_with_copy(csv_path: Path) -> int:
     # Use COPY to load data
     buffer.seek(0)
 
-    conn = get_connection()
+    conn = get_raw_connection()
     cursor = conn.cursor()
 
     # Create temp table, COPY into it, then INSERT with conflict handling
