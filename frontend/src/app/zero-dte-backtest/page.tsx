@@ -4,13 +4,15 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle,
   RefreshCw, AlertTriangle, Calendar, Clock, Loader2, CheckCircle,
-  Settings, DollarSign, Target, Layers, ChevronDown, ChevronUp
+  Settings, DollarSign, Target, Layers, ChevronDown, ChevronUp,
+  Download, FileSpreadsheet, LineChart, PieChart, ArrowUpDown,
+  Database, Info, Percent, Shield
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, BarChart, Bar, Cell
+  LineChart as RechartsLine, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, BarChart, Bar, Cell, AreaChart, Area, ComposedChart
 } from 'recharts'
 
 interface BacktestConfig {
@@ -22,6 +24,20 @@ interface BacktestConfig {
   risk_per_trade_pct: number
   ticker: string
   strategy: string
+  // New enhanced parameters
+  strategy_type: string
+  min_vix: number | null
+  max_vix: number | null
+  stop_loss_pct: number | null
+  profit_target_pct: number | null
+  trade_monday: boolean
+  trade_tuesday: boolean
+  trade_wednesday: boolean
+  trade_thursday: boolean
+  trade_friday: boolean
+  max_contracts_override: number | null
+  commission_per_leg: number | null
+  slippage_per_spread: number | null
 }
 
 interface BacktestJob {
@@ -45,6 +61,16 @@ interface Strategy {
     sd_multiplier: number
     spread_width: number
   }
+}
+
+interface StrategyType {
+  id: string
+  name: string
+  description: string
+  legs: number
+  direction: string
+  credit: boolean
+  warning?: string
 }
 
 interface Tier {
@@ -79,6 +105,8 @@ interface BacktestResult {
   monthly_returns: any
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+
 export default function ZeroDTEBacktestPage() {
   // Configuration state
   const [config, setConfig] = useState<BacktestConfig>({
@@ -89,14 +117,30 @@ export default function ZeroDTEBacktestPage() {
     sd_multiplier: 1.0,
     risk_per_trade_pct: 5.0,
     ticker: 'SPX',
-    strategy: 'hybrid_fixed'
+    strategy: 'hybrid_fixed',
+    // New parameters
+    strategy_type: 'iron_condor',
+    min_vix: null,
+    max_vix: null,
+    stop_loss_pct: null,
+    profit_target_pct: null,
+    trade_monday: true,
+    trade_tuesday: true,
+    trade_wednesday: true,
+    trade_thursday: true,
+    trade_friday: true,
+    max_contracts_override: null,
+    commission_per_leg: null,
+    slippage_per_spread: null,
   })
 
   // UI state
   const [strategies, setStrategies] = useState<Strategy[]>([])
+  const [strategyTypes, setStrategyTypes] = useState<StrategyType[]>([])
   const [tiers, setTiers] = useState<Tier[]>([])
   const [results, setResults] = useState<BacktestResult[]>([])
   const [selectedResult, setSelectedResult] = useState<BacktestResult | null>(null)
+  const [liveJobResult, setLiveJobResult] = useState<any>(null)
 
   // Job state
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
@@ -107,10 +151,17 @@ export default function ZeroDTEBacktestPage() {
   // UI toggles
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showTiers, setShowTiers] = useState(false)
+  const [showRiskSettings, setShowRiskSettings] = useState(false)
+  const [showDataInfo, setShowDataInfo] = useState(false)
+  const [activeTab, setActiveTab] = useState<'overview' | 'charts' | 'trades' | 'compare'>('overview')
+
+  // Comparison state
+  const [selectedForCompare, setSelectedForCompare] = useState<string[]>([])
 
   // Load strategies and tiers on mount
   useEffect(() => {
     loadStrategies()
+    loadStrategyTypes()
     loadTiers()
     loadResults()
   }, [])
@@ -121,7 +172,7 @@ export default function ZeroDTEBacktestPage() {
 
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/zero-dte/job/${currentJobId}`)
+        const response = await fetch(`${API_URL}/api/zero-dte/job/${currentJobId}`)
         const data = await response.json()
 
         if (data.job) {
@@ -130,6 +181,7 @@ export default function ZeroDTEBacktestPage() {
           if (data.job.status === 'completed') {
             setRunning(false)
             setCurrentJobId(null)
+            setLiveJobResult(data.job.result)
             loadResults()
           } else if (data.job.status === 'failed') {
             setRunning(false)
@@ -147,7 +199,7 @@ export default function ZeroDTEBacktestPage() {
 
   const loadStrategies = async () => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/zero-dte/strategies`)
+      const response = await fetch(`${API_URL}/api/zero-dte/strategies`)
       const data = await response.json()
       if (data.strategies) {
         setStrategies(data.strategies)
@@ -157,9 +209,21 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
+  const loadStrategyTypes = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/strategy-types`)
+      const data = await response.json()
+      if (data.strategy_types) {
+        setStrategyTypes(data.strategy_types)
+      }
+    } catch (err) {
+      console.error('Failed to load strategy types:', err)
+    }
+  }
+
   const loadTiers = async () => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/zero-dte/tiers`)
+      const response = await fetch(`${API_URL}/api/zero-dte/tiers`)
       const data = await response.json()
       if (data.tiers) {
         setTiers(data.tiers)
@@ -171,11 +235,11 @@ export default function ZeroDTEBacktestPage() {
 
   const loadResults = async () => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/zero-dte/results`)
+      const response = await fetch(`${API_URL}/api/zero-dte/results`)
       const data = await response.json()
       if (data.results) {
         setResults(data.results)
-        if (data.results.length > 0) {
+        if (data.results.length > 0 && !selectedResult) {
           setSelectedResult(data.results[0])
         }
       }
@@ -188,9 +252,10 @@ export default function ZeroDTEBacktestPage() {
     setRunning(true)
     setError(null)
     setJobStatus(null)
+    setLiveJobResult(null)
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/zero-dte/run`, {
+      const response = await fetch(`${API_URL}/api/zero-dte/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
@@ -231,11 +296,51 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
+  const exportTrades = async (jobId: string) => {
+    window.open(`${API_URL}/api/zero-dte/export/trades/${jobId}`, '_blank')
+  }
+
+  const exportSummary = async (jobId: string) => {
+    window.open(`${API_URL}/api/zero-dte/export/summary/${jobId}`, '_blank')
+  }
+
+  const exportEquityCurve = async (jobId: string) => {
+    window.open(`${API_URL}/api/zero-dte/export/equity-curve/${jobId}`, '_blank')
+  }
+
+  // Get current result (live or selected)
+  const currentResult = liveJobResult || selectedResult
+
   // Format monthly returns for chart
-  const monthlyChartData = selectedResult?.monthly_returns
-    ? Object.entries(selectedResult.monthly_returns).map(([month, pct]) => ({
+  const monthlyChartData = currentResult?.monthly_returns
+    ? Object.entries(currentResult.monthly_returns).map(([month, pct]) => ({
         month,
         return_pct: typeof pct === 'number' ? pct : parseFloat(String(pct))
+      }))
+    : []
+
+  // Format equity curve for chart
+  const equityCurveData = liveJobResult?.equity_curve || []
+
+  // Format day of week performance
+  const dayOfWeekData = liveJobResult?.day_of_week_performance
+    ? Object.entries(liveJobResult.day_of_week_performance).map(([day, stats]: [string, any]) => ({
+        day,
+        trades: stats.trades,
+        pnl: stats.pnl,
+        win_rate: stats.win_rate,
+        avg_pnl: stats.avg_pnl
+      }))
+    : []
+
+  // Format VIX performance
+  const vixPerformanceData = liveJobResult?.vix_performance
+    ? Object.entries(liveJobResult.vix_performance).map(([level, stats]: [string, any]) => ({
+        level: level.charAt(0).toUpperCase() + level.slice(1),
+        trades: stats.trades,
+        pnl: stats.pnl,
+        win_rate: stats.win_rate,
+        avg_pnl: stats.avg_pnl
       }))
     : []
 
@@ -257,7 +362,54 @@ export default function ZeroDTEBacktestPage() {
                 Hybrid scaling strategy with automatic tier transitions
               </p>
             </div>
+            <button
+              onClick={() => setShowDataInfo(!showDataInfo)}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
+            >
+              <Database className="w-4 h-4" />
+              Data Sources
+              {showDataInfo ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
           </div>
+
+          {/* Data Sources Info Panel */}
+          {showDataInfo && (
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+              <h3 className="font-bold mb-4 flex items-center gap-2">
+                <Info className="w-5 h-5 text-blue-400" />
+                Data Sources & Limitations
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <h4 className="font-bold text-green-400 mb-2">ORAT Options Data</h4>
+                  <p className="text-sm text-gray-400 mb-2">End-of-day options data including Greeks, IV, bid/ask</p>
+                  <ul className="text-xs text-gray-500 space-y-1">
+                    <li>- SPX, SPXW, SPY tickers</li>
+                    <li>- 2021-01-01 to present</li>
+                    <li>- EOD snapshots only</li>
+                  </ul>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <h4 className="font-bold text-yellow-400 mb-2">Yahoo Finance</h4>
+                  <p className="text-sm text-gray-400 mb-2">Free OHLC data for underlying and VIX</p>
+                  <ul className="text-xs text-gray-500 space-y-1">
+                    <li>- S&P 500 daily OHLC</li>
+                    <li>- VIX daily close</li>
+                    <li>- Fetched on-demand</li>
+                  </ul>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <h4 className="font-bold text-gray-400 mb-2">Limitations</h4>
+                  <ul className="text-xs text-gray-500 space-y-1">
+                    <li>- No intraday data (stops approximate)</li>
+                    <li>- Greeks are EOD snapshot</li>
+                    <li>- Settlement uses daily OHLC</li>
+                    <li>- No tick data for slippage</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Strategy Selection */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -296,16 +448,26 @@ export default function ZeroDTEBacktestPage() {
                 <Settings className="w-5 h-5 text-gray-400" />
                 Backtest Configuration
               </h2>
-              <button
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
-              >
-                {showAdvanced ? 'Hide' : 'Show'} Advanced
-                {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowRiskSettings(!showRiskSettings)}
+                  className="text-sm text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                >
+                  <Shield className="w-4 h-4" />
+                  {showRiskSettings ? 'Hide' : 'Show'} Risk
+                </button>
+                <button
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                >
+                  {showAdvanced ? 'Hide' : 'Show'} Advanced
+                  {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Basic Settings */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               {/* Date Range */}
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Start Date</label>
@@ -351,11 +513,120 @@ export default function ZeroDTEBacktestPage() {
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
                 />
               </div>
+
+              {/* Strategy Type */}
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Strategy Type</label>
+                <select
+                  value={config.strategy_type}
+                  onChange={e => setConfig(prev => ({ ...prev, strategy_type: e.target.value }))}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                >
+                  {strategyTypes.map(st => (
+                    <option key={st.id} value={st.id}>{st.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
+
+            {/* Risk Management Settings */}
+            {showRiskSettings && (
+              <div className="mt-4 pt-4 border-t border-gray-800">
+                <h3 className="text-sm font-bold text-purple-400 mb-3 flex items-center gap-2">
+                  <Shield className="w-4 h-4" />
+                  Risk Management & Filters
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                  {/* VIX Filter */}
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Min VIX</label>
+                    <input
+                      type="number"
+                      step="1"
+                      value={config.min_vix || ''}
+                      placeholder="None"
+                      onChange={e => setConfig(prev => ({ ...prev, min_vix: e.target.value ? Number(e.target.value) : null }))}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Max VIX</label>
+                    <input
+                      type="number"
+                      step="1"
+                      value={config.max_vix || ''}
+                      placeholder="None"
+                      onChange={e => setConfig(prev => ({ ...prev, max_vix: e.target.value ? Number(e.target.value) : null }))}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  {/* Stop Loss / Profit Target */}
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Stop Loss %</label>
+                    <input
+                      type="number"
+                      step="10"
+                      value={config.stop_loss_pct || ''}
+                      placeholder="None"
+                      onChange={e => setConfig(prev => ({ ...prev, stop_loss_pct: e.target.value ? Number(e.target.value) : null }))}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Profit Target %</label>
+                    <input
+                      type="number"
+                      step="10"
+                      value={config.profit_target_pct || ''}
+                      placeholder="None"
+                      onChange={e => setConfig(prev => ({ ...prev, profit_target_pct: e.target.value ? Number(e.target.value) : null }))}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  {/* Max Contracts Override */}
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Max Contracts</label>
+                    <input
+                      type="number"
+                      value={config.max_contracts_override || ''}
+                      placeholder="Auto"
+                      onChange={e => setConfig(prev => ({ ...prev, max_contracts_override: e.target.value ? Number(e.target.value) : null }))}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Trading Days */}
+                <div className="mt-4">
+                  <label className="block text-sm text-gray-400 mb-2">Trading Days</label>
+                  <div className="flex gap-4">
+                    {[
+                      { key: 'trade_monday', label: 'Mon' },
+                      { key: 'trade_tuesday', label: 'Tue' },
+                      { key: 'trade_wednesday', label: 'Wed' },
+                      { key: 'trade_thursday', label: 'Thu' },
+                      { key: 'trade_friday', label: 'Fri' },
+                    ].map(day => (
+                      <label key={day.key} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={config[day.key as keyof BacktestConfig] as boolean}
+                          onChange={e => setConfig(prev => ({ ...prev, [day.key]: e.target.checked }))}
+                          className="w-4 h-4 rounded bg-gray-800 border-gray-600"
+                        />
+                        <span className="text-sm">{day.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Advanced Options */}
             {showAdvanced && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-4 border-t border-gray-800">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 pt-4 border-t border-gray-800">
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">SD Multiplier</label>
                   <input
@@ -385,6 +656,28 @@ export default function ZeroDTEBacktestPage() {
                     <option value="SPX">SPX</option>
                     <option value="SPXW">SPXW</option>
                   </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Commission/Leg ($)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={config.commission_per_leg || ''}
+                    placeholder="Default"
+                    onChange={e => setConfig(prev => ({ ...prev, commission_per_leg: e.target.value ? Number(e.target.value) : null }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Slippage/Spread ($)</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={config.slippage_per_spread || ''}
+                    placeholder="Default"
+                    onChange={e => setConfig(prev => ({ ...prev, slippage_per_spread: e.target.value ? Number(e.target.value) : null }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                  />
                 </div>
               </div>
             )}
@@ -482,146 +775,441 @@ export default function ZeroDTEBacktestPage() {
           </div>
 
           {/* Results Section */}
-          {results.length > 0 && (
+          {(liveJobResult || results.length > 0) && (
             <>
-              {/* Summary Cards */}
-              {selectedResult && (
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div className="text-sm text-gray-400 mb-1">Final Equity</div>
-                    <div className="text-2xl font-bold text-green-400">
-                      ${selectedResult.final_equity?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </div>
-                  </div>
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div className="text-sm text-gray-400 mb-1">Total Return</div>
-                    <div className={`text-2xl font-bold ${selectedResult.total_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {selectedResult.total_return_pct?.toFixed(1)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div className="text-sm text-gray-400 mb-1">Avg Monthly</div>
-                    <div className={`text-2xl font-bold ${selectedResult.avg_monthly_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {selectedResult.avg_monthly_return_pct?.toFixed(2)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div className="text-sm text-gray-400 mb-1">Win Rate</div>
-                    <div className="text-2xl font-bold text-blue-400">
-                      {selectedResult.win_rate?.toFixed(1)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div className="text-sm text-gray-400 mb-1">Max Drawdown</div>
-                    <div className="text-2xl font-bold text-red-400">
-                      {selectedResult.max_drawdown_pct?.toFixed(1)}%
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Monthly Returns Chart */}
-              {monthlyChartData.length > 0 && (
-                <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-                  <h3 className="font-bold mb-4">Monthly Returns</h3>
-                  <div className="h-80">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={monthlyChartData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                        <XAxis
-                          dataKey="month"
-                          stroke="#9CA3AF"
-                          fontSize={10}
-                          angle={-45}
-                          textAnchor="end"
-                          height={60}
-                        />
-                        <YAxis
-                          stroke="#9CA3AF"
-                          fontSize={12}
-                          tickFormatter={(v) => `${v}%`}
-                        />
-                        <Tooltip
-                          contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                          formatter={(value: number) => [`${value.toFixed(2)}%`, 'Return']}
-                        />
-                        <Bar dataKey="return_pct" name="Return %">
-                          {monthlyChartData.map((entry, index) => (
-                            <Cell
-                              key={`cell-${index}`}
-                              fill={entry.return_pct >= 0 ? '#22C55E' : '#EF4444'}
-                            />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              )}
-
-              {/* Results History */}
-              <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-800">
-                  <h3 className="font-bold">Backtest History</h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-gray-950 text-sm text-gray-400">
-                      <tr>
-                        <th className="text-left p-4">Date</th>
-                        <th className="text-left p-4">Strategy</th>
-                        <th className="text-left p-4">Period</th>
-                        <th className="text-right p-4">Initial</th>
-                        <th className="text-right p-4">Final</th>
-                        <th className="text-right p-4">Return</th>
-                        <th className="text-right p-4">Monthly Avg</th>
-                        <th className="text-right p-4">Win Rate</th>
-                        <th className="text-right p-4">Trades</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {results.map(result => (
-                        <tr
-                          key={result.id}
-                          onClick={() => setSelectedResult(result)}
-                          className={`border-b border-gray-800 cursor-pointer hover:bg-gray-800/50 ${
-                            selectedResult?.id === result.id ? 'bg-blue-900/20' : ''
-                          }`}
-                        >
-                          <td className="p-4 text-sm text-gray-400">
-                            {new Date(result.created_at).toLocaleDateString()}
-                          </td>
-                          <td className="p-4 font-medium">{result.strategy}</td>
-                          <td className="p-4 text-sm text-gray-400">
-                            {result.start_date} - {result.end_date}
-                          </td>
-                          <td className="p-4 text-right">
-                            ${result.initial_capital?.toLocaleString()}
-                          </td>
-                          <td className="p-4 text-right font-bold text-green-400">
-                            ${result.final_equity?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                          </td>
-                          <td className={`p-4 text-right font-bold ${result.total_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {result.total_return_pct?.toFixed(1)}%
-                          </td>
-                          <td className={`p-4 text-right ${result.avg_monthly_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {result.avg_monthly_return_pct?.toFixed(2)}%
-                          </td>
-                          <td className="p-4 text-right text-blue-400">
-                            {result.win_rate?.toFixed(1)}%
-                          </td>
-                          <td className="p-4 text-right">{result.total_trades}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              {/* Tabs */}
+              <div className="flex gap-2 border-b border-gray-800 pb-2">
+                {['overview', 'charts', 'trades', 'compare'].map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab as any)}
+                    className={`px-4 py-2 rounded-t-lg transition-colors ${
+                      activeTab === tab
+                        ? 'bg-gray-800 text-white'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </button>
+                ))}
               </div>
+
+              {/* Overview Tab */}
+              {activeTab === 'overview' && currentResult && (
+                <>
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-sm text-gray-400 mb-1">Final Equity</div>
+                      <div className="text-2xl font-bold text-green-400">
+                        ${(liveJobResult?.summary?.final_equity || currentResult.final_equity)?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-sm text-gray-400 mb-1">Total Return</div>
+                      <div className={`text-2xl font-bold ${(liveJobResult?.summary?.total_return_pct || currentResult.total_return_pct) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {(liveJobResult?.summary?.total_return_pct || currentResult.total_return_pct)?.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-sm text-gray-400 mb-1">Avg Monthly</div>
+                      <div className={`text-2xl font-bold ${(liveJobResult?.summary?.avg_monthly_return_pct || currentResult.avg_monthly_return_pct) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {(liveJobResult?.summary?.avg_monthly_return_pct || currentResult.avg_monthly_return_pct)?.toFixed(2)}%
+                      </div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-sm text-gray-400 mb-1">Win Rate</div>
+                      <div className="text-2xl font-bold text-blue-400">
+                        {(liveJobResult?.trades?.win_rate || currentResult.win_rate)?.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-sm text-gray-400 mb-1">Max Drawdown</div>
+                      <div className="text-2xl font-bold text-red-400">
+                        {(liveJobResult?.summary?.max_drawdown_pct || currentResult.max_drawdown_pct)?.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-sm text-gray-400 mb-1">Profit Factor</div>
+                      <div className="text-2xl font-bold text-purple-400">
+                        {(liveJobResult?.trades?.profit_factor || currentResult.profit_factor)?.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Risk Metrics */}
+                  {liveJobResult?.risk_metrics && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <div className="text-sm text-gray-400 mb-1">Sharpe Ratio</div>
+                        <div className="text-xl font-bold text-cyan-400">
+                          {liveJobResult.risk_metrics.sharpe_ratio?.toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <div className="text-sm text-gray-400 mb-1">Sortino Ratio</div>
+                        <div className="text-xl font-bold text-cyan-400">
+                          {liveJobResult.risk_metrics.sortino_ratio?.toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <div className="text-sm text-gray-400 mb-1">Max Consecutive Losses</div>
+                        <div className="text-xl font-bold text-orange-400">
+                          {liveJobResult.risk_metrics.max_consecutive_losses}
+                        </div>
+                      </div>
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <div className="text-sm text-gray-400 mb-1">VIX Filter Skips</div>
+                        <div className="text-xl font-bold text-gray-400">
+                          {liveJobResult.risk_metrics.vix_filter_skips}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Export Buttons */}
+                  {currentJobId && (
+                    <div className="flex gap-4">
+                      <button
+                        onClick={() => exportTrades(currentJobId)}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
+                      >
+                        <FileSpreadsheet className="w-4 h-4" />
+                        Export Trades CSV
+                      </button>
+                      <button
+                        onClick={() => exportSummary(currentJobId)}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
+                      >
+                        <Download className="w-4 h-4" />
+                        Export Summary CSV
+                      </button>
+                      <button
+                        onClick={() => exportEquityCurve(currentJobId)}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
+                      >
+                        <LineChart className="w-4 h-4" />
+                        Export Equity Curve
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Monthly Returns Chart */}
+                  {monthlyChartData.length > 0 && (
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                      <h3 className="font-bold mb-4">Monthly Returns</h3>
+                      <div className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={monthlyChartData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis
+                              dataKey="month"
+                              stroke="#9CA3AF"
+                              fontSize={10}
+                              angle={-45}
+                              textAnchor="end"
+                              height={60}
+                            />
+                            <YAxis
+                              stroke="#9CA3AF"
+                              fontSize={12}
+                              tickFormatter={(v) => `${v}%`}
+                            />
+                            <Tooltip
+                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                              formatter={(value: number) => [`${value.toFixed(2)}%`, 'Return']}
+                            />
+                            <Bar dataKey="return_pct" name="Return %">
+                              {monthlyChartData.map((entry, index) => (
+                                <Cell
+                                  key={`cell-${index}`}
+                                  fill={entry.return_pct >= 0 ? '#22C55E' : '#EF4444'}
+                                />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Charts Tab */}
+              {activeTab === 'charts' && liveJobResult && (
+                <div className="space-y-6">
+                  {/* Equity Curve */}
+                  {equityCurveData.length > 0 && (
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                      <h3 className="font-bold mb-4">Equity Curve</h3>
+                      <div className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={equityCurveData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis
+                              dataKey="date"
+                              stroke="#9CA3AF"
+                              fontSize={10}
+                              tickFormatter={(date) => date?.slice(5, 10)}
+                            />
+                            <YAxis
+                              stroke="#9CA3AF"
+                              fontSize={12}
+                              tickFormatter={(v) => `$${(v / 1000000).toFixed(1)}M`}
+                            />
+                            <Tooltip
+                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                              formatter={(value: number) => [`$${value.toLocaleString()}`, 'Equity']}
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey="equity"
+                              stroke="#22C55E"
+                              fill="#22C55E"
+                              fillOpacity={0.2}
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Drawdown Chart */}
+                  {equityCurveData.length > 0 && (
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                      <h3 className="font-bold mb-4">Drawdown</h3>
+                      <div className="h-60">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={equityCurveData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis
+                              dataKey="date"
+                              stroke="#9CA3AF"
+                              fontSize={10}
+                              tickFormatter={(date) => date?.slice(5, 10)}
+                            />
+                            <YAxis
+                              stroke="#9CA3AF"
+                              fontSize={12}
+                              tickFormatter={(v) => `${v.toFixed(1)}%`}
+                              reversed
+                            />
+                            <Tooltip
+                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                              formatter={(value: number) => [`${value.toFixed(2)}%`, 'Drawdown']}
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey="drawdown_pct"
+                              stroke="#EF4444"
+                              fill="#EF4444"
+                              fillOpacity={0.3}
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Day of Week Performance */}
+                  {dayOfWeekData.length > 0 && (
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                      <h3 className="font-bold mb-4">P&L by Day of Week</h3>
+                      <div className="h-60">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={dayOfWeekData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis dataKey="day" stroke="#9CA3AF" fontSize={12} />
+                            <YAxis
+                              stroke="#9CA3AF"
+                              fontSize={12}
+                              tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                            />
+                            <Tooltip
+                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                              formatter={(value: number, name: string) => {
+                                if (name === 'pnl') return [`$${value.toLocaleString()}`, 'P&L']
+                                if (name === 'win_rate') return [`${value.toFixed(1)}%`, 'Win Rate']
+                                return [value, name]
+                              }}
+                            />
+                            <Bar dataKey="pnl" name="P&L">
+                              {dayOfWeekData.map((entry, index) => (
+                                <Cell
+                                  key={`cell-${index}`}
+                                  fill={entry.pnl >= 0 ? '#22C55E' : '#EF4444'}
+                                />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* VIX Level Performance */}
+                  {vixPerformanceData.length > 0 && (
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                      <h3 className="font-bold mb-4">P&L by VIX Level</h3>
+                      <div className="h-60">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={vixPerformanceData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis dataKey="level" stroke="#9CA3AF" fontSize={12} />
+                            <YAxis
+                              yAxisId="left"
+                              stroke="#9CA3AF"
+                              fontSize={12}
+                              tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                            />
+                            <YAxis
+                              yAxisId="right"
+                              orientation="right"
+                              stroke="#9CA3AF"
+                              fontSize={12}
+                              tickFormatter={(v) => `${v}%`}
+                            />
+                            <Tooltip
+                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                            />
+                            <Bar yAxisId="left" dataKey="pnl" name="P&L" fill="#8B5CF6" />
+                            <Line
+                              yAxisId="right"
+                              type="monotone"
+                              dataKey="win_rate"
+                              name="Win Rate"
+                              stroke="#22C55E"
+                              strokeWidth={2}
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Trades Tab */}
+              {activeTab === 'trades' && liveJobResult?.all_trades && (
+                <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-800 flex justify-between items-center">
+                    <h3 className="font-bold">Trade Log ({liveJobResult.all_trades.length} trades)</h3>
+                  </div>
+                  <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-950 sticky top-0">
+                        <tr>
+                          <th className="text-left p-3">#</th>
+                          <th className="text-left p-3">Date</th>
+                          <th className="text-left p-3">Tier</th>
+                          <th className="text-right p-3">VIX</th>
+                          <th className="text-right p-3">Put Strike</th>
+                          <th className="text-right p-3">Call Strike</th>
+                          <th className="text-right p-3">Contracts</th>
+                          <th className="text-right p-3">P&L</th>
+                          <th className="text-left p-3">Outcome</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {liveJobResult.all_trades.slice(0, 100).map((trade: any) => (
+                          <tr key={trade.trade_number} className="border-b border-gray-800 hover:bg-gray-800/50">
+                            <td className="p-3">{trade.trade_number}</td>
+                            <td className="p-3">{trade.trade_date}</td>
+                            <td className="p-3 text-purple-400">{trade.tier_name.replace('TIER_', '')}</td>
+                            <td className="p-3 text-right">{trade.vix?.toFixed(1)}</td>
+                            <td className="p-3 text-right">{trade.put_short_strike?.toFixed(0)}</td>
+                            <td className="p-3 text-right">{trade.call_short_strike?.toFixed(0)}</td>
+                            <td className="p-3 text-right">{trade.contracts}</td>
+                            <td className={`p-3 text-right font-mono ${trade.net_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              ${trade.net_pnl?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </td>
+                            <td className={`p-3 ${
+                              trade.outcome === 'MAX_PROFIT' ? 'text-green-400' :
+                              trade.outcome === 'DOUBLE_BREACH' ? 'text-red-400' : 'text-yellow-400'
+                            }`}>
+                              {trade.outcome}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {liveJobResult.all_trades.length > 100 && (
+                      <div className="p-4 text-center text-gray-400">
+                        Showing first 100 of {liveJobResult.all_trades.length} trades. Export CSV for full list.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Compare Tab */}
+              {activeTab === 'compare' && (
+                <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                  <h3 className="font-bold mb-4">Compare Backtests</h3>
+                  <p className="text-gray-400 mb-4">
+                    Run multiple backtests with different parameters, then compare them here.
+                  </p>
+
+                  {/* Results History */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gray-950 text-sm text-gray-400">
+                        <tr>
+                          <th className="text-left p-4">Date</th>
+                          <th className="text-left p-4">Strategy</th>
+                          <th className="text-left p-4">Period</th>
+                          <th className="text-right p-4">Initial</th>
+                          <th className="text-right p-4">Final</th>
+                          <th className="text-right p-4">Return</th>
+                          <th className="text-right p-4">Monthly Avg</th>
+                          <th className="text-right p-4">Win Rate</th>
+                          <th className="text-right p-4">Trades</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {results.map(result => (
+                          <tr
+                            key={result.id}
+                            onClick={() => setSelectedResult(result)}
+                            className={`border-b border-gray-800 cursor-pointer hover:bg-gray-800/50 ${
+                              selectedResult?.id === result.id ? 'bg-blue-900/20' : ''
+                            }`}
+                          >
+                            <td className="p-4 text-sm text-gray-400">
+                              {new Date(result.created_at).toLocaleDateString()}
+                            </td>
+                            <td className="p-4 font-medium">{result.strategy}</td>
+                            <td className="p-4 text-sm text-gray-400">
+                              {result.start_date} - {result.end_date}
+                            </td>
+                            <td className="p-4 text-right">
+                              ${result.initial_capital?.toLocaleString()}
+                            </td>
+                            <td className="p-4 text-right font-bold text-green-400">
+                              ${result.final_equity?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </td>
+                            <td className={`p-4 text-right font-bold ${result.total_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {result.total_return_pct?.toFixed(1)}%
+                            </td>
+                            <td className={`p-4 text-right ${result.avg_monthly_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {result.avg_monthly_return_pct?.toFixed(2)}%
+                            </td>
+                            <td className="p-4 text-right text-blue-400">
+                              {result.win_rate?.toFixed(1)}%
+                            </td>
+                            <td className="p-4 text-right">{result.total_trades}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
           {/* Empty State */}
-          {results.length === 0 && !running && (
+          {!liveJobResult && results.length === 0 && !running && (
             <div className="bg-gray-900 border-2 border-dashed border-gray-700 rounded-xl p-12 text-center">
               <TestTube className="w-16 h-16 mx-auto mb-4 text-gray-600" />
               <h2 className="text-2xl font-bold mb-2">No Backtest Results Yet</h2>

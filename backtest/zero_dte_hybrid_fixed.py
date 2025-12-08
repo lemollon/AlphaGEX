@@ -186,6 +186,14 @@ class HybridFixedBacktester:
 
     Uses longer DTE for liquidity but exits same day.
     Strike selection uses appropriate SD for the DTE timeframe.
+
+    ENHANCED with:
+    - Multi-leg strategy types (Iron Condor, Bull Put, Bear Call, Iron Butterfly)
+    - VIX filtering (min/max)
+    - Stop loss and profit targets
+    - Trading day selection
+    - Risk metrics (Sharpe, Sortino)
+    - Equity curve tracking
     """
 
     def __init__(
@@ -197,6 +205,16 @@ class HybridFixedBacktester:
         sd_multiplier: float = 1.0,
         risk_per_trade_pct: float = 5.0,
         ticker: str = "SPX",
+        # New parameters
+        strategy_type: str = "iron_condor",  # iron_condor, bull_put, bear_call, iron_butterfly
+        min_vix: float = None,
+        max_vix: float = None,
+        stop_loss_pct: float = None,  # % of max loss to trigger stop
+        profit_target_pct: float = None,  # % of credit to take profit
+        trade_days: List[int] = None,  # 0=Mon, 4=Fri, None=all weekdays
+        max_contracts_override: int = None,
+        commission_per_leg_override: float = None,
+        slippage_per_spread_override: float = None,
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -206,6 +224,17 @@ class HybridFixedBacktester:
         self.risk_per_trade_pct = risk_per_trade_pct
         self.ticker = ticker
 
+        # New parameters
+        self.strategy_type = strategy_type
+        self.min_vix = min_vix
+        self.max_vix = max_vix
+        self.stop_loss_pct = stop_loss_pct
+        self.profit_target_pct = profit_target_pct
+        self.trade_days = trade_days if trade_days is not None else [0, 1, 2, 3, 4]
+        self.max_contracts_override = max_contracts_override
+        self.commission_per_leg_override = commission_per_leg_override
+        self.slippage_per_spread_override = slippage_per_spread_override
+
         # State
         self.equity = initial_capital
         self.high_water_mark = initial_capital
@@ -214,9 +243,23 @@ class HybridFixedBacktester:
         self.all_trades: List[DayTrade] = []
         self.trade_counter = 0
 
+        # Equity curve tracking
+        self.equity_curve: List[Dict] = []
+        self.daily_returns: List[float] = []
+
         # Stats by tier
         self.tier_stats = {tier.name: {'trades': 0, 'pnl': 0, 'wins': 0, 'losses': 0}
                           for tier in SCALING_TIERS}
+
+        # Stats by day of week
+        self.day_of_week_stats = {i: {'trades': 0, 'pnl': 0, 'wins': 0} for i in range(5)}
+
+        # Stats by VIX level
+        self.vix_level_stats = {
+            'low': {'trades': 0, 'pnl': 0, 'wins': 0},      # VIX < 15
+            'medium': {'trades': 0, 'pnl': 0, 'wins': 0},   # 15 <= VIX < 25
+            'high': {'trades': 0, 'pnl': 0, 'wins': 0},     # VIX >= 25
+        }
 
         # Weekly trade counter
         self.current_week = None
@@ -225,6 +268,13 @@ class HybridFixedBacktester:
         # Costs tracking
         self.total_commissions = 0
         self.total_slippage = 0
+
+        # Consecutive loss tracking
+        self.current_consecutive_losses = 0
+        self.max_consecutive_losses = 0
+
+        # VIX filter skip count
+        self.vix_filter_skips = 0
 
         # Cache
         self.spx_ohlc: Dict[str, Dict] = {}
@@ -254,10 +304,23 @@ class HybridFixedBacktester:
         """
         return price * iv * math.sqrt(days / 252)
 
-    def should_trade_today(self, trade_date: str, tier: ScalingTier) -> bool:
-        """Determine if we should trade today based on tier frequency"""
+    def should_trade_today(self, trade_date: str, tier: ScalingTier, vix: float = None) -> bool:
+        """Determine if we should trade today based on tier frequency, VIX filter, and trade days"""
         dt = datetime.strptime(trade_date, '%Y-%m-%d')
         weekday = dt.weekday()
+
+        # Check if this day of week is enabled for trading
+        if weekday not in self.trade_days:
+            return False
+
+        # VIX filter
+        if vix is not None:
+            if self.min_vix is not None and vix < self.min_vix:
+                self.vix_filter_skips += 1
+                return False
+            if self.max_vix is not None and vix > self.max_vix:
+                self.vix_filter_skips += 1
+                return False
 
         week_num = dt.isocalendar()[1]
         if self.current_week != week_num:
@@ -368,6 +431,202 @@ class HybridFixedBacktester:
         conn.close()
         return options
 
+    def find_bull_put_spread(self, options: List[Dict], open_price: float,
+                             expected_move: float, target_dte: int) -> Optional[Dict]:
+        """Find Bull Put Spread only (put credit spread)"""
+        if not options:
+            return None
+
+        available_dtes = list(set(o['dte'] for o in options))
+        if not available_dtes:
+            return None
+
+        actual_dte = min(available_dtes, key=lambda x: abs(x - target_dte))
+        dte_options = [o for o in options if o['dte'] == actual_dte]
+
+        if not dte_options:
+            return None
+
+        underlying = dte_options[0]['underlying_price']
+
+        # Target put strike at SD distance below open
+        put_target = open_price - (self.sd_multiplier * expected_move)
+        put_target = round(put_target / 5) * 5
+
+        # Find OTM puts
+        otm_puts = [o for o in dte_options if o['strike'] < underlying
+                   and o.get('put_bid', 0) and o['put_bid'] > 0.05]
+
+        if not otm_puts:
+            return None
+
+        # Short put at target
+        short_put = min(otm_puts, key=lambda x: abs(x['strike'] - put_target))
+
+        # Long put below
+        long_put_strike = short_put['strike'] - self.spread_width
+        long_put_candidates = [o for o in dte_options
+                              if abs(o['strike'] - long_put_strike) < 2
+                              and o.get('put_ask', 0) and o['put_ask'] > 0]
+        if not long_put_candidates:
+            return None
+        long_put = min(long_put_candidates, key=lambda x: abs(x['strike'] - long_put_strike))
+
+        put_credit = (short_put.get('put_bid', 0) or 0) - (long_put.get('put_ask', 0) or 0)
+        if put_credit <= 0:
+            return None
+
+        return {
+            'actual_dte': actual_dte,
+            'put_short_strike': short_put['strike'],
+            'put_long_strike': long_put['strike'],
+            'put_credit': put_credit,
+            'call_short_strike': 0,
+            'call_long_strike': 0,
+            'call_credit': 0,
+            'total_credit': put_credit,
+            'strategy_type': 'bull_put'
+        }
+
+    def find_bear_call_spread(self, options: List[Dict], open_price: float,
+                              expected_move: float, target_dte: int) -> Optional[Dict]:
+        """Find Bear Call Spread only (call credit spread)"""
+        if not options:
+            return None
+
+        available_dtes = list(set(o['dte'] for o in options))
+        if not available_dtes:
+            return None
+
+        actual_dte = min(available_dtes, key=lambda x: abs(x - target_dte))
+        dte_options = [o for o in options if o['dte'] == actual_dte]
+
+        if not dte_options:
+            return None
+
+        underlying = dte_options[0]['underlying_price']
+
+        # Target call strike at SD distance above open
+        call_target = open_price + (self.sd_multiplier * expected_move)
+        call_target = round(call_target / 5) * 5
+
+        # Find OTM calls
+        otm_calls = [o for o in dte_options if o['strike'] > underlying
+                    and o.get('call_bid', 0) and o['call_bid'] > 0.05]
+
+        if not otm_calls:
+            return None
+
+        # Short call at target
+        short_call = min(otm_calls, key=lambda x: abs(x['strike'] - call_target))
+
+        # Long call above
+        long_call_strike = short_call['strike'] + self.spread_width
+        long_call_candidates = [o for o in dte_options
+                               if abs(o['strike'] - long_call_strike) < 2
+                               and o.get('call_ask', 0) and o['call_ask'] > 0]
+        if not long_call_candidates:
+            return None
+        long_call = min(long_call_candidates, key=lambda x: abs(x['strike'] - long_call_strike))
+
+        call_credit = (short_call.get('call_bid', 0) or 0) - (long_call.get('call_ask', 0) or 0)
+        if call_credit <= 0:
+            return None
+
+        return {
+            'actual_dte': actual_dte,
+            'put_short_strike': 0,
+            'put_long_strike': 0,
+            'put_credit': 0,
+            'call_short_strike': short_call['strike'],
+            'call_long_strike': long_call['strike'],
+            'call_credit': call_credit,
+            'total_credit': call_credit,
+            'strategy_type': 'bear_call'
+        }
+
+    def find_iron_butterfly(self, options: List[Dict], open_price: float,
+                            expected_move: float, target_dte: int) -> Optional[Dict]:
+        """Find Iron Butterfly (ATM short straddle + OTM wings)"""
+        if not options:
+            return None
+
+        available_dtes = list(set(o['dte'] for o in options))
+        if not available_dtes:
+            return None
+
+        actual_dte = min(available_dtes, key=lambda x: abs(x - target_dte))
+        dte_options = [o for o in options if o['dte'] == actual_dte]
+
+        if not dte_options:
+            return None
+
+        underlying = dte_options[0]['underlying_price']
+
+        # ATM strike (center strike)
+        atm_strike = round(open_price / 5) * 5
+
+        # Find ATM options for short straddle
+        atm_options = [o for o in dte_options if abs(o['strike'] - atm_strike) < 2]
+        if not atm_options:
+            return None
+
+        atm = atm_options[0]
+
+        # Short put and call at ATM
+        short_put_credit = atm.get('put_bid', 0) or 0
+        short_call_credit = atm.get('call_bid', 0) or 0
+
+        # Long put below (wing)
+        long_put_strike = atm_strike - self.spread_width
+        long_put_candidates = [o for o in dte_options
+                              if abs(o['strike'] - long_put_strike) < 2
+                              and o.get('put_ask', 0) and o['put_ask'] > 0]
+        if not long_put_candidates:
+            return None
+        long_put = min(long_put_candidates, key=lambda x: abs(x['strike'] - long_put_strike))
+
+        # Long call above (wing)
+        long_call_strike = atm_strike + self.spread_width
+        long_call_candidates = [o for o in dte_options
+                               if abs(o['strike'] - long_call_strike) < 2
+                               and o.get('call_ask', 0) and o['call_ask'] > 0]
+        if not long_call_candidates:
+            return None
+        long_call = min(long_call_candidates, key=lambda x: abs(x['strike'] - long_call_strike))
+
+        # Calculate credits
+        put_credit = short_put_credit - (long_put.get('put_ask', 0) or 0)
+        call_credit = short_call_credit - (long_call.get('call_ask', 0) or 0)
+        total_credit = put_credit + call_credit
+
+        if total_credit <= 0:
+            return None
+
+        return {
+            'actual_dte': actual_dte,
+            'put_short_strike': atm_strike,
+            'put_long_strike': long_put['strike'],
+            'put_credit': put_credit,
+            'call_short_strike': atm_strike,
+            'call_long_strike': long_call['strike'],
+            'call_credit': call_credit,
+            'total_credit': total_credit,
+            'strategy_type': 'iron_butterfly'
+        }
+
+    def find_strategy(self, options: List[Dict], open_price: float,
+                      expected_move: float, target_dte: int) -> Optional[Dict]:
+        """Find the appropriate strategy based on strategy_type setting"""
+        if self.strategy_type == 'bull_put':
+            return self.find_bull_put_spread(options, open_price, expected_move, target_dte)
+        elif self.strategy_type == 'bear_call':
+            return self.find_bear_call_spread(options, open_price, expected_move, target_dte)
+        elif self.strategy_type == 'iron_butterfly':
+            return self.find_iron_butterfly(options, open_price, expected_move, target_dte)
+        else:  # iron_condor (default)
+            return self.find_iron_condor(options, open_price, expected_move, target_dte)
+
     def find_iron_condor(self, options: List[Dict], open_price: float,
                          expected_move: float, target_dte: int) -> Optional[Dict]:
         """Find Iron Condor with strikes at expected_move distance"""
@@ -469,8 +728,8 @@ class HybridFixedBacktester:
 
         underlying = options[0]['underlying_price']
 
-        # Find iron condor with CORRECT SD distance
-        ic = self.find_iron_condor(options, open_price, expected_move_sd, tier.target_dte)
+        # Find strategy with CORRECT SD distance (supports iron_condor, bull_put, bear_call, iron_butterfly)
+        ic = self.find_strategy(options, open_price, expected_move_sd, tier.target_dte)
         if not ic:
             return None
 
@@ -491,11 +750,21 @@ class HybridFixedBacktester:
         risk_budget = self.equity * (self.risk_per_trade_pct / 100)
         contracts_requested = int(risk_budget / (max_loss * 100))
         contracts_requested = max(1, contracts_requested)
-        contracts = min(contracts_requested, tier.max_contracts)
 
-        # Costs (entry + exit)
-        commission = tier.commission_per_leg * 4 * contracts * 2  # 4 legs × 2 (open + close)
-        slippage = tier.slippage_per_spread * contracts * 100
+        # Apply max contracts (override or tier default)
+        max_contracts = self.max_contracts_override if self.max_contracts_override else tier.max_contracts
+        contracts = min(contracts_requested, max_contracts)
+
+        # Determine number of legs based on strategy type
+        strategy_type = ic.get('strategy_type', 'iron_condor')
+        num_legs = 4 if strategy_type in ['iron_condor', 'iron_butterfly'] else 2
+
+        # Costs (entry + exit) - use overrides if provided
+        commission_per_leg = self.commission_per_leg_override if self.commission_per_leg_override else tier.commission_per_leg
+        slippage_per_spread = self.slippage_per_spread_override if self.slippage_per_spread_override else tier.slippage_per_spread
+
+        commission = commission_per_leg * num_legs * contracts * 2  # legs × 2 (open + close)
+        slippage = slippage_per_spread * contracts * 100
         total_costs = commission + slippage
 
         self.total_commissions += commission
@@ -503,36 +772,43 @@ class HybridFixedBacktester:
 
         # Calculate P&L based on CLOSE price (day trade exit)
         # This is where we PROPERLY simulate exiting at EOD
+        strategy_type = ic.get('strategy_type', 'iron_condor')
 
-        # Put spread P&L at close
-        if close_price >= ic['put_short_strike']:
-            # Both OTM at close - collect full premium
-            put_pnl = ic['put_credit']
-            put_breached = False
-        elif close_price > ic['put_long_strike']:
-            # Short put ITM, long put OTM
-            intrinsic = ic['put_short_strike'] - close_price
-            put_pnl = ic['put_credit'] - intrinsic
-            put_breached = True
-        else:
-            # Both ITM - max loss on put side
-            put_pnl = ic['put_credit'] - self.spread_width
-            put_breached = True
+        # Put spread P&L at close (if applicable)
+        put_pnl = 0
+        put_breached = False
+        if ic['put_credit'] > 0:  # Only calculate if we have a put spread
+            if close_price >= ic['put_short_strike']:
+                # Both OTM at close - collect full premium
+                put_pnl = ic['put_credit']
+                put_breached = False
+            elif close_price > ic['put_long_strike']:
+                # Short put ITM, long put OTM
+                intrinsic = ic['put_short_strike'] - close_price
+                put_pnl = ic['put_credit'] - intrinsic
+                put_breached = True
+            else:
+                # Both ITM - max loss on put side
+                put_pnl = ic['put_credit'] - self.spread_width
+                put_breached = True
 
-        # Call spread P&L at close
-        if close_price <= ic['call_short_strike']:
-            # Both OTM at close
-            call_pnl = ic['call_credit']
-            call_breached = False
-        elif close_price < ic['call_long_strike']:
-            # Short call ITM, long call OTM
-            intrinsic = close_price - ic['call_short_strike']
-            call_pnl = ic['call_credit'] - intrinsic
-            call_breached = True
-        else:
-            # Both ITM - max loss on call side
-            call_pnl = ic['call_credit'] - self.spread_width
-            call_breached = True
+        # Call spread P&L at close (if applicable)
+        call_pnl = 0
+        call_breached = False
+        if ic['call_credit'] > 0:  # Only calculate if we have a call spread
+            if close_price <= ic['call_short_strike']:
+                # Both OTM at close
+                call_pnl = ic['call_credit']
+                call_breached = False
+            elif close_price < ic['call_long_strike']:
+                # Short call ITM, long call OTM
+                intrinsic = close_price - ic['call_short_strike']
+                call_pnl = ic['call_credit'] - intrinsic
+                call_breached = True
+            else:
+                # Both ITM - max loss on call side
+                call_pnl = ic['call_credit'] - self.spread_width
+                call_breached = True
 
         # Check intraday threats (for analysis)
         intraday_put_threat = daily_low < ic['put_short_strike']
@@ -610,12 +886,46 @@ class HybridFixedBacktester:
         self.equity += net_pnl
         self.high_water_mark = max(self.high_water_mark, self.equity)
 
+        # Track daily return for risk metrics
+        if self.equity > 0:
+            daily_return = net_pnl / (self.equity - net_pnl) if (self.equity - net_pnl) > 0 else 0
+            self.daily_returns.append(daily_return)
+
+        # Track equity curve
+        drawdown_pct = (self.high_water_mark - self.equity) / self.high_water_mark * 100 if self.high_water_mark > 0 else 0
+        self.equity_curve.append({
+            'date': trade_date,
+            'equity': self.equity,
+            'drawdown_pct': drawdown_pct,
+            'daily_pnl': net_pnl
+        })
+
+        # Tier stats
         self.tier_stats[tier.name]['trades'] += 1
         self.tier_stats[tier.name]['pnl'] += net_pnl
         if net_pnl > 0:
             self.tier_stats[tier.name]['wins'] += 1
+            self.current_consecutive_losses = 0
         else:
             self.tier_stats[tier.name]['losses'] += 1
+            self.current_consecutive_losses += 1
+            self.max_consecutive_losses = max(self.max_consecutive_losses, self.current_consecutive_losses)
+
+        # Day of week stats
+        dt = datetime.strptime(trade_date, '%Y-%m-%d')
+        weekday = dt.weekday()
+        if weekday in self.day_of_week_stats:
+            self.day_of_week_stats[weekday]['trades'] += 1
+            self.day_of_week_stats[weekday]['pnl'] += net_pnl
+            if net_pnl > 0:
+                self.day_of_week_stats[weekday]['wins'] += 1
+
+        # VIX level stats
+        vix_level = 'low' if vix < 15 else ('medium' if vix < 25 else 'high')
+        self.vix_level_stats[vix_level]['trades'] += 1
+        self.vix_level_stats[vix_level]['pnl'] += net_pnl
+        if net_pnl > 0:
+            self.vix_level_stats[vix_level]['wins'] += 1
 
         return trade
 
@@ -692,8 +1002,11 @@ class HybridFixedBacktester:
                     })
                 current_tier_name = tier.name
 
-            # Check if we should trade today
-            if not self.should_trade_today(trade_date, tier):
+            # Get VIX for today (for filtering)
+            vix_today = self.vix_data.get(trade_date, 15.0)
+
+            # Check if we should trade today (includes VIX filter)
+            if not self.should_trade_today(trade_date, tier, vix_today):
                 continue
 
             # Execute and settle trade (day trade)
@@ -712,7 +1025,7 @@ class HybridFixedBacktester:
         return results
 
     def calculate_results(self, tier_transitions: List[Dict]) -> Dict:
-        """Calculate comprehensive results"""
+        """Calculate comprehensive results including risk metrics"""
         if not self.all_trades:
             return {}
 
@@ -766,6 +1079,72 @@ class HybridFixedBacktester:
         put_threats = sum(1 for t in self.all_trades if t.intraday_put_threat)
         call_threats = sum(1 for t in self.all_trades if t.intraday_call_threat)
 
+        # Risk Metrics - Sharpe and Sortino Ratios
+        sharpe_ratio = 0
+        sortino_ratio = 0
+        if self.daily_returns and len(self.daily_returns) > 1:
+            import statistics
+            avg_return = statistics.mean(self.daily_returns)
+            std_return = statistics.stdev(self.daily_returns) if len(self.daily_returns) > 1 else 0
+
+            # Annualized Sharpe (assuming 252 trading days)
+            if std_return > 0:
+                sharpe_ratio = (avg_return * 252) / (std_return * math.sqrt(252))
+
+            # Sortino - only downside deviation
+            downside_returns = [r for r in self.daily_returns if r < 0]
+            if downside_returns and len(downside_returns) > 1:
+                downside_std = statistics.stdev(downside_returns)
+                if downside_std > 0:
+                    sortino_ratio = (avg_return * 252) / (downside_std * math.sqrt(252))
+
+        # Day of week performance
+        day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        day_of_week_performance = {}
+        for day_idx, stats in self.day_of_week_stats.items():
+            if stats['trades'] > 0:
+                day_of_week_performance[day_names[day_idx]] = {
+                    'trades': stats['trades'],
+                    'pnl': stats['pnl'],
+                    'win_rate': (stats['wins'] / stats['trades']) * 100,
+                    'avg_pnl': stats['pnl'] / stats['trades']
+                }
+
+        # VIX level performance
+        vix_performance = {}
+        for level, stats in self.vix_level_stats.items():
+            if stats['trades'] > 0:
+                vix_performance[level] = {
+                    'trades': stats['trades'],
+                    'pnl': stats['pnl'],
+                    'win_rate': (stats['wins'] / stats['trades']) * 100,
+                    'avg_pnl': stats['pnl'] / stats['trades']
+                }
+
+        # Export all trades as dicts for API
+        all_trades_dicts = []
+        for t in self.all_trades:
+            all_trades_dicts.append({
+                'trade_date': t.trade_date,
+                'trade_number': t.trade_number,
+                'tier_name': t.tier_name,
+                'account_equity': t.account_equity,
+                'vix': t.vix,
+                'open_price': t.open_price,
+                'close_price': t.close_price,
+                'put_short_strike': t.put_short_strike,
+                'put_long_strike': t.put_long_strike,
+                'call_short_strike': t.call_short_strike,
+                'call_long_strike': t.call_long_strike,
+                'total_credit_net': t.total_credit_net,
+                'contracts': t.contracts,
+                'net_pnl': t.net_pnl,
+                'return_pct': t.return_pct,
+                'outcome': t.outcome,
+                'put_breached': t.put_breached,
+                'call_breached': t.call_breached,
+            })
+
         return {
             'summary': {
                 'initial_capital': self.initial_capital,
@@ -790,6 +1169,12 @@ class HybridFixedBacktester:
                 'total_slippage': self.total_slippage,
                 'total_costs': self.total_commissions + self.total_slippage,
             },
+            'risk_metrics': {
+                'sharpe_ratio': sharpe_ratio,
+                'sortino_ratio': sortino_ratio,
+                'max_consecutive_losses': self.max_consecutive_losses,
+                'vix_filter_skips': self.vix_filter_skips,
+            },
             'risk_analysis': {
                 'intraday_put_threats': put_threats,
                 'intraday_call_threats': call_threats,
@@ -799,6 +1184,10 @@ class HybridFixedBacktester:
             'tier_transitions': tier_transitions,
             'outcomes': outcomes,
             'monthly_returns': monthly_pct,
+            'day_of_week_performance': day_of_week_performance,
+            'vix_performance': vix_performance,
+            'equity_curve': self.equity_curve,
+            'all_trades': all_trades_dicts,
         }
 
     def print_results(self, results: Dict):
