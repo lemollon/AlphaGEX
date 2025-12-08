@@ -26,6 +26,10 @@ interface BacktestConfig {
   strategy: string
   // New enhanced parameters
   strategy_type: string
+  // Strike selection method
+  strike_selection: 'sd' | 'fixed' | 'delta'
+  fixed_strike_distance: number
+  target_delta: number
   min_vix: number | null
   max_vix: number | null
   stop_loss_pct: number | null
@@ -120,6 +124,10 @@ export default function ZeroDTEBacktestPage() {
     strategy: 'hybrid_fixed',
     // New parameters
     strategy_type: 'iron_condor',
+    // Strike selection
+    strike_selection: 'sd',
+    fixed_strike_distance: 50,
+    target_delta: 0.16,
     min_vix: null,
     max_vix: null,
     stop_loss_pct: null,
@@ -626,17 +634,72 @@ export default function ZeroDTEBacktestPage() {
 
             {/* Advanced Options */}
             {showAdvanced && (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 pt-4 border-t border-gray-800">
+              <div className="mt-4 pt-4 border-t border-gray-800 space-y-4">
+                {/* Strike Selection Method */}
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">SD Multiplier</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={config.sd_multiplier}
-                    onChange={e => setConfig(prev => ({ ...prev, sd_multiplier: Number(e.target.value) }))}
-                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
-                  />
+                  <h3 className="text-sm font-bold text-cyan-400 mb-3 flex items-center gap-2">
+                    <Target className="w-4 h-4" />
+                    Strike Selection Method
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Method</label>
+                      <select
+                        value={config.strike_selection}
+                        onChange={e => setConfig(prev => ({ ...prev, strike_selection: e.target.value as 'sd' | 'fixed' | 'delta' }))}
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                      >
+                        <option value="sd">Standard Deviation (SD)</option>
+                        <option value="fixed">Fixed Distance</option>
+                        <option value="delta">Target Delta</option>
+                      </select>
+                    </div>
+                    {config.strike_selection === 'sd' && (
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-1">SD Multiplier</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={config.sd_multiplier}
+                          onChange={e => setConfig(prev => ({ ...prev, sd_multiplier: Number(e.target.value) }))}
+                          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Strike = Price ± (SD × Expected Move)</p>
+                      </div>
+                    )}
+                    {config.strike_selection === 'fixed' && (
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-1">Fixed Distance ($)</label>
+                        <input
+                          type="number"
+                          step="5"
+                          value={config.fixed_strike_distance}
+                          onChange={e => setConfig(prev => ({ ...prev, fixed_strike_distance: Number(e.target.value) }))}
+                          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Fixed points from current price</p>
+                      </div>
+                    )}
+                    {config.strike_selection === 'delta' && (
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-1">Target Delta</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          max="0.50"
+                          value={config.target_delta}
+                          onChange={e => setConfig(prev => ({ ...prev, target_delta: Number(e.target.value) }))}
+                          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">e.g., 0.16 = 16 delta</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {/* Other Advanced Settings */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">Spread Width ($)</label>
                   <input
@@ -678,6 +741,7 @@ export default function ZeroDTEBacktestPage() {
                     onChange={e => setConfig(prev => ({ ...prev, slippage_per_spread: e.target.value ? Number(e.target.value) : null }))}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
                   />
+                </div>
                 </div>
               </div>
             )}
