@@ -1,10 +1,11 @@
 """
-import logging
-logger = logging.getLogger(__name__)
 Core API routes - Health, diagnostics, time, rate-limit endpoints.
 """
 
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 
 import requests
