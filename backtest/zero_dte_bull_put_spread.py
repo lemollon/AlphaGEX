@@ -779,7 +779,7 @@ def main():
     parser.add_argument('--capital', type=float, default=1_000_000, help='Initial capital')
     parser.add_argument('--delta', type=float, default=0.15, help='Target delta (e.g., 0.15 for 15 delta)')
     parser.add_argument('--width', type=float, default=10.0, help='Spread width in dollars')
-    parser.add_argument('--risk', type=float, default=2.0, help='Max risk per trade (%)')
+    parser.add_argument('--risk', type=float, default=2.0, help='Max risk per trade (percent)')
     parser.add_argument('--ticker', default='SPXW', help='Ticker (SPXW for weeklies)')
     parser.add_argument('--export', action='store_true', help='Export trades to CSV')
 
