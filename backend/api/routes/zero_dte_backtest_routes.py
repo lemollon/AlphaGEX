@@ -113,31 +113,36 @@ async def health_check():
 
     Use this to verify everything is working before running a backtest.
     """
-    # Check DATABASE_URL first
-    database_url_set = bool(os.getenv('DATABASE_URL'))
+    # Check ORAT_DATABASE_URL first, then fall back to DATABASE_URL
+    orat_db_url = os.getenv('ORAT_DATABASE_URL')
+    database_url = os.getenv('DATABASE_URL')
+    has_orat_db = bool(orat_db_url or database_url)
 
     health = {
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
         "backend": "running",
-        "database_url_configured": database_url_set,
-        "database": "not_configured" if not database_url_set else "unknown",
-        "orat_data": "unavailable" if not database_url_set else "unknown",
+        "orat_database_url_configured": bool(orat_db_url),
+        "database_url_configured": bool(database_url),
+        "using_database": "ORAT_DATABASE_URL" if orat_db_url else ("DATABASE_URL" if database_url else "none"),
+        "database": "not_configured" if not has_orat_db else "unknown",
+        "orat_data": "unavailable" if not has_orat_db else "unknown",
         "active_jobs": len([j for j in _jobs.values() if j.get('status') == 'running']),
         "total_jobs": len(_jobs),
     }
 
-    if not database_url_set:
+    if not has_orat_db:
         health["status"] = "degraded"
         health["error"] = (
-            "DATABASE_URL not set. KRONOS requires PostgreSQL with ORAT options data. "
-            "Copy .env.template to .env and configure DATABASE_URL."
+            "Neither ORAT_DATABASE_URL nor DATABASE_URL is set. "
+            "KRONOS requires PostgreSQL with ORAT options data. "
+            "Set ORAT_DATABASE_URL to point to your backtester database."
         )
         return health
 
-    # Check database connectivity
+    # Check database connectivity using ORAT database
     try:
-        conn = get_connection()
+        conn = get_orat_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
         health["database"] = "connected"
@@ -171,6 +176,29 @@ async def health_check():
     return health
 
 
+def get_orat_connection():
+    """
+    Get database connection for ORAT options data.
+    Uses ORAT_DATABASE_URL if set, otherwise falls back to DATABASE_URL.
+    """
+    import psycopg2
+    from urllib.parse import urlparse
+
+    database_url = os.getenv('ORAT_DATABASE_URL') or os.getenv('DATABASE_URL')
+    if not database_url:
+        raise ValueError("Neither ORAT_DATABASE_URL nor DATABASE_URL is set")
+
+    result = urlparse(database_url)
+    return psycopg2.connect(
+        host=result.hostname,
+        port=result.port or 5432,
+        user=result.username,
+        password=result.password,
+        database=result.path[1:],
+        connect_timeout=30
+    )
+
+
 def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
     """Run the hybrid fixed backtest in background"""
     try:
@@ -186,21 +214,25 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
         _jobs[job_id]['progress'] = 5
         _jobs[job_id]['progress_message'] = 'Initializing backtest...'
 
-        # Check DATABASE_URL before proceeding
-        if not os.getenv('DATABASE_URL'):
+        # Check ORAT_DATABASE_URL or DATABASE_URL before proceeding
+        orat_db = os.getenv('ORAT_DATABASE_URL') or os.getenv('DATABASE_URL')
+        if not orat_db:
             error_msg = (
-                "DATABASE_URL environment variable is not set. "
+                "Neither ORAT_DATABASE_URL nor DATABASE_URL is set. "
                 "KRONOS backtester requires a PostgreSQL connection to access ORAT options data. "
-                "For local development, copy .env.template to .env and set DATABASE_URL "
-                "to your Render PostgreSQL connection string."
+                "Set ORAT_DATABASE_URL to point to your backtester database with ORAT options data."
             )
             logger.error(error_msg)
             _jobs[job_id]['status'] = 'failed'
             _jobs[job_id]['progress'] = 100
             _jobs[job_id]['error'] = error_msg
-            _jobs[job_id]['progress_message'] = 'Database not configured'
+            _jobs[job_id]['progress_message'] = 'ORAT database not configured'
             _jobs[job_id]['completed_at'] = datetime.now().isoformat()
             return
+
+        # Log which database is being used
+        using_db = "ORAT_DATABASE_URL" if os.getenv('ORAT_DATABASE_URL') else "DATABASE_URL"
+        print(f"📊 Using {using_db} for ORAT options data", flush=True)
 
         # Import the backtest module
         print("📦 Importing HybridFixedBacktester...", flush=True)

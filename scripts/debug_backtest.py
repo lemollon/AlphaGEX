@@ -14,16 +14,50 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / '.env')
 
+def get_orat_connection():
+    """Get connection to ORAT database (uses ORAT_DATABASE_URL or falls back to DATABASE_URL)"""
+    import psycopg2
+    from urllib.parse import urlparse
+
+    database_url = os.getenv('ORAT_DATABASE_URL') or os.getenv('DATABASE_URL')
+    if not database_url:
+        raise ValueError("Neither ORAT_DATABASE_URL nor DATABASE_URL is set")
+
+    result = urlparse(database_url)
+    return psycopg2.connect(
+        host=result.hostname,
+        port=result.port or 5432,
+        user=result.username,
+        password=result.password,
+        database=result.path[1:],
+        connect_timeout=30
+    )
+
+
 def main():
     print("=" * 70)
     print("KRONOS BACKTEST DIAGNOSTIC TEST")
     print("=" * 70)
 
+    # Check environment variables
+    print("\n[0] Checking environment variables...")
+    orat_url = os.getenv('ORAT_DATABASE_URL')
+    db_url = os.getenv('DATABASE_URL')
+    print(f"    ORAT_DATABASE_URL: {'✅ Set' if orat_url else '❌ Not set'}")
+    print(f"    DATABASE_URL: {'✅ Set' if db_url else '❌ Not set'}")
+    if orat_url:
+        print(f"    Using: ORAT_DATABASE_URL")
+    elif db_url:
+        print(f"    Using: DATABASE_URL (fallback)")
+    else:
+        print(f"    ❌ No database URL configured!")
+        print(f"       Set ORAT_DATABASE_URL to your backtester database connection string.")
+        return
+
     # Test 1: Database connection
     print("\n[1] Testing database connection...")
     try:
-        from database_adapter import get_connection
-        conn = get_connection()
+        conn = get_orat_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM orat_options_eod")
         count = cursor.fetchone()[0]
