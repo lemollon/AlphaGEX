@@ -244,6 +244,31 @@ class HybridFixedBacktester:
         self.fixed_strike_distance = fixed_strike_distance
         self.target_delta = target_delta
 
+        # Debug mode - traces all execution paths
+        self.debug_mode = True  # Enable detailed logging
+        self.debug_stats = {
+            'total_days_processed': 0,
+            'skipped_by_trade_day': 0,
+            'skipped_by_vix_filter': 0,
+            'skipped_by_tier_limit': 0,
+            'skipped_no_ohlc': 0,
+            'skipped_no_options': 0,
+            'skipped_no_strategy': 0,
+            'skipped_bad_credit': 0,
+            'trades_executed': 0,
+            'strategy_failures': {
+                'no_options': 0,
+                'no_dtes': 0,
+                'no_dte_options': 0,
+                'no_otm_puts': 0,
+                'no_otm_calls': 0,
+                'no_long_put': 0,
+                'no_long_call': 0,
+                'bad_put_credit': 0,
+                'bad_call_credit': 0,
+            }
+        }
+
         # State
         self.equity = initial_capital
         self.high_water_mark = initial_capital
@@ -376,15 +401,18 @@ class HybridFixedBacktester:
 
         # Check if this day of week is enabled for trading
         if weekday not in self.trade_days:
+            self.debug_stats['skipped_by_trade_day'] += 1
             return False
 
         # VIX filter
         if vix is not None:
             if self.min_vix is not None and vix < self.min_vix:
                 self.vix_filter_skips += 1
+                self.debug_stats['skipped_by_vix_filter'] += 1
                 return False
             if self.max_vix is not None and vix > self.max_vix:
                 self.vix_filter_skips += 1
+                self.debug_stats['skipped_by_vix_filter'] += 1
                 return False
 
         week_num = dt.isocalendar()[1]
@@ -393,6 +421,7 @@ class HybridFixedBacktester:
             self.trades_this_week = 0
 
         if self.trades_this_week >= tier.trades_per_week:
+            self.debug_stats['skipped_by_tier_limit'] += 1
             return False
 
         if tier.trades_per_week == 5:
@@ -401,6 +430,9 @@ class HybridFixedBacktester:
             return weekday in [0, 2, 4]
         elif tier.trades_per_week == 2:
             return weekday in [1, 3]
+
+        # Default case - trades_per_week is not 2, 3, or 5
+        self.debug_stats['skipped_by_tier_limit'] += 1
         return False
 
     def load_market_data(self):
@@ -616,6 +648,22 @@ class HybridFixedBacktester:
                 options.append(opt)
 
             conn.close()
+
+            # Debug logging for first few calls
+            if self.debug_mode and not hasattr(self, '_options_debug_count'):
+                self._options_debug_count = 0
+            if self.debug_mode and self._options_debug_count < 3:
+                self._options_debug_count += 1
+                if options:
+                    dtes = list(set(o['dte'] for o in options))
+                    underlying = options[0]['underlying_price'] if options else 'N/A'
+                    puts_with_bid = len([o for o in options if o.get('put_bid', 0) and o['put_bid'] > 0.05])
+                    calls_with_bid = len([o for o in options if o.get('call_bid', 0) and o['call_bid'] > 0.05])
+                    print(f"   DEBUG [{trade_date}]: {len(options)} options, DTEs={sorted(dtes)}, "
+                          f"underlying={underlying:.0f}, puts_w_bid={puts_with_bid}, calls_w_bid={calls_with_bid}")
+                else:
+                    print(f"   DEBUG [{trade_date}]: No options found for ticker={self.ticker}, DTE range [{min_dte}, {max_dte}]")
+
             return options
 
         except Exception as e:
@@ -1063,6 +1111,7 @@ class HybridFixedBacktester:
             use_raw_distance: If True, use distances directly. If False, multiply by sd_multiplier.
         """
         if not options:
+            self.debug_stats['strategy_failures']['no_options'] += 1
             return None
 
         if call_distance is None:
@@ -1071,12 +1120,14 @@ class HybridFixedBacktester:
         # Find options closest to target DTE
         available_dtes = list(set(o['dte'] for o in options))
         if not available_dtes:
+            self.debug_stats['strategy_failures']['no_dtes'] += 1
             return None
 
         actual_dte = min(available_dtes, key=lambda x: abs(x - target_dte))
         dte_options = [o for o in options if o['dte'] == actual_dte]
 
         if not dte_options:
+            self.debug_stats['strategy_failures']['no_dte_options'] += 1
             return None
 
         underlying = dte_options[0]['underlying_price']
@@ -1098,7 +1149,11 @@ class HybridFixedBacktester:
         otm_calls = [o for o in dte_options if o['strike'] > underlying
                     and o.get('call_bid', 0) and o['call_bid'] > 0.05]
 
-        if not otm_puts or not otm_calls:
+        if not otm_puts:
+            self.debug_stats['strategy_failures']['no_otm_puts'] += 1
+            return None
+        if not otm_calls:
+            self.debug_stats['strategy_failures']['no_otm_calls'] += 1
             return None
 
         # Short put at target
@@ -1110,6 +1165,7 @@ class HybridFixedBacktester:
                               if abs(o['strike'] - long_put_strike) < 2
                               and o.get('put_ask', 0) and o['put_ask'] > 0]
         if not long_put_candidates:
+            self.debug_stats['strategy_failures']['no_long_put'] += 1
             return None
         long_put = min(long_put_candidates, key=lambda x: abs(x['strike'] - long_put_strike))
 
@@ -1122,6 +1178,7 @@ class HybridFixedBacktester:
                                if abs(o['strike'] - long_call_strike) < 2
                                and o.get('call_ask', 0) and o['call_ask'] > 0]
         if not long_call_candidates:
+            self.debug_stats['strategy_failures']['no_long_call'] += 1
             return None
         long_call = min(long_call_candidates, key=lambda x: abs(x['strike'] - long_call_strike))
 
@@ -1129,7 +1186,11 @@ class HybridFixedBacktester:
         put_credit = (short_put.get('put_bid', 0) or 0) - (long_put.get('put_ask', 0) or 0)
         call_credit = (short_call.get('call_bid', 0) or 0) - (long_call.get('call_ask', 0) or 0)
 
-        if put_credit <= 0 or call_credit <= 0:
+        if put_credit <= 0:
+            self.debug_stats['strategy_failures']['bad_put_credit'] += 1
+            return None
+        if call_credit <= 0:
+            self.debug_stats['strategy_failures']['bad_call_credit'] += 1
             return None
 
         return {
@@ -1147,6 +1208,9 @@ class HybridFixedBacktester:
         """Execute and settle trade in same day (day trade)"""
         ohlc = self.spx_ohlc.get(trade_date)
         if not ohlc:
+            self.debug_stats['skipped_no_ohlc'] += 1
+            if self.debug_mode and self.debug_stats['skipped_no_ohlc'] <= 3:
+                print(f"   DEBUG [{trade_date}]: No OHLC data available")
             return None
 
         open_price = ohlc['open']
@@ -1163,6 +1227,9 @@ class HybridFixedBacktester:
         # Get options for tier's target DTE
         options = self.get_options_for_date(trade_date, tier.target_dte)
         if not options:
+            self.debug_stats['skipped_no_options'] += 1
+            if self.debug_mode and self.debug_stats['skipped_no_options'] <= 3:
+                print(f"   DEBUG [{trade_date}]: No options returned for DTE={tier.target_dte}")
             return None
 
         underlying = options[0]['underlying_price']
@@ -1171,6 +1238,9 @@ class HybridFixedBacktester:
         # Pass iv and sd_days for delta/sd calculation if needed
         ic = self.find_strategy(options, open_price, expected_move_sd, tier.target_dte, iv=iv, sd_days=tier.sd_days)
         if not ic:
+            self.debug_stats['skipped_no_strategy'] += 1
+            if self.debug_mode and self.debug_stats['skipped_no_strategy'] <= 3:
+                print(f"   DEBUG [{trade_date}]: find_strategy returned None (underlying={underlying:.0f}, options={len(options)})")
             return None
 
         # Apply slippage (entry)
@@ -1179,6 +1249,9 @@ class HybridFixedBacktester:
         total_credit_net = put_credit_net + call_credit_net
 
         if total_credit_net <= 0:
+            self.debug_stats['skipped_bad_credit'] += 1
+            if self.debug_mode and self.debug_stats['skipped_bad_credit'] <= 3:
+                print(f"   DEBUG [{trade_date}]: Total credit <= 0 after slippage (put={put_credit_net:.2f}, call={call_credit_net:.2f})")
             return None
 
         # Max loss - use override for diagonal spreads
@@ -1478,6 +1551,34 @@ class HybridFixedBacktester:
                 self.all_trades.append(trade)
 
         print(f"\r  [{'█' * 40}] 100.0% Complete!{' ' * 40}")
+
+        # Print debug summary
+        if self.debug_mode:
+            print("\n" + "=" * 60)
+            print("🔍 DEBUG EXECUTION SUMMARY")
+            print("=" * 60)
+            print(f"Total trading days processed: {len(trading_days)}")
+            print(f"Trades executed: {len(self.all_trades)}")
+            print(f"\nSkip reasons:")
+            print(f"  - Trade day filter (wrong weekday): {self.debug_stats['skipped_by_trade_day']}")
+            print(f"  - VIX filter: {self.debug_stats['skipped_by_vix_filter']}")
+            print(f"  - Tier frequency limit: {self.debug_stats['skipped_by_tier_limit']}")
+            print(f"  - No OHLC data (Yahoo): {self.debug_stats['skipped_no_ohlc']}")
+            print(f"  - No options data (ORAT): {self.debug_stats['skipped_no_options']}")
+            print(f"  - Strategy failed: {self.debug_stats['skipped_no_strategy']}")
+            print(f"  - Bad credit after slippage: {self.debug_stats['skipped_bad_credit']}")
+            print(f"\nStrategy failure breakdown:")
+            sf = self.debug_stats['strategy_failures']
+            print(f"  - No options passed: {sf['no_options']}")
+            print(f"  - No available DTEs: {sf['no_dtes']}")
+            print(f"  - No options at target DTE: {sf['no_dte_options']}")
+            print(f"  - No OTM puts with bid: {sf['no_otm_puts']}")
+            print(f"  - No OTM calls with bid: {sf['no_otm_calls']}")
+            print(f"  - No long put at spread width: {sf['no_long_put']}")
+            print(f"  - No long call at spread width: {sf['no_long_call']}")
+            print(f"  - Bad put credit (<=0): {sf['bad_put_credit']}")
+            print(f"  - Bad call credit (<=0): {sf['bad_call_credit']}")
+            print("=" * 60 + "\n")
 
         # Calculate results
         results = self.calculate_results(tier_transitions)

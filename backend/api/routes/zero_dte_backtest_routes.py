@@ -113,15 +113,27 @@ async def health_check():
 
     Use this to verify everything is working before running a backtest.
     """
+    # Check DATABASE_URL first
+    database_url_set = bool(os.getenv('DATABASE_URL'))
+
     health = {
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
         "backend": "running",
-        "database": "unknown",
-        "orat_data": "unknown",
+        "database_url_configured": database_url_set,
+        "database": "not_configured" if not database_url_set else "unknown",
+        "orat_data": "unavailable" if not database_url_set else "unknown",
         "active_jobs": len([j for j in _jobs.values() if j.get('status') == 'running']),
         "total_jobs": len(_jobs),
     }
+
+    if not database_url_set:
+        health["status"] = "degraded"
+        health["error"] = (
+            "DATABASE_URL not set. KRONOS requires PostgreSQL with ORAT options data. "
+            "Copy .env.template to .env and configure DATABASE_URL."
+        )
+        return health
 
     # Check database connectivity
     try:
@@ -173,6 +185,22 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
         _jobs[job_id]['status'] = 'running'
         _jobs[job_id]['progress'] = 5
         _jobs[job_id]['progress_message'] = 'Initializing backtest...'
+
+        # Check DATABASE_URL before proceeding
+        if not os.getenv('DATABASE_URL'):
+            error_msg = (
+                "DATABASE_URL environment variable is not set. "
+                "KRONOS backtester requires a PostgreSQL connection to access ORAT options data. "
+                "For local development, copy .env.template to .env and set DATABASE_URL "
+                "to your Render PostgreSQL connection string."
+            )
+            logger.error(error_msg)
+            _jobs[job_id]['status'] = 'failed'
+            _jobs[job_id]['progress'] = 100
+            _jobs[job_id]['error'] = error_msg
+            _jobs[job_id]['progress_message'] = 'Database not configured'
+            _jobs[job_id]['completed_at'] = datetime.now().isoformat()
+            return
 
         # Import the backtest module
         print("📦 Importing HybridFixedBacktester...", flush=True)
@@ -239,7 +267,7 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
 
         # Check if results are valid (not empty)
         if not results or not results.get('trades') or results.get('trades', {}).get('total', 0) == 0:
-            # More detailed error info
+            # More detailed error info with debug stats
             error_detail = f'No trades found for {config.ticker} between {config.start_date} and {config.end_date}.'
             if not results:
                 error_detail += ' Backtest returned empty results (check if market data or ORAT data loaded).'
@@ -247,6 +275,20 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
                 error_detail += f' Results missing "trades" key. Keys: {list(results.keys())}'
             else:
                 error_detail += f' Trade count was 0.'
+
+            # Include debug stats if available
+            if hasattr(backtester, 'debug_stats'):
+                ds = backtester.debug_stats
+                sf = ds.get('strategy_failures', {})
+                error_detail += f"\n\nDEBUG STATS:"
+                error_detail += f"\n- Skipped (wrong weekday): {ds.get('skipped_by_trade_day', 0)}"
+                error_detail += f"\n- Skipped (VIX filter): {ds.get('skipped_by_vix_filter', 0)}"
+                error_detail += f"\n- Skipped (tier limit): {ds.get('skipped_by_tier_limit', 0)}"
+                error_detail += f"\n- Skipped (no OHLC): {ds.get('skipped_no_ohlc', 0)}"
+                error_detail += f"\n- Skipped (no options): {ds.get('skipped_no_options', 0)}"
+                error_detail += f"\n- Skipped (strategy failed): {ds.get('skipped_no_strategy', 0)}"
+                error_detail += f"\n- Strategy failures: no_otm_puts={sf.get('no_otm_puts', 0)}, no_otm_calls={sf.get('no_otm_calls', 0)}, no_long_put={sf.get('no_long_put', 0)}, no_long_call={sf.get('no_long_call', 0)}"
+
             logger.warning(error_detail)
             _jobs[job_id]['status'] = 'failed'
             _jobs[job_id]['progress'] = 100
