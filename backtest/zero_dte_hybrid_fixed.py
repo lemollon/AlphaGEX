@@ -339,43 +339,154 @@ class HybridFixedBacktester:
         return False
 
     def load_market_data(self):
-        """Load SPX and VIX data"""
-        if not YFINANCE_AVAILABLE:
-            return
-
-        print("  Loading market data from Yahoo Finance...")
-
+        """Load SPX and VIX data - first from DB, then from Yahoo API"""
         start = datetime.strptime(self.start_date, '%Y-%m-%d') - timedelta(days=10)
         end = datetime.strptime(self.end_date, '%Y-%m-%d') + timedelta(days=5)
+        start_str = start.strftime('%Y-%m-%d')
+        end_str = end.strftime('%Y-%m-%d')
 
+        # Try loading from database first
+        db_loaded = self._load_market_data_from_db(start_str, end_str)
+
+        if db_loaded:
+            return
+
+        # Fall back to direct Yahoo Finance API (no yfinance library needed)
+        print("  Loading market data from Yahoo Finance API...")
+        self._load_market_data_from_yahoo(start_str, end_str)
+
+    def _load_market_data_from_db(self, start_str: str, end_str: str) -> bool:
+        """Load market data from stored database. Returns True if successful."""
         try:
-            spx = yf.Ticker("^GSPC")
-            hist = spx.history(start=start, end=end)
+            conn = self.get_connection()
+            cursor = conn.cursor()
 
-            for date_idx, row in hist.iterrows():
-                date_str = date_idx.strftime('%Y-%m-%d')
+            # Check if table exists and has data
+            cursor.execute("""
+                SELECT COUNT(*) FROM market_data_daily
+                WHERE symbol = 'SPX' AND date >= %s AND date <= %s
+            """, (start_str, end_str))
+            spx_count = cursor.fetchone()[0]
+
+            if spx_count == 0:
+                conn.close()
+                return False
+
+            # Load SPX data
+            cursor.execute("""
+                SELECT date, open, high, low, close
+                FROM market_data_daily
+                WHERE symbol = 'SPX' AND date >= %s AND date <= %s
+                ORDER BY date
+            """, (start_str, end_str))
+
+            for row in cursor.fetchall():
+                date_str = row[0].strftime('%Y-%m-%d') if hasattr(row[0], 'strftime') else str(row[0])
                 self.spx_ohlc[date_str] = {
-                    'open': float(row['Open']),
-                    'high': float(row['High']),
-                    'low': float(row['Low']),
-                    'close': float(row['Close']),
+                    'open': float(row[1]) if row[1] else 0,
+                    'high': float(row[2]) if row[2] else 0,
+                    'low': float(row[3]) if row[3] else 0,
+                    'close': float(row[4]) if row[4] else 0,
                 }
 
-            print(f"  Loaded {len(self.spx_ohlc)} days of SPX data")
+            print(f"  Loaded {len(self.spx_ohlc)} days of SPX data from database")
+
+            # Load VIX data
+            cursor.execute("""
+                SELECT date, close
+                FROM market_data_daily
+                WHERE symbol = 'VIX' AND date >= %s AND date <= %s
+                ORDER BY date
+            """, (start_str, end_str))
+
+            for row in cursor.fetchall():
+                date_str = row[0].strftime('%Y-%m-%d') if hasattr(row[0], 'strftime') else str(row[0])
+                self.vix_data[date_str] = float(row[1]) if row[1] else 0
+
+            print(f"  Loaded {len(self.vix_data)} days of VIX data from database")
+
+            conn.close()
+            return len(self.spx_ohlc) > 0
+
         except Exception as e:
-            print(f"  Failed to load SPX: {e}")
+            print(f"  Database load failed: {e}, falling back to Yahoo...")
+            return False
 
-        try:
-            vix = yf.Ticker("^VIX")
-            hist = vix.history(start=start, end=end)
+    def _load_market_data_from_yahoo(self, start_str: str, end_str: str):
+        """Load market data directly from Yahoo Finance API (no yfinance needed)"""
+        import requests
 
-            for date_idx, row in hist.iterrows():
-                date_str = date_idx.strftime('%Y-%m-%d')
-                self.vix_data[date_str] = float(row['Close'])
+        def fetch_yahoo_data(symbol: str, start: str, end: str) -> List[Dict]:
+            """Fetch data from Yahoo Finance API"""
+            start_ts = int(datetime.strptime(start, "%Y-%m-%d").timestamp())
+            end_ts = int(datetime.strptime(end, "%Y-%m-%d").timestamp())
 
-            print(f"  Loaded {len(self.vix_data)} days of VIX data")
-        except Exception as e:
-            print(f"  Failed to load VIX: {e}")
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+            params = {
+                "period1": start_ts,
+                "period2": end_ts,
+                "interval": "1d",
+                "events": "history"
+            }
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+            try:
+                response = requests.get(url, params=params, headers=headers, timeout=30)
+                if response.status_code != 200:
+                    return []
+
+                data = response.json()
+                result = data.get("chart", {}).get("result", [])
+                if not result:
+                    return []
+
+                chart_data = result[0]
+                timestamps = chart_data.get("timestamp", [])
+                quote = chart_data.get("indicators", {}).get("quote", [{}])[0]
+
+                records = []
+                for i, ts in enumerate(timestamps):
+                    try:
+                        date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+                        open_p = quote.get("open", [])[i]
+                        high_p = quote.get("high", [])[i]
+                        low_p = quote.get("low", [])[i]
+                        close_p = quote.get("close", [])[i]
+
+                        if any(p is None for p in [open_p, high_p, low_p, close_p]):
+                            continue
+
+                        records.append({
+                            "date": date,
+                            "open": float(open_p),
+                            "high": float(high_p),
+                            "low": float(low_p),
+                            "close": float(close_p)
+                        })
+                    except (IndexError, TypeError):
+                        continue
+
+                return records
+            except Exception as e:
+                print(f"  Yahoo API error for {symbol}: {e}")
+                return []
+
+        # Fetch SPX
+        spx_data = fetch_yahoo_data("^GSPC", start_str, end_str)
+        for rec in spx_data:
+            self.spx_ohlc[rec["date"]] = {
+                'open': rec["open"],
+                'high': rec["high"],
+                'low': rec["low"],
+                'close': rec["close"],
+            }
+        print(f"  Loaded {len(self.spx_ohlc)} days of SPX data from Yahoo API")
+
+        # Fetch VIX
+        vix_data = fetch_yahoo_data("^VIX", start_str, end_str)
+        for rec in vix_data:
+            self.vix_data[rec["date"]] = rec["close"]
+        print(f"  Loaded {len(self.vix_data)} days of VIX data from Yahoo API")
 
     def get_trading_days(self) -> List[str]:
         """Get all trading days"""

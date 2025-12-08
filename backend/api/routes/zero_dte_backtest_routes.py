@@ -709,22 +709,117 @@ async def get_data_sources():
     }
 
 
+def fetch_yahoo_finance_direct(symbol: str, start_date: str, end_date: str) -> List[Dict]:
+    """
+    Fetch historical data directly from Yahoo Finance API (no yfinance library).
+
+    Args:
+        symbol: Yahoo Finance symbol (e.g., ^GSPC for S&P 500, ^VIX for VIX)
+        start_date: Start date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format
+
+    Returns:
+        List of daily OHLC records
+    """
+    import requests
+
+    # Convert dates to Unix timestamps
+    start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
+    end_ts = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp())
+
+    # Yahoo Finance API URL
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+
+    params = {
+        "period1": start_ts,
+        "period2": end_ts,
+        "interval": "1d",
+        "events": "history",
+        "includeAdjustedClose": "true"
+    }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    logger.info(f"Fetching {symbol} from {start_date} to {end_date}...")
+
+    response = requests.get(url, params=params, headers=headers)
+
+    if response.status_code != 200:
+        logger.error(f"Error fetching {symbol}: HTTP {response.status_code}")
+        return []
+
+    data = response.json()
+
+    # Parse the response
+    result = data.get("chart", {}).get("result", [])
+    if not result:
+        logger.error(f"No data returned for {symbol}")
+        return []
+
+    chart_data = result[0]
+    timestamps = chart_data.get("timestamp", [])
+    quote = chart_data.get("indicators", {}).get("quote", [{}])[0]
+    adjclose = chart_data.get("indicators", {}).get("adjclose", [{}])[0].get("adjclose", [])
+
+    records = []
+    for i, ts in enumerate(timestamps):
+        try:
+            date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+            open_price = quote.get("open", [])[i]
+            high_price = quote.get("high", [])[i]
+            low_price = quote.get("low", [])[i]
+            close_price = quote.get("close", [])[i]
+            volume = quote.get("volume", [])[i]
+            adj_close = adjclose[i] if i < len(adjclose) else close_price
+
+            # Skip if any price is None
+            if any(p is None for p in [open_price, high_price, low_price, close_price]):
+                continue
+
+            records.append({
+                "date": date,
+                "open": round(float(open_price), 2),
+                "high": round(float(high_price), 2),
+                "low": round(float(low_price), 2),
+                "close": round(float(close_price), 2),
+                "adj_close": round(float(adj_close), 2) if adj_close else round(float(close_price), 2),
+                "volume": int(volume) if volume else 0
+            })
+        except (IndexError, TypeError):
+            continue
+
+    logger.info(f"Retrieved {len(records)} records for {symbol}")
+    return records
+
+
 @router.post("/store-market-data")
 async def store_market_data(ticker: str = "^GSPC", days: int = 365 * 5):
-    """Store Yahoo Finance data in database for faster backtests"""
+    """Store Yahoo Finance data in database for faster backtests (no yfinance dependency)"""
     try:
-        import yfinance as yf
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
-        # Fetch data
+        # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
 
-        data = yf.Ticker(ticker)
-        hist = data.history(start=start_date, end=end_date)
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
 
-        if hist.empty:
+        # Fetch data directly from Yahoo
+        records = fetch_yahoo_finance_direct(ticker, start_str, end_str)
+
+        if not records:
             return {"success": False, "error": "No data returned from Yahoo Finance"}
+
+        # Normalize symbol for storage
+        symbol_map = {
+            "^GSPC": "SPX",
+            "^VIX": "VIX"
+        }
+        normalized_symbol = symbol_map.get(ticker, ticker)
 
         # Store in database
         conn = get_connection()
@@ -734,44 +829,55 @@ async def store_market_data(ticker: str = "^GSPC", days: int = 365 * 5):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS market_data_daily (
                 id SERIAL PRIMARY KEY,
-                ticker VARCHAR(20) NOT NULL,
-                trade_date DATE NOT NULL,
-                open_price DECIMAL(12,4),
-                high_price DECIMAL(12,4),
-                low_price DECIMAL(12,4),
-                close_price DECIMAL(12,4),
+                symbol VARCHAR(20) NOT NULL,
+                date DATE NOT NULL,
+                open DECIMAL(12,4),
+                high DECIMAL(12,4),
+                low DECIMAL(12,4),
+                close DECIMAL(12,4),
+                adj_close DECIMAL(12,4),
                 volume BIGINT,
+                source VARCHAR(50) DEFAULT 'yahoo',
                 created_at TIMESTAMP DEFAULT NOW(),
-                UNIQUE(ticker, trade_date)
+                UNIQUE(symbol, date)
             )
+        """)
+
+        # Create index
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_market_data_daily_symbol_date
+            ON market_data_daily(symbol, date)
         """)
 
         # Insert data
         rows_inserted = 0
-        for date_idx, row in hist.iterrows():
-            date_str = date_idx.strftime('%Y-%m-%d')
+        for record in records:
             try:
                 cursor.execute("""
-                    INSERT INTO market_data_daily (ticker, trade_date, open_price, high_price, low_price, close_price, volume)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, trade_date) DO UPDATE SET
-                        open_price = EXCLUDED.open_price,
-                        high_price = EXCLUDED.high_price,
-                        low_price = EXCLUDED.low_price,
-                        close_price = EXCLUDED.close_price,
-                        volume = EXCLUDED.volume
+                    INSERT INTO market_data_daily (symbol, date, open, high, low, close, adj_close, volume, source)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (symbol, date) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        adj_close = EXCLUDED.adj_close,
+                        volume = EXCLUDED.volume,
+                        source = EXCLUDED.source
                 """, (
-                    ticker,
-                    date_str,
-                    float(row['Open']),
-                    float(row['High']),
-                    float(row['Low']),
-                    float(row['Close']),
-                    int(row['Volume']) if row['Volume'] else 0
+                    normalized_symbol,
+                    record["date"],
+                    record["open"],
+                    record["high"],
+                    record["low"],
+                    record["close"],
+                    record.get("adj_close", record["close"]),
+                    record.get("volume", 0),
+                    "yahoo"
                 ))
                 rows_inserted += 1
             except Exception as e:
-                logger.warning(f"Failed to insert row for {date_str}: {e}")
+                logger.warning(f"Failed to insert row for {record['date']}: {e}")
 
         conn.commit()
         conn.close()
@@ -779,16 +885,121 @@ async def store_market_data(ticker: str = "^GSPC", days: int = 365 * 5):
         return {
             "success": True,
             "ticker": ticker,
+            "symbol": normalized_symbol,
             "rows_inserted": rows_inserted,
             "date_range": {
-                "start": hist.index[0].strftime('%Y-%m-%d'),
-                "end": hist.index[-1].strftime('%Y-%m-%d')
+                "start": records[0]["date"] if records else start_str,
+                "end": records[-1]["date"] if records else end_str
             }
         }
 
     except Exception as e:
         logger.error(f"Failed to store market data: {e}")
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
+
+
+@router.post("/backfill-all")
+async def backfill_all_market_data(start_date: str = "2020-01-01"):
+    """Backfill all required market data (SPX and VIX) from Yahoo Finance"""
+    results = []
+
+    # Symbols to backfill: (yahoo_symbol, normalized_symbol)
+    symbols = [
+        ("^GSPC", "SPX"),
+        ("^VIX", "VIX"),
+    ]
+
+    end_date = datetime.now().strftime('%Y-%m-%d')
+
+    for yahoo_symbol, normalized_symbol in symbols:
+        try:
+            # Fetch data
+            records = fetch_yahoo_finance_direct(yahoo_symbol, start_date, end_date)
+
+            if not records:
+                results.append({
+                    "symbol": normalized_symbol,
+                    "success": False,
+                    "error": "No data returned"
+                })
+                continue
+
+            # Store in database
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Ensure table exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS market_data_daily (
+                    id SERIAL PRIMARY KEY,
+                    symbol VARCHAR(20) NOT NULL,
+                    date DATE NOT NULL,
+                    open DECIMAL(12,4),
+                    high DECIMAL(12,4),
+                    low DECIMAL(12,4),
+                    close DECIMAL(12,4),
+                    adj_close DECIMAL(12,4),
+                    volume BIGINT,
+                    source VARCHAR(50) DEFAULT 'yahoo',
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(symbol, date)
+                )
+            """)
+
+            rows_inserted = 0
+            for record in records:
+                try:
+                    cursor.execute("""
+                        INSERT INTO market_data_daily (symbol, date, open, high, low, close, adj_close, volume, source)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (symbol, date) DO UPDATE SET
+                            open = EXCLUDED.open,
+                            high = EXCLUDED.high,
+                            low = EXCLUDED.low,
+                            close = EXCLUDED.close,
+                            adj_close = EXCLUDED.adj_close,
+                            volume = EXCLUDED.volume
+                    """, (
+                        normalized_symbol,
+                        record["date"],
+                        record["open"],
+                        record["high"],
+                        record["low"],
+                        record["close"],
+                        record.get("adj_close", record["close"]),
+                        record.get("volume", 0),
+                        "yahoo"
+                    ))
+                    rows_inserted += 1
+                except Exception as e:
+                    logger.warning(f"Failed to insert {normalized_symbol} row for {record['date']}: {e}")
+
+            conn.commit()
+            conn.close()
+
+            results.append({
+                "symbol": normalized_symbol,
+                "success": True,
+                "rows_inserted": rows_inserted,
+                "date_range": {
+                    "start": records[0]["date"],
+                    "end": records[-1]["date"]
+                }
+            })
+
+        except Exception as e:
+            results.append({
+                "symbol": normalized_symbol,
+                "success": False,
+                "error": str(e)
+            })
+
+    return {
+        "success": all(r["success"] for r in results),
+        "results": results
+    }
 
 
 @router.get("/stored-data-status")
@@ -798,47 +1009,56 @@ async def get_stored_data_status():
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Check market_data_daily table
-        cursor.execute("""
-            SELECT
-                ticker,
-                COUNT(*) as row_count,
-                MIN(trade_date) as earliest_date,
-                MAX(trade_date) as latest_date
-            FROM market_data_daily
-            GROUP BY ticker
-            ORDER BY ticker
-        """)
-
         market_data = []
-        for row in cursor.fetchall():
-            market_data.append({
-                'ticker': row['ticker'],
-                'row_count': row['row_count'],
-                'earliest_date': str(row['earliest_date']),
-                'latest_date': str(row['latest_date'])
-            })
+        orat_data = []
+
+        # Check market_data_daily table (new schema with symbol/date columns)
+        try:
+            cursor.execute("""
+                SELECT
+                    symbol,
+                    COUNT(*) as row_count,
+                    MIN(date) as earliest_date,
+                    MAX(date) as latest_date,
+                    source
+                FROM market_data_daily
+                GROUP BY symbol, source
+                ORDER BY symbol
+            """)
+
+            for row in cursor.fetchall():
+                market_data.append({
+                    'symbol': row['symbol'],
+                    'row_count': row['row_count'],
+                    'earliest_date': str(row['earliest_date']),
+                    'latest_date': str(row['latest_date']),
+                    'source': row.get('source', 'unknown')
+                })
+        except Exception as e:
+            logger.warning(f"market_data_daily table not found or error: {e}")
 
         # Check ORAT options data
-        cursor.execute("""
-            SELECT
-                ticker,
-                COUNT(*) as row_count,
-                MIN(trade_date) as earliest_date,
-                MAX(trade_date) as latest_date
-            FROM orat_options_eod
-            GROUP BY ticker
-            ORDER BY ticker
-        """)
+        try:
+            cursor.execute("""
+                SELECT
+                    ticker,
+                    COUNT(*) as row_count,
+                    MIN(trade_date) as earliest_date,
+                    MAX(trade_date) as latest_date
+                FROM orat_options_eod
+                GROUP BY ticker
+                ORDER BY ticker
+            """)
 
-        orat_data = []
-        for row in cursor.fetchall():
-            orat_data.append({
-                'ticker': row['ticker'],
-                'row_count': row['row_count'],
-                'earliest_date': str(row['earliest_date']),
-                'latest_date': str(row['latest_date'])
-            })
+            for row in cursor.fetchall():
+                orat_data.append({
+                    'ticker': row['ticker'],
+                    'row_count': row['row_count'],
+                    'earliest_date': str(row['earliest_date']),
+                    'latest_date': str(row['latest_date'])
+                })
+        except Exception as e:
+            logger.warning(f"orat_options_eod table not found or error: {e}")
 
         conn.close()
 
