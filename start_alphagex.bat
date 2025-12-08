@@ -13,6 +13,13 @@ start "AlphaGEX Backend" cmd /k "cd /d %~dp0backend && set DATABASE_URL=%DATABAS
 :: Wait a few seconds for backend to initialize
 timeout /t 3 /nobreak > nul
 
+:: Create frontend .env.local if it doesn't exist
+if not exist "%~dp0frontend\.env.local" (
+    echo Creating frontend .env.local...
+    echo NEXT_PUBLIC_API_URL=http://localhost:8000> "%~dp0frontend\.env.local"
+    echo NEXT_PUBLIC_WS_URL=ws://localhost:8000>> "%~dp0frontend\.env.local"
+)
+
 :: Start the frontend in a new window
 echo Starting Frontend (KRONOS)...
 start "AlphaGEX Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
