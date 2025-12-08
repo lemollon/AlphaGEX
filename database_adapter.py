@@ -50,7 +50,10 @@ class DatabaseAdapter:
             'keepalives_interval': 10,
             'keepalives_count': 5
         }
-        print(f"✅ Using PostgreSQL: {self.pg_config['host']}/{self.pg_config['database']}")
+        global _connection_logged
+        if not _connection_logged:
+            print(f"✅ Using PostgreSQL: {self.pg_config['host']}/{self.pg_config['database']}")
+            _connection_logged = True
 
     def connect(self):
         """Create PostgreSQL database connection"""
@@ -225,6 +228,7 @@ class PostgreSQLCursor:
 # Global adapter instance
 _adapter = None
 _db_available = None  # Cache the availability check
+_connection_logged = False  # Only log connection once
 
 
 def is_database_available() -> bool:
