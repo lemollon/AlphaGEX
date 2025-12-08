@@ -318,8 +318,33 @@ class HybridFixedBacktester:
         self.vix_data: Dict[str, float] = {}
 
     def get_connection(self):
-        from database_adapter import get_connection
-        return get_connection()
+        """
+        Get database connection for ORAT options data.
+        Uses ORAT_DATABASE_URL if set, otherwise falls back to DATABASE_URL.
+        """
+        import psycopg2
+        from urllib.parse import urlparse
+
+        # Try ORAT-specific database first, then fall back to main DATABASE_URL
+        database_url = os.getenv('ORAT_DATABASE_URL') or os.getenv('DATABASE_URL')
+
+        if not database_url:
+            raise ValueError(
+                "Neither ORAT_DATABASE_URL nor DATABASE_URL is set. "
+                "Set ORAT_DATABASE_URL to point to the PostgreSQL database containing ORAT options data."
+            )
+
+        result = urlparse(database_url)
+        conn = psycopg2.connect(
+            host=result.hostname,
+            port=result.port or 5432,
+            user=result.username,
+            password=result.password,
+            database=result.path[1:],
+            connect_timeout=30,
+            options='-c statement_timeout=300000'
+        )
+        return conn
 
     def get_current_tier(self) -> ScalingTier:
         """Get appropriate tier based on current equity"""
