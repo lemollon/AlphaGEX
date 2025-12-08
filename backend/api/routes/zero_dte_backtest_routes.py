@@ -44,13 +44,18 @@ class ZeroDTEBacktestConfig(BaseModel):
     end_date: str = Field(default="2025-12-01", description="End date YYYY-MM-DD")
     initial_capital: float = Field(default=1_000_000, description="Starting capital")
     spread_width: float = Field(default=10.0, description="Spread width in dollars")
-    sd_multiplier: float = Field(default=1.0, description="Standard deviation multiplier for strike selection")
     risk_per_trade_pct: float = Field(default=5.0, description="Risk per trade as % of equity")
     ticker: str = Field(default="SPX", description="Ticker symbol")
     strategy: str = Field(default="hybrid_fixed", description="Strategy: hybrid_fixed, aggressive, realistic")
 
     # Multi-leg strategy type
-    strategy_type: str = Field(default="iron_condor", description="iron_condor, bull_put, bear_call, iron_butterfly, strangle")
+    strategy_type: str = Field(default="iron_condor", description="iron_condor, bull_put, bear_call, iron_butterfly, diagonal_call, diagonal_put")
+
+    # Strike selection method
+    strike_selection: str = Field(default="sd", description="Strike selection method: sd, fixed, delta")
+    sd_multiplier: float = Field(default=1.0, description="SD multiplier (for strike_selection=sd)")
+    fixed_strike_distance: float = Field(default=50.0, description="Fixed points from price (for strike_selection=fixed)")
+    target_delta: float = Field(default=0.16, description="Target delta for short strikes (for strike_selection=delta)")
 
     # VIX filtering
     min_vix: Optional[float] = Field(default=None, description="Minimum VIX to trade (None = no filter)")
@@ -127,6 +132,10 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
             max_contracts_override=config.max_contracts_override,
             commission_per_leg_override=config.commission_per_leg,
             slippage_per_spread_override=config.slippage_per_spread,
+            # Strike selection method
+            strike_selection=config.strike_selection,
+            fixed_strike_distance=config.fixed_strike_distance,
+            target_delta=config.target_delta,
         )
 
         _jobs[job_id]['progress'] = 10
@@ -478,13 +487,22 @@ async def get_strategy_types():
                 "credit": True
             },
             {
-                "id": "strangle",
-                "name": "Short Strangle",
-                "description": "Sell OTM put + OTM call. Undefined risk, use with caution.",
+                "id": "diagonal_call",
+                "name": "Diagonal Call (PMCC)",
+                "description": "Sell near-term OTM call at SD distance, buy longer-term call. Poor Man's Covered Call.",
                 "legs": 2,
-                "direction": "neutral",
-                "credit": True,
-                "warning": "Undefined risk - not recommended for beginners"
+                "direction": "bearish/neutral",
+                "credit": False,
+                "note": "Short strike placed at configured SD multiplier above price"
+            },
+            {
+                "id": "diagonal_put",
+                "name": "Diagonal Put (PMCP)",
+                "description": "Sell near-term OTM put at SD distance, buy longer-term put. Poor Man's Covered Put.",
+                "legs": 2,
+                "direction": "bullish/neutral",
+                "credit": False,
+                "note": "Short strike placed at configured SD multiplier below price"
             }
         ]
     }

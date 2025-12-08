@@ -50,7 +50,7 @@ const navItems = [
   { href: '/ai/history', label: 'Conversation History', icon: MessageSquare, category: 'AI & Testing' },
   { href: '/recommendations/history', label: 'Recommendations', icon: Target, category: 'AI & Testing' },
   { href: '/backtesting', label: 'Backtesting', icon: TestTube, category: 'AI & Testing' },
-  { href: '/zero-dte-backtest', label: '0DTE Iron Condor', icon: TestTube, category: 'AI & Testing' },
+  { href: '/zero-dte-backtest', label: 'KRONOS (0DTE Condor)', icon: Clock, category: 'AI & Testing' },
   { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
   { href: '/trader', label: 'PHOENIX (SPY 0DTE)', icon: Bot, category: 'Automation' },
   { href: '/wheel', label: 'HERMES (Manual Wheel)', icon: RotateCcw, category: 'Automation' },

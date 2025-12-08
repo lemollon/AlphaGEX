@@ -206,7 +206,7 @@ class HybridFixedBacktester:
         risk_per_trade_pct: float = 5.0,
         ticker: str = "SPX",
         # New parameters
-        strategy_type: str = "iron_condor",  # iron_condor, bull_put, bear_call, iron_butterfly
+        strategy_type: str = "iron_condor",  # iron_condor, bull_put, bear_call, iron_butterfly, diagonal_call, diagonal_put
         min_vix: float = None,
         max_vix: float = None,
         stop_loss_pct: float = None,  # % of max loss to trigger stop
@@ -215,6 +215,10 @@ class HybridFixedBacktester:
         max_contracts_override: int = None,
         commission_per_leg_override: float = None,
         slippage_per_spread_override: float = None,
+        # Strike selection method
+        strike_selection: str = "sd",  # sd, fixed, delta
+        fixed_strike_distance: float = 50.0,  # For fixed method: points from price
+        target_delta: float = 0.16,  # For delta method: target delta for short strikes
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -234,6 +238,11 @@ class HybridFixedBacktester:
         self.max_contracts_override = max_contracts_override
         self.commission_per_leg_override = commission_per_leg_override
         self.slippage_per_spread_override = slippage_per_spread_override
+
+        # Strike selection
+        self.strike_selection = strike_selection
+        self.fixed_strike_distance = fixed_strike_distance
+        self.target_delta = target_delta
 
         # State
         self.equity = initial_capital
@@ -303,6 +312,59 @@ class HybridFixedBacktester:
         - 30 days: $5000 × 0.20 × √(30/252) = $345 (6.9%)
         """
         return price * iv * math.sqrt(days / 252)
+
+    def calculate_strike_distance(self, price: float, iv: float, days: int,
+                                  options: List[Dict] = None, direction: str = "put") -> float:
+        """
+        Calculate strike distance based on selected method.
+
+        Methods:
+        - sd: Use SD multiplier × expected move
+        - fixed: Use fixed point distance
+        - delta: Find strike at target delta
+
+        Args:
+            price: Current underlying price
+            iv: Implied volatility (decimal)
+            days: Days for SD calculation
+            options: Options chain (needed for delta method)
+            direction: "put" or "call" (for delta method)
+
+        Returns:
+            Strike distance in points
+        """
+        if self.strike_selection == "fixed":
+            return self.fixed_strike_distance
+
+        elif self.strike_selection == "delta" and options:
+            # Find the strike with delta closest to target
+            target = self.target_delta
+            if direction == "put":
+                # For puts, look for negative delta close to -target
+                candidates = [o for o in options if o.get('delta') is not None
+                             and o['strike'] < price]
+                if candidates:
+                    # Find put with delta closest to -target_delta
+                    best = min(candidates, key=lambda x: abs(abs(x.get('delta', 0)) - target))
+                    return price - best['strike']
+            else:
+                # For calls, look for positive delta close to target
+                candidates = [o for o in options if o.get('delta') is not None
+                             and o['strike'] > price]
+                if candidates:
+                    best = min(candidates, key=lambda x: abs(x.get('delta', 0) - target))
+                    return best['strike'] - price
+
+            # Fall back to SD if delta not found
+            self.delta_fallback_count = getattr(self, 'delta_fallback_count', 0) + 1
+            if self.delta_fallback_count == 1:
+                print(f"⚠️ Warning: Delta-based strike selection falling back to SD method (delta data not available)")
+            expected_move = self.calculate_expected_move(price, iv, days)
+            return self.sd_multiplier * expected_move
+
+        else:  # Default: SD method
+            expected_move = self.calculate_expected_move(price, iv, days)
+            return self.sd_multiplier * expected_move
 
     def should_trade_today(self, trade_date: str, tier: ScalingTier, vix: float = None) -> bool:
         """Determine if we should trade today based on tier frequency, VIX filter, and trade days"""
@@ -489,61 +551,77 @@ class HybridFixedBacktester:
         print(f"  Loaded {len(self.vix_data)} days of VIX data from Yahoo API")
 
     def get_trading_days(self) -> List[str]:
-        """Get all trading days"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        """Get all trading days from ORAT options data"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT DISTINCT trade_date
-            FROM orat_options_eod
-            WHERE ticker = %s
-              AND trade_date >= %s
-              AND trade_date <= %s
-            ORDER BY trade_date
-        """, (self.ticker, self.start_date, self.end_date))
+            cursor.execute("""
+                SELECT DISTINCT trade_date
+                FROM orat_options_eod
+                WHERE ticker = %s
+                  AND trade_date >= %s
+                  AND trade_date <= %s
+                ORDER BY trade_date
+            """, (self.ticker, self.start_date, self.end_date))
 
-        days = [row[0].strftime('%Y-%m-%d') for row in cursor.fetchall()]
-        conn.close()
-        return days
+            days = [row[0].strftime('%Y-%m-%d') for row in cursor.fetchall()]
+            conn.close()
+
+            if not days:
+                print(f"⚠️ Warning: No trading days found for {self.ticker} between {self.start_date} and {self.end_date}")
+
+            return days
+
+        except Exception as e:
+            print(f"❌ Error fetching trading days: {e}")
+            print("   Make sure orat_options_eod table exists and has data for the specified ticker/dates")
+            return []
 
     def get_options_for_date(self, trade_date: str, target_dte: int) -> List[Dict]:
         """Get options near target DTE"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
 
-        # Get options within range of target DTE
-        min_dte = max(0, target_dte - 3)
-        max_dte = target_dte + 7
+            # Get options within range of target DTE
+            min_dte = max(0, target_dte - 3)
+            max_dte = target_dte + 7
 
-        cursor.execute("""
-            SELECT
-                strike, underlying_price, dte,
-                put_bid, put_ask, call_bid, call_ask,
-                delta, put_iv, call_iv
-            FROM orat_options_eod
-            WHERE ticker = %s
-              AND trade_date = %s
-              AND dte >= %s
-              AND dte <= %s
-            ORDER BY ABS(dte - %s), strike
-        """, (self.ticker, trade_date, min_dte, max_dte, target_dte))
+            cursor.execute("""
+                SELECT
+                    strike, underlying_price, dte,
+                    put_bid, put_ask, call_bid, call_ask,
+                    delta, put_iv, call_iv
+                FROM orat_options_eod
+                WHERE ticker = %s
+                  AND trade_date = %s
+                  AND dte >= %s
+                  AND dte <= %s
+                ORDER BY ABS(dte - %s), strike
+            """, (self.ticker, trade_date, min_dte, max_dte, target_dte))
 
-        columns = ['strike', 'underlying_price', 'dte', 'put_bid', 'put_ask',
-                   'call_bid', 'call_ask', 'delta', 'put_iv', 'call_iv']
+            columns = ['strike', 'underlying_price', 'dte', 'put_bid', 'put_ask',
+                       'call_bid', 'call_ask', 'delta', 'put_iv', 'call_iv']
 
-        options = []
-        for row in cursor.fetchall():
-            opt = dict(zip(columns, row))
-            for key in opt:
-                if opt[key] is not None and key != 'dte':
-                    opt[key] = float(opt[key])
-            options.append(opt)
+            options = []
+            for row in cursor.fetchall():
+                opt = dict(zip(columns, row))
+                for key in opt:
+                    if opt[key] is not None and key != 'dte':
+                        opt[key] = float(opt[key])
+                options.append(opt)
 
-        conn.close()
-        return options
+            conn.close()
+            return options
+
+        except Exception as e:
+            print(f"⚠️ Warning: Error fetching options for {trade_date}: {e}")
+            return []
 
     def find_bull_put_spread(self, options: List[Dict], open_price: float,
-                             expected_move: float, target_dte: int) -> Optional[Dict]:
+                             strike_distance: float, target_dte: int,
+                             use_raw_distance: bool = False) -> Optional[Dict]:
         """Find Bull Put Spread only (put credit spread)"""
         if not options:
             return None
@@ -560,8 +638,11 @@ class HybridFixedBacktester:
 
         underlying = dte_options[0]['underlying_price']
 
-        # Target put strike at SD distance below open
-        put_target = open_price - (self.sd_multiplier * expected_move)
+        # Target put strike at specified distance below open
+        if use_raw_distance:
+            put_target = open_price - strike_distance
+        else:
+            put_target = open_price - (self.sd_multiplier * strike_distance)
         put_target = round(put_target / 5) * 5
 
         # Find OTM puts
@@ -600,7 +681,8 @@ class HybridFixedBacktester:
         }
 
     def find_bear_call_spread(self, options: List[Dict], open_price: float,
-                              expected_move: float, target_dte: int) -> Optional[Dict]:
+                              strike_distance: float, target_dte: int,
+                              use_raw_distance: bool = False) -> Optional[Dict]:
         """Find Bear Call Spread only (call credit spread)"""
         if not options:
             return None
@@ -617,8 +699,11 @@ class HybridFixedBacktester:
 
         underlying = dte_options[0]['underlying_price']
 
-        # Target call strike at SD distance above open
-        call_target = open_price + (self.sd_multiplier * expected_move)
+        # Target call strike at specified distance above open
+        if use_raw_distance:
+            call_target = open_price + strike_distance
+        else:
+            call_target = open_price + (self.sd_multiplier * strike_distance)
         call_target = round(call_target / 5) * 5
 
         # Find OTM calls
@@ -726,23 +811,259 @@ class HybridFixedBacktester:
             'strategy_type': 'iron_butterfly'
         }
 
-    def find_strategy(self, options: List[Dict], open_price: float,
-                      expected_move: float, target_dte: int) -> Optional[Dict]:
-        """Find the appropriate strategy based on strategy_type setting"""
-        if self.strategy_type == 'bull_put':
-            return self.find_bull_put_spread(options, open_price, expected_move, target_dte)
-        elif self.strategy_type == 'bear_call':
-            return self.find_bear_call_spread(options, open_price, expected_move, target_dte)
-        elif self.strategy_type == 'iron_butterfly':
-            return self.find_iron_butterfly(options, open_price, expected_move, target_dte)
-        else:  # iron_condor (default)
-            return self.find_iron_condor(options, open_price, expected_move, target_dte)
+    def find_diagonal_call(self, options: List[Dict], open_price: float,
+                           strike_distance: float, target_dte: int,
+                           use_raw_distance: bool = False) -> Optional[Dict]:
+        """
+        Find Diagonal Call Spread (Poor Man's Covered Call)
 
-    def find_iron_condor(self, options: List[Dict], open_price: float,
-                         expected_move: float, target_dte: int) -> Optional[Dict]:
-        """Find Iron Condor with strikes at expected_move distance"""
+        - Sell near-term OTM call at specified distance above price
+        - Buy longer-term call for protection (same or lower strike)
+
+        This is a DEBIT spread with defined risk.
+        Profits from: time decay on short leg, price staying below short strike
+        """
         if not options:
             return None
+
+        available_dtes = sorted(set(o['dte'] for o in options))
+        if len(available_dtes) < 2:
+            return None  # Need at least 2 different DTEs for diagonal
+
+        # Short leg: near-term (closest to target_dte, usually 0-7 DTE)
+        short_dte = min(available_dtes, key=lambda x: abs(x - target_dte))
+
+        # Long leg: longer-term (at least 14 days out, preferably 30+)
+        long_dte_candidates = [d for d in available_dtes if d >= short_dte + 14]
+        if not long_dte_candidates:
+            # Fall back to just finding something longer
+            long_dte_candidates = [d for d in available_dtes if d > short_dte]
+        if not long_dte_candidates:
+            return None
+
+        long_dte = min(long_dte_candidates)  # Take the nearest long-term option
+
+        short_dte_options = [o for o in options if o['dte'] == short_dte]
+        long_dte_options = [o for o in options if o['dte'] == long_dte]
+
+        if not short_dte_options or not long_dte_options:
+            return None
+
+        underlying = short_dte_options[0]['underlying_price']
+
+        # Short call strike at specified distance above open (OTM)
+        if use_raw_distance:
+            call_target = open_price + strike_distance
+        else:
+            call_target = open_price + (self.sd_multiplier * strike_distance)
+        call_target = round(call_target / 5) * 5
+
+        # Find OTM calls for short leg
+        otm_calls_short = [o for o in short_dte_options if o['strike'] > underlying
+                          and o.get('call_bid', 0) and o['call_bid'] > 0.05]
+
+        if not otm_calls_short:
+            return None
+
+        # Short call at target SD
+        short_call = min(otm_calls_short, key=lambda x: abs(x['strike'] - call_target))
+
+        # Long call: ATM or slightly ITM for protection (same strike or lower)
+        long_call_target = short_call['strike']  # Same strike = calendar, lower = true diagonal
+        long_call_candidates = [o for o in long_dte_options
+                               if o['strike'] <= long_call_target
+                               and o.get('call_ask', 0) and o['call_ask'] > 0]
+
+        if not long_call_candidates:
+            return None
+
+        # Pick the highest strike that's at or below short strike
+        long_call = max(long_call_candidates, key=lambda x: x['strike'])
+
+        # Calculate debit (we pay for long, receive for short)
+        short_premium = short_call.get('call_bid', 0) or 0
+        long_premium = long_call.get('call_ask', 0) or 0
+
+        net_debit = long_premium - short_premium  # Positive = we pay, Negative = credit
+
+        # For diagonal, max loss depends on whether it's a debit or credit
+        # Debit spread: max loss = net debit paid
+        # Credit spread: max loss = spread width - credit received
+        if net_debit > 0:
+            max_loss = net_debit
+        else:
+            # Credit scenario: max loss is spread width reduced by credit received
+            max_loss = max(self.spread_width + net_debit, 0.01)  # net_debit is negative here
+
+        return {
+            'actual_dte': short_dte,
+            'long_dte': long_dte,
+            'put_short_strike': 0,
+            'put_long_strike': 0,
+            'put_credit': 0,
+            'call_short_strike': short_call['strike'],
+            'call_long_strike': long_call['strike'],
+            'call_credit': -net_debit,  # Negative debit = positive credit equivalent
+            'total_credit': -net_debit,
+            'max_loss_override': max_loss,
+            'strategy_type': 'diagonal_call'
+        }
+
+    def find_diagonal_put(self, options: List[Dict], open_price: float,
+                          strike_distance: float, target_dte: int,
+                          use_raw_distance: bool = False) -> Optional[Dict]:
+        """
+        Find Diagonal Put Spread (Poor Man's Covered Put)
+
+        - Sell near-term OTM put at specified distance below price
+        - Buy longer-term put for protection (same or higher strike)
+
+        This is typically a DEBIT spread with defined risk.
+        Profits from: time decay on short leg, price staying above short strike
+        """
+        if not options:
+            return None
+
+        available_dtes = sorted(set(o['dte'] for o in options))
+        if len(available_dtes) < 2:
+            return None
+
+        # Short leg: near-term
+        short_dte = min(available_dtes, key=lambda x: abs(x - target_dte))
+
+        # Long leg: longer-term (at least 14 days out)
+        long_dte_candidates = [d for d in available_dtes if d >= short_dte + 14]
+        if not long_dte_candidates:
+            long_dte_candidates = [d for d in available_dtes if d > short_dte]
+        if not long_dte_candidates:
+            return None
+
+        long_dte = min(long_dte_candidates)
+
+        short_dte_options = [o for o in options if o['dte'] == short_dte]
+        long_dte_options = [o for o in options if o['dte'] == long_dte]
+
+        if not short_dte_options or not long_dte_options:
+            return None
+
+        underlying = short_dte_options[0]['underlying_price']
+
+        # Short put strike at specified distance below open (OTM)
+        if use_raw_distance:
+            put_target = open_price - strike_distance
+        else:
+            put_target = open_price - (self.sd_multiplier * strike_distance)
+        put_target = round(put_target / 5) * 5
+
+        # Find OTM puts for short leg
+        otm_puts_short = [o for o in short_dte_options if o['strike'] < underlying
+                         and o.get('put_bid', 0) and o['put_bid'] > 0.05]
+
+        if not otm_puts_short:
+            return None
+
+        # Short put at target SD
+        short_put = min(otm_puts_short, key=lambda x: abs(x['strike'] - put_target))
+
+        # Long put: ATM or slightly ITM for protection (same strike or higher)
+        long_put_target = short_put['strike']
+        long_put_candidates = [o for o in long_dte_options
+                              if o['strike'] >= long_put_target
+                              and o.get('put_ask', 0) and o['put_ask'] > 0]
+
+        if not long_put_candidates:
+            return None
+
+        # Pick the lowest strike that's at or above short strike
+        long_put = min(long_put_candidates, key=lambda x: x['strike'])
+
+        # Calculate debit
+        short_premium = short_put.get('put_bid', 0) or 0
+        long_premium = long_put.get('put_ask', 0) or 0
+
+        net_debit = long_premium - short_premium
+
+        # For diagonal, max loss depends on whether it's a debit or credit
+        # Debit spread: max loss = net debit paid
+        # Credit spread: max loss = spread width - credit received
+        if net_debit > 0:
+            max_loss = net_debit
+        else:
+            # Credit scenario: max loss is spread width reduced by credit received
+            max_loss = max(self.spread_width + net_debit, 0.01)  # net_debit is negative here
+
+        return {
+            'actual_dte': short_dte,
+            'long_dte': long_dte,
+            'put_short_strike': short_put['strike'],
+            'put_long_strike': long_put['strike'],
+            'put_credit': -net_debit,
+            'call_short_strike': 0,
+            'call_long_strike': 0,
+            'call_credit': 0,
+            'total_credit': -net_debit,
+            'max_loss_override': max_loss,
+            'strategy_type': 'diagonal_put'
+        }
+
+    def find_strategy(self, options: List[Dict], open_price: float,
+                      expected_move: float, target_dte: int,
+                      iv: float = 0.15, sd_days: int = 1) -> Optional[Dict]:
+        """
+        Find the appropriate strategy based on strategy_type setting.
+
+        Strike selection is determined by self.strike_selection:
+        - 'sd': Use expected_move × sd_multiplier (default behavior)
+        - 'fixed': Use fixed_strike_distance points
+        - 'delta': Find strikes by target delta
+        """
+        # Calculate actual strike distances based on strike selection method
+        if self.strike_selection == 'fixed':
+            # For fixed, we use the fixed distance directly
+            put_distance = self.fixed_strike_distance
+            call_distance = self.fixed_strike_distance
+        elif self.strike_selection == 'delta':
+            # For delta, calculate from options (if available)
+            put_distance = self.calculate_strike_distance(open_price, iv, sd_days, options, "put")
+            call_distance = self.calculate_strike_distance(open_price, iv, sd_days, options, "call")
+        else:  # 'sd' - default
+            # Use SD multiplier × expected move
+            put_distance = self.sd_multiplier * expected_move
+            call_distance = self.sd_multiplier * expected_move
+
+        # Pass calculated distances to strategy finders
+        if self.strategy_type == 'bull_put':
+            return self.find_bull_put_spread(options, open_price, put_distance, target_dte, use_raw_distance=True)
+        elif self.strategy_type == 'bear_call':
+            return self.find_bear_call_spread(options, open_price, call_distance, target_dte, use_raw_distance=True)
+        elif self.strategy_type == 'iron_butterfly':
+            return self.find_iron_butterfly(options, open_price, expected_move, target_dte)
+        elif self.strategy_type == 'diagonal_call':
+            return self.find_diagonal_call(options, open_price, call_distance, target_dte, use_raw_distance=True)
+        elif self.strategy_type == 'diagonal_put':
+            return self.find_diagonal_put(options, open_price, put_distance, target_dte, use_raw_distance=True)
+        else:  # iron_condor (default)
+            return self.find_iron_condor(options, open_price, put_distance, call_distance, target_dte, use_raw_distance=True)
+
+    def find_iron_condor(self, options: List[Dict], open_price: float,
+                         put_distance: float, call_distance: float = None,
+                         target_dte: int = 0, use_raw_distance: bool = False) -> Optional[Dict]:
+        """
+        Find Iron Condor with strikes at specified distance.
+
+        Args:
+            options: Options chain
+            open_price: Opening price of underlying
+            put_distance: Distance for put strike (if use_raw_distance=True, used directly)
+            call_distance: Distance for call strike (defaults to put_distance)
+            target_dte: Target days to expiration
+            use_raw_distance: If True, use distances directly. If False, multiply by sd_multiplier.
+        """
+        if not options:
+            return None
+
+        if call_distance is None:
+            call_distance = put_distance
 
         # Find options closest to target DTE
         available_dtes = list(set(o['dte'] for o in options))
@@ -757,11 +1078,15 @@ class HybridFixedBacktester:
 
         underlying = dte_options[0]['underlying_price']
 
-        # Target strikes at SD distance from OPEN price
-        put_target = open_price - (self.sd_multiplier * expected_move)
-        put_target = round(put_target / 5) * 5
+        # Target strikes at specified distance from OPEN price
+        if use_raw_distance:
+            put_target = open_price - put_distance
+            call_target = open_price + call_distance
+        else:
+            put_target = open_price - (self.sd_multiplier * put_distance)
+            call_target = open_price + (self.sd_multiplier * call_distance)
 
-        call_target = open_price + (self.sd_multiplier * expected_move)
+        put_target = round(put_target / 5) * 5
         call_target = round(call_target / 5) * 5
 
         # Find OTM options
@@ -839,8 +1164,9 @@ class HybridFixedBacktester:
 
         underlying = options[0]['underlying_price']
 
-        # Find strategy with CORRECT SD distance (supports iron_condor, bull_put, bear_call, iron_butterfly)
-        ic = self.find_strategy(options, open_price, expected_move_sd, tier.target_dte)
+        # Find strategy with appropriate strike selection method
+        # Pass iv and sd_days for delta/sd calculation if needed
+        ic = self.find_strategy(options, open_price, expected_move_sd, tier.target_dte, iv=iv, sd_days=tier.sd_days)
         if not ic:
             return None
 
@@ -852,10 +1178,14 @@ class HybridFixedBacktester:
         if total_credit_net <= 0:
             return None
 
-        # Max loss
-        max_loss = self.spread_width - total_credit_net
+        # Max loss - use override for diagonal spreads
+        if 'max_loss_override' in ic and ic['max_loss_override']:
+            max_loss = ic['max_loss_override']
+        else:
+            max_loss = self.spread_width - total_credit_net
+
         if max_loss <= 0:
-            return None
+            max_loss = self.spread_width  # Fallback to spread width
 
         # Position sizing
         risk_budget = self.equity * (self.risk_per_trade_pct / 100)
@@ -922,8 +1252,9 @@ class HybridFixedBacktester:
                 call_breached = True
 
         # Check intraday threats (for analysis)
-        intraday_put_threat = daily_low < ic['put_short_strike']
-        intraday_call_threat = daily_high > ic['call_short_strike']
+        # Only check if the strike is non-zero (diagonal strategies may have one side = 0)
+        intraday_put_threat = ic['put_short_strike'] > 0 and daily_low < ic['put_short_strike']
+        intraday_call_threat = ic['call_short_strike'] > 0 and daily_high > ic['call_short_strike']
 
         # Total P&L
         gross_pnl = (put_pnl + call_pnl) * 100 * contracts
