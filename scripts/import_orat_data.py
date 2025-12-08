@@ -230,13 +230,12 @@ def import_to_database(csv_path: Path) -> int:
     """Import a processed CSV file into the database using batch inserts"""
     try:
         from database_adapter import get_connection
-        import psycopg2.extras
     except ImportError:
         print("  ⚠️ Database not available - skipping DB import")
         return 0
 
     rows_imported = 0
-    BATCH_SIZE = 1000  # Insert 1000 rows at a time
+    BATCH_SIZE = 500  # Insert 500 rows at a time
 
     try:
         conn = get_connection()
@@ -247,6 +246,20 @@ def import_to_database(csv_path: Path) -> int:
         trade_date = datetime.strptime(date_str, '%Y%m%d').date()
 
         batch = []
+
+        insert_sql = """
+            INSERT INTO orat_options_eod (
+                trade_date, ticker, expiration_date, strike, option_type,
+                call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
+                delta, gamma, theta, vega, rho,
+                call_iv, put_iv, underlying_price, dte,
+                call_volume, put_volume, call_oi, put_oi
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING
+        """
 
         with open(csv_path, 'r') as f:
             reader = csv.DictReader(f)
@@ -297,19 +310,8 @@ def import_to_database(csv_path: Path) -> int:
 
                     # Insert batch when full
                     if len(batch) >= BATCH_SIZE:
-                        psycopg2.extras.execute_values(
-                            cursor,
-                            """INSERT INTO orat_options_eod (
-                                trade_date, ticker, expiration_date, strike, option_type,
-                                call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
-                                delta, gamma, theta, vega, rho,
-                                call_iv, put_iv, underlying_price, dte,
-                                call_volume, put_volume, call_oi, put_oi
-                            ) VALUES %s
-                            ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING""",
-                            batch,
-                            page_size=BATCH_SIZE
-                        )
+                        cursor.executemany(insert_sql, batch)
+                        conn.commit()
                         batch = []
 
                 except Exception as e:
@@ -317,21 +319,9 @@ def import_to_database(csv_path: Path) -> int:
 
         # Insert remaining rows
         if batch:
-            psycopg2.extras.execute_values(
-                cursor,
-                """INSERT INTO orat_options_eod (
-                    trade_date, ticker, expiration_date, strike, option_type,
-                    call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
-                    delta, gamma, theta, vega, rho,
-                    call_iv, put_iv, underlying_price, dte,
-                    call_volume, put_volume, call_oi, put_oi
-                ) VALUES %s
-                ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING""",
-                batch,
-                page_size=BATCH_SIZE
-            )
+            cursor.executemany(insert_sql, batch)
+            conn.commit()
 
-        conn.commit()
         conn.close()
 
     except Exception as e:
