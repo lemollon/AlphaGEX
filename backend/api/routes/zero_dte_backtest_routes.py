@@ -1089,3 +1089,80 @@ async def get_stored_data_status():
     except Exception as e:
         logger.error(f"Failed to get data status: {e}")
         return {"success": False, "error": str(e), "market_data_daily": [], "orat_options_eod": []}
+
+
+@router.get("/data-quality-check")
+async def check_data_quality():
+    """
+    Check data quality for backtesting - especially delta field availability.
+    Access via: GET /api/zero-dte/data-quality-check
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        results = {}
+
+        # Check total ORAT records
+        cursor.execute("SELECT COUNT(*) FROM orat_options_eod")
+        results['total_orat_records'] = cursor.fetchone()[0]
+
+        # Check records with delta
+        cursor.execute("SELECT COUNT(*) FROM orat_options_eod WHERE delta IS NOT NULL")
+        results['records_with_delta'] = cursor.fetchone()[0]
+
+        # Delta coverage percentage
+        if results['total_orat_records'] > 0:
+            results['delta_coverage_pct'] = round(
+                results['records_with_delta'] / results['total_orat_records'] * 100, 2
+            )
+        else:
+            results['delta_coverage_pct'] = 0
+
+        # Check date range
+        cursor.execute("""
+            SELECT MIN(trade_date), MAX(trade_date), COUNT(DISTINCT trade_date)
+            FROM orat_options_eod
+        """)
+        row = cursor.fetchone()
+        results['date_range'] = {
+            'earliest': str(row[0]) if row[0] else None,
+            'latest': str(row[1]) if row[1] else None,
+            'trading_days': row[2] or 0
+        }
+
+        # Check SPX vs SPXW breakdown
+        cursor.execute("""
+            SELECT ticker, COUNT(*) as cnt
+            FROM orat_options_eod
+            GROUP BY ticker
+        """)
+        results['by_ticker'] = {row[0]: row[1] for row in cursor.fetchall()}
+
+        # Sample of delta values (to verify they're reasonable)
+        cursor.execute("""
+            SELECT delta FROM orat_options_eod
+            WHERE delta IS NOT NULL
+            LIMIT 10
+        """)
+        sample_deltas = [float(row[0]) for row in cursor.fetchall()]
+        results['sample_deltas'] = sample_deltas
+
+        conn.close()
+
+        # Provide recommendation
+        if results['delta_coverage_pct'] >= 90:
+            results['delta_status'] = "GOOD - Delta data available"
+            results['recommendation'] = "Delta-based strike selection will work"
+        elif results['delta_coverage_pct'] >= 50:
+            results['delta_status'] = "PARTIAL - Some delta data available"
+            results['recommendation'] = "Delta selection may work but will often fall back to SD"
+        else:
+            results['delta_status'] = "MISSING - Delta data not available"
+            results['recommendation'] = "Use SD or Fixed strike selection instead"
+
+        return {"success": True, **results}
+
+    except Exception as e:
+        logger.error(f"Data quality check failed: {e}")
+        return {"success": False, "error": str(e)}
