@@ -132,6 +132,7 @@ class ZeroDTEBullPutSpreadBacktester:
         ticker: str = "SPXW",  # SPXW for weeklies (0DTE)
         monthly_return_target: float = 10.0,  # 10% monthly target
         trading_days_of_week: List[int] = None,  # Days to trade: 0=Mon, 1=Tue, etc.
+        max_vix: float = 30.0,  # Don't trade when VIX > this (crash protection)
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -144,6 +145,7 @@ class ZeroDTEBullPutSpreadBacktester:
         self.monthly_return_target = monthly_return_target
         # Default to Monday and Tuesday only
         self.trading_days_of_week = trading_days_of_week if trading_days_of_week is not None else [0, 1]
+        self.max_vix = max_vix  # VIX threshold - don't trade above this
 
         # State
         self.cash = initial_capital
@@ -159,9 +161,13 @@ class ZeroDTEBullPutSpreadBacktester:
         self.days_traded = 0
         self.days_with_data = 0
         self.days_skipped = 0
+        self.days_skipped_vix = 0  # Days skipped due to high VIX
 
         # Cache for SPX OHLC data (loaded once at start)
         self.spx_ohlc: Dict[str, Dict] = {}
+
+        # Cache for VIX data (for crash protection)
+        self.vix_data: Dict[str, float] = {}
 
     def load_spx_ohlc_data(self):
         """
@@ -217,6 +223,60 @@ class ZeroDTEBullPutSpreadBacktester:
             data = self.spx_ohlc[trade_date]
             return data['open'], data['close']
         return None, None
+
+    def load_vix_data(self):
+        """
+        Load VIX data from Yahoo Finance for crash protection.
+        When VIX is above threshold, we skip trading that day.
+        """
+        if not YFINANCE_AVAILABLE:
+            print("  VIX filter disabled - yfinance not available")
+            return
+
+        print("  Loading VIX data from Yahoo Finance...")
+
+        try:
+            ticker = yf.Ticker("^VIX")
+
+            start = datetime.strptime(self.start_date, '%Y-%m-%d') - timedelta(days=5)
+            end = datetime.strptime(self.end_date, '%Y-%m-%d') + timedelta(days=5)
+
+            df = ticker.history(start=start, end=end)
+
+            if df.empty:
+                print("  Warning: No VIX data from Yahoo Finance")
+                return
+
+            for idx, row in df.iterrows():
+                date_str = idx.strftime('%Y-%m-%d')
+                # Use the close price as the VIX level
+                self.vix_data[date_str] = float(row['Close'])
+
+            print(f"  Loaded {len(self.vix_data)} days of VIX data")
+
+        except Exception as e:
+            print(f"  Warning: Failed to load VIX data: {e}")
+            print("  VIX filter will be disabled")
+
+    def get_vix(self, trade_date: str) -> Optional[float]:
+        """Get VIX level for a given date."""
+        return self.vix_data.get(trade_date)
+
+    def should_trade(self, trade_date: str) -> Tuple[bool, str]:
+        """
+        Check if we should trade on this date based on VIX filter.
+        Returns (should_trade, reason)
+        """
+        vix = self.get_vix(trade_date)
+
+        if vix is None:
+            # No VIX data - trade anyway
+            return True, ""
+
+        if vix > self.max_vix:
+            return False, f"VIX={vix:.1f} > {self.max_vix}"
+
+        return True, ""
 
     def get_connection(self):
         """Get database connection"""
@@ -538,6 +598,7 @@ class ZeroDTEBullPutSpreadBacktester:
         print(f"Monthly Target:   {self.monthly_return_target}%")
         print(f"Ticker:           {self.ticker}")
         print(f"Trading Days:     {trading_days_str}")
+        print(f"VIX Filter:       Skip when VIX > {self.max_vix}")
         print("=" * 80)
 
         # Get trading days
@@ -570,6 +631,14 @@ class ZeroDTEBullPutSpreadBacktester:
         else:
             print("  Using SIMULATED settlement prices (install yfinance for real data)")
 
+        # Load VIX data for crash protection
+        self.load_vix_data()
+        use_vix_filter = len(self.vix_data) > 0
+        if use_vix_filter:
+            print(f"  VIX filter ENABLED - will skip trading when VIX > {self.max_vix}")
+        else:
+            print("  VIX filter disabled - no VIX data available")
+
         # Process each day
         total_days = len(trading_days)
         for i, trade_date in enumerate(trading_days):
@@ -582,6 +651,14 @@ class ZeroDTEBullPutSpreadBacktester:
                 filled = int(bar_len * i / total_days)
                 bar = "=" * filled + "-" * (bar_len - filled)
                 print(f"\r[{bar}] {pct:5.1f}% ({i}/{total_days}) | Trades: {len(self.all_trades)} | Equity: ${self.equity:,.0f}", end="", flush=True)
+
+            # Check VIX filter - skip high volatility days (crash protection)
+            if use_vix_filter:
+                should_trade, skip_reason = self.should_trade(trade_date)
+                if not should_trade:
+                    self.days_skipped_vix += 1
+                    self.days_skipped += 1
+                    continue
 
             # Get options for this day
             options = self.get_options_for_date(trade_date)
@@ -766,6 +843,7 @@ class ZeroDTEBullPutSpreadBacktester:
                 'days_with_data': self.days_with_data,
                 'days_traded': self.days_traded,
                 'days_skipped': self.days_skipped,
+                'days_skipped_vix': self.days_skipped_vix,
             },
             'parameters': {
                 'target_delta': self.target_delta,
@@ -857,6 +935,16 @@ class ZeroDTEBullPutSpreadBacktester:
         for outcome, count in o.items():
             pct = count / t['total_trades'] * 100 if t['total_trades'] > 0 else 0
             print(f"  {outcome}: {count} ({pct:.1f}%)")
+
+        print("-" * 80)
+
+        # Risk management stats
+        dq = results['data_quality']
+        print(f"\nRISK MANAGEMENT:")
+        print(f"  Days with data:         {dq['days_with_data']}")
+        print(f"  Days traded:            {dq['days_traded']}")
+        print(f"  Days skipped (VIX):     {dq['days_skipped_vix']} (VIX > {self.max_vix})")
+        print(f"  Days skipped (other):   {dq['days_skipped'] - dq['days_skipped_vix']}")
 
         print("-" * 80)
 
@@ -1006,6 +1094,7 @@ def main():
     parser.add_argument('--risk', type=float, default=2.0, help='Max risk per trade (percent)')
     parser.add_argument('--ticker', default='SPXW', help='Ticker (SPXW for weeklies)')
     parser.add_argument('--days', default='0,1', help='Days to trade: 0=Mon,1=Tue,2=Wed,3=Thu,4=Fri (default: 0,1 for Mon-Tue)')
+    parser.add_argument('--maxvix', type=float, default=30.0, help='Max VIX to trade (skip days above this, default: 30)')
     parser.add_argument('--export', action='store_true', help='Export trades to CSV')
 
     args = parser.parse_args()
@@ -1021,7 +1110,8 @@ def main():
         spread_width=args.width,
         max_risk_per_trade_pct=args.risk,
         ticker=args.ticker,
-        trading_days_of_week=trading_days
+        trading_days_of_week=trading_days,
+        max_vix=args.maxvix
     )
 
     results = backtester.run()
