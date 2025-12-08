@@ -6,12 +6,19 @@ echo ========================================
 :: Set the database URL
 set DATABASE_URL=postgresql://alphagex_user:e5DSVWnKceA16V5ysssLZCbqNE9ELRKi@dpg-d4quq1u3jp1c739oijb0-a.oregon-postgres.render.com/alphagex_backtest
 
+:: Create root .env file if it doesn't exist (backend uses load_dotenv)
+if not exist "%~dp0.env" (
+    echo Creating .env file...
+    echo DATABASE_URL=%DATABASE_URL%> "%~dp0.env"
+)
+
 :: Start the backend API in a new window (from backend folder)
 echo Starting Backend API...
 start "AlphaGEX Backend" cmd /k "cd /d %~dp0backend && set DATABASE_URL=%DATABASE_URL% && python main.py"
 
-:: Wait a few seconds for backend to initialize
-timeout /t 3 /nobreak > nul
+:: Wait for backend to fully initialize (needs time to connect to DB)
+echo Waiting for backend to initialize...
+timeout /t 8 /nobreak > nul
 
 :: Create frontend .env.local if it doesn't exist
 if not exist "%~dp0frontend\.env.local" (
