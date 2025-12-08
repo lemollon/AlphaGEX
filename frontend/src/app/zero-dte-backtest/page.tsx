@@ -152,6 +152,7 @@ export default function ZeroDTEBacktestPage() {
 
   // Job state
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [completedJobId, setCompletedJobId] = useState<string | null>(null)  // Keep job_id for exports
   const [jobStatus, setJobStatus] = useState<BacktestJob | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -163,11 +164,36 @@ export default function ZeroDTEBacktestPage() {
   const [showDataInfo, setShowDataInfo] = useState(false)
   const [activeTab, setActiveTab] = useState<'overview' | 'charts' | 'trades' | 'compare'>('overview')
 
+  // Backend connection status
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'error'>('checking')
+  const [oratDataInfo, setOratDataInfo] = useState<any>(null)
+
   // Comparison state
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([])
 
+  // Check backend health on mount
+  const checkBackendHealth = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/health`)
+      if (response.ok) {
+        const data = await response.json()
+        setBackendStatus('connected')
+        if (data.orat_data?.status === 'available') {
+          setOratDataInfo(data.orat_data)
+        }
+      } else {
+        setBackendStatus('error')
+        setError(`Backend returned HTTP ${response.status}`)
+      }
+    } catch (err) {
+      setBackendStatus('error')
+      setError(`Cannot connect to backend at ${API_URL}. Start it with: python backend/main.py`)
+    }
+  }
+
   // Load strategies and tiers on mount
   useEffect(() => {
+    checkBackendHealth()
     loadStrategies()
     loadStrategyTypes()
     loadTiers()
@@ -181,6 +207,18 @@ export default function ZeroDTEBacktestPage() {
     const interval = setInterval(async () => {
       try {
         const response = await fetch(`${API_URL}/api/zero-dte/job/${currentJobId}`)
+
+        // Handle HTTP errors
+        if (!response.ok) {
+          console.error(`Job poll failed: HTTP ${response.status}`)
+          if (response.status === 404) {
+            setRunning(false)
+            setCurrentJobId(null)
+            setError('Job not found - backend may have restarted. Please try again.')
+          }
+          return
+        }
+
         const data = await response.json()
 
         if (data.job) {
@@ -188,6 +226,7 @@ export default function ZeroDTEBacktestPage() {
 
           if (data.job.status === 'completed') {
             setRunning(false)
+            setCompletedJobId(currentJobId)  // Save for export buttons
             setCurrentJobId(null)
             setLiveJobResult(data.job.result)
             loadResults()
@@ -199,6 +238,10 @@ export default function ZeroDTEBacktestPage() {
         }
       } catch (err) {
         console.error('Failed to poll job status:', err)
+        // Network error - show user-friendly message
+        setError('Lost connection to backend - check if server is running at ' + API_URL)
+        setRunning(false)
+        setCurrentJobId(null)
       }
     }, 2000)
 
@@ -208,6 +251,10 @@ export default function ZeroDTEBacktestPage() {
   const loadStrategies = async () => {
     try {
       const response = await fetch(`${API_URL}/api/zero-dte/strategies`)
+      if (!response.ok) {
+        console.error(`Failed to load strategies: HTTP ${response.status}`)
+        return
+      }
       const data = await response.json()
       if (data.strategies) {
         setStrategies(data.strategies)
@@ -220,6 +267,10 @@ export default function ZeroDTEBacktestPage() {
   const loadStrategyTypes = async () => {
     try {
       const response = await fetch(`${API_URL}/api/zero-dte/strategy-types`)
+      if (!response.ok) {
+        console.error(`Failed to load strategy types: HTTP ${response.status}`)
+        return
+      }
       const data = await response.json()
       if (data.strategy_types) {
         setStrategyTypes(data.strategy_types)
@@ -232,6 +283,10 @@ export default function ZeroDTEBacktestPage() {
   const loadTiers = async () => {
     try {
       const response = await fetch(`${API_URL}/api/zero-dte/tiers`)
+      if (!response.ok) {
+        console.error(`Failed to load tiers: HTTP ${response.status}`)
+        return
+      }
       const data = await response.json()
       if (data.tiers) {
         setTiers(data.tiers)
@@ -244,6 +299,10 @@ export default function ZeroDTEBacktestPage() {
   const loadResults = async () => {
     try {
       const response = await fetch(`${API_URL}/api/zero-dte/results`)
+      if (!response.ok) {
+        console.error(`Failed to load results: HTTP ${response.status}`)
+        return
+      }
       const data = await response.json()
       if (data.results) {
         setResults(data.results)
@@ -257,10 +316,14 @@ export default function ZeroDTEBacktestPage() {
   }
 
   const runBacktest = async () => {
+    // Prevent double-clicks
+    if (running) return
+
     setRunning(true)
     setError(null)
     setJobStatus(null)
     setLiveJobResult(null)
+    setCompletedJobId(null)  // Clear old completed job
 
     try {
       const response = await fetch(`${API_URL}/api/zero-dte/run`, {
@@ -268,6 +331,21 @@ export default function ZeroDTEBacktestPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
       })
+
+      // Handle HTTP errors before trying to parse JSON
+      if (!response.ok) {
+        let errorMessage = `Server error: HTTP ${response.status}`
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.detail || errorData.error || errorMessage
+        } catch {
+          // If response isn't JSON, use status text
+          errorMessage = `Server error: ${response.status} ${response.statusText}`
+        }
+        setError(errorMessage)
+        setRunning(false)
+        return
+      }
 
       const data = await response.json()
 
@@ -284,11 +362,12 @@ export default function ZeroDTEBacktestPage() {
           completed_at: null
         })
       } else {
-        setError(data.error || 'Failed to start backtest')
+        setError(data.error || 'Failed to start backtest - no job_id returned')
         setRunning(false)
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to connect to API')
+      // Network error or backend not running
+      setError(`Cannot connect to backend at ${API_URL}. Is the server running?`)
       setRunning(false)
     }
   }
@@ -318,6 +397,20 @@ export default function ZeroDTEBacktestPage() {
 
   // Get current result (live or selected)
   const currentResult = liveJobResult || selectedResult
+
+  // Helper to check if result has valid data
+  const hasValidResult = (result: any): boolean => {
+    if (!result) return false
+    // Check for live job result structure
+    if (result.summary && result.trades) {
+      return result.trades.total > 0
+    }
+    // Check for saved result structure
+    if (result.total_trades !== undefined) {
+      return result.total_trades > 0
+    }
+    return false
+  }
 
   // Format monthly returns for chart
   const monthlyChartData = currentResult?.monthly_returns
@@ -370,15 +463,54 @@ export default function ZeroDTEBacktestPage() {
                 God of Time Decay - Hybrid scaling strategy with automatic tier transitions
               </p>
             </div>
-            <button
-              onClick={() => setShowDataInfo(!showDataInfo)}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
-            >
-              <Database className="w-4 h-4" />
-              Data Sources
-              {showDataInfo ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </button>
+            <div className="flex items-center gap-4">
+              {/* Backend Status Indicator */}
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs ${
+                backendStatus === 'connected' ? 'bg-green-900/50 text-green-400' :
+                backendStatus === 'error' ? 'bg-red-900/50 text-red-400' :
+                'bg-yellow-900/50 text-yellow-400'
+              }`}>
+                <div className={`w-2 h-2 rounded-full ${
+                  backendStatus === 'connected' ? 'bg-green-400' :
+                  backendStatus === 'error' ? 'bg-red-400' :
+                  'bg-yellow-400 animate-pulse'
+                }`} />
+                {backendStatus === 'connected' ? 'Backend Connected' :
+                 backendStatus === 'error' ? 'Backend Offline' :
+                 'Checking...'}
+              </div>
+              <button
+                onClick={() => setShowDataInfo(!showDataInfo)}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
+              >
+                <Database className="w-4 h-4" />
+                Data Sources
+                {showDataInfo ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
+
+          {/* Backend Error Banner */}
+          {backendStatus === 'error' && (
+            <div className="bg-red-900/30 border border-red-800 rounded-lg p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+                <div>
+                  <div className="font-bold text-red-300">Backend Not Connected</div>
+                  <div className="text-sm text-red-400">
+                    Start the backend with: <code className="bg-red-900/50 px-2 py-0.5 rounded">python backend/main.py</code>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={checkBackendHealth}
+                className="px-4 py-2 bg-red-800 hover:bg-red-700 rounded-lg text-sm flex items-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Retry
+              </button>
+            </div>
+          )}
 
           {/* Data Sources Info Panel */}
           {showDataInfo && (
@@ -750,13 +882,19 @@ export default function ZeroDTEBacktestPage() {
             <div className="mt-6 flex items-center gap-4">
               <button
                 onClick={runBacktest}
-                disabled={running}
+                disabled={running || backendStatus !== 'connected'}
                 className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                title={backendStatus !== 'connected' ? 'Backend not connected' : undefined}
               >
                 {running ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
                     Running Backtest...
+                  </>
+                ) : backendStatus !== 'connected' ? (
+                  <>
+                    <AlertTriangle className="w-5 h-5" />
+                    Backend Offline
                   </>
                 ) : (
                   <>
@@ -766,7 +904,7 @@ export default function ZeroDTEBacktestPage() {
                 )}
               </button>
 
-              {error && (
+              {error && !error.includes('Backend') && (
                 <div className="flex items-center gap-2 text-red-400">
                   <AlertTriangle className="w-5 h-5" />
                   {error}
@@ -839,7 +977,7 @@ export default function ZeroDTEBacktestPage() {
           </div>
 
           {/* Results Section */}
-          {(liveJobResult || results.length > 0) && (
+          {(hasValidResult(liveJobResult) || results.length > 0) && (
             <>
               {/* Tabs */}
               <div className="flex gap-2 border-b border-gray-800 pb-2">
@@ -859,7 +997,7 @@ export default function ZeroDTEBacktestPage() {
               </div>
 
               {/* Overview Tab */}
-              {activeTab === 'overview' && currentResult && (
+              {activeTab === 'overview' && hasValidResult(currentResult) && (
                 <>
                   {/* Summary Cards */}
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
@@ -932,24 +1070,24 @@ export default function ZeroDTEBacktestPage() {
                   )}
 
                   {/* Export Buttons */}
-                  {currentJobId && (
+                  {completedJobId && liveJobResult && (
                     <div className="flex gap-4">
                       <button
-                        onClick={() => exportTrades(currentJobId)}
+                        onClick={() => exportTrades(completedJobId)}
                         className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
                       >
                         <FileSpreadsheet className="w-4 h-4" />
                         Export Trades CSV
                       </button>
                       <button
-                        onClick={() => exportSummary(currentJobId)}
+                        onClick={() => exportSummary(completedJobId)}
                         className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
                       >
                         <Download className="w-4 h-4" />
                         Export Summary CSV
                       </button>
                       <button
-                        onClick={() => exportEquityCurve(currentJobId)}
+                        onClick={() => exportEquityCurve(completedJobId)}
                         className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
                       >
                         <LineChart className="w-4 h-4" />
@@ -1273,7 +1411,7 @@ export default function ZeroDTEBacktestPage() {
           )}
 
           {/* Empty State */}
-          {!liveJobResult && results.length === 0 && !running && (
+          {!hasValidResult(liveJobResult) && results.length === 0 && !running && (
             <div className="bg-gray-900 border-2 border-dashed border-gray-700 rounded-xl p-12 text-center">
               <TestTube className="w-16 h-16 mx-auto mb-4 text-gray-600" />
               <h2 className="text-2xl font-bold mb-2">No Backtest Results Yet</h2>
@@ -1281,6 +1419,12 @@ export default function ZeroDTEBacktestPage() {
                 Configure your strategy parameters above and click "Run Backtest" to analyze the
                 0DTE Iron Condor hybrid scaling strategy with your ORAT historical data.
               </p>
+              {error && (
+                <div className="mt-4 p-4 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-sm max-w-lg mx-auto">
+                  <AlertTriangle className="w-5 h-5 inline mr-2" />
+                  {error}
+                </div>
+              )}
             </div>
           )}
 
