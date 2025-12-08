@@ -33,6 +33,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / '.env')
 
+# Try to import yfinance for real OHLC data
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+    print("Warning: yfinance not installed. Run: pip install yfinance")
+    print("Using simulated settlement prices instead of real OHLC data.")
+
 
 @dataclass
 class BullPutSpreadTrade:
@@ -147,6 +156,64 @@ class ZeroDTEBullPutSpreadBacktester:
         self.days_traded = 0
         self.days_with_data = 0
         self.days_skipped = 0
+
+        # Cache for SPX OHLC data (loaded once at start)
+        self.spx_ohlc: Dict[str, Dict] = {}
+
+    def load_spx_ohlc_data(self):
+        """
+        Load SPX OHLC data from Yahoo Finance.
+        This gives us real open/close prices for accurate backtesting.
+
+        Entry: Use OPEN price (assumes entry at market open)
+        Settlement: Use CLOSE price (0DTE settles at close)
+        """
+        if not YFINANCE_AVAILABLE:
+            print("  yfinance not available - will use simulated settlement")
+            return
+
+        print("  Loading SPX OHLC data from Yahoo Finance...")
+
+        try:
+            # Yahoo Finance uses ^GSPC for SPX
+            ticker = yf.Ticker("^GSPC")
+
+            # Add buffer days to handle weekends
+            start = datetime.strptime(self.start_date, '%Y-%m-%d') - timedelta(days=5)
+            end = datetime.strptime(self.end_date, '%Y-%m-%d') + timedelta(days=5)
+
+            df = ticker.history(start=start, end=end)
+
+            if df.empty:
+                print("  Warning: No SPX data from Yahoo Finance")
+                return
+
+            # Convert to dictionary for fast lookup
+            for idx, row in df.iterrows():
+                date_str = idx.strftime('%Y-%m-%d')
+                self.spx_ohlc[date_str] = {
+                    'open': float(row['Open']),
+                    'high': float(row['High']),
+                    'low': float(row['Low']),
+                    'close': float(row['Close']),
+                    'volume': float(row['Volume'])
+                }
+
+            print(f"  Loaded {len(self.spx_ohlc)} days of SPX OHLC data")
+
+        except Exception as e:
+            print(f"  Warning: Failed to load SPX data from Yahoo: {e}")
+            print("  Will use simulated settlement prices")
+
+    def get_spx_prices(self, trade_date: str) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Get SPX open and close prices for a given date.
+        Returns (open_price, close_price) or (None, None) if not available.
+        """
+        if trade_date in self.spx_ohlc:
+            data = self.spx_ohlc[trade_date]
+            return data['open'], data['close']
+        return None, None
 
     def get_connection(self):
         """Get database connection"""
@@ -476,6 +543,14 @@ class ZeroDTEBullPutSpreadBacktester:
 
         print(f"Found {len(trading_days)} trading days with 0DTE data")
 
+        # Load real SPX OHLC data from Yahoo Finance
+        self.load_spx_ohlc_data()
+        use_real_data = len(self.spx_ohlc) > 0
+        if use_real_data:
+            print("  Using REAL SPX close prices for settlement")
+        else:
+            print("  Using SIMULATED settlement prices (install yfinance for real data)")
+
         # Process each day
         total_days = len(trading_days)
         for i, trade_date in enumerate(trading_days):
@@ -500,12 +575,28 @@ class ZeroDTEBullPutSpreadBacktester:
             trade = self.execute_trade(trade_date, options)
 
             if trade:
-                # Simulate realistic settlement price based on IV
-                # ORAT provides EOD data, so we simulate intraday movement
-                iv = trade.short_iv if trade.short_iv > 0 else 0.20  # Default 20% IV
-                settlement_price = self.simulate_settlement(
-                    trade.underlying_price, iv, trade_date
-                )
+                # Get settlement price using REAL intraday movement
+                if use_real_data:
+                    open_price, close_price = self.get_spx_prices(trade_date)
+                    if open_price and close_price:
+                        # Calculate REAL intraday move from Yahoo
+                        # This is the actual Open -> Close movement for the day
+                        intraday_move = close_price - open_price
+
+                        # Apply intraday move to ORAT's underlying
+                        # ORAT underlying_price represents entry level
+                        # Settlement = entry + actual daily movement
+                        settlement_price = trade.underlying_price + intraday_move
+                    else:
+                        # Fallback to ORAT's underlying_price
+                        settlement_price = trade.underlying_price
+                else:
+                    # Simulate settlement based on IV (fallback)
+                    iv = trade.short_iv if trade.short_iv > 0 else 0.20
+                    settlement_price = self.simulate_settlement(
+                        trade.underlying_price, iv, trade_date
+                    )
+
                 self.settle_trade(trade, settlement_price)
                 self.all_trades.append(trade)
                 self.days_traded += 1
