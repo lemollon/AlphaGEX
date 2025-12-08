@@ -27,9 +27,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / '.env')
 
-# PostgreSQL REAL limits
-REAL_MAX = 3.4e38
-REAL_MIN = -3.4e38
+# PostgreSQL REAL limits (actual safe range is ~1e37, using 1e30 to be safe)
+REAL_MAX = 1e30
+REAL_MIN = -1e30
 
 # Paths
 ORAT_PROCESSED_DIR = Path(__file__).parent.parent / 'data' / 'orat_processed'
