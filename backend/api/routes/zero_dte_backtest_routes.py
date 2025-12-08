@@ -476,8 +476,25 @@ async def get_strategy_types():
                 "legs": 4,
                 "direction": "neutral",
                 "credit": True
+            },
+            {
+                "id": "diagonal_call",
+                "name": "Diagonal Call (PMCC)",
+                "description": "Sell near-term OTM call at SD distance, buy longer-term call. Poor Man's Covered Call.",
+                "legs": 2,
+                "direction": "bearish/neutral",
+                "credit": False,
+                "note": "Short strike placed at configured SD multiplier above price"
+            },
+            {
+                "id": "diagonal_put",
+                "name": "Diagonal Put (PMCP)",
+                "description": "Sell near-term OTM put at SD distance, buy longer-term put. Poor Man's Covered Put.",
+                "legs": 2,
+                "direction": "bullish/neutral",
+                "credit": False,
+                "note": "Short strike placed at configured SD multiplier below price"
             }
-            # Note: Strangle removed - undefined risk, not safe for backtesting
         ]
     }
 
