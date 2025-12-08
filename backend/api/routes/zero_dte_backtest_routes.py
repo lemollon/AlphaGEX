@@ -476,16 +476,8 @@ async def get_strategy_types():
                 "legs": 4,
                 "direction": "neutral",
                 "credit": True
-            },
-            {
-                "id": "strangle",
-                "name": "Short Strangle",
-                "description": "Sell OTM put + OTM call. Undefined risk, use with caution.",
-                "legs": 2,
-                "direction": "neutral",
-                "credit": True,
-                "warning": "Undefined risk - not recommended for beginners"
             }
+            # Note: Strangle removed - undefined risk, not safe for backtesting
         ]
     }
 
