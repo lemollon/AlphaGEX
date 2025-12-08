@@ -234,7 +234,7 @@ def save_underlying_prices(trade_date: date, prices: Dict) -> int:
     return rows_saved
 
 
-def import_to_database(csv_path: Path) -> int:
+def import_to_database(csv_path: Path, show_progress: bool = False) -> int:
     """Import a processed CSV file into the database using batch inserts"""
     try:
         from database_adapter import get_connection
@@ -244,96 +244,109 @@ def import_to_database(csv_path: Path) -> int:
 
     rows_imported = 0
     BATCH_SIZE = 500  # Insert 500 rows at a time
+    MAX_RETRIES = 3
 
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
+    # Parse trade date from filename
+    date_str = csv_path.stem.replace('orat_spx_', '')
+    trade_date = datetime.strptime(date_str, '%Y%m%d').date()
 
-        # Parse trade date from filename
-        date_str = csv_path.stem.replace('orat_spx_', '')
-        trade_date = datetime.strptime(date_str, '%Y%m%d').date()
+    insert_sql = """
+        INSERT INTO orat_options_eod (
+            trade_date, ticker, expiration_date, strike, option_type,
+            call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
+            delta, gamma, theta, vega, rho,
+            call_iv, put_iv, underlying_price, dte,
+            call_volume, put_volume, call_oi, put_oi
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING
+    """
 
-        batch = []
+    # Read all rows first
+    all_rows = []
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                exp_date = row.get('expirDate', '')
+                if exp_date:
+                    try:
+                        exp_date = datetime.strptime(exp_date, '%Y-%m-%d').date()
+                    except:
+                        exp_date = None
 
-        insert_sql = """
-            INSERT INTO orat_options_eod (
-                trade_date, ticker, expiration_date, strike, option_type,
-                call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
-                delta, gamma, theta, vega, rho,
-                call_iv, put_iv, underlying_price, dte,
-                call_volume, put_volume, call_oi, put_oi
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-            )
-            ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING
-        """
+                yte = float(row.get('yte', 0) or 0)
+                dte = int(yte * 365)
 
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
+                row_data = (
+                    trade_date,
+                    row.get('ticker', ''),
+                    exp_date,
+                    float(row.get('strike', 0) or 0),
+                    'BOTH',
+                    float(row.get('cBidPx', 0) or 0),
+                    float(row.get('cAskPx', 0) or 0),
+                    (float(row.get('cBidPx', 0) or 0) + float(row.get('cAskPx', 0) or 0)) / 2,
+                    float(row.get('pBidPx', 0) or 0),
+                    float(row.get('pAskPx', 0) or 0),
+                    (float(row.get('pBidPx', 0) or 0) + float(row.get('pAskPx', 0) or 0)) / 2,
+                    float(row.get('delta', 0) or 0),
+                    float(row.get('gamma', 0) or 0),
+                    float(row.get('theta', 0) or 0),
+                    float(row.get('vega', 0) or 0),
+                    float(row.get('rho', 0) or 0),
+                    float(row.get('cMidIv', 0) or 0),
+                    float(row.get('pMidIv', 0) or 0),
+                    float(row.get('stkPx', 0) or 0),
+                    dte,
+                    int(float(row.get('cVolu', 0) or 0)),
+                    int(float(row.get('pVolu', 0) or 0)),
+                    int(float(row.get('cOi', 0) or 0)),
+                    int(float(row.get('pOi', 0) or 0))
+                )
+                all_rows.append(row_data)
+            except Exception:
+                continue
 
-            for row in reader:
-                try:
-                    # Parse expiration date
-                    exp_date = row.get('expirDate', '')
-                    if exp_date:
-                        try:
-                            exp_date = datetime.strptime(exp_date, '%Y-%m-%d').date()
-                        except:
-                            exp_date = None
+    # Insert in batches with retry logic
+    total_batches = (len(all_rows) + BATCH_SIZE - 1) // BATCH_SIZE
 
-                    # Calculate DTE from yte (years to expiration)
-                    yte = float(row.get('yte', 0) or 0)
-                    dte = int(yte * 365)
+    for batch_num in range(total_batches):
+        start_idx = batch_num * BATCH_SIZE
+        end_idx = min(start_idx + BATCH_SIZE, len(all_rows))
+        batch = all_rows[start_idx:end_idx]
 
-                    # Build row tuple
-                    row_data = (
-                        trade_date,
-                        row.get('ticker', ''),
-                        exp_date,
-                        float(row.get('strike', 0) or 0),
-                        'BOTH',
-                        float(row.get('cBidPx', 0) or 0),
-                        float(row.get('cAskPx', 0) or 0),
-                        (float(row.get('cBidPx', 0) or 0) + float(row.get('cAskPx', 0) or 0)) / 2,
-                        float(row.get('pBidPx', 0) or 0),
-                        float(row.get('pAskPx', 0) or 0),
-                        (float(row.get('pBidPx', 0) or 0) + float(row.get('pAskPx', 0) or 0)) / 2,
-                        float(row.get('delta', 0) or 0),
-                        float(row.get('gamma', 0) or 0),
-                        float(row.get('theta', 0) or 0),
-                        float(row.get('vega', 0) or 0),
-                        float(row.get('rho', 0) or 0),
-                        float(row.get('cMidIv', 0) or 0),
-                        float(row.get('pMidIv', 0) or 0),
-                        float(row.get('stkPx', 0) or 0),
-                        dte,
-                        int(float(row.get('cVolu', 0) or 0)),
-                        int(float(row.get('pVolu', 0) or 0)),
-                        int(float(row.get('cOi', 0) or 0)),
-                        int(float(row.get('pOi', 0) or 0))
-                    )
-                    batch.append(row_data)
-                    rows_imported += 1
+        # Retry logic for each batch
+        for retry in range(MAX_RETRIES):
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.executemany(insert_sql, batch)
+                conn.commit()
+                conn.close()
+                rows_imported += len(batch)
 
-                    # Insert batch when full
-                    if len(batch) >= BATCH_SIZE:
-                        cursor.executemany(insert_sql, batch)
-                        conn.commit()
-                        batch = []
+                # Show batch progress if requested
+                if show_progress and HAS_TQDM:
+                    pass  # tqdm handles this
+                elif show_progress:
+                    print(f"    Batch {batch_num + 1}/{total_batches} ✓", end='\r', flush=True)
+                break  # Success, exit retry loop
 
-                except Exception as e:
-                    continue
-
-        # Insert remaining rows
-        if batch:
-            cursor.executemany(insert_sql, batch)
-            conn.commit()
-
-        conn.close()
-
-    except Exception as e:
-        print(f"  ❌ Database error: {e}")
+            except Exception as e:
+                if retry < MAX_RETRIES - 1:
+                    import time
+                    wait_time = 2 ** retry  # Exponential backoff: 1, 2, 4 seconds
+                    print(f"\n    ⚠️ Batch {batch_num + 1} failed, retrying in {wait_time}s... ({e})")
+                    time.sleep(wait_time)
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                else:
+                    print(f"\n    ❌ Batch {batch_num + 1} failed after {MAX_RETRIES} retries: {e}")
 
     return rows_imported
 
@@ -455,6 +468,7 @@ def main():
     # Database import (sequential for now)
     if not args.no_db and not args.extract_only:
         print("\n📥 Importing to database...")
+        print("   (Each file has ~30 batches of 500 rows - watch for movement)\n")
 
         # Count files to import
         files_to_import = [s for s in results if s['success'] and s['filtered_rows'] > 0 and s['date']]
@@ -464,7 +478,8 @@ def main():
         if HAS_TQDM:
             pbar_db = tqdm(files_to_import, total=total_files,
                           desc="📥 DB Import", unit="file",
-                          bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+                          bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
+                          position=0)
         else:
             pbar_db = files_to_import
 
@@ -473,8 +488,11 @@ def main():
             if csv_path.exists():
                 date_str = stats['date'].strftime('%Y-%m-%d')
 
-                # Import options data
-                db_rows = import_to_database(csv_path)
+                if HAS_TQDM:
+                    pbar_db.set_description(f"📥 {date_str}")
+
+                # Import options data with progress
+                db_rows = import_to_database(csv_path, show_progress=not HAS_TQDM)
                 total_stats['db_rows'] += db_rows
 
                 # Also extract and save underlying prices
@@ -484,12 +502,13 @@ def main():
                     total_stats['price_rows'] += price_rows
 
                 if HAS_TQDM:
-                    pbar_db.set_postfix({'date': date_str, 'rows': f"{db_rows:,}"})
+                    pbar_db.set_postfix({'rows': f"{db_rows:,}", 'total': f"{total_stats['db_rows']:,}"})
                 else:
-                    print(f"  [{idx}/{total_files}] {date_str} ✅ {db_rows:,} rows")
+                    print(f"\n  [{idx}/{total_files}] {date_str} ✅ {db_rows:,} rows")
 
         if HAS_TQDM:
             pbar_db.close()
+        print()  # New line after progress
 
     # Summary
     print("\n" + "=" * 70)
