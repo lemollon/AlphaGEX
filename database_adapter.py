@@ -40,9 +40,20 @@ class DatabaseAdapter:
             'port': result.port or 5432,
             'user': result.username,
             'password': result.password,
-            'database': result.path[1:]  # Remove leading /
+            'database': result.path[1:],  # Remove leading /
+            # Timeout settings to prevent hanging
+            'connect_timeout': 30,  # 30 seconds to connect
+            'options': '-c statement_timeout=300000',  # 5 minute query timeout
+            # Keepalive settings for long operations
+            'keepalives': 1,
+            'keepalives_idle': 30,
+            'keepalives_interval': 10,
+            'keepalives_count': 5
         }
-        print(f"✅ Using PostgreSQL: {self.pg_config['host']}/{self.pg_config['database']}")
+        global _connection_logged
+        if not _connection_logged:
+            print(f"✅ Using PostgreSQL: {self.pg_config['host']}/{self.pg_config['database']}")
+            _connection_logged = True
 
     def connect(self):
         """Create PostgreSQL database connection"""
@@ -217,6 +228,7 @@ class PostgreSQLCursor:
 # Global adapter instance
 _adapter = None
 _db_available = None  # Cache the availability check
+_connection_logged = False  # Only log connection once
 
 
 def is_database_available() -> bool:
