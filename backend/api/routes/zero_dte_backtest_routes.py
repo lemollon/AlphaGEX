@@ -219,17 +219,27 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
         backtester.progress_callback = update_progress
 
         # Run backtest
+        logger.info(f"Starting backtest for {config.ticker} from {config.start_date} to {config.end_date}")
         results = backtester.run()
+        logger.info(f"Backtest run() returned: {type(results)}, keys: {results.keys() if results else 'empty'}")
 
         _jobs[job_id]['progress'] = 95
         _jobs[job_id]['progress_message'] = 'Finalizing results...'
 
         # Check if results are valid (not empty)
         if not results or not results.get('trades') or results.get('trades', {}).get('total', 0) == 0:
-            # No trades found - this is an error condition
+            # More detailed error info
+            error_detail = f'No trades found for {config.ticker} between {config.start_date} and {config.end_date}.'
+            if not results:
+                error_detail += ' Backtest returned empty results (check if market data or ORAT data loaded).'
+            elif not results.get('trades'):
+                error_detail += f' Results missing "trades" key. Keys: {list(results.keys())}'
+            else:
+                error_detail += f' Trade count was 0.'
+            logger.warning(error_detail)
             _jobs[job_id]['status'] = 'failed'
             _jobs[job_id]['progress'] = 100
-            _jobs[job_id]['error'] = f'No trades found for {config.ticker} between {config.start_date} and {config.end_date}. Check that ORAT data exists for this ticker and date range.'
+            _jobs[job_id]['error'] = error_detail
             _jobs[job_id]['progress_message'] = 'No trades found'
             _jobs[job_id]['completed_at'] = datetime.now().isoformat()
             return
