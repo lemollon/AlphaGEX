@@ -109,7 +109,7 @@ interface BacktestResult {
   monthly_returns: any
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export default function ZeroDTEBacktestPage() {
   // Configuration state

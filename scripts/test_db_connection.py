@@ -145,6 +145,38 @@ except Exception as e:
     print(f"❌ INSERT failed after {elapsed:.1f}s: {e}")
     conn.rollback()
 
+# Step 9: Check stored backtest results
+print("\n📊 Checking stored backtest results...")
+try:
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'zero_dte_backtest_results'
+        );
+    """)
+    exists = cursor.fetchone()[0]
+    if exists:
+        cursor.execute("SELECT COUNT(*) FROM zero_dte_backtest_results")
+        count = cursor.fetchone()[0]
+        print(f"   Backtest results table: {count} saved backtests")
+
+        if count > 0:
+            cursor.execute("""
+                SELECT job_id, strategy, ticker, start_date, end_date,
+                       total_return_pct, win_rate, total_trades, created_at
+                FROM zero_dte_backtest_results
+                ORDER BY created_at DESC
+                LIMIT 5
+            """)
+            results = cursor.fetchall()
+            print(f"   Recent backtests:")
+            for r in results:
+                print(f"      {r[0][:8]}... | {r[1]} | {r[2]} | {r[3]} to {r[4]} | {r[5]:.1f}% return | {r[6]:.1f}% win | {r[7]} trades")
+    else:
+        print("   Backtest results table doesn't exist yet (created on first backtest)")
+except Exception as e:
+    print(f"❌ Error checking backtest results: {e}")
+
 conn.close()
 print("\n" + "=" * 60)
 print("TEST COMPLETE")
