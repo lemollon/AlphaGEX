@@ -356,6 +356,9 @@ class HybridFixedBacktester:
                     return best['strike'] - price
 
             # Fall back to SD if delta not found
+            self.delta_fallback_count = getattr(self, 'delta_fallback_count', 0) + 1
+            if self.delta_fallback_count == 1:
+                print(f"⚠️ Warning: Delta-based strike selection falling back to SD method (delta data not available)")
             expected_move = self.calculate_expected_move(price, iv, days)
             return self.sd_multiplier * expected_move
 
@@ -548,58 +551,73 @@ class HybridFixedBacktester:
         print(f"  Loaded {len(self.vix_data)} days of VIX data from Yahoo API")
 
     def get_trading_days(self) -> List[str]:
-        """Get all trading days"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        """Get all trading days from ORAT options data"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT DISTINCT trade_date
-            FROM orat_options_eod
-            WHERE ticker = %s
-              AND trade_date >= %s
-              AND trade_date <= %s
-            ORDER BY trade_date
-        """, (self.ticker, self.start_date, self.end_date))
+            cursor.execute("""
+                SELECT DISTINCT trade_date
+                FROM orat_options_eod
+                WHERE ticker = %s
+                  AND trade_date >= %s
+                  AND trade_date <= %s
+                ORDER BY trade_date
+            """, (self.ticker, self.start_date, self.end_date))
 
-        days = [row[0].strftime('%Y-%m-%d') for row in cursor.fetchall()]
-        conn.close()
-        return days
+            days = [row[0].strftime('%Y-%m-%d') for row in cursor.fetchall()]
+            conn.close()
+
+            if not days:
+                print(f"⚠️ Warning: No trading days found for {self.ticker} between {self.start_date} and {self.end_date}")
+
+            return days
+
+        except Exception as e:
+            print(f"❌ Error fetching trading days: {e}")
+            print("   Make sure orat_options_eod table exists and has data for the specified ticker/dates")
+            return []
 
     def get_options_for_date(self, trade_date: str, target_dte: int) -> List[Dict]:
         """Get options near target DTE"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
 
-        # Get options within range of target DTE
-        min_dte = max(0, target_dte - 3)
-        max_dte = target_dte + 7
+            # Get options within range of target DTE
+            min_dte = max(0, target_dte - 3)
+            max_dte = target_dte + 7
 
-        cursor.execute("""
-            SELECT
-                strike, underlying_price, dte,
-                put_bid, put_ask, call_bid, call_ask,
-                delta, put_iv, call_iv
-            FROM orat_options_eod
-            WHERE ticker = %s
-              AND trade_date = %s
-              AND dte >= %s
-              AND dte <= %s
-            ORDER BY ABS(dte - %s), strike
-        """, (self.ticker, trade_date, min_dte, max_dte, target_dte))
+            cursor.execute("""
+                SELECT
+                    strike, underlying_price, dte,
+                    put_bid, put_ask, call_bid, call_ask,
+                    delta, put_iv, call_iv
+                FROM orat_options_eod
+                WHERE ticker = %s
+                  AND trade_date = %s
+                  AND dte >= %s
+                  AND dte <= %s
+                ORDER BY ABS(dte - %s), strike
+            """, (self.ticker, trade_date, min_dte, max_dte, target_dte))
 
-        columns = ['strike', 'underlying_price', 'dte', 'put_bid', 'put_ask',
-                   'call_bid', 'call_ask', 'delta', 'put_iv', 'call_iv']
+            columns = ['strike', 'underlying_price', 'dte', 'put_bid', 'put_ask',
+                       'call_bid', 'call_ask', 'delta', 'put_iv', 'call_iv']
 
-        options = []
-        for row in cursor.fetchall():
-            opt = dict(zip(columns, row))
-            for key in opt:
-                if opt[key] is not None and key != 'dte':
-                    opt[key] = float(opt[key])
-            options.append(opt)
+            options = []
+            for row in cursor.fetchall():
+                opt = dict(zip(columns, row))
+                for key in opt:
+                    if opt[key] is not None and key != 'dte':
+                        opt[key] = float(opt[key])
+                options.append(opt)
 
-        conn.close()
-        return options
+            conn.close()
+            return options
+
+        except Exception as e:
+            print(f"⚠️ Warning: Error fetching options for {trade_date}: {e}")
+            return []
 
     def find_bull_put_spread(self, options: List[Dict], open_price: float,
                              strike_distance: float, target_dte: int,
@@ -868,12 +886,14 @@ class HybridFixedBacktester:
 
         net_debit = long_premium - short_premium  # Positive = we pay, Negative = credit
 
-        # For diagonal, max loss is the net debit (if long has higher strike) or more complex
-        # Simplified: max loss = net debit if debit, or spread width if credit
+        # For diagonal, max loss depends on whether it's a debit or credit
+        # Debit spread: max loss = net debit paid
+        # Credit spread: max loss = spread width - credit received
         if net_debit > 0:
             max_loss = net_debit
         else:
-            max_loss = self.spread_width  # Approximate
+            # Credit scenario: max loss is spread width reduced by credit received
+            max_loss = max(self.spread_width + net_debit, 0.01)  # net_debit is negative here
 
         return {
             'actual_dte': short_dte,
@@ -963,10 +983,14 @@ class HybridFixedBacktester:
 
         net_debit = long_premium - short_premium
 
+        # For diagonal, max loss depends on whether it's a debit or credit
+        # Debit spread: max loss = net debit paid
+        # Credit spread: max loss = spread width - credit received
         if net_debit > 0:
             max_loss = net_debit
         else:
-            max_loss = self.spread_width
+            # Credit scenario: max loss is spread width reduced by credit received
+            max_loss = max(self.spread_width + net_debit, 0.01)  # net_debit is negative here
 
         return {
             'actual_dte': short_dte,
@@ -1228,8 +1252,9 @@ class HybridFixedBacktester:
                 call_breached = True
 
         # Check intraday threats (for analysis)
-        intraday_put_threat = daily_low < ic['put_short_strike']
-        intraday_call_threat = daily_high > ic['call_short_strike']
+        # Only check if the strike is non-zero (diagonal strategies may have one side = 0)
+        intraday_put_threat = ic['put_short_strike'] > 0 and daily_low < ic['put_short_strike']
+        intraday_call_threat = ic['call_short_strike'] > 0 and daily_high > ic['call_short_strike']
 
         # Total P&L
         gross_pnl = (put_pnl + call_pnl) * 100 * contracts
