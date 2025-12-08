@@ -80,7 +80,55 @@ try:
 except Exception as e:
     print(f"❌ Error counting rows: {e}")
 
-# Step 5: Try a test INSERT
+# Step 5: Check what tickers are in the database
+print("\n🏷️ Checking tickers in database...")
+try:
+    cursor.execute("""
+        SELECT ticker, COUNT(*) as count
+        FROM orat_options_eod
+        GROUP BY ticker
+        ORDER BY count DESC
+        LIMIT 20
+    """)
+    rows = cursor.fetchall()
+    print(f"   Found {len(rows)} unique tickers:")
+    for ticker, count in rows:
+        print(f"      {ticker}: {count:,} rows")
+except Exception as e:
+    print(f"❌ Error checking tickers: {e}")
+
+# Step 6: Check date range
+print("\n📅 Checking date range...")
+try:
+    cursor.execute("""
+        SELECT MIN(trade_date), MAX(trade_date)
+        FROM orat_options_eod
+    """)
+    min_date, max_date = cursor.fetchone()
+    print(f"   Date range: {min_date} to {max_date}")
+except Exception as e:
+    print(f"❌ Error checking dates: {e}")
+
+# Step 7: Check SPX specifically (what backtester needs)
+print("\n📈 Checking SPX data specifically...")
+try:
+    cursor.execute("""
+        SELECT COUNT(*) FROM orat_options_eod WHERE ticker = 'SPX'
+    """)
+    spx_count = cursor.fetchone()[0]
+    print(f"   SPX rows: {spx_count:,}")
+
+    if spx_count > 0:
+        cursor.execute("""
+            SELECT MIN(trade_date), MAX(trade_date)
+            FROM orat_options_eod WHERE ticker = 'SPX'
+        """)
+        min_date, max_date = cursor.fetchone()
+        print(f"   SPX date range: {min_date} to {max_date}")
+except Exception as e:
+    print(f"❌ Error checking SPX data: {e}")
+
+# Step 8: Try a test INSERT
 print("\n🧪 Testing INSERT (will rollback)...")
 start = time.time()
 try:

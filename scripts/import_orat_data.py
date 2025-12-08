@@ -312,6 +312,7 @@ def import_to_database(csv_path: Path, show_progress: bool = False) -> int:
 
     # Insert in batches with retry logic
     total_batches = (len(all_rows) + BATCH_SIZE - 1) // BATCH_SIZE
+    print(f"      {len(all_rows):,} rows in {total_batches} batches: ", end='', flush=True)
 
     for batch_num in range(total_batches):
         start_idx = batch_num * BATCH_SIZE
@@ -328,25 +329,24 @@ def import_to_database(csv_path: Path, show_progress: bool = False) -> int:
                 conn.close()
                 rows_imported += len(batch)
 
-                # Show batch progress if requested
-                if show_progress and HAS_TQDM:
-                    pass  # tqdm handles this
-                elif show_progress:
-                    print(f"    Batch {batch_num + 1}/{total_batches} ✓", end='\r', flush=True)
+                # Show batch progress - print a dot for each successful batch
+                print(".", end='', flush=True)
                 break  # Success, exit retry loop
 
             except Exception as e:
                 if retry < MAX_RETRIES - 1:
                     import time
                     wait_time = 2 ** retry  # Exponential backoff: 1, 2, 4 seconds
-                    print(f"\n    ⚠️ Batch {batch_num + 1} failed, retrying in {wait_time}s... ({e})")
+                    print(f"R", end='', flush=True)  # R = retry
                     time.sleep(wait_time)
                     try:
                         conn.close()
                     except:
                         pass
                 else:
-                    print(f"\n    ❌ Batch {batch_num + 1} failed after {MAX_RETRIES} retries: {e}")
+                    print(f"X", end='', flush=True)  # X = failed
+
+    print(" Done!")  # Newline after all batches
 
     return rows_imported
 
