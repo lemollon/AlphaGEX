@@ -224,24 +224,30 @@ class ZeroDTEBullPutSpreadBacktester:
         - Long put at (short_strike - spread_width)
 
         Returns (short_put, long_put) or None if no valid spread found
+
+        NOTE: ORAT stores CALL delta (0 to 1), not put delta.
+        Put delta = call delta - 1
+        So for a 15 delta PUT, we need call delta = 0.85
         """
         if not options:
             return None
 
-        # Filter for OTM puts (delta < 0, closer to 0 = more OTM)
-        # ORAT delta is negative for puts, so we look for delta close to -target_delta
+        # ORAT stores CALL delta (0 to 1)
+        # For OTM puts: call delta 0.70-0.95 = put delta -0.30 to -0.05
+        # For 15 delta put: call delta = 1 - 0.15 = 0.85
+        target_call_delta = 1.0 - target_delta  # Convert put delta target to call delta
+
         short_candidates = [
             opt for opt in options
             if opt['delta'] is not None
-            and -0.30 < opt['delta'] < -0.05  # Between 5 and 30 delta puts
+            and 0.70 < opt['delta'] < 0.95  # Call delta for 5-30 delta puts
         ]
 
         if not short_candidates:
             return None
 
-        # Find put closest to target delta
-        target = -target_delta
-        short_put = min(short_candidates, key=lambda x: abs(x['delta'] - target))
+        # Find put closest to target (using call delta)
+        short_put = min(short_candidates, key=lambda x: abs(x['delta'] - target_call_delta))
 
         # Find long put at spread_width below
         long_strike = short_put['strike'] - spread_width
