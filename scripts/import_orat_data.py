@@ -421,19 +421,29 @@ def main():
     # Database import (sequential for now)
     if not args.no_db and not args.extract_only:
         print("\n📥 Importing to database...")
-        for stats in results:
-            if stats['success'] and stats['filtered_rows'] > 0 and stats['date']:
-                csv_path = ORAT_PROCESSED_DIR / f"orat_spx_{stats['date'].strftime('%Y%m%d')}.csv"
-                if csv_path.exists():
-                    # Import options data
-                    db_rows = import_to_database(csv_path)
-                    total_stats['db_rows'] += db_rows
 
-                    # Also extract and save underlying prices
-                    prices = extract_underlying_prices(csv_path)
-                    if prices:
-                        price_rows = save_underlying_prices(stats['date'], prices)
-                        total_stats['price_rows'] += price_rows
+        # Count files to import
+        files_to_import = [s for s in results if s['success'] and s['filtered_rows'] > 0 and s['date']]
+        total_files = len(files_to_import)
+
+        for idx, stats in enumerate(files_to_import, 1):
+            csv_path = ORAT_PROCESSED_DIR / f"orat_spx_{stats['date'].strftime('%Y%m%d')}.csv"
+            if csv_path.exists():
+                # Show progress
+                date_str = stats['date'].strftime('%Y-%m-%d')
+                print(f"  [{idx}/{total_files}] Importing {date_str}...", end=" ", flush=True)
+
+                # Import options data
+                db_rows = import_to_database(csv_path)
+                total_stats['db_rows'] += db_rows
+
+                # Also extract and save underlying prices
+                prices = extract_underlying_prices(csv_path)
+                if prices:
+                    price_rows = save_underlying_prices(stats['date'], prices)
+                    total_stats['price_rows'] += price_rows
+
+                print(f"✅ {db_rows:,} rows")
 
     # Summary
     print("\n" + "=" * 70)
