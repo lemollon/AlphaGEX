@@ -162,40 +162,40 @@ def import_single_file(csv_path_str: str) -> tuple:
         buffer.seek(0)
         cursor = conn.cursor()
 
-        # Create temp table
+        # Create temp table with TEXT columns to avoid overflow during COPY
         cursor.execute("""
             CREATE TEMP TABLE temp_import (
                 trade_date DATE,
                 ticker TEXT,
                 expiration_date TEXT,
-                strike REAL,
+                strike TEXT,
                 option_type TEXT,
-                call_bid REAL,
-                call_ask REAL,
-                call_mid REAL,
-                put_bid REAL,
-                put_ask REAL,
-                put_mid REAL,
-                delta REAL,
-                gamma REAL,
-                theta REAL,
-                vega REAL,
-                rho REAL,
-                call_iv REAL,
-                put_iv REAL,
-                underlying_price REAL,
-                dte INTEGER,
-                call_volume INTEGER,
-                put_volume INTEGER,
-                call_oi INTEGER,
-                put_oi INTEGER
+                call_bid TEXT,
+                call_ask TEXT,
+                call_mid TEXT,
+                put_bid TEXT,
+                put_ask TEXT,
+                put_mid TEXT,
+                delta TEXT,
+                gamma TEXT,
+                theta TEXT,
+                vega TEXT,
+                rho TEXT,
+                call_iv TEXT,
+                put_iv TEXT,
+                underlying_price TEXT,
+                dte TEXT,
+                call_volume TEXT,
+                put_volume TEXT,
+                call_oi TEXT,
+                put_oi TEXT
             )
         """)
 
         # COPY data into temp table
         cursor.copy_from(buffer, 'temp_import', sep='\t', null='\\N')
 
-        # Insert with conflict handling
+        # Insert with conflict handling - cast TEXT to proper types with capping
         cursor.execute("""
             INSERT INTO orat_options_eod (
                 trade_date, ticker, expiration_date, strike, option_type,
@@ -205,13 +205,30 @@ def import_single_file(csv_path_str: str) -> tuple:
                 call_volume, put_volume, call_oi, put_oi
             )
             SELECT
-                trade_date, ticker,
+                trade_date,
+                ticker,
                 CASE WHEN expiration_date = '' THEN NULL ELSE expiration_date::DATE END,
-                strike, option_type,
-                call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
-                delta, gamma, theta, vega, rho,
-                call_iv, put_iv, underlying_price, dte,
-                call_volume, put_volume, call_oi, put_oi
+                LEAST(GREATEST(strike::FLOAT, -1e30), 1e30)::REAL,
+                option_type,
+                LEAST(GREATEST(call_bid::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(call_ask::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(call_mid::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(put_bid::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(put_ask::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(put_mid::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(delta::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(gamma::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(theta::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(vega::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(rho::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(call_iv::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(put_iv::FLOAT, -1e30), 1e30)::REAL,
+                LEAST(GREATEST(underlying_price::FLOAT, -1e30), 1e30)::REAL,
+                dte::INTEGER,
+                call_volume::INTEGER,
+                put_volume::INTEGER,
+                call_oi::INTEGER,
+                put_oi::INTEGER
             FROM temp_import
             ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING
         """)
