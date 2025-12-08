@@ -227,18 +227,26 @@ def save_underlying_prices(trade_date: date, prices: Dict) -> int:
 
 
 def import_to_database(csv_path: Path) -> int:
-    """Import a processed CSV file into the database"""
+    """Import a processed CSV file into the database using batch inserts"""
     try:
         from database_adapter import get_connection
+        import psycopg2.extras
     except ImportError:
         print("  ⚠️ Database not available - skipping DB import")
         return 0
 
     rows_imported = 0
+    BATCH_SIZE = 1000  # Insert 1000 rows at a time
 
     try:
         conn = get_connection()
         cursor = conn.cursor()
+
+        # Parse trade date from filename
+        date_str = csv_path.stem.replace('orat_spx_', '')
+        trade_date = datetime.strptime(date_str, '%Y%m%d').date()
+
+        batch = []
 
         with open(csv_path, 'r') as f:
             reader = csv.DictReader(f)
@@ -257,31 +265,13 @@ def import_to_database(csv_path: Path) -> int:
                     yte = float(row.get('yte', 0) or 0)
                     dte = int(yte * 365)
 
-                    # Parse trade date from filename
-                    date_str = csv_path.stem.replace('orat_spx_', '')
-                    trade_date = datetime.strptime(date_str, '%Y%m%d').date()
-
-                    cursor.execute("""
-                        INSERT INTO orat_options_eod (
-                            trade_date, ticker, expiration_date, strike, option_type,
-                            call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
-                            delta, gamma, theta, vega, rho,
-                            call_iv, put_iv, underlying_price, dte,
-                            call_volume, put_volume, call_oi, put_oi
-                        ) VALUES (
-                            %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s,
-                            %s, %s, %s, %s
-                        )
-                        ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING
-                    """, (
+                    # Build row tuple
+                    row_data = (
                         trade_date,
                         row.get('ticker', ''),
                         exp_date,
                         float(row.get('strike', 0) or 0),
-                        'BOTH',  # ORAT has both call and put data in same row
+                        'BOTH',
                         float(row.get('cBidPx', 0) or 0),
                         float(row.get('cAskPx', 0) or 0),
                         (float(row.get('cBidPx', 0) or 0) + float(row.get('cAskPx', 0) or 0)) / 2,
@@ -301,12 +291,45 @@ def import_to_database(csv_path: Path) -> int:
                         int(float(row.get('pVolu', 0) or 0)),
                         int(float(row.get('cOi', 0) or 0)),
                         int(float(row.get('pOi', 0) or 0))
-                    ))
+                    )
+                    batch.append(row_data)
                     rows_imported += 1
 
+                    # Insert batch when full
+                    if len(batch) >= BATCH_SIZE:
+                        psycopg2.extras.execute_values(
+                            cursor,
+                            """INSERT INTO orat_options_eod (
+                                trade_date, ticker, expiration_date, strike, option_type,
+                                call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
+                                delta, gamma, theta, vega, rho,
+                                call_iv, put_iv, underlying_price, dte,
+                                call_volume, put_volume, call_oi, put_oi
+                            ) VALUES %s
+                            ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING""",
+                            batch,
+                            page_size=BATCH_SIZE
+                        )
+                        batch = []
+
                 except Exception as e:
-                    # Skip bad rows
                     continue
+
+        # Insert remaining rows
+        if batch:
+            psycopg2.extras.execute_values(
+                cursor,
+                """INSERT INTO orat_options_eod (
+                    trade_date, ticker, expiration_date, strike, option_type,
+                    call_bid, call_ask, call_mid, put_bid, put_ask, put_mid,
+                    delta, gamma, theta, vega, rho,
+                    call_iv, put_iv, underlying_price, dte,
+                    call_volume, put_volume, call_oi, put_oi
+                ) VALUES %s
+                ON CONFLICT (trade_date, ticker, expiration_date, strike) DO NOTHING""",
+                batch,
+                page_size=BATCH_SIZE
+            )
 
         conn.commit()
         conn.close()
@@ -421,19 +444,29 @@ def main():
     # Database import (sequential for now)
     if not args.no_db and not args.extract_only:
         print("\n📥 Importing to database...")
-        for stats in results:
-            if stats['success'] and stats['filtered_rows'] > 0 and stats['date']:
-                csv_path = ORAT_PROCESSED_DIR / f"orat_spx_{stats['date'].strftime('%Y%m%d')}.csv"
-                if csv_path.exists():
-                    # Import options data
-                    db_rows = import_to_database(csv_path)
-                    total_stats['db_rows'] += db_rows
 
-                    # Also extract and save underlying prices
-                    prices = extract_underlying_prices(csv_path)
-                    if prices:
-                        price_rows = save_underlying_prices(stats['date'], prices)
-                        total_stats['price_rows'] += price_rows
+        # Count files to import
+        files_to_import = [s for s in results if s['success'] and s['filtered_rows'] > 0 and s['date']]
+        total_files = len(files_to_import)
+
+        for idx, stats in enumerate(files_to_import, 1):
+            csv_path = ORAT_PROCESSED_DIR / f"orat_spx_{stats['date'].strftime('%Y%m%d')}.csv"
+            if csv_path.exists():
+                # Show progress
+                date_str = stats['date'].strftime('%Y-%m-%d')
+                print(f"  [{idx}/{total_files}] Importing {date_str}...", end=" ", flush=True)
+
+                # Import options data
+                db_rows = import_to_database(csv_path)
+                total_stats['db_rows'] += db_rows
+
+                # Also extract and save underlying prices
+                prices = extract_underlying_prices(csv_path)
+                if prices:
+                    price_rows = save_underlying_prices(stats['date'], prices)
+                    total_stats['price_rows'] += price_rows
+
+                print(f"✅ {db_rows:,} rows")
 
     # Summary
     print("\n" + "=" * 70)
