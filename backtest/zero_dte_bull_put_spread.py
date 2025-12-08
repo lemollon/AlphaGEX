@@ -18,6 +18,8 @@ import os
 import sys
 import uuid
 import argparse
+import random
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
@@ -304,6 +306,36 @@ class ZeroDTEBullPutSpreadBacktester:
             loss = short_strike - long_strike
             return -loss, "MAX_LOSS"
 
+    def simulate_settlement(self, entry_price: float, iv: float, trade_date: str) -> float:
+        """
+        Simulate realistic settlement price based on IV.
+
+        ORAT provides EOD data, so we need to simulate intraday movement.
+        Expected Daily Move = Underlying * IV * sqrt(1/252)
+
+        Uses trade_date as random seed for reproducibility.
+        """
+        # Seed random with date for reproducibility
+        date_seed = int(trade_date.replace('-', ''))
+        random.seed(date_seed)
+
+        # Calculate expected daily move (1 standard deviation)
+        # Annualized IV to daily: IV * sqrt(1/252)
+        daily_vol = iv * math.sqrt(1/252)
+        expected_move = entry_price * daily_vol
+
+        # Simulate using normal distribution
+        # Most days within 1 SD, occasionally 2-3 SD moves
+        z_score = random.gauss(0, 1)
+
+        # Cap extreme moves to 3 standard deviations
+        z_score = max(-3, min(3, z_score))
+
+        # Calculate settlement
+        settlement = entry_price + (expected_move * z_score)
+
+        return settlement
+
     def size_position(self, credit: float, spread_width: float,
                       underlying_price: float) -> Tuple[int, float, float]:
         """
@@ -464,16 +496,17 @@ class ZeroDTEBullPutSpreadBacktester:
                 self.days_skipped += 1
                 continue
 
-            # Get underlying price for settlement
-            underlying_price = options[0]['underlying_price'] if options else 0
-
             # Execute trade
             trade = self.execute_trade(trade_date, options)
 
             if trade:
-                # For 0DTE, we settle same day using underlying close as proxy
-                # In reality, SPX settles to AM settlement price
-                self.settle_trade(trade, underlying_price)
+                # Simulate realistic settlement price based on IV
+                # ORAT provides EOD data, so we simulate intraday movement
+                iv = trade.short_iv if trade.short_iv > 0 else 0.20  # Default 20% IV
+                settlement_price = self.simulate_settlement(
+                    trade.underlying_price, iv, trade_date
+                )
+                self.settle_trade(trade, settlement_price)
                 self.all_trades.append(trade)
                 self.days_traded += 1
             else:
@@ -520,13 +553,56 @@ class ZeroDTEBullPutSpreadBacktester:
 
         win_rate = len(wins) / len(self.all_trades) * 100 if self.all_trades else 0
 
-        avg_win = sum(t.total_pnl for t in wins) / len(wins) if wins else 0
-        avg_loss = sum(t.total_pnl for t in losses) / len(losses) if losses else 0
+        # Gross profit/loss
+        gross_profit = sum(t.total_pnl for t in wins) if wins else 0
+        gross_loss = sum(t.total_pnl for t in losses) if losses else 0
 
-        profit_factor = abs(sum(t.total_pnl for t in wins) / sum(t.total_pnl for t in losses)) if losses and sum(t.total_pnl for t in losses) != 0 else float('inf')
+        avg_win = gross_profit / len(wins) if wins else 0
+        avg_loss = gross_loss / len(losses) if losses else 0
 
-        # Max drawdown
-        max_dd = max(d.drawdown_pct for d in self.daily_equity) if self.daily_equity else 0
+        profit_factor = abs(gross_profit / gross_loss) if gross_loss != 0 else float('inf')
+
+        # Expected payoff (average trade)
+        expected_payoff = total_pnl / len(self.all_trades) if self.all_trades else 0
+
+        # Drawdowns
+        max_dd_pct = max(d.drawdown_pct for d in self.daily_equity) if self.daily_equity else 0
+        # Calculate absolute and maximal drawdown in dollars
+        peak_equity = self.initial_capital
+        max_dd_dollars = 0
+        for daily in self.daily_equity:
+            peak_equity = max(peak_equity, daily.equity)
+            dd = peak_equity - daily.equity
+            max_dd_dollars = max(max_dd_dollars, dd)
+
+        # Consecutive wins/losses
+        max_consec_wins = 0
+        max_consec_losses = 0
+        max_consec_win_profit = 0
+        max_consec_loss_amount = 0
+
+        current_wins = 0
+        current_losses = 0
+        current_win_profit = 0
+        current_loss_amount = 0
+
+        for trade in self.all_trades:
+            if trade.total_pnl > 0:
+                current_wins += 1
+                current_win_profit += trade.total_pnl
+                if current_wins > max_consec_wins:
+                    max_consec_wins = current_wins
+                    max_consec_win_profit = current_win_profit
+                current_losses = 0
+                current_loss_amount = 0
+            else:
+                current_losses += 1
+                current_loss_amount += trade.total_pnl
+                if current_losses > max_consec_losses:
+                    max_consec_losses = current_losses
+                    max_consec_loss_amount = current_loss_amount
+                current_wins = 0
+                current_win_profit = 0
 
         # Monthly returns
         monthly_returns = self._calculate_monthly_returns()
@@ -551,7 +627,10 @@ class ZeroDTEBullPutSpreadBacktester:
                 'final_equity': self.equity,
                 'total_pnl': total_pnl,
                 'total_return_pct': total_return_pct,
-                'max_drawdown_pct': max_dd,
+                'gross_profit': gross_profit,
+                'gross_loss': gross_loss,
+                'max_drawdown_pct': max_dd_pct,
+                'max_drawdown_dollars': max_dd_dollars,
             },
             'trades': {
                 'total_trades': len(self.all_trades),
@@ -561,8 +640,13 @@ class ZeroDTEBullPutSpreadBacktester:
                 'avg_win': avg_win,
                 'avg_loss': avg_loss,
                 'profit_factor': profit_factor,
+                'expected_payoff': expected_payoff,
                 'largest_win': max(t.total_pnl for t in self.all_trades) if self.all_trades else 0,
                 'largest_loss': min(t.total_pnl for t in self.all_trades) if self.all_trades else 0,
+                'max_consec_wins': max_consec_wins,
+                'max_consec_win_profit': max_consec_win_profit,
+                'max_consec_losses': max_consec_losses,
+                'max_consec_loss_amount': max_consec_loss_amount,
             },
             'outcomes': outcomes,
             'monthly_returns': monthly_returns,
@@ -614,7 +698,7 @@ class ZeroDTEBullPutSpreadBacktester:
         return monthly
 
     def _print_results(self, results: Dict):
-        """Print formatted results"""
+        """Print formatted results in MetaTrader style"""
         s = results['summary']
         t = results['trades']
         o = results['outcomes']
@@ -623,34 +707,54 @@ class ZeroDTEBullPutSpreadBacktester:
         print("0DTE BULL PUT SPREAD BACKTEST RESULTS")
         print("=" * 80)
 
-        print(f"\nPERFORMANCE:")
-        print(f"  Initial Capital:     ${s['initial_capital']:,.2f}")
-        print(f"  Final Equity:        ${s['final_equity']:,.2f}")
-        print(f"  Total P&L:           ${s['total_pnl']:+,.2f}")
-        print(f"  Total Return:        {s['total_return_pct']:+.2f}%")
-        print(f"  Max Drawdown:        {s['max_drawdown_pct']:.2f}%")
+        # Period info
+        print(f"\nSymbol                 {s['ticker']} (S&P 500 Index)")
+        print(f"Period                 {s['start_date']} - {s['end_date']}")
+        print(f"Strategy               {s['strategy']}")
 
-        print(f"\nTRADE STATISTICS:")
-        print(f"  Total Trades:        {t['total_trades']}")
-        print(f"  Winning Trades:      {t['winning_trades']}")
-        print(f"  Losing Trades:       {t['losing_trades']}")
-        print(f"  Win Rate:            {t['win_rate_pct']:.1f}%")
-        print(f"  Avg Win:             ${t['avg_win']:+,.2f}")
-        print(f"  Avg Loss:            ${t['avg_loss']:+,.2f}")
-        print(f"  Profit Factor:       {t['profit_factor']:.2f}")
-        print(f"  Largest Win:         ${t['largest_win']:+,.2f}")
-        print(f"  Largest Loss:        ${t['largest_loss']:+,.2f}")
+        print("-" * 80)
 
+        # Main performance metrics (MetaTrader style)
+        print(f"\nInitial deposit        {s['initial_capital']:,.2f}")
+        print(f"Total net profit       {s['total_pnl']:,.2f}              Gross profit           {s['gross_profit']:,.2f}")
+        print(f"                                               Gross loss             {s['gross_loss']:,.2f}")
+        pf_str = f"{t['profit_factor']:.2f}" if t['profit_factor'] != float('inf') else "inf"
+        print(f"Profit factor          {pf_str}                Expected payoff        {t['expected_payoff']:,.2f}")
+        print(f"Maximal drawdown       {s['max_drawdown_dollars']:,.2f} ({s['max_drawdown_pct']:.2f}%)")
+
+        print("-" * 80)
+
+        # Trade statistics
+        print(f"\nTotal trades           {t['total_trades']}")
+        win_pct = t['winning_trades'] / t['total_trades'] * 100 if t['total_trades'] > 0 else 0
+        loss_pct = t['losing_trades'] / t['total_trades'] * 100 if t['total_trades'] > 0 else 0
+        print(f"                       Profit trades (pct of total)   {t['winning_trades']} ({win_pct:.2f}%)")
+        print(f"                       Loss trades (pct of total)     {t['losing_trades']} ({loss_pct:.2f}%)")
+
+        print(f"\n                       Largest profit trade          {t['largest_win']:,.2f}")
+        print(f"                       Largest loss trade            {t['largest_loss']:,.2f}")
+
+        print(f"\n                       Average profit trade          {t['avg_win']:,.2f}")
+        print(f"                       Average loss trade            {t['avg_loss']:,.2f}")
+
+        print(f"\n                       Maximum consecutive wins      {t['max_consec_wins']} ({t['max_consec_win_profit']:,.2f})")
+        print(f"                       Maximum consecutive losses    {t['max_consec_losses']} ({t['max_consec_loss_amount']:,.2f})")
+
+        print("-" * 80)
+
+        # Outcome breakdown
         print(f"\nOUTCOME BREAKDOWN:")
         for outcome, count in o.items():
             pct = count / t['total_trades'] * 100 if t['total_trades'] > 0 else 0
             print(f"  {outcome}: {count} ({pct:.1f}%)")
 
-        print(f"\nMONTHLY RETURNS:")
-        print(f"  Average Monthly:     {results['avg_monthly_return_pct']:+.2f}%")
-        print(f"  Target ({self.monthly_return_target}%):        {'MET' if results['monthly_target_met'] else 'NOT MET'}")
+        print("-" * 80)
 
-        # Show some months
+        # Monthly returns
+        print(f"\nMONTHLY RETURNS:")
+        print(f"  Average Monthly Return:  {results['avg_monthly_return_pct']:+.2f}%")
+        print(f"  Target ({self.monthly_return_target}%):           {'MET' if results['monthly_target_met'] else 'NOT MET'}")
+
         monthly = results['monthly_returns']
         if monthly:
             print(f"\n  Recent months:")
