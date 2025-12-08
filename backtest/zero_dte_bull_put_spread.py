@@ -125,7 +125,7 @@ class ZeroDTEBullPutSpreadBacktester:
         start_date: str = "2020-01-01",
         end_date: str = None,
         initial_capital: float = 1_000_000,
-        target_delta: float = 0.15,  # 15 delta puts
+        target_delta: float = 0.15,  # 15 delta puts (used if use_sd_strike=False)
         spread_width: float = 10.0,  # $10 wide spread
         max_risk_per_trade_pct: float = 2.0,  # Max 2% of capital at risk per trade
         max_daily_trades: int = 1,  # 1 trade per day
@@ -135,6 +135,8 @@ class ZeroDTEBullPutSpreadBacktester:
         max_vix: float = 30.0,  # Don't trade when VIX > this (crash protection)
         stop_loss_multiplier: float = 2.0,  # Exit if loss hits 2x credit received
         profit_target_pct: float = 50.0,  # Take profits at 50% of max profit
+        use_sd_strike: bool = True,  # Use standard deviation for strike selection
+        sd_multiple: float = 1.0,  # Number of SDs below open for short strike
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -150,6 +152,8 @@ class ZeroDTEBullPutSpreadBacktester:
         self.max_vix = max_vix  # VIX threshold - don't trade above this
         self.stop_loss_multiplier = stop_loss_multiplier  # Exit at X times credit
         self.profit_target_pct = profit_target_pct  # Take profit at X% of max
+        self.use_sd_strike = use_sd_strike  # SD-based vs delta-based strike selection
+        self.sd_multiple = sd_multiple  # How many SDs below open
 
         # State
         self.cash = initial_capital
@@ -406,6 +410,60 @@ class ZeroDTEBullPutSpreadBacktester:
 
         return (short_put, long_put)
 
+    def find_spread_by_strike(self, options: List[Dict], target_strike: float, spread_width: float) -> Optional[Tuple[Dict, Dict]]:
+        """
+        Find bull put spread based on target strike price (for SD-based selection).
+
+        - Short put at strike closest to target_strike
+        - Long put at (short_strike - spread_width)
+
+        Returns (short_put, long_put) or None if no valid spread found
+        """
+        if not options:
+            return None
+
+        # Find all OTM puts (strikes below current price)
+        underlying = options[0]['underlying_price'] if options else 0
+        otm_puts = [opt for opt in options if opt['strike'] < underlying and opt['put_bid'] > 0]
+
+        if not otm_puts:
+            return None
+
+        # Find strike closest to target
+        short_put = min(otm_puts, key=lambda x: abs(x['strike'] - target_strike))
+
+        # Find long put at spread_width below
+        long_strike = short_put['strike'] - spread_width
+
+        # Find exact or closest strike
+        long_candidates = [opt for opt in options if abs(opt['strike'] - long_strike) < 1]
+
+        if not long_candidates:
+            # Try to find any strike below
+            long_candidates = [opt for opt in options if opt['strike'] < short_put['strike']]
+            if not long_candidates:
+                return None
+            long_put = max(long_candidates, key=lambda x: x['strike'])
+        else:
+            long_put = min(long_candidates, key=lambda x: abs(x['strike'] - long_strike))
+
+        # Validate spread
+        if long_put['strike'] >= short_put['strike']:
+            return None
+
+        return (short_put, long_put)
+
+    def calculate_expected_move(self, underlying_price: float, iv: float) -> float:
+        """
+        Calculate expected daily move (1 standard deviation).
+
+        Expected Move = Underlying × IV × √(1/252)
+
+        For 0DTE, this represents 1 SD of expected movement.
+        """
+        daily_factor = math.sqrt(1 / 252)
+        return underlying_price * iv * daily_factor
+
     def calculate_credit(self, short_put: Dict, long_put: Dict) -> float:
         """
         Calculate credit received for bull put spread.
@@ -497,11 +555,31 @@ class ZeroDTEBullPutSpreadBacktester:
 
         return contracts, total_credit, total_risk
 
-    def execute_trade(self, trade_date: str, options: List[Dict]) -> Optional[BullPutSpreadTrade]:
-        """Execute a single bull put spread trade"""
+    def execute_trade(self, trade_date: str, options: List[Dict],
+                      open_price: float = None, iv: float = None) -> Optional[BullPutSpreadTrade]:
+        """
+        Execute a single bull put spread trade.
 
-        # Find spread
-        spread = self.find_spread(options, self.target_delta, self.spread_width)
+        If use_sd_strike=True and open_price/iv are provided:
+            Strike = Open - (SD_multiple × Expected_Move)
+        Otherwise:
+            Strike selected by delta
+        """
+        # Determine strike selection method
+        if self.use_sd_strike and open_price is not None and iv is not None and iv > 0:
+            # Calculate target strike: 1 SD below open
+            expected_move = self.calculate_expected_move(open_price, iv)
+            target_strike = open_price - (self.sd_multiple * expected_move)
+
+            # Round to nearest $5 strike (SPX has $5 strikes)
+            target_strike = round(target_strike / 5) * 5
+
+            # Find spread by target strike
+            spread = self.find_spread_by_strike(options, target_strike, self.spread_width)
+        else:
+            # Fallback to delta-based selection
+            spread = self.find_spread(options, self.target_delta, self.spread_width)
+
         if not spread:
             return None
 
@@ -657,7 +735,10 @@ class ZeroDTEBullPutSpreadBacktester:
         print("=" * 80)
         print(f"Period:           {self.start_date} to {self.end_date}")
         print(f"Initial Capital:  ${self.initial_capital:,.2f}")
-        print(f"Target Delta:     {self.target_delta} ({self.target_delta*100:.0f} delta puts)")
+        if self.use_sd_strike:
+            print(f"Strike Selection: {self.sd_multiple} SD below OPEN (standard deviation)")
+        else:
+            print(f"Strike Selection: {self.target_delta} ({self.target_delta*100:.0f} delta puts)")
         print(f"Spread Width:     ${self.spread_width:.0f}")
         print(f"Max Risk/Trade:   {self.max_risk_per_trade_pct}%")
         print(f"Monthly Target:   {self.monthly_return_target}%")
@@ -734,37 +815,41 @@ class ZeroDTEBullPutSpreadBacktester:
                 self.days_skipped += 1
                 continue
 
-            # Execute trade
-            trade = self.execute_trade(trade_date, options)
+            # Get OHLC data for strike selection and settlement
+            open_price, high_price, low_price, close_price = None, None, None, None
+            if use_real_data:
+                open_price, high_price, low_price, close_price = self.get_spx_prices(trade_date)
+
+            # Get average IV from options for expected move calculation
+            ivs = [opt['put_iv'] for opt in options if opt['put_iv'] and opt['put_iv'] > 0]
+            avg_iv = sum(ivs) / len(ivs) if ivs else 0.20  # Default 20% IV
+
+            # Execute trade (passing open price and IV for SD-based strike selection)
+            trade = self.execute_trade(trade_date, options, open_price, avg_iv)
 
             if trade:
                 # Get settlement price and HIGH/LOW for stop loss using REAL data
                 daily_low = None
                 daily_high = None
 
-                if use_real_data:
-                    open_price, high_price, low_price, close_price = self.get_spx_prices(trade_date)
-                    if open_price and close_price:
-                        # Calculate REAL intraday move from Yahoo
-                        intraday_move = close_price - open_price
+                if use_real_data and open_price and close_price:
+                    # Calculate REAL intraday move from Yahoo
+                    intraday_move = close_price - open_price
 
-                        # Apply intraday move to ORAT's underlying
-                        settlement_price = trade.underlying_price + intraday_move
+                    # Apply intraday move to ORAT's underlying
+                    settlement_price = trade.underlying_price + intraday_move
 
-                        # Calculate adjusted high/low for stop loss checks
-                        # Scale the high/low range relative to our entry price
-                        daily_range = high_price - low_price
-                        daily_low = trade.underlying_price + (low_price - open_price)
-                        daily_high = trade.underlying_price + (high_price - open_price)
-                    else:
-                        settlement_price = trade.underlying_price
+                    # Calculate adjusted high/low for stop loss checks
+                    # Scale the high/low range relative to our entry price
+                    daily_low = trade.underlying_price + (low_price - open_price)
+                    daily_high = trade.underlying_price + (high_price - open_price)
                 else:
-                    # Simulate settlement based on IV (fallback)
+                    # Simulate settlement based on IV (fallback when no Yahoo data)
                     iv = trade.short_iv if trade.short_iv > 0 else 0.20
                     settlement_price = self.simulate_settlement(
                         trade.underlying_price, iv, trade_date
                     )
-                    # Simulate daily range for stop loss (roughly 2x the expected move)
+                    # Simulate daily range for stop loss
                     daily_vol = iv * math.sqrt(1/252)
                     expected_move = trade.underlying_price * daily_vol
                     daily_low = settlement_price - expected_move
@@ -1174,6 +1259,8 @@ def main():
     parser.add_argument('--maxvix', type=float, default=30.0, help='Max VIX to trade (skip days above this, default: 30)')
     parser.add_argument('--stoploss', type=float, default=2.0, help='Stop loss multiplier (exit at Nx credit, default: 2.0)')
     parser.add_argument('--profit', type=float, default=50.0, help='Profit target percent (take profit at N%%, default: 50)')
+    parser.add_argument('--sd', type=float, default=1.0, help='Standard deviations below open for strike (default: 1.0)')
+    parser.add_argument('--usedelta', action='store_true', help='Use delta-based selection instead of SD-based')
     parser.add_argument('--export', action='store_true', help='Export trades to CSV')
 
     args = parser.parse_args()
@@ -1192,7 +1279,9 @@ def main():
         trading_days_of_week=trading_days,
         max_vix=args.maxvix,
         stop_loss_multiplier=args.stoploss,
-        profit_target_pct=args.profit
+        profit_target_pct=args.profit,
+        use_sd_strike=not args.usedelta,  # SD-based by default, unless --usedelta flag is set
+        sd_multiple=args.sd
     )
 
     results = backtester.run()
