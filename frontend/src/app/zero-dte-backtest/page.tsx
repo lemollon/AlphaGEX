@@ -355,11 +355,11 @@ export default function ZeroDTEBacktestPage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold flex items-center gap-3">
-                <TestTube className="w-8 h-8 text-blue-400" />
-                0DTE Iron Condor Backtest
+                <Clock className="w-8 h-8 text-blue-400" />
+                KRONOS - 0DTE Iron Condor Backtest
               </h1>
               <p className="text-gray-400 mt-1">
-                Hybrid scaling strategy with automatic tier transitions
+                God of Time Decay - Hybrid scaling strategy with automatic tier transitions
               </p>
             </div>
             <button
