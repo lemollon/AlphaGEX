@@ -162,12 +162,22 @@ async def health_check():
 def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
     """Run the hybrid fixed backtest in background"""
     try:
+        print(f"\n{'='*60}", flush=True)
+        print(f"🚀 KRONOS BACKTEST STARTING - Job: {job_id}", flush=True)
+        print(f"   Ticker: {config.ticker}", flush=True)
+        print(f"   Date Range: {config.start_date} to {config.end_date}", flush=True)
+        print(f"   Initial Capital: ${config.initial_capital:,.0f}", flush=True)
+        print(f"   Strategy: {config.strategy_type}", flush=True)
+        print(f"{'='*60}\n", flush=True)
+
         _jobs[job_id]['status'] = 'running'
         _jobs[job_id]['progress'] = 5
         _jobs[job_id]['progress_message'] = 'Initializing backtest...'
 
         # Import the backtest module
+        print("📦 Importing HybridFixedBacktester...", flush=True)
         from backtest.zero_dte_hybrid_fixed import HybridFixedBacktester
+        print("✅ Import successful", flush=True)
 
         # Build trade_days list from config
         trade_days = []
@@ -180,6 +190,7 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
         _jobs[job_id]['progress'] = 10
         _jobs[job_id]['progress_message'] = 'Creating backtester...'
 
+        print(f"🔧 Creating backtester instance...", flush=True)
         # Create backtester with all enhanced parameters
         backtester = HybridFixedBacktester(
             start_date=config.start_date,
