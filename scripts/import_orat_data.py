@@ -32,6 +32,14 @@ import io
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import multiprocessing
 
+# Progress bar
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    print("Note: Install tqdm for progress bars: pip install tqdm")
+
 # Add parent directory for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -39,8 +47,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / '.env')
 
-# Target tickers for backtesting
-TARGET_TICKERS = {'SPX', 'SPXW', 'SPY', 'VIX', '^SPX', '^VIX'}
+# Target tickers for backtesting (SPX includes 0DTE daily expirations)
+TARGET_TICKERS = {'SPX', 'SPY', 'VIX', '^SPX', '^VIX'}
 
 # We'll also extract underlying prices (stkPx) for these tickers
 # This gives us SPX, SPY, and VIX spot prices from ORAT data
@@ -409,7 +417,15 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {executor.submit(process_single_file, item): item[0] for item in work_items}
 
-        for i, future in enumerate(as_completed(futures), 1):
+        # Use tqdm progress bar if available
+        if HAS_TQDM:
+            pbar = tqdm(as_completed(futures), total=len(zip_files),
+                       desc="📦 Extracting ZIPs", unit="file",
+                       bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        else:
+            pbar = as_completed(futures)
+
+        for i, future in enumerate(pbar, 1):
             zip_file = futures[future]
             try:
                 stats = future.result()
@@ -421,15 +437,20 @@ def main():
 
                 if stats['success']:
                     total_stats['files_success'] += 1
-                    tickers = ', '.join(stats['tickers_found']) if stats['tickers_found'] else 'None'
-                    print(f"[{i}/{len(zip_files)}] ✅ {zip_file.name} - {stats['filtered_rows']:,} rows ({tickers})")
+                    if HAS_TQDM:
+                        pbar.set_postfix({'last': zip_file.name[:20], 'rows': f"{stats['filtered_rows']:,}"})
                 else:
                     total_stats['files_error'] += 1
-                    print(f"[{i}/{len(zip_files)}] ❌ {zip_file.name} - {stats['error']}")
+                    if not HAS_TQDM:
+                        print(f"[{i}/{len(zip_files)}] ❌ {zip_file.name} - {stats['error']}")
 
             except Exception as e:
                 total_stats['files_error'] += 1
-                print(f"[{i}/{len(zip_files)}] ❌ {zip_file.name} - Worker error: {e}")
+                if not HAS_TQDM:
+                    print(f"[{i}/{len(zip_files)}] ❌ {zip_file.name} - Worker error: {e}")
+
+        if HAS_TQDM:
+            pbar.close()
 
     # Database import (sequential for now)
     if not args.no_db and not args.extract_only:
@@ -439,12 +460,18 @@ def main():
         files_to_import = [s for s in results if s['success'] and s['filtered_rows'] > 0 and s['date']]
         total_files = len(files_to_import)
 
-        for idx, stats in enumerate(files_to_import, 1):
+        # Use tqdm for database import progress
+        if HAS_TQDM:
+            pbar_db = tqdm(files_to_import, total=total_files,
+                          desc="📥 DB Import", unit="file",
+                          bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        else:
+            pbar_db = files_to_import
+
+        for idx, stats in enumerate(pbar_db, 1):
             csv_path = ORAT_PROCESSED_DIR / f"orat_spx_{stats['date'].strftime('%Y%m%d')}.csv"
             if csv_path.exists():
-                # Show progress
                 date_str = stats['date'].strftime('%Y-%m-%d')
-                print(f"  [{idx}/{total_files}] Importing {date_str}...", end=" ", flush=True)
 
                 # Import options data
                 db_rows = import_to_database(csv_path)
@@ -456,7 +483,13 @@ def main():
                     price_rows = save_underlying_prices(stats['date'], prices)
                     total_stats['price_rows'] += price_rows
 
-                print(f"✅ {db_rows:,} rows")
+                if HAS_TQDM:
+                    pbar_db.set_postfix({'date': date_str, 'rows': f"{db_rows:,}"})
+                else:
+                    print(f"  [{idx}/{total_files}] {date_str} ✅ {db_rows:,} rows")
+
+        if HAS_TQDM:
+            pbar_db.close()
 
     # Summary
     print("\n" + "=" * 70)
@@ -466,7 +499,7 @@ def main():
     print(f"  Files success: {total_stats['files_success']}")
     print(f"  Files with errors: {total_stats['files_error']}")
     print(f"  Total rows scanned: {total_stats['total_rows']:,}")
-    print(f"  Filtered rows (SPX/SPXW/SPY/VIX): {total_stats['filtered_rows']:,}")
+    print(f"  Filtered rows (SPX/SPY/VIX): {total_stats['filtered_rows']:,}")
     if not args.no_db and not args.extract_only:
         print(f"  Options data imported: {total_stats['db_rows']:,}")
         print(f"  Price data imported: {total_stats['price_rows']:,}")
