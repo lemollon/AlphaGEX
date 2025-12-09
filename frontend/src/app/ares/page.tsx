@@ -97,11 +97,11 @@ export default function ARESPage() {
       setError(null)
 
       const [statusRes, performanceRes, equityRes, positionsRes, marketRes] = await Promise.all([
-        apiClient.get('/api/ares/status').catch(() => ({ data: null })),
-        apiClient.get('/api/ares/performance').catch(() => ({ data: null })),
-        apiClient.get('/api/ares/equity-curve?days=30').catch(() => ({ data: null })),
-        apiClient.get('/api/ares/positions').catch(() => ({ data: null })),
-        apiClient.get('/api/ares/market-data').catch(() => ({ data: null }))
+        apiClient.getARESPageStatus().catch(() => ({ data: null })),
+        apiClient.getARESPerformance().catch(() => ({ data: null })),
+        apiClient.getARESEquityCurve(30).catch(() => ({ data: null })),
+        apiClient.getARESPositions().catch(() => ({ data: null })),
+        apiClient.getARESMarketData().catch(() => ({ data: null }))
       ])
 
       if (statusRes.data?.data) setStatus(statusRes.data.data)
