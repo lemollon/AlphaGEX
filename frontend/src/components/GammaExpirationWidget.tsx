@@ -158,6 +158,161 @@ export default function GammaExpirationWidget() {
 
   const weekDates = getCurrentWeekDates()
 
+  // Generate intelligent trade recommendation based on market conditions
+  const getTradeRecommendation = () => {
+    if (!data || !data.directional_prediction) return null
+
+    const direction = data.directional_prediction.direction
+    const probability = data.directional_prediction.probability
+    const netGex = data.net_gex
+    const isPositiveGamma = netGex > 0
+    const isHighConfidence = probability >= 65
+    const isMidWeek = ['Monday', 'Tuesday', 'Wednesday'].includes(data.current_day)
+
+    // SIDEWAYS: Favor premium selling (high win rate)
+    if (direction === 'SIDEWAYS') {
+      if (isPositiveGamma && isMidWeek) {
+        return {
+          strategy: 'Iron Condor',
+          strategyEmoji: '🦅',
+          winRate: '65-75%',
+          type: 'Premium Selling',
+          typeColor: 'text-success',
+          borderColor: 'border-success',
+          bgColor: 'bg-success/10',
+          description: 'Positive gamma + sideways = range-bound. Sell premium to collect theta.',
+          structure: [
+            { label: 'Sell OTM Put', value: `$${(data.spot_price * 0.98).toFixed(0)} (0.20 delta)` },
+            { label: 'Buy OTM Put', value: `$${(data.spot_price * 0.96).toFixed(0)} (protection)` },
+            { label: 'Sell OTM Call', value: `$${(data.spot_price * 1.02).toFixed(0)} (0.20 delta)` },
+            { label: 'Buy OTM Call', value: `$${(data.spot_price * 1.04).toFixed(0)} (protection)` },
+            { label: 'Expiration', value: 'Friday (weekly)' },
+            { label: 'Credit', value: '$0.80 - $1.50 per spread' },
+          ],
+          exitRules: 'Close at 50% profit or if price approaches short strikes',
+          stopLoss: 'Close if either short strike is breached',
+          sizing: '3-5% account risk',
+          edge: `Positive GEX (${formatGamma(netGex)}) keeps dealers hedging = mean reversion. ${probability}% sideways probability.`
+        }
+      } else {
+        return {
+          strategy: 'Cash / Reduced Size',
+          strategyEmoji: '💵',
+          winRate: 'N/A',
+          type: 'Capital Preservation',
+          typeColor: 'text-warning',
+          borderColor: 'border-warning',
+          bgColor: 'bg-warning/10',
+          description: 'Sideways with weak signals. Wait for clearer setup.',
+          structure: [
+            { label: 'Action', value: 'Stay in cash or reduce position size' },
+            { label: 'Alternative', value: 'Small Iron Butterfly if IV is elevated' },
+          ],
+          exitRules: 'Wait for directional signal or positive gamma regime',
+          stopLoss: 'N/A',
+          sizing: '0-1% account risk',
+          edge: `Low confidence (${probability}%) in sideways. Better opportunities may arise.`
+        }
+      }
+    }
+
+    // UPWARD: Bull spreads (defined risk, directional)
+    if (direction === 'UPWARD') {
+      if (isHighConfidence) {
+        return {
+          strategy: 'Bull Call Spread',
+          strategyEmoji: '📈',
+          winRate: '55-60%',
+          type: 'Directional (Bullish)',
+          typeColor: 'text-success',
+          borderColor: 'border-success',
+          bgColor: 'bg-success/10',
+          description: 'High probability upward move. Define risk with vertical spread.',
+          structure: [
+            { label: 'Buy ATM Call', value: `$${data.spot_price.toFixed(0)} strike` },
+            { label: 'Sell OTM Call', value: `$${(data.spot_price * 1.01).toFixed(0)} strike (+$${(data.spot_price * 0.01).toFixed(0)})` },
+            { label: 'Expiration', value: '1-2 DTE' },
+            { label: 'Debit', value: '$0.40 - $0.60 per spread' },
+            { label: 'Max Profit', value: 'Spread width minus debit' },
+          ],
+          exitRules: 'Close at 50-70% of max profit or if direction reverses',
+          stopLoss: 'Close if premium drops 50%',
+          sizing: '2-3% account risk',
+          edge: `${probability}% upward probability. GEX: ${formatGamma(netGex)}. Spot above flip point.`
+        }
+      } else {
+        return {
+          strategy: 'Small Long Call',
+          strategyEmoji: '📈',
+          winRate: '45-55%',
+          type: 'Directional (Cautious)',
+          typeColor: 'text-primary',
+          borderColor: 'border-primary',
+          bgColor: 'bg-primary/10',
+          description: 'Moderate bullish signal. Keep position small.',
+          structure: [
+            { label: 'Buy Call', value: `$${data.spot_price.toFixed(0)} or $${(data.spot_price + 1).toFixed(0)} strike` },
+            { label: 'Expiration', value: '1-3 DTE' },
+            { label: 'Debit', value: '$0.50 - $1.00' },
+          ],
+          exitRules: 'Take profit at 30-50% gain',
+          stopLoss: '30% stop loss on premium',
+          sizing: '1% account risk (small)',
+          edge: `Moderate ${probability}% upward probability. Position small due to uncertainty.`
+        }
+      }
+    }
+
+    // DOWNWARD: Bear spreads (defined risk, directional)
+    if (direction === 'DOWNWARD') {
+      if (isHighConfidence) {
+        return {
+          strategy: 'Bear Put Spread',
+          strategyEmoji: '📉',
+          winRate: '55-60%',
+          type: 'Directional (Bearish)',
+          typeColor: 'text-danger',
+          borderColor: 'border-danger',
+          bgColor: 'bg-danger/10',
+          description: 'High probability downward move. Define risk with vertical spread.',
+          structure: [
+            { label: 'Buy ATM Put', value: `$${data.spot_price.toFixed(0)} strike` },
+            { label: 'Sell OTM Put', value: `$${(data.spot_price * 0.99).toFixed(0)} strike (-$${(data.spot_price * 0.01).toFixed(0)})` },
+            { label: 'Expiration', value: '1-2 DTE' },
+            { label: 'Debit', value: '$0.40 - $0.60 per spread' },
+            { label: 'Max Profit', value: 'Spread width minus debit' },
+          ],
+          exitRules: 'Close at 50-70% of max profit or if direction reverses',
+          stopLoss: 'Close if premium drops 50%',
+          sizing: '2-3% account risk',
+          edge: `${probability}% downward probability. GEX: ${formatGamma(netGex)}. Spot below flip point.`
+        }
+      } else {
+        return {
+          strategy: 'Small Long Put',
+          strategyEmoji: '📉',
+          winRate: '45-55%',
+          type: 'Directional (Cautious)',
+          typeColor: 'text-warning',
+          borderColor: 'border-warning',
+          bgColor: 'bg-warning/10',
+          description: 'Moderate bearish signal. Keep position small.',
+          structure: [
+            { label: 'Buy Put', value: `$${data.spot_price.toFixed(0)} or $${(data.spot_price - 1).toFixed(0)} strike` },
+            { label: 'Expiration', value: '1-3 DTE' },
+            { label: 'Debit', value: '$0.50 - $1.00' },
+          ],
+          exitRules: 'Take profit at 30-50% gain',
+          stopLoss: '30% stop loss on premium',
+          sizing: '1% account risk (small)',
+          edge: `Moderate ${probability}% downward probability. Position small due to uncertainty.`
+        }
+      }
+    }
+
+    return null
+  }
+
   const toggleSection = (section: string) => {
     setExpandedSections(prev => {
       const next = new Set(prev)
@@ -614,89 +769,108 @@ export default function GammaExpirationWidget() {
         )}
       </div>
 
-      {/* ACTIONABLE TRADE PLAYBOOK */}
-      <div className="card bg-gradient-to-br from-primary/10 to-success/10 border border-primary">
-        <h3 className="text-lg font-bold text-text-primary mb-3">🎯 Actionable Trade Playbook - Today's Opportunity</h3>
+      {/* ACTIONABLE TRADE PLAYBOOK - Dynamic based on market conditions */}
+      {(() => {
+        const recommendation = getTradeRecommendation()
+        if (!recommendation) return null
 
-        <div className="p-3 bg-background-card rounded-lg mb-3">
-          <h4 className="text-md font-bold text-danger mb-2">📊 🔥 0DTE Straddle - Volatility Explosion</h4>
+        return (
+          <div className={`card ${recommendation.bgColor} border ${recommendation.borderColor}`}>
+            <h3 className="text-lg font-bold text-text-primary mb-3">🎯 Actionable Trade Playbook - Today's Opportunity</h3>
 
-          <div className="mb-3">
-            <h5 className="font-bold text-text-primary text-sm mb-1">📍 Current Market Scenario:</h5>
-            <p className="text-xs text-text-secondary">{data.current_day} Expiration + Massive gamma decay = Volatility spike</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            <div className="space-y-2">
-              <div>
-                <h5 className="font-bold text-text-primary">💼 Strategy:</h5>
-                <p className="text-text-secondary">Long 0DTE ATM Straddle</p>
+            <div className="p-3 bg-background-card rounded-lg mb-3">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className={`text-md font-bold ${recommendation.typeColor}`}>
+                  {recommendation.strategyEmoji} {recommendation.strategy}
+                </h4>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2 py-1 rounded text-xs font-bold ${recommendation.bgColor} ${recommendation.typeColor}`}>
+                    {recommendation.type}
+                  </span>
+                  <span className="px-2 py-1 bg-background-hover rounded text-xs font-bold text-text-primary">
+                    Win Rate: {recommendation.winRate}
+                  </span>
+                </div>
               </div>
-              <div>
-                <h5 className="font-bold text-text-primary">⏰ Entry Timing:</h5>
-                <p className="text-text-secondary">9:30 AM - 10:30 AM ET (Early to capture full move)</p>
+
+              <div className="mb-3">
+                <p className="text-sm text-text-secondary">{recommendation.description}</p>
               </div>
-              <div>
-                <h5 className="font-bold text-text-primary">📋 Trade Structure:</h5>
-                <div className="space-y-0.5">
-                  <p><strong>Buy ATM Call:</strong> ${data.spot_price.toFixed(2)} strike</p>
-                  <p><strong>Buy ATM Put:</strong> ${data.spot_price.toFixed(2)} strike</p>
-                  <p><strong>Expiration:</strong> TODAY (0DTE)</p>
-                  <p><strong>Debit:</strong> $1.50 - $2.50 per straddle</p>
-                  <p><strong>Breakevens:</strong> ${(data.spot_price - 2).toFixed(2)} / ${(data.spot_price + 2).toFixed(2)}</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div className="space-y-2">
+                  <div>
+                    <h5 className="font-bold text-text-primary">📋 Trade Structure:</h5>
+                    <div className="space-y-0.5 mt-1">
+                      {recommendation.structure.map((item, idx) => (
+                        <p key={idx}><strong>{item.label}:</strong> {item.value}</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div>
+                    <h5 className="font-bold text-text-primary">🎯 Exit Rules:</h5>
+                    <p className="text-text-secondary">{recommendation.exitRules}</p>
+                  </div>
+                  <div>
+                    <h5 className="font-bold text-text-primary">🛑 Stop Loss:</h5>
+                    <p className="text-text-secondary">{recommendation.stopLoss}</p>
+                  </div>
+                  <div>
+                    <h5 className="font-bold text-text-primary">💰 Position Size:</h5>
+                    <p className="text-text-secondary">{recommendation.sizing}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 p-2 bg-background-hover rounded-lg">
+                <h5 className="font-bold text-primary text-xs mb-1">🧠 Edge:</h5>
+                <p className="text-xs text-text-secondary">{recommendation.edge}</p>
+              </div>
+            </div>
+
+            {/* Current Conditions */}
+            <div className="p-3 bg-background-hover rounded-lg">
+              <h4 className="font-bold text-text-primary text-sm mb-2">Current Conditions:</h4>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                <div>
+                  <span className="text-text-muted">Symbol:</span>
+                  <span className="ml-2 font-semibold text-primary">{data.symbol}</span>
+                </div>
+                <div>
+                  <span className="text-text-muted">Net GEX:</span>
+                  <span className={`ml-2 font-semibold ${data.net_gex > 0 ? 'text-success' : 'text-danger'}`}>
+                    {formatGamma(data.net_gex)} ({data.net_gex > 0 ? 'Long Gamma' : 'Short Gamma'})
+                  </span>
+                </div>
+                <div>
+                  <span className="text-text-muted">Spot Price:</span>
+                  <span className="ml-2 font-semibold text-text-primary">${data.spot_price.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="text-text-muted">Flip Point:</span>
+                  <span className="ml-2 font-semibold text-warning">${data.flip_point.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="text-text-muted">Direction:</span>
+                  <span className={`ml-2 font-semibold ${
+                    data.directional_prediction?.direction === 'UPWARD' ? 'text-success' :
+                    data.directional_prediction?.direction === 'DOWNWARD' ? 'text-danger' : 'text-warning'
+                  }`}>
+                    {data.directional_prediction?.direction_emoji} {data.directional_prediction?.direction} ({data.directional_prediction?.probability}%)
+                  </span>
+                </div>
+                <div>
+                  <span className="text-text-muted">Day:</span>
+                  <span className="ml-2 font-semibold text-text-primary">{data.current_day}</span>
                 </div>
               </div>
             </div>
-
-            <div className="space-y-2">
-              <div>
-                <h5 className="font-bold text-text-primary">🎯 Exit Rules:</h5>
-                <p className="text-text-secondary"><strong>Target:</strong> Exit when either leg is ITM by $2+ OR at 1:00 PM ET</p>
-                <p className="text-text-secondary"><strong>Stop:</strong> Exit at 11:30 AM if no movement (down 30-40%) or at $100 loss per straddle</p>
-              </div>
-              <div>
-                <h5 className="font-bold text-text-primary">💰 Risk Management:</h5>
-                <p className="text-text-secondary"><strong>Size:</strong> 1-2% of account (aggressive but defined risk)</p>
-              </div>
-              <div>
-                <h5 className="font-bold text-text-primary">🧠 Edge:</h5>
-                <p className="text-text-secondary">Low gamma = dealers stop hedging = big intraday moves. Friday afternoon typically sees 1-2% swings</p>
-              </div>
-            </div>
           </div>
-        </div>
-
-        {/* Current Conditions */}
-        <div className="p-3 bg-background-hover rounded-lg">
-          <h4 className="font-bold text-text-primary text-sm mb-2">Current Conditions:</h4>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-            <div>
-              <span className="text-text-muted">Symbol:</span>
-              <span className="ml-2 font-semibold text-primary">{data.symbol}</span>
-            </div>
-            <div>
-              <span className="text-text-muted">Net GEX:</span>
-              <span className="ml-2 font-semibold text-text-primary">{formatGamma(data.net_gex)}</span>
-            </div>
-            <div>
-              <span className="text-text-muted">Spot Price:</span>
-              <span className="ml-2 font-semibold text-text-primary">${data.spot_price.toFixed(2)}</span>
-            </div>
-            <div>
-              <span className="text-text-muted">Flip Point:</span>
-              <span className="ml-2 font-semibold text-warning">${data.flip_point.toFixed(2)}</span>
-            </div>
-            <div>
-              <span className="text-text-muted">Day:</span>
-              <span className="ml-2 font-semibold text-text-primary">{data.current_day}</span>
-            </div>
-            <div>
-              <span className="text-text-muted">Expiration Today:</span>
-              <span className="ml-2 font-semibold text-danger">Yes</span>
-            </div>
-          </div>
-        </div>
-      </div>
+        )
+      })()}
 
       {/* Evidence-based footer */}
       <div className="card bg-background-hover">
