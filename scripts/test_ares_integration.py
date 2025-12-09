@@ -95,8 +95,30 @@ def test_tradier_connection():
     account = tradier.get_account_balance()
     if account:
         print(f"   Account ID: {tradier.account_id}")
-        print(f"   Cash Available: ${account.get('cash', {}).get('cash_available', 0):,.2f}")
-        print(f"   Option BP: ${account.get('option_buying_power', 0):,.2f}")
+
+        # Get cash info
+        cash = account.get('cash', {})
+        cash_available = cash.get('cash_available', 0)
+        option_bp = account.get('option_buying_power', 0)
+        total_equity = account.get('total_equity', 0)
+
+        print(f"   Total Equity: ${total_equity:,.2f}")
+        print(f"   Cash Available: ${cash_available:,.2f}")
+        print(f"   Option BP: ${option_bp:,.2f}")
+
+        # Check if buying power is $0 - this is a known sandbox issue
+        if option_bp == 0 and total_equity > 0:
+            print()
+            print("   ⚠️  WARNING: Option Buying Power is $0!")
+            print("   This is a known Tradier sandbox issue.")
+            print()
+            print("   TO FIX: Go to https://dash.tradier.com/")
+            print("   1. Log in and switch to Sandbox mode")
+            print("   2. Go to 'Reset Sandbox Account' in settings")
+            print("   3. Reset the account to restore buying power")
+            print()
+            print("   (Test still passes - connection works)")
+
         return True
     else:
         print("   ❌ Could not get account info")
@@ -137,39 +159,45 @@ def test_market_data():
 
 
 # =============================================================================
-# TEST 4: Options Chain
+# TEST 4: Options Chain (SPY for sandbox, as SPXW is not available)
 # =============================================================================
-@test("Options Chain (SPXW)")
+@test("Options Chain (SPY - sandbox mode uses SPY)")
 def test_options_chain():
-    """Test that we can get SPX options chain"""
+    """Test that we can get SPY options chain (sandbox uses SPY instead of SPXW)"""
     from data.tradier_data_fetcher import TradierDataFetcher
 
     tradier = TradierDataFetcher(sandbox=True)
 
-    # Get expirations
-    expirations = tradier.get_option_expirations('SPXW')
+    # ARES uses SPY in sandbox mode because SPXW is not available
+    # Get expirations for SPY
+    expirations = tradier.get_option_expirations('SPY')
+
     if not expirations:
-        print("   ⚠️  No SPXW expirations, trying SPX...")
-        expirations = tradier.get_option_expirations('SPX')
+        print("   ❌ No SPY expirations found")
+        return False
 
-    if expirations:
-        print(f"   Found {len(expirations)} expirations")
-        print(f"   Nearest: {expirations[0]}")
+    print(f"   Found {len(expirations)} expirations")
+    print(f"   Nearest: {expirations[0]}")
 
-        # Get chain for nearest expiration
-        chain = tradier.get_option_chain('SPXW', expirations[0])
-        if chain and chain.chains:
-            contracts = chain.chains.get(expirations[0], [])
-            puts = [c for c in contracts if c.option_type == 'put']
-            calls = [c for c in contracts if c.option_type == 'call']
-            print(f"   Contracts: {len(puts)} puts, {len(calls)} calls")
+    # Get chain for nearest expiration
+    chain = tradier.get_option_chain('SPY', expirations[0])
+
+    if chain and chain.chains and expirations[0] in chain.chains:
+        contracts = chain.chains.get(expirations[0], [])
+        puts = [c for c in contracts if c.option_type == 'put']
+        calls = [c for c in contracts if c.option_type == 'call']
+        print(f"   Contracts: {len(puts)} puts, {len(calls)} calls")
+
+        if len(puts) > 0 and len(calls) > 0:
+            print(f"   ✓ Options data available for ARES sandbox trading")
             return True
         else:
-            print("   ⚠️  No chain data (sandbox may have limited options)")
-            return True  # Not a failure, sandbox limitation
+            print("   ⚠️  Limited options data (no bids/asks)")
+            return True  # Still pass, sandbox limitation
     else:
-        print("   ❌ No expirations found")
-        return False
+        print("   ⚠️  No chain data returned (sandbox may have limited options)")
+        print("   NOTE: ARES will use SPY in sandbox mode")
+        return True  # Not a hard failure, sandbox limitation
 
 
 # =============================================================================
@@ -188,13 +216,21 @@ def test_ares_init():
     status = ares.get_status()
     print(f"   Mode: {status['mode']}")
     print(f"   Capital: ${status['capital']:,.0f}")
+    print(f"   Trading Ticker: {status['config']['ticker']}")
+    print(f"   Sandbox Ticker: {status['config']['sandbox_ticker']}")
+    print(f"   Production Ticker: {status['config']['production_ticker']}")
     print(f"   Risk/Trade: {status['config']['risk_per_trade']}%")
     print(f"   Spread Width: ${status['config']['spread_width']}")
     print(f"   SD Multiplier: {status['config']['sd_multiplier']}")
     print(f"   In Trading Window: {status['in_trading_window']}")
     print(f"   Traded Today: {status['traded_today']}")
 
-    return status['mode'] == 'paper' and status['capital'] == 200_000
+    # In paper mode, should be using SPY
+    correct_ticker = status['config']['ticker'] == 'SPY'
+    if not correct_ticker:
+        print(f"   ⚠️  Expected SPY for sandbox, got {status['config']['ticker']}")
+
+    return status['mode'] == 'paper' and status['capital'] == 200_000 and correct_ticker
 
 
 # =============================================================================

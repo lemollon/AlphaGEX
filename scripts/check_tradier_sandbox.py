@@ -40,11 +40,30 @@ def main():
         balance = tradier.get_account_balance()
         if balance:
             cash = balance.get('cash', {})
-            print(f"  Total Equity:     ${balance.get('total_equity', 0):,.2f}")
-            print(f"  Cash Available:   ${cash.get('cash_available', 0):,.2f}")
-            print(f"  Option BP:        ${balance.get('option_buying_power', 0):,.2f}")
+            total_equity = balance.get('total_equity', 0)
+            cash_available = cash.get('cash_available', 0)
+            option_bp = balance.get('option_buying_power', 0)
+
+            print(f"  Total Equity:     ${total_equity:,.2f}")
+            print(f"  Cash Available:   ${cash_available:,.2f}")
+            print(f"  Option BP:        ${option_bp:,.2f}")
             print(f"  Day Trade BP:     ${balance.get('day_trade_buying_power', 0):,.2f}")
             print(f"  Market Value:     ${balance.get('market_value', 0):,.2f}")
+
+            # Check for $0 buying power issue
+            if option_bp == 0 and total_equity > 0:
+                print()
+                print("  ⚠️  ISSUE: Option Buying Power is $0!")
+                print("  ────────────────────────────────────────")
+                print("  This prevents ARES from placing trades.")
+                print()
+                print("  HOW TO FIX:")
+                print("  1. Go to https://dash.tradier.com/")
+                print("  2. Log in with your Tradier credentials")
+                print("  3. Click 'Switch to Sandbox' at top right")
+                print("  4. Go to Settings → Reset Sandbox Account")
+                print("  5. Reset the account to restore buying power")
+                print()
         else:
             print("  ⚠️  Could not get balance")
     except Exception as e:
