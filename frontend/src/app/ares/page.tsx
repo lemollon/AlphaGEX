@@ -14,6 +14,7 @@ interface ARESStatus {
   trade_count: number
   win_rate: number
   open_positions: number
+  closed_positions: number
   traded_today: boolean
   in_trading_window: boolean
   current_time: string
