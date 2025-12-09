@@ -36,7 +36,7 @@ export default function ARESPage() {
   const fetchStatus = async () => {
     try {
       setLoading(true)
-      const response = await apiClient.get('/bots/ares/status')
+      const response = await apiClient.getARESStatus()
       if (response.data) {
         setStatus(response.data)
         setError(null)
@@ -52,7 +52,7 @@ export default function ARESPage() {
     try {
       setRunningCycle(true)
       setCycleResult(null)
-      const response = await apiClient.post('/bots/ares/run')
+      const response = await apiClient.runARESCycle()
       if (response.data) {
         setCycleResult(response.data)
         // Refresh status after running
