@@ -668,6 +668,18 @@ def get_scheduler() -> AutonomousTraderScheduler:
     return _scheduler_instance
 
 
+def get_ares_trader():
+    """Get the ARES trader instance from the scheduler"""
+    scheduler = get_scheduler()
+    return scheduler.ares_trader if scheduler else None
+
+
+def get_atlas_trader():
+    """Get the ATLAS trader instance from the scheduler"""
+    scheduler = get_scheduler()
+    return scheduler.atlas_trader if scheduler else None
+
+
 # ============================================================================
 # STANDALONE EXECUTION MODE (for Render Background Worker)
 # ============================================================================
