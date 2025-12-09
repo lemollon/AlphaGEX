@@ -2169,3 +2169,95 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
     except Exception as e:
         logger.error(f"Error resetting bot data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ARES (Aggressive Iron Condor) Routes
+# =============================================================================
+
+# Try to import ARES trader
+try:
+    from trading.ares_iron_condor import ARESTrader, TradingMode as ARESTradingMode
+    ARES_AVAILABLE = True
+except ImportError as e:
+    ARES_AVAILABLE = False
+    logger.warning(f"ARES trader not available: {e}")
+
+# Initialize ARES trader instance (lazy initialization)
+_ares_trader = None
+
+def get_ares_trader():
+    """Get or create ARES trader instance"""
+    global _ares_trader
+    if _ares_trader is None and ARES_AVAILABLE:
+        _ares_trader = ARESTrader(
+            mode=ARESTradingMode.PAPER,
+            initial_capital=200_000
+        )
+    return _ares_trader
+
+
+@router.get("/bots/ares/status")
+async def get_ares_status():
+    """
+    Get ARES bot status.
+
+    Returns current status, configuration, and performance metrics.
+    """
+    if not ARES_AVAILABLE:
+        return {
+            "success": False,
+            "error": "ARES trader not available",
+            "mode": "unavailable"
+        }
+
+    try:
+        ares = get_ares_trader()
+        if ares:
+            status = ares.get_status()
+            return status
+        else:
+            return {
+                "success": False,
+                "error": "Could not initialize ARES trader"
+            }
+    except Exception as e:
+        logger.error(f"Error getting ARES status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bots/ares/run")
+async def run_ares_cycle():
+    """
+    Run ARES daily trading cycle.
+
+    This will:
+    1. Check if within trading window
+    2. Get SPY price and calculate expected move
+    3. Find Iron Condor strikes at 1 SD
+    4. Place order on Tradier (sandbox mode)
+
+    Returns the cycle result with any actions taken.
+    """
+    if not ARES_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="ARES trader not available"
+        )
+
+    try:
+        ares = get_ares_trader()
+        if not ares:
+            raise HTTPException(
+                status_code=503,
+                detail="Could not initialize ARES trader"
+            )
+
+        result = ares.run_daily_cycle()
+        return {
+            "success": True,
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"Error running ARES cycle: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
