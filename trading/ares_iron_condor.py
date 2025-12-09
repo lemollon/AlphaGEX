@@ -168,13 +168,15 @@ class ARESTrader:
         self.tz = ZoneInfo("America/New_York")
 
         # Initialize Tradier client
+        # ALWAYS use Production API for real SPX/SPXW data
+        # Paper trading is handled internally (not via Tradier sandbox)
         self.tradier = None
         if TRADIER_AVAILABLE and mode != TradingMode.BACKTEST:
             try:
-                # Use sandbox for PAPER mode
-                sandbox = (mode == TradingMode.PAPER)
-                self.tradier = TradierDataFetcher(sandbox=sandbox)
-                logger.info(f"ARES: Tradier client initialized ({'SANDBOX' if sandbox else 'LIVE'})")
+                # Always use production API for real SPX data
+                # Paper vs Live mode controls whether we EXECUTE trades, not data source
+                self.tradier = TradierDataFetcher(sandbox=False)
+                logger.info(f"ARES: Tradier client initialized (PRODUCTION API for SPX data)")
             except Exception as e:
                 logger.warning(f"ARES: Failed to initialize Tradier: {e}")
 
@@ -214,34 +216,26 @@ class ARESTrader:
 
     def get_trading_ticker(self) -> str:
         """
-        Get the ticker to trade based on mode.
+        Get the ticker to trade.
 
-        Sandbox mode uses SPY (better data availability in Tradier sandbox).
-        Production mode uses SPX for higher premium.
+        ARES always trades SPX/SPXW for higher premium.
+        Data comes from Tradier Production API.
         """
-        if self.mode == TradingMode.PAPER:
-            return self.config.sandbox_ticker  # SPY
-        return self.config.ticker  # SPX
+        return self.config.ticker  # Always SPX
 
     def get_spread_width(self) -> float:
         """
-        Get spread width based on mode.
+        Get spread width for SPX.
 
-        SPY spreads are $2 wide (vs $10 for SPX) because SPY is ~1/10 of SPX.
+        SPX spreads are $10 wide.
         """
-        if self.mode == TradingMode.PAPER:
-            return self.config.spread_width_spy  # $2 for SPY
         return self.config.spread_width  # $10 for SPX
 
     def get_min_credit(self) -> float:
         """
-        Get minimum credit required based on mode.
-
-        SPY credits are ~1/10 of SPX credits.
+        Get minimum credit required for SPX.
         """
-        if self.mode == TradingMode.PAPER:
-            return self.config.min_credit_per_spread_spy
-        return self.config.min_credit_per_spread
+        return self.config.min_credit_per_spread  # $3 for SPX
 
     def get_current_market_data(self) -> Optional[Dict]:
         """
@@ -483,39 +477,51 @@ class ARESTrader:
             return None
 
         try:
-            # Execute Iron Condor as a single order
             ticker = self.get_trading_ticker()
             spread_width = self.get_spread_width()
+            order_id = ""
+            order_status = ""
 
-            result = self.tradier.place_iron_condor(
-                symbol=ticker,
-                expiration=expiration,
-                put_long=ic_strikes['put_long_strike'],
-                put_short=ic_strikes['put_short_strike'],
-                call_short=ic_strikes['call_short_strike'],
-                call_long=ic_strikes['call_long_strike'],
-                quantity=contracts,
-                limit_price=ic_strikes['total_credit']
-            )
+            # PAPER mode: Log trade internally, don't submit to Tradier
+            # LIVE mode: Submit real order to Tradier
+            if self.mode == TradingMode.PAPER:
+                # Paper trading - just log, don't execute
+                order_id = f"PAPER-{datetime.now(self.tz).strftime('%Y%m%d%H%M%S')}"
+                order_status = "paper"
+                logger.info(f"ARES [PAPER]: Iron Condor on {ticker} - {ic_strikes['put_long_strike']}/{ic_strikes['put_short_strike']}P - {ic_strikes['call_short_strike']}/{ic_strikes['call_long_strike']}C")
+                logger.info(f"ARES [PAPER]: {contracts} contracts @ ${ic_strikes['total_credit']:.2f} credit (NOT submitted to broker)")
+            else:
+                # LIVE mode - submit real order
+                logger.info(f"ARES [LIVE]: Submitting real order to Tradier...")
+                result = self.tradier.place_iron_condor(
+                    symbol=ticker,
+                    expiration=expiration,
+                    put_long=ic_strikes['put_long_strike'],
+                    put_short=ic_strikes['put_short_strike'],
+                    call_short=ic_strikes['call_short_strike'],
+                    call_long=ic_strikes['call_long_strike'],
+                    quantity=contracts,
+                    limit_price=ic_strikes['total_credit']
+                )
 
-            # Check for Tradier API errors
-            if 'errors' in result:
-                error_msg = result.get('errors', {}).get('error', 'Unknown error')
-                logger.error(f"ARES: Tradier API error: {error_msg}")
-                logger.error(f"ARES: Full response: {result}")
-                return None
+                # Check for Tradier API errors
+                if 'errors' in result:
+                    error_msg = result.get('errors', {}).get('error', 'Unknown error')
+                    logger.error(f"ARES: Tradier API error: {error_msg}")
+                    logger.error(f"ARES: Full response: {result}")
+                    return None
 
-            order_info = result.get('order', {}) or {}
-            order_id = str(order_info.get('id', ''))
-            order_status = order_info.get('status', '')
+                order_info = result.get('order', {}) or {}
+                order_id = str(order_info.get('id', ''))
+                order_status = order_info.get('status', '')
 
-            # Validate order was actually placed
-            if not order_id:
-                logger.error(f"ARES: Order not placed - no order ID returned")
-                logger.error(f"ARES: Full response: {result}")
-                return None
+                # Validate order was actually placed
+                if not order_id:
+                    logger.error(f"ARES: Order not placed - no order ID returned")
+                    logger.error(f"ARES: Full response: {result}")
+                    return None
 
-            logger.info(f"ARES: Iron Condor order placed on {ticker} - ID: {order_id}, Status: {order_status}")
+                logger.info(f"ARES [LIVE]: Order placed - ID: {order_id}, Status: {order_status}")
 
             # Create position record
             max_loss = spread_width - ic_strikes['total_credit']
