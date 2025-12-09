@@ -148,7 +148,8 @@ export default function DecisionLogViewer() {
       'PHOENIX': 'text-orange-400',
       'ATLAS': 'text-blue-400',
       'HERMES': 'text-purple-400',
-      'ORACLE': 'text-green-400'
+      'ORACLE': 'text-green-400',
+      'ARES': 'text-red-400'
     }
     return colors[botName] || 'text-gray-400'
   }
@@ -179,6 +180,7 @@ export default function DecisionLogViewer() {
             <option value="all">All Bots</option>
             <option value="PHOENIX">PHOENIX (0DTE)</option>
             <option value="ATLAS">ATLAS (Wheel)</option>
+            <option value="ARES">ARES (Aggressive IC)</option>
             <option value="HERMES">HERMES (Manual)</option>
             <option value="ORACLE">ORACLE (Advisory)</option>
           </select>
