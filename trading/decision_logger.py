@@ -45,6 +45,7 @@ class BotName(Enum):
     ATLAS = "ATLAS"      # SPXWheelTrader - SPX Cash-Secured Put Wheel
     HERMES = "HERMES"    # WheelStrategyManager - Manual Wheel via UI
     ORACLE = "ORACLE"    # MultiStrategyOptimizer - Advisory/Recommendations
+    ARES = "ARES"        # ARESTrader - Aggressive Iron Condor (10% monthly target)
 
 
 class DecisionType(Enum):
@@ -1045,3 +1046,10 @@ def get_oracle_logger() -> DecisionLogger:
     if 'ORACLE' not in _bot_loggers:
         _bot_loggers['ORACLE'] = DecisionLogger()
     return _bot_loggers['ORACLE']
+
+
+def get_ares_logger() -> DecisionLogger:
+    """Get logger for ARES (Aggressive Iron Condor)"""
+    if 'ARES' not in _bot_loggers:
+        _bot_loggers['ARES'] = DecisionLogger()
+    return _bot_loggers['ARES']
