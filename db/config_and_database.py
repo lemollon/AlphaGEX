@@ -484,6 +484,73 @@ def init_database():
         )
     ''')
 
+    # ARES Iron Condor Positions
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ares_positions (
+            id SERIAL PRIMARY KEY,
+            position_id TEXT UNIQUE NOT NULL,
+            open_date TEXT NOT NULL,
+            open_time TEXT,
+            expiration TEXT NOT NULL,
+
+            -- Iron Condor Strikes (4 legs)
+            put_long_strike REAL NOT NULL,
+            put_short_strike REAL NOT NULL,
+            call_short_strike REAL NOT NULL,
+            call_long_strike REAL NOT NULL,
+
+            -- Credits
+            put_credit REAL NOT NULL,
+            call_credit REAL NOT NULL,
+            total_credit REAL NOT NULL,
+
+            -- Position details
+            contracts INTEGER NOT NULL,
+            spread_width REAL NOT NULL,
+            max_loss REAL NOT NULL,
+
+            -- Order IDs from broker
+            put_spread_order_id TEXT,
+            call_spread_order_id TEXT,
+
+            -- Status
+            status TEXT DEFAULT 'open',
+            close_date TEXT,
+            close_time TEXT,
+            close_price REAL,
+            realized_pnl REAL,
+
+            -- Market data at entry
+            underlying_price_at_entry REAL,
+            vix_at_entry REAL,
+            expected_move REAL,
+
+            -- Metadata
+            mode TEXT DEFAULT 'paper',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # ARES Daily Performance Tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ares_daily_performance (
+            id SERIAL PRIMARY KEY,
+            date TEXT UNIQUE NOT NULL,
+            starting_capital REAL NOT NULL,
+            ending_capital REAL NOT NULL,
+            daily_pnl REAL NOT NULL,
+            daily_return_pct REAL NOT NULL,
+            cumulative_pnl REAL NOT NULL,
+            cumulative_return_pct REAL NOT NULL,
+            positions_opened INTEGER DEFAULT 0,
+            positions_closed INTEGER DEFAULT 0,
+            high_water_mark REAL,
+            drawdown_pct REAL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
     # Autonomous Trader Comprehensive Logs
     c.execute('''
         CREATE TABLE IF NOT EXISTS autonomous_trader_logs (
@@ -1847,6 +1914,13 @@ def init_database():
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_date ON autonomous_trade_log(date)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_action ON autonomous_trade_log(action)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_position_id ON autonomous_trade_log(position_id)")
+
+    # ARES positions indexes
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_positions_status ON ares_positions(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_positions_open_date ON ares_positions(open_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_positions_expiration ON ares_positions(expiration)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_positions_mode ON ares_positions(mode)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_daily_performance_date ON ares_daily_performance(date)")
 
     # ===== NEW TABLE INDEXES =====
 

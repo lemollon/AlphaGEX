@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Zap, TrendingUp, TrendingDown, Activity, DollarSign, Target, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
+import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
@@ -146,7 +146,7 @@ export default function ARESPage() {
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
-              <Zap className="w-8 h-8 text-red-500" />
+              <Sword className="w-8 h-8 text-red-500" />
               <div>
                 <h1 className="text-2xl font-bold text-white">ARES - Aggressive Iron Condor</h1>
                 <p className="text-gray-400">Targeting 10% Monthly Returns via Daily SPX 0DTE Iron Condors</p>
@@ -295,7 +295,7 @@ export default function ARESPage() {
 
                 <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                   <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                    <Zap className="w-5 h-5 text-red-500" />
+                    <Sword className="w-5 h-5 text-red-500" />
                     Strategy Configuration
                   </h3>
                   <div className="space-y-2 text-sm">
@@ -515,7 +515,7 @@ export default function ARESPage() {
           {activeTab === 'logs' && (
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <Zap className="w-5 h-5 text-red-500" />
+                <Sword className="w-5 h-5 text-red-500" />
                 ARES Decision Log
               </h3>
               <DecisionLogViewer />

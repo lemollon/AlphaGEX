@@ -208,6 +208,15 @@ class ARESTrader:
         logger.info(f"  Spread width: ${self.get_spread_width()}")
         logger.info(f"  SD multiplier: {self.config.sd_multiplier}")
 
+        # Load existing positions from database (survives restarts)
+        if mode != TradingMode.BACKTEST:
+            try:
+                loaded = self._load_positions_from_db()
+                if loaded > 0:
+                    logger.info(f"ARES: Restored {loaded} open positions from database")
+            except Exception as e:
+                logger.warning(f"ARES: Could not load positions from database: {e}")
+
     def _generate_position_id(self) -> str:
         """Generate unique position ID"""
         self._position_counter += 1
@@ -553,6 +562,9 @@ class ARESTrader:
             # Log decision
             self._log_entry_decision(position, market_data)
 
+            # Save position to database for persistence
+            self._save_position_to_db(position)
+
             return position
 
         except Exception as e:
@@ -814,6 +826,297 @@ class ARESTrader:
         logger.info(f"=" * 60)
 
         return result
+
+    # =========================================================================
+    # DATABASE PERSISTENCE METHODS
+    # =========================================================================
+
+    def _save_position_to_db(self, position: IronCondorPosition) -> bool:
+        """
+        Save an Iron Condor position to the database.
+
+        Args:
+            position: IronCondorPosition to save
+
+        Returns:
+            True if saved successfully
+        """
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            now = datetime.now(self.tz)
+
+            cursor.execute('''
+                INSERT INTO ares_positions (
+                    position_id, open_date, open_time, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss,
+                    put_spread_order_id, call_spread_order_id,
+                    status, underlying_price_at_entry, vix_at_entry, expected_move,
+                    mode
+                ) VALUES (
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s, %s, %s,
+                    %s
+                )
+                ON CONFLICT (position_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    updated_at = NOW()
+            ''', (
+                position.position_id, position.open_date, now.strftime('%H:%M:%S'), position.expiration,
+                position.put_long_strike, position.put_short_strike, position.call_short_strike, position.call_long_strike,
+                position.put_credit, position.call_credit, position.total_credit,
+                position.contracts, position.spread_width, position.max_loss,
+                position.put_spread_order_id, position.call_spread_order_id,
+                position.status, position.underlying_price_at_entry, position.vix_at_entry, position.expected_move,
+                self.mode.value
+            ))
+
+            conn.commit()
+            conn.close()
+            logger.info(f"ARES: Saved position {position.position_id} to database")
+            return True
+
+        except Exception as e:
+            logger.error(f"ARES: Failed to save position to database: {e}")
+            return False
+
+    def _update_position_in_db(self, position: IronCondorPosition) -> bool:
+        """
+        Update a position's status in the database (e.g., when closed).
+
+        Args:
+            position: IronCondorPosition to update
+
+        Returns:
+            True if updated successfully
+        """
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            now = datetime.now(self.tz)
+
+            cursor.execute('''
+                UPDATE ares_positions SET
+                    status = %s,
+                    close_date = %s,
+                    close_time = %s,
+                    close_price = %s,
+                    realized_pnl = %s,
+                    updated_at = NOW()
+                WHERE position_id = %s
+            ''', (
+                position.status,
+                position.close_date,
+                now.strftime('%H:%M:%S') if position.close_date else None,
+                position.close_price,
+                position.realized_pnl,
+                position.position_id
+            ))
+
+            conn.commit()
+            conn.close()
+            logger.info(f"ARES: Updated position {position.position_id} in database")
+            return True
+
+        except Exception as e:
+            logger.error(f"ARES: Failed to update position in database: {e}")
+            return False
+
+    def _load_positions_from_db(self) -> int:
+        """
+        Load open positions from database on startup.
+
+        Returns:
+            Number of positions loaded
+        """
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Load open positions for current mode
+            cursor.execute('''
+                SELECT
+                    position_id, open_date, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss,
+                    put_spread_order_id, call_spread_order_id,
+                    status, underlying_price_at_entry, vix_at_entry, expected_move
+                FROM ares_positions
+                WHERE status = 'open' AND mode = %s
+                ORDER BY open_date DESC
+            ''', (self.mode.value,))
+
+            rows = cursor.fetchall()
+            loaded_count = 0
+
+            for row in rows:
+                position = IronCondorPosition(
+                    position_id=row[0],
+                    open_date=row[1],
+                    expiration=row[2],
+                    put_long_strike=row[3],
+                    put_short_strike=row[4],
+                    call_short_strike=row[5],
+                    call_long_strike=row[6],
+                    put_credit=row[7],
+                    call_credit=row[8],
+                    total_credit=row[9],
+                    contracts=row[10],
+                    spread_width=row[11],
+                    max_loss=row[12],
+                    put_spread_order_id=row[13] or "",
+                    call_spread_order_id=row[14] or "",
+                    status=row[15],
+                    underlying_price_at_entry=row[16] or 0,
+                    vix_at_entry=row[17] or 0,
+                    expected_move=row[18] or 0
+                )
+                self.open_positions.append(position)
+                loaded_count += 1
+
+                # Mark today as traded if position opened today
+                today = datetime.now(self.tz).strftime('%Y-%m-%d')
+                if position.open_date == today:
+                    self.daily_trade_executed[today] = True
+
+            # Also load recent closed positions for history
+            cursor.execute('''
+                SELECT
+                    position_id, open_date, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss,
+                    put_spread_order_id, call_spread_order_id,
+                    status, close_date, close_price, realized_pnl,
+                    underlying_price_at_entry, vix_at_entry, expected_move
+                FROM ares_positions
+                WHERE status != 'open' AND mode = %s
+                ORDER BY close_date DESC
+                LIMIT 100
+            ''', (self.mode.value,))
+
+            closed_rows = cursor.fetchall()
+            for row in closed_rows:
+                position = IronCondorPosition(
+                    position_id=row[0],
+                    open_date=row[1],
+                    expiration=row[2],
+                    put_long_strike=row[3],
+                    put_short_strike=row[4],
+                    call_short_strike=row[5],
+                    call_long_strike=row[6],
+                    put_credit=row[7],
+                    call_credit=row[8],
+                    total_credit=row[9],
+                    contracts=row[10],
+                    spread_width=row[11],
+                    max_loss=row[12],
+                    put_spread_order_id=row[13] or "",
+                    call_spread_order_id=row[14] or "",
+                    status=row[15],
+                    close_date=row[16] or "",
+                    close_price=row[17] or 0,
+                    realized_pnl=row[18] or 0,
+                    underlying_price_at_entry=row[19] or 0,
+                    vix_at_entry=row[20] or 0,
+                    expected_move=row[21] or 0
+                )
+                self.closed_positions.append(position)
+
+                # Update stats from closed positions
+                self.trade_count += 1
+                self.total_pnl += position.realized_pnl
+                if position.realized_pnl > 0:
+                    self.win_count += 1
+
+            conn.close()
+
+            if loaded_count > 0:
+                logger.info(f"ARES: Loaded {loaded_count} open positions from database")
+            if len(self.closed_positions) > 0:
+                logger.info(f"ARES: Loaded {len(self.closed_positions)} closed positions from history")
+
+            # Update capital based on total P&L
+            self.capital = 200000 + self.total_pnl  # ARES base capital
+            self.high_water_mark = max(self.high_water_mark, self.capital)
+
+            return loaded_count
+
+        except Exception as e:
+            logger.error(f"ARES: Failed to load positions from database: {e}")
+            return 0
+
+    def _update_daily_performance(self) -> bool:
+        """
+        Update daily performance tracking in the database.
+
+        Returns:
+            True if updated successfully
+        """
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            today = datetime.now(self.tz).strftime('%Y-%m-%d')
+            starting_capital = 200000  # ARES allocated capital
+
+            # Calculate daily stats
+            daily_pnl = sum(pos.realized_pnl for pos in self.closed_positions
+                          if pos.close_date == today)
+
+            cursor.execute('''
+                INSERT INTO ares_daily_performance (
+                    date, starting_capital, ending_capital,
+                    daily_pnl, daily_return_pct,
+                    cumulative_pnl, cumulative_return_pct,
+                    positions_opened, positions_closed,
+                    high_water_mark, drawdown_pct
+                ) VALUES (
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s
+                )
+                ON CONFLICT (date) DO UPDATE SET
+                    ending_capital = EXCLUDED.ending_capital,
+                    daily_pnl = EXCLUDED.daily_pnl,
+                    daily_return_pct = EXCLUDED.daily_return_pct,
+                    cumulative_pnl = EXCLUDED.cumulative_pnl,
+                    cumulative_return_pct = EXCLUDED.cumulative_return_pct,
+                    positions_closed = EXCLUDED.positions_closed,
+                    high_water_mark = EXCLUDED.high_water_mark,
+                    drawdown_pct = EXCLUDED.drawdown_pct
+            ''', (
+                today, starting_capital, self.capital,
+                daily_pnl, (daily_pnl / starting_capital) * 100 if starting_capital > 0 else 0,
+                self.total_pnl, (self.total_pnl / starting_capital) * 100 if starting_capital > 0 else 0,
+                1 if self.daily_trade_executed.get(today, False) else 0,
+                sum(1 for pos in self.closed_positions if pos.close_date == today),
+                self.high_water_mark,
+                ((self.high_water_mark - self.capital) / self.high_water_mark) * 100 if self.high_water_mark > 0 else 0
+            ))
+
+            conn.commit()
+            conn.close()
+            return True
+
+        except Exception as e:
+            logger.error(f"ARES: Failed to update daily performance: {e}")
+            return False
 
     def get_status(self) -> Dict:
         """Get current ARES status"""
