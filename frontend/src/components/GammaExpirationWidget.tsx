@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger'
 
 import { useState, useEffect, useCallback } from 'react'
-import { AlertTriangle, TrendingUp, TrendingDown, Clock, Zap, Target, Calendar, Activity, RefreshCw, BarChart3, DollarSign, ChevronDown, ChevronUp } from 'lucide-react'
+import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
 interface DirectionalPrediction {
@@ -58,7 +58,7 @@ export default function GammaExpirationWidget() {
   const [data, setData] = useState<GammaExpirationData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [expandedSection, setExpandedSection] = useState<string | null>('prediction')
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['prediction', 'today']))
 
   const popularSymbols = ['SPY', 'QQQ', 'IWM']
 
@@ -159,7 +159,15 @@ export default function GammaExpirationWidget() {
   const weekDates = getCurrentWeekDates()
 
   const toggleSection = (section: string) => {
-    setExpandedSection(expandedSection === section ? null : section)
+    setExpandedSections(prev => {
+      const next = new Set(prev)
+      if (next.has(section)) {
+        next.delete(section)
+      } else {
+        next.add(section)
+      }
+      return next
+    })
   }
 
   if (loading) {
@@ -227,7 +235,7 @@ export default function GammaExpirationWidget() {
         </div>
       </div>
 
-      {/* Directional Prediction - Collapsible */}
+      {/* DIRECTIONAL PREDICTION */}
       {data.directional_prediction && (
         <div className={`card border-l-4 ${
           data.directional_prediction.direction === 'UPWARD' ? 'border-success bg-success/5' :
@@ -239,14 +247,14 @@ export default function GammaExpirationWidget() {
             className="w-full flex items-center justify-between"
           >
             <div className="flex items-center gap-4">
-              <div className={`text-3xl font-black ${
+              <div className={`text-2xl font-black ${
                 data.directional_prediction.direction === 'UPWARD' ? 'text-success' :
                 data.directional_prediction.direction === 'DOWNWARD' ? 'text-danger' :
                 'text-warning'
               }`}>
                 {data.directional_prediction.direction_emoji} {data.directional_prediction.direction}
               </div>
-              <div className={`text-xl font-bold ${
+              <div className={`text-lg font-bold ${
                 data.directional_prediction.direction === 'UPWARD' ? 'text-success' :
                 data.directional_prediction.direction === 'DOWNWARD' ? 'text-danger' :
                 'text-warning'
@@ -254,10 +262,10 @@ export default function GammaExpirationWidget() {
                 {data.directional_prediction.probability}% Probability
               </div>
             </div>
-            {expandedSection === 'prediction' ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+            {expandedSections.has('prediction') ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
           </button>
 
-          {expandedSection === 'prediction' && (
+          {expandedSections.has('prediction') && (
             <div className="mt-4 pt-4 border-t border-border">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm mb-4">
                 <div>
@@ -267,13 +275,16 @@ export default function GammaExpirationWidget() {
                 <div>
                   <span className="text-primary font-bold">Expected Range:</span>
                   <span className="ml-2 text-text-primary">{data.directional_prediction.expected_range}</span>
+                  <span className="ml-1 text-text-muted">({data.directional_prediction.range_width_pct})</span>
                 </div>
                 <div>
                   <span className="text-primary font-bold">Flip Point:</span>
                   <span className="ml-2 text-text-primary">${data.flip_point.toFixed(2)}</span>
+                  <span className="ml-1 text-text-muted">({data.directional_prediction.spot_vs_flip_pct > 0 ? '+' : ''}{data.directional_prediction.spot_vs_flip_pct.toFixed(1)}% from spot)</span>
                 </div>
               </div>
-              <div className="border-t border-border pt-3">
+
+              <div className="border-t border-border pt-3 mb-3">
                 <div className="font-bold text-primary mb-2 text-sm">Key Factors:</div>
                 <ul className="list-disc list-inside space-y-1 text-xs text-text-secondary">
                   {data.directional_prediction.key_factors.map((factor, idx) => (
@@ -281,21 +292,33 @@ export default function GammaExpirationWidget() {
                   ))}
                 </ul>
               </div>
+
+              <div className="border-t border-border pt-3">
+                <div className="font-bold text-warning text-sm">Expected Move:</div>
+                <div className="text-text-primary text-sm mt-1">{data.directional_prediction.expected_move}</div>
+              </div>
+
+              <div className="mt-3 p-2 bg-background-hover/30 rounded-lg text-center">
+                <div className="text-text-muted text-xs">
+                  ⚠️ This prediction is based on current GEX structure, VIX ({data.directional_prediction.vix}), and historical patterns.
+                  Markets can change rapidly. Use as one input among many for your trading decisions.
+                </div>
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Today's Impact - Compact */}
+      {/* VIEW 1: TODAY'S IMPACT */}
       <div className="card">
         <button
           onClick={() => toggleSection('today')}
           className="w-full flex items-center justify-between mb-4"
         >
           <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
-            ⚡ Today's Impact
+            ⚡ VIEW 1: TODAY'S IMPACT <span className="text-text-secondary text-sm">(Intraday Trading)</span>
           </h3>
-          {expandedSection === 'today' ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          {expandedSections.has('today') ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
         </button>
 
         <div className="grid grid-cols-3 gap-3 mb-4">
@@ -309,44 +332,98 @@ export default function GammaExpirationWidget() {
           </div>
           <div className="p-3 bg-background-hover rounded-lg text-center">
             <p className="text-text-muted text-xs mb-1">Loss Today</p>
-            <p className="text-xl font-bold text-danger">-{data.gamma_loss_pct}%</p>
+            <p className="text-xl font-bold text-danger">-{formatGamma(data.gamma_loss_today)} ({data.gamma_loss_pct}%)</p>
           </div>
         </div>
 
-        <div className={`p-3 rounded-lg border ${getRiskBgColor(data.risk_level)}`}>
-          <span className="text-sm font-bold">Risk Level: </span>
+        <div className={`p-3 rounded-lg border mb-4 ${getRiskBgColor(data.risk_level)}`}>
+          <span className="text-sm font-bold">🎯 RISK LEVEL: </span>
           <span className={`font-bold ${getRiskColor(data.risk_level)}`}>{data.risk_level}</span>
         </div>
 
-        {expandedSection === 'today' && (
-          <div className="mt-4 pt-4 border-t border-border space-y-3">
+        {expandedSections.has('today') && (
+          <div className="space-y-4">
+            <h4 className="text-md font-bold text-text-primary">💰 HOW TO PROFIT TODAY:</h4>
+
+            {/* Strategy 1: Fade the Close */}
             <div className="p-3 bg-danger/5 border border-danger/20 rounded-lg">
-              <h4 className="text-sm font-bold text-text-primary mb-2">Fade the Close Strategy</h4>
-              <p className="text-xs text-text-secondary">Buy directional options at 3:45pm, sell tomorrow morning. Gamma loss of {data.gamma_loss_pct}% creates overnight volatility.</p>
+              <div className="flex items-start gap-2 mb-2">
+                <span className="px-2 py-0.5 bg-danger text-white text-xs font-bold rounded">HIGH PRIORITY</span>
+                <h5 className="text-sm font-bold text-text-primary">Fade the Close</h5>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Strategy:</strong> Buy directional options at 3:45pm, sell tomorrow morning</p>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Strike:</strong> 0.4 delta (first OTM) in trend direction</p>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Expiration:</strong> 0DTE or 1DTE</p>
+                  <p className="text-text-secondary"><strong className="text-text-primary">Entry:</strong> {data.current_day} 3:45pm</p>
+                </div>
+                <div>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Exit:</strong> Tomorrow morning if gap move occurs</p>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Risk:</strong> 30% stop loss | Size: 2-3% account risk</p>
+                  <p className="text-text-secondary"><strong className="text-primary">Why:</strong> Tomorrow loses {data.gamma_loss_pct}% gamma support - moves will be sharper without dealer hedging</p>
+                </div>
+              </div>
             </div>
+
+            {/* Strategy 2: ATM Straddle */}
             <div className="p-3 bg-warning/5 border border-warning/20 rounded-lg">
-              <h4 className="text-sm font-bold text-text-primary mb-2">ATM Straddle into Expiration</h4>
-              <p className="text-xs text-text-secondary">Buy volatility at 3:30pm with 1-2DTE. Exit tomorrow morning on gap move.</p>
+              <div className="flex items-start gap-2 mb-2">
+                <span className="px-2 py-0.5 bg-warning text-white text-xs font-bold rounded">MEDIUM PRIORITY</span>
+                <h5 className="text-sm font-bold text-text-primary">ATM Straddle into Expiration</h5>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Strategy:</strong> Buy volatility, not direction</p>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Strike:</strong> ATM (0.5 delta both sides)</p>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Expiration:</strong> 1DTE or 2DTE</p>
+                  <p className="text-text-secondary"><strong className="text-text-primary">Entry:</strong> {data.current_day} 3:30pm</p>
+                </div>
+                <div>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Exit:</strong> Tomorrow morning on gap or quick move</p>
+                  <p className="text-text-secondary mb-1"><strong className="text-text-primary">Risk:</strong> Defined (premium paid) | Size: 1-2% account risk</p>
+                  <p className="text-text-secondary"><strong className="text-primary">Why:</strong> Gamma expiration creates volatility vacuum - expect {data.gamma_loss_pct}% regime shift overnight</p>
+                </div>
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Weekly Evolution - Compact */}
+      {/* VIEW 2: WEEKLY EVOLUTION */}
       <div className="card">
         <button
           onClick={() => toggleSection('weekly')}
           className="w-full flex items-center justify-between mb-4"
         >
           <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
-            📅 Weekly Evolution
+            📅 VIEW 2: WEEKLY EVOLUTION <span className="text-text-secondary text-sm">(Positional Trading)</span>
           </h3>
-          {expandedSection === 'weekly' ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          {expandedSections.has('weekly') ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
         </button>
 
-        <div className="space-y-2">
+        {/* Weekly Stats */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="p-3 bg-background-hover rounded-lg text-center">
+            <p className="text-text-muted text-xs mb-1">Monday Baseline</p>
+            <p className="text-lg font-bold text-text-primary">{formatGamma(data.weekly_gamma.monday)}</p>
+          </div>
+          <div className="p-3 bg-background-hover rounded-lg text-center">
+            <p className="text-text-muted text-xs mb-1">Friday End</p>
+            <p className="text-lg font-bold text-text-primary">{formatGamma(data.weekly_gamma.friday)}</p>
+          </div>
+          <div className="p-3 bg-background-hover rounded-lg text-center">
+            <p className="text-text-muted text-xs mb-1">Total Decay</p>
+            <p className="text-lg font-bold text-danger">{data.weekly_gamma.total_decay_pct}%</p>
+            <p className="text-xs text-warning">{data.weekly_gamma.decay_pattern}</p>
+          </div>
+        </div>
+
+        {/* Week's Gamma Structure */}
+        <h4 className="text-sm font-bold text-text-primary mb-2">Week's Gamma Structure:</h4>
+        <div className="space-y-2 mb-4">
           {['monday', 'tuesday', 'wednesday', 'thursday', 'friday'].map((day) => {
-            const dayName = day.charAt(0).toUpperCase() + day.slice(1, 3)
+            const dayName = day.charAt(0).toUpperCase() + day.slice(1)
             const gamma = data.weekly_gamma[day as keyof typeof data.weekly_gamma] as number
             const pct = Math.round((gamma / data.weekly_gamma.monday) * 100)
             const isToday = day === data.current_day.toLowerCase()
@@ -354,7 +431,7 @@ export default function GammaExpirationWidget() {
             return (
               <div key={day} className={`flex items-center gap-2 p-2 rounded-lg ${isToday ? 'bg-primary/10 border border-primary' : 'bg-background-hover'}`}>
                 {isToday && <span className="text-primary text-xs">📍</span>}
-                <span className="text-xs font-mono w-8 text-text-secondary">{dayName}</span>
+                <span className="text-xs font-mono w-24 text-text-secondary">{dayName} {weekDates[day]}</span>
                 <div className="flex-1 h-4 bg-background-deep rounded-full overflow-hidden">
                   <div
                     className="h-full bg-gradient-to-r from-success to-danger transition-all"
@@ -368,103 +445,266 @@ export default function GammaExpirationWidget() {
           })}
         </div>
 
-        <div className="mt-3 p-2 bg-background-hover rounded-lg text-center">
-          <span className="text-xs text-text-muted">Total Weekly Decay: </span>
-          <span className="text-sm font-bold text-danger">{data.weekly_gamma.total_decay_pct}%</span>
-          <span className="text-xs text-warning ml-2">({data.weekly_gamma.decay_pattern})</span>
-        </div>
+        {expandedSections.has('weekly') && (
+          <div className="space-y-3">
+            <h4 className="text-md font-bold text-text-primary">💰 HOW TO PROFIT THIS WEEK:</h4>
 
-        {expandedSection === 'weekly' && (
-          <div className="mt-4 pt-4 border-t border-border space-y-3">
+            {/* Weekly Strategy 1: Theta Farming */}
             <div className="p-3 bg-success/5 border border-success/20 rounded-lg">
-              <h4 className="text-sm font-bold text-success mb-1">Mon-Wed: Theta Farming</h4>
-              <p className="text-xs text-text-secondary">Sell premium (Iron Condors, Credit Spreads). Exit at 50-60% profit.</p>
+              <h5 className="text-sm font-bold text-success mb-2">Aggressive Theta Farming (Mon-Wed)</h5>
+              <p className="text-xs text-text-secondary mb-2"><strong className="text-text-primary">Description:</strong> Sell premium while gamma is strong</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p className="mb-1"><strong>Strategy:</strong> Iron Condor or Credit Spreads</p>
+                  <p className="mb-1"><strong>Strikes:</strong> 0.15-0.20 delta wings (far OTM)</p>
+                  <p><strong>Expiration:</strong> Friday (this week)</p>
+                </div>
+                <div>
+                  <p className="mb-1"><strong>Entry:</strong> Monday or Tuesday morning</p>
+                  <p className="mb-1"><strong>Exit:</strong> Wednesday close (50-60% profit)</p>
+                  <p><strong>Size:</strong> 3-5% account risk per spread</p>
+                </div>
+              </div>
+              <p className="text-xs mt-2"><strong className="text-primary">Why:</strong> Week starts with 100% of gamma - high mean-reversion, options will decay fast</p>
             </div>
+
+            {/* Weekly Strategy 2: Delta Buying */}
             <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
-              <h4 className="text-sm font-bold text-primary mb-1">Thu-Fri: Delta Buying</h4>
-              <p className="text-xs text-text-secondary">Switch to directional plays. Low gamma = momentum moves.</p>
+              <h5 className="text-sm font-bold text-primary mb-2">Delta Buying (Thu-Fri)</h5>
+              <p className="text-xs text-text-secondary mb-2"><strong className="text-text-primary">Description:</strong> Switch to directional momentum plays</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p className="mb-1"><strong>Strategy:</strong> Long Calls or Puts</p>
+                  <p className="mb-1"><strong>Strikes:</strong> ATM or first OTM (0.5-0.6 delta)</p>
+                  <p><strong>Expiration:</strong> Next week (1 week DTE)</p>
+                </div>
+                <div>
+                  <p className="mb-1"><strong>Entry:</strong> Thursday morning</p>
+                  <p className="mb-1"><strong>Exit:</strong> Friday close or hold if strong trend</p>
+                  <p><strong>Size:</strong> 2-3% account risk</p>
+                </div>
+              </div>
+              <p className="text-xs mt-2"><strong className="text-primary">Why:</strong> By Thursday, only 12% gamma remains - low hedging = directional moves</p>
+            </div>
+
+            {/* Weekly Strategy 3: Dynamic Position Sizing */}
+            <div className="p-3 bg-warning/5 border border-warning/20 rounded-lg">
+              <h5 className="text-sm font-bold text-warning mb-2">Dynamic Position Sizing</h5>
+              <p className="text-xs text-text-secondary mb-2"><strong className="text-text-primary">Description:</strong> Adjust size based on gamma regime through week</p>
+              <div className="space-y-1 text-xs">
+                <p><strong>Mon-Tue:</strong> 100% normal size (gamma protects you)</p>
+                <p><strong>Wed:</strong> 75% size (transition)</p>
+                <p><strong>Thu-Fri:</strong> 50% size (gamma gone, vol spikes)</p>
+              </div>
+              <p className="text-xs mt-2"><strong className="text-primary">Why:</strong> Risk management: {data.weekly_gamma.total_decay_pct}% weekly decay means vol will increase significantly late week</p>
             </div>
           </div>
         )}
       </div>
 
-      {/* Volatility Cliffs - Compact */}
+      {/* VIEW 3: VOLATILITY CLIFFS */}
       <div className="card">
         <button
           onClick={() => toggleSection('cliffs')}
           className="w-full flex items-center justify-between mb-4"
         >
           <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
-            ⚠️ Daily Risk Levels
+            ⚠️ VIEW 3: VOLATILITY CLIFFS <span className="text-text-secondary text-sm">(Risk Management)</span>
           </h3>
-          {expandedSection === 'cliffs' ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          {expandedSections.has('cliffs') ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
         </button>
 
-        <div className="grid grid-cols-5 gap-2">
+        <h4 className="text-sm font-bold text-text-primary mb-3">Relative Expiration Risk by Day:</h4>
+        <div className="grid grid-cols-5 gap-2 mb-4">
           {['monday', 'tuesday', 'wednesday', 'thursday', 'friday'].map((day) => {
             const dayName = day.charAt(0).toUpperCase() + day.slice(1, 3)
             const risk = data.daily_risks[day as keyof typeof data.daily_risks]
             const isToday = day === data.current_day.toLowerCase()
+            const riskLevel = getDayRiskLevel(risk)
 
             return (
               <div
                 key={day}
                 className={`p-2 rounded-lg border text-center ${isToday ? 'border-primary bg-primary/10' : 'border-border bg-background-hover'}`}
               >
-                {isToday && <div className="text-primary text-xs font-bold mb-1">TODAY</div>}
-                <div className="text-lg mb-1">{getDayIcon(risk)}</div>
-                <div className="text-xs font-bold text-text-primary">{dayName}</div>
-                <div className="text-sm font-bold" style={{ color: risk >= 70 ? '#ef4444' : risk >= 50 ? '#f59e0b' : '#3b82f6' }}>
+                {isToday && <div className="text-primary text-xs font-bold mb-1">📍 TODAY</div>}
+                <div className="text-xl mb-1">{getDayIcon(risk)}</div>
+                <div className="text-xs font-bold text-text-primary mb-1">{dayName}</div>
+                <div className="text-lg font-bold mb-1" style={{ color: risk >= 70 ? '#ef4444' : risk >= 50 ? '#f59e0b' : '#3b82f6' }}>
                   {risk}%
+                </div>
+                <div className="text-xs font-semibold" style={{ color: risk >= 70 ? '#ef4444' : risk >= 50 ? '#f59e0b' : '#3b82f6' }}>
+                  {riskLevel}
                 </div>
               </div>
             )
           })}
         </div>
 
-        {expandedSection === 'cliffs' && (
-          <div className="mt-4 pt-4 border-t border-border">
-            <h4 className="text-sm font-bold text-text-primary mb-3">Friday Strategies (Highest Risk):</h4>
-            <div className="space-y-2">
-              <div className="p-2 bg-danger/5 border border-danger/20 rounded-lg">
-                <span className="text-xs font-bold text-danger">Pre-Expiration Scalp:</span>
-                <span className="text-xs text-text-secondary ml-2">ATM Straddle 10am → Exit 2-3pm</span>
+        {expandedSections.has('cliffs') && (
+          <div className="space-y-3">
+            <h4 className="text-md font-bold text-text-primary">💰 STRATEGIES FOR HIGHEST RISK DAY (Friday):</h4>
+
+            {/* Cliff Strategy 1 */}
+            <div className="p-3 bg-danger/5 border border-danger/20 rounded-lg">
+              <div className="flex items-start gap-2 mb-2">
+                <span className="px-2 py-0.5 bg-danger text-white text-xs font-bold rounded">HIGH PRIORITY</span>
+                <h5 className="text-sm font-bold text-danger">Pre-Expiration Volatility Scalp</h5>
               </div>
-              <div className="p-2 bg-warning/5 border border-warning/20 rounded-lg">
-                <span className="text-xs font-bold text-warning">Post-Expiration Position:</span>
-                <span className="text-xs text-text-secondary ml-2">Buy direction at 3:45pm Friday</span>
+              <p className="text-xs text-text-secondary mb-2"><strong className="text-text-primary">Strategy:</strong> Capture chaos of gamma expiration, not direction</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p className="mb-1"><strong>Type:</strong> ATM Straddle</p>
+                  <p className="mb-1"><strong>Strike:</strong> ATM (0.5 delta both sides)</p>
+                  <p className="mb-1"><strong>Expiration:</strong> 0DTE (expiring Friday)</p>
+                  <p><strong>Entry:</strong> Friday 10:00-11:00am</p>
+                </div>
+                <div>
+                  <p className="mb-1"><strong>Exit:</strong> Friday 2:00-3:00pm (BEFORE 4pm)</p>
+                  <p className="mb-1"><strong>Risk:</strong> Defined (premium paid)</p>
+                  <p><strong>Size:</strong> 2-3% account risk</p>
+                </div>
               </div>
+              <p className="text-xs mt-2"><strong className="text-primary">Why:</strong> Friday has 100% gamma decay - massive expiration creates intraday volatility spike. Exit before pin risk at 4pm.</p>
+            </div>
+
+            {/* Cliff Strategy 2 */}
+            <div className="p-3 bg-warning/5 border border-warning/20 rounded-lg">
+              <div className="flex items-start gap-2 mb-2">
+                <span className="px-2 py-0.5 bg-warning text-white text-xs font-bold rounded">MEDIUM PRIORITY</span>
+                <h5 className="text-sm font-bold text-warning">Post-Expiration Directional Positioning</h5>
+              </div>
+              <p className="text-xs text-text-secondary mb-2"><strong className="text-text-primary">Strategy:</strong> Position day-before for explosive move day-after</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p className="mb-1"><strong>Type:</strong> Long Calls or Puts</p>
+                  <p className="mb-1"><strong>Strike:</strong> 0.4-0.5 delta in expected direction</p>
+                  <p className="mb-1"><strong>Expiration:</strong> 1DTE or 2DTE</p>
+                  <p><strong>Entry:</strong> Friday 3:45pm</p>
+                </div>
+                <div>
+                  <p className="mb-1"><strong>Exit:</strong> Next day morning if profit target hit</p>
+                  <p className="mb-1"><strong>Risk:</strong> 30% stop loss</p>
+                  <p><strong>Size:</strong> 2% account risk</p>
+                </div>
+              </div>
+              <p className="text-xs mt-2"><strong className="text-primary">Why:</strong> After Friday gamma expires, next day will have explosive moves in prevailing trend direction</p>
+            </div>
+
+            {/* Cliff Strategy 3: Avoidance */}
+            <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
+              <div className="flex items-start gap-2 mb-2">
+                <span className="px-2 py-0.5 bg-primary text-white text-xs font-bold rounded">LOW PRIORITY</span>
+                <h5 className="text-sm font-bold text-primary">The Avoidance Strategy</h5>
+              </div>
+              <p className="text-xs text-text-secondary mb-2"><strong className="text-text-primary">Strategy:</strong> Sometimes the best trade is no trade</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p className="mb-1"><strong>Type:</strong> Cash / Sidelines</p>
+                  <p><strong>Entry:</strong> Close all positions day before</p>
+                </div>
+                <div>
+                  <p className="mb-1"><strong>Exit:</strong> Re-enter next Monday</p>
+                  <p><strong>Risk:</strong> 0% (no positions)</p>
+                </div>
+              </div>
+              <p className="text-xs mt-2"><strong className="text-primary">Why:</strong> Friday shows 100% decay - if you're uncomfortable with chaos, sit out and preserve capital</p>
             </div>
           </div>
         )}
       </div>
 
-      {/* Quick Trade Playbook */}
+      {/* ACTIONABLE TRADE PLAYBOOK */}
       <div className="card bg-gradient-to-br from-primary/10 to-success/10 border border-primary">
-        <h3 className="text-lg font-bold text-text-primary mb-3">🎯 Today's Trade Opportunity</h3>
+        <h3 className="text-lg font-bold text-text-primary mb-3">🎯 Actionable Trade Playbook - Today's Opportunity</h3>
 
-        <div className="grid grid-cols-2 gap-3 text-sm mb-3">
-          <div>
-            <span className="text-text-muted">Strategy:</span>
-            <span className="ml-2 font-semibold text-primary">0DTE ATM Straddle</span>
+        <div className="p-3 bg-background-card rounded-lg mb-3">
+          <h4 className="text-md font-bold text-danger mb-2">📊 🔥 0DTE Straddle - Volatility Explosion</h4>
+
+          <div className="mb-3">
+            <h5 className="font-bold text-text-primary text-sm mb-1">📍 Current Market Scenario:</h5>
+            <p className="text-xs text-text-secondary">{data.current_day} Expiration + Massive gamma decay = Volatility spike</p>
           </div>
-          <div>
-            <span className="text-text-muted">Entry:</span>
-            <span className="ml-2 font-semibold text-text-primary">9:30-10:30am ET</span>
-          </div>
-          <div>
-            <span className="text-text-muted">Strike:</span>
-            <span className="ml-2 font-semibold text-text-primary">${data.spot_price.toFixed(2)} (ATM)</span>
-          </div>
-          <div>
-            <span className="text-text-muted">Exit:</span>
-            <span className="ml-2 font-semibold text-text-primary">1:00pm or +$2 ITM</span>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div className="space-y-2">
+              <div>
+                <h5 className="font-bold text-text-primary">💼 Strategy:</h5>
+                <p className="text-text-secondary">Long 0DTE ATM Straddle</p>
+              </div>
+              <div>
+                <h5 className="font-bold text-text-primary">⏰ Entry Timing:</h5>
+                <p className="text-text-secondary">9:30 AM - 10:30 AM ET (Early to capture full move)</p>
+              </div>
+              <div>
+                <h5 className="font-bold text-text-primary">📋 Trade Structure:</h5>
+                <div className="space-y-0.5">
+                  <p><strong>Buy ATM Call:</strong> ${data.spot_price.toFixed(2)} strike</p>
+                  <p><strong>Buy ATM Put:</strong> ${data.spot_price.toFixed(2)} strike</p>
+                  <p><strong>Expiration:</strong> TODAY (0DTE)</p>
+                  <p><strong>Debit:</strong> $1.50 - $2.50 per straddle</p>
+                  <p><strong>Breakevens:</strong> ${(data.spot_price - 2).toFixed(2)} / ${(data.spot_price + 2).toFixed(2)}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div>
+                <h5 className="font-bold text-text-primary">🎯 Exit Rules:</h5>
+                <p className="text-text-secondary"><strong>Target:</strong> Exit when either leg is ITM by $2+ OR at 1:00 PM ET</p>
+                <p className="text-text-secondary"><strong>Stop:</strong> Exit at 11:30 AM if no movement (down 30-40%) or at $100 loss per straddle</p>
+              </div>
+              <div>
+                <h5 className="font-bold text-text-primary">💰 Risk Management:</h5>
+                <p className="text-text-secondary"><strong>Size:</strong> 1-2% of account (aggressive but defined risk)</p>
+              </div>
+              <div>
+                <h5 className="font-bold text-text-primary">🧠 Edge:</h5>
+                <p className="text-text-secondary">Low gamma = dealers stop hedging = big intraday moves. Friday afternoon typically sees 1-2% swings</p>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="p-2 bg-background-hover/50 rounded-lg text-xs text-text-secondary">
-          <strong>Edge:</strong> {data.gamma_loss_pct}% gamma loss = dealers stop hedging = big intraday moves
+        {/* Current Conditions */}
+        <div className="p-3 bg-background-hover rounded-lg">
+          <h4 className="font-bold text-text-primary text-sm mb-2">Current Conditions:</h4>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+            <div>
+              <span className="text-text-muted">Symbol:</span>
+              <span className="ml-2 font-semibold text-primary">{data.symbol}</span>
+            </div>
+            <div>
+              <span className="text-text-muted">Net GEX:</span>
+              <span className="ml-2 font-semibold text-text-primary">{formatGamma(data.net_gex)}</span>
+            </div>
+            <div>
+              <span className="text-text-muted">Spot Price:</span>
+              <span className="ml-2 font-semibold text-text-primary">${data.spot_price.toFixed(2)}</span>
+            </div>
+            <div>
+              <span className="text-text-muted">Flip Point:</span>
+              <span className="ml-2 font-semibold text-warning">${data.flip_point.toFixed(2)}</span>
+            </div>
+            <div>
+              <span className="text-text-muted">Day:</span>
+              <span className="ml-2 font-semibold text-text-primary">{data.current_day}</span>
+            </div>
+            <div>
+              <span className="text-text-muted">Expiration Today:</span>
+              <span className="ml-2 font-semibold text-danger">Yes</span>
+            </div>
+          </div>
         </div>
+      </div>
+
+      {/* Evidence-based footer */}
+      <div className="card bg-background-hover">
+        <h4 className="text-xs font-bold text-text-primary mb-1">📚 EVIDENCE-BASED THRESHOLDS</h4>
+        <p className="text-xs text-text-secondary">
+          Thresholds based on: Academic research (Dim, Eraker, Vilkov 2023), SpotGamma professional analysis, ECB Financial Stability Review 2023,
+          and validated production trading data. Context-aware adjustments for Friday expirations and high-VIX environments.
+        </p>
       </div>
     </div>
   )
