@@ -6,13 +6,21 @@ Integrates seamlessly with Streamlit web service
 CAPITAL ALLOCATION:
 ==================
 Total Capital: $1,000,000
-├── PHOENIX (0DTE SPY/SPX): $400,000 (40%)
-├── ATLAS (SPX Wheel):      $500,000 (50%)
-└── Reserve:                $100,000 (10%)
+├── PHOENIX (0DTE SPY/SPX):      $300,000 (30%)
+├── ATLAS (SPX Wheel):           $400,000 (40%)
+├── ARES (Aggressive IC):        $200,000 (20%)
+└── Reserve:                     $100,000 (10%)
+
+TRADING BOTS:
+============
+- PHOENIX: 0DTE options trading (hourly 10 AM - 3 PM ET)
+- ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
+- ARES: Aggressive Iron Condor targeting 10% monthly (daily at 10:15 AM ET)
 
 This partitioning provides:
 - Aggressive short-term trading via PHOENIX
 - Steady premium collection via ATLAS wheel
+- High-return strategy via ARES Iron Condors
 - Reserve for margin calls and opportunities
 """
 
@@ -20,8 +28,9 @@ This partitioning provides:
 # CAPITAL ALLOCATION CONFIGURATION
 # ============================================================================
 CAPITAL_ALLOCATION = {
-    'PHOENIX': 400_000,   # 0DTE options trading
-    'ATLAS': 500_000,     # SPX wheel strategy
+    'PHOENIX': 300_000,   # 0DTE options trading
+    'ATLAS': 400_000,     # SPX wheel strategy
+    'ARES': 200_000,      # Aggressive Iron Condor (10% monthly target)
     'RESERVE': 100_000,   # Emergency reserve
     'TOTAL': 1_000_000,
 }
@@ -59,9 +68,19 @@ except ImportError:
     TradingMode = None
     print("Warning: SPXWheelTrader not available. ATLAS bot will be disabled.")
 
+# Import ARES (Aggressive Iron Condor)
+try:
+    from trading.ares_iron_condor import ARESTrader, TradingMode as ARESTradingMode
+    ARES_AVAILABLE = True
+except ImportError:
+    ARES_AVAILABLE = False
+    ARESTrader = None
+    ARESTradingMode = None
+    print("Warning: ARESTrader not available. ARES bot will be disabled.")
+
 # Import decision logger for comprehensive logging
 try:
-    from trading.decision_logger import get_phoenix_logger, get_atlas_logger, BotName
+    from trading.decision_logger import get_phoenix_logger, get_atlas_logger, get_ares_logger, BotName
     DECISION_LOGGER_AVAILABLE = True
 except ImportError:
     DECISION_LOGGER_AVAILABLE = False
@@ -107,7 +126,7 @@ class AutonomousTraderScheduler:
         logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital")
 
         # ATLAS - SPX Cash-Secured Put Wheel Trader
-        # Capital: $500,000 (50% of total)
+        # Capital: $400,000 (40% of total)
         self.atlas_trader = None
         if ATLAS_AVAILABLE:
             try:
@@ -120,10 +139,25 @@ class AutonomousTraderScheduler:
                 logger.warning(f"ATLAS initialization failed: {e}")
                 self.atlas_trader = None
 
+        # ARES - Aggressive Iron Condor (10% monthly target)
+        # Capital: $200,000 (20% of total)
+        self.ares_trader = None
+        if ARES_AVAILABLE:
+            try:
+                self.ares_trader = ARESTrader(
+                    mode=ARESTradingMode.PAPER,
+                    initial_capital=CAPITAL_ALLOCATION['ARES']
+                )
+                logger.info(f"✅ ARES initialized with ${CAPITAL_ALLOCATION['ARES']:,} capital")
+            except Exception as e:
+                logger.warning(f"ARES initialization failed: {e}")
+                self.ares_trader = None
+
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
         logger.info(f"   PHOENIX: ${CAPITAL_ALLOCATION['PHOENIX']:,}")
         logger.info(f"   ATLAS:   ${CAPITAL_ALLOCATION['ATLAS']:,}")
+        logger.info(f"   ARES:    ${CAPITAL_ALLOCATION['ARES']:,}")
         logger.info(f"   RESERVE: ${CAPITAL_ALLOCATION['RESERVE']:,}")
         logger.info(f"   TOTAL:   ${CAPITAL_ALLOCATION['TOTAL']:,}")
 
@@ -131,9 +165,11 @@ class AutonomousTraderScheduler:
         self.last_trade_check = None
         self.last_position_check = None
         self.last_atlas_check = None
+        self.last_ares_check = None
         self.last_error = None
         self.execution_count = 0
         self.atlas_execution_count = 0
+        self.ares_execution_count = 0
 
         # Load saved state from database
         self._load_state()
@@ -393,6 +429,63 @@ class AutonomousTraderScheduler:
             logger.info("ATLAS will continue despite error")
             logger.info(f"=" * 80)
 
+    def scheduled_ares_logic(self):
+        """
+        ARES (Aggressive Iron Condor) trading logic - runs daily at 10:15 AM ET
+
+        The aggressive Iron Condor strategy:
+        - Targets 10% monthly returns
+        - Trades 0DTE Iron Condors every weekday
+        - 1 SD strikes, 10% risk per trade
+        - No stop loss - let theta work
+        """
+        ny_tz = pytz.timezone('America/New_York')
+        now = datetime.now(ny_tz)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ARES (Aggressive IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.ares_trader:
+            logger.warning("ARES trader not available - skipping")
+            return
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping ARES logic.")
+            return
+
+        logger.info("Market is OPEN. Running ARES aggressive Iron Condor strategy...")
+
+        try:
+            self.last_ares_check = now
+
+            # Run the daily ARES cycle
+            result = self.ares_trader.run_daily_cycle()
+
+            if result:
+                logger.info(f"ARES daily cycle completed:")
+                logger.info(f"  Capital: ${result.get('capital', 0):,.2f}")
+                logger.info(f"  Open Positions: {result.get('open_positions', 0)}")
+                logger.info(f"  Actions: {result.get('actions', [])}")
+
+                # Log any new positions
+                if result.get('new_position'):
+                    pos = result.get('new_position')
+                    logger.info(f"  NEW POSITION: {pos.get('position_id')} - {pos.get('strikes')}")
+                    logger.info(f"    Contracts: {pos.get('contracts')}, Credit: ${pos.get('credit', 0):.2f}")
+            else:
+                logger.info("ARES: No actions taken today")
+
+            self.ares_execution_count += 1
+            logger.info(f"ARES cycle #{self.ares_execution_count} completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in ARES trading logic: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("ARES will continue despite error")
+            logger.info(f"=" * 80)
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -406,10 +499,11 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel)")
+        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC)")
         logger.info(f"Timezone: America/New_York (Eastern Time)")
         logger.info(f"PHOENIX Schedule: Every hour 10:00 AM - 3:00 PM ET, Mon-Fri")
-        logger.info(f"ATLAS Schedule: Daily at 10:00 AM ET, Mon-Fri")
+        logger.info(f"ATLAS Schedule: Daily at 10:05 AM ET, Mon-Fri")
+        logger.info(f"ARES Schedule: Daily at 10:15 AM ET, Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -433,7 +527,7 @@ class AutonomousTraderScheduler:
         )
 
         # =================================================================
-        # ATLAS JOB: SPX Wheel - runs once daily at 10:00 AM ET
+        # ATLAS JOB: SPX Wheel - runs once daily at 10:05 AM ET
         # =================================================================
         if self.atlas_trader:
             self.scheduler.add_job(
@@ -451,6 +545,26 @@ class AutonomousTraderScheduler:
             logger.info("✅ ATLAS job scheduled (10:05 AM ET daily)")
         else:
             logger.warning("⚠️ ATLAS not available - wheel trading disabled")
+
+        # =================================================================
+        # ARES JOB: Aggressive Iron Condor - runs once daily at 10:15 AM ET
+        # =================================================================
+        if self.ares_trader:
+            self.scheduler.add_job(
+                self.scheduled_ares_logic,
+                trigger=CronTrigger(
+                    hour=10,       # 10:00 AM - after market settles
+                    minute=15,     # 10:15 AM to avoid conflict with PHOENIX/ATLAS
+                    day_of_week='mon-fri',
+                    timezone='America/New_York'
+                ),
+                id='ares_trading',
+                name='ARES - Aggressive Iron Condor',
+                replace_existing=True
+            )
+            logger.info("✅ ARES job scheduled (10:15 AM ET daily)")
+        else:
+            logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
 
         self.scheduler.start()
         self.is_running = True
@@ -575,9 +689,10 @@ def run_standalone():
     logger.info("=" * 80)
     logger.info("ALPHAGEX AUTONOMOUS TRADER - STANDALONE MODE")
     logger.info("=" * 80)
-    logger.info(f"PHOENIX (0DTE): ${CAPITAL_ALLOCATION['PHOENIX']:,}")
-    logger.info(f"ATLAS (Wheel):  ${CAPITAL_ALLOCATION['ATLAS']:,}")
-    logger.info(f"RESERVE:        ${CAPITAL_ALLOCATION['RESERVE']:,}")
+    logger.info(f"PHOENIX (0DTE):      ${CAPITAL_ALLOCATION['PHOENIX']:,}")
+    logger.info(f"ATLAS (Wheel):       ${CAPITAL_ALLOCATION['ATLAS']:,}")
+    logger.info(f"ARES (Aggressive):   ${CAPITAL_ALLOCATION['ARES']:,}")
+    logger.info(f"RESERVE:             ${CAPITAL_ALLOCATION['RESERVE']:,}")
     logger.info("=" * 80)
 
     # Create and start scheduler
@@ -610,7 +725,7 @@ def run_standalone():
             # Log status periodically
             status = scheduler.get_status()
             if status['market_open']:
-                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}")
+                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}")
             else:
                 logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
 
