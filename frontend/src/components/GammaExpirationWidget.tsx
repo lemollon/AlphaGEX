@@ -455,8 +455,13 @@ export default function GammaExpirationWidget() {
             <p className="text-sm text-text-secondary">
               Week of {getCurrentWeekRange()} | Today: <strong className="text-primary">{data.current_day}</strong>
               {lastUpdated && (
-                <span className="ml-2 text-text-muted">
-                  | Updated {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                <span className="ml-2 text-text-muted" suppressHydrationWarning>
+                  | Updated {lastUpdated.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true,
+                    timeZoneName: 'short'
+                  })}
                   {refreshing && <span className="ml-1 text-primary">(refreshing...)</span>}
                 </span>
               )}
