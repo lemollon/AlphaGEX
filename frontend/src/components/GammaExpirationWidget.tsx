@@ -53,35 +53,125 @@ interface GammaExpirationData {
   directional_prediction: DirectionalPrediction | null
 }
 
+// Cache configuration
+const CACHE_KEY_PREFIX = 'alphagex_0dte_'
+const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes - data is fresh
+const STALE_TTL_MS = 60 * 60 * 1000 // 1 hour - data is stale but usable
+
+interface CachedData {
+  data: GammaExpirationData
+  timestamp: number
+}
+
+function getCachedData(symbol: string): CachedData | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const cached = localStorage.getItem(`${CACHE_KEY_PREFIX}${symbol}`)
+    if (cached) {
+      return JSON.parse(cached)
+    }
+  } catch (e) {
+    // Ignore parse errors
+  }
+  return null
+}
+
+function setCachedData(symbol: string, data: GammaExpirationData): void {
+  if (typeof window === 'undefined') return
+  try {
+    const cacheEntry: CachedData = {
+      data,
+      timestamp: Date.now()
+    }
+    localStorage.setItem(`${CACHE_KEY_PREFIX}${symbol}`, JSON.stringify(cacheEntry))
+  } catch (e) {
+    // Ignore storage errors (quota exceeded, etc.)
+  }
+}
+
 export default function GammaExpirationWidget() {
   const [symbol, setSymbol] = useState('SPY')
   const [data, setData] = useState<GammaExpirationData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false) // Background refresh indicator
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['prediction', 'today']))
 
   const popularSymbols = ['SPY', 'QQQ', 'IWM']
 
-  const fetchData = useCallback(async () => {
+  // Load cached data immediately on mount/symbol change
+  useEffect(() => {
+    const cached = getCachedData(symbol)
+    if (cached) {
+      const age = Date.now() - cached.timestamp
+      // Use cached data if it's not too old
+      if (age < STALE_TTL_MS) {
+        setData(cached.data)
+        setLastUpdated(new Date(cached.timestamp))
+        setLoading(false) // Show cached data immediately
+
+        // If data is stale (older than TTL but younger than STALE_TTL), refresh in background
+        if (age > CACHE_TTL_MS) {
+          setRefreshing(true)
+        }
+      }
+    }
+  }, [symbol])
+
+  const fetchData = useCallback(async (isBackgroundRefresh = false) => {
     try {
-      setLoading(true)
+      if (!isBackgroundRefresh) {
+        // Only show loading spinner if no cached data
+        if (!data) {
+          setLoading(true)
+        }
+      }
       setError(null)
 
       const response = await apiClient.getGammaExpiration(symbol)
       const expirationData = response.data.data
 
+      // Update state and cache
       setData(expirationData)
+      setLastUpdated(new Date())
+      setCachedData(symbol, expirationData)
     } catch (error: any) {
       logger.error('Error fetching expiration data:', error)
-      setError(error.message || 'Failed to fetch data')
+      // Only set error if we don't have cached data to show
+      if (!data) {
+        setError(error.message || 'Failed to fetch data')
+      }
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
-  }, [symbol])
+  }, [symbol, data])
 
+  // Fetch data on mount and when symbol changes
   useEffect(() => {
-    fetchData()
-  }, [fetchData])
+    const cached = getCachedData(symbol)
+    const hasFreshCache = cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS
+
+    // If we have fresh cached data, don't fetch immediately
+    if (hasFreshCache) {
+      return
+    }
+
+    // If we have stale cache, fetch in background
+    if (cached && (Date.now() - cached.timestamp) < STALE_TTL_MS) {
+      fetchData(true) // Background refresh
+    } else {
+      // No cache or very old - fetch with loading spinner
+      fetchData(false)
+    }
+  }, [symbol]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Manual refresh handler
+  const handleRefresh = () => {
+    setRefreshing(true)
+    fetchData(true)
+  }
 
   const getRiskColor = (level: string) => {
     switch (level.toUpperCase()) {
@@ -344,7 +434,7 @@ export default function GammaExpirationWidget() {
           <h3 className="text-lg font-bold text-danger mb-1">Failed to Load 0DTE Data</h3>
           <p className="text-text-secondary text-sm mb-3">{error || 'No data available'}</p>
           <button
-            onClick={() => fetchData()}
+            onClick={() => fetchData(false)}
             className="px-3 py-1 bg-primary text-white text-sm rounded-lg hover:bg-primary/80"
           >
             <RefreshCw className="w-3 h-3 inline mr-1" />
@@ -362,7 +452,15 @@ export default function GammaExpirationWidget() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-text-primary">0DTE Gamma Expiration Tracker</h2>
-            <p className="text-sm text-text-secondary">Week of {getCurrentWeekRange()} | Today: <strong className="text-primary">{data.current_day}</strong></p>
+            <p className="text-sm text-text-secondary">
+              Week of {getCurrentWeekRange()} | Today: <strong className="text-primary">{data.current_day}</strong>
+              {lastUpdated && (
+                <span className="ml-2 text-text-muted">
+                  | Updated {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {refreshing && <span className="ml-1 text-primary">(refreshing...)</span>}
+                </span>
+              )}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex gap-1">
@@ -381,10 +479,11 @@ export default function GammaExpirationWidget() {
               ))}
             </div>
             <button
-              onClick={fetchData}
-              className="flex items-center gap-1 px-3 py-1 rounded-lg bg-background-hover hover:bg-background-hover/70 text-text-primary transition-all"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className={`flex items-center gap-1 px-3 py-1 rounded-lg bg-background-hover hover:bg-background-hover/70 text-text-primary transition-all ${refreshing ? 'opacity-50' : ''}`}
             >
-              <RefreshCw className="w-3 h-3" />
+              <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
