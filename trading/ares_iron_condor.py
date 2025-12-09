@@ -182,10 +182,23 @@ class ARESTrader:
                 logger.warning(f"ARES: Failed to initialize Tradier production: {e}")
 
             # Sandbox API for paper trade submission (only in PAPER mode)
+            # IMPORTANT: Tradier sandbox requires SEPARATE API credentials from production
             if mode == TradingMode.PAPER:
                 try:
-                    self.tradier_sandbox = TradierDataFetcher(sandbox=True)
-                    logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
+                    from unified_config import APIConfig
+                    sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY
+                    sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+
+                    if sandbox_key and sandbox_account:
+                        self.tradier_sandbox = TradierDataFetcher(
+                            api_key=sandbox_key,
+                            account_id=sandbox_account,
+                            sandbox=True
+                        )
+                        logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
+                    else:
+                        logger.warning("ARES: Sandbox credentials not configured - set TRADIER_SANDBOX_API_KEY and TRADIER_SANDBOX_ACCOUNT_ID in .env")
+                        logger.warning("ARES: Get sandbox credentials from: https://developer.tradier.com/user/applications")
                 except Exception as e:
                     logger.warning(f"ARES: Failed to initialize Tradier sandbox: {e}")
 
@@ -231,6 +244,39 @@ class ARESTrader:
         self._position_counter += 1
         now = datetime.now(self.tz)
         return f"ARES-{now.strftime('%Y%m%d')}-{self._position_counter:04d}"
+
+    def _find_spy_expiration(self, spx_expiration: str) -> str:
+        """
+        Find valid SPY expiration date.
+
+        SPY only has Mon/Wed/Fri expirations, not daily like SPX.
+        If SPX expiration is Tue/Thu, use the nearest valid SPY date.
+
+        Args:
+            spx_expiration: SPX expiration date (YYYY-MM-DD)
+
+        Returns:
+            Valid SPY expiration date (YYYY-MM-DD)
+        """
+        from datetime import timedelta
+
+        exp_date = datetime.strptime(spx_expiration, '%Y-%m-%d')
+        day_of_week = exp_date.weekday()  # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
+
+        # SPY valid days: Mon(0), Wed(2), Fri(4)
+        if day_of_week in [0, 2, 4]:
+            # Already a valid SPY expiration
+            return spx_expiration
+        elif day_of_week == 1:  # Tuesday -> use Wednesday
+            spy_date = exp_date + timedelta(days=1)
+        elif day_of_week == 3:  # Thursday -> use Friday
+            spy_date = exp_date + timedelta(days=1)
+        else:  # Saturday/Sunday (shouldn't happen)
+            # Use next Monday
+            days_until_monday = (7 - day_of_week) % 7
+            spy_date = exp_date + timedelta(days=days_until_monday)
+
+        return spy_date.strftime('%Y-%m-%d')
 
     def get_trading_ticker(self) -> str:
         """
@@ -514,25 +560,24 @@ class ARESTrader:
                     try:
                         # Use SPY for sandbox (SPX not available in Tradier sandbox)
                         sandbox_ticker = self.config.sandbox_ticker  # SPY
-                        sandbox_spread_width = self.config.spread_width_spy  # $2
 
                         # Scale strikes to SPY (SPY is ~1/10 of SPX)
-                        spx_price = market_data['underlying_price']
-                        spy_price = spx_price / 10
+                        # Use integer strikes (SPY options are in $1 increments)
+                        spy_put_long = int(round(ic_strikes['put_long_strike'] / 10, 0))
+                        spy_put_short = int(round(ic_strikes['put_short_strike'] / 10, 0))
+                        spy_call_short = int(round(ic_strikes['call_short_strike'] / 10, 0))
+                        spy_call_long = int(round(ic_strikes['call_long_strike'] / 10, 0))
 
-                        # Calculate equivalent SPY strikes
-                        spy_put_long = round(ic_strikes['put_long_strike'] / 10, 0)
-                        spy_put_short = round(ic_strikes['put_short_strike'] / 10, 0)
-                        spy_call_short = round(ic_strikes['call_short_strike'] / 10, 0)
-                        spy_call_long = round(ic_strikes['call_long_strike'] / 10, 0)
+                        # Scale credit proportionally (minimum $0.10 to ensure fill)
+                        spy_credit = max(0.10, round(ic_strikes['total_credit'] / 10, 2))
 
-                        # Scale credit proportionally
-                        spy_credit = ic_strikes['total_credit'] / 10
+                        # Find valid SPY expiration (SPY only has Mon/Wed/Fri, not daily like SPX)
+                        spy_expiration = self._find_spy_expiration(expiration)
 
-                        logger.info(f"ARES [SANDBOX]: Submitting to Tradier sandbox - SPY {spy_put_long}/{spy_put_short}P - {spy_call_short}/{spy_call_long}C")
+                        logger.info(f"ARES [SANDBOX]: Submitting to Tradier sandbox - SPY {spy_put_long}/{spy_put_short}P - {spy_call_short}/{spy_call_long}C exp={spy_expiration}")
                         sandbox_result = self.tradier_sandbox.place_iron_condor(
                             symbol=sandbox_ticker,
-                            expiration=expiration,
+                            expiration=spy_expiration,
                             put_long=spy_put_long,
                             put_short=spy_put_short,
                             call_short=spy_call_short,
