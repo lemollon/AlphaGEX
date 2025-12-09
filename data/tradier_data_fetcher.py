@@ -939,7 +939,21 @@ class TradierDataFetcher:
         if limit_price:
             data['price'] = str(limit_price)
 
-        return self._make_request('POST', f'accounts/{self.account_id}/orders', data=data)
+        # Log the order details for debugging
+        logger.info(f"Placing Iron Condor order: {symbol} exp={expiration}")
+        logger.info(f"  Legs: {put_long_sym} / {put_short_sym} / {call_short_sym} / {call_long_sym}")
+        logger.info(f"  Quantity: {quantity}, Limit: ${limit_price}" if limit_price else f"  Quantity: {quantity}, Market order")
+
+        response = self._make_request('POST', f'accounts/{self.account_id}/orders', data=data)
+
+        # Log the response
+        order_info = response.get('order', {})
+        if order_info:
+            logger.info(f"Iron Condor order response - ID: {order_info.get('id')}, Status: {order_info.get('status')}")
+        else:
+            logger.warning(f"Iron Condor order response - No order info: {response}")
+
+        return response
 
     # ==================== STREAMING ====================
 

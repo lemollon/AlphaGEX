@@ -498,9 +498,22 @@ class ARESTrader:
                 limit_price=ic_strikes['total_credit']
             )
 
-            order_info = result.get('order', {})
+            # Check for Tradier API errors
+            if 'errors' in result:
+                error_msg = result.get('errors', {}).get('error', 'Unknown error')
+                logger.error(f"ARES: Tradier API error: {error_msg}")
+                logger.error(f"ARES: Full response: {result}")
+                return None
+
+            order_info = result.get('order', {}) or {}
             order_id = str(order_info.get('id', ''))
             order_status = order_info.get('status', '')
+
+            # Validate order was actually placed
+            if not order_id:
+                logger.error(f"ARES: Order not placed - no order ID returned")
+                logger.error(f"ARES: Full response: {result}")
+                return None
 
             logger.info(f"ARES: Iron Condor order placed on {ticker} - ID: {order_id}, Status: {order_status}")
 
