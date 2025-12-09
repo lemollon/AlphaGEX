@@ -9,6 +9,7 @@ import {
   Database, Info, Percent, Shield
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import EnhancedEquityCurve from '@/components/backtest/EnhancedEquityCurve'
 import { apiClient } from '@/lib/api'
 import {
   LineChart as RechartsLine, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -1140,46 +1141,18 @@ export default function ZeroDTEBacktestPage() {
               {/* Charts Tab */}
               {activeTab === 'charts' && liveJobResult && (
                 <div className="space-y-6">
-                  {/* Equity Curve */}
-                  {equityCurveData.length > 0 && (
-                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-                      <h3 className="font-bold mb-4">Equity Curve</h3>
-                      <div className="h-80">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={equityCurveData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                            <XAxis
-                              dataKey="date"
-                              stroke="#9CA3AF"
-                              fontSize={10}
-                              tickFormatter={(date) => date?.slice(5, 10)}
-                            />
-                            <YAxis
-                              stroke="#9CA3AF"
-                              fontSize={12}
-                              tickFormatter={(v) => `$${(v / 1000000).toFixed(1)}M`}
-                            />
-                            <Tooltip
-                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                              formatter={(value: number) => [`$${value.toLocaleString()}`, 'Equity']}
-                            />
-                            <Area
-                              type="monotone"
-                              dataKey="equity"
-                              stroke="#22C55E"
-                              fill="#22C55E"
-                              fillOpacity={0.2}
-                            />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-                  )}
+                  {/* Enhanced Equity Curve with Annotations */}
+                  <EnhancedEquityCurve
+                    equityCurve={equityCurveData}
+                    tierTransitions={liveJobResult?.tier_transitions || []}
+                    allTrades={liveJobResult?.all_trades || []}
+                    initialCapital={config.initial_capital}
+                  />
 
                   {/* Drawdown Chart */}
                   {equityCurveData.length > 0 && (
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-                      <h3 className="font-bold mb-4">Drawdown</h3>
+                      <h3 className="font-bold mb-4">Drawdown Over Time</h3>
                       <div className="h-60">
                         <ResponsiveContainer width="100%" height="100%">
                           <AreaChart data={equityCurveData}>
@@ -1188,17 +1161,17 @@ export default function ZeroDTEBacktestPage() {
                               dataKey="date"
                               stroke="#9CA3AF"
                               fontSize={10}
-                              tickFormatter={(date) => date?.slice(5, 10)}
+                              tickFormatter={(date) => date?.slice(2, 7)}
                             />
                             <YAxis
                               stroke="#9CA3AF"
                               fontSize={12}
-                              tickFormatter={(v) => `${v.toFixed(1)}%`}
+                              tickFormatter={(v) => `-${v.toFixed(1)}%`}
                               reversed
                             />
                             <Tooltip
                               contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                              formatter={(value: number) => [`${value.toFixed(2)}%`, 'Drawdown']}
+                              formatter={(value: number) => [`-${value.toFixed(2)}%`, 'Drawdown']}
                             />
                             <Area
                               type="monotone"
