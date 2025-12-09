@@ -182,23 +182,23 @@ class ARESTrader:
                 logger.warning(f"ARES: Failed to initialize Tradier production: {e}")
 
             # Sandbox API for paper trade submission (only in PAPER mode)
-            # IMPORTANT: Tradier sandbox requires SEPARATE API credentials from production
+            # Tradier uses SAME credentials for sandbox, just different endpoint
             if mode == TradingMode.PAPER:
                 try:
                     from unified_config import APIConfig
-                    sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY
-                    sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+                    # Use separate sandbox credentials if available, otherwise use same as production
+                    sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+                    sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
 
                     if sandbox_key and sandbox_account:
                         self.tradier_sandbox = TradierDataFetcher(
                             api_key=sandbox_key,
                             account_id=sandbox_account,
-                            sandbox=True
+                            sandbox=True  # This switches to sandbox.tradier.com endpoint
                         )
                         logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
                     else:
-                        logger.warning("ARES: Sandbox credentials not configured - set TRADIER_SANDBOX_API_KEY and TRADIER_SANDBOX_ACCOUNT_ID in .env")
-                        logger.warning("ARES: Get sandbox credentials from: https://developer.tradier.com/user/applications")
+                        logger.warning("ARES: Tradier credentials not configured - cannot submit to sandbox")
                 except Exception as e:
                     logger.warning(f"ARES: Failed to initialize Tradier sandbox: {e}")
 
