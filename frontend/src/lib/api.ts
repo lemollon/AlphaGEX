@@ -295,6 +295,10 @@ export const apiClient = {
   resetBotData: (params?: { bot?: string, confirm?: boolean }) =>
     api.post('/api/trader/bots/reset', null, { params }),
 
+  // ARES - Aggressive Iron Condor Bot
+  getARESStatus: () => api.get('/api/trader/bots/ares/status'),
+  runARESCycle: () => api.post('/api/trader/bots/ares/run'),
+
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {
     symbol: string,
