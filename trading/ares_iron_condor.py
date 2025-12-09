@@ -167,18 +167,27 @@ class ARESTrader:
 
         self.tz = ZoneInfo("America/New_York")
 
-        # Initialize Tradier client
-        # ALWAYS use Production API for real SPX/SPXW data
-        # Paper trading is handled internally (not via Tradier sandbox)
-        self.tradier = None
+        # Initialize Tradier clients
+        # Production API: Always used for real SPX/SPXW market data (quotes, option chains)
+        # Sandbox API: Used in PAPER mode to submit trades to Tradier's paper trading
+        self.tradier = None  # Production - for market data
+        self.tradier_sandbox = None  # Sandbox - for paper trade submission
+
         if TRADIER_AVAILABLE and mode != TradingMode.BACKTEST:
             try:
-                # Always use production API for real SPX data
-                # Paper vs Live mode controls whether we EXECUTE trades, not data source
+                # Production API for real SPX data
                 self.tradier = TradierDataFetcher(sandbox=False)
-                logger.info(f"ARES: Tradier client initialized (PRODUCTION API for SPX data)")
+                logger.info(f"ARES: Tradier PRODUCTION client initialized (for SPX market data)")
             except Exception as e:
-                logger.warning(f"ARES: Failed to initialize Tradier: {e}")
+                logger.warning(f"ARES: Failed to initialize Tradier production: {e}")
+
+            # Sandbox API for paper trade submission (only in PAPER mode)
+            if mode == TradingMode.PAPER:
+                try:
+                    self.tradier_sandbox = TradierDataFetcher(sandbox=True)
+                    logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
+                except Exception as e:
+                    logger.warning(f"ARES: Failed to initialize Tradier sandbox: {e}")
 
         # Decision logger
         self.decision_logger = None
@@ -491,14 +500,59 @@ class ARESTrader:
             order_id = ""
             order_status = ""
 
-            # PAPER mode: Log trade internally, don't submit to Tradier
-            # LIVE mode: Submit real order to Tradier
+            # PAPER mode: Track internally in AlphaGEX AND submit to Tradier sandbox
+            # LIVE mode: Submit real order to Tradier production
             if self.mode == TradingMode.PAPER:
-                # Paper trading - just log, don't execute
+                # AlphaGEX internal paper trade tracking
                 order_id = f"PAPER-{datetime.now(self.tz).strftime('%Y%m%d%H%M%S')}"
                 order_status = "paper"
                 logger.info(f"ARES [PAPER]: Iron Condor on {ticker} - {ic_strikes['put_long_strike']}/{ic_strikes['put_short_strike']}P - {ic_strikes['call_short_strike']}/{ic_strikes['call_long_strike']}C")
-                logger.info(f"ARES [PAPER]: {contracts} contracts @ ${ic_strikes['total_credit']:.2f} credit (NOT submitted to broker)")
+                logger.info(f"ARES [PAPER]: {contracts} contracts @ ${ic_strikes['total_credit']:.2f} credit (AlphaGEX internal tracking)")
+
+                # ALSO submit to Tradier sandbox for their paper trading
+                if self.tradier_sandbox:
+                    try:
+                        # Use SPY for sandbox (SPX not available in Tradier sandbox)
+                        sandbox_ticker = self.config.sandbox_ticker  # SPY
+                        sandbox_spread_width = self.config.spread_width_spy  # $2
+
+                        # Scale strikes to SPY (SPY is ~1/10 of SPX)
+                        spx_price = market_data['underlying_price']
+                        spy_price = spx_price / 10
+
+                        # Calculate equivalent SPY strikes
+                        spy_put_long = round(ic_strikes['put_long_strike'] / 10, 0)
+                        spy_put_short = round(ic_strikes['put_short_strike'] / 10, 0)
+                        spy_call_short = round(ic_strikes['call_short_strike'] / 10, 0)
+                        spy_call_long = round(ic_strikes['call_long_strike'] / 10, 0)
+
+                        # Scale credit proportionally
+                        spy_credit = ic_strikes['total_credit'] / 10
+
+                        logger.info(f"ARES [SANDBOX]: Submitting to Tradier sandbox - SPY {spy_put_long}/{spy_put_short}P - {spy_call_short}/{spy_call_long}C")
+                        sandbox_result = self.tradier_sandbox.place_iron_condor(
+                            symbol=sandbox_ticker,
+                            expiration=expiration,
+                            put_long=spy_put_long,
+                            put_short=spy_put_short,
+                            call_short=spy_call_short,
+                            call_long=spy_call_long,
+                            quantity=contracts,
+                            limit_price=spy_credit
+                        )
+
+                        if 'errors' in sandbox_result:
+                            error_msg = sandbox_result.get('errors', {}).get('error', 'Unknown error')
+                            logger.warning(f"ARES [SANDBOX]: Tradier sandbox error: {error_msg}")
+                        else:
+                            sandbox_order_info = sandbox_result.get('order', {}) or {}
+                            sandbox_order_id = sandbox_order_info.get('id', '')
+                            sandbox_status = sandbox_order_info.get('status', '')
+                            logger.info(f"ARES [SANDBOX]: Order placed - ID: {sandbox_order_id}, Status: {sandbox_status}")
+                    except Exception as e:
+                        logger.warning(f"ARES [SANDBOX]: Failed to submit to sandbox: {e}")
+                else:
+                    logger.info(f"ARES [PAPER]: Tradier sandbox not available - internal tracking only")
             else:
                 # LIVE mode - submit real order
                 logger.info(f"ARES [LIVE]: Submitting real order to Tradier...")
