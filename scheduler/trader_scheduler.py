@@ -141,14 +141,15 @@ class AutonomousTraderScheduler:
 
         # ARES - Aggressive Iron Condor (10% monthly target)
         # Capital: $200,000 (20% of total)
+        # Uses LIVE mode to trade SPX (PAPER mode would use SPY for testing)
         self.ares_trader = None
         if ARES_AVAILABLE:
             try:
                 self.ares_trader = ARESTrader(
-                    mode=ARESTradingMode.PAPER,
+                    mode=ARESTradingMode.LIVE,  # LIVE mode for SPX trading
                     initial_capital=CAPITAL_ALLOCATION['ARES']
                 )
-                logger.info(f"✅ ARES initialized with ${CAPITAL_ALLOCATION['ARES']:,} capital")
+                logger.info(f"✅ ARES initialized with ${CAPITAL_ALLOCATION['ARES']:,} capital (LIVE/SPX)")
             except Exception as e:
                 logger.warning(f"ARES initialization failed: {e}")
                 self.ares_trader = None
