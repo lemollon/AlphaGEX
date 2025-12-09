@@ -27,6 +27,7 @@ from . import wheel_routes
 from . import export_routes
 from . import ml_routes
 from . import spx_backtest_routes
+from . import ares_routes
 
 __all__ = [
     'vix_routes',
@@ -53,4 +54,5 @@ __all__ = [
     'export_routes',
     'ml_routes',
     'spx_backtest_routes',
+    'ares_routes',
 ]
