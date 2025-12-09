@@ -117,14 +117,17 @@ class ARESConfig:
     """Configuration for ARES trading bot"""
     # Risk parameters
     risk_per_trade_pct: float = 10.0     # 10% of capital per trade
-    spread_width: float = 10.0            # $10 wide spreads
+    spread_width: float = 10.0            # $10 wide spreads (SPX)
+    spread_width_spy: float = 2.0         # $2 wide spreads (SPY for sandbox)
     sd_multiplier: float = 1.0            # 1 SD strikes
 
     # Execution parameters
-    ticker: str = "SPX"                   # Trade SPX
+    ticker: str = "SPX"                   # Trade SPX in production
+    sandbox_ticker: str = "SPY"           # Trade SPY in sandbox (better data)
     use_0dte: bool = True                 # Use 0DTE options
     max_contracts: int = 1000             # Max contracts per trade
-    min_credit_per_spread: float = 1.50   # Minimum credit to accept
+    min_credit_per_spread: float = 1.50   # Minimum credit to accept (SPX)
+    min_credit_per_spread_spy: float = 0.15  # Minimum credit (SPY ~1/10)
 
     # Trade management
     use_stop_loss: bool = False           # NO stop loss (defined risk)
@@ -198,8 +201,9 @@ class ARESTrader:
             logger.warning("ARES: LIVE TRADING MODE - Real money at risk!")
 
         logger.info(f"ARES initialized: mode={mode.value}, capital=${initial_capital:,.0f}")
+        logger.info(f"  Trading ticker: {self.get_trading_ticker()}")
         logger.info(f"  Risk per trade: {self.config.risk_per_trade_pct}%")
-        logger.info(f"  Spread width: ${self.config.spread_width}")
+        logger.info(f"  Spread width: ${self.get_spread_width()}")
         logger.info(f"  SD multiplier: {self.config.sd_multiplier}")
 
     def _generate_position_id(self) -> str:
@@ -208,9 +212,40 @@ class ARESTrader:
         now = datetime.now(self.tz)
         return f"ARES-{now.strftime('%Y%m%d')}-{self._position_counter:04d}"
 
+    def get_trading_ticker(self) -> str:
+        """
+        Get the ticker to trade based on mode.
+
+        Sandbox mode uses SPY (better data availability in Tradier sandbox).
+        Production mode uses SPX for higher premium.
+        """
+        if self.mode == TradingMode.PAPER:
+            return self.config.sandbox_ticker  # SPY
+        return self.config.ticker  # SPX
+
+    def get_spread_width(self) -> float:
+        """
+        Get spread width based on mode.
+
+        SPY spreads are $2 wide (vs $10 for SPX) because SPY is ~1/10 of SPX.
+        """
+        if self.mode == TradingMode.PAPER:
+            return self.config.spread_width_spy  # $2 for SPY
+        return self.config.spread_width  # $10 for SPX
+
+    def get_min_credit(self) -> float:
+        """
+        Get minimum credit required based on mode.
+
+        SPY credits are ~1/10 of SPX credits.
+        """
+        if self.mode == TradingMode.PAPER:
+            return self.config.min_credit_per_spread_spy
+        return self.config.min_credit_per_spread
+
     def get_current_market_data(self) -> Optional[Dict]:
         """
-        Get current market data for SPX/VIX.
+        Get current market data for the trading ticker (SPX or SPY).
 
         Returns:
             Dict with underlying price, VIX, expected move
@@ -220,37 +255,52 @@ class ARESTrader:
             return None
 
         try:
-            # Get SPX quote (or SPY as proxy)
-            symbol = self.config.ticker
-            if symbol == "SPX":
-                # Tradier uses different symbol for SPX
+            # Get the appropriate ticker for current mode
+            ticker = self.get_trading_ticker()
+            underlying_price = None
+
+            if ticker == "SPY":
+                # Sandbox mode - use SPY directly
+                quote = self.tradier.get_quote("SPY")
+                if quote and quote.get('last'):
+                    underlying_price = float(quote['last'])
+                else:
+                    logger.warning("ARES: Could not get SPY quote")
+                    return None
+            else:
+                # Production mode - use SPX
                 quote = self.tradier.get_quote("$SPX.X")
                 if not quote or not quote.get('last'):
                     # Fallback to SPY * 10 estimate
                     spy_quote = self.tradier.get_quote("SPY")
                     if spy_quote and spy_quote.get('last'):
                         underlying_price = float(spy_quote['last']) * 10
+                        logger.info("ARES: Using SPY*10 as SPX proxy")
                     else:
+                        logger.warning("ARES: Could not get SPX or SPY quote")
                         return None
                 else:
                     underlying_price = float(quote['last'])
-            else:
-                quote = self.tradier.get_quote(symbol)
-                if not quote or not quote.get('last'):
-                    return None
-                underlying_price = float(quote['last'])
 
             # Get VIX for expected move calculation
+            vix = 15.0  # Default if not available
             vix_quote = self.tradier.get_quote("$VIX.X")
-            vix = 15.0  # Default
             if vix_quote and vix_quote.get('last'):
                 vix = float(vix_quote['last'])
+            else:
+                # Try alternate symbol
+                vix_quote = self.tradier.get_quote("VIX")
+                if vix_quote and vix_quote.get('last'):
+                    vix = float(vix_quote['last'])
+                else:
+                    logger.info("ARES: VIX not available, using default 15.0")
 
             # Calculate expected move (1 SD for 0DTE)
             iv = vix / 100
             expected_move = underlying_price * iv * math.sqrt(1/252)
 
             return {
+                'ticker': ticker,
                 'underlying_price': underlying_price,
                 'vix': vix,
                 'expected_move': expected_move,
@@ -271,7 +321,7 @@ class ARESTrader:
         Find optimal Iron Condor strikes at 1 SD from current price.
 
         Args:
-            underlying_price: Current SPX price
+            underlying_price: Current price (SPX or SPY)
             expected_move: Expected move (1 SD)
             expiration: Expiration date (YYYY-MM-DD)
 
@@ -282,11 +332,22 @@ class ARESTrader:
             return None
 
         try:
-            # Get options chain
-            symbol = self.config.ticker if self.config.ticker != "SPX" else "SPXW"
+            # Get options chain - use appropriate symbol for mode
+            ticker = self.get_trading_ticker()
+            spread_width = self.get_spread_width()
+            min_credit = self.get_min_credit()
+
+            # Determine options symbol
+            if ticker == "SPY":
+                symbol = "SPY"  # SPY options
+            elif ticker == "SPX":
+                symbol = "SPXW"  # Weekly SPX options
+            else:
+                symbol = ticker
+
             chain = self.tradier.get_option_chain(symbol, expiration, greeks=True)
 
-            if not chain.chains or expiration not in chain.chains:
+            if not chain or not chain.chains or expiration not in chain.chains:
                 logger.warning(f"ARES: No options chain for {symbol} exp {expiration}")
                 return None
 
@@ -295,9 +356,11 @@ class ARESTrader:
                 return None
 
             # Target strikes at SD distance
+            # For SPY, round to $1 strikes; for SPX, round to $5 strikes
             sd = self.config.sd_multiplier
-            put_target = round((underlying_price - sd * expected_move) / 5) * 5
-            call_target = round((underlying_price + sd * expected_move) / 5) * 5
+            strike_rounding = 1 if ticker == "SPY" else 5
+            put_target = round((underlying_price - sd * expected_move) / strike_rounding) * strike_rounding
+            call_target = round((underlying_price + sd * expected_move) / strike_rounding) * strike_rounding
 
             # Filter puts and calls
             otm_puts = [c for c in contracts
@@ -318,13 +381,14 @@ class ARESTrader:
             short_put = min(otm_puts, key=lambda x: abs(x.strike - put_target))
 
             # Find long put (buy) - spread_width below short
-            long_put_strike = short_put.strike - self.config.spread_width
+            long_put_strike = short_put.strike - spread_width
             long_put_candidates = [c for c in contracts
                                   if c.option_type == 'put'
-                                  and abs(c.strike - long_put_strike) < 1
+                                  and abs(c.strike - long_put_strike) < (0.5 if ticker == "SPY" else 1)
                                   and c.ask > 0]
 
             if not long_put_candidates:
+                logger.warning(f"ARES: No long put at strike {long_put_strike}")
                 return None
 
             long_put = min(long_put_candidates, key=lambda x: abs(x.strike - long_put_strike))
@@ -333,13 +397,14 @@ class ARESTrader:
             short_call = min(otm_calls, key=lambda x: abs(x.strike - call_target))
 
             # Find long call (buy) - spread_width above short
-            long_call_strike = short_call.strike + self.config.spread_width
+            long_call_strike = short_call.strike + spread_width
             long_call_candidates = [c for c in contracts
                                    if c.option_type == 'call'
-                                   and abs(c.strike - long_call_strike) < 1
+                                   and abs(c.strike - long_call_strike) < (0.5 if ticker == "SPY" else 1)
                                    and c.ask > 0]
 
             if not long_call_candidates:
+                logger.warning(f"ARES: No long call at strike {long_call_strike}")
                 return None
 
             long_call = min(long_call_candidates, key=lambda x: abs(x.strike - long_call_strike))
@@ -350,8 +415,8 @@ class ARESTrader:
             total_credit = put_credit + call_credit
 
             # Validate credit
-            if total_credit < self.config.min_credit_per_spread:
-                logger.info(f"ARES: Credit too low: ${total_credit:.2f} < ${self.config.min_credit_per_spread:.2f}")
+            if total_credit < min_credit:
+                logger.info(f"ARES: Credit too low: ${total_credit:.2f} < ${min_credit:.2f}")
                 return None
 
             return {
@@ -419,10 +484,11 @@ class ARESTrader:
 
         try:
             # Execute Iron Condor as a single order
-            symbol = self.config.ticker
+            ticker = self.get_trading_ticker()
+            spread_width = self.get_spread_width()
 
             result = self.tradier.place_iron_condor(
-                symbol=symbol,
+                symbol=ticker,
                 expiration=expiration,
                 put_long=ic_strikes['put_long_strike'],
                 put_short=ic_strikes['put_short_strike'],
@@ -436,10 +502,10 @@ class ARESTrader:
             order_id = str(order_info.get('id', ''))
             order_status = order_info.get('status', '')
 
-            logger.info(f"ARES: Iron Condor order placed - ID: {order_id}, Status: {order_status}")
+            logger.info(f"ARES: Iron Condor order placed on {ticker} - ID: {order_id}, Status: {order_status}")
 
             # Create position record
-            max_loss = self.config.spread_width - ic_strikes['total_credit']
+            max_loss = spread_width - ic_strikes['total_credit']
 
             position = IronCondorPosition(
                 position_id=self._generate_position_id(),
@@ -453,7 +519,7 @@ class ARESTrader:
                 call_credit=ic_strikes['call_credit'],
                 total_credit=ic_strikes['total_credit'],
                 contracts=contracts,
-                spread_width=self.config.spread_width,
+                spread_width=spread_width,
                 max_loss=max_loss,
                 put_spread_order_id=order_id,
                 call_spread_order_id=order_id,
@@ -561,6 +627,7 @@ class ARESTrader:
     def get_todays_expiration(self) -> Optional[str]:
         """Get today's expiration for 0DTE trading"""
         now = datetime.now(self.tz)
+        ticker = self.get_trading_ticker()
 
         # For 0DTE, use today's date
         if self.config.use_0dte:
@@ -571,11 +638,11 @@ class ARESTrader:
             return None
 
         try:
-            expirations = self.tradier.get_option_expirations(self.config.ticker)
+            expirations = self.tradier.get_option_expirations(ticker)
             if expirations:
                 return expirations[0]
         except Exception as e:
-            logger.error(f"ARES: Error getting expirations: {e}")
+            logger.error(f"ARES: Error getting expirations for {ticker}: {e}")
 
         return None
 
@@ -748,9 +815,11 @@ class ARESTrader:
             'current_time': now.strftime('%Y-%m-%d %H:%M:%S %Z'),
             'config': {
                 'risk_per_trade': self.config.risk_per_trade_pct,
-                'spread_width': self.config.spread_width,
+                'spread_width': self.get_spread_width(),
                 'sd_multiplier': self.config.sd_multiplier,
-                'ticker': self.config.ticker
+                'ticker': self.get_trading_ticker(),
+                'production_ticker': self.config.ticker,
+                'sandbox_ticker': self.config.sandbox_ticker
             }
         }
 
