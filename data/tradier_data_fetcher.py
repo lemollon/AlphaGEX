@@ -870,10 +870,18 @@ class TradierDataFetcher:
         long_symbol = self._build_occ_symbol(symbol, expiration, long_strike, opt_char)
         short_symbol = self._build_occ_symbol(symbol, expiration, short_strike, opt_char)
 
+        # Determine if spread is credit or debit based on strikes
+        # Puts: credit if short > long (bull put), debit if short < long (bear put)
+        # Calls: credit if short < long (bear call), debit if short > long (bull call)
+        if option_type == 'put':
+            spread_type = 'credit' if short_strike > long_strike else 'debit'
+        else:  # call
+            spread_type = 'credit' if short_strike < long_strike else 'debit'
+
         data = {
             'class': 'multileg',
             'symbol': symbol,
-            'type': 'limit' if limit_price else 'market',
+            'type': spread_type if limit_price else 'market',
             'duration': 'day',
             'side[0]': 'buy_to_open',
             'quantity[0]': str(quantity),
@@ -884,7 +892,7 @@ class TradierDataFetcher:
         }
 
         if limit_price:
-            data['price'] = str(limit_price)
+            data['price'] = str(abs(limit_price))  # Price should be positive
 
         return self._make_request('POST', f'accounts/{self.account_id}/orders', data=data)
 
@@ -920,7 +928,7 @@ class TradierDataFetcher:
         data = {
             'class': 'multileg',
             'symbol': symbol,
-            'type': 'limit' if limit_price else 'market',
+            'type': 'credit' if limit_price else 'market',  # Iron Condor receives credit
             'duration': 'day',
             'side[0]': 'buy_to_open',
             'quantity[0]': str(quantity),
@@ -937,7 +945,7 @@ class TradierDataFetcher:
         }
 
         if limit_price:
-            data['price'] = str(limit_price)
+            data['price'] = str(abs(limit_price))  # Price should be positive
 
         # Log the order details for debugging
         logger.info(f"Placing Iron Condor order: {symbol} exp={expiration}")
