@@ -135,8 +135,8 @@ class ARESConfig:
 
     # Trading schedule
     trade_every_day: bool = True          # Trade Mon-Fri
-    entry_time_start: str = "09:45"       # Entry window start
-    entry_time_end: str = "10:30"         # Entry window end
+    entry_time_start: str = "09:35"       # Entry window start (after market open)
+    entry_time_end: str = "15:30"         # Entry window end (before close)
 
 
 class ARESTrader:
