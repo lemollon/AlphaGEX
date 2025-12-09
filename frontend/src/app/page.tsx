@@ -3,6 +3,7 @@
 import Navigation from '@/components/Navigation'
 import MarketCommentary from '@/components/MarketCommentary'
 import DailyTradingPlan from '@/components/DailyTradingPlan'
+import GammaExpirationWidget from '@/components/GammaExpirationWidget'
 
 export default function Dashboard() {
   return (
@@ -19,10 +20,13 @@ export default function Dashboard() {
         </div>
 
         {/* AI Intelligence - Daily Trading Plan and Market Commentary */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           <DailyTradingPlan />
           <MarketCommentary />
         </div>
+
+        {/* 0DTE Gamma Expiration Tracker */}
+        <GammaExpirationWidget />
 
         </div>
       </main>
