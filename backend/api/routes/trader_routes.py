@@ -1988,9 +1988,9 @@ async def get_all_bots_status():
                 "description": "0DTE SPY/SPX Options Trader",
                 "type": "autonomous",
                 "scheduled": True,
-                "schedule": "Every 5min during market hours (8:30 AM - 3:00 PM CT)",
-                "capital_allocation": 400_000,
-                "capital_pct": 40,
+                "schedule": "Hourly 10 AM - 3 PM ET (Mon-Fri)",
+                "capital_allocation": 300_000,
+                "capital_pct": 30,
                 "strategy": "0DTE directional + premium selling",
                 "data_sources": ["GEX", "IV Surface", "Psychology Rules", "ML Regime"]
             },
@@ -1998,12 +1998,23 @@ async def get_all_bots_status():
                 "name": "ATLAS",
                 "description": "SPX Cash-Secured Put Wheel",
                 "type": "autonomous",
-                "scheduled": True,  # Now scheduled!
+                "scheduled": True,
                 "schedule": "Daily at 10:05 AM ET (Mon-Fri)",
-                "capital_allocation": 500_000,
-                "capital_pct": 50,
+                "capital_allocation": 400_000,
+                "capital_pct": 40,
                 "strategy": "Weekly CSP wheel with ML optimization",
                 "data_sources": ["Backtester", "VIX", "Delta Targeting", "Walk-Forward"]
+            },
+            "ARES": {
+                "name": "ARES",
+                "description": "Aggressive Iron Condor (10% Monthly Target)",
+                "type": "autonomous",
+                "scheduled": True,
+                "schedule": "Daily at 10:15 AM ET (Mon-Fri)",
+                "capital_allocation": 200_000,
+                "capital_pct": 20,
+                "strategy": "0DTE Iron Condor at 1 SD, 10% risk per trade",
+                "data_sources": ["VIX", "Expected Move", "Tradier Sandbox"]
             },
             "HERMES": {
                 "name": "HERMES",
@@ -2045,13 +2056,14 @@ async def get_all_bots_status():
                     "allocated_capital": sum(b["capital_allocation"] for b in bots.values()),
                     "reserve_capital": RESERVE_CAPITAL,
                     "allocation": {
-                        "PHOENIX": {"amount": 400_000, "pct": 40},
-                        "ATLAS": {"amount": 500_000, "pct": 50},
+                        "PHOENIX": {"amount": 300_000, "pct": 30},
+                        "ATLAS": {"amount": 400_000, "pct": 40},
+                        "ARES": {"amount": 200_000, "pct": 20},
                         "RESERVE": {"amount": 100_000, "pct": 10}
                     }
                 },
                 "active_count": sum(1 for b in bots.values() if b["scheduled"]),
-                "autonomous_bots": ["PHOENIX", "ATLAS"],
+                "autonomous_bots": ["PHOENIX", "ATLAS", "ARES"],
                 "timestamp": datetime.now().isoformat()
             }
         }
