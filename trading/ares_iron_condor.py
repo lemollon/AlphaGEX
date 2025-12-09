@@ -182,10 +182,23 @@ class ARESTrader:
                 logger.warning(f"ARES: Failed to initialize Tradier production: {e}")
 
             # Sandbox API for paper trade submission (only in PAPER mode)
+            # Tradier uses SAME credentials for sandbox, just different endpoint
             if mode == TradingMode.PAPER:
                 try:
-                    self.tradier_sandbox = TradierDataFetcher(sandbox=True)
-                    logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
+                    from unified_config import APIConfig
+                    # Use separate sandbox credentials if available, otherwise use same as production
+                    sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+                    sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+
+                    if sandbox_key and sandbox_account:
+                        self.tradier_sandbox = TradierDataFetcher(
+                            api_key=sandbox_key,
+                            account_id=sandbox_account,
+                            sandbox=True  # This switches to sandbox.tradier.com endpoint
+                        )
+                        logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
+                    else:
+                        logger.warning("ARES: Tradier credentials not configured - cannot submit to sandbox")
                 except Exception as e:
                     logger.warning(f"ARES: Failed to initialize Tradier sandbox: {e}")
 
@@ -514,22 +527,19 @@ class ARESTrader:
                     try:
                         # Use SPY for sandbox (SPX not available in Tradier sandbox)
                         sandbox_ticker = self.config.sandbox_ticker  # SPY
-                        sandbox_spread_width = self.config.spread_width_spy  # $2
 
                         # Scale strikes to SPY (SPY is ~1/10 of SPX)
-                        spx_price = market_data['underlying_price']
-                        spy_price = spx_price / 10
+                        # Use integer strikes (SPY options are in $1 increments)
+                        spy_put_long = int(round(ic_strikes['put_long_strike'] / 10, 0))
+                        spy_put_short = int(round(ic_strikes['put_short_strike'] / 10, 0))
+                        spy_call_short = int(round(ic_strikes['call_short_strike'] / 10, 0))
+                        spy_call_long = int(round(ic_strikes['call_long_strike'] / 10, 0))
 
-                        # Calculate equivalent SPY strikes
-                        spy_put_long = round(ic_strikes['put_long_strike'] / 10, 0)
-                        spy_put_short = round(ic_strikes['put_short_strike'] / 10, 0)
-                        spy_call_short = round(ic_strikes['call_short_strike'] / 10, 0)
-                        spy_call_long = round(ic_strikes['call_long_strike'] / 10, 0)
+                        # Scale credit proportionally (minimum $0.10 to ensure fill)
+                        spy_credit = max(0.10, round(ic_strikes['total_credit'] / 10, 2))
 
-                        # Scale credit proportionally
-                        spy_credit = ic_strikes['total_credit'] / 10
-
-                        logger.info(f"ARES [SANDBOX]: Submitting to Tradier sandbox - SPY {spy_put_long}/{spy_put_short}P - {spy_call_short}/{spy_call_long}C")
+                        # SPY has daily 0DTE options (since Nov 2022), same as SPX
+                        logger.info(f"ARES [SANDBOX]: Submitting to Tradier sandbox - SPY {spy_put_long}/{spy_put_short}P - {spy_call_short}/{spy_call_long}C exp={expiration}")
                         sandbox_result = self.tradier_sandbox.place_iron_condor(
                             symbol=sandbox_ticker,
                             expiration=expiration,
