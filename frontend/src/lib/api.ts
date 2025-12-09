@@ -299,6 +299,13 @@ export const apiClient = {
   getARESStatus: () => api.get('/api/trader/bots/ares/status'),
   runARESCycle: () => api.post('/api/trader/bots/ares/run'),
 
+  // ARES Page API endpoints
+  getARESPageStatus: () => api.get('/api/ares/status'),
+  getARESPerformance: () => api.get('/api/ares/performance'),
+  getARESEquityCurve: (days: number = 30) => api.get('/api/ares/equity-curve', { params: { days } }),
+  getARESPositions: () => api.get('/api/ares/positions'),
+  getARESMarketData: () => api.get('/api/ares/market-data'),
+
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {
     symbol: string,
