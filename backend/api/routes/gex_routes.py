@@ -459,7 +459,7 @@ async def get_gex_history(symbol: str = "SPY", days: int = 30):
                 regime
             FROM gex_history
             WHERE symbol = %s AND DATE(timestamp) >= %s
-            ORDER BY timestamp ASC
+            ORDER BY timestamp DESC
         """, (symbol, start_date))
 
         history = []
@@ -587,6 +587,10 @@ async def get_regime_changes(symbol: str = "SPY", days: int = 30):
 
             prev_regime = current_regime
             prev_timestamp = row['timestamp']
+
+        # Reverse to show most recent changes first
+        changes.reverse()
+        regime_changes.reverse()
 
         return {
             "success": True,
