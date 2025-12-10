@@ -435,6 +435,11 @@ export const apiClient = {
   getBacktestResults: () => api.get('/api/backtests/results'),
   runBacktests: (config?: { lookback_days?: number, strategies?: string[], async_mode?: boolean }) =>
     api.post('/api/backtests/run', { async_mode: true, ...config }),
+  exportBacktestResults: () => {
+    // Direct download - returns CSV file
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+    window.open(`${baseUrl}/api/backtests/export`, '_blank')
+  },
 
   // Background Job Management (for async backtests)
   getBacktestJobStatus: (jobId: string) => api.get(`/api/backtests/job/${jobId}`),

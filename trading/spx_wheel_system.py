@@ -91,6 +91,22 @@ try:
 except ImportError:
     WALK_FORWARD_AVAILABLE = False
 
+# Oracle AI advisor for intelligent trading decisions
+try:
+    from quant.oracle_advisor import (
+        OracleAdvisor, MarketContext as OracleMarketContext,
+        TradingAdvice, GEXRegime, OraclePrediction, TradeOutcome,
+        BotName as OracleBotName
+    )
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    OracleMarketContext = None
+    TradingAdvice = None
+    TradeOutcome = None
+    OracleBotName = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -550,6 +566,15 @@ class SPXWheelTrader:
         if DECISION_LOGGING_AVAILABLE:
             self.decision_logger = DecisionLogger()
 
+        # Initialize Oracle AI advisor
+        self.oracle = None
+        if ORACLE_AVAILABLE:
+            try:
+                self.oracle = OracleAdvisor()
+                logger.info("ATLAS: Oracle AI advisor initialized")
+            except Exception as e:
+                logger.warning(f"ATLAS: Failed to initialize Oracle AI: {e}")
+
         self._ensure_tables()
 
         print("\n" + "="*70)
@@ -931,6 +956,34 @@ class SPXWheelTrader:
             print(f"  {reason}")
             return False, reason
 
+        # =========================================================================
+        # CONSULT ORACLE AI FOR TRADING ADVICE
+        # =========================================================================
+        oracle_advice = self.consult_oracle(spot, vix)
+
+        if oracle_advice:
+            # Honor Oracle's SKIP advice
+            if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
+                reason = f"Oracle advises SKIP: {oracle_advice.reasoning}"
+                print(f"  {reason}")
+                self._log_decision(
+                    decision_type="NO_TRADE",
+                    action="SKIP",
+                    what=f"NO TRADE for SPX - Oracle advised SKIP",
+                    why=f"Oracle win probability: {oracle_advice.win_probability:.1%}. {oracle_advice.reasoning}",
+                    how="Consulted Oracle AI advisor. Conditions unfavorable.",
+                    spot_price=spot,
+                    vix=vix
+                )
+                return False, reason
+
+            # Store oracle advice for position sizing
+            self._last_oracle_advice = oracle_advice
+            print(f"  Oracle: {oracle_advice.advice.value} (Win Prob: {oracle_advice.win_probability:.1%})")
+        else:
+            self._last_oracle_advice = None
+            print("  Oracle: Not available, using default parameters")
+
         return True, "Market conditions favorable"
 
     def _get_spx_price(self) -> Optional[float]:
@@ -948,6 +1001,163 @@ class SPXWheelTrader:
             if vix and vix > 0:
                 return vix
         return 17.0  # Default
+
+    def _build_oracle_context(self, spot: float, vix: float) -> Optional['OracleMarketContext']:
+        """
+        Build Oracle MarketContext from current market data.
+
+        Args:
+            spot: Current SPX price
+            vix: Current VIX level
+
+        Returns:
+            OracleMarketContext for Oracle consultation
+        """
+        if not ORACLE_AVAILABLE or OracleMarketContext is None:
+            return None
+
+        try:
+            now = datetime.now()
+
+            # Try to get GEX data from database
+            gex_net = 0
+            gex_call_wall = 0
+            gex_put_wall = 0
+            gex_flip = 0
+
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                    SELECT net_gex, call_wall, put_wall, gex_flip_point
+                    FROM gex_data
+                    WHERE symbol = 'SPY'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """)
+                row = cursor.fetchone()
+                if row:
+                    gex_net = row[0] or 0
+                    gex_call_wall = (row[1] or 0) * 10  # Scale SPY walls to SPX
+                    gex_put_wall = (row[2] or 0) * 10
+                    gex_flip = (row[3] or 0) * 10
+                conn.close()
+            except Exception as e:
+                logger.debug(f"ATLAS: Could not fetch GEX data: {e}")
+
+            # Determine GEX regime
+            gex_regime = GEXRegime.NEUTRAL
+            if gex_net > 0:
+                gex_regime = GEXRegime.POSITIVE
+            elif gex_net < 0:
+                gex_regime = GEXRegime.NEGATIVE
+
+            # Check if price is between walls
+            between_walls = True
+            if gex_put_wall > 0 and gex_call_wall > 0:
+                between_walls = gex_put_wall <= spot <= gex_call_wall
+
+            return OracleMarketContext(
+                spot_price=spot,
+                price_change_1d=0,
+                vix=vix,
+                vix_percentile_30d=50.0,
+                vix_change_1d=0,
+                gex_net=gex_net,
+                gex_normalized=0,
+                gex_regime=gex_regime,
+                gex_flip_point=gex_flip,
+                gex_call_wall=gex_call_wall,
+                gex_put_wall=gex_put_wall,
+                gex_distance_to_flip_pct=0,
+                gex_between_walls=between_walls,
+                day_of_week=now.weekday(),
+                days_to_opex=self.params.dte_target,
+                win_rate_30d=self.params.backtest_win_rate / 100.0 if self.params.backtest_win_rate else 0.68,
+                expected_move_pct=vix / 100.0 * (self.params.dte_target / 365) ** 0.5 * 100
+            )
+
+        except Exception as e:
+            logger.error(f"ATLAS: Error building Oracle context: {e}")
+            return None
+
+    def consult_oracle(self, spot: float, vix: float) -> Optional['OraclePrediction']:
+        """
+        Consult Oracle AI for trading advice.
+
+        Args:
+            spot: Current SPX price
+            vix: Current VIX level
+
+        Returns:
+            OraclePrediction with advice, or None if Oracle unavailable
+        """
+        if not self.oracle:
+            logger.debug("ATLAS: Oracle not available, proceeding without advice")
+            return None
+
+        context = self._build_oracle_context(spot, vix)
+        if not context:
+            logger.debug("ATLAS: Could not build Oracle context")
+            return None
+
+        try:
+            # Get advice from Oracle
+            advice = self.oracle.get_atlas_advice(context)
+
+            logger.info(f"ATLAS Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
+                       f"Risk: {advice.suggested_risk_pct:.1%}")
+
+            if advice.reasoning:
+                logger.info(f"ATLAS Oracle Reasoning: {advice.reasoning}")
+
+            # Store prediction for feedback loop
+            try:
+                today = datetime.now().strftime('%Y-%m-%d')
+                self.oracle.store_prediction(advice, context, today)
+            except Exception as e:
+                logger.debug(f"ATLAS: Could not store Oracle prediction: {e}")
+
+            return advice
+
+        except Exception as e:
+            logger.error(f"ATLAS: Error consulting Oracle: {e}")
+            return None
+
+    def record_trade_outcome(
+        self,
+        trade_date: str,
+        outcome_type: str,
+        actual_pnl: float
+    ) -> bool:
+        """
+        Record trade outcome back to Oracle for feedback loop.
+
+        Args:
+            trade_date: Date of the trade (YYYY-MM-DD)
+            outcome_type: One of MAX_PROFIT, PARTIAL_PROFIT, LOSS, etc.
+            actual_pnl: Actual P&L from the trade
+
+        Returns:
+            True if recorded successfully
+        """
+        if not self.oracle or not ORACLE_AVAILABLE:
+            return False
+
+        try:
+            outcome = TradeOutcome[outcome_type]
+            self.oracle.update_outcome(
+                trade_date,
+                OracleBotName.ATLAS,
+                outcome,
+                actual_pnl
+            )
+            logger.info(f"ATLAS: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
+            return True
+        except Exception as e:
+            logger.error(f"ATLAS: Failed to record outcome: {e}")
+            return False
 
     def _get_account_balance(self) -> Dict:
         """Get account balance from broker (LIVE mode) or calculate from DB (PAPER mode)"""

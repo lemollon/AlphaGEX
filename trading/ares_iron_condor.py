@@ -56,12 +56,28 @@ except ImportError:
 try:
     from trading.decision_logger import (
         DecisionLogger, TradeDecision, DecisionType,
-        DataSource, TradeLeg, MarketContext, DecisionReasoning, BotName
+        DataSource, TradeLeg, MarketContext as LoggerMarketContext, DecisionReasoning, BotName
     )
     LOGGER_AVAILABLE = True
 except ImportError:
     LOGGER_AVAILABLE = False
     DecisionLogger = None
+
+# Import Oracle AI advisor
+try:
+    from quant.oracle_advisor import (
+        OracleAdvisor, MarketContext as OracleMarketContext,
+        TradingAdvice, GEXRegime, OraclePrediction, TradeOutcome,
+        BotName as OracleBotName
+    )
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    OracleMarketContext = None
+    TradingAdvice = None
+    TradeOutcome = None
+    OracleBotName = None
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +245,15 @@ class ARESTrader:
         if LOGGER_AVAILABLE:
             self.decision_logger = DecisionLogger()
 
+        # Oracle AI advisor
+        self.oracle = None
+        if ORACLE_AVAILABLE:
+            try:
+                self.oracle = OracleAdvisor()
+                logger.info("ARES: Oracle AI advisor initialized")
+            except Exception as e:
+                logger.warning(f"ARES: Failed to initialize Oracle AI: {e}")
+
         # State tracking
         self.open_positions: List[IronCondorPosition] = []
         self.closed_positions: List[IronCondorPosition] = []
@@ -364,6 +389,173 @@ class ARESTrader:
         except Exception as e:
             logger.error(f"ARES: Error getting market data: {e}")
             return None
+
+    def _build_oracle_context(self, market_data: Dict) -> Optional['OracleMarketContext']:
+        """
+        Build Oracle MarketContext from ARES market data.
+
+        Args:
+            market_data: Dict from get_current_market_data()
+
+        Returns:
+            OracleMarketContext for Oracle consultation
+        """
+        if not ORACLE_AVAILABLE or OracleMarketContext is None:
+            return None
+
+        try:
+            now = datetime.now(self.tz)
+            vix = market_data.get('vix', 15.0)
+            spot = market_data.get('underlying_price', 0)
+
+            # Try to get GEX data from database
+            gex_net = 0
+            gex_call_wall = 0
+            gex_put_wall = 0
+            gex_flip = 0
+
+            try:
+                from database_adapter import get_connection
+                conn = get_connection()
+                c = conn.cursor()
+
+                # Get latest GEX data
+                c.execute("""
+                    SELECT net_gex, call_wall, put_wall, gex_flip_point
+                    FROM gex_data
+                    WHERE symbol = 'SPY'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """)
+                row = c.fetchone()
+                if row:
+                    gex_net = row[0] or 0
+                    gex_call_wall = row[1] or 0
+                    gex_put_wall = row[2] or 0
+                    gex_flip = row[3] or 0
+                conn.close()
+            except Exception as e:
+                logger.debug(f"ARES: Could not fetch GEX data: {e}")
+
+            # Determine GEX regime
+            gex_regime = GEXRegime.NEUTRAL
+            if gex_net > 0:
+                gex_regime = GEXRegime.POSITIVE
+            elif gex_net < 0:
+                gex_regime = GEXRegime.NEGATIVE
+
+            # Check if price is between walls
+            between_walls = True
+            if gex_put_wall > 0 and gex_call_wall > 0:
+                between_walls = gex_put_wall <= spot <= gex_call_wall
+
+            # Calculate expected move as percentage
+            expected_move_pct = (market_data.get('expected_move', 0) / spot * 100) if spot > 0 else 1.0
+
+            return OracleMarketContext(
+                spot_price=spot,
+                price_change_1d=0,  # Would need historical data
+                vix=vix,
+                vix_percentile_30d=50.0,  # Default, could be enhanced
+                vix_change_1d=0,
+                gex_net=gex_net,
+                gex_normalized=0,  # Would need calculation
+                gex_regime=gex_regime,
+                gex_flip_point=gex_flip,
+                gex_call_wall=gex_call_wall,
+                gex_put_wall=gex_put_wall,
+                gex_distance_to_flip_pct=0,
+                gex_between_walls=between_walls,
+                day_of_week=now.weekday(),
+                days_to_opex=0,  # 0DTE
+                win_rate_30d=self.win_count / max(1, self.trade_count) if self.trade_count > 0 else 0.68,
+                expected_move_pct=expected_move_pct
+            )
+
+        except Exception as e:
+            logger.error(f"ARES: Error building Oracle context: {e}")
+            return None
+
+    def consult_oracle(self, market_data: Dict) -> Optional['OraclePrediction']:
+        """
+        Consult Oracle AI for trading advice.
+
+        Args:
+            market_data: Dict from get_current_market_data()
+
+        Returns:
+            OraclePrediction with advice, or None if Oracle unavailable
+        """
+        if not self.oracle:
+            logger.debug("ARES: Oracle not available, proceeding without advice")
+            return None
+
+        context = self._build_oracle_context(market_data)
+        if not context:
+            logger.debug("ARES: Could not build Oracle context")
+            return None
+
+        try:
+            # Get advice from Oracle
+            advice = self.oracle.get_ares_advice(
+                context,
+                use_gex_walls=True,
+                use_claude_validation=True
+            )
+
+            logger.info(f"ARES Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
+                       f"Risk: {advice.suggested_risk_pct:.1%} | SD Mult: {advice.suggested_sd_multiplier:.2f}")
+
+            if advice.reasoning:
+                logger.info(f"ARES Oracle Reasoning: {advice.reasoning}")
+
+            # Store prediction for feedback loop
+            try:
+                today = datetime.now(self.tz).strftime('%Y-%m-%d')
+                self.oracle.store_prediction(advice, context, today)
+                self._last_oracle_context = context  # Store for outcome update
+            except Exception as e:
+                logger.debug(f"ARES: Could not store Oracle prediction: {e}")
+
+            return advice
+
+        except Exception as e:
+            logger.error(f"ARES: Error consulting Oracle: {e}")
+            return None
+
+    def record_trade_outcome(
+        self,
+        trade_date: str,
+        outcome_type: str,
+        actual_pnl: float
+    ) -> bool:
+        """
+        Record trade outcome back to Oracle for feedback loop.
+
+        Args:
+            trade_date: Date of the trade (YYYY-MM-DD)
+            outcome_type: One of MAX_PROFIT, PUT_BREACHED, CALL_BREACHED, etc.
+            actual_pnl: Actual P&L from the trade
+
+        Returns:
+            True if recorded successfully
+        """
+        if not self.oracle or not ORACLE_AVAILABLE:
+            return False
+
+        try:
+            outcome = TradeOutcome[outcome_type]
+            self.oracle.update_outcome(
+                trade_date,
+                OracleBotName.ARES,
+                outcome,
+                actual_pnl
+            )
+            logger.info(f"ARES: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
+            return True
+        except Exception as e:
+            logger.error(f"ARES: Failed to record outcome: {e}")
+            return False
 
     def find_iron_condor_strikes(
         self,
@@ -541,17 +733,16 @@ class ARESTrader:
             spread_width = self.get_spread_width()
             order_id = ""
             order_status = ""
+            sandbox_order_id = ""  # Track actual Tradier sandbox order ID
 
             # PAPER mode: Track internally in AlphaGEX AND submit to Tradier sandbox
             # LIVE mode: Submit real order to Tradier production
             if self.mode == TradingMode.PAPER:
-                # AlphaGEX internal paper trade tracking
-                order_id = f"PAPER-{datetime.now(self.tz).strftime('%Y%m%d%H%M%S')}"
-                order_status = "paper"
                 logger.info(f"ARES [PAPER]: Iron Condor on {ticker} - {ic_strikes['put_long_strike']}/{ic_strikes['put_short_strike']}P - {ic_strikes['call_short_strike']}/{ic_strikes['call_long_strike']}C")
-                logger.info(f"ARES [PAPER]: {contracts} contracts @ ${ic_strikes['total_credit']:.2f} credit (AlphaGEX internal tracking)")
+                logger.info(f"ARES [PAPER]: {contracts} contracts @ ${ic_strikes['total_credit']:.2f} credit")
 
-                # ALSO submit to Tradier sandbox for their paper trading
+                # Submit to Tradier sandbox for paper trading
+                sandbox_success = False
                 if self.tradier_sandbox:
                     try:
                         # Use SPY for sandbox (SPX not available in Tradier sandbox)
@@ -573,10 +764,14 @@ class ARESTrader:
                             spy_put_short = int(round(ic_strikes['put_short_strike'] / 10, 0))
                             spy_call_short = int(round(ic_strikes['call_short_strike'] / 10, 0))
                             spy_call_long = int(round(ic_strikes['call_long_strike'] / 10, 0))
-                            spy_credit = max(0.10, round(ic_strikes['total_credit'] / 10, 2))
+                            # FIX: Don't floor credit - scale proportionally (remove artificial $0.10 minimum)
+                            spy_credit = round(ic_strikes['total_credit'] / 10, 2)
+                            # Only apply minimum if result would be $0.00 (prevent $0 orders)
+                            if spy_credit < 0.01:
+                                spy_credit = 0.01
 
                         # SPY has daily 0DTE options (since Nov 2022), same as SPX
-                        logger.info(f"ARES [SANDBOX]: Submitting to Tradier sandbox - SPY {spy_put_long}/{spy_put_short}P - {spy_call_short}/{spy_call_long}C exp={expiration}")
+                        logger.info(f"ARES [SANDBOX]: Submitting to Tradier sandbox - SPY {spy_put_long}/{spy_put_short}P - {spy_call_short}/{spy_call_long}C exp={expiration} credit=${spy_credit:.2f}")
                         sandbox_result = self.tradier_sandbox.place_iron_condor(
                             symbol=sandbox_ticker,
                             expiration=expiration,
@@ -590,16 +785,41 @@ class ARESTrader:
 
                         if 'errors' in sandbox_result:
                             error_msg = sandbox_result.get('errors', {}).get('error', 'Unknown error')
-                            logger.warning(f"ARES [SANDBOX]: Tradier sandbox error: {error_msg}")
+                            logger.error(f"ARES [SANDBOX]: Tradier sandbox FAILED: {error_msg}")
+                            logger.error(f"ARES [SANDBOX]: Full response: {sandbox_result}")
+                            # FIX: Don't create position if Tradier sandbox fails
+                            return None
                         else:
                             sandbox_order_info = sandbox_result.get('order', {}) or {}
-                            sandbox_order_id = sandbox_order_info.get('id', '')
+                            sandbox_order_id = str(sandbox_order_info.get('id', ''))
                             sandbox_status = sandbox_order_info.get('status', '')
-                            logger.info(f"ARES [SANDBOX]: Order placed - ID: {sandbox_order_id}, Status: {sandbox_status}")
+
+                            # FIX: Validate order was actually placed (check status)
+                            if not sandbox_order_id:
+                                logger.error(f"ARES [SANDBOX]: No order ID returned from Tradier")
+                                return None
+
+                            # Check for rejected/error status
+                            if sandbox_status in ['rejected', 'error', 'expired', 'canceled']:
+                                logger.error(f"ARES [SANDBOX]: Order rejected - Status: {sandbox_status}")
+                                return None
+
+                            logger.info(f"ARES [SANDBOX]: Order SUCCESS - ID: {sandbox_order_id}, Status: {sandbox_status}")
+                            sandbox_success = True
+                            # FIX: Use actual Tradier order ID instead of synthetic
+                            order_id = f"SANDBOX-{sandbox_order_id}"
+                            order_status = sandbox_status
+
                     except Exception as e:
-                        logger.warning(f"ARES [SANDBOX]: Failed to submit to sandbox: {e}")
+                        logger.error(f"ARES [SANDBOX]: Failed to submit to sandbox: {e}")
+                        # FIX: Don't create position if Tradier sandbox submission fails
+                        return None
                 else:
+                    # No sandbox available - create internal tracking only
                     logger.info(f"ARES [PAPER]: Tradier sandbox not available - internal tracking only")
+                    order_id = f"PAPER-{datetime.now(self.tz).strftime('%Y%m%d%H%M%S')}"
+                    order_status = "paper_internal"
+
             else:
                 # LIVE mode - submit real order
                 logger.info(f"ARES [LIVE]: Submitting real order to Tradier...")
@@ -617,23 +837,28 @@ class ARESTrader:
                 # Check for Tradier API errors
                 if 'errors' in result:
                     error_msg = result.get('errors', {}).get('error', 'Unknown error')
-                    logger.error(f"ARES: Tradier API error: {error_msg}")
-                    logger.error(f"ARES: Full response: {result}")
+                    logger.error(f"ARES [LIVE]: Tradier API error: {error_msg}")
+                    logger.error(f"ARES [LIVE]: Full response: {result}")
                     return None
 
                 order_info = result.get('order', {}) or {}
                 order_id = str(order_info.get('id', ''))
                 order_status = order_info.get('status', '')
 
-                # Validate order was actually placed
+                # FIX: Validate order was actually placed (check both ID and status)
                 if not order_id:
-                    logger.error(f"ARES: Order not placed - no order ID returned")
-                    logger.error(f"ARES: Full response: {result}")
+                    logger.error(f"ARES [LIVE]: Order not placed - no order ID returned")
+                    logger.error(f"ARES [LIVE]: Full response: {result}")
+                    return None
+
+                # FIX: Check for rejected/error status in LIVE mode too
+                if order_status in ['rejected', 'error', 'expired', 'canceled']:
+                    logger.error(f"ARES [LIVE]: Order rejected - ID: {order_id}, Status: {order_status}")
                     return None
 
                 logger.info(f"ARES [LIVE]: Order placed - ID: {order_id}, Status: {order_status}")
 
-            # Create position record
+            # Create position record (only reached if order was successful)
             max_loss = spread_width - ic_strikes['total_credit']
 
             position = IronCondorPosition(
@@ -873,6 +1098,37 @@ class ARESTrader:
         logger.info(f"  VIX: {market_data['vix']:.1f}")
         logger.info(f"  Expected Move (1 SD): ${market_data['expected_move']:.2f}")
 
+        # =========================================================================
+        # CONSULT ORACLE AI FOR TRADING ADVICE
+        # =========================================================================
+        oracle_advice = self.consult_oracle(market_data)
+        oracle_risk_pct = None
+        oracle_sd_mult = None
+
+        if oracle_advice:
+            result['oracle_advice'] = {
+                'advice': oracle_advice.advice.value,
+                'win_probability': oracle_advice.win_probability,
+                'suggested_risk_pct': oracle_advice.suggested_risk_pct,
+                'suggested_sd_multiplier': oracle_advice.suggested_sd_multiplier,
+                'reasoning': oracle_advice.reasoning
+            }
+
+            # Honor Oracle's SKIP advice
+            if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
+                logger.warning(f"ARES: Oracle advises SKIP - {oracle_advice.reasoning}")
+                result['actions'].append(f"Oracle SKIP: {oracle_advice.reasoning}")
+                return result
+
+            # Store Oracle's suggestions for use
+            oracle_risk_pct = oracle_advice.suggested_risk_pct
+            oracle_sd_mult = oracle_advice.suggested_sd_multiplier
+
+            logger.info(f"  Oracle Advice: {oracle_advice.advice.value}")
+            logger.info(f"  Oracle Win Prob: {oracle_advice.win_probability:.1%}")
+        else:
+            logger.info("  Oracle: Not available, using default parameters")
+
         # Get expiration
         expiration = self.get_todays_expiration()
         if not expiration:
@@ -880,10 +1136,16 @@ class ARESTrader:
             result['actions'].append("Failed to get expiration")
             return result
 
-        # Find Iron Condor strikes
+        # Calculate expected move with Oracle's SD multiplier if available
+        adjusted_expected_move = market_data['expected_move']
+        if oracle_sd_mult:
+            adjusted_expected_move = market_data['expected_move'] * oracle_sd_mult
+            logger.info(f"  Oracle SD Mult: {oracle_sd_mult:.2f} -> Adjusted Move: ${adjusted_expected_move:.2f}")
+
+        # Find Iron Condor strikes (with Oracle's SD multiplier applied)
         ic_strikes = self.find_iron_condor_strikes(
             market_data['underlying_price'],
-            market_data['expected_move'],
+            adjusted_expected_move,
             expiration
         )
 
@@ -896,9 +1158,18 @@ class ARESTrader:
                    f"{ic_strikes['call_short_strike']}/{ic_strikes['call_long_strike']}C")
         logger.info(f"  Credit: ${ic_strikes['total_credit']:.2f}")
 
-        # Calculate position size
+        # Calculate position size (with Oracle's risk % if available)
         max_loss = self.config.spread_width - ic_strikes['total_credit']
-        contracts = self.calculate_position_size(max_loss)
+
+        # Use Oracle's risk percentage if available
+        if oracle_risk_pct:
+            original_risk_pct = self.config.risk_per_trade
+            self.config.risk_per_trade = oracle_risk_pct
+            contracts = self.calculate_position_size(max_loss)
+            self.config.risk_per_trade = original_risk_pct  # Restore original
+            logger.info(f"  Oracle Risk Adj: {oracle_risk_pct:.1%} (default: {original_risk_pct:.1%})")
+        else:
+            contracts = self.calculate_position_size(max_loss)
 
         logger.info(f"  Contracts: {contracts}")
         logger.info(f"  Total Premium: ${ic_strikes['total_credit'] * 100 * contracts:,.2f}")
@@ -1027,11 +1298,42 @@ class ARESTrader:
             conn.commit()
             conn.close()
             logger.info(f"ARES: Updated position {position.position_id} in database")
+
+            # Record outcome to Oracle feedback loop if position closed
+            if position.status in ('closed', 'expired') and hasattr(position, 'realized_pnl'):
+                self._record_oracle_outcome(position)
+
             return True
 
         except Exception as e:
             logger.error(f"ARES: Failed to update position in database: {e}")
             return False
+
+    def _record_oracle_outcome(self, position: IronCondorPosition) -> None:
+        """Record position outcome to Oracle for feedback loop."""
+        if not self.oracle or not ORACLE_AVAILABLE:
+            return
+
+        try:
+            # Determine outcome type based on P&L and strikes
+            pnl = position.realized_pnl or 0
+            max_credit = position.total_credit * 100 * position.contracts
+
+            if pnl >= max_credit * 0.9:
+                outcome_type = "MAX_PROFIT"
+            elif pnl > 0:
+                outcome_type = "PARTIAL_PROFIT"
+            else:
+                # Check which side breached (would need underlying close price)
+                outcome_type = "LOSS"
+
+            self.record_trade_outcome(
+                trade_date=position.open_date,
+                outcome_type=outcome_type,
+                actual_pnl=pnl
+            )
+        except Exception as e:
+            logger.debug(f"ARES: Could not record Oracle outcome: {e}")
 
     def _load_positions_from_db(self) -> int:
         """
@@ -1158,6 +1460,168 @@ class ARESTrader:
         except Exception as e:
             logger.error(f"ARES: Failed to load positions from database: {e}")
             return 0
+
+    # =========================================================================
+    # TRADIER POSITION SYNC METHODS
+    # =========================================================================
+
+    def sync_positions_from_tradier(self) -> Dict:
+        """
+        Sync positions from Tradier account to AlphaGEX.
+
+        This pulls open positions from Tradier and adds any that aren't already
+        tracked in AlphaGEX. Useful for reconciliation after manual trades.
+
+        Returns:
+            Dict with sync results: synced_count, already_tracked, errors
+        """
+        result = {
+            'synced_count': 0,
+            'already_tracked': 0,
+            'skipped': 0,
+            'errors': [],
+            'positions': []
+        }
+
+        # Determine which Tradier client to use based on mode
+        tradier_client = self.tradier_sandbox if self.mode == TradingMode.PAPER else self.tradier
+
+        if not tradier_client:
+            result['errors'].append("Tradier client not available")
+            logger.error("ARES SYNC: No Tradier client available")
+            return result
+
+        try:
+            # Get positions from Tradier
+            logger.info("ARES SYNC: Fetching positions from Tradier...")
+            tradier_positions = tradier_client.get_positions()
+
+            if not tradier_positions:
+                logger.info("ARES SYNC: No positions found in Tradier")
+                return result
+
+            # Get list of known order IDs from our tracked positions
+            known_order_ids = set()
+            for pos in self.open_positions + self.closed_positions:
+                if pos.put_spread_order_id:
+                    # Extract the actual order ID (e.g., "SANDBOX-12345" -> "12345")
+                    order_id = pos.put_spread_order_id.replace("SANDBOX-", "").replace("PAPER-", "")
+                    known_order_ids.add(order_id)
+                if pos.call_spread_order_id:
+                    order_id = pos.call_spread_order_id.replace("SANDBOX-", "").replace("PAPER-", "")
+                    known_order_ids.add(order_id)
+
+            logger.info(f"ARES SYNC: Found {len(tradier_positions)} positions in Tradier")
+            logger.info(f"ARES SYNC: Already tracking {len(known_order_ids)} order IDs")
+
+            # Process each Tradier position
+            for tpos in tradier_positions:
+                try:
+                    symbol = tpos.get('symbol', '')
+                    quantity = abs(int(tpos.get('quantity', 0)))
+
+                    # Only process SPY or SPX options
+                    if not (symbol.startswith('SPY') or symbol.startswith('SPX') or symbol.startswith('SPXW')):
+                        result['skipped'] += 1
+                        continue
+
+                    # Check if this is already tracked
+                    position_id = tpos.get('id', '')
+                    if str(position_id) in known_order_ids:
+                        result['already_tracked'] += 1
+                        continue
+
+                    # Log the new position found
+                    cost_basis = float(tpos.get('cost_basis', 0))
+                    date_acquired = tpos.get('date_acquired', '')
+
+                    logger.info(f"ARES SYNC: Found untracked position - {symbol} x{quantity} cost=${cost_basis:.2f}")
+
+                    result['positions'].append({
+                        'symbol': symbol,
+                        'quantity': quantity,
+                        'cost_basis': cost_basis,
+                        'date_acquired': date_acquired,
+                        'position_id': position_id
+                    })
+
+                    result['synced_count'] += 1
+
+                except Exception as e:
+                    result['errors'].append(f"Error processing position: {e}")
+                    logger.warning(f"ARES SYNC: Error processing position: {e}")
+
+            logger.info(f"ARES SYNC: Complete - Synced: {result['synced_count']}, "
+                       f"Already tracked: {result['already_tracked']}, "
+                       f"Skipped: {result['skipped']}")
+
+            return result
+
+        except Exception as e:
+            result['errors'].append(f"Sync failed: {e}")
+            logger.error(f"ARES SYNC: Failed to sync positions: {e}")
+            return result
+
+    def get_tradier_account_status(self) -> Dict:
+        """
+        Get current Tradier account status including positions and orders.
+
+        Returns:
+            Dict with account info, positions, and recent orders
+        """
+        result = {
+            'success': False,
+            'mode': self.mode.value,
+            'account': {},
+            'positions': [],
+            'orders': [],
+            'errors': []
+        }
+
+        tradier_client = self.tradier_sandbox if self.mode == TradingMode.PAPER else self.tradier
+
+        if not tradier_client:
+            result['errors'].append("Tradier client not available")
+            return result
+
+        try:
+            # Get account balances
+            try:
+                balances = tradier_client.get_balances()
+                if balances:
+                    result['account'] = {
+                        'total_equity': balances.get('total_equity', 0),
+                        'total_cash': balances.get('total_cash', 0),
+                        'option_buying_power': balances.get('option_buying_power', 0),
+                        'pending_orders_count': balances.get('pending_orders_count', 0)
+                    }
+            except Exception as e:
+                result['errors'].append(f"Failed to get balances: {e}")
+
+            # Get positions
+            try:
+                positions = tradier_client.get_positions()
+                if positions:
+                    result['positions'] = positions
+            except Exception as e:
+                result['errors'].append(f"Failed to get positions: {e}")
+
+            # Get recent orders
+            try:
+                orders = tradier_client.get_orders()
+                if orders:
+                    # Only include recent orders (last 10)
+                    result['orders'] = orders[:10] if len(orders) > 10 else orders
+            except Exception as e:
+                result['errors'].append(f"Failed to get orders: {e}")
+
+            result['success'] = True
+            return result
+
+        except Exception as e:
+            result['errors'].append(f"Account status failed: {e}")
+            logger.error(f"ARES: Failed to get Tradier account status: {e}")
+            return result
 
     def _update_daily_performance(self) -> bool:
         """

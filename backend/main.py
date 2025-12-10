@@ -1490,6 +1490,52 @@ async def startup_event():
             import traceback
             traceback.print_exc()
 
+        # =====================================================================
+        # Register ARES + ATLAS Scheduler (APScheduler-based trading bots)
+        # ARES: Aggressive Iron Condor - 10:15 AM ET daily ($200K)
+        # ATLAS: SPX Wheel Strategy - 10:05 AM ET daily ($400K)
+        # =====================================================================
+        try:
+            def run_ares_atlas_scheduler():
+                """
+                Run ARES and ATLAS trading bots via APScheduler.
+                This function runs continuously and manages both bots.
+                """
+                import time
+                from scheduler.trader_scheduler import get_scheduler
+
+                print("🚀 Starting ARES + ATLAS Scheduler...")
+                scheduler = get_scheduler()
+
+                if not scheduler.is_running:
+                    scheduler.start()
+                    print("✅ ARES + ATLAS Scheduler started successfully")
+                else:
+                    print("ℹ️  ARES + ATLAS Scheduler already running")
+
+                # Keep thread alive - APScheduler runs in background
+                while True:
+                    time.sleep(60)
+                    # Periodic status check
+                    if scheduler.is_running:
+                        status = scheduler.get_status()
+                        if status.get('market_open'):
+                            print(f"📊 ARES/ATLAS Status: Market OPEN | PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}")
+
+            watchdog.register(
+                name="ARES_ATLAS_Scheduler",
+                target=run_ares_atlas_scheduler,
+                kwargs={},
+                max_restarts=10
+            )
+            print("✅ Registered: ARES_ATLAS_Scheduler")
+            print("   • ARES (Aggressive Iron Condor): 10:15 AM ET daily, $200K capital")
+            print("   • ATLAS (SPX Wheel): 10:05 AM ET daily, $400K capital")
+        except Exception as e:
+            print(f"⚠️  Could not register ARES_ATLAS_Scheduler: {e}")
+            import traceback
+            traceback.print_exc()
+
         # Start the watchdog (this starts all registered threads + monitoring)
         watchdog.start()
 
@@ -1526,23 +1572,29 @@ async def startup_event():
     print("🎯 ALPHAGEX AUTONOMOUS SYSTEM STATUS")
     print("=" * 80)
     print("✅ Thread Watchdog: ACTIVE (auto-restarts crashed threads)")
-    print("✅ Autonomous Trader: MONITORED (checks every 5 min)")
+    print("✅ PHOENIX Trader: MONITORED (0DTE options, every 5 min)")
+    print("✅ ARES Trader: MONITORED (Iron Condor, 10:15 AM ET daily, $200K)")
+    print("✅ ATLAS Trader: MONITORED (SPX Wheel, 10:05 AM ET daily, $400K)")
     print("✅ Data Collector: MONITORED (GEX snapshots every 5 min)")
     print("✅ Notification Monitor: RUNNING (checks every 60 sec)")
     print("✅ Database: INITIALIZED")
     print("")
-    print("📊 The system will now:")
-    print("   • Collect GEX data every 5 minutes during market hours")
-    print("   • Execute trades automatically when opportunities arise")
-    print("   • Save all data to PostgreSQL for historical analysis")
-    print("   • Send notifications for critical market events")
-    print("   • AUTO-RESTART any crashed threads within 30 seconds")
+    print("📊 TRADING BOTS (ALL AUTOMATED):")
+    print("   • PHOENIX: 0DTE SPY/SPX options - every 5 min during market hours")
+    print("   • ARES: Aggressive Iron Condor - 10:15 AM ET daily (targets 10% monthly)")
+    print("   • ATLAS: SPX Cash-Secured Put Wheel - 10:05 AM ET daily")
+    print("   • Oracle AI: Provides recommendations to ARES for trade decisions")
     print("")
-    print("🔍 Frontend pages will show:")
-    print("   • Live GEX data from Trading Volatility API")
-    print("   • Historical charts from gex_history table")
-    print("   • Trade performance from autonomous_closed_trades")
-    print("   • Psychology regime signals from regime_signals")
+    print("💰 CAPITAL ALLOCATION:")
+    print("   • PHOENIX: $300,000 (30%)")
+    print("   • ATLAS:   $400,000 (40%)")
+    print("   • ARES:    $200,000 (20%)")
+    print("   • Reserve: $100,000 (10%)")
+    print("")
+    print("🔄 AUTO-RECOVERY:")
+    print("   • All bots auto-restart within 30 seconds if they crash")
+    print("   • Max 10 restarts per hour per bot (rate limited)")
+    print("   • State persisted to database (survives full restarts)")
     print("=" * 80 + "\n")
 @app.on_event("shutdown")
 async def shutdown_event():

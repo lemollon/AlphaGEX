@@ -151,6 +151,24 @@ except ImportError as e:
     STRATEGY_STATS_AVAILABLE = False
     logger.warning(f"Strategy Stats not available: {e}")
 
+# CRITICAL: Import Oracle AI advisor for intelligent trading decisions
+try:
+    from quant.oracle_advisor import (
+        OracleAdvisor, MarketContext as OracleMarketContext,
+        TradingAdvice, GEXRegime, OraclePrediction, TradeOutcome,
+        BotName as OracleBotName
+    )
+    ORACLE_AVAILABLE = True
+    logger.info("Oracle AI Advisor integrated - ML-based trade decisions")
+except ImportError as e:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    OracleMarketContext = None
+    TradingAdvice = None
+    TradeOutcome = None
+    OracleBotName = None
+    logger.warning(f"Oracle AI not available: {e}")
+
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
                           current_spot: float = None, use_theoretical: bool = True) -> Dict:
@@ -415,6 +433,16 @@ class AutonomousPaperTrader(
         else:
             self.decision_bridge = None
             print("⚠️ Decision bridge not available - limited audit trail")
+
+        # Initialize Oracle AI advisor for ML-based decisions
+        self.oracle = None
+        self._last_oracle_advice = None
+        if ORACLE_AVAILABLE:
+            try:
+                self.oracle = OracleAdvisor()
+                print("✅ Oracle AI advisor initialized - ML-based trade decisions")
+            except Exception as e:
+                print(f"⚠️ Oracle AI not available: {e}")
 
         # CRITICAL: Initialize UNIFIED Market Regime Classifier
         # This is the SINGLE source of truth - NO more whiplash decisions
@@ -948,6 +976,43 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             time_context = self._get_time_context()
             put_call_ratio = skew_data.get('put_call_ratio', 1.0) if skew_data else 1.0
 
+            # ============================================================
+            # STEP 1c: CONSULT ORACLE AI FOR TRADING ADVICE
+            # ============================================================
+            oracle_advice = self._consult_oracle(spot_price, vix, net_gex, gex_data)
+            if oracle_advice:
+                self._last_oracle_advice = oracle_advice
+
+                # Honor Oracle's SKIP advice
+                if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
+                    self.update_live_status(
+                        status='ORACLE_SKIP',
+                        action=f'Oracle AI advises SKIP today',
+                        decision=f'Win prob: {oracle_advice.win_probability:.1%} | {oracle_advice.reasoning}'
+                    )
+                    self.log_action('ORACLE_SKIP', f'Oracle advises SKIP: {oracle_advice.reasoning}', success=True)
+
+                    if self.decision_bridge:
+                        try:
+                            self.decision_bridge.log_no_trade(
+                                symbol=self.symbol,
+                                spot_price=spot_price,
+                                reason=f'Oracle SKIP: {oracle_advice.reasoning}'
+                            )
+                        except Exception:
+                            pass
+
+                    return None
+
+                self.log_action(
+                    'ORACLE_ADVICE',
+                    f'Oracle: {oracle_advice.advice.value} | Win Prob: {oracle_advice.win_probability:.1%} | Risk: {oracle_advice.suggested_risk_pct:.1%}',
+                    success=True
+                )
+            else:
+                self._last_oracle_advice = None
+                self.log_action('ORACLE_UNAVAILABLE', 'Oracle AI not available, using default parameters', success=True)
+
             if spot_price == 0:
                 self.update_live_status(
                     status='ERROR',
@@ -1439,6 +1504,143 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
         except Exception as e:
             print(f"❌ Failed to fetch VIX: {e}")
             return 17.0
+
+    def _build_oracle_context(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['OracleMarketContext']:
+        """
+        Build Oracle MarketContext from PHOENIX market data.
+
+        Args:
+            spot: Current spot price
+            vix: Current VIX level
+            net_gex: Net GEX value
+            gex_data: Full GEX data dict
+
+        Returns:
+            OracleMarketContext for Oracle consultation
+        """
+        if not ORACLE_AVAILABLE or OracleMarketContext is None:
+            return None
+
+        try:
+            now = datetime.now(CENTRAL_TZ)
+
+            # Get GEX walls from data
+            gex_call_wall = gex_data.get('call_wall', 0) if gex_data else 0
+            gex_put_wall = gex_data.get('put_wall', 0) if gex_data else 0
+            gex_flip = gex_data.get('flip_point', 0) if gex_data else 0
+
+            # Determine GEX regime
+            gex_regime = GEXRegime.NEUTRAL
+            if net_gex > 0:
+                gex_regime = GEXRegime.POSITIVE
+            elif net_gex < 0:
+                gex_regime = GEXRegime.NEGATIVE
+
+            # Check if price is between walls
+            between_walls = True
+            if gex_put_wall > 0 and gex_call_wall > 0:
+                between_walls = gex_put_wall <= spot <= gex_call_wall
+
+            # Calculate expected move
+            expected_move_pct = vix / 100.0 * (1/252) ** 0.5 * 100 if vix > 0 else 1.0
+
+            return OracleMarketContext(
+                spot_price=spot,
+                price_change_1d=0,
+                vix=vix,
+                vix_percentile_30d=50.0,
+                vix_change_1d=0,
+                gex_net=net_gex,
+                gex_normalized=0,
+                gex_regime=gex_regime,
+                gex_flip_point=gex_flip,
+                gex_call_wall=gex_call_wall,
+                gex_put_wall=gex_put_wall,
+                gex_distance_to_flip_pct=abs(spot - gex_flip) / spot * 100 if spot > 0 and gex_flip > 0 else 0,
+                gex_between_walls=between_walls,
+                day_of_week=now.weekday(),
+                days_to_opex=0,  # 0DTE
+                win_rate_30d=0.68,
+                expected_move_pct=expected_move_pct
+            )
+
+        except Exception as e:
+            logger.error(f"PHOENIX: Error building Oracle context: {e}")
+            return None
+
+    def _consult_oracle(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['OraclePrediction']:
+        """
+        Consult Oracle AI for trading advice.
+
+        Args:
+            spot: Current spot price
+            vix: Current VIX level
+            net_gex: Net GEX value
+            gex_data: Full GEX data dict
+
+        Returns:
+            OraclePrediction with advice, or None if Oracle unavailable
+        """
+        if not self.oracle:
+            logger.debug("PHOENIX: Oracle not available, proceeding without advice")
+            return None
+
+        context = self._build_oracle_context(spot, vix, net_gex, gex_data)
+        if not context:
+            logger.debug("PHOENIX: Could not build Oracle context")
+            return None
+
+        try:
+            # Get advice from Oracle for directional trades
+            advice = self.oracle.get_phoenix_advice(context)
+
+            logger.info(f"PHOENIX Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
+                       f"Risk: {advice.suggested_risk_pct:.1%}")
+
+            if advice.reasoning:
+                logger.info(f"PHOENIX Oracle Reasoning: {advice.reasoning}")
+
+            # Store prediction for feedback loop
+            try:
+                today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+                self.oracle.store_prediction(advice, context, today)
+            except Exception as e:
+                logger.debug(f"PHOENIX: Could not store Oracle prediction: {e}")
+
+            return advice
+
+        except Exception as e:
+            logger.error(f"PHOENIX: Error consulting Oracle: {e}")
+            return None
+
+    def record_trade_outcome(self, trade_date: str, outcome_type: str, actual_pnl: float) -> bool:
+        """
+        Record trade outcome back to Oracle for feedback loop.
+
+        Args:
+            trade_date: Date of the trade (YYYY-MM-DD)
+            outcome_type: One of MAX_PROFIT, PARTIAL_PROFIT, LOSS, etc.
+            actual_pnl: Actual P&L from the trade
+
+        Returns:
+            True if recorded successfully
+        """
+        if not self.oracle or not ORACLE_AVAILABLE:
+            return False
+
+        try:
+            outcome = TradeOutcome[outcome_type]
+            self.oracle.update_outcome(
+                trade_date,
+                OracleBotName.PHOENIX,
+                outcome,
+                actual_pnl
+            )
+            logger.info(f"PHOENIX: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
+            return True
+        except Exception as e:
+            logger.error(f"PHOENIX: Failed to record outcome: {e}")
+            return False
 
     def _get_momentum(self) -> Dict:
         """Calculate recent momentum (1h, 4h price change) - Tradier or Polygon"""

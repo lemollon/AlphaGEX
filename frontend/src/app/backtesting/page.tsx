@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger'
 
 import { useState, useEffect, useCallback } from 'react'
-import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle, Calendar, Clock, Loader2, CheckCircle, XCircle } from 'lucide-react'
+import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle, Calendar, Clock, Loader2, CheckCircle, XCircle, Download } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import SmartStrategyPicker from '@/components/SmartStrategyPicker'
 import { apiClient } from '@/lib/api'
@@ -229,23 +229,36 @@ export default function BacktestingPage() {
                 Performance analysis of 29+ trading strategies with realistic transaction costs
               </p>
             </div>
-            <button
-              onClick={runBacktestsHandler}
-              disabled={running}
-              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {running ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Running Backtests...
-                </>
-              ) : (
-                <>
-                  <PlayCircle className="w-5 h-5" />
-                  Run Backtests
-                </>
+            <div className="flex items-center gap-3">
+              {/* Export Button */}
+              {results.length > 0 && (
+                <button
+                  onClick={() => apiClient.exportBacktestResults()}
+                  className="px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold flex items-center gap-2"
+                >
+                  <Download className="w-5 h-5" />
+                  Export CSV
+                </button>
               )}
-            </button>
+              {/* Run Backtests Button */}
+              <button
+                onClick={runBacktestsHandler}
+                disabled={running}
+                className="px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {running ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Running Backtests...
+                  </>
+                ) : (
+                  <>
+                    <PlayCircle className="w-5 h-5" />
+                    Run Backtests
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Run Error */}
