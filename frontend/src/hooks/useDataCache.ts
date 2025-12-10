@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { logger } from '@/lib/logger'
 
 interface CacheOptions {
@@ -12,8 +12,11 @@ interface CacheData<T> {
 }
 
 /**
- * Hook for caching data with automatic expiration
+ * Bug #2 Fix: Hook for caching data with automatic expiration
  * Persists data across page refreshes using sessionStorage
+ *
+ * FIXED: Now memoizes return value to prevent object reference changes
+ * that were causing useEffect dependency loops in consuming components.
  */
 export function useDataCache<T>(options: CacheOptions) {
   const { key, ttl = 5 * 60 * 1000 } = options // Default 5 minutes
@@ -69,27 +72,30 @@ export function useDataCache<T>(options: CacheOptions) {
     }
   }, [key])
 
+  // Bug #2 Fix: Compute these values inside useMemo to avoid creating new function references
   // Check if cache is fresh
-  const isCacheFresh = useCallback(() => {
+  const isCacheFresh = useMemo(() => {
     if (!lastFetch) return false
     const age = Date.now() - lastFetch
     return age < ttl
   }, [lastFetch, ttl])
 
   // Get time until cache expires
-  const timeUntilExpiry = useCallback(() => {
+  const timeUntilExpiry = useMemo(() => {
     if (!lastFetch) return 0
     const age = Date.now() - lastFetch
     const remaining = ttl - age
     return Math.max(0, remaining)
   }, [lastFetch, ttl])
 
-  return {
+  // Bug #2 Fix: Memoize the entire return object to prevent new object references
+  // This prevents consumers from having their useCallbacks/useEffects triggered unnecessarily
+  return useMemo(() => ({
     cachedData,
     setCache,
     clearCache,
-    isCacheFresh: isCacheFresh(),
-    timeUntilExpiry: timeUntilExpiry(),
+    isCacheFresh,
+    timeUntilExpiry,
     lastFetch
-  }
+  }), [cachedData, setCache, clearCache, isCacheFresh, timeUntilExpiry, lastFetch])
 }

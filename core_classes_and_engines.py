@@ -1652,17 +1652,18 @@ class TradingVolatilityAPI:
                     print(f"❌ gammaOI endpoint returned status {response.status_code}")
                     return {}
 
+                # Bug #6 Fix: Return proper error dict instead of empty dict on rate limit
                 # Check for rate limit error in response text
                 # DON'T activate circuit breaker - gammaOI has stricter limits (2/min)
                 # Blocking all endpoints because of gammaOI would break gex/latest (20/min)
                 if "API limit exceeded" in response.text:
-                    print(f"⚠️ gammaOI rate limited (2/min during trading hours) - returning empty data")
-                    return {}
+                    print(f"⚠️ gammaOI rate limited (2/min during trading hours)")
+                    return {'error': 'rate_limit', 'message': 'gammaOI API rate limited (2/min)'}
 
                 # Check if response has content before parsing JSON
                 if not response.text or len(response.text.strip()) == 0:
                     print(f"❌ gammaOI endpoint returned empty response")
-                    return {}
+                    return {'error': 'empty_response', 'message': 'gammaOI returned empty response'}
 
                 # Try to parse JSON with better error handling
                 try:
@@ -1671,12 +1672,12 @@ class TradingVolatilityAPI:
                     # Check if error message contains rate limit info
                     # DON'T activate circuit breaker - gammaOI has stricter limits
                     if "API limit exceeded" in response.text:
-                        print(f"⚠️ gammaOI rate limited - returning empty data")
-                        return {}
+                        print(f"⚠️ gammaOI rate limited")
+                        return {'error': 'rate_limit', 'message': 'gammaOI API rate limited'}
                     else:
                         print(f"❌ Invalid JSON from gammaOI endpoint")
                         print(f"Response text (first 200 chars): {response.text[:200]}")
-                        return {}
+                        return {'error': 'invalid_json', 'message': 'Invalid JSON from gammaOI'}
 
                 # Success! Reset error counter
                 self._reset_rate_limit_errors()
