@@ -690,6 +690,16 @@ async def get_strategy_types():
                 "direction": "bullish/neutral",
                 "credit": False,
                 "note": "Short strike placed at configured SD multiplier below price"
+            },
+            {
+                "id": "gex_protected_iron_condor",
+                "name": "GEX-Protected Iron Condor",
+                "description": "Iron Condor with strikes placed outside GEX walls (call wall/put wall) for additional protection. Falls back to SD when GEX data unavailable.",
+                "legs": 4,
+                "direction": "neutral",
+                "credit": True,
+                "note": "Uses GEX walls as support/resistance levels for strike selection",
+                "features": ["GEX wall protection", "SD fallback", "Positive GEX bias"]
             }
         ]
     }
@@ -1353,3 +1363,646 @@ async def check_data_quality():
     except Exception as e:
         logger.error(f"Data quality check failed: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# STRATEGY PRESETS AND SAVED STRATEGIES
+# ============================================================================
+
+class SavedStrategy(BaseModel):
+    """Model for saved strategy configurations"""
+    name: str = Field(..., description="Strategy name")
+    description: str = Field(default="", description="Strategy description")
+    config: Dict[str, Any] = Field(..., description="Strategy configuration")
+    tags: List[str] = Field(default=[], description="Tags for filtering")
+
+
+# Built-in strategy presets
+STRATEGY_PRESETS = [
+    {
+        "id": "conservative_ic",
+        "name": "Conservative IC",
+        "description": "Standard Iron Condor with 1.5 SD multiplier for wider strikes and lower risk",
+        "is_preset": True,
+        "tags": ["conservative", "iron_condor", "low_risk"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "sd_multiplier": 1.5,
+            "risk_per_trade_pct": 3.0,
+            "spread_width": 10.0,
+            "max_vix": 30,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "aggressive_ic",
+        "name": "Aggressive IC",
+        "description": "Aggressive Iron Condor with 0.8 SD multiplier for tighter strikes and higher premium",
+        "is_preset": True,
+        "tags": ["aggressive", "iron_condor", "high_premium"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "sd_multiplier": 0.8,
+            "risk_per_trade_pct": 8.0,
+            "spread_width": 10.0,
+            "min_vix": 15,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "gex_protected_ic",
+        "name": "GEX-Protected IC",
+        "description": "Iron Condor using GEX walls for strike selection with SD fallback. Trades with additional protection from gamma exposure levels.",
+        "is_preset": True,
+        "tags": ["gex", "iron_condor", "protected"],
+        "config": {
+            "strategy_type": "gex_protected_iron_condor",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "vix_filter_ic",
+        "name": "VIX Filter IC",
+        "description": "Iron Condor only trading in elevated volatility (VIX 18-35) for better premium",
+        "is_preset": True,
+        "tags": ["vix_filter", "iron_condor", "volatility"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "min_vix": 18,
+            "max_vix": 35,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "mon_wed_ic",
+        "name": "Monday-Wednesday IC",
+        "description": "Iron Condor trading only on Mon/Wed for lower theta decay competition",
+        "is_preset": True,
+        "tags": ["day_filter", "iron_condor"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "trade_monday": True,
+            "trade_tuesday": False,
+            "trade_wednesday": True,
+            "trade_thursday": False,
+            "trade_friday": False,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "delta_based_ic",
+        "name": "Delta-Based IC",
+        "description": "Iron Condor using 16-delta strikes for consistent probability-based positioning",
+        "is_preset": True,
+        "tags": ["delta", "iron_condor", "probability"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "target_delta": 0.16,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "delta"
+        }
+    }
+]
+
+# In-memory storage for user-saved strategies (in production, use database)
+_saved_strategies: Dict[str, Dict] = {}
+
+
+@router.get("/presets")
+async def get_strategy_presets():
+    """
+    Get built-in strategy presets.
+
+    These are pre-configured strategy configurations that users can select
+    and optionally modify before running a backtest.
+    """
+    return {
+        "success": True,
+        "presets": STRATEGY_PRESETS
+    }
+
+
+def _ensure_saved_strategies_table(cursor):
+    """Ensure the saved_strategies table exists"""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS saved_strategies (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            user_id VARCHAR(100) DEFAULT NULL,
+            strategy_type VARCHAR(50) NOT NULL,
+            parameters JSONB NOT NULL,
+            last_backtest_date TIMESTAMP WITH TIME ZONE,
+            backtest_results JSONB,
+            is_preset BOOLEAN DEFAULT FALSE,
+            is_public BOOLEAN DEFAULT FALSE,
+            tags VARCHAR(255)[],
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # Create unique constraint if not exists (ignore error if already exists)
+    try:
+        cursor.execute("""
+            ALTER TABLE saved_strategies
+            ADD CONSTRAINT unique_strategy_name_user UNIQUE (name, user_id)
+        """)
+    except:
+        pass  # Constraint already exists
+
+
+@router.get("/saved-strategies")
+async def get_saved_strategies():
+    """
+    Get user-saved strategy configurations.
+
+    Returns both built-in presets and user-saved strategies.
+    """
+    # Try to load from database
+    strategies = []
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Ensure table exists
+        _ensure_saved_strategies_table(cursor)
+        conn.commit()
+
+        cursor.execute("""
+            SELECT id, name, description, strategy_type, parameters,
+                   is_preset, tags, created_at, updated_at, backtest_results
+            FROM saved_strategies
+            ORDER BY is_preset DESC, name
+        """)
+
+        for row in cursor.fetchall():
+            strategies.append({
+                "id": str(row['id']),
+                "name": row['name'],
+                "description": row['description'] or "",
+                "strategy_type": row['strategy_type'],
+                "config": row['parameters'] if isinstance(row['parameters'], dict) else json.loads(row['parameters'] or '{}'),
+                "is_preset": row['is_preset'],
+                "tags": row['tags'] or [],
+                "created_at": str(row['created_at']) if row['created_at'] else None,
+                "backtest_results": row['backtest_results']
+            })
+
+        conn.close()
+
+    except Exception as e:
+        logger.warning(f"Could not load saved strategies from database: {e}")
+        # Fall back to in-memory storage
+        strategies = list(_saved_strategies.values())
+
+    # Add presets if not in database
+    preset_names = {s['name'] for s in strategies if s.get('is_preset')}
+    for preset in STRATEGY_PRESETS:
+        if preset['name'] not in preset_names:
+            strategies.append(preset)
+
+    return {
+        "success": True,
+        "strategies": strategies
+    }
+
+
+@router.post("/saved-strategies")
+async def save_strategy(strategy: SavedStrategy):
+    """
+    Save a custom strategy configuration.
+
+    Users can save their backtest configurations for later use.
+    """
+    strategy_id = f"user_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    strategy_data = {
+        "id": strategy_id,
+        "name": strategy.name,
+        "description": strategy.description,
+        "config": strategy.config,
+        "tags": strategy.tags,
+        "is_preset": False,
+        "created_at": datetime.now().isoformat()
+    }
+
+    # Try to save to database
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Ensure table exists
+        _ensure_saved_strategies_table(cursor)
+        conn.commit()
+
+        cursor.execute("""
+            INSERT INTO saved_strategies (name, description, strategy_type, parameters, is_preset, tags)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (name, user_id) DO UPDATE SET
+                description = EXCLUDED.description,
+                parameters = EXCLUDED.parameters,
+                tags = EXCLUDED.tags,
+                updated_at = NOW()
+            RETURNING id
+        """, (
+            strategy.name,
+            strategy.description,
+            strategy.config.get('strategy_type', 'iron_condor'),
+            json.dumps(strategy.config),
+            False,
+            strategy.tags
+        ))
+
+        row = cursor.fetchone()
+        if row:
+            strategy_id = str(row[0])
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"Saved strategy '{strategy.name}' to database")
+
+    except Exception as e:
+        logger.warning(f"Could not save to database, using in-memory: {e}")
+        # Fall back to in-memory storage
+        _saved_strategies[strategy_id] = strategy_data
+
+    return {
+        "success": True,
+        "strategy_id": strategy_id,
+        "message": f"Strategy '{strategy.name}' saved successfully"
+    }
+
+
+@router.delete("/saved-strategies/{strategy_id}")
+async def delete_saved_strategy(strategy_id: str):
+    """Delete a user-saved strategy (cannot delete presets)"""
+
+    # Check if it's a preset
+    for preset in STRATEGY_PRESETS:
+        if preset['id'] == strategy_id:
+            raise HTTPException(status_code=400, detail="Cannot delete built-in presets")
+
+    # Try to delete from database
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            DELETE FROM saved_strategies
+            WHERE id = %s AND is_preset = FALSE
+            RETURNING id
+        """, (strategy_id,))
+
+        row = cursor.fetchone()
+        conn.commit()
+        conn.close()
+
+        if row:
+            return {"success": True, "message": "Strategy deleted"}
+
+    except Exception as e:
+        logger.warning(f"Could not delete from database: {e}")
+
+    # Try in-memory
+    if strategy_id in _saved_strategies:
+        del _saved_strategies[strategy_id]
+        return {"success": True, "message": "Strategy deleted"}
+
+    raise HTTPException(status_code=404, detail="Strategy not found")
+
+
+# ============================================================================
+# ORACLE CLAUDE AI ENDPOINTS
+# ============================================================================
+
+class OracleAnalysisRequest(BaseModel):
+    """Request model for Oracle Claude analysis"""
+    spot_price: float = Field(default=5000.0, description="Current spot price")
+    vix: float = Field(default=20.0, description="Current VIX")
+    gex_regime: str = Field(default="NEUTRAL", description="GEX regime: POSITIVE, NEGATIVE, NEUTRAL")
+    gex_normalized: float = Field(default=0.0, description="Normalized GEX value")
+    gex_call_wall: float = Field(default=0.0, description="GEX call wall strike")
+    gex_put_wall: float = Field(default=0.0, description="GEX put wall strike")
+    day_of_week: int = Field(default=2, description="Day of week (0=Mon, 4=Fri)")
+    bot_name: str = Field(default="ARES", description="Bot name: ARES, ATLAS, PHOENIX")
+
+
+class OracleExplainRequest(BaseModel):
+    """Request model for explaining Oracle prediction"""
+    prediction: Dict[str, Any] = Field(..., description="Oracle prediction to explain")
+    context: Dict[str, Any] = Field(..., description="Market context used")
+
+
+@router.get("/oracle/status")
+async def get_oracle_status():
+    """
+    Get Oracle system status including Claude AI availability.
+
+    Returns information about:
+    - ML model status (trained/untrained)
+    - Claude AI status (enabled/disabled)
+    - Model version
+    """
+    try:
+        from quant.oracle_advisor import get_oracle
+
+        oracle = get_oracle()
+
+        return {
+            "success": True,
+            "oracle": {
+                "model_trained": oracle.is_trained,
+                "model_version": oracle.model_version,
+                "claude_available": oracle.claude_available,
+                "claude_model": oracle.claude.CLAUDE_MODEL if oracle.claude else None,
+                "high_confidence_threshold": oracle.high_confidence_threshold,
+                "low_confidence_threshold": oracle.low_confidence_threshold,
+            }
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get Oracle status: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/oracle/analyze")
+async def oracle_analyze(request: OracleAnalysisRequest):
+    """
+    Get Oracle advice with Claude AI validation.
+
+    This endpoint:
+    1. Creates market context from request
+    2. Gets ML-based prediction from Oracle
+    3. Validates with Claude AI (if available)
+    4. Returns combined analysis
+
+    Use this for live trading decisions.
+    """
+    try:
+        from quant.oracle_advisor import (
+            get_oracle, MarketContext, GEXRegime, BotName
+        )
+
+        oracle = get_oracle()
+
+        # Parse GEX regime
+        gex_regime = GEXRegime[request.gex_regime.upper()]
+
+        # Parse bot name
+        bot_name = BotName[request.bot_name.upper()]
+
+        # Build market context
+        context = MarketContext(
+            spot_price=request.spot_price,
+            vix=request.vix,
+            gex_regime=gex_regime,
+            gex_normalized=request.gex_normalized,
+            gex_call_wall=request.gex_call_wall,
+            gex_put_wall=request.gex_put_wall,
+            day_of_week=request.day_of_week,
+            gex_between_walls=(
+                request.gex_put_wall < request.spot_price < request.gex_call_wall
+            ) if request.gex_call_wall > 0 and request.gex_put_wall > 0 else True
+        )
+
+        # Get advice based on bot type
+        if bot_name == BotName.ARES:
+            prediction = oracle.get_ares_advice(
+                context,
+                use_gex_walls=(request.gex_call_wall > 0 and request.gex_put_wall > 0),
+                use_claude_validation=True
+            )
+        elif bot_name == BotName.ATLAS:
+            prediction = oracle.get_atlas_advice(context)
+        elif bot_name == BotName.PHOENIX:
+            prediction = oracle.get_phoenix_advice(context)
+        else:
+            prediction = oracle.get_ares_advice(context)
+
+        # Get Claude explanation if available
+        explanation = None
+        if oracle.claude_available:
+            explanation = oracle.explain_prediction(prediction, context)
+
+        return {
+            "success": True,
+            "prediction": {
+                "bot_name": prediction.bot_name.value,
+                "advice": prediction.advice.value,
+                "win_probability": prediction.win_probability,
+                "confidence": prediction.confidence,
+                "suggested_risk_pct": prediction.suggested_risk_pct,
+                "suggested_sd_multiplier": prediction.suggested_sd_multiplier,
+                "use_gex_walls": prediction.use_gex_walls,
+                "suggested_put_strike": prediction.suggested_put_strike,
+                "suggested_call_strike": prediction.suggested_call_strike,
+                "reasoning": prediction.reasoning,
+                "model_version": prediction.model_version,
+                "top_factors": prediction.top_factors
+            },
+            "claude_explanation": explanation,
+            "claude_available": oracle.claude_available,
+            "context": {
+                "spot_price": context.spot_price,
+                "vix": context.vix,
+                "gex_regime": context.gex_regime.value,
+                "day_of_week": context.day_of_week
+            }
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}"
+        }
+    except Exception as e:
+        logger.error(f"Oracle analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/oracle/explain")
+async def oracle_explain(request: OracleExplainRequest):
+    """
+    Get Claude AI explanation of an Oracle prediction.
+
+    Takes a prediction object and market context, returns
+    a natural language explanation suitable for traders.
+    """
+    try:
+        from quant.oracle_advisor import (
+            get_oracle, MarketContext, GEXRegime, BotName,
+            TradingAdvice, OraclePrediction
+        )
+
+        oracle = get_oracle()
+
+        if not oracle.claude_available:
+            return {
+                "success": False,
+                "error": "Claude AI not available. Set ANTHROPIC_API_KEY environment variable."
+            }
+
+        # Reconstruct prediction object
+        pred_data = request.prediction
+        prediction = OraclePrediction(
+            bot_name=BotName[pred_data.get('bot_name', 'ARES')],
+            advice=TradingAdvice[pred_data.get('advice', 'TRADE_FULL')],
+            win_probability=pred_data.get('win_probability', 0.68),
+            confidence=pred_data.get('confidence', 70),
+            suggested_risk_pct=pred_data.get('suggested_risk_pct', 5.0),
+            suggested_sd_multiplier=pred_data.get('suggested_sd_multiplier', 1.0),
+            use_gex_walls=pred_data.get('use_gex_walls', False),
+            suggested_put_strike=pred_data.get('suggested_put_strike'),
+            suggested_call_strike=pred_data.get('suggested_call_strike'),
+            reasoning=pred_data.get('reasoning', ''),
+            model_version=pred_data.get('model_version', '1.0.0')
+        )
+
+        # Reconstruct market context
+        ctx_data = request.context
+        context = MarketContext(
+            spot_price=ctx_data.get('spot_price', 5000),
+            vix=ctx_data.get('vix', 20),
+            gex_regime=GEXRegime[ctx_data.get('gex_regime', 'NEUTRAL')],
+            gex_normalized=ctx_data.get('gex_normalized', 0),
+            gex_call_wall=ctx_data.get('gex_call_wall', 0),
+            gex_put_wall=ctx_data.get('gex_put_wall', 0),
+            day_of_week=ctx_data.get('day_of_week', 2),
+            gex_between_walls=ctx_data.get('gex_between_walls', True)
+        )
+
+        explanation = oracle.explain_prediction(prediction, context)
+
+        return {
+            "success": True,
+            "explanation": explanation
+        }
+
+    except Exception as e:
+        logger.error(f"Oracle explain failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/oracle/logs")
+async def get_oracle_logs(limit: int = 50):
+    """
+    Get Oracle live logs for frontend transparency.
+
+    Returns recent Claude AI interactions, validations, and analyses.
+    Use this for real-time monitoring of Oracle's reasoning.
+    """
+    try:
+        from quant.oracle_advisor import oracle_live_log
+
+        logs = oracle_live_log.get_logs(limit=limit)
+
+        return {
+            "success": True,
+            "logs": logs,
+            "count": len(logs)
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}",
+            "logs": []
+        }
+    except Exception as e:
+        logger.error(f"Failed to get Oracle logs: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "logs": []
+        }
+
+
+@router.delete("/oracle/logs")
+async def clear_oracle_logs():
+    """Clear Oracle live logs"""
+    try:
+        from quant.oracle_advisor import oracle_live_log
+
+        oracle_live_log.clear()
+
+        return {"success": True, "message": "Logs cleared"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/oracle/analyze-patterns")
+async def oracle_analyze_patterns(job_id: Optional[str] = None):
+    """
+    Use Claude AI to analyze patterns in backtest results.
+
+    If job_id is provided, analyzes that specific backtest.
+    Otherwise, analyzes any available training data.
+
+    Returns identified patterns, loss conditions, and recommendations.
+    """
+    try:
+        from quant.oracle_advisor import get_oracle
+
+        oracle = get_oracle()
+
+        if not oracle.claude_available:
+            return {
+                "success": False,
+                "error": "Claude AI not available. Set ANTHROPIC_API_KEY environment variable."
+            }
+
+        # Get backtest results if job_id provided
+        backtest_results = None
+        if job_id and job_id in _jobs:
+            job = _jobs[job_id]
+            if job['status'] == 'completed' and job.get('result'):
+                backtest_results = job['result']
+
+        # Run pattern analysis
+        analysis = oracle.analyze_patterns(backtest_results)
+
+        return {
+            "success": analysis.get('success', False),
+            "patterns": analysis.get('patterns', []),
+            "loss_conditions": analysis.get('loss_conditions', []),
+            "optimal_conditions": analysis.get('optimal_conditions', []),
+            "recommendations": analysis.get('recommendations', []),
+            "raw_analysis": analysis.get('raw_analysis', ''),
+            "error": analysis.get('error')
+        }
+
+    except Exception as e:
+        logger.error(f"Pattern analysis failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }

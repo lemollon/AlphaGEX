@@ -6,7 +6,7 @@ import {
   RefreshCw, AlertTriangle, Calendar, Clock, Loader2, CheckCircle,
   Settings, DollarSign, Target, Layers, ChevronDown, ChevronUp,
   Download, FileSpreadsheet, LineChart, PieChart, ArrowUpDown,
-  Database, Info, Percent, Shield
+  Database, Info, Percent, Shield, Zap
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import EnhancedEquityCurve from '@/components/backtest/EnhancedEquityCurve'
@@ -148,6 +148,8 @@ export default function ZeroDTEBacktestPage() {
   const [strategyTypes, setStrategyTypes] = useState<StrategyType[]>([])
   const [tiers, setTiers] = useState<Tier[]>([])
   const [results, setResults] = useState<BacktestResult[]>([])
+  const [presets, setPresets] = useState<any[]>([])
+  const [savedStrategies, setSavedStrategies] = useState<any[]>([])
   const [selectedResult, setSelectedResult] = useState<BacktestResult | null>(null)
   const [liveJobResult, setLiveJobResult] = useState<any>(null)
 
@@ -172,6 +174,11 @@ export default function ZeroDTEBacktestPage() {
   // Comparison state
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([])
 
+  // Oracle AI state
+  const [oracleStatus, setOracleStatus] = useState<any>(null)
+  const [oracleLogs, setOracleLogs] = useState<any[]>([])
+  const [showOracleLogs, setShowOracleLogs] = useState(false)
+
   // Check backend health on mount
   const checkBackendHealth = async () => {
     try {
@@ -192,6 +199,36 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
+  // Load Oracle status
+  const loadOracleStatus = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/oracle/status`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          setOracleStatus(data.oracle)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load Oracle status:', err)
+    }
+  }
+
+  // Load Oracle logs
+  const loadOracleLogs = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/oracle/logs?limit=20`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          setOracleLogs(data.logs || [])
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load Oracle logs:', err)
+    }
+  }
+
   // Load strategies and tiers on mount
   useEffect(() => {
     checkBackendHealth()
@@ -199,7 +236,95 @@ export default function ZeroDTEBacktestPage() {
     loadStrategyTypes()
     loadTiers()
     loadResults()
+    loadPresets()
+    loadSavedStrategies()
+    loadOracleStatus()
   }, [])
+
+  // Auto-refresh Oracle logs when panel is open
+  useEffect(() => {
+    if (showOracleLogs) {
+      loadOracleLogs()
+      const interval = setInterval(loadOracleLogs, 3000) // Refresh every 3s
+      return () => clearInterval(interval)
+    }
+  }, [showOracleLogs])
+
+  const loadPresets = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/presets`)
+      if (!response.ok) {
+        console.error(`Failed to load presets: HTTP ${response.status}`)
+        return
+      }
+      const data = await response.json()
+      if (data.presets) {
+        setPresets(data.presets)
+      }
+    } catch (err) {
+      console.error('Failed to load presets:', err)
+    }
+  }
+
+  const loadSavedStrategies = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/saved-strategies`)
+      if (!response.ok) {
+        console.error(`Failed to load saved strategies: HTTP ${response.status}`)
+        return
+      }
+      const data = await response.json()
+      if (data.strategies) {
+        setSavedStrategies(data.strategies)
+      }
+    } catch (err) {
+      console.error('Failed to load saved strategies:', err)
+    }
+  }
+
+  const applyPreset = (presetId: string) => {
+    const preset = presets.find(p => p.id === presetId) || savedStrategies.find(s => s.id === presetId)
+    if (preset && preset.config) {
+      setConfig(prev => ({
+        ...prev,
+        ...preset.config,
+        // Preserve date range and capital
+        start_date: prev.start_date,
+        end_date: prev.end_date,
+        initial_capital: prev.initial_capital,
+      }))
+    }
+  }
+
+  const saveCurrentStrategy = async () => {
+    const name = prompt('Enter a name for this strategy:')
+    if (!name) return
+
+    const description = prompt('Enter a description (optional):') || ''
+
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/saved-strategies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          description,
+          config: config,
+          tags: []
+        })
+      })
+
+      if (response.ok) {
+        alert('Strategy saved successfully!')
+        loadSavedStrategies()
+      } else {
+        alert('Failed to save strategy')
+      }
+    } catch (err) {
+      console.error('Failed to save strategy:', err)
+      alert('Failed to save strategy')
+    }
+  }
 
   // Poll job status
   useEffect(() => {
@@ -480,6 +605,25 @@ export default function ZeroDTEBacktestPage() {
                  backendStatus === 'error' ? 'Backend Offline' :
                  'Checking...'}
               </div>
+              {/* Oracle AI Status Indicator */}
+              {oracleStatus && (
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs ${
+                  oracleStatus.claude_available ? 'bg-purple-900/50 text-purple-400' : 'bg-gray-800 text-gray-400'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full ${
+                    oracleStatus.claude_available ? 'bg-purple-400' : 'bg-gray-500'
+                  }`} />
+                  Claude AI: {oracleStatus.claude_available ? 'Active' : 'Offline'}
+                </div>
+              )}
+              <button
+                onClick={() => setShowOracleLogs(!showOracleLogs)}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-900/30 hover:bg-purple-900/50 rounded-lg text-sm text-purple-300"
+              >
+                <Activity className="w-4 h-4" />
+                Oracle Logs
+                {showOracleLogs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
               <button
                 onClick={() => setShowDataInfo(!showDataInfo)}
                 className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
@@ -490,6 +634,58 @@ export default function ZeroDTEBacktestPage() {
               </button>
             </div>
           </div>
+
+          {/* Oracle Live Logs Panel */}
+          {showOracleLogs && (
+            <div className="bg-purple-900/20 border border-purple-800 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-purple-300 flex items-center gap-2">
+                  <Activity className="w-4 h-4" />
+                  Oracle AI Live Logs
+                </h3>
+                <div className="flex items-center gap-2">
+                  {oracleStatus && (
+                    <span className="text-xs text-gray-400">
+                      Model: {oracleStatus.claude_model || 'N/A'} | Version: {oracleStatus.model_version}
+                    </span>
+                  )}
+                  <button
+                    onClick={loadOracleLogs}
+                    className="p-1 hover:bg-purple-800/50 rounded"
+                  >
+                    <RefreshCw className="w-4 h-4 text-purple-400" />
+                  </button>
+                </div>
+              </div>
+              <div className="bg-black/30 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs">
+                {oracleLogs.length === 0 ? (
+                  <div className="text-gray-500 text-center py-4">
+                    No Oracle logs yet. Run a backtest or make a prediction to see Claude AI activity.
+                  </div>
+                ) : (
+                  oracleLogs.slice().reverse().map((log, idx) => (
+                    <div key={idx} className={`py-1 border-b border-gray-800 last:border-0 ${
+                      log.type === 'ERROR' ? 'text-red-400' :
+                      log.type === 'WARN' ? 'text-yellow-400' :
+                      log.type?.includes('DONE') ? 'text-green-400' :
+                      'text-purple-300'
+                    }`}>
+                      <span className="text-gray-500">{log.timestamp?.split('T')[1]?.split('.')[0] || ''}</span>
+                      {' '}
+                      <span className="text-purple-500">[{log.type}]</span>
+                      {' '}
+                      {log.message}
+                      {log.data && (
+                        <span className="text-gray-500 ml-2">
+                          {JSON.stringify(log.data).slice(0, 80)}...
+                        </span>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Backend Error Banner */}
           {backendStatus === 'error' && (
@@ -655,6 +851,33 @@ export default function ZeroDTEBacktestPage() {
                 />
               </div>
 
+              {/* Strategy Preset */}
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">
+                  Strategy Preset
+                  <span className="text-gray-600 ml-1">(Quick Start)</span>
+                </label>
+                <select
+                  value=""
+                  onChange={e => e.target.value && applyPreset(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                >
+                  <option value="">Select a preset...</option>
+                  <optgroup label="Built-in Presets">
+                    {presets.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </optgroup>
+                  {savedStrategies.filter(s => !s.is_preset).length > 0 && (
+                    <optgroup label="Saved Strategies">
+                      {savedStrategies.filter(s => !s.is_preset).map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+
               {/* Strategy Type */}
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Strategy Type</label>
@@ -667,6 +890,11 @@ export default function ZeroDTEBacktestPage() {
                     <option key={st.id} value={st.id}>{st.name}</option>
                   ))}
                 </select>
+                {config.strategy_type === 'gex_protected_iron_condor' && (
+                  <p className="mt-1 text-xs text-emerald-400">
+                    Uses GEX walls for strike protection, falls back to SD when unavailable
+                  </p>
+                )}
               </div>
             </div>
 
@@ -905,6 +1133,15 @@ export default function ZeroDTEBacktestPage() {
                 )}
               </button>
 
+              <button
+                onClick={saveCurrentStrategy}
+                className="px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium flex items-center gap-2 text-sm"
+                title="Save current configuration as a strategy preset"
+              >
+                <Download className="w-4 h-4" />
+                Save Strategy
+              </button>
+
               {error && !error.includes('Backend') && (
                 <div className="flex items-center gap-2 text-red-400">
                   <AlertTriangle className="w-5 h-5" />
@@ -1067,6 +1304,50 @@ export default function ZeroDTEBacktestPage() {
                           {liveJobResult.risk_metrics.vix_filter_skips}
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {/* GEX-Protected Strategy Stats */}
+                  {liveJobResult?.gex_stats && (
+                    <div className="bg-gray-900 border border-emerald-800 rounded-lg p-6">
+                      <h3 className="font-bold mb-4 flex items-center gap-2 text-emerald-400">
+                        <Zap className="w-5 h-5" />
+                        GEX-Protected Strategy Stats
+                      </h3>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div className="bg-gray-800 rounded-lg p-4">
+                          <div className="text-sm text-gray-400 mb-1">GEX Wall Trades</div>
+                          <div className="text-xl font-bold text-emerald-400">
+                            {liveJobResult.gex_stats.trades_with_gex_walls}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {((liveJobResult.gex_stats.trades_with_gex_walls /
+                              (liveJobResult.gex_stats.trades_with_gex_walls + liveJobResult.gex_stats.trades_with_sd_fallback)) * 100).toFixed(1)}%
+                            of trades
+                          </div>
+                        </div>
+                        <div className="bg-gray-800 rounded-lg p-4">
+                          <div className="text-sm text-gray-400 mb-1">SD Fallback Trades</div>
+                          <div className="text-xl font-bold text-yellow-400">
+                            {liveJobResult.gex_stats.trades_with_sd_fallback}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            GEX data unavailable
+                          </div>
+                        </div>
+                        <div className="bg-gray-800 rounded-lg p-4">
+                          <div className="text-sm text-gray-400 mb-1">GEX Unavailable Days</div>
+                          <div className="text-xl font-bold text-gray-400">
+                            {liveJobResult.gex_stats.gex_unavailable_days}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Used SD multiplier instead
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-4">
+                        GEX walls provide support/resistance levels for strike selection. When GEX data is unavailable, the strategy falls back to SD-based strike selection.
+                      </p>
                     </div>
                   )}
 
