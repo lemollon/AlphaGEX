@@ -74,7 +74,8 @@ export default function GammaIntelligence() {
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [symbol, setSymbol] = useState('SPY')
-  const [vix, setVix] = useState<number>(20)
+  const [vix, setVix] = useState<number | null>(null)  // Bug #16 Fix: Start null, auto-fetch
+  const [vixLoading, setVixLoading] = useState(true)  // Bug #16 Fix: Track VIX loading state
   const [intelligence, setIntelligence] = useState<GammaIntelligence | null>(null)
   const [loading, setLoading] = useState(true)  // Bug #1 Fix: Start with loading=true
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -85,6 +86,31 @@ export default function GammaIntelligence() {
   const [loadingProbabilities, setLoadingProbabilities] = useState(false)
   const [retryCount, setRetryCount] = useState(0)  // Bug #10 Fix: Track retries
   const { data: wsData, isConnected } = useWebSocket(symbol)
+
+  // Bug #16 Fix: Auto-fetch current VIX on mount
+  useEffect(() => {
+    const fetchVix = async () => {
+      try {
+        setVixLoading(true)
+        const response = await apiClient.getVIXCurrent()
+        if (response?.data?.vix) {
+          setVix(response.data.vix)
+        } else if (response?.data?.price) {
+          setVix(response.data.price)
+        } else {
+          // Fallback to default if API doesn't return VIX
+          setVix(20)
+          logger.warn('VIX API returned no data, using default 20')
+        }
+      } catch (err) {
+        logger.error('Failed to fetch VIX:', err)
+        setVix(20)  // Fallback to reasonable default
+      } finally {
+        setVixLoading(false)
+      }
+    }
+    fetchVix()
+  }, [])
 
   // Position simulator state
   const [simStrike, setSimStrike] = useState(450)
@@ -178,7 +204,8 @@ export default function GammaIntelligence() {
       logger.info('=== FETCHING GAMMA INTELLIGENCE ===')
       logger.info('Symbol:', symbol, 'VIX:', vix, retry > 0 ? `(Retry ${retry}/3)` : '')
 
-      const response = await apiClient.getGammaIntelligence(symbol, vix)
+      // Bug #16 Fix: Pass vix with fallback to ensure it's never undefined
+      const response = await apiClient.getGammaIntelligence(symbol, vix ?? 20)
 
       // Check if request was cancelled
       if (signal?.aborted) {
@@ -265,7 +292,8 @@ export default function GammaIntelligence() {
       logger.info('=== FETCHING PROBABILITY DATA ===')
       logger.info('Symbol:', symbol, 'VIX:', vix)
 
-      const response = await apiClient.getGammaProbabilities(symbol, vix)
+      // Bug #16 Fix: Pass vix with fallback to ensure it's never undefined
+      const response = await apiClient.getGammaProbabilities(symbol, vix ?? 20)
 
       // Validate response structure
       if (!response?.data) {
@@ -326,6 +354,9 @@ export default function GammaIntelligence() {
   fetchDataRef.current = fetchData
 
   useEffect(() => {
+    // Bug #16 Fix: Wait for VIX to be loaded before fetching
+    if (vix === null) return
+
     // Create AbortController for request cancellation
     const controller = new AbortController()
 
@@ -361,10 +392,11 @@ export default function GammaIntelligence() {
 
   useEffect(() => {
     // Fetch probability data when switching to probabilities tab
-    if (activeTab === 'probabilities' && !probabilityData) {
+    // Bug #16 Fix: Wait for VIX to be loaded before fetching probabilities
+    if (activeTab === 'probabilities' && !probabilityData && vix !== null) {
       fetchProbabilityDataRef.current()
     }
-  }, [activeTab, probabilityData])  // Bug #9 Fix: Removed fetchProbabilityData from deps
+  }, [activeTab, probabilityData, vix])  // Bug #9 Fix: Removed fetchProbabilityData from deps
 
   const handleRefresh = () => {
     fetchData(true)
@@ -555,17 +587,24 @@ export default function GammaIntelligence() {
               ))}
             </div>
           </div>
+          {/* Bug #16 Fix: VIX auto-fetched from API, displayed read-only */}
           <div className="flex items-center gap-3">
             <label className="text-text-secondary font-medium">VIX:</label>
-            <input
-              type="number"
-              value={vix}
-              onChange={(e) => setVix(Number(e.target.value))}
-              className="input w-20"
-              min="10"
-              max="80"
-              step="0.5"
-            />
+            <div className={`px-3 py-2 rounded-lg font-semibold ${
+              vixLoading ? 'bg-background-hover text-text-muted' :
+              vix && vix >= 30 ? 'bg-danger/10 text-danger' :
+              vix && vix >= 20 ? 'bg-warning/10 text-warning' :
+              'bg-success/10 text-success'
+            }`}>
+              {vixLoading ? (
+                <span className="flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Loading...
+                </span>
+              ) : (
+                <span>{vix?.toFixed(2) || '--'}</span>
+              )}
+            </div>
           </div>
         </div>
       </div>
