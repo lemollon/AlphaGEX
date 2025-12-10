@@ -168,39 +168,61 @@ class ARESTrader:
         self.tz = ZoneInfo("America/New_York")
 
         # Initialize Tradier clients
-        # Production API: Always used for real SPX/SPXW market data (quotes, option chains)
-        # Sandbox API: Used in PAPER mode to submit trades to Tradier's paper trading
-        self.tradier = None  # Production - for market data
-        self.tradier_sandbox = None  # Sandbox - for paper trade submission
+        # When TRADIER_SANDBOX=true: Use sandbox for BOTH market data AND orders
+        # When TRADIER_SANDBOX=false: Use production for market data, sandbox for paper orders
+        self.tradier = None  # Primary client for market data
+        self.tradier_sandbox = None  # Sandbox client for paper trade submission
 
         if TRADIER_AVAILABLE and mode != TradingMode.BACKTEST:
-            try:
-                # Production API for real SPX data
-                self.tradier = TradierDataFetcher(sandbox=False)
-                logger.info(f"ARES: Tradier PRODUCTION client initialized (for SPX market data)")
-            except Exception as e:
-                logger.warning(f"ARES: Failed to initialize Tradier production: {e}")
+            from unified_config import APIConfig
+            is_sandbox_mode = APIConfig.TRADIER_SANDBOX
 
-            # Sandbox API for paper trade submission (only in PAPER mode)
-            # Tradier uses SAME credentials for sandbox, just different endpoint
-            if mode == TradingMode.PAPER:
+            if is_sandbox_mode:
+                # Sandbox-only mode: Use sandbox API for everything (market data + orders)
                 try:
-                    from unified_config import APIConfig
-                    # Use separate sandbox credentials if available, otherwise use same as production
                     sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
                     sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
 
                     if sandbox_key and sandbox_account:
-                        self.tradier_sandbox = TradierDataFetcher(
+                        # Use sandbox for market data
+                        self.tradier = TradierDataFetcher(
                             api_key=sandbox_key,
                             account_id=sandbox_account,
-                            sandbox=True  # This switches to sandbox.tradier.com endpoint
+                            sandbox=True
                         )
-                        logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
+                        # Use same sandbox client for orders in PAPER mode
+                        if mode == TradingMode.PAPER:
+                            self.tradier_sandbox = self.tradier
+                        logger.info(f"ARES: Tradier SANDBOX client initialized (sandbox-only mode)")
                     else:
-                        logger.warning("ARES: Tradier credentials not configured - cannot submit to sandbox")
+                        logger.warning("ARES: Tradier sandbox credentials not configured")
                 except Exception as e:
                     logger.warning(f"ARES: Failed to initialize Tradier sandbox: {e}")
+            else:
+                # Production mode: Use production API for market data
+                try:
+                    self.tradier = TradierDataFetcher(sandbox=False)
+                    logger.info(f"ARES: Tradier PRODUCTION client initialized (for SPX market data)")
+                except Exception as e:
+                    logger.warning(f"ARES: Failed to initialize Tradier production: {e}")
+
+                # Sandbox API for paper trade submission (only in PAPER mode)
+                if mode == TradingMode.PAPER:
+                    try:
+                        sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+                        sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+
+                        if sandbox_key and sandbox_account:
+                            self.tradier_sandbox = TradierDataFetcher(
+                                api_key=sandbox_key,
+                                account_id=sandbox_account,
+                                sandbox=True
+                            )
+                            logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
+                        else:
+                            logger.warning("ARES: Tradier credentials not configured - cannot submit to sandbox")
+                    except Exception as e:
+                        logger.warning(f"ARES: Failed to initialize Tradier sandbox: {e}")
 
         # Decision logger
         self.decision_logger = None
