@@ -6,7 +6,7 @@ import {
   RefreshCw, AlertTriangle, Calendar, Clock, Loader2, CheckCircle,
   Settings, DollarSign, Target, Layers, ChevronDown, ChevronUp,
   Download, FileSpreadsheet, LineChart, PieChart, ArrowUpDown,
-  Database, Info, Percent, Shield
+  Database, Info, Percent, Shield, Zap
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import EnhancedEquityCurve from '@/components/backtest/EnhancedEquityCurve'
@@ -1188,6 +1188,50 @@ export default function ZeroDTEBacktestPage() {
                           {liveJobResult.risk_metrics.vix_filter_skips}
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {/* GEX-Protected Strategy Stats */}
+                  {liveJobResult?.gex_stats && (
+                    <div className="bg-gray-900 border border-emerald-800 rounded-lg p-6">
+                      <h3 className="font-bold mb-4 flex items-center gap-2 text-emerald-400">
+                        <Zap className="w-5 h-5" />
+                        GEX-Protected Strategy Stats
+                      </h3>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div className="bg-gray-800 rounded-lg p-4">
+                          <div className="text-sm text-gray-400 mb-1">GEX Wall Trades</div>
+                          <div className="text-xl font-bold text-emerald-400">
+                            {liveJobResult.gex_stats.trades_with_gex_walls}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {((liveJobResult.gex_stats.trades_with_gex_walls /
+                              (liveJobResult.gex_stats.trades_with_gex_walls + liveJobResult.gex_stats.trades_with_sd_fallback)) * 100).toFixed(1)}%
+                            of trades
+                          </div>
+                        </div>
+                        <div className="bg-gray-800 rounded-lg p-4">
+                          <div className="text-sm text-gray-400 mb-1">SD Fallback Trades</div>
+                          <div className="text-xl font-bold text-yellow-400">
+                            {liveJobResult.gex_stats.trades_with_sd_fallback}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            GEX data unavailable
+                          </div>
+                        </div>
+                        <div className="bg-gray-800 rounded-lg p-4">
+                          <div className="text-sm text-gray-400 mb-1">GEX Unavailable Days</div>
+                          <div className="text-xl font-bold text-gray-400">
+                            {liveJobResult.gex_stats.gex_unavailable_days}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Used SD multiplier instead
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-4">
+                        GEX walls provide support/resistance levels for strike selection. When GEX data is unavailable, the strategy falls back to SD-based strike selection.
+                      </p>
                     </div>
                   )}
 
