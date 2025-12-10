@@ -93,14 +93,16 @@ export default function GammaIntelligence() {
       try {
         setVixLoading(true)
         const response = await apiClient.getVIXCurrent()
-        if (response?.data?.vix) {
-          setVix(response.data.vix)
-        } else if (response?.data?.price) {
-          setVix(response.data.price)
+        // API returns { success: true, data: { vix_spot: number, ... } }
+        if (response?.data?.data?.vix_spot) {
+          setVix(response.data.data.vix_spot)
+        } else if (response?.data?.vix_spot) {
+          // Fallback in case the response structure is flat
+          setVix(response.data.vix_spot)
         } else {
           // Fallback to default if API doesn't return VIX
+          logger.warn('VIX API returned no vix_spot, using default 20')
           setVix(20)
-          logger.warn('VIX API returned no data, using default 20')
         }
       } catch (err) {
         logger.error('Failed to fetch VIX:', err)
