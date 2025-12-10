@@ -535,3 +535,68 @@ async def get_ares_config():
         "success": True,
         "data": default_config
     }
+
+
+@router.post("/sync-tradier")
+async def sync_tradier_positions():
+    """
+    Sync positions from Tradier to AlphaGEX.
+
+    Pulls current positions from Tradier account and identifies any
+    that aren't already tracked in AlphaGEX. Useful for reconciliation
+    after manual trades.
+    """
+    ares = get_ares_instance()
+
+    if not ares:
+        return {
+            "success": False,
+            "error": "ARES not initialized",
+            "data": None
+        }
+
+    try:
+        result = ares.sync_positions_from_tradier()
+
+        return {
+            "success": True,
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"Error syncing Tradier positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tradier-status")
+async def get_tradier_account_status():
+    """
+    Get current Tradier account status.
+
+    Returns account balances, positions, and recent orders
+    from the connected Tradier account.
+    """
+    ares = get_ares_instance()
+
+    if not ares:
+        return {
+            "success": False,
+            "error": "ARES not initialized",
+            "data": {
+                "mode": "unknown",
+                "account": {},
+                "positions": [],
+                "orders": [],
+                "errors": ["ARES not initialized"]
+            }
+        }
+
+    try:
+        result = ares.get_tradier_account_status()
+
+        return {
+            "success": result.get('success', False),
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"Error getting Tradier account status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
