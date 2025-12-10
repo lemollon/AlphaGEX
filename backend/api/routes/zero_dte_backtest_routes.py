@@ -690,6 +690,16 @@ async def get_strategy_types():
                 "direction": "bullish/neutral",
                 "credit": False,
                 "note": "Short strike placed at configured SD multiplier below price"
+            },
+            {
+                "id": "gex_protected_iron_condor",
+                "name": "GEX-Protected Iron Condor",
+                "description": "Iron Condor with strikes placed outside GEX walls (call wall/put wall) for additional protection. Falls back to SD when GEX data unavailable.",
+                "legs": 4,
+                "direction": "neutral",
+                "credit": True,
+                "note": "Uses GEX walls as support/resistance levels for strike selection",
+                "features": ["GEX wall protection", "SD fallback", "Positive GEX bias"]
             }
         ]
     }
@@ -1353,3 +1363,284 @@ async def check_data_quality():
     except Exception as e:
         logger.error(f"Data quality check failed: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# STRATEGY PRESETS AND SAVED STRATEGIES
+# ============================================================================
+
+class SavedStrategy(BaseModel):
+    """Model for saved strategy configurations"""
+    name: str = Field(..., description="Strategy name")
+    description: str = Field(default="", description="Strategy description")
+    config: Dict[str, Any] = Field(..., description="Strategy configuration")
+    tags: List[str] = Field(default=[], description="Tags for filtering")
+
+
+# Built-in strategy presets
+STRATEGY_PRESETS = [
+    {
+        "id": "conservative_ic",
+        "name": "Conservative IC",
+        "description": "Standard Iron Condor with 1.5 SD multiplier for wider strikes and lower risk",
+        "is_preset": True,
+        "tags": ["conservative", "iron_condor", "low_risk"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "sd_multiplier": 1.5,
+            "risk_per_trade_pct": 3.0,
+            "spread_width": 10.0,
+            "max_vix": 30,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "aggressive_ic",
+        "name": "Aggressive IC",
+        "description": "Aggressive Iron Condor with 0.8 SD multiplier for tighter strikes and higher premium",
+        "is_preset": True,
+        "tags": ["aggressive", "iron_condor", "high_premium"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "sd_multiplier": 0.8,
+            "risk_per_trade_pct": 8.0,
+            "spread_width": 10.0,
+            "min_vix": 15,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "gex_protected_ic",
+        "name": "GEX-Protected IC",
+        "description": "Iron Condor using GEX walls for strike selection with SD fallback. Trades with additional protection from gamma exposure levels.",
+        "is_preset": True,
+        "tags": ["gex", "iron_condor", "protected"],
+        "config": {
+            "strategy_type": "gex_protected_iron_condor",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "vix_filter_ic",
+        "name": "VIX Filter IC",
+        "description": "Iron Condor only trading in elevated volatility (VIX 18-35) for better premium",
+        "is_preset": True,
+        "tags": ["vix_filter", "iron_condor", "volatility"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "min_vix": 18,
+            "max_vix": 35,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "mon_wed_ic",
+        "name": "Monday-Wednesday IC",
+        "description": "Iron Condor trading only on Mon/Wed for lower theta decay competition",
+        "is_preset": True,
+        "tags": ["day_filter", "iron_condor"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "trade_monday": True,
+            "trade_tuesday": False,
+            "trade_wednesday": True,
+            "trade_thursday": False,
+            "trade_friday": False,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "delta_based_ic",
+        "name": "Delta-Based IC",
+        "description": "Iron Condor using 16-delta strikes for consistent probability-based positioning",
+        "is_preset": True,
+        "tags": ["delta", "iron_condor", "probability"],
+        "config": {
+            "strategy_type": "iron_condor",
+            "target_delta": 0.16,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "delta"
+        }
+    }
+]
+
+# In-memory storage for user-saved strategies (in production, use database)
+_saved_strategies: Dict[str, Dict] = {}
+
+
+@router.get("/presets")
+async def get_strategy_presets():
+    """
+    Get built-in strategy presets.
+
+    These are pre-configured strategy configurations that users can select
+    and optionally modify before running a backtest.
+    """
+    return {
+        "success": True,
+        "presets": STRATEGY_PRESETS
+    }
+
+
+@router.get("/saved-strategies")
+async def get_saved_strategies():
+    """
+    Get user-saved strategy configurations.
+
+    Returns both built-in presets and user-saved strategies.
+    """
+    # Try to load from database
+    strategies = []
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT id, name, description, strategy_type, parameters,
+                   is_preset, tags, created_at, updated_at, backtest_results
+            FROM saved_strategies
+            ORDER BY is_preset DESC, name
+        """)
+
+        for row in cursor.fetchall():
+            strategies.append({
+                "id": str(row['id']),
+                "name": row['name'],
+                "description": row['description'] or "",
+                "strategy_type": row['strategy_type'],
+                "config": row['parameters'] if isinstance(row['parameters'], dict) else json.loads(row['parameters'] or '{}'),
+                "is_preset": row['is_preset'],
+                "tags": row['tags'] or [],
+                "created_at": str(row['created_at']) if row['created_at'] else None,
+                "backtest_results": row['backtest_results']
+            })
+
+        conn.close()
+
+    except Exception as e:
+        logger.warning(f"Could not load saved strategies from database: {e}")
+        # Fall back to in-memory storage
+        strategies = list(_saved_strategies.values())
+
+    # Add presets if not in database
+    preset_names = {s['name'] for s in strategies if s.get('is_preset')}
+    for preset in STRATEGY_PRESETS:
+        if preset['name'] not in preset_names:
+            strategies.append(preset)
+
+    return {
+        "success": True,
+        "strategies": strategies
+    }
+
+
+@router.post("/saved-strategies")
+async def save_strategy(strategy: SavedStrategy):
+    """
+    Save a custom strategy configuration.
+
+    Users can save their backtest configurations for later use.
+    """
+    strategy_id = f"user_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    strategy_data = {
+        "id": strategy_id,
+        "name": strategy.name,
+        "description": strategy.description,
+        "config": strategy.config,
+        "tags": strategy.tags,
+        "is_preset": False,
+        "created_at": datetime.now().isoformat()
+    }
+
+    # Try to save to database
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO saved_strategies (name, description, strategy_type, parameters, is_preset, tags)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (name, user_id) DO UPDATE SET
+                description = EXCLUDED.description,
+                parameters = EXCLUDED.parameters,
+                tags = EXCLUDED.tags,
+                updated_at = NOW()
+            RETURNING id
+        """, (
+            strategy.name,
+            strategy.description,
+            strategy.config.get('strategy_type', 'iron_condor'),
+            json.dumps(strategy.config),
+            False,
+            strategy.tags
+        ))
+
+        row = cursor.fetchone()
+        if row:
+            strategy_id = str(row[0])
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"Saved strategy '{strategy.name}' to database")
+
+    except Exception as e:
+        logger.warning(f"Could not save to database, using in-memory: {e}")
+        # Fall back to in-memory storage
+        _saved_strategies[strategy_id] = strategy_data
+
+    return {
+        "success": True,
+        "strategy_id": strategy_id,
+        "message": f"Strategy '{strategy.name}' saved successfully"
+    }
+
+
+@router.delete("/saved-strategies/{strategy_id}")
+async def delete_saved_strategy(strategy_id: str):
+    """Delete a user-saved strategy (cannot delete presets)"""
+
+    # Check if it's a preset
+    for preset in STRATEGY_PRESETS:
+        if preset['id'] == strategy_id:
+            raise HTTPException(status_code=400, detail="Cannot delete built-in presets")
+
+    # Try to delete from database
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            DELETE FROM saved_strategies
+            WHERE id = %s AND is_preset = FALSE
+            RETURNING id
+        """, (strategy_id,))
+
+        row = cursor.fetchone()
+        conn.commit()
+        conn.close()
+
+        if row:
+            return {"success": True, "message": "Strategy deleted"}
+
+    except Exception as e:
+        logger.warning(f"Could not delete from database: {e}")
+
+    # Try in-memory
+    if strategy_id in _saved_strategies:
+        del _saved_strategies[strategy_id]
+        return {"success": True, "message": "Strategy deleted"}
+
+    raise HTTPException(status_code=404, detail="Strategy not found")

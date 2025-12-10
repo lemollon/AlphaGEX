@@ -148,6 +148,8 @@ export default function ZeroDTEBacktestPage() {
   const [strategyTypes, setStrategyTypes] = useState<StrategyType[]>([])
   const [tiers, setTiers] = useState<Tier[]>([])
   const [results, setResults] = useState<BacktestResult[]>([])
+  const [presets, setPresets] = useState<any[]>([])
+  const [savedStrategies, setSavedStrategies] = useState<any[]>([])
   const [selectedResult, setSelectedResult] = useState<BacktestResult | null>(null)
   const [liveJobResult, setLiveJobResult] = useState<any>(null)
 
@@ -199,7 +201,85 @@ export default function ZeroDTEBacktestPage() {
     loadStrategyTypes()
     loadTiers()
     loadResults()
+    loadPresets()
+    loadSavedStrategies()
   }, [])
+
+  const loadPresets = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/presets`)
+      if (!response.ok) {
+        console.error(`Failed to load presets: HTTP ${response.status}`)
+        return
+      }
+      const data = await response.json()
+      if (data.presets) {
+        setPresets(data.presets)
+      }
+    } catch (err) {
+      console.error('Failed to load presets:', err)
+    }
+  }
+
+  const loadSavedStrategies = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/saved-strategies`)
+      if (!response.ok) {
+        console.error(`Failed to load saved strategies: HTTP ${response.status}`)
+        return
+      }
+      const data = await response.json()
+      if (data.strategies) {
+        setSavedStrategies(data.strategies)
+      }
+    } catch (err) {
+      console.error('Failed to load saved strategies:', err)
+    }
+  }
+
+  const applyPreset = (presetId: string) => {
+    const preset = presets.find(p => p.id === presetId) || savedStrategies.find(s => s.id === presetId)
+    if (preset && preset.config) {
+      setConfig(prev => ({
+        ...prev,
+        ...preset.config,
+        // Preserve date range and capital
+        start_date: prev.start_date,
+        end_date: prev.end_date,
+        initial_capital: prev.initial_capital,
+      }))
+    }
+  }
+
+  const saveCurrentStrategy = async () => {
+    const name = prompt('Enter a name for this strategy:')
+    if (!name) return
+
+    const description = prompt('Enter a description (optional):') || ''
+
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/saved-strategies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          description,
+          config: config,
+          tags: []
+        })
+      })
+
+      if (response.ok) {
+        alert('Strategy saved successfully!')
+        loadSavedStrategies()
+      } else {
+        alert('Failed to save strategy')
+      }
+    } catch (err) {
+      console.error('Failed to save strategy:', err)
+      alert('Failed to save strategy')
+    }
+  }
 
   // Poll job status
   useEffect(() => {
@@ -655,6 +735,33 @@ export default function ZeroDTEBacktestPage() {
                 />
               </div>
 
+              {/* Strategy Preset */}
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">
+                  Strategy Preset
+                  <span className="text-gray-600 ml-1">(Quick Start)</span>
+                </label>
+                <select
+                  value=""
+                  onChange={e => e.target.value && applyPreset(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                >
+                  <option value="">Select a preset...</option>
+                  <optgroup label="Built-in Presets">
+                    {presets.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </optgroup>
+                  {savedStrategies.filter(s => !s.is_preset).length > 0 && (
+                    <optgroup label="Saved Strategies">
+                      {savedStrategies.filter(s => !s.is_preset).map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+
               {/* Strategy Type */}
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Strategy Type</label>
@@ -667,6 +774,11 @@ export default function ZeroDTEBacktestPage() {
                     <option key={st.id} value={st.id}>{st.name}</option>
                   ))}
                 </select>
+                {config.strategy_type === 'gex_protected_iron_condor' && (
+                  <p className="mt-1 text-xs text-emerald-400">
+                    Uses GEX walls for strike protection, falls back to SD when unavailable
+                  </p>
+                )}
               </div>
             </div>
 
@@ -903,6 +1015,15 @@ export default function ZeroDTEBacktestPage() {
                     Run Backtest
                   </>
                 )}
+              </button>
+
+              <button
+                onClick={saveCurrentStrategy}
+                className="px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium flex items-center gap-2 text-sm"
+                title="Save current configuration as a strategy preset"
+              >
+                <Download className="w-4 h-4" />
+                Save Strategy
               </button>
 
               {error && !error.includes('Backend') && (
