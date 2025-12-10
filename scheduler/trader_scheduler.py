@@ -503,7 +503,7 @@ class AutonomousTraderScheduler:
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
         logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC)")
         logger.info(f"Timezone: America/New_York (Eastern Time)")
-        logger.info(f"PHOENIX Schedule: Every hour 10:00 AM - 3:00 PM ET, Mon-Fri")
+        logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 10:05 AM ET, Mon-Fri")
         logger.info(f"ARES Schedule: Daily at 10:15 AM ET, Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
@@ -513,20 +513,27 @@ class AutonomousTraderScheduler:
         self.scheduler = BackgroundScheduler(timezone='America/New_York')
 
         # =================================================================
-        # PHOENIX JOB: 0DTE Options - runs every hour 10 AM to 3 PM ET
+        # PHOENIX JOB: DISABLED - Handled by AutonomousTrader (every 5 min)
         # =================================================================
-        self.scheduler.add_job(
-            self.scheduled_trade_logic,
-            trigger=CronTrigger(
-                hour='10-15',  # 10 AM through 3 PM (15 is 3:00 PM)
-                minute=0,      # On the hour
-                day_of_week='mon-fri',
-                timezone='America/New_York'
-            ),
-            id='phoenix_trading',
-            name='PHOENIX - 0DTE Options Trading',
-            replace_existing=True
-        )
+        # NOTE: PHOENIX is run via the AutonomousTrader watchdog thread which
+        # executes every 5 minutes during market hours. This provides more
+        # responsive trading than the hourly schedule here.
+        # The AutonomousTrader is registered separately in backend/main.py.
+        #
+        # DISABLED to prevent duplicate trade execution:
+        # self.scheduler.add_job(
+        #     self.scheduled_trade_logic,
+        #     trigger=CronTrigger(
+        #         hour='10-15',  # 10 AM through 3 PM (15 is 3:00 PM)
+        #         minute=0,      # On the hour
+        #         day_of_week='mon-fri',
+        #         timezone='America/New_York'
+        #     ),
+        #     id='phoenix_trading',
+        #     name='PHOENIX - 0DTE Options Trading',
+        #     replace_existing=True
+        # )
+        logger.info("⚠️ PHOENIX job DISABLED here - handled by AutonomousTrader (every 5 min)")
 
         # =================================================================
         # ATLAS JOB: SPX Wheel - runs once daily at 10:05 AM ET
