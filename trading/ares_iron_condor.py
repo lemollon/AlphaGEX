@@ -557,15 +557,23 @@ class ARESTrader:
                         # Use SPY for sandbox (SPX not available in Tradier sandbox)
                         sandbox_ticker = self.config.sandbox_ticker  # SPY
 
-                        # Scale strikes to SPY (SPY is ~1/10 of SPX)
-                        # Use integer strikes (SPY options are in $1 increments)
-                        spy_put_long = int(round(ic_strikes['put_long_strike'] / 10, 0))
-                        spy_put_short = int(round(ic_strikes['put_short_strike'] / 10, 0))
-                        spy_call_short = int(round(ic_strikes['call_short_strike'] / 10, 0))
-                        spy_call_long = int(round(ic_strikes['call_long_strike'] / 10, 0))
-
-                        # Scale credit proportionally (minimum $0.10 to ensure fill)
-                        spy_credit = max(0.10, round(ic_strikes['total_credit'] / 10, 2))
+                        # Check if we're already trading SPY (sandbox-only mode)
+                        # In that case, strikes are already SPY-scale, no conversion needed
+                        current_ticker = self.get_trading_ticker()
+                        if current_ticker == 'SPY':
+                            # Already using SPY, no scaling needed
+                            spy_put_long = int(round(ic_strikes['put_long_strike'], 0))
+                            spy_put_short = int(round(ic_strikes['put_short_strike'], 0))
+                            spy_call_short = int(round(ic_strikes['call_short_strike'], 0))
+                            spy_call_long = int(round(ic_strikes['call_long_strike'], 0))
+                            spy_credit = ic_strikes['total_credit']
+                        else:
+                            # Using SPX for data, scale strikes to SPY (SPY is ~1/10 of SPX)
+                            spy_put_long = int(round(ic_strikes['put_long_strike'] / 10, 0))
+                            spy_put_short = int(round(ic_strikes['put_short_strike'] / 10, 0))
+                            spy_call_short = int(round(ic_strikes['call_short_strike'] / 10, 0))
+                            spy_call_long = int(round(ic_strikes['call_long_strike'] / 10, 0))
+                            spy_credit = max(0.10, round(ic_strikes['total_credit'] / 10, 2))
 
                         # SPY has daily 0DTE options (since Nov 2022), same as SPX
                         logger.info(f"ARES [SANDBOX]: Submitting to Tradier sandbox - SPY {spy_put_long}/{spy_put_short}P - {spy_call_short}/{spy_call_long}C exp={expiration}")
