@@ -249,24 +249,31 @@ class ARESTrader:
         """
         Get the ticker to trade.
 
-        ARES always trades SPX/SPXW for higher premium.
-        Data comes from Tradier Production API.
+        In PAPER mode with sandbox: Uses SPY (Tradier sandbox has SPY options)
+        In LIVE mode: Uses SPX/SPXW for higher premium
         """
-        return self.config.ticker  # Always SPX
+        # Use SPY in sandbox mode (Tradier sandbox doesn't support SPX options)
+        if self.tradier_sandbox is not None:
+            return self.config.sandbox_ticker  # SPY for sandbox
+        return self.config.ticker  # SPX for production
 
     def get_spread_width(self) -> float:
         """
-        Get spread width for SPX.
+        Get spread width based on trading mode.
 
-        SPX spreads are $10 wide.
+        SPX spreads are $10 wide, SPY spreads are $2 wide.
         """
+        if self.tradier_sandbox is not None:
+            return self.config.spread_width_spy  # $2 for SPY sandbox
         return self.config.spread_width  # $10 for SPX
 
     def get_min_credit(self) -> float:
         """
-        Get minimum credit required for SPX.
+        Get minimum credit required based on trading mode.
         """
-        return self.config.min_credit_per_spread  # $3 for SPX
+        if self.tradier_sandbox is not None:
+            return self.config.min_credit_per_spread_spy  # $0.15 for SPY sandbox
+        return self.config.min_credit_per_spread  # $1.50 for SPX
 
     def get_current_market_data(self) -> Optional[Dict]:
         """
