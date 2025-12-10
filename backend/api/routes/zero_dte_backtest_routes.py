@@ -1492,6 +1492,35 @@ async def get_strategy_presets():
     }
 
 
+def _ensure_saved_strategies_table(cursor):
+    """Ensure the saved_strategies table exists"""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS saved_strategies (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            user_id VARCHAR(100) DEFAULT NULL,
+            strategy_type VARCHAR(50) NOT NULL,
+            parameters JSONB NOT NULL,
+            last_backtest_date TIMESTAMP WITH TIME ZONE,
+            backtest_results JSONB,
+            is_preset BOOLEAN DEFAULT FALSE,
+            is_public BOOLEAN DEFAULT FALSE,
+            tags VARCHAR(255)[],
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # Create unique constraint if not exists (ignore error if already exists)
+    try:
+        cursor.execute("""
+            ALTER TABLE saved_strategies
+            ADD CONSTRAINT unique_strategy_name_user UNIQUE (name, user_id)
+        """)
+    except:
+        pass  # Constraint already exists
+
+
 @router.get("/saved-strategies")
 async def get_saved_strategies():
     """
@@ -1505,6 +1534,10 @@ async def get_saved_strategies():
     try:
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Ensure table exists
+        _ensure_saved_strategies_table(cursor)
+        conn.commit()
 
         cursor.execute("""
             SELECT id, name, description, strategy_type, parameters,
@@ -1568,6 +1601,10 @@ async def save_strategy(strategy: SavedStrategy):
     try:
         conn = get_connection()
         cursor = conn.cursor()
+
+        # Ensure table exists
+        _ensure_saved_strategies_table(cursor)
+        conn.commit()
 
         cursor.execute("""
             INSERT INTO saved_strategies (name, description, strategy_type, parameters, is_preset, tags)

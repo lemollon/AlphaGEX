@@ -467,6 +467,116 @@ class KronosGEXCalculator:
 
         return backtest_results
 
+    def store_gex_to_database(self, gex: GEXData) -> bool:
+        """
+        Store calculated GEX data to gex_daily table for ML training.
+
+        This ensures GEX data is persisted and can be used for:
+        - ML model training
+        - Historical analysis
+        - Cross-referencing with trade outcomes
+
+        Args:
+            gex: GEXData object to store
+
+        Returns:
+            True if stored successfully, False otherwise
+        """
+        if not gex:
+            return False
+
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Create table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS gex_daily (
+                    id SERIAL PRIMARY KEY,
+                    trade_date DATE NOT NULL,
+                    symbol VARCHAR(10) NOT NULL DEFAULT 'SPX',
+                    spot_price FLOAT NOT NULL,
+                    net_gex FLOAT NOT NULL,
+                    call_gex FLOAT,
+                    put_gex FLOAT,
+                    call_wall FLOAT,
+                    put_wall FLOAT,
+                    flip_point FLOAT,
+                    gex_normalized FLOAT,
+                    gex_regime VARCHAR(10),
+                    distance_to_flip_pct FLOAT,
+                    above_call_wall BOOLEAN,
+                    below_put_wall BOOLEAN,
+                    between_walls BOOLEAN,
+                    dte_max_used INTEGER DEFAULT 7,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT unique_gex_daily UNIQUE (trade_date, symbol)
+                )
+            """)
+
+            # Insert or update
+            cursor.execute("""
+                INSERT INTO gex_daily (
+                    trade_date, symbol, spot_price, net_gex, call_gex, put_gex,
+                    call_wall, put_wall, flip_point, gex_normalized, gex_regime,
+                    distance_to_flip_pct, above_call_wall, below_put_wall, between_walls
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (trade_date, symbol) DO UPDATE SET
+                    spot_price = EXCLUDED.spot_price,
+                    net_gex = EXCLUDED.net_gex,
+                    call_gex = EXCLUDED.call_gex,
+                    put_gex = EXCLUDED.put_gex,
+                    call_wall = EXCLUDED.call_wall,
+                    put_wall = EXCLUDED.put_wall,
+                    flip_point = EXCLUDED.flip_point,
+                    gex_normalized = EXCLUDED.gex_normalized,
+                    gex_regime = EXCLUDED.gex_regime,
+                    distance_to_flip_pct = EXCLUDED.distance_to_flip_pct
+            """, (
+                gex.trade_date,
+                gex.symbol,
+                gex.spot_price,
+                gex.net_gex,
+                gex.call_gex,
+                gex.put_gex,
+                gex.call_wall,
+                gex.put_wall,
+                gex.flip_point,
+                gex.gex_normalized,
+                gex.gex_regime,
+                gex.distance_to_flip_pct,
+                gex.above_call_wall,
+                gex.below_put_wall,
+                gex.between_walls
+            ))
+
+            conn.commit()
+            conn.close()
+            logger.info(f"Stored GEX data for {gex.trade_date} to database")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to store GEX data: {e}")
+            return False
+
+    def calculate_and_store_gex(self, trade_date: str, dte_max: int = 7) -> Optional[GEXData]:
+        """
+        Calculate GEX for a date and store it to database.
+
+        This combines calculation and storage for convenience.
+
+        Args:
+            trade_date: Date to calculate GEX for
+            dte_max: Max DTE to include
+
+        Returns:
+            GEXData if successful, None otherwise
+        """
+        gex = self.calculate_gex_for_date(trade_date, dte_max)
+        if gex:
+            self.store_gex_to_database(gex)
+        return gex
+
 
 def get_gex_for_date(trade_date: str, ticker: str = "SPX") -> Optional[GEXData]:
     """

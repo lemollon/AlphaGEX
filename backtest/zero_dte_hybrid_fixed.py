@@ -1112,7 +1112,7 @@ class HybridFixedBacktester:
 
     def get_gex_for_date(self, trade_date: str) -> Optional[GEXData]:
         """
-        Get GEX data for a trading date (cached).
+        Get GEX data for a trading date (cached and stored to DB).
 
         Returns:
             GEXData with call_wall, put_wall, flip_point, etc. or None if unavailable
@@ -1123,11 +1123,18 @@ class HybridFixedBacktester:
         if trade_date in self.gex_cache:
             return self.gex_cache[trade_date]
 
-        # Calculate and cache
+        # Calculate, cache, and store to database for ML training
         gex = self.gex_calculator.calculate_gex_for_date(trade_date, dte_max=7)
         self.gex_cache[trade_date] = gex
 
-        if gex is None:
+        if gex:
+            # Store GEX data to database for ML training (async, don't block)
+            try:
+                self.gex_calculator.store_gex_to_database(gex)
+            except Exception as e:
+                # Don't fail the backtest if storage fails
+                pass
+        else:
             self.gex_stats['gex_unavailable_days'] += 1
 
         return gex
