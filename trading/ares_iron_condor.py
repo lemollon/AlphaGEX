@@ -56,12 +56,28 @@ except ImportError:
 try:
     from trading.decision_logger import (
         DecisionLogger, TradeDecision, DecisionType,
-        DataSource, TradeLeg, MarketContext, DecisionReasoning, BotName
+        DataSource, TradeLeg, MarketContext as LoggerMarketContext, DecisionReasoning, BotName
     )
     LOGGER_AVAILABLE = True
 except ImportError:
     LOGGER_AVAILABLE = False
     DecisionLogger = None
+
+# Import Oracle AI advisor
+try:
+    from quant.oracle_advisor import (
+        OracleAdvisor, MarketContext as OracleMarketContext,
+        TradingAdvice, GEXRegime, OraclePrediction, TradeOutcome,
+        BotName as OracleBotName
+    )
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    OracleMarketContext = None
+    TradingAdvice = None
+    TradeOutcome = None
+    OracleBotName = None
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +245,15 @@ class ARESTrader:
         if LOGGER_AVAILABLE:
             self.decision_logger = DecisionLogger()
 
+        # Oracle AI advisor
+        self.oracle = None
+        if ORACLE_AVAILABLE:
+            try:
+                self.oracle = OracleAdvisor()
+                logger.info("ARES: Oracle AI advisor initialized")
+            except Exception as e:
+                logger.warning(f"ARES: Failed to initialize Oracle AI: {e}")
+
         # State tracking
         self.open_positions: List[IronCondorPosition] = []
         self.closed_positions: List[IronCondorPosition] = []
@@ -364,6 +389,173 @@ class ARESTrader:
         except Exception as e:
             logger.error(f"ARES: Error getting market data: {e}")
             return None
+
+    def _build_oracle_context(self, market_data: Dict) -> Optional['OracleMarketContext']:
+        """
+        Build Oracle MarketContext from ARES market data.
+
+        Args:
+            market_data: Dict from get_current_market_data()
+
+        Returns:
+            OracleMarketContext for Oracle consultation
+        """
+        if not ORACLE_AVAILABLE or OracleMarketContext is None:
+            return None
+
+        try:
+            now = datetime.now(self.tz)
+            vix = market_data.get('vix', 15.0)
+            spot = market_data.get('underlying_price', 0)
+
+            # Try to get GEX data from database
+            gex_net = 0
+            gex_call_wall = 0
+            gex_put_wall = 0
+            gex_flip = 0
+
+            try:
+                from database_adapter import get_connection
+                conn = get_connection()
+                c = conn.cursor()
+
+                # Get latest GEX data
+                c.execute("""
+                    SELECT net_gex, call_wall, put_wall, gex_flip_point
+                    FROM gex_data
+                    WHERE symbol = 'SPY'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """)
+                row = c.fetchone()
+                if row:
+                    gex_net = row[0] or 0
+                    gex_call_wall = row[1] or 0
+                    gex_put_wall = row[2] or 0
+                    gex_flip = row[3] or 0
+                conn.close()
+            except Exception as e:
+                logger.debug(f"ARES: Could not fetch GEX data: {e}")
+
+            # Determine GEX regime
+            gex_regime = GEXRegime.NEUTRAL
+            if gex_net > 0:
+                gex_regime = GEXRegime.POSITIVE
+            elif gex_net < 0:
+                gex_regime = GEXRegime.NEGATIVE
+
+            # Check if price is between walls
+            between_walls = True
+            if gex_put_wall > 0 and gex_call_wall > 0:
+                between_walls = gex_put_wall <= spot <= gex_call_wall
+
+            # Calculate expected move as percentage
+            expected_move_pct = (market_data.get('expected_move', 0) / spot * 100) if spot > 0 else 1.0
+
+            return OracleMarketContext(
+                spot_price=spot,
+                price_change_1d=0,  # Would need historical data
+                vix=vix,
+                vix_percentile_30d=50.0,  # Default, could be enhanced
+                vix_change_1d=0,
+                gex_net=gex_net,
+                gex_normalized=0,  # Would need calculation
+                gex_regime=gex_regime,
+                gex_flip_point=gex_flip,
+                gex_call_wall=gex_call_wall,
+                gex_put_wall=gex_put_wall,
+                gex_distance_to_flip_pct=0,
+                gex_between_walls=between_walls,
+                day_of_week=now.weekday(),
+                days_to_opex=0,  # 0DTE
+                win_rate_30d=self.win_count / max(1, self.trade_count) if self.trade_count > 0 else 0.68,
+                expected_move_pct=expected_move_pct
+            )
+
+        except Exception as e:
+            logger.error(f"ARES: Error building Oracle context: {e}")
+            return None
+
+    def consult_oracle(self, market_data: Dict) -> Optional['OraclePrediction']:
+        """
+        Consult Oracle AI for trading advice.
+
+        Args:
+            market_data: Dict from get_current_market_data()
+
+        Returns:
+            OraclePrediction with advice, or None if Oracle unavailable
+        """
+        if not self.oracle:
+            logger.debug("ARES: Oracle not available, proceeding without advice")
+            return None
+
+        context = self._build_oracle_context(market_data)
+        if not context:
+            logger.debug("ARES: Could not build Oracle context")
+            return None
+
+        try:
+            # Get advice from Oracle
+            advice = self.oracle.get_ares_advice(
+                context,
+                use_gex_walls=True,
+                use_claude_validation=True
+            )
+
+            logger.info(f"ARES Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
+                       f"Risk: {advice.suggested_risk_pct:.1%} | SD Mult: {advice.suggested_sd_multiplier:.2f}")
+
+            if advice.reasoning:
+                logger.info(f"ARES Oracle Reasoning: {advice.reasoning}")
+
+            # Store prediction for feedback loop
+            try:
+                today = datetime.now(self.tz).strftime('%Y-%m-%d')
+                self.oracle.store_prediction(advice, context, today)
+                self._last_oracle_context = context  # Store for outcome update
+            except Exception as e:
+                logger.debug(f"ARES: Could not store Oracle prediction: {e}")
+
+            return advice
+
+        except Exception as e:
+            logger.error(f"ARES: Error consulting Oracle: {e}")
+            return None
+
+    def record_trade_outcome(
+        self,
+        trade_date: str,
+        outcome_type: str,
+        actual_pnl: float
+    ) -> bool:
+        """
+        Record trade outcome back to Oracle for feedback loop.
+
+        Args:
+            trade_date: Date of the trade (YYYY-MM-DD)
+            outcome_type: One of MAX_PROFIT, PUT_BREACHED, CALL_BREACHED, etc.
+            actual_pnl: Actual P&L from the trade
+
+        Returns:
+            True if recorded successfully
+        """
+        if not self.oracle or not ORACLE_AVAILABLE:
+            return False
+
+        try:
+            outcome = TradeOutcome[outcome_type]
+            self.oracle.update_outcome(
+                trade_date,
+                OracleBotName.ARES,
+                outcome,
+                actual_pnl
+            )
+            logger.info(f"ARES: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
+            return True
+        except Exception as e:
+            logger.error(f"ARES: Failed to record outcome: {e}")
+            return False
 
     def find_iron_condor_strikes(
         self,
@@ -906,6 +1098,37 @@ class ARESTrader:
         logger.info(f"  VIX: {market_data['vix']:.1f}")
         logger.info(f"  Expected Move (1 SD): ${market_data['expected_move']:.2f}")
 
+        # =========================================================================
+        # CONSULT ORACLE AI FOR TRADING ADVICE
+        # =========================================================================
+        oracle_advice = self.consult_oracle(market_data)
+        oracle_risk_pct = None
+        oracle_sd_mult = None
+
+        if oracle_advice:
+            result['oracle_advice'] = {
+                'advice': oracle_advice.advice.value,
+                'win_probability': oracle_advice.win_probability,
+                'suggested_risk_pct': oracle_advice.suggested_risk_pct,
+                'suggested_sd_multiplier': oracle_advice.suggested_sd_multiplier,
+                'reasoning': oracle_advice.reasoning
+            }
+
+            # Honor Oracle's SKIP advice
+            if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
+                logger.warning(f"ARES: Oracle advises SKIP - {oracle_advice.reasoning}")
+                result['actions'].append(f"Oracle SKIP: {oracle_advice.reasoning}")
+                return result
+
+            # Store Oracle's suggestions for use
+            oracle_risk_pct = oracle_advice.suggested_risk_pct
+            oracle_sd_mult = oracle_advice.suggested_sd_multiplier
+
+            logger.info(f"  Oracle Advice: {oracle_advice.advice.value}")
+            logger.info(f"  Oracle Win Prob: {oracle_advice.win_probability:.1%}")
+        else:
+            logger.info("  Oracle: Not available, using default parameters")
+
         # Get expiration
         expiration = self.get_todays_expiration()
         if not expiration:
@@ -913,10 +1136,16 @@ class ARESTrader:
             result['actions'].append("Failed to get expiration")
             return result
 
-        # Find Iron Condor strikes
+        # Calculate expected move with Oracle's SD multiplier if available
+        adjusted_expected_move = market_data['expected_move']
+        if oracle_sd_mult:
+            adjusted_expected_move = market_data['expected_move'] * oracle_sd_mult
+            logger.info(f"  Oracle SD Mult: {oracle_sd_mult:.2f} -> Adjusted Move: ${adjusted_expected_move:.2f}")
+
+        # Find Iron Condor strikes (with Oracle's SD multiplier applied)
         ic_strikes = self.find_iron_condor_strikes(
             market_data['underlying_price'],
-            market_data['expected_move'],
+            adjusted_expected_move,
             expiration
         )
 
@@ -929,9 +1158,18 @@ class ARESTrader:
                    f"{ic_strikes['call_short_strike']}/{ic_strikes['call_long_strike']}C")
         logger.info(f"  Credit: ${ic_strikes['total_credit']:.2f}")
 
-        # Calculate position size
+        # Calculate position size (with Oracle's risk % if available)
         max_loss = self.config.spread_width - ic_strikes['total_credit']
-        contracts = self.calculate_position_size(max_loss)
+
+        # Use Oracle's risk percentage if available
+        if oracle_risk_pct:
+            original_risk_pct = self.config.risk_per_trade
+            self.config.risk_per_trade = oracle_risk_pct
+            contracts = self.calculate_position_size(max_loss)
+            self.config.risk_per_trade = original_risk_pct  # Restore original
+            logger.info(f"  Oracle Risk Adj: {oracle_risk_pct:.1%} (default: {original_risk_pct:.1%})")
+        else:
+            contracts = self.calculate_position_size(max_loss)
 
         logger.info(f"  Contracts: {contracts}")
         logger.info(f"  Total Premium: ${ic_strikes['total_credit'] * 100 * contracts:,.2f}")
@@ -1060,11 +1298,42 @@ class ARESTrader:
             conn.commit()
             conn.close()
             logger.info(f"ARES: Updated position {position.position_id} in database")
+
+            # Record outcome to Oracle feedback loop if position closed
+            if position.status in ('closed', 'expired') and hasattr(position, 'realized_pnl'):
+                self._record_oracle_outcome(position)
+
             return True
 
         except Exception as e:
             logger.error(f"ARES: Failed to update position in database: {e}")
             return False
+
+    def _record_oracle_outcome(self, position: IronCondorPosition) -> None:
+        """Record position outcome to Oracle for feedback loop."""
+        if not self.oracle or not ORACLE_AVAILABLE:
+            return
+
+        try:
+            # Determine outcome type based on P&L and strikes
+            pnl = position.realized_pnl or 0
+            max_credit = position.total_credit * 100 * position.contracts
+
+            if pnl >= max_credit * 0.9:
+                outcome_type = "MAX_PROFIT"
+            elif pnl > 0:
+                outcome_type = "PARTIAL_PROFIT"
+            else:
+                # Check which side breached (would need underlying close price)
+                outcome_type = "LOSS"
+
+            self.record_trade_outcome(
+                trade_date=position.open_date,
+                outcome_type=outcome_type,
+                actual_pnl=pnl
+            )
+        except Exception as e:
+            logger.debug(f"ARES: Could not record Oracle outcome: {e}")
 
     def _load_positions_from_db(self) -> int:
         """
