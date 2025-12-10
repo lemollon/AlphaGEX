@@ -174,6 +174,11 @@ export default function ZeroDTEBacktestPage() {
   // Comparison state
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([])
 
+  // Oracle AI state
+  const [oracleStatus, setOracleStatus] = useState<any>(null)
+  const [oracleLogs, setOracleLogs] = useState<any[]>([])
+  const [showOracleLogs, setShowOracleLogs] = useState(false)
+
   // Check backend health on mount
   const checkBackendHealth = async () => {
     try {
@@ -194,6 +199,36 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
+  // Load Oracle status
+  const loadOracleStatus = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/oracle/status`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          setOracleStatus(data.oracle)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load Oracle status:', err)
+    }
+  }
+
+  // Load Oracle logs
+  const loadOracleLogs = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/oracle/logs?limit=20`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          setOracleLogs(data.logs || [])
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load Oracle logs:', err)
+    }
+  }
+
   // Load strategies and tiers on mount
   useEffect(() => {
     checkBackendHealth()
@@ -203,7 +238,17 @@ export default function ZeroDTEBacktestPage() {
     loadResults()
     loadPresets()
     loadSavedStrategies()
+    loadOracleStatus()
   }, [])
+
+  // Auto-refresh Oracle logs when panel is open
+  useEffect(() => {
+    if (showOracleLogs) {
+      loadOracleLogs()
+      const interval = setInterval(loadOracleLogs, 3000) // Refresh every 3s
+      return () => clearInterval(interval)
+    }
+  }, [showOracleLogs])
 
   const loadPresets = async () => {
     try {
@@ -560,6 +605,25 @@ export default function ZeroDTEBacktestPage() {
                  backendStatus === 'error' ? 'Backend Offline' :
                  'Checking...'}
               </div>
+              {/* Oracle AI Status Indicator */}
+              {oracleStatus && (
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs ${
+                  oracleStatus.claude_available ? 'bg-purple-900/50 text-purple-400' : 'bg-gray-800 text-gray-400'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full ${
+                    oracleStatus.claude_available ? 'bg-purple-400' : 'bg-gray-500'
+                  }`} />
+                  Claude AI: {oracleStatus.claude_available ? 'Active' : 'Offline'}
+                </div>
+              )}
+              <button
+                onClick={() => setShowOracleLogs(!showOracleLogs)}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-900/30 hover:bg-purple-900/50 rounded-lg text-sm text-purple-300"
+              >
+                <Activity className="w-4 h-4" />
+                Oracle Logs
+                {showOracleLogs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
               <button
                 onClick={() => setShowDataInfo(!showDataInfo)}
                 className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
@@ -570,6 +634,58 @@ export default function ZeroDTEBacktestPage() {
               </button>
             </div>
           </div>
+
+          {/* Oracle Live Logs Panel */}
+          {showOracleLogs && (
+            <div className="bg-purple-900/20 border border-purple-800 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-purple-300 flex items-center gap-2">
+                  <Activity className="w-4 h-4" />
+                  Oracle AI Live Logs
+                </h3>
+                <div className="flex items-center gap-2">
+                  {oracleStatus && (
+                    <span className="text-xs text-gray-400">
+                      Model: {oracleStatus.claude_model || 'N/A'} | Version: {oracleStatus.model_version}
+                    </span>
+                  )}
+                  <button
+                    onClick={loadOracleLogs}
+                    className="p-1 hover:bg-purple-800/50 rounded"
+                  >
+                    <RefreshCw className="w-4 h-4 text-purple-400" />
+                  </button>
+                </div>
+              </div>
+              <div className="bg-black/30 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs">
+                {oracleLogs.length === 0 ? (
+                  <div className="text-gray-500 text-center py-4">
+                    No Oracle logs yet. Run a backtest or make a prediction to see Claude AI activity.
+                  </div>
+                ) : (
+                  oracleLogs.slice().reverse().map((log, idx) => (
+                    <div key={idx} className={`py-1 border-b border-gray-800 last:border-0 ${
+                      log.type === 'ERROR' ? 'text-red-400' :
+                      log.type === 'WARN' ? 'text-yellow-400' :
+                      log.type?.includes('DONE') ? 'text-green-400' :
+                      'text-purple-300'
+                    }`}>
+                      <span className="text-gray-500">{log.timestamp?.split('T')[1]?.split('.')[0] || ''}</span>
+                      {' '}
+                      <span className="text-purple-500">[{log.type}]</span>
+                      {' '}
+                      {log.message}
+                      {log.data && (
+                        <span className="text-gray-500 ml-2">
+                          {JSON.stringify(log.data).slice(0, 80)}...
+                        </span>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Backend Error Banner */}
           {backendStatus === 'error' && (
