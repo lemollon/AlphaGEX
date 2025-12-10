@@ -212,11 +212,17 @@ export default function GammaIntelligence() {
       logger.error('Error fetching gamma intelligence:', error)
 
       // Bug #10 Fix: Retry up to 3 times for transient errors
+      // Bug #13 Fix: Check signal before retry to prevent stale updates after unmount
       const isRetryable = error.type === 'network' || error.type === 'timeout' || error.status >= 500
-      if (isRetryable && retry < 3) {
+      if (isRetryable && retry < 3 && !signal?.aborted) {
         logger.info(`Retrying in ${(retry + 1) * 2} seconds...`)
         setRetryCount(retry + 1)
         await new Promise(resolve => setTimeout(resolve, (retry + 1) * 2000))
+        // Check again after delay in case component unmounted during wait
+        if (signal?.aborted) {
+          logger.info('Retry cancelled - component unmounted')
+          return
+        }
         return fetchData(forceRefresh, signal, retry + 1)
       }
 
@@ -633,7 +639,8 @@ export default function GammaIntelligence() {
                     <div>
                       <p className="text-text-secondary text-sm">GEX Ratio</p>
                       <p className="text-2xl font-bold text-text-primary mt-1">
-                        {intelligence.gamma_exposure_ratio.toFixed(2)}
+                        {/* Bug #14 Fix: Safe property access */}
+                        {(intelligence.gamma_exposure_ratio ?? 0).toFixed(2)}
                       </p>
                     </div>
                     <Activity className="text-primary w-8 h-8" />
@@ -898,7 +905,8 @@ export default function GammaIntelligence() {
                     Key Observations
                   </h2>
                   <ul className="space-y-2">
-                    {intelligence.key_observations.map((obs, idx) => (
+                    {/* Bug #14 Fix: Safe array access */}
+                    {(intelligence.key_observations || []).map((obs, idx) => (
                       <li key={idx} className="flex items-start gap-2 text-text-secondary">
                         <span className="text-primary mt-1">•</span>
                         <span>{obs}</span>
@@ -913,7 +921,8 @@ export default function GammaIntelligence() {
                     Trading Implications
                   </h2>
                   <ul className="space-y-2">
-                    {intelligence.trading_implications.map((impl, idx) => (
+                    {/* Bug #14 Fix: Safe array access */}
+                    {(intelligence.trading_implications || []).map((impl, idx) => (
                       <li key={idx} className="flex items-start gap-2 text-text-secondary">
                         <span className="text-success mt-1">•</span>
                         <span>{impl}</span>
@@ -930,13 +939,15 @@ export default function GammaIntelligence() {
                   <div className="p-4 bg-background-hover rounded-lg">
                     <p className="text-text-muted text-xs uppercase">Risk Reversal</p>
                     <p className="text-xl font-bold text-text-primary mt-1">
-                      {intelligence.risk_reversal.toFixed(3)}
+                      {/* Bug #14 Fix: Safe property access */}
+                      {(intelligence.risk_reversal ?? 0).toFixed(3)}
                     </p>
                   </div>
                   <div className="p-4 bg-background-hover rounded-lg">
                     <p className="text-text-muted text-xs uppercase">Skew Index</p>
                     <p className="text-xl font-bold text-text-primary mt-1">
-                      {intelligence.skew_index.toFixed(2)}
+                      {/* Bug #14 Fix: Safe property access */}
+                      {(intelligence.skew_index ?? 0).toFixed(2)}
                     </p>
                   </div>
                   <div className="p-4 bg-background-hover rounded-lg">
@@ -1099,7 +1110,8 @@ export default function GammaIntelligence() {
                     <div className="grid grid-cols-3 gap-4 p-4 bg-background-hover rounded-lg">
                       <div>
                         <p className="text-text-muted text-xs uppercase mb-1">Current Spot</p>
-                        <p className="text-xl font-bold text-primary">${intelligence.spot_price.toFixed(2)}</p>
+                        {/* Bug #14 Fix: Safe property access */}
+                        <p className="text-xl font-bold text-primary">${(intelligence.spot_price ?? 0).toFixed(2)}</p>
                       </div>
                       <div>
                         <p className="text-text-muted text-xs uppercase mb-1">Flip Point</p>
@@ -1107,8 +1119,9 @@ export default function GammaIntelligence() {
                       </div>
                       <div>
                         <p className="text-text-muted text-xs uppercase mb-1">Distance to Flip</p>
-                        <p className={`text-xl font-bold ${(intelligence.flip_point || 0) > intelligence.spot_price ? 'text-success' : 'text-danger'}`}>
-                          {intelligence.flip_point ? ((intelligence.flip_point - intelligence.spot_price) / intelligence.spot_price * 100).toFixed(2) : 'N/A'}%
+                        {/* Bug #14 Fix: Safe division (prevent divide by zero) */}
+                        <p className={`text-xl font-bold ${(intelligence.flip_point || 0) > (intelligence.spot_price || 0) ? 'text-success' : 'text-danger'}`}>
+                          {intelligence.flip_point && intelligence.spot_price ? ((intelligence.flip_point - intelligence.spot_price) / intelligence.spot_price * 100).toFixed(2) : 'N/A'}%
                         </p>
                       </div>
                     </div>
