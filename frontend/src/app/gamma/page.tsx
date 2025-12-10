@@ -216,9 +216,16 @@ export default function GammaIntelligence() {
       }
 
       logger.info('API Response:', response.data)
-      logger.info('Has strikes?', response.data.data?.strikes?.length || 0)
 
-      const data = response.data.data
+      // Bug #17 Fix: Validate response structure before accessing nested data
+      const data = response.data?.data
+      if (!data) {
+        const errorMsg = response.data?.error || response.data?.detail || 'Invalid API response structure'
+        logger.error('API returned invalid data structure:', response.data)
+        throw new Error(errorMsg)
+      }
+
+      logger.info('Has strikes?', data.strikes?.length || 0)
 
       // Log what we received for debugging
       logger.info('Intelligence data:', {
