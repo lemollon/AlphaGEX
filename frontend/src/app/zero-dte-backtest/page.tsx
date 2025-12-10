@@ -521,6 +521,16 @@ export default function ZeroDTEBacktestPage() {
     window.open(`${API_URL}/api/zero-dte/export/equity-curve/${jobId}`, '_blank')
   }
 
+  // Export individual result by ID
+  const exportResultById = async (resultId: number) => {
+    window.open(`${API_URL}/api/zero-dte/export/result/${resultId}`, '_blank')
+  }
+
+  // Export all results as CSV
+  const exportAllResults = async () => {
+    window.open(`${API_URL}/api/zero-dte/export/all-results`, '_blank')
+  }
+
   // Get current result (live or selected)
   const currentResult = liveJobResult || selectedResult
 
@@ -1601,64 +1611,96 @@ export default function ZeroDTEBacktestPage() {
               {/* Compare Tab */}
               {activeTab === 'compare' && (
                 <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-                  <h3 className="font-bold mb-4">Compare Backtests</h3>
-                  <p className="text-gray-400 mb-4">
-                    Run multiple backtests with different parameters, then compare them here.
-                  </p>
-
-                  {/* Results History */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-950 text-sm text-gray-400">
-                        <tr>
-                          <th className="text-left p-4">Date</th>
-                          <th className="text-left p-4">Strategy</th>
-                          <th className="text-left p-4">Period</th>
-                          <th className="text-right p-4">Initial</th>
-                          <th className="text-right p-4">Final</th>
-                          <th className="text-right p-4">Return</th>
-                          <th className="text-right p-4">Monthly Avg</th>
-                          <th className="text-right p-4">Win Rate</th>
-                          <th className="text-right p-4">Trades</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {results.map(result => (
-                          <tr
-                            key={result.id}
-                            onClick={() => setSelectedResult(result)}
-                            className={`border-b border-gray-800 cursor-pointer hover:bg-gray-800/50 ${
-                              selectedResult?.id === result.id ? 'bg-blue-900/20' : ''
-                            }`}
-                          >
-                            <td className="p-4 text-sm text-gray-400">
-                              {new Date(result.created_at).toLocaleDateString()}
-                            </td>
-                            <td className="p-4 font-medium">{result.strategy}</td>
-                            <td className="p-4 text-sm text-gray-400">
-                              {result.start_date} - {result.end_date}
-                            </td>
-                            <td className="p-4 text-right">
-                              ${result.initial_capital?.toLocaleString()}
-                            </td>
-                            <td className="p-4 text-right font-bold text-green-400">
-                              ${result.final_equity?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                            </td>
-                            <td className={`p-4 text-right font-bold ${result.total_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                              {result.total_return_pct?.toFixed(1)}%
-                            </td>
-                            <td className={`p-4 text-right ${result.avg_monthly_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                              {result.avg_monthly_return_pct?.toFixed(2)}%
-                            </td>
-                            <td className="p-4 text-right text-blue-400">
-                              {result.win_rate?.toFixed(1)}%
-                            </td>
-                            <td className="p-4 text-right">{result.total_trades}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="flex justify-between items-center mb-4">
+                    <div>
+                      <h3 className="font-bold">Backtest History</h3>
+                      <p className="text-gray-400 text-sm">
+                        {results.length} saved backtest{results.length !== 1 ? 's' : ''}. Click a row to view details.
+                      </p>
+                    </div>
+                    {results.length > 0 && (
+                      <button
+                        onClick={exportAllResults}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium"
+                      >
+                        <Download className="w-4 h-4" />
+                        Export All CSV
+                      </button>
+                    )}
                   </div>
+
+                  {results.length === 0 ? (
+                    <div className="text-center py-8 text-gray-400">
+                      <Database className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p>No saved backtests yet. Run a backtest to see results here.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-gray-950 text-sm text-gray-400">
+                          <tr>
+                            <th className="text-left p-4">Date</th>
+                            <th className="text-left p-4">Strategy</th>
+                            <th className="text-left p-4">Period</th>
+                            <th className="text-right p-4">Initial</th>
+                            <th className="text-right p-4">Final</th>
+                            <th className="text-right p-4">Return</th>
+                            <th className="text-right p-4">Monthly Avg</th>
+                            <th className="text-right p-4">Win Rate</th>
+                            <th className="text-right p-4">Trades</th>
+                            <th className="text-center p-4">Export</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {results.map(result => (
+                            <tr
+                              key={result.id}
+                              onClick={() => setSelectedResult(result)}
+                              className={`border-b border-gray-800 cursor-pointer hover:bg-gray-800/50 ${
+                                selectedResult?.id === result.id ? 'bg-blue-900/20' : ''
+                              }`}
+                            >
+                              <td className="p-4 text-sm text-gray-400">
+                                {new Date(result.created_at).toLocaleDateString()}
+                              </td>
+                              <td className="p-4 font-medium">{result.strategy}</td>
+                              <td className="p-4 text-sm text-gray-400">
+                                {result.start_date} - {result.end_date}
+                              </td>
+                              <td className="p-4 text-right">
+                                ${result.initial_capital?.toLocaleString()}
+                              </td>
+                              <td className="p-4 text-right font-bold text-green-400">
+                                ${result.final_equity?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </td>
+                              <td className={`p-4 text-right font-bold ${result.total_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {result.total_return_pct?.toFixed(1)}%
+                              </td>
+                              <td className={`p-4 text-right ${result.avg_monthly_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {result.avg_monthly_return_pct?.toFixed(2)}%
+                              </td>
+                              <td className="p-4 text-right text-blue-400">
+                                {result.win_rate?.toFixed(1)}%
+                              </td>
+                              <td className="p-4 text-right">{result.total_trades}</td>
+                              <td className="p-4 text-center">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    exportResultById(result.id)
+                                  }}
+                                  className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+                                  title="Export this result"
+                                >
+                                  <Download className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </>

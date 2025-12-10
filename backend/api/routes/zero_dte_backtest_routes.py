@@ -2006,3 +2006,163 @@ async def oracle_analyze_patterns(job_id: Optional[str] = None):
             "success": False,
             "error": str(e)
         }
+
+
+@router.get("/export/result/{result_id}")
+async def export_result_by_id(result_id: int):
+    """Export a specific backtest result by database ID"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT * FROM zero_dte_backtest_results WHERE id = %s
+        """, (result_id,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Result not found")
+
+        # Create CSV output
+        output = io.StringIO()
+
+        # Summary section
+        output.write("BACKTEST RESULT EXPORT\n")
+        output.write("=" * 50 + "\n\n")
+
+        output.write(f"Backtest ID,{row['id']}\n")
+        output.write(f"Job ID,{row['job_id']}\n")
+        output.write(f"Created At,{row['created_at']}\n")
+        output.write(f"Strategy,{row['strategy']}\n")
+        output.write(f"Ticker,{row['ticker']}\n")
+        output.write(f"Period,{row['start_date']} to {row['end_date']}\n\n")
+
+        output.write("PERFORMANCE SUMMARY\n")
+        output.write("-" * 30 + "\n")
+        output.write(f"Initial Capital,${row['initial_capital']:,.2f}\n")
+        output.write(f"Final Equity,${row['final_equity']:,.2f}\n")
+        output.write(f"Total P&L,${row['total_pnl']:,.2f}\n")
+        output.write(f"Total Return,{row['total_return_pct']:.2f}%\n")
+        output.write(f"Avg Monthly Return,{row['avg_monthly_return_pct']:.2f}%\n")
+        output.write(f"Max Drawdown,{row['max_drawdown_pct']:.2f}%\n")
+        output.write(f"Total Trades,{row['total_trades']}\n")
+        output.write(f"Win Rate,{row['win_rate']:.2f}%\n")
+        output.write(f"Profit Factor,{row['profit_factor']:.2f}\n")
+        output.write(f"Total Costs,${row['total_costs']:,.2f}\n\n")
+
+        # Tier stats if available
+        if row.get('tier_stats'):
+            output.write("TIER STATISTICS\n")
+            output.write("-" * 30 + "\n")
+            tier_stats = row['tier_stats']
+            if isinstance(tier_stats, dict):
+                for tier_name, stats in tier_stats.items():
+                    if isinstance(stats, dict):
+                        output.write(f"\n{tier_name}:\n")
+                        for key, value in stats.items():
+                            output.write(f"  {key},{value}\n")
+            output.write("\n")
+
+        # Monthly returns if available
+        if row.get('monthly_returns'):
+            output.write("MONTHLY RETURNS\n")
+            output.write("-" * 30 + "\n")
+            output.write("Month,Return %\n")
+            monthly = row['monthly_returns']
+            if isinstance(monthly, dict):
+                for month, ret in monthly.items():
+                    output.write(f"{month},{ret:.2f}\n")
+            elif isinstance(monthly, list):
+                for item in monthly:
+                    if isinstance(item, dict):
+                        output.write(f"{item.get('month', 'N/A')},{item.get('return_pct', 0):.2f}\n")
+
+        csv_content = output.getvalue()
+        output.close()
+
+        filename = f"backtest_result_{result_id}_{row['strategy']}_{row['start_date']}_to_{row['end_date']}.csv"
+
+        return StreamingResponse(
+            iter([csv_content]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export result {result_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/export/all-results")
+async def export_all_results():
+    """Export all backtest results as CSV"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT * FROM zero_dte_backtest_results
+            ORDER BY created_at DESC
+        """)
+
+        results = cursor.fetchall()
+        conn.close()
+
+        if not results:
+            raise HTTPException(status_code=404, detail="No results found")
+
+        # Create CSV output
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header
+        writer.writerow([
+            'ID', 'Job ID', 'Created At', 'Strategy', 'Ticker',
+            'Start Date', 'End Date', 'Initial Capital', 'Final Equity',
+            'Total P&L', 'Total Return %', 'Avg Monthly Return %',
+            'Max Drawdown %', 'Total Trades', 'Win Rate %',
+            'Profit Factor', 'Total Costs'
+        ])
+
+        # Data rows
+        for row in results:
+            writer.writerow([
+                row['id'],
+                row['job_id'],
+                row['created_at'].isoformat() if row['created_at'] else '',
+                row['strategy'],
+                row['ticker'],
+                str(row['start_date']),
+                str(row['end_date']),
+                f"{row['initial_capital']:.2f}",
+                f"{row['final_equity']:.2f}",
+                f"{row['total_pnl']:.2f}",
+                f"{row['total_return_pct']:.2f}",
+                f"{row['avg_monthly_return_pct']:.2f}",
+                f"{row['max_drawdown_pct']:.2f}",
+                row['total_trades'],
+                f"{row['win_rate']:.2f}",
+                f"{row['profit_factor']:.2f}",
+                f"{row['total_costs']:.2f}"
+            ])
+
+        csv_content = output.getvalue()
+        output.close()
+
+        filename = f"all_backtest_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+        return StreamingResponse(
+            iter([csv_content]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export all results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
