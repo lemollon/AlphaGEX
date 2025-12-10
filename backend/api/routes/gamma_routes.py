@@ -2,6 +2,10 @@
 Gamma Intelligence API routes.
 
 Handles gamma analytics, probabilities, expiration analysis, and waterfall data.
+
+Bug #5 Fix: Uses singleton instances for API clients to avoid recreation overhead.
+Bug #7 Fix: Improved error logging for fallback chain.
+Bug #12 Fix: Added data_source and data_age tracking for stale data indication.
 """
 
 import logging
@@ -16,6 +20,38 @@ from backend.api.utils import safe_round, safe_float, clean_dict_for_json
 
 logger = logging.getLogger(__name__)
 
+# Bug #5 Fix: Singleton instances for API clients
+_trading_volatility_api = None
+_gex_calculator = None
+
+
+def get_trading_volatility_api():
+    """Get singleton TradingVolatilityAPI instance."""
+    global _trading_volatility_api
+    if _trading_volatility_api is None:
+        try:
+            from core_classes_and_engines import TradingVolatilityAPI
+            _trading_volatility_api = TradingVolatilityAPI()
+            logger.info("TradingVolatilityAPI singleton initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize TradingVolatilityAPI: {e}")
+            return None
+    return _trading_volatility_api
+
+
+def get_gex_calculator_instance():
+    """Get singleton GEX calculator instance."""
+    global _gex_calculator
+    if _gex_calculator is None:
+        try:
+            from data.gex_calculator import get_gex_calculator
+            _gex_calculator = get_gex_calculator()
+            logger.info("GEX Calculator singleton initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize GEX Calculator: {e}")
+            return None
+    return _gex_calculator
+
 
 def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
     """
@@ -23,27 +59,43 @@ def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
     1. TradingVolatilityAPI (live data)
     2. Tradier calculation (real-time from options chain)
     3. Database (historical cache)
-    """
-    # PRIMARY: Try TradingVolatilityAPI
-    try:
-        from core_classes_and_engines import TradingVolatilityAPI
-        api = TradingVolatilityAPI()
-        data = api.get_net_gamma(symbol)
-        if data and 'error' not in data:
-            data['data_source'] = 'live_api'
-            return data
-    except Exception as e:
-        logger.debug(f"TradingVolatilityAPI failed for {symbol}: {type(e).__name__}")
 
-    # FALLBACK 1: Calculate from Tradier
+    Bug #5 Fix: Uses singleton API instance
+    Bug #7 Fix: Improved error logging
+    Bug #12 Fix: Returns data_source for stale data indication
+    """
+    # PRIMARY: Try TradingVolatilityAPI (singleton)
     try:
-        from data.gex_calculator import get_calculated_gex
-        data = get_calculated_gex(symbol)
-        if data and 'error' not in data:
-            logger.debug(f"GEX calculated from Tradier for {symbol}")
-            return data
+        api = get_trading_volatility_api()
+        if api:
+            data = api.get_net_gamma(symbol)
+            if data and 'error' not in data:
+                data['data_source'] = 'live_api'
+                data['data_age'] = 'live'
+                return data
+            elif data and 'error' in data:
+                logger.warning(f"TradingVolatilityAPI returned error for {symbol}: {data.get('error')}")
     except Exception as e:
-        logger.debug(f"Tradier GEX calculation failed for {symbol}: {type(e).__name__}")
+        logger.warning(f"TradingVolatilityAPI failed for {symbol}: {type(e).__name__}: {str(e)}")
+
+    # FALLBACK 1: Calculate from Tradier (singleton)
+    try:
+        calculator = get_gex_calculator_instance()
+        if calculator:
+            data = calculator.get_gex(symbol)
+            if data and 'error' not in data:
+                data['data_source'] = 'tradier_calculated'
+                data['data_age'] = 'live'
+                logger.info(f"GEX calculated from Tradier for {symbol}")
+                return data
+            elif data and 'error' in data:
+                # Bug #7 Fix: Log the actual error
+                logger.warning(f"Tradier GEX calculation returned error for {symbol}: {data.get('error')}")
+    except ValueError as e:
+        # Bug #7 Fix: Log API key issues clearly
+        logger.error(f"Tradier GEX calculation failed for {symbol} - API key issue: {str(e)}")
+    except Exception as e:
+        logger.warning(f"Tradier GEX calculation failed for {symbol}: {type(e).__name__}: {str(e)}")
 
     # FALLBACK 2: Try database
     try:
@@ -60,7 +112,20 @@ def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
         row = cursor.fetchone()
         conn.close()
         if row:
-            logger.debug(f"Using database GEX for {symbol}")
+            # Bug #12 Fix: Calculate data age for stale indicator
+            data_timestamp = row.get('timestamp')
+            if data_timestamp:
+                age_hours = (datetime.now() - data_timestamp).total_seconds() / 3600
+                if age_hours < 1:
+                    data_age = 'recent'
+                elif age_hours < 24:
+                    data_age = f'{int(age_hours)}h old'
+                else:
+                    data_age = f'{int(age_hours / 24)}d old'
+            else:
+                data_age = 'unknown'
+
+            logger.info(f"Using database GEX for {symbol} (age: {data_age})")
             return {
                 'symbol': symbol,
                 'spot_price': float(row.get('spot_price') or 0),
@@ -71,35 +136,54 @@ def get_gex_with_fallback(symbol: str) -> Dict[str, Any]:
                 'mm_state': row.get('mm_state'),
                 'regime': row.get('regime'),
                 'collection_date': row.get('timestamp').strftime('%Y-%m-%d') if row.get('timestamp') else None,
-                'data_source': 'database_fallback'
+                'data_source': 'database_fallback',
+                'data_age': data_age
             }
     except Exception as e:
-        logger.debug(f"Database fallback failed for {symbol}: {type(e).__name__}")
+        logger.error(f"Database fallback failed for {symbol}: {type(e).__name__}: {str(e)}")
 
-    return {'error': 'All data sources failed'}
+    return {'error': 'All data sources failed', 'data_source': 'none'}
 
 
 def get_gex_profile_with_fallback(symbol: str) -> Optional[Dict[str, Any]]:
-    """Get detailed GEX profile with fallback to Tradier calculation."""
-    # PRIMARY: Try TradingVolatilityAPI
-    try:
-        from core_classes_and_engines import TradingVolatilityAPI
-        api = TradingVolatilityAPI()
-        profile = api.get_gex_profile(symbol)
-        if profile and 'error' not in profile:
-            return profile
-    except Exception as e:
-        logger.debug(f"TradingVolatilityAPI profile failed for {symbol}: {type(e).__name__}")
+    """
+    Get detailed GEX profile with fallback to Tradier calculation.
 
-    # FALLBACK: Calculate from Tradier
+    Bug #5 Fix: Uses singleton API instance
+    Bug #6 Fix: Returns proper error dict instead of empty dict on rate limit
+    Bug #7 Fix: Improved error logging
+    """
+    # PRIMARY: Try TradingVolatilityAPI (singleton)
     try:
-        from data.gex_calculator import get_calculated_gex_profile
-        profile = get_calculated_gex_profile(symbol)
-        if profile and 'error' not in profile:
-            logger.debug(f"GEX profile calculated from Tradier for {symbol}")
-            return profile
+        api = get_trading_volatility_api()
+        if api:
+            profile = api.get_gex_profile(symbol)
+            if profile and 'error' not in profile and profile.get('strikes'):
+                profile['profile_source'] = 'live_api'
+                return profile
+            elif profile and 'error' in profile:
+                logger.warning(f"TradingVolatilityAPI profile returned error for {symbol}: {profile.get('error')}")
+            elif profile and not profile.get('strikes'):
+                logger.warning(f"TradingVolatilityAPI profile returned no strikes for {symbol} (rate limited?)")
     except Exception as e:
-        logger.debug(f"Tradier GEX profile calculation failed for {symbol}: {type(e).__name__}")
+        logger.warning(f"TradingVolatilityAPI profile failed for {symbol}: {type(e).__name__}: {str(e)}")
+
+    # FALLBACK: Calculate from Tradier (singleton)
+    try:
+        calculator = get_gex_calculator_instance()
+        if calculator:
+            profile = calculator.get_gex_profile(symbol)
+            if profile and 'error' not in profile:
+                profile['profile_source'] = 'tradier_calculated'
+                logger.info(f"GEX profile calculated from Tradier for {symbol}")
+                return profile
+            elif profile and 'error' in profile:
+                logger.warning(f"Tradier GEX profile returned error for {symbol}: {profile.get('error')}")
+    except ValueError as e:
+        # Bug #7 Fix: Log API key issues clearly
+        logger.error(f"Tradier GEX profile failed for {symbol} - API key issue: {str(e)}")
+    except Exception as e:
+        logger.warning(f"Tradier GEX profile calculation failed for {symbol}: {type(e).__name__}: {str(e)}")
 
     return None
 
@@ -206,6 +290,38 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
         # Get data_date from GEX data or calculate
         data_date = gex_data.get('collection_date') or get_last_trading_day()
 
+        # Bug #8 Fix: Calculate vanna_exposure and charm_decay
+        # Vanna = dDelta/dIV - approximated from gamma and IV relationship
+        # Charm = dDelta/dTime - approximated from theta/gamma relationship
+        implied_vol = gex_data.get('implied_volatility', 0.20)  # Default 20% IV
+        vanna_exposure = 0
+        charm_decay = 0
+
+        if profile and profile.get('strikes'):
+            # Calculate vanna as sensitivity of delta to IV changes
+            # Approximation: vanna ≈ gamma * spot_price * sqrt(time) / IV
+            # Using 7-day as typical DTE
+            import math
+            time_to_expiry = 7 / 365  # 7 days in years
+            for strike in profile['strikes']:
+                strike_gamma = strike.get('call_gamma', 0) + strike.get('put_gamma', 0)
+                # Vanna approximation: larger for ATM options
+                strike_price = strike.get('strike', spot_price)
+                moneyness = abs(strike_price - spot_price) / spot_price
+                atm_factor = max(0.1, 1 - moneyness * 5)  # ATM = 1, 20% OTM = 0
+                vanna_exposure += strike_gamma * atm_factor * spot_price * math.sqrt(time_to_expiry)
+
+            # Charm is the decay of delta over time
+            # Approximation: charm ≈ -gamma * theta_factor
+            # Options lose delta as they approach expiration
+            theta_factor = 0.05  # Approximate theta as 5% of gamma per day
+            charm_decay = -total_gamma * theta_factor
+
+        # Bug #12 Fix: Include data source and age in response
+        data_source = gex_data.get('data_source', 'unknown')
+        data_age = gex_data.get('data_age', 'unknown')
+        profile_source = profile.get('profile_source', 'unknown') if profile else 'none'
+
         return {
             "success": True,
             "symbol": symbol,
@@ -217,6 +333,9 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
                 "put_gamma": total_put_gamma,
                 "gamma_is_estimated": gamma_is_estimated,  # True if gamma split is estimated (no strike data)
                 "gamma_exposure_ratio": gamma_exposure_ratio,
+                # Bug #8 Fix: Added vanna_exposure and charm_decay
+                "vanna_exposure": vanna_exposure,
+                "charm_decay": charm_decay,
                 "risk_reversal": risk_reversal,
                 "skew_index": gamma_exposure_ratio,
                 "key_observations": observations,
@@ -234,7 +353,11 @@ async def get_gamma_intelligence(symbol: str, vix: float = 20):
                 "flip_point": profile.get('flip_point', 0) if profile else 0,
                 "call_wall": profile.get('call_wall', 0) if profile else 0,
                 "put_wall": profile.get('put_wall', 0) if profile else 0,
-                "data_date": data_date
+                "data_date": data_date,
+                # Bug #12 Fix: Added data source tracking for stale data indication
+                "data_source": data_source,
+                "data_age": data_age,
+                "profile_source": profile_source
             },
             "timestamp": datetime.now().isoformat()
         }

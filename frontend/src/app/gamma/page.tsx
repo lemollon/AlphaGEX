@@ -2,7 +2,7 @@
 
 import { logger } from '@/lib/logger'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Zap, TrendingUp, TrendingDown, Activity, BarChart3, Target, Clock, AlertCircle, RefreshCw, Calendar } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -55,6 +55,10 @@ interface GammaIntelligence {
   call_wall?: number
   put_wall?: number
   data_date?: string  // When the market data was collected
+  // Bug #12 Fix: Data source tracking for stale data indication
+  data_source?: string  // 'live_api' | 'tradier_calculated' | 'database_fallback'
+  data_age?: string     // 'live' | 'recent' | '2h old' | '1d old' etc.
+  profile_source?: string  // 'live_api' | 'tradier_calculated' | 'none'
 }
 
 interface HistoricalData {
@@ -72,13 +76,14 @@ export default function GammaIntelligence() {
   const [symbol, setSymbol] = useState('SPY')
   const [vix, setVix] = useState<number>(20)
   const [intelligence, setIntelligence] = useState<GammaIntelligence | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)  // Bug #1 Fix: Start with loading=true
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [historicalData, setHistoricalData] = useState<HistoricalData[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [probabilityData, setProbabilityData] = useState<any | null>(null)
   const [loadingProbabilities, setLoadingProbabilities] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)  // Bug #10 Fix: Track retries
   const { data: wsData, isConnected } = useWebSocket(symbol)
 
   // Position simulator state
@@ -141,26 +146,37 @@ export default function GammaIntelligence() {
     })
   }, [intelligence, simStrike, simQuantity, simOptionType])
 
-  // Cache for gamma intelligence - 1 hour (adaptive based on market hours)
+  // Bug #11 Fix: Remove VIX from cache key (VIX changes frequently, creates too many cache entries)
+  // Bug #2 Fix: Memoize cache TTL to prevent re-creation on every render
+  const cacheTTL = useMemo(() => getCacheTTL('GAMMA_INTELLIGENCE', true), [])
   const gammaCache = useDataCache<GammaIntelligence>({
-    key: `gamma-intelligence-${symbol}-${vix}`,
-    ttl: getCacheTTL('GAMMA_INTELLIGENCE', true) // 1 hour during market, 4h after hours
+    key: `gamma-intelligence-${symbol}`,  // Removed VIX from key
+    ttl: cacheTTL
   })
 
+  // Bug #2 Fix: Use ref to access cache without adding to dependencies
+  const gammaCacheRef = useRef(gammaCache)
+  gammaCacheRef.current = gammaCache
+
   // Fetch gamma intelligence
-  const fetchData = useCallback(async (forceRefresh = false, signal?: AbortSignal) => {
-    // Use cached data if fresh
-    if (!forceRefresh && gammaCache.isCacheFresh && gammaCache.cachedData) {
-      setIntelligence(gammaCache.cachedData)
+  // Bug #2 Fix: Removed gammaCache from dependencies to prevent race condition
+  // Bug #10 Fix: Added retry mechanism for transient failures
+  const fetchData = useCallback(async (forceRefresh = false, signal?: AbortSignal, retry = 0) => {
+    const cache = gammaCacheRef.current
+
+    // Use cached data if fresh (but not on retry)
+    if (!forceRefresh && retry === 0 && cache.isCacheFresh && cache.cachedData) {
+      setIntelligence(cache.cachedData)
+      setLoading(false)
       return
     }
 
     try {
       forceRefresh ? setIsRefreshing(true) : setLoading(true)
-      setError(null)
+      if (retry === 0) setError(null)
 
       logger.info('=== FETCHING GAMMA INTELLIGENCE ===')
-      logger.info('Symbol:', symbol, 'VIX:', vix)
+      logger.info('Symbol:', symbol, 'VIX:', vix, retry > 0 ? `(Retry ${retry}/3)` : '')
 
       const response = await apiClient.getGammaIntelligence(symbol, vix)
 
@@ -184,7 +200,8 @@ export default function GammaIntelligence() {
       })
 
       setIntelligence(data)
-      gammaCache.setCache(data)
+      setRetryCount(0)
+      cache.setCache(data)
     } catch (error: any) {
       // Ignore cancellation errors
       if (error.name === 'AbortError' || signal?.aborted) {
@@ -193,13 +210,29 @@ export default function GammaIntelligence() {
       }
 
       logger.error('Error fetching gamma intelligence:', error)
+
+      // Bug #10 Fix: Retry up to 3 times for transient errors
+      // Bug #13 Fix: Check signal before retry to prevent stale updates after unmount
+      const isRetryable = error.type === 'network' || error.type === 'timeout' || error.status >= 500
+      if (isRetryable && retry < 3 && !signal?.aborted) {
+        logger.info(`Retrying in ${(retry + 1) * 2} seconds...`)
+        setRetryCount(retry + 1)
+        await new Promise(resolve => setTimeout(resolve, (retry + 1) * 2000))
+        // Check again after delay in case component unmounted during wait
+        if (signal?.aborted) {
+          logger.info('Retry cancelled - component unmounted')
+          return
+        }
+        return fetchData(forceRefresh, signal, retry + 1)
+      }
+
       const errorMessage = error.response?.data?.detail || error.message || 'Failed to fetch gamma intelligence'
       setError(errorMessage)
     } finally {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [symbol, vix, gammaCache])
+  }, [symbol, vix])  // Removed gammaCache from deps
 
   // Fetch historical data
   const fetchHistoricalData = useCallback(async () => {
@@ -288,18 +321,23 @@ export default function GammaIntelligence() {
     }
   }, [symbol, vix])
 
+  // Bug #2 Fix: Use ref for fetchData to avoid dependency issues
+  const fetchDataRef = useRef(fetchData)
+  fetchDataRef.current = fetchData
+
   useEffect(() => {
     // Create AbortController for request cancellation
     const controller = new AbortController()
 
     // Always fetch fresh data when symbol or vix changes
-    fetchData(true, controller.signal)
+    // Bug #2 Fix: Use ref to avoid including fetchData in deps
+    fetchDataRef.current(true, controller.signal)
 
     // Cleanup: cancel request if component unmounts or deps change
     return () => {
       controller.abort()
     }
-  }, [symbol, vix, fetchData])
+  }, [symbol, vix])  // Bug #2 Fix: Removed fetchData from deps
 
   // Update simulator strike to spot price when intelligence loads
   useEffect(() => {
@@ -308,19 +346,25 @@ export default function GammaIntelligence() {
     }
   }, [intelligence?.spot_price, simStrike])
 
+  // Bug #9 Fix: Use refs for fetch functions to avoid unnecessary re-fetches
+  const fetchHistoricalDataRef = useRef(fetchHistoricalData)
+  fetchHistoricalDataRef.current = fetchHistoricalData
+  const fetchProbabilityDataRef = useRef(fetchProbabilityData)
+  fetchProbabilityDataRef.current = fetchProbabilityData
+
   useEffect(() => {
     // Fetch historical data when switching to historical tab
     if (activeTab === 'historical' && historicalData.length === 0) {
-      fetchHistoricalData()
+      fetchHistoricalDataRef.current()
     }
-  }, [activeTab, historicalData.length, fetchHistoricalData])
+  }, [activeTab, historicalData.length])  // Bug #9 Fix: Removed fetchHistoricalData from deps
 
   useEffect(() => {
     // Fetch probability data when switching to probabilities tab
     if (activeTab === 'probabilities' && !probabilityData) {
-      fetchProbabilityData()
+      fetchProbabilityDataRef.current()
     }
-  }, [activeTab, probabilityData, fetchProbabilityData])
+  }, [activeTab, probabilityData])  // Bug #9 Fix: Removed fetchProbabilityData from deps
 
   const handleRefresh = () => {
     fetchData(true)
@@ -332,20 +376,44 @@ export default function GammaIntelligence() {
     }
   }
 
-  // Update from WebSocket - backend sends 'market_update' type
+  // Bug #3 Fix: Update from WebSocket - now creates initial intelligence if null
   useEffect(() => {
     if (wsData?.type === 'market_update' && wsData.data) {
-      // Map market_update data to intelligence format
       const data = wsData.data
       if (data.symbol === symbol) {
-        setIntelligence(prev => prev ? {
-          ...prev,
-          spot_price: data.spot_price || prev.spot_price,
-          net_gex: data.net_gex,
-          flip_point: data.flip_point || prev.flip_point,
-          call_wall: data.call_wall || prev.call_wall,
-          put_wall: data.put_wall || prev.put_wall
-        } : prev)
+        setIntelligence(prev => {
+          // Bug #3 Fix: If prev is null, create a minimal intelligence object
+          // This ensures WebSocket updates aren't lost if initial fetch failed
+          if (!prev) {
+            return {
+              symbol: data.symbol,
+              spot_price: data.spot_price || 0,
+              total_gamma: 0,
+              call_gamma: 0,
+              put_gamma: 0,
+              gamma_exposure_ratio: 0,
+              vanna_exposure: 0,
+              charm_decay: 0,
+              risk_reversal: 0,
+              skew_index: 0,
+              key_observations: ['Receiving live data from WebSocket'],
+              trading_implications: ['Waiting for full data load...'],
+              market_regime: { state: 'Unknown', volatility: 'Unknown', trend: 'Unknown' },
+              net_gex: data.net_gex || 0,
+              flip_point: data.flip_point || 0,
+              call_wall: data.call_wall || 0,
+              put_wall: data.put_wall || 0,
+            }
+          }
+          return {
+            ...prev,
+            spot_price: data.spot_price || prev.spot_price,
+            net_gex: data.net_gex ?? prev.net_gex,
+            flip_point: data.flip_point || prev.flip_point,
+            call_wall: data.call_wall || prev.call_wall,
+            put_wall: data.put_wall || prev.put_wall
+          }
+        })
       }
     }
   }, [wsData, symbol])
@@ -423,11 +491,46 @@ export default function GammaIntelligence() {
         </div>
       </div>
 
-      {/* Data Date Display */}
-      {intelligence?.data_date && (
-        <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-3 py-1.5 rounded-lg w-fit">
-          <Clock className="w-4 h-4" />
-          <span>Market Data as of: <span className="font-semibold">{intelligence.data_date}</span></span>
+      {/* Bug #12 Fix: Data Date and Stale Data Indicator */}
+      {intelligence && (
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Data Date */}
+          {intelligence.data_date && (
+            <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-3 py-1.5 rounded-lg">
+              <Clock className="w-4 h-4" />
+              <span>Market Data as of: <span className="font-semibold">{intelligence.data_date}</span></span>
+            </div>
+          )}
+
+          {/* Bug #12 Fix: Stale Data Warning */}
+          {intelligence.data_source === 'database_fallback' && (
+            <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 px-3 py-1.5 rounded-lg">
+              <AlertCircle className="w-4 h-4" />
+              <span>Using cached data ({intelligence.data_age || 'unknown age'})</span>
+            </div>
+          )}
+
+          {/* Data Source Indicator */}
+          {intelligence.data_source && intelligence.data_source !== 'database_fallback' && (
+            <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg ${
+              intelligence.data_source === 'live_api' ? 'text-success bg-success/10' : 'text-primary bg-primary/10'
+            }`}>
+              <Activity className="w-4 h-4" />
+              <span>
+                {intelligence.data_source === 'live_api' ? 'Live API' :
+                 intelligence.data_source === 'tradier_calculated' ? 'Tradier (calculated)' :
+                 intelligence.data_source}
+              </span>
+            </div>
+          )}
+
+          {/* Retry Count Indicator */}
+          {retryCount > 0 && (
+            <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 px-3 py-1.5 rounded-lg">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              <span>Retrying... ({retryCount}/3)</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -536,7 +639,8 @@ export default function GammaIntelligence() {
                     <div>
                       <p className="text-text-secondary text-sm">GEX Ratio</p>
                       <p className="text-2xl font-bold text-text-primary mt-1">
-                        {intelligence.gamma_exposure_ratio.toFixed(2)}
+                        {/* Bug #14 Fix: Safe property access */}
+                        {(intelligence.gamma_exposure_ratio ?? 0).toFixed(2)}
                       </p>
                     </div>
                     <Activity className="text-primary w-8 h-8" />
@@ -801,7 +905,8 @@ export default function GammaIntelligence() {
                     Key Observations
                   </h2>
                   <ul className="space-y-2">
-                    {intelligence.key_observations.map((obs, idx) => (
+                    {/* Bug #14 Fix: Safe array access */}
+                    {(intelligence.key_observations || []).map((obs, idx) => (
                       <li key={idx} className="flex items-start gap-2 text-text-secondary">
                         <span className="text-primary mt-1">•</span>
                         <span>{obs}</span>
@@ -816,7 +921,8 @@ export default function GammaIntelligence() {
                     Trading Implications
                   </h2>
                   <ul className="space-y-2">
-                    {intelligence.trading_implications.map((impl, idx) => (
+                    {/* Bug #14 Fix: Safe array access */}
+                    {(intelligence.trading_implications || []).map((impl, idx) => (
                       <li key={idx} className="flex items-start gap-2 text-text-secondary">
                         <span className="text-success mt-1">•</span>
                         <span>{impl}</span>
@@ -833,13 +939,15 @@ export default function GammaIntelligence() {
                   <div className="p-4 bg-background-hover rounded-lg">
                     <p className="text-text-muted text-xs uppercase">Risk Reversal</p>
                     <p className="text-xl font-bold text-text-primary mt-1">
-                      {intelligence.risk_reversal.toFixed(3)}
+                      {/* Bug #14 Fix: Safe property access */}
+                      {(intelligence.risk_reversal ?? 0).toFixed(3)}
                     </p>
                   </div>
                   <div className="p-4 bg-background-hover rounded-lg">
                     <p className="text-text-muted text-xs uppercase">Skew Index</p>
                     <p className="text-xl font-bold text-text-primary mt-1">
-                      {intelligence.skew_index.toFixed(2)}
+                      {/* Bug #14 Fix: Safe property access */}
+                      {(intelligence.skew_index ?? 0).toFixed(2)}
                     </p>
                   </div>
                   <div className="p-4 bg-background-hover rounded-lg">
@@ -1002,7 +1110,8 @@ export default function GammaIntelligence() {
                     <div className="grid grid-cols-3 gap-4 p-4 bg-background-hover rounded-lg">
                       <div>
                         <p className="text-text-muted text-xs uppercase mb-1">Current Spot</p>
-                        <p className="text-xl font-bold text-primary">${intelligence.spot_price.toFixed(2)}</p>
+                        {/* Bug #14 Fix: Safe property access */}
+                        <p className="text-xl font-bold text-primary">${(intelligence.spot_price ?? 0).toFixed(2)}</p>
                       </div>
                       <div>
                         <p className="text-text-muted text-xs uppercase mb-1">Flip Point</p>
@@ -1010,8 +1119,9 @@ export default function GammaIntelligence() {
                       </div>
                       <div>
                         <p className="text-text-muted text-xs uppercase mb-1">Distance to Flip</p>
-                        <p className={`text-xl font-bold ${(intelligence.flip_point || 0) > intelligence.spot_price ? 'text-success' : 'text-danger'}`}>
-                          {intelligence.flip_point ? ((intelligence.flip_point - intelligence.spot_price) / intelligence.spot_price * 100).toFixed(2) : 'N/A'}%
+                        {/* Bug #14 Fix: Safe division (prevent divide by zero) */}
+                        <p className={`text-xl font-bold ${(intelligence.flip_point || 0) > (intelligence.spot_price || 0) ? 'text-success' : 'text-danger'}`}>
+                          {intelligence.flip_point && intelligence.spot_price ? ((intelligence.flip_point - intelligence.spot_price) / intelligence.spot_price * 100).toFixed(2) : 'N/A'}%
                         </p>
                       </div>
                     </div>
