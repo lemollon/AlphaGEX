@@ -350,13 +350,34 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
         _jobs[job_id]['completed_at'] = datetime.now().isoformat()
 
 
+def _sanitize_numeric(value, default=0.0, max_value=999999999.99):
+    """
+    Sanitize numeric value for PostgreSQL DECIMAL columns.
+    PostgreSQL DECIMAL does NOT accept NaN, Infinity, or -Infinity.
+    """
+    import math
+
+    if value is None:
+        return default
+
+    try:
+        num = float(value)
+        # Check for NaN and infinity
+        if math.isnan(num) or math.isinf(num):
+            return default if num != float('inf') else min(999.0, max_value)
+        # Clamp to max_value to prevent overflow
+        return min(max(num, -max_value), max_value)
+    except (TypeError, ValueError):
+        return default
+
+
 def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: str):
     """Save backtest results to database"""
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check if table exists, create if not
+        # Table should already exist, but create if not
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS zero_dte_backtest_results (
                 id SERIAL PRIMARY KEY,
@@ -388,6 +409,30 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
         t = results.get('trades', {})
         c = results.get('costs', {})
 
+        # Sanitize ALL numeric values - PostgreSQL DECIMAL rejects NaN/Infinity
+        initial_capital = _sanitize_numeric(s.get('initial_capital', config.initial_capital))
+        final_equity = _sanitize_numeric(s.get('final_equity', 0))
+        total_pnl = _sanitize_numeric(s.get('total_pnl', 0))
+        total_return_pct = _sanitize_numeric(s.get('total_return_pct', 0), max_value=99999999.99)
+        avg_monthly_return_pct = _sanitize_numeric(s.get('avg_monthly_return_pct', 0), max_value=99999999.99)
+        max_drawdown_pct = _sanitize_numeric(s.get('max_drawdown_pct', 0), max_value=99999999.99)
+
+        total_trades = int(t.get('total', 0)) if t.get('total') is not None else 0
+        win_rate = _sanitize_numeric(t.get('win_rate', 0), max_value=100.0)
+        profit_factor = _sanitize_numeric(t.get('profit_factor', 0), default=999.0, max_value=999.0)
+        avg_win = _sanitize_numeric(t.get('avg_win', 0))
+        avg_loss = _sanitize_numeric(t.get('avg_loss', 0))
+        total_costs = _sanitize_numeric(c.get('total_costs', 0))
+
+        # Properly serialize JSON using json.dumps() - NOT string conversion!
+        # This handles None -> null, True -> true, special chars, etc.
+        config_json = json.dumps(config.dict(), default=str)
+        tier_stats_json = json.dumps(results.get('tier_stats', {}), default=str)
+        monthly_returns_json = json.dumps(results.get('monthly_returns', {}), default=str)
+
+        # Debug logging
+        print(f"📝 KRONOS: Saving backtest - job_id={job_id}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
+
         cursor.execute("""
             INSERT INTO zero_dte_backtest_results (
                 job_id, strategy, ticker, start_date, end_date,
@@ -409,29 +454,34 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
             config.ticker,
             config.start_date,
             config.end_date,
-            s.get('initial_capital', config.initial_capital),
-            s.get('final_equity', 0),
-            s.get('total_pnl', 0),
-            s.get('total_return_pct', 0),
-            s.get('avg_monthly_return_pct', 0),
-            s.get('max_drawdown_pct', 0),
-            t.get('total', 0),
-            t.get('win_rate', 0),
-            t.get('profit_factor', 0) if t.get('profit_factor') != float('inf') else 999,
-            t.get('avg_win', 0),
-            t.get('avg_loss', 0),
-            c.get('total_costs', 0),
-            str(config.dict()).replace("'", '"'),
-            str(results.get('tier_stats', {})).replace("'", '"'),
-            str(results.get('monthly_returns', {})).replace("'", '"'),
+            initial_capital,
+            final_equity,
+            total_pnl,
+            total_return_pct,
+            avg_monthly_return_pct,
+            max_drawdown_pct,
+            total_trades,
+            win_rate,
+            profit_factor,
+            avg_win,
+            avg_loss,
+            total_costs,
+            config_json,
+            tier_stats_json,
+            monthly_returns_json,
         ))
 
         conn.commit()
         conn.close()
-        logger.info(f"Saved backtest results for job {job_id}")
+        logger.info(f"✅ Saved backtest results for job {job_id}")
+        print(f"✅ KRONOS: Saved backtest results to database (job_id: {job_id})", flush=True)
 
     except Exception as e:
-        logger.error(f"Failed to save results: {e}")
+        import traceback
+        error_detail = traceback.format_exc()
+        logger.error(f"❌ Failed to save backtest results: {e}\n{error_detail}")
+        print(f"❌ KRONOS: Failed to save results to database: {e}", flush=True)
+        print(f"   Error details: {error_detail}", flush=True)
 
 
 @router.post("/run")
