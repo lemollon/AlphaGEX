@@ -59,15 +59,14 @@ import warnings
 # Add parent to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Claude AI / LangChain imports
+# Claude AI - Direct Anthropic SDK (no LangChain needed!)
 try:
-    from langchain_anthropic import ChatAnthropic
-    from langchain.prompts import ChatPromptTemplate
-    from langchain_core.output_parsers import StrOutputParser
+    import anthropic
     CLAUDE_AVAILABLE = True
 except ImportError:
     CLAUDE_AVAILABLE = False
-    print("Info: LangChain/Claude not available. Install with: pip install langchain-anthropic")
+    anthropic = None
+    print("Info: Anthropic SDK not available. Install with: pip install anthropic")
 
 # ML imports
 try:
@@ -228,9 +227,75 @@ class ClaudeAnalysis:
 # CLAUDE AI ENHANCER
 # =============================================================================
 
+# =============================================================================
+# ORACLE LIVE LOG - For Frontend Transparency
+# =============================================================================
+
+class OracleLiveLog:
+    """
+    Live logging system for Oracle Claude AI interactions.
+    Stores recent logs for frontend transparency.
+    """
+    _instance = None
+    MAX_LOGS = 100
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._logs = []
+            cls._instance._callbacks = []
+        return cls._instance
+
+    def log(self, event_type: str, message: str, data: Optional[Dict] = None):
+        """Add a log entry"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "type": event_type,
+            "message": message,
+            "data": data
+        }
+        self._logs.append(entry)
+
+        # Keep only recent logs
+        if len(self._logs) > self.MAX_LOGS:
+            self._logs = self._logs[-self.MAX_LOGS:]
+
+        # Notify callbacks
+        for callback in self._callbacks:
+            try:
+                callback(entry)
+            except:
+                pass
+
+        # Also log to standard logger
+        logger.info(f"[ORACLE] {event_type}: {message}")
+
+    def get_logs(self, limit: int = 50) -> List[Dict]:
+        """Get recent logs"""
+        return self._logs[-limit:]
+
+    def clear(self):
+        """Clear all logs"""
+        self._logs = []
+
+    def add_callback(self, callback):
+        """Add callback for real-time log streaming"""
+        self._callbacks.append(callback)
+
+    def remove_callback(self, callback):
+        """Remove callback"""
+        if callback in self._callbacks:
+            self._callbacks.remove(callback)
+
+
+# Global live log instance
+oracle_live_log = OracleLiveLog()
+
+
 class OracleClaudeEnhancer:
     """
     Claude AI integration for Oracle predictions.
+    Uses direct Anthropic SDK (no LangChain needed!).
 
     Provides three key capabilities:
     1. Validate and enhance ML predictions with reasoning
@@ -242,27 +307,24 @@ class OracleClaudeEnhancer:
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize Claude AI enhancer"""
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        self._llm = None
+        # Check both ANTHROPIC_API_KEY and CLAUDE_API_KEY
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
+        self._client = None
         self._enabled = False
+        self.live_log = oracle_live_log
 
         if CLAUDE_AVAILABLE and self.api_key:
             try:
-                self._llm = ChatAnthropic(
-                    anthropic_api_key=self.api_key,
-                    model=self.CLAUDE_MODEL,
-                    temperature=0.3,  # Lower temp for more consistent analysis
-                    max_tokens=2048
-                )
+                self._client = anthropic.Anthropic(api_key=self.api_key)
                 self._enabled = True
-                logger.info(f"Claude AI enabled (model: {self.CLAUDE_MODEL})")
+                self.live_log.log("INIT", f"Claude AI enabled (model: {self.CLAUDE_MODEL})")
             except Exception as e:
-                logger.warning(f"Failed to initialize Claude: {e}")
+                self.live_log.log("ERROR", f"Failed to initialize Claude: {e}")
         else:
             if not CLAUDE_AVAILABLE:
-                logger.info("Claude AI not available (langchain not installed)")
+                self.live_log.log("WARN", "Claude AI not available (pip install anthropic)")
             elif not self.api_key:
-                logger.info("Claude AI not available (no API key)")
+                self.live_log.log("WARN", "Claude AI not available (no API key - set ANTHROPIC_API_KEY or CLAUDE_API_KEY)")
 
     @property
     def is_enabled(self) -> bool:
@@ -298,8 +360,9 @@ class OracleClaudeEnhancer:
                 recommendation="AGREE"
             )
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert options trading analyst validating ML predictions for the Oracle system.
+        day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+        system_prompt = """You are an expert options trading analyst validating ML predictions for the Oracle system.
 
 Your job is to review the ML model's prediction and market context, then:
 1. Identify any risk factors the ML model might have missed
@@ -307,21 +370,22 @@ Your job is to review the ML model's prediction and market context, then:
 3. Recommend whether to AGREE, ADJUST (small confidence change), or OVERRIDE (significant change)
 4. Suggest a confidence adjustment (-0.10 to +0.10)
 
-Be concise and data-driven. Focus on GEX regime, VIX levels, and day-of-week patterns."""),
-            ("human", """Validate this ML prediction for {bot_name}:
+Be concise and data-driven. Focus on GEX regime, VIX levels, and day-of-week patterns."""
+
+        user_prompt = f"""Validate this ML prediction for {bot_name.value}:
 
 MARKET CONTEXT:
-- Spot Price: ${spot_price:,.2f}
-- VIX: {vix:.1f}
-- VIX Change 1d: {vix_change:+.1f}%
-- GEX Regime: {gex_regime}
-- GEX Normalized: {gex_normalized:.6f}
-- Between GEX Walls: {between_walls}
-- Day of Week: {day_of_week}
+- Spot Price: ${context.spot_price:,.2f}
+- VIX: {context.vix:.1f}
+- VIX Change 1d: {context.vix_change_1d:+.1f}%
+- GEX Regime: {context.gex_regime.value}
+- GEX Normalized: {context.gex_normalized:.6f}
+- Between GEX Walls: {"Yes" if context.gex_between_walls else "No"}
+- Day of Week: {day_names[context.day_of_week]}
 
 ML PREDICTION:
-- Win Probability: {win_prob:.1%}
-- Top Factors: {top_factors}
+- Win Probability: {ml_prediction.get('win_probability', 0.68):.1%}
+- Top Factors: {ml_prediction.get('top_factors', [])}
 
 Provide your analysis in this format:
 ANALYSIS: [Your analysis in 2-3 sentences]
@@ -329,32 +393,36 @@ RISK_FACTORS: [Comma-separated list]
 OPPORTUNITIES: [Comma-separated list]
 CONFIDENCE_ADJUSTMENT: [Number between -0.10 and +0.10]
 RECOMMENDATION: [AGREE/ADJUST/OVERRIDE]
-OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]""")
-        ])
+OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
+
+        self.live_log.log("VALIDATE", f"Validating {bot_name.value} prediction...", {
+            "vix": context.vix,
+            "gex_regime": context.gex_regime.value,
+            "win_prob": ml_prediction.get('win_probability', 0.68)
+        })
 
         try:
-            chain = prompt | self._llm | StrOutputParser()
+            message = self._client.messages.create(
+                model=self.CLAUDE_MODEL,
+                max_tokens=1024,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ],
+                system=system_prompt
+            )
 
-            day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            response = message.content[0].text
+            result = self._parse_validation_response(response)
 
-            response = chain.invoke({
-                "bot_name": bot_name.value,
-                "spot_price": context.spot_price,
-                "vix": context.vix,
-                "vix_change": context.vix_change_1d,
-                "gex_regime": context.gex_regime.value,
-                "gex_normalized": context.gex_normalized,
-                "between_walls": "Yes" if context.gex_between_walls else "No",
-                "day_of_week": day_names[context.day_of_week],
-                "win_prob": ml_prediction.get('win_probability', 0.68),
-                "top_factors": str(ml_prediction.get('top_factors', []))
+            self.live_log.log("VALIDATE_DONE", f"Claude recommends: {result.recommendation}", {
+                "confidence_adj": result.confidence_adjustment,
+                "risk_factors": result.risk_factors
             })
 
-            # Parse response
-            return self._parse_validation_response(response)
+            return result
 
         except Exception as e:
-            logger.error(f"Claude validation failed: {e}")
+            self.live_log.log("ERROR", f"Claude validation failed: {e}")
             return ClaudeAnalysis(
                 analysis=f"Validation error: {str(e)}",
                 confidence_adjustment=0.0,
@@ -429,8 +497,9 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]""")
         if not self._enabled:
             return f"Oracle predicts {prediction.advice.value} with {prediction.win_probability:.1%} confidence. {prediction.reasoning}"
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are explaining Oracle's trading predictions to a human trader.
+        day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+        system_prompt = """You are explaining Oracle's trading predictions to a human trader.
 
 Write a clear, concise explanation (3-5 sentences) that:
 1. States the recommendation in plain English
@@ -438,47 +507,45 @@ Write a clear, concise explanation (3-5 sentences) that:
 3. Highlights any important risks or opportunities
 4. Gives actionable guidance
 
-Use a professional but approachable tone. Avoid jargon where possible."""),
-            ("human", """Explain this Oracle prediction for {bot_name}:
+Use a professional but approachable tone. Avoid jargon where possible."""
+
+        user_prompt = f"""Explain this Oracle prediction for {prediction.bot_name.value}:
 
 PREDICTION:
-- Advice: {advice}
-- Win Probability: {win_prob:.1%}
-- Suggested Risk %: {risk_pct:.1f}%
-- Use GEX Walls: {use_gex}
-- Model Reasoning: {reasoning}
+- Advice: {prediction.advice.value}
+- Win Probability: {prediction.win_probability:.1%}
+- Suggested Risk %: {prediction.suggested_risk_pct:.1f}%
+- Use GEX Walls: {"Yes" if prediction.use_gex_walls else "No"}
+- Model Reasoning: {prediction.reasoning}
 
 MARKET CONTEXT:
-- VIX: {vix:.1f}
-- GEX Regime: {gex_regime}
-- Day: {day_of_week}
-- Price between walls: {between_walls}
+- VIX: {context.vix:.1f}
+- GEX Regime: {context.gex_regime.value}
+- Day: {day_names[context.day_of_week]}
+- Price between walls: {"Yes" if context.gex_between_walls else "No"}
 
-Write a clear explanation for the trader.""")
-        ])
+Write a clear explanation for the trader."""
+
+        self.live_log.log("EXPLAIN", f"Generating explanation for {prediction.bot_name.value}...")
 
         try:
-            chain = prompt | self._llm | StrOutputParser()
+            message = self._client.messages.create(
+                model=self.CLAUDE_MODEL,
+                max_tokens=512,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ],
+                system=system_prompt
+            )
 
-            day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            explanation = message.content[0].text.strip()
 
-            explanation = chain.invoke({
-                "bot_name": prediction.bot_name.value,
-                "advice": prediction.advice.value,
-                "win_prob": prediction.win_probability,
-                "risk_pct": prediction.suggested_risk_pct,
-                "use_gex": "Yes" if prediction.use_gex_walls else "No",
-                "reasoning": prediction.reasoning,
-                "vix": context.vix,
-                "gex_regime": context.gex_regime.value,
-                "day_of_week": day_names[context.day_of_week],
-                "between_walls": "Yes" if context.gex_between_walls else "No"
-            })
+            self.live_log.log("EXPLAIN_DONE", f"Explanation generated ({len(explanation)} chars)")
 
-            return explanation.strip()
+            return explanation
 
         except Exception as e:
-            logger.error(f"Claude explanation failed: {e}")
+            self.live_log.log("ERROR", f"Claude explanation failed: {e}")
             return f"Oracle predicts {prediction.advice.value} with {prediction.win_probability:.1%} confidence. {prediction.reasoning}"
 
     # =========================================================================
@@ -545,8 +612,7 @@ Write a clear explanation for the trader.""")
                 "recommendations": []
             }
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a quantitative analyst reviewing trading data for pattern identification.
+        system_prompt = """You are a quantitative analyst reviewing trading data for pattern identification.
 
 Analyze the provided statistics and identify:
 1. Key patterns affecting win rate
@@ -554,8 +620,9 @@ Analyze the provided statistics and identify:
 3. Optimal trading conditions
 4. Actionable recommendations for the ML model
 
-Be specific and data-driven. Focus on actionable insights."""),
-            ("human", """Analyze these KRONOS backtest statistics:
+Be specific and data-driven. Focus on actionable insights."""
+
+        user_prompt = f"""Analyze these KRONOS backtest statistics:
 
 OVERALL PERFORMANCE:
 - Total Trades: {total_trades}
@@ -574,7 +641,7 @@ GEX REGIME STATS:
 {gex_stats}
 
 RECENT LOSSES (if any):
-{recent_losses}
+{recent_losses or "None"}
 
 Provide analysis in this format:
 PATTERNS:
@@ -591,29 +658,34 @@ OPTIMAL_CONDITIONS:
 RECOMMENDATIONS:
 1. [Recommendation 1]
 2. [Recommendation 2]
-3. [Recommendation 3]""")
-        ])
+3. [Recommendation 3]"""
+
+        self.live_log.log("PATTERNS", f"Analyzing {total_trades} trades for patterns...", {
+            "win_rate": win_rate,
+            "recent_win_rate": recent_win_rate
+        })
 
         try:
-            chain = prompt | self._llm | StrOutputParser()
+            message = self._client.messages.create(
+                model=self.CLAUDE_MODEL,
+                max_tokens=1024,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ],
+                system=system_prompt
+            )
 
-            response = chain.invoke({
-                "total_trades": total_trades,
-                "win_rate": win_rate,
-                "recent_win_rate": recent_win_rate,
-                "avg_vix": avg_vix,
-                "vix_win": vix_win,
-                "vix_loss": vix_loss,
-                "dow_stats": str(dow_stats),
-                "gex_stats": str(gex_stats),
-                "recent_losses": str(recent_losses or "None")
+            response = message.content[0].text
+            result = self._parse_pattern_response(response)
+
+            self.live_log.log("PATTERNS_DONE", f"Found {len(result.get('patterns', []))} patterns", {
+                "patterns": result.get('patterns', [])[:3]
             })
 
-            # Parse response
-            return self._parse_pattern_response(response)
+            return result
 
         except Exception as e:
-            logger.error(f"Claude pattern analysis failed: {e}")
+            self.live_log.log("ERROR", f"Claude pattern analysis failed: {e}")
             return {
                 "success": False,
                 "error": str(e),

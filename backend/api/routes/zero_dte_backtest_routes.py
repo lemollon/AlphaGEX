@@ -1911,6 +1911,54 @@ async def oracle_explain(request: OracleExplainRequest):
         }
 
 
+@router.get("/oracle/logs")
+async def get_oracle_logs(limit: int = 50):
+    """
+    Get Oracle live logs for frontend transparency.
+
+    Returns recent Claude AI interactions, validations, and analyses.
+    Use this for real-time monitoring of Oracle's reasoning.
+    """
+    try:
+        from quant.oracle_advisor import oracle_live_log
+
+        logs = oracle_live_log.get_logs(limit=limit)
+
+        return {
+            "success": True,
+            "logs": logs,
+            "count": len(logs)
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}",
+            "logs": []
+        }
+    except Exception as e:
+        logger.error(f"Failed to get Oracle logs: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "logs": []
+        }
+
+
+@router.delete("/oracle/logs")
+async def clear_oracle_logs():
+    """Clear Oracle live logs"""
+    try:
+        from quant.oracle_advisor import oracle_live_log
+
+        oracle_live_log.clear()
+
+        return {"success": True, "message": "Logs cleared"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @router.post("/oracle/analyze-patterns")
 async def oracle_analyze_patterns(job_id: Optional[str] = None):
     """
