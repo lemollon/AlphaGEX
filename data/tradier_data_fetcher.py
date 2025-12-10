@@ -481,9 +481,28 @@ class TradierDataFetcher:
     # ==================== ACCOUNT & POSITIONS ====================
 
     def get_account_balance(self) -> Dict:
-        """Get account balance and buying power"""
+        """Get account balance and buying power.
+
+        Flattens the nested margin/cash structure so option_buying_power
+        is accessible at the top level for both margin and cash accounts.
+        """
         response = self._make_request('GET', f'accounts/{self.account_id}/balances')
-        return response.get('balances', {})
+        balances = response.get('balances', {})
+
+        # Flatten margin data (option_buying_power is nested inside 'margin')
+        margin = balances.get('margin', {})
+        if margin:
+            balances['option_buying_power'] = margin.get('option_buying_power', 0)
+            balances['stock_buying_power'] = margin.get('stock_buying_power', 0)
+            balances['day_trade_buying_power'] = margin.get('stock_buying_power', 0)  # Approximation
+
+        # Also check cash account structure
+        cash = balances.get('cash', {})
+        if cash and 'option_buying_power' not in balances:
+            balances['option_buying_power'] = cash.get('cash_available', 0)
+            balances['stock_buying_power'] = cash.get('cash_available', 0)
+
+        return balances
 
     def get_positions(self) -> List[AccountPosition]:
         """Get current positions"""
