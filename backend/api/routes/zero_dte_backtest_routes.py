@@ -356,7 +356,7 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check if table exists, create if not
+        # Table should already exist, but create if not
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS zero_dte_backtest_results (
                 id SERIAL PRIMARY KEY,
@@ -388,6 +388,21 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
         t = results.get('trades', {})
         c = results.get('costs', {})
 
+        # Handle profit_factor edge cases (infinity, None, etc.)
+        profit_factor = t.get('profit_factor', 0)
+        if profit_factor is None or profit_factor == float('inf') or profit_factor == float('-inf'):
+            profit_factor = 999.0
+        try:
+            profit_factor = float(profit_factor)
+        except (TypeError, ValueError):
+            profit_factor = 0.0
+
+        # Properly serialize JSON using json.dumps() - NOT string conversion!
+        # This handles None -> null, True -> true, special chars, etc.
+        config_json = json.dumps(config.dict(), default=str)
+        tier_stats_json = json.dumps(results.get('tier_stats', {}), default=str)
+        monthly_returns_json = json.dumps(results.get('monthly_returns', {}), default=str)
+
         cursor.execute("""
             INSERT INTO zero_dte_backtest_results (
                 job_id, strategy, ticker, start_date, end_date,
@@ -417,21 +432,26 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
             s.get('max_drawdown_pct', 0),
             t.get('total', 0),
             t.get('win_rate', 0),
-            t.get('profit_factor', 0) if t.get('profit_factor') != float('inf') else 999,
+            profit_factor,
             t.get('avg_win', 0),
             t.get('avg_loss', 0),
             c.get('total_costs', 0),
-            str(config.dict()).replace("'", '"'),
-            str(results.get('tier_stats', {})).replace("'", '"'),
-            str(results.get('monthly_returns', {})).replace("'", '"'),
+            config_json,
+            tier_stats_json,
+            monthly_returns_json,
         ))
 
         conn.commit()
         conn.close()
-        logger.info(f"Saved backtest results for job {job_id}")
+        logger.info(f"✅ Saved backtest results for job {job_id}")
+        print(f"✅ KRONOS: Saved backtest results to database (job_id: {job_id})", flush=True)
 
     except Exception as e:
-        logger.error(f"Failed to save results: {e}")
+        import traceback
+        error_detail = traceback.format_exc()
+        logger.error(f"❌ Failed to save backtest results: {e}\n{error_detail}")
+        print(f"❌ KRONOS: Failed to save results to database: {e}", flush=True)
+        print(f"   Error details: {error_detail}", flush=True)
 
 
 @router.post("/run")
