@@ -325,6 +325,178 @@ class TestComparisonScript:
             pytest.skip(f"Comparison script not available: {e}")
 
 
+class TestOracleClaudeIntegration:
+    """Test Oracle Claude AI integration"""
+
+    def test_oracle_claude_enhancer_import(self):
+        """Test OracleClaudeEnhancer can be imported"""
+        try:
+            from quant.oracle_advisor import OracleClaudeEnhancer, ClaudeAnalysis
+            assert OracleClaudeEnhancer is not None
+            assert ClaudeAnalysis is not None
+        except ImportError as e:
+            pytest.skip(f"Oracle Claude not available: {e}")
+
+    def test_oracle_claude_available_property(self):
+        """Test Oracle has claude_available property"""
+        from quant.oracle_advisor import get_oracle
+
+        oracle = get_oracle()
+
+        # Should have the property even if Claude is not configured
+        assert hasattr(oracle, 'claude_available')
+        assert isinstance(oracle.claude_available, bool)
+
+    def test_oracle_explain_prediction_fallback(self):
+        """Test explain_prediction returns fallback when Claude unavailable"""
+        from quant.oracle_advisor import (
+            OracleAdvisor, MarketContext, GEXRegime,
+            OraclePrediction, BotName, TradingAdvice
+        )
+
+        # Create Oracle with Claude disabled
+        oracle = OracleAdvisor(enable_claude=False)
+
+        context = MarketContext(
+            spot_price=5000.0,
+            vix=20.0,
+            gex_regime=GEXRegime.POSITIVE,
+            day_of_week=2
+        )
+
+        prediction = OraclePrediction(
+            bot_name=BotName.ARES,
+            advice=TradingAdvice.TRADE_FULL,
+            win_probability=0.72,
+            confidence=85.0,
+            suggested_risk_pct=5.0,
+            suggested_sd_multiplier=1.0,
+            reasoning="Test reasoning"
+        )
+
+        explanation = oracle.explain_prediction(prediction, context)
+
+        # Should return a string even without Claude
+        assert isinstance(explanation, str)
+        assert len(explanation) > 0
+        assert "TRADE_FULL" in explanation
+
+    def test_oracle_get_claude_analysis_returns_none_when_disabled(self):
+        """Test get_claude_analysis returns None when Claude disabled"""
+        from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+
+        oracle = OracleAdvisor(enable_claude=False)
+
+        context = MarketContext(
+            spot_price=5000.0,
+            vix=20.0,
+            gex_regime=GEXRegime.POSITIVE,
+            day_of_week=2
+        )
+
+        analysis = oracle.get_claude_analysis(context)
+        assert analysis is None
+
+    def test_oracle_analyze_patterns_returns_error_when_disabled(self):
+        """Test analyze_patterns returns error when Claude disabled"""
+        from quant.oracle_advisor import OracleAdvisor
+
+        oracle = OracleAdvisor(enable_claude=False)
+
+        result = oracle.analyze_patterns()
+
+        assert result['success'] is False
+        assert 'error' in result
+        assert 'not available' in result['error'].lower()
+
+    def test_oracle_ares_advice_with_claude_validation_disabled(self):
+        """Test ARES advice works with Claude validation explicitly disabled"""
+        from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+
+        oracle = OracleAdvisor(enable_claude=False)
+
+        context = MarketContext(
+            spot_price=5000.0,
+            vix=20.0,
+            gex_regime=GEXRegime.POSITIVE,
+            gex_call_wall=5050.0,
+            gex_put_wall=4950.0,
+            gex_between_walls=True,
+            day_of_week=2
+        )
+
+        # Should work without Claude
+        advice = oracle.get_ares_advice(
+            context,
+            use_gex_walls=True,
+            use_claude_validation=False
+        )
+
+        assert advice is not None
+        assert advice.win_probability > 0
+        assert advice.suggested_risk_pct >= 0
+
+    def test_claude_analysis_dataclass(self):
+        """Test ClaudeAnalysis dataclass structure"""
+        from quant.oracle_advisor import ClaudeAnalysis
+
+        analysis = ClaudeAnalysis(
+            analysis="Test analysis",
+            confidence_adjustment=0.05,
+            risk_factors=["Risk 1", "Risk 2"],
+            opportunities=["Opp 1"],
+            recommendation="AGREE"
+        )
+
+        assert analysis.analysis == "Test analysis"
+        assert analysis.confidence_adjustment == 0.05
+        assert len(analysis.risk_factors) == 2
+        assert analysis.recommendation == "AGREE"
+        assert analysis.override_advice is None
+
+
+class TestOracleConvenienceFunctions:
+    """Test Oracle convenience functions"""
+
+    def test_explain_oracle_advice_function(self):
+        """Test explain_oracle_advice convenience function"""
+        from quant.oracle_advisor import (
+            explain_oracle_advice, MarketContext, GEXRegime,
+            OraclePrediction, BotName, TradingAdvice
+        )
+
+        context = MarketContext(
+            spot_price=5000.0,
+            vix=20.0,
+            gex_regime=GEXRegime.NEUTRAL,
+            day_of_week=2
+        )
+
+        prediction = OraclePrediction(
+            bot_name=BotName.ARES,
+            advice=TradingAdvice.TRADE_REDUCED,
+            win_probability=0.60,
+            confidence=70.0,
+            suggested_risk_pct=3.0,
+            suggested_sd_multiplier=1.2,
+            reasoning="Medium confidence"
+        )
+
+        explanation = explain_oracle_advice(prediction, context)
+        assert isinstance(explanation, str)
+        assert len(explanation) > 0
+
+    def test_analyze_kronos_patterns_function(self):
+        """Test analyze_kronos_patterns convenience function"""
+        from quant.oracle_advisor import analyze_kronos_patterns
+
+        # Should return error dict when Claude not available
+        result = analyze_kronos_patterns({})
+        assert isinstance(result, dict)
+        # Either succeeds or returns error
+        assert 'success' in result or 'error' in result
+
+
 # Standalone test runner
 if __name__ == "__main__":
     print("=" * 80)

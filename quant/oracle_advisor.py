@@ -59,6 +59,16 @@ import warnings
 # Add parent to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Claude AI / LangChain imports
+try:
+    from langchain_anthropic import ChatAnthropic
+    from langchain.prompts import ChatPromptTemplate
+    from langchain_core.output_parsers import StrOutputParser
+    CLAUDE_AVAILABLE = True
+except ImportError:
+    CLAUDE_AVAILABLE = False
+    print("Info: LangChain/Claude not available. Install with: pip install langchain-anthropic")
+
 # ML imports
 try:
     import numpy as np
@@ -203,6 +213,448 @@ class TrainingMetrics:
     model_version: str
 
 
+@dataclass
+class ClaudeAnalysis:
+    """Claude AI analysis result"""
+    analysis: str
+    confidence_adjustment: float  # -0.1 to +0.1 adjustment
+    risk_factors: List[str]
+    opportunities: List[str]
+    recommendation: str  # "AGREE", "ADJUST", "OVERRIDE"
+    override_advice: Optional[str] = None
+
+
+# =============================================================================
+# CLAUDE AI ENHANCER
+# =============================================================================
+
+class OracleClaudeEnhancer:
+    """
+    Claude AI integration for Oracle predictions.
+
+    Provides three key capabilities:
+    1. Validate and enhance ML predictions with reasoning
+    2. Explain Oracle reasoning in natural language
+    3. Identify patterns in training data
+    """
+
+    CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # Haiku 4.5
+
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize Claude AI enhancer"""
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self._llm = None
+        self._enabled = False
+
+        if CLAUDE_AVAILABLE and self.api_key:
+            try:
+                self._llm = ChatAnthropic(
+                    anthropic_api_key=self.api_key,
+                    model=self.CLAUDE_MODEL,
+                    temperature=0.3,  # Lower temp for more consistent analysis
+                    max_tokens=2048
+                )
+                self._enabled = True
+                logger.info(f"Claude AI enabled (model: {self.CLAUDE_MODEL})")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Claude: {e}")
+        else:
+            if not CLAUDE_AVAILABLE:
+                logger.info("Claude AI not available (langchain not installed)")
+            elif not self.api_key:
+                logger.info("Claude AI not available (no API key)")
+
+    @property
+    def is_enabled(self) -> bool:
+        return self._enabled
+
+    # =========================================================================
+    # 1. VALIDATE/ENHANCE ML PREDICTIONS
+    # =========================================================================
+
+    def validate_prediction(
+        self,
+        context: 'MarketContext',
+        ml_prediction: Dict[str, Any],
+        bot_name: BotName
+    ) -> ClaudeAnalysis:
+        """
+        Use Claude to validate and potentially adjust ML prediction.
+
+        Args:
+            context: Current market conditions
+            ml_prediction: ML model's prediction dict
+            bot_name: Which bot is requesting advice
+
+        Returns:
+            ClaudeAnalysis with validation result
+        """
+        if not self._enabled:
+            return ClaudeAnalysis(
+                analysis="Claude AI not available",
+                confidence_adjustment=0.0,
+                risk_factors=[],
+                opportunities=[],
+                recommendation="AGREE"
+            )
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert options trading analyst validating ML predictions for the Oracle system.
+
+Your job is to review the ML model's prediction and market context, then:
+1. Identify any risk factors the ML model might have missed
+2. Identify opportunities the context suggests
+3. Recommend whether to AGREE, ADJUST (small confidence change), or OVERRIDE (significant change)
+4. Suggest a confidence adjustment (-0.10 to +0.10)
+
+Be concise and data-driven. Focus on GEX regime, VIX levels, and day-of-week patterns."""),
+            ("human", """Validate this ML prediction for {bot_name}:
+
+MARKET CONTEXT:
+- Spot Price: ${spot_price:,.2f}
+- VIX: {vix:.1f}
+- VIX Change 1d: {vix_change:+.1f}%
+- GEX Regime: {gex_regime}
+- GEX Normalized: {gex_normalized:.6f}
+- Between GEX Walls: {between_walls}
+- Day of Week: {day_of_week}
+
+ML PREDICTION:
+- Win Probability: {win_prob:.1%}
+- Top Factors: {top_factors}
+
+Provide your analysis in this format:
+ANALYSIS: [Your analysis in 2-3 sentences]
+RISK_FACTORS: [Comma-separated list]
+OPPORTUNITIES: [Comma-separated list]
+CONFIDENCE_ADJUSTMENT: [Number between -0.10 and +0.10]
+RECOMMENDATION: [AGREE/ADJUST/OVERRIDE]
+OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]""")
+        ])
+
+        try:
+            chain = prompt | self._llm | StrOutputParser()
+
+            day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+            response = chain.invoke({
+                "bot_name": bot_name.value,
+                "spot_price": context.spot_price,
+                "vix": context.vix,
+                "vix_change": context.vix_change_1d,
+                "gex_regime": context.gex_regime.value,
+                "gex_normalized": context.gex_normalized,
+                "between_walls": "Yes" if context.gex_between_walls else "No",
+                "day_of_week": day_names[context.day_of_week],
+                "win_prob": ml_prediction.get('win_probability', 0.68),
+                "top_factors": str(ml_prediction.get('top_factors', []))
+            })
+
+            # Parse response
+            return self._parse_validation_response(response)
+
+        except Exception as e:
+            logger.error(f"Claude validation failed: {e}")
+            return ClaudeAnalysis(
+                analysis=f"Validation error: {str(e)}",
+                confidence_adjustment=0.0,
+                risk_factors=[],
+                opportunities=[],
+                recommendation="AGREE"
+            )
+
+    def _parse_validation_response(self, response: str) -> ClaudeAnalysis:
+        """Parse Claude's validation response"""
+        lines = response.strip().split('\n')
+
+        analysis = ""
+        risk_factors = []
+        opportunities = []
+        confidence_adj = 0.0
+        recommendation = "AGREE"
+        override_advice = None
+
+        for line in lines:
+            line = line.strip()
+            if line.startswith("ANALYSIS:"):
+                analysis = line.replace("ANALYSIS:", "").strip()
+            elif line.startswith("RISK_FACTORS:"):
+                factors = line.replace("RISK_FACTORS:", "").strip()
+                risk_factors = [f.strip() for f in factors.split(",") if f.strip()]
+            elif line.startswith("OPPORTUNITIES:"):
+                opps = line.replace("OPPORTUNITIES:", "").strip()
+                opportunities = [o.strip() for o in opps.split(",") if o.strip()]
+            elif line.startswith("CONFIDENCE_ADJUSTMENT:"):
+                try:
+                    adj_str = line.replace("CONFIDENCE_ADJUSTMENT:", "").strip()
+                    confidence_adj = float(adj_str)
+                    confidence_adj = max(-0.10, min(0.10, confidence_adj))
+                except ValueError:
+                    confidence_adj = 0.0
+            elif line.startswith("RECOMMENDATION:"):
+                rec = line.replace("RECOMMENDATION:", "").strip().upper()
+                if rec in ["AGREE", "ADJUST", "OVERRIDE"]:
+                    recommendation = rec
+            elif line.startswith("OVERRIDE_ADVICE:"):
+                override_advice = line.replace("OVERRIDE_ADVICE:", "").strip()
+
+        return ClaudeAnalysis(
+            analysis=analysis,
+            confidence_adjustment=confidence_adj,
+            risk_factors=risk_factors,
+            opportunities=opportunities,
+            recommendation=recommendation,
+            override_advice=override_advice
+        )
+
+    # =========================================================================
+    # 2. EXPLAIN ORACLE REASONING
+    # =========================================================================
+
+    def explain_prediction(
+        self,
+        prediction: 'OraclePrediction',
+        context: 'MarketContext'
+    ) -> str:
+        """
+        Generate natural language explanation of Oracle's prediction.
+
+        Args:
+            prediction: The Oracle prediction to explain
+            context: Market context used for prediction
+
+        Returns:
+            Human-readable explanation string
+        """
+        if not self._enabled:
+            return f"Oracle predicts {prediction.advice.value} with {prediction.win_probability:.1%} confidence. {prediction.reasoning}"
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are explaining Oracle's trading predictions to a human trader.
+
+Write a clear, concise explanation (3-5 sentences) that:
+1. States the recommendation in plain English
+2. Explains the key factors driving the decision
+3. Highlights any important risks or opportunities
+4. Gives actionable guidance
+
+Use a professional but approachable tone. Avoid jargon where possible."""),
+            ("human", """Explain this Oracle prediction for {bot_name}:
+
+PREDICTION:
+- Advice: {advice}
+- Win Probability: {win_prob:.1%}
+- Suggested Risk %: {risk_pct:.1f}%
+- Use GEX Walls: {use_gex}
+- Model Reasoning: {reasoning}
+
+MARKET CONTEXT:
+- VIX: {vix:.1f}
+- GEX Regime: {gex_regime}
+- Day: {day_of_week}
+- Price between walls: {between_walls}
+
+Write a clear explanation for the trader.""")
+        ])
+
+        try:
+            chain = prompt | self._llm | StrOutputParser()
+
+            day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+            explanation = chain.invoke({
+                "bot_name": prediction.bot_name.value,
+                "advice": prediction.advice.value,
+                "win_prob": prediction.win_probability,
+                "risk_pct": prediction.suggested_risk_pct,
+                "use_gex": "Yes" if prediction.use_gex_walls else "No",
+                "reasoning": prediction.reasoning,
+                "vix": context.vix,
+                "gex_regime": context.gex_regime.value,
+                "day_of_week": day_names[context.day_of_week],
+                "between_walls": "Yes" if context.gex_between_walls else "No"
+            })
+
+            return explanation.strip()
+
+        except Exception as e:
+            logger.error(f"Claude explanation failed: {e}")
+            return f"Oracle predicts {prediction.advice.value} with {prediction.win_probability:.1%} confidence. {prediction.reasoning}"
+
+    # =========================================================================
+    # 3. IDENTIFY PATTERNS IN TRAINING DATA
+    # =========================================================================
+
+    def analyze_training_patterns(
+        self,
+        df: 'pd.DataFrame',
+        recent_losses: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
+        """
+        Use Claude to identify patterns in KRONOS training data.
+
+        Args:
+            df: Training DataFrame with features and outcomes
+            recent_losses: Optional list of recent losing trades
+
+        Returns:
+            Dict with pattern analysis and recommendations
+        """
+        if not self._enabled:
+            return {
+                "success": False,
+                "error": "Claude AI not available",
+                "patterns": [],
+                "recommendations": []
+            }
+
+        if not ML_AVAILABLE or df is None or len(df) == 0:
+            return {
+                "success": False,
+                "error": "No training data available",
+                "patterns": [],
+                "recommendations": []
+            }
+
+        # Calculate summary statistics for Claude
+        try:
+            total_trades = len(df)
+            win_rate = df['is_win'].mean() * 100
+            avg_vix = df['vix'].mean()
+            vix_win = df[df['is_win'] == True]['vix'].mean() if 'is_win' in df.columns else avg_vix
+            vix_loss = df[df['is_win'] == False]['vix'].mean() if 'is_win' in df.columns else avg_vix
+
+            # Day of week analysis
+            dow_stats = df.groupby('day_of_week')['is_win'].agg(['count', 'mean']).to_dict()
+
+            # GEX regime analysis (if available)
+            gex_stats = {}
+            if 'gex_regime_positive' in df.columns:
+                gex_stats = df.groupby('gex_regime_positive')['is_win'].agg(['count', 'mean']).to_dict()
+
+            # Recent performance
+            recent_30 = df.tail(30)
+            recent_win_rate = recent_30['is_win'].mean() * 100 if len(recent_30) > 0 else win_rate
+
+        except Exception as e:
+            logger.error(f"Failed to calculate stats: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "patterns": [],
+                "recommendations": []
+            }
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a quantitative analyst reviewing trading data for pattern identification.
+
+Analyze the provided statistics and identify:
+1. Key patterns affecting win rate
+2. Conditions that lead to losses
+3. Optimal trading conditions
+4. Actionable recommendations for the ML model
+
+Be specific and data-driven. Focus on actionable insights."""),
+            ("human", """Analyze these KRONOS backtest statistics:
+
+OVERALL PERFORMANCE:
+- Total Trades: {total_trades}
+- Win Rate: {win_rate:.1f}%
+- Recent 30-Day Win Rate: {recent_win_rate:.1f}%
+
+VIX ANALYSIS:
+- Average VIX: {avg_vix:.1f}
+- Avg VIX on Wins: {vix_win:.1f}
+- Avg VIX on Losses: {vix_loss:.1f}
+
+DAY OF WEEK STATS:
+{dow_stats}
+
+GEX REGIME STATS:
+{gex_stats}
+
+RECENT LOSSES (if any):
+{recent_losses}
+
+Provide analysis in this format:
+PATTERNS:
+1. [Pattern 1]
+2. [Pattern 2]
+3. [Pattern 3]
+
+LOSS_CONDITIONS:
+- [Condition that leads to losses]
+
+OPTIMAL_CONDITIONS:
+- [Best conditions for trading]
+
+RECOMMENDATIONS:
+1. [Recommendation 1]
+2. [Recommendation 2]
+3. [Recommendation 3]""")
+        ])
+
+        try:
+            chain = prompt | self._llm | StrOutputParser()
+
+            response = chain.invoke({
+                "total_trades": total_trades,
+                "win_rate": win_rate,
+                "recent_win_rate": recent_win_rate,
+                "avg_vix": avg_vix,
+                "vix_win": vix_win,
+                "vix_loss": vix_loss,
+                "dow_stats": str(dow_stats),
+                "gex_stats": str(gex_stats),
+                "recent_losses": str(recent_losses or "None")
+            })
+
+            # Parse response
+            return self._parse_pattern_response(response)
+
+        except Exception as e:
+            logger.error(f"Claude pattern analysis failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "patterns": [],
+                "recommendations": []
+            }
+
+    def _parse_pattern_response(self, response: str) -> Dict[str, Any]:
+        """Parse Claude's pattern analysis response"""
+        result = {
+            "success": True,
+            "patterns": [],
+            "loss_conditions": [],
+            "optimal_conditions": [],
+            "recommendations": [],
+            "raw_analysis": response
+        }
+
+        current_section = None
+        lines = response.strip().split('\n')
+
+        for line in lines:
+            line = line.strip()
+
+            if line.startswith("PATTERNS:"):
+                current_section = "patterns"
+            elif line.startswith("LOSS_CONDITIONS:"):
+                current_section = "loss_conditions"
+            elif line.startswith("OPTIMAL_CONDITIONS:"):
+                current_section = "optimal_conditions"
+            elif line.startswith("RECOMMENDATIONS:"):
+                current_section = "recommendations"
+            elif line and current_section:
+                # Remove leading numbers and dashes
+                cleaned = line.lstrip("0123456789.-) ").strip()
+                if cleaned:
+                    result[current_section].append(cleaned)
+
+        return result
+
+
 # =============================================================================
 # ORACLE ADVISOR
 # =============================================================================
@@ -249,7 +701,7 @@ class OracleAdvisor:
 
     MODEL_PATH = os.path.join(os.path.dirname(__file__), '.models')
 
-    def __init__(self):
+    def __init__(self, enable_claude: bool = True):
         self.model = None
         self.calibrated_model = None
         self.scaler = None
@@ -262,11 +714,22 @@ class OracleAdvisor:
         self.high_confidence_threshold = 0.70
         self.low_confidence_threshold = 0.55
 
+        # Claude AI Enhancer
+        self.claude: Optional[OracleClaudeEnhancer] = None
+        self._claude_enabled = enable_claude
+        if enable_claude:
+            self.claude = OracleClaudeEnhancer()
+
         # Create models directory
         os.makedirs(self.MODEL_PATH, exist_ok=True)
 
         # Try to load existing model
         self._load_model()
+
+    @property
+    def claude_available(self) -> bool:
+        """Check if Claude AI is available and enabled"""
+        return self.claude is not None and self.claude.is_enabled
 
     # =========================================================================
     # MODEL PERSISTENCE
@@ -324,7 +787,8 @@ class OracleAdvisor:
     def get_ares_advice(
         self,
         context: MarketContext,
-        use_gex_walls: bool = False
+        use_gex_walls: bool = False,
+        use_claude_validation: bool = True
     ) -> OraclePrediction:
         """
         Get Iron Condor advice for ARES.
@@ -332,6 +796,7 @@ class OracleAdvisor:
         Args:
             context: Current market conditions
             use_gex_walls: Whether to suggest strikes based on GEX walls
+            use_claude_validation: Whether to use Claude AI to validate prediction
 
         Returns:
             OraclePrediction with IC-specific advice
@@ -363,6 +828,24 @@ class OracleAdvisor:
         else:
             reasoning_parts.append("Price outside GEX walls (breakout risk)")
             base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - 0.03)
+
+        # =========================================================================
+        # CLAUDE AI VALIDATION (if enabled)
+        # =========================================================================
+        claude_analysis = None
+        if use_claude_validation and self.claude_available:
+            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.ARES)
+
+            # Apply Claude's confidence adjustment
+            if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
+                base_pred['win_probability'] = max(0.40, min(0.85,
+                    base_pred['win_probability'] + claude_analysis.confidence_adjustment
+                ))
+                reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
+
+                # Log risk factors
+                if claude_analysis.risk_factors:
+                    logger.info(f"Claude risk factors: {claude_analysis.risk_factors}")
 
         # Determine final advice
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
@@ -564,6 +1047,90 @@ class OracleAdvisor:
             return TradingAdvice.SKIP_TODAY, 0.0
 
     # =========================================================================
+    # CLAUDE AI METHODS
+    # =========================================================================
+
+    def explain_prediction(
+        self,
+        prediction: OraclePrediction,
+        context: MarketContext
+    ) -> str:
+        """
+        Get natural language explanation of prediction using Claude AI.
+
+        Args:
+            prediction: Oracle prediction to explain
+            context: Market context used for prediction
+
+        Returns:
+            Human-readable explanation string
+        """
+        if self.claude_available:
+            return self.claude.explain_prediction(prediction, context)
+        else:
+            return f"Oracle predicts {prediction.advice.value} with {prediction.win_probability:.1%} confidence. {prediction.reasoning}"
+
+    def get_claude_analysis(
+        self,
+        context: MarketContext,
+        bot_name: BotName = BotName.ARES
+    ) -> Optional[ClaudeAnalysis]:
+        """
+        Get standalone Claude AI analysis of market conditions.
+
+        Args:
+            context: Current market conditions
+            bot_name: Which bot is requesting analysis
+
+        Returns:
+            ClaudeAnalysis or None if Claude unavailable
+        """
+        if not self.claude_available:
+            return None
+
+        # Get base prediction first
+        base_pred = self._get_base_prediction(context)
+        return self.claude.validate_prediction(context, base_pred, bot_name)
+
+    def analyze_patterns(
+        self,
+        backtest_results: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Use Claude to analyze patterns in training data.
+
+        Args:
+            backtest_results: Optional KRONOS results (will extract features if provided)
+
+        Returns:
+            Dict with pattern analysis
+        """
+        if not self.claude_available:
+            return {
+                "success": False,
+                "error": "Claude AI not available",
+                "patterns": [],
+                "recommendations": []
+            }
+
+        # Extract features if backtest results provided
+        df = None
+        if backtest_results:
+            try:
+                df = self.extract_features_from_kronos(backtest_results)
+            except Exception as e:
+                logger.error(f"Failed to extract features: {e}")
+
+        # Get recent losses for analysis
+        recent_losses = None
+        if df is not None and 'is_win' in df.columns:
+            losses = df[df['is_win'] == False].tail(10)
+            if len(losses) > 0:
+                recent_losses = losses.to_dict('records')
+
+        return self.claude.analyze_training_patterns(df, recent_losses)
+
+    # =========================================================================
     # TRAINING
     # =========================================================================
 
@@ -763,6 +1330,23 @@ class OracleAdvisor:
         logger.info(f"  AUC-ROC: {self.training_metrics.auc_roc:.3f}")
         logger.info(f"  Win Rate: {self.training_metrics.win_rate_actual:.2%}")
 
+        # =========================================================================
+        # CLAUDE PATTERN ANALYSIS (if enabled)
+        # =========================================================================
+        if self.claude_available:
+            logger.info("Running Claude AI pattern analysis...")
+            try:
+                pattern_analysis = self.claude.analyze_training_patterns(df)
+                if pattern_analysis.get('success'):
+                    logger.info("Claude identified patterns:")
+                    for pattern in pattern_analysis.get('patterns', [])[:3]:
+                        logger.info(f"  - {pattern}")
+                    logger.info("Claude recommendations:")
+                    for rec in pattern_analysis.get('recommendations', [])[:3]:
+                        logger.info(f"  - {rec}")
+            except Exception as e:
+                logger.warning(f"Claude pattern analysis failed: {e}")
+
         return self.training_metrics
 
     # =========================================================================
@@ -939,14 +1523,30 @@ def train_from_backtest(backtest_results: Dict[str, Any]) -> TrainingMetrics:
     return oracle.train_from_kronos(backtest_results)
 
 
+def explain_oracle_advice(
+    prediction: OraclePrediction,
+    context: MarketContext
+) -> str:
+    """Get Claude AI explanation of Oracle prediction"""
+    oracle = get_oracle()
+    return oracle.explain_prediction(prediction, context)
+
+
+def analyze_kronos_patterns(backtest_results: Dict[str, Any]) -> Dict[str, Any]:
+    """Use Claude to analyze patterns in KRONOS backtest results"""
+    oracle = get_oracle()
+    return oracle.analyze_patterns(backtest_results)
+
+
 if __name__ == "__main__":
     print("=" * 60)
-    print("ORACLE - Multi-Strategy ML Advisor")
+    print("ORACLE - Multi-Strategy ML Advisor with Claude AI")
     print("=" * 60)
 
     oracle = get_oracle()
     print(f"Model loaded: {oracle.is_trained}")
     print(f"Version: {oracle.model_version}")
+    print(f"Claude AI: {'ENABLED' if oracle.claude_available else 'DISABLED'}")
 
     # Demo predictions
     print("\n--- ARES Advice Demo ---")
@@ -960,7 +1560,8 @@ if __name__ == "__main__":
         gex_between_walls=True
     )
 
-    advice = oracle.get_ares_advice(context, use_gex_walls=True)
+    # Get advice with Claude validation
+    advice = oracle.get_ares_advice(context, use_gex_walls=True, use_claude_validation=True)
     print(f"Advice: {advice.advice.value}")
     print(f"Win Prob: {advice.win_probability:.1%}")
     print(f"Risk %: {advice.suggested_risk_pct:.1f}%")
@@ -969,3 +1570,19 @@ if __name__ == "__main__":
     if advice.suggested_put_strike:
         print(f"GEX Put Strike: {advice.suggested_put_strike}")
         print(f"GEX Call Strike: {advice.suggested_call_strike}")
+
+    # Demo Claude explanation
+    if oracle.claude_available:
+        print("\n--- Claude AI Explanation ---")
+        explanation = oracle.explain_prediction(advice, context)
+        print(explanation)
+
+        print("\n--- Claude AI Market Analysis ---")
+        analysis = oracle.get_claude_analysis(context)
+        if analysis:
+            print(f"Recommendation: {analysis.recommendation}")
+            print(f"Confidence Adjustment: {analysis.confidence_adjustment:+.2f}")
+            if analysis.risk_factors:
+                print(f"Risk Factors: {', '.join(analysis.risk_factors)}")
+            if analysis.opportunities:
+                print(f"Opportunities: {', '.join(analysis.opportunities)}")
