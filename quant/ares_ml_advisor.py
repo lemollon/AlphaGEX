@@ -173,7 +173,24 @@ class AresMLAdvisor:
     """
 
     # Feature columns for prediction
+    # V2: Now includes GEX features for better Iron Condor prediction
     FEATURE_COLS = [
+        'vix',
+        'vix_percentile_30d',
+        'vix_change_1d',
+        'day_of_week',
+        'price_change_1d',
+        'expected_move_pct',
+        'win_rate_30d',
+        # GEX features (V2)
+        'gex_normalized',           # Scale-independent GEX
+        'gex_regime_positive',      # 1 if positive GEX regime, 0 otherwise
+        'gex_distance_to_flip_pct', # Distance to flip point as %
+        'gex_between_walls',        # 1 if price between call/put walls
+    ]
+
+    # Feature columns without GEX (for backward compatibility)
+    FEATURE_COLS_V1 = [
         'vix',
         'vix_percentile_30d',
         'vix_change_1d',
@@ -244,13 +261,15 @@ class AresMLAdvisor:
 
     def extract_features_from_kronos(
         self,
-        backtest_results: Dict[str, Any]
+        backtest_results: Dict[str, Any],
+        include_gex: bool = True
     ) -> pd.DataFrame:
         """
         Extract ML features from KRONOS backtest results.
 
         Args:
             backtest_results: Results dict from HybridFixedBacktester.run()
+            include_gex: Whether to include GEX features (requires enriched data)
 
         Returns:
             DataFrame with features and outcomes for each trade
@@ -262,6 +281,22 @@ class AresMLAdvisor:
         if not trades:
             logger.warning("No trades found in backtest results")
             return pd.DataFrame()
+
+        # Check if GEX data is available
+        has_gex = 'gex_normalized' in trades[0] if trades else False
+
+        if include_gex and not has_gex:
+            logger.info("GEX data not found in backtest results. Enriching with GEX...")
+            try:
+                from quant.kronos_gex_calculator import enrich_trades_with_gex
+                backtest_results = enrich_trades_with_gex(backtest_results)
+                trades = backtest_results.get('all_trades', [])
+                has_gex = 'gex_normalized' in trades[0] if trades else False
+                if has_gex:
+                    logger.info("Successfully enriched trades with GEX data")
+            except Exception as e:
+                logger.warning(f"Could not enrich with GEX: {e}")
+                has_gex = False
 
         records = []
 
@@ -305,7 +340,7 @@ class AresMLAdvisor:
             outcomes.append(outcome)
             pnls.append(net_pnl)
 
-            records.append({
+            record = {
                 'trade_date': trade_date,
                 'vix': vix,
                 'vix_percentile_30d': 50,  # Will calculate later
@@ -323,7 +358,23 @@ class AresMLAdvisor:
                 'is_win': is_win,
                 'net_pnl': net_pnl,
                 'return_pct': trade.get('return_pct', 0),
-            })
+            }
+
+            # Add GEX features if available
+            if has_gex:
+                gex_regime = trade.get('gex_regime', 'NEUTRAL')
+                record['gex_normalized'] = trade.get('gex_normalized', 0)
+                record['gex_regime_positive'] = 1 if gex_regime == 'POSITIVE' else 0
+                record['gex_distance_to_flip_pct'] = trade.get('gex_distance_to_flip_pct', 0)
+                record['gex_between_walls'] = 1 if trade.get('gex_between_walls', True) else 0
+            else:
+                # Default GEX values (neutral)
+                record['gex_normalized'] = 0
+                record['gex_regime_positive'] = 0
+                record['gex_distance_to_flip_pct'] = 0
+                record['gex_between_walls'] = 1
+
+            records.append(record)
 
         df = pd.DataFrame(records)
 
@@ -333,6 +384,9 @@ class AresMLAdvisor:
                 lambda x: (x.rank().iloc[-1] / len(x)) * 100 if len(x) > 0 else 50
             ).fillna(50)
             df['vix_change_1d'] = df['vix'].pct_change().fillna(0) * 100
+
+        # Store whether we have GEX for later use
+        self._has_gex_features = has_gex
 
         return df
 
@@ -469,7 +523,12 @@ class AresMLAdvisor:
         expected_move_pct: float = 1.0,
         win_rate_30d: float = 0.68,
         vix_percentile_30d: float = 50,
-        vix_change_1d: float = 0
+        vix_change_1d: float = 0,
+        # GEX features (V2)
+        gex_normalized: float = 0,
+        gex_regime_positive: int = 0,
+        gex_distance_to_flip_pct: float = 0,
+        gex_between_walls: int = 1
     ) -> MLPrediction:
         """
         Get ML prediction for today's trading decision.
@@ -483,24 +542,46 @@ class AresMLAdvisor:
             win_rate_30d: Recent 30-day win rate
             vix_percentile_30d: VIX percentile in 30-day range
             vix_change_1d: VIX change from yesterday %
+            gex_normalized: Scale-independent GEX (GEX / spot^2)
+            gex_regime_positive: 1 if positive GEX regime, 0 otherwise
+            gex_distance_to_flip_pct: Distance to flip point as %
+            gex_between_walls: 1 if price between call/put walls
 
         Returns:
             MLPrediction with advice and probability
         """
         if not self.is_trained:
             # Return conservative fallback
-            return self._fallback_prediction(vix, day_of_week)
+            return self._fallback_prediction(vix, day_of_week, gex_regime_positive)
 
-        # Prepare features
-        features = np.array([[
-            vix,
-            vix_percentile_30d,
-            vix_change_1d,
-            day_of_week,
-            price_change_1d,
-            expected_move_pct,
-            win_rate_30d,
-        ]])
+        # Prepare features - use the feature columns the model was trained on
+        has_gex = getattr(self, '_has_gex_features', len(self.FEATURE_COLS) > 7)
+
+        if has_gex:
+            features = np.array([[
+                vix,
+                vix_percentile_30d,
+                vix_change_1d,
+                day_of_week,
+                price_change_1d,
+                expected_move_pct,
+                win_rate_30d,
+                gex_normalized,
+                gex_regime_positive,
+                gex_distance_to_flip_pct,
+                gex_between_walls,
+            ]])
+        else:
+            # V1 model without GEX
+            features = np.array([[
+                vix,
+                vix_percentile_30d,
+                vix_change_1d,
+                day_of_week,
+                price_change_1d,
+                expected_move_pct,
+                win_rate_30d,
+            ]])
 
         # Scale
         features_scaled = self.scaler.transform(features)
@@ -552,7 +633,12 @@ class AresMLAdvisor:
             probabilities={'win': proba[1], 'loss': proba[0]}
         )
 
-    def _fallback_prediction(self, vix: float, day_of_week: int) -> MLPrediction:
+    def _fallback_prediction(
+        self,
+        vix: float,
+        day_of_week: int,
+        gex_regime_positive: int = 0
+    ) -> MLPrediction:
         """
         Rule-based fallback when model not trained.
 
@@ -560,6 +646,7 @@ class AresMLAdvisor:
         - High VIX (>30) = more risk, reduce size
         - Mondays tend to be more volatile
         - Fridays have theta acceleration
+        - Positive GEX = better for Iron Condors (mean reversion)
         """
         # Base win probability from historical average
         base_prob = 0.68
@@ -582,6 +669,14 @@ class AresMLAdvisor:
         }
         base_prob += dow_adjustments.get(day_of_week, 0)
 
+        # GEX adjustment - KEY INSIGHT for Iron Condors
+        # Positive GEX = market makers long gamma = mean reversion = good for Iron Condors
+        # Negative GEX = market makers short gamma = trending = bad for Iron Condors
+        if gex_regime_positive == 1:
+            base_prob += 0.05  # Positive GEX favors Iron Condors
+        else:
+            base_prob -= 0.03  # Negative/neutral GEX slightly unfavorable
+
         # Clip to reasonable range
         win_probability = max(0.4, min(0.85, base_prob))
 
@@ -596,14 +691,17 @@ class AresMLAdvisor:
             advice = TradingAdvice.SKIP_TODAY
             suggested_risk = 0.0
 
+        # Build top factors
+        top_factors = [('vix', 0.4), ('gex_regime', 0.3), ('day_of_week', 0.2), ('base_rate', 0.1)]
+
         return MLPrediction(
             advice=advice,
             win_probability=win_probability,
-            confidence=40.0,  # Low confidence for fallback
+            confidence=45.0,  # Slightly higher with GEX
             suggested_risk_pct=suggested_risk,
             suggested_sd_multiplier=1.0,
-            top_factors=[('vix', 0.5), ('day_of_week', 0.3), ('base_rate', 0.2)],
-            model_version="fallback",
+            top_factors=top_factors,
+            model_version="fallback_v2_gex",
             probabilities={'win': win_probability, 'loss': 1 - win_probability}
         )
 
