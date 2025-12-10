@@ -513,6 +513,29 @@ export const apiClient = {
   exportZeroDTEEquityCurve: (jobId: string) => api.get(`/api/zero-dte/export/equity-curve/${jobId}`, { responseType: 'blob' }),
   compareZeroDTEBacktests: (jobIds: string[]) => api.get(`/api/zero-dte/compare?job_ids=${jobIds.join(',')}`),
 
+  // Oracle AI - Claude-powered prediction validation and analysis
+  getOracleStatus: () => api.get('/api/zero-dte/oracle/status'),
+  getOracleLogs: () => api.get('/api/zero-dte/oracle/logs'),
+  clearOracleLogs: () => api.delete('/api/zero-dte/oracle/logs'),
+  oracleAnalyze: (data: {
+    spot_price: number
+    vix: number
+    gex_regime: string
+    day_of_week?: number
+    vix_1d_change?: number
+    normalized_gex?: number
+    distance_to_call_wall?: number
+    distance_to_put_wall?: number
+  }) => api.post('/api/zero-dte/oracle/analyze', data),
+  oracleExplain: (data: {
+    prediction: any
+    market_context?: any
+  }) => api.post('/api/zero-dte/oracle/explain', data),
+  oracleAnalyzePatterns: (data: {
+    backtest_trades: any[]
+    focus_area?: string
+  }) => api.post('/api/zero-dte/oracle/analyze-patterns', data),
+
   // Export Routes
   exportData: async (type: 'trades' | 'pnl-attribution' | 'decision-logs' | 'wheel-cycles' | 'full-audit', params?: {
     symbol?: string

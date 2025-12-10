@@ -29,7 +29,8 @@ import {
   Database,
   Settings,
   RotateCcw,
-  Sword
+  Sword,
+  Eye
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -52,6 +53,7 @@ const navItems = [
   { href: '/recommendations/history', label: 'Recommendations', icon: Target, category: 'AI & Testing' },
   { href: '/backtesting', label: 'Backtesting', icon: TestTube, category: 'AI & Testing' },
   { href: '/zero-dte-backtest', label: 'KRONOS (0DTE Condor)', icon: Clock, category: 'AI & Testing' },
+  { href: '/oracle', label: 'Oracle AI', icon: Eye, category: 'AI & Testing' },
   { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
   { href: '/trader', label: 'PHOENIX (SPY 0DTE)', icon: Bot, category: 'Automation' },
   { href: '/wheel', label: 'HERMES (Manual Wheel)', icon: RotateCcw, category: 'Automation' },
