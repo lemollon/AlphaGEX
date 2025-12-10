@@ -492,3 +492,122 @@ async def get_strategy_stats_endpoint():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/export")
+async def export_backtest_results(format: str = Query("csv", description="Export format: csv or xlsx")):
+    """
+    Export all backtest results to CSV or Excel.
+
+    Returns downloadable file with all strategy backtest results including:
+    - Strategy name, symbol, test period
+    - Win rate, expectancy, total return
+    - Max drawdown, Sharpe ratio
+    - Trade counts and averages
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+    import csv
+
+    try:
+        conn = get_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get all backtest results from most recent run
+        c.execute('''
+            SELECT
+                strategy_name,
+                symbol,
+                start_date,
+                end_date,
+                total_trades,
+                winning_trades,
+                losing_trades,
+                win_rate,
+                avg_win_pct,
+                avg_loss_pct,
+                largest_win_pct,
+                largest_loss_pct,
+                expectancy_pct,
+                total_return_pct,
+                max_drawdown_pct,
+                sharpe_ratio,
+                avg_trade_duration_days,
+                timestamp
+            FROM backtest_results
+            WHERE timestamp = (SELECT MAX(timestamp) FROM backtest_results)
+            ORDER BY expectancy_pct DESC
+        ''')
+        results = c.fetchall()
+        conn.close()
+
+        if not results:
+            raise HTTPException(status_code=404, detail="No backtest results found")
+
+        # Create CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header row
+        writer.writerow([
+            'Strategy Name',
+            'Symbol',
+            'Start Date',
+            'End Date',
+            'Total Trades',
+            'Winning Trades',
+            'Losing Trades',
+            'Win Rate (%)',
+            'Avg Win (%)',
+            'Avg Loss (%)',
+            'Largest Win (%)',
+            'Largest Loss (%)',
+            'Expectancy (%)',
+            'Total Return (%)',
+            'Max Drawdown (%)',
+            'Sharpe Ratio',
+            'Avg Trade Duration (Days)',
+            'Backtest Date'
+        ])
+
+        # Data rows
+        for row in results:
+            writer.writerow([
+                row['strategy_name'],
+                row.get('symbol', 'SPY'),
+                str(row.get('start_date', '')),
+                str(row.get('end_date', '')),
+                row.get('total_trades', 0),
+                row.get('winning_trades', 0),
+                row.get('losing_trades', 0),
+                safe_round(row.get('win_rate', 0)),
+                safe_round(row.get('avg_win_pct', 0)),
+                safe_round(row.get('avg_loss_pct', 0)),
+                safe_round(row.get('largest_win_pct', 0)),
+                safe_round(row.get('largest_loss_pct', 0)),
+                safe_round(row.get('expectancy_pct', 0)),
+                safe_round(row.get('total_return_pct', 0)),
+                safe_round(row.get('max_drawdown_pct', 0)),
+                safe_round(row.get('sharpe_ratio', 0)),
+                safe_round(row.get('avg_trade_duration_days', 0)),
+                row['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if row.get('timestamp') else ''
+            ])
+
+        output.seek(0)
+
+        # Generate filename with date
+        filename = f"backtest_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting backtest results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
