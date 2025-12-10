@@ -44,6 +44,15 @@ except ImportError:
     YFINANCE_AVAILABLE = False
     print("Warning: yfinance not installed")
 
+# GEX Calculator integration for GEX-Protected strategies
+try:
+    from quant.kronos_gex_calculator import KronosGEXCalculator, GEXData
+    GEX_AVAILABLE = True
+except ImportError:
+    GEX_AVAILABLE = False
+    KronosGEXCalculator = None
+    GEXData = None
+
 
 @dataclass
 class ScalingTier:
@@ -178,6 +187,12 @@ class DayTrade:
     call_breached: bool = False
     intraday_put_threat: bool = False  # Did price threaten put strike intraday?
     intraday_call_threat: bool = False
+
+    # GEX-Protected strategy fields
+    gex_protected: bool = False
+    gex_put_wall: Optional[float] = None
+    gex_call_wall: Optional[float] = None
+    gex_regime: str = ""
 
 
 class HybridFixedBacktester:
@@ -316,6 +331,19 @@ class HybridFixedBacktester:
         # Cache
         self.spx_ohlc: Dict[str, Dict] = {}
         self.vix_data: Dict[str, float] = {}
+
+        # GEX Calculator for GEX-Protected strategies
+        self.gex_calculator = None
+        self.gex_cache: Dict[str, Optional[GEXData]] = {}
+        if GEX_AVAILABLE and self.strategy_type == 'gex_protected_iron_condor':
+            self.gex_calculator = KronosGEXCalculator(ticker)
+
+        # GEX strategy stats
+        self.gex_stats = {
+            'trades_with_gex_walls': 0,
+            'trades_with_sd_fallback': 0,
+            'gex_unavailable_days': 0,
+        }
 
     def get_connection(self):
         """
@@ -1082,9 +1110,121 @@ class HybridFixedBacktester:
             'strategy_type': 'diagonal_put'
         }
 
+    def get_gex_for_date(self, trade_date: str) -> Optional[GEXData]:
+        """
+        Get GEX data for a trading date (cached).
+
+        Returns:
+            GEXData with call_wall, put_wall, flip_point, etc. or None if unavailable
+        """
+        if not self.gex_calculator:
+            return None
+
+        if trade_date in self.gex_cache:
+            return self.gex_cache[trade_date]
+
+        # Calculate and cache
+        gex = self.gex_calculator.calculate_gex_for_date(trade_date, dte_max=7)
+        self.gex_cache[trade_date] = gex
+
+        if gex is None:
+            self.gex_stats['gex_unavailable_days'] += 1
+
+        return gex
+
+    def find_gex_protected_iron_condor(
+        self,
+        options: List[Dict],
+        open_price: float,
+        expected_move: float,
+        target_dte: int,
+        trade_date: str
+    ) -> Optional[Dict]:
+        """
+        Find Iron Condor with strikes outside GEX walls when available.
+
+        GEX-Protected Strategy:
+        - Put strike below the put wall (support level)
+        - Call strike above the call wall (resistance level)
+        - Falls back to SD-based strikes when GEX walls unavailable
+
+        Args:
+            options: Options chain for the day
+            open_price: Opening price of underlying
+            expected_move: Expected move based on IV and SD days
+            target_dte: Target days to expiration
+            trade_date: Date string for GEX lookup
+
+        Returns:
+            Iron Condor dict with strikes, or None if not possible
+        """
+        if not options:
+            self.debug_stats['strategy_failures']['no_options'] += 1
+            return None
+
+        # Get GEX data for this date
+        gex = self.get_gex_for_date(trade_date)
+
+        # Determine strike distances
+        use_gex_walls = False
+        put_distance = None
+        call_distance = None
+
+        if gex and gex.put_wall > 0 and gex.call_wall > 0:
+            # GEX walls available - use them with a buffer
+            # Add 0.5% buffer outside the walls for extra protection
+            put_wall_buffer = open_price * 0.005
+            call_wall_buffer = open_price * 0.005
+
+            # Distance from open price to wall (plus buffer)
+            gex_put_distance = open_price - gex.put_wall + put_wall_buffer
+            gex_call_distance = gex.call_wall - open_price + call_wall_buffer
+
+            # Only use GEX walls if they provide meaningful distance
+            # (at least 0.5% from open price)
+            min_distance = open_price * 0.005
+
+            if gex_put_distance > min_distance and gex_call_distance > min_distance:
+                put_distance = gex_put_distance
+                call_distance = gex_call_distance
+                use_gex_walls = True
+                self.gex_stats['trades_with_gex_walls'] += 1
+            else:
+                # Walls too close - fall back to SD
+                self.gex_stats['trades_with_sd_fallback'] += 1
+        else:
+            # No GEX data - fall back to SD
+            self.gex_stats['trades_with_sd_fallback'] += 1
+
+        # Fall back to SD-based strikes if GEX walls not used
+        if not use_gex_walls:
+            put_distance = self.sd_multiplier * expected_move
+            call_distance = self.sd_multiplier * expected_move
+
+        # Find the iron condor with calculated distances
+        result = self.find_iron_condor(
+            options=options,
+            open_price=open_price,
+            put_distance=put_distance,
+            call_distance=call_distance,
+            target_dte=target_dte,
+            use_raw_distance=True
+        )
+
+        if result:
+            # Add GEX info to result for tracking
+            result['gex_protected'] = use_gex_walls
+            result['gex_put_wall'] = gex.put_wall if gex else None
+            result['gex_call_wall'] = gex.call_wall if gex else None
+            result['gex_regime'] = gex.gex_regime if gex else 'UNKNOWN'
+            result['strategy_type'] = 'gex_protected_iron_condor'
+
+        return result
+
     def find_strategy(self, options: List[Dict], open_price: float,
                       expected_move: float, target_dte: int,
-                      iv: float = 0.15, sd_days: int = 1) -> Optional[Dict]:
+                      iv: float = 0.15, sd_days: int = 1,
+                      trade_date: str = None) -> Optional[Dict]:
         """
         Find the appropriate strategy based on strategy_type setting.
 
@@ -1092,7 +1232,29 @@ class HybridFixedBacktester:
         - 'sd': Use expected_move × sd_multiplier (default behavior)
         - 'fixed': Use fixed_strike_distance points
         - 'delta': Find strikes by target delta
+        - 'gex': Use GEX walls (for gex_protected_iron_condor strategy)
+
+        Args:
+            options: Options chain
+            open_price: Opening price of underlying
+            expected_move: Expected move based on IV
+            target_dte: Target days to expiration
+            iv: Implied volatility (decimal)
+            sd_days: Days for SD calculation
+            trade_date: Date string (required for GEX-protected strategies)
         """
+        # Handle GEX-Protected Iron Condor separately - it has its own strike logic
+        if self.strategy_type == 'gex_protected_iron_condor':
+            if trade_date is None:
+                # Fallback to regular iron condor if no date provided
+                return self.find_iron_condor(options, open_price,
+                                            self.sd_multiplier * expected_move,
+                                            self.sd_multiplier * expected_move,
+                                            target_dte, use_raw_distance=True)
+            return self.find_gex_protected_iron_condor(
+                options, open_price, expected_move, target_dte, trade_date
+            )
+
         # Calculate actual strike distances based on strike selection method
         if self.strike_selection == 'fixed':
             # For fixed, we use the fixed distance directly
@@ -1260,8 +1422,9 @@ class HybridFixedBacktester:
         underlying = options[0]['underlying_price']
 
         # Find strategy with appropriate strike selection method
-        # Pass iv and sd_days for delta/sd calculation if needed
-        ic = self.find_strategy(options, open_price, expected_move_sd, tier.target_dte, iv=iv, sd_days=tier.sd_days)
+        # Pass iv, sd_days, and trade_date for delta/sd/gex calculation
+        ic = self.find_strategy(options, open_price, expected_move_sd, tier.target_dte,
+                                iv=iv, sd_days=tier.sd_days, trade_date=trade_date)
         if not ic:
             self.debug_stats['skipped_no_strategy'] += 1
             if self.debug_mode and self.debug_stats['skipped_no_strategy'] <= 3:
@@ -1423,6 +1586,11 @@ class HybridFixedBacktester:
             call_breached=call_breached,
             intraday_put_threat=intraday_put_threat,
             intraday_call_threat=intraday_call_threat,
+            # GEX-Protected fields
+            gex_protected=ic.get('gex_protected', False),
+            gex_put_wall=ic.get('gex_put_wall'),
+            gex_call_wall=ic.get('gex_call_wall'),
+            gex_regime=ic.get('gex_regime', ''),
         )
 
         # Update equity and stats
@@ -1482,6 +1650,9 @@ class HybridFixedBacktester:
         print(f"Risk Per Trade:     {self.risk_per_trade_pct}%")
         print(f"SD Multiplier:      {self.sd_multiplier}")
         print(f"Spread Width:       ${self.spread_width}")
+        print(f"Strategy Type:      {self.strategy_type}")
+        if self.strategy_type == 'gex_protected_iron_condor':
+            print(f"  -> Uses GEX walls for strikes when available, falls back to SD")
         print("-" * 80)
         print("SCALING TIERS (with correct SD calculations):")
         for tier in SCALING_TIERS:
@@ -1731,6 +1902,11 @@ class HybridFixedBacktester:
                 'outcome': t.outcome,
                 'put_breached': t.put_breached,
                 'call_breached': t.call_breached,
+                # GEX-Protected fields
+                'gex_protected': t.gex_protected,
+                'gex_put_wall': t.gex_put_wall,
+                'gex_call_wall': t.gex_call_wall,
+                'gex_regime': t.gex_regime,
             })
 
         return {
@@ -1776,6 +1952,7 @@ class HybridFixedBacktester:
             'vix_performance': vix_performance,
             'equity_curve': self.equity_curve,
             'all_trades': all_trades_dicts,
+            'gex_stats': self.gex_stats if self.strategy_type == 'gex_protected_iron_condor' else None,
         }
 
     def print_results(self, results: Dict):
@@ -1838,6 +2015,19 @@ class HybridFixedBacktester:
             for trans in tt:
                 print(f"  {trans['date']}: {trans['from_tier']} → {trans['to_tier']} (Equity: ${trans['equity']:,.0f})")
 
+        # GEX-Protected strategy stats
+        gex_stats = results.get('gex_stats')
+        if gex_stats:
+            print(f"\nGEX-PROTECTED STRATEGY STATS")
+            gex_wall_trades = gex_stats.get('trades_with_gex_walls', 0)
+            sd_fallback_trades = gex_stats.get('trades_with_sd_fallback', 0)
+            total_gex_trades = gex_wall_trades + sd_fallback_trades
+            if total_gex_trades > 0:
+                gex_wall_pct = (gex_wall_trades / total_gex_trades) * 100
+                print(f"  GEX Wall Trades:      {gex_wall_trades:>10} ({gex_wall_pct:.1f}%)")
+                print(f"  SD Fallback Trades:   {sd_fallback_trades:>10} ({100 - gex_wall_pct:.1f}%)")
+                print(f"  GEX Unavailable Days: {gex_stats.get('gex_unavailable_days', 0):>10}")
+
         print(f"\nOUTCOME BREAKDOWN")
         for outcome, count in sorted(o.items(), key=lambda x: -x[1]):
             pct = count / t['total'] * 100
@@ -1887,6 +2077,10 @@ def main():
     parser.add_argument('--sd', type=float, default=1.0)
     parser.add_argument('--risk', type=float, default=5.0)
     parser.add_argument('--ticker', default='SPX')
+    parser.add_argument('--strategy', default='iron_condor',
+                       choices=['iron_condor', 'gex_protected_iron_condor', 'bull_put',
+                               'bear_call', 'iron_butterfly', 'diagonal_call', 'diagonal_put'],
+                       help='Strategy type (default: iron_condor)')
 
     args = parser.parse_args()
 
@@ -1898,6 +2092,7 @@ def main():
         sd_multiplier=args.sd,
         risk_per_trade_pct=args.risk,
         ticker=args.ticker,
+        strategy_type=args.strategy,
     )
 
     results = backtester.run()
