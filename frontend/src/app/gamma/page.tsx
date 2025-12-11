@@ -730,23 +730,25 @@ export default function GammaIntelligence() {
               </div>
 
               {/* Market Regime */}
-              <div className="card">
-                <h2 className="text-xl font-semibold text-text-primary mb-4">Market Regime</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="p-4 bg-background-hover rounded-lg">
-                    <p className="text-text-secondary text-sm mb-2">State</p>
-                    <p className="text-lg font-bold text-primary">{intelligence.market_regime.state}</p>
-                  </div>
-                  <div className="p-4 bg-background-hover rounded-lg">
-                    <p className="text-text-secondary text-sm mb-2">Volatility</p>
-                    <p className="text-lg font-bold text-warning">{intelligence.market_regime.volatility}</p>
-                  </div>
-                  <div className="p-4 bg-background-hover rounded-lg">
-                    <p className="text-text-secondary text-sm mb-2">Trend</p>
-                    <p className="text-lg font-bold text-success">{intelligence.market_regime.trend}</p>
+              {intelligence.market_regime && (
+                <div className="card">
+                  <h2 className="text-xl font-semibold text-text-primary mb-4">Market Regime</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="p-4 bg-background-hover rounded-lg">
+                      <p className="text-text-secondary text-sm mb-2">State</p>
+                      <p className="text-lg font-bold text-primary">{intelligence.market_regime.state || 'Unknown'}</p>
+                    </div>
+                    <div className="p-4 bg-background-hover rounded-lg">
+                      <p className="text-text-secondary text-sm mb-2">Volatility</p>
+                      <p className="text-lg font-bold text-warning">{intelligence.market_regime.volatility || 'Unknown'}</p>
+                    </div>
+                    <div className="p-4 bg-background-hover rounded-lg">
+                      <p className="text-text-secondary text-sm mb-2">Trend</p>
+                      <p className="text-lg font-bold text-success">{intelligence.market_regime.trend || 'Unknown'}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* Gamma Exposure Heatmap */}
               <div className="card">
