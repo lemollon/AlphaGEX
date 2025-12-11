@@ -710,7 +710,8 @@ class ARESTrader:
         ic_strikes: Dict,
         contracts: int,
         expiration: str,
-        market_data: Dict
+        market_data: Dict,
+        oracle_advice: Optional[Any] = None
     ) -> Optional[IronCondorPosition]:
         """
         Execute Iron Condor order via Tradier.
@@ -720,6 +721,7 @@ class ARESTrader:
             contracts: Number of contracts
             expiration: Expiration date
             market_data: Current market data
+            oracle_advice: Oracle AI advice for this trade (optional)
 
         Returns:
             IronCondorPosition if successful, None otherwise
@@ -885,8 +887,8 @@ class ARESTrader:
             self.open_positions.append(position)
             self.trade_count += 1
 
-            # Log decision
-            self._log_entry_decision(position, market_data)
+            # Log decision with Oracle advice included
+            self._log_entry_decision(position, market_data, oracle_advice)
 
             # Save position to database for persistence
             self._save_position_to_db(position)
@@ -897,8 +899,105 @@ class ARESTrader:
             logger.error(f"ARES: Error executing Iron Condor: {e}")
             return None
 
-    def _log_entry_decision(self, position: IronCondorPosition, market_data: Dict):
-        """Log entry decision with full transparency"""
+    def _log_skip_decision(self, reason: str, market_data: Optional[Dict] = None,
+                           oracle_advice: Optional[Any] = None, alternatives: Optional[List[str]] = None):
+        """
+        Log a SKIP decision with full transparency about WHY we didn't trade.
+
+        This is critical for understanding ARES behavior and improving the strategy.
+        """
+        if not self.decision_logger or not LOGGER_AVAILABLE:
+            return
+
+        try:
+            now = datetime.now(self.tz)
+            today = now.strftime('%Y-%m-%d')
+
+            # Build detailed reasoning
+            supporting_factors = []
+            risk_factors = []
+            alternatives_considered = alternatives or []
+            why_not_alternatives = []
+
+            # Add market context if available
+            if market_data:
+                supporting_factors.append(f"Underlying: ${market_data.get('underlying_price', 0):,.2f}")
+                supporting_factors.append(f"VIX: {market_data.get('vix', 0):.1f}")
+                supporting_factors.append(f"Expected Move (1SD): ${market_data.get('expected_move', 0):.2f}")
+
+                # VIX analysis
+                vix = market_data.get('vix', 15)
+                if vix > 30:
+                    risk_factors.append(f"Elevated VIX ({vix:.1f}) indicates high volatility environment")
+                elif vix < 12:
+                    risk_factors.append(f"Low VIX ({vix:.1f}) may result in thin premiums")
+
+            # Add Oracle reasoning if available
+            oracle_reasoning = ""
+            if oracle_advice:
+                oracle_reasoning = f" Oracle: {oracle_advice.advice.value} ({oracle_advice.win_probability:.0%} win prob)"
+                supporting_factors.append(f"Oracle Win Probability: {oracle_advice.win_probability:.1%}")
+                supporting_factors.append(f"Oracle Recommendation: {oracle_advice.advice.value}")
+                if oracle_advice.reasoning:
+                    supporting_factors.append(f"Oracle Reasoning: {oracle_advice.reasoning}")
+                if hasattr(oracle_advice, 'top_factors') and oracle_advice.top_factors:
+                    for factor, importance in oracle_advice.top_factors[:3]:
+                        supporting_factors.append(f"Key Factor: {factor} (importance: {importance:.0%})")
+
+            # Build comprehensive "what" description
+            what_desc = f"SKIP - No trade executed. Reason: {reason}"
+
+            # Build comprehensive "why" description
+            why_desc = f"{reason}.{oracle_reasoning}"
+            if market_data:
+                why_desc += f" Market: {self.get_trading_ticker()} @ ${market_data.get('underlying_price', 0):,.2f}, VIX: {market_data.get('vix', 0):.1f}"
+
+            # Build "how" description with methodology
+            how_desc = (
+                f"ARES Aggressive IC Strategy evaluates daily: "
+                f"1) Check trading window (9:35 AM - 3:30 PM ET), "
+                f"2) Verify no existing position for today, "
+                f"3) Get market data (price, VIX, expected move), "
+                f"4) Consult Oracle AI for trade/skip advice, "
+                f"5) Find 1 SD Iron Condor strikes if trading, "
+                f"6) Execute via Tradier API (PAPER/LIVE mode)."
+            )
+
+            decision = TradeDecision(
+                decision_id=f"ARES-SKIP-{today}-{now.strftime('%H%M%S')}",
+                timestamp=now.isoformat(),
+                decision_type=DecisionType.NO_ACTION,
+                bot_name=BotName.ARES,
+                what=what_desc,
+                why=why_desc,
+                how=how_desc,
+                action="SKIP",
+                symbol=self.get_trading_ticker(),
+                strategy="aggressive_iron_condor",
+                market_context=MarketContext(
+                    timestamp=now.isoformat(),
+                    spot_price=market_data.get('underlying_price', 0) if market_data else 0,
+                    spot_source=DataSource.TRADIER_LIVE,
+                    vix=market_data.get('vix', 0) if market_data else 0
+                ) if market_data else None,
+                reasoning=DecisionReasoning(
+                    primary_reason=reason,
+                    supporting_factors=supporting_factors,
+                    risk_factors=risk_factors,
+                    alternatives_considered=alternatives_considered,
+                    why_not_alternatives=why_not_alternatives
+                )
+            )
+
+            self.decision_logger.log_decision(decision)
+            logger.info(f"ARES: Logged SKIP decision - {reason}")
+
+        except Exception as e:
+            logger.error(f"ARES: Error logging SKIP decision: {e}")
+
+    def _log_entry_decision(self, position: IronCondorPosition, market_data: Dict,
+                           oracle_advice: Optional[Any] = None):
+        """Log entry decision with full transparency including Oracle reasoning"""
         if not self.decision_logger or not LOGGER_AVAILABLE:
             return
 
@@ -940,6 +1039,74 @@ class ARESTrader:
                     contracts=position.contracts
                 )
             ]
+
+            # Build comprehensive supporting factors
+            supporting_factors = [
+                f"VIX at {market_data['vix']:.1f} - {'favorable' if 15 <= market_data['vix'] <= 30 else 'elevated' if market_data['vix'] > 30 else 'low'} for premium selling",
+                f"1 SD expected move: ${market_data['expected_move']:.0f} ({market_data['expected_move']/market_data['underlying_price']*100:.2f}% of underlying)",
+                f"Put spread: ${position.put_short_strike} / ${position.put_long_strike} (${position.put_credit:.2f} credit)",
+                f"Call spread: ${position.call_short_strike} / ${position.call_long_strike} (${position.call_credit:.2f} credit)",
+                f"Total credit received: ${position.total_credit:.2f} per spread",
+                f"Position size: {position.contracts} contracts @ {self.config.risk_per_trade_pct:.0f}% risk",
+            ]
+
+            # Add Oracle factors if available
+            if oracle_advice:
+                supporting_factors.append(f"Oracle Win Probability: {oracle_advice.win_probability:.1%}")
+                supporting_factors.append(f"Oracle Recommendation: {oracle_advice.advice.value}")
+                if oracle_advice.reasoning:
+                    supporting_factors.append(f"Oracle Reasoning: {oracle_advice.reasoning}")
+                if oracle_advice.suggested_risk_pct:
+                    supporting_factors.append(f"Oracle Risk Adjustment: {oracle_advice.suggested_risk_pct:.1%}")
+                if oracle_advice.suggested_sd_multiplier and oracle_advice.suggested_sd_multiplier != 1.0:
+                    supporting_factors.append(f"Oracle SD Multiplier: {oracle_advice.suggested_sd_multiplier:.2f}x")
+
+            # Build risk factors
+            risk_factors = [
+                f"Max loss per spread: ${position.max_loss:.2f} (spread width ${position.spread_width:.0f} - credit ${position.total_credit:.2f})",
+                f"Total max risk: ${position.max_loss * 100 * position.contracts:,.0f}",
+                "No stop loss - defined risk strategy, let theta decay work",
+                f"0DTE expiration: {position.expiration} - all-or-nothing outcome",
+            ]
+
+            if market_data['vix'] > 25:
+                risk_factors.append(f"Elevated VIX ({market_data['vix']:.1f}) increases probability of breach")
+
+            # Alternatives considered
+            alternatives_considered = [
+                "SKIP today (Oracle evaluation)",
+                "Wider strikes (2 SD) for higher win rate but less premium",
+                "Narrower strikes (0.5 SD) for more premium but lower win rate",
+                "Single credit spread instead of Iron Condor",
+                "Wait for better entry later in day",
+            ]
+
+            why_not_alternatives = [
+                "Oracle approved trade with acceptable win probability",
+                "1 SD provides optimal risk/reward based on backtest data",
+                "Iron Condor provides balanced risk on both sides",
+                "Early entry captures full theta decay",
+            ]
+
+            # Build comprehensive "why"
+            why_parts = [
+                f"1 SD Iron Condor for aggressive daily premium collection targeting 10% monthly returns.",
+                f"VIX: {market_data['vix']:.1f}",
+            ]
+            if oracle_advice:
+                why_parts.append(f"Oracle: {oracle_advice.advice.value} ({oracle_advice.win_probability:.0%} win prob)")
+            why_desc = " | ".join(why_parts)
+
+            # Build comprehensive "how"
+            how_desc = (
+                f"Strike Selection: Found strikes at 1 SD ({market_data['expected_move']:.0f} pts) from "
+                f"${market_data['underlying_price']:,.2f}. "
+                f"Put short @ ${position.put_short_strike}, Call short @ ${position.call_short_strike}. "
+                f"Position Sizing: {self.config.risk_per_trade_pct:.0f}% of ${self.capital:,.0f} capital = "
+                f"${self.capital * self.config.risk_per_trade_pct / 100:,.0f} risk budget. "
+                f"Max loss ${position.max_loss:.2f}/spread → {position.contracts} contracts. "
+                f"Execution: {'Tradier Sandbox (PAPER)' if self.mode == TradingMode.PAPER else 'Tradier Production (LIVE)'}."
+            )
 
             decision = TradeDecision(
                 decision_id=position.position_id,
@@ -1078,11 +1245,23 @@ class ARESTrader:
         if not self.is_trading_window():
             logger.info("ARES: Outside trading window")
             result['actions'].append("Outside trading window")
+            self._log_skip_decision(
+                reason="Outside trading window (9:35 AM - 3:30 PM ET)",
+                market_data=None,
+                oracle_advice=None,
+                alternatives=["Wait for trading window to open"]
+            )
             return result
 
         # Check if should trade today
         if not self.should_trade_today():
             result['actions'].append("Already traded today or position exists")
+            self._log_skip_decision(
+                reason="Already traded today or have existing position for today's expiration",
+                market_data=None,
+                oracle_advice=None,
+                alternatives=["ARES trades once per day - position already established"]
+            )
             return result
 
         # Get market data
@@ -1090,6 +1269,12 @@ class ARESTrader:
         if not market_data:
             logger.warning("ARES: Could not get market data")
             result['actions'].append("Failed to get market data")
+            self._log_skip_decision(
+                reason="Failed to get market data from Tradier API",
+                market_data=None,
+                oracle_advice=None,
+                alternatives=["Retry later when market data is available", "Check Tradier API status"]
+            )
             return result
 
         result['market_data'] = market_data
@@ -1118,6 +1303,16 @@ class ARESTrader:
             if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
                 logger.warning(f"ARES: Oracle advises SKIP - {oracle_advice.reasoning}")
                 result['actions'].append(f"Oracle SKIP: {oracle_advice.reasoning}")
+                self._log_skip_decision(
+                    reason=f"Oracle AI recommends SKIP: {oracle_advice.reasoning}",
+                    market_data=market_data,
+                    oracle_advice=oracle_advice,
+                    alternatives=[
+                        "Proceed with trade anyway (ignoring Oracle)",
+                        "Wait for better market conditions",
+                        "Adjust strike selection to improve win probability"
+                    ]
+                )
                 return result
 
             # Store Oracle's suggestions for use
@@ -1134,6 +1329,12 @@ class ARESTrader:
         if not expiration:
             logger.warning("ARES: Could not get expiration date")
             result['actions'].append("Failed to get expiration")
+            self._log_skip_decision(
+                reason="Could not determine today's expiration date for 0DTE options",
+                market_data=market_data,
+                oracle_advice=oracle_advice,
+                alternatives=["Check Tradier API for expiration calendar", "Retry later"]
+            )
             return result
 
         # Calculate expected move with Oracle's SD multiplier if available
@@ -1152,6 +1353,16 @@ class ARESTrader:
         if not ic_strikes:
             logger.info("ARES: Could not find suitable Iron Condor strikes")
             result['actions'].append("No suitable strikes found")
+            self._log_skip_decision(
+                reason=f"Could not find suitable Iron Condor strikes for {expiration} at 1 SD ({adjusted_expected_move:.0f} pts)",
+                market_data=market_data,
+                oracle_advice=oracle_advice,
+                alternatives=[
+                    "Widen strike selection criteria",
+                    "Try different expiration date",
+                    "Market may have insufficient options liquidity today"
+                ]
+            )
             return result
 
         logger.info(f"  IC Strikes: {ic_strikes['put_long_strike']}/{ic_strikes['put_short_strike']}P - "
@@ -1175,8 +1386,8 @@ class ARESTrader:
         logger.info(f"  Total Premium: ${ic_strikes['total_credit'] * 100 * contracts:,.2f}")
         logger.info(f"  Max Risk: ${max_loss * 100 * contracts:,.2f}")
 
-        # Execute the trade
-        position = self.execute_iron_condor(ic_strikes, contracts, expiration, market_data)
+        # Execute the trade with Oracle advice for logging
+        position = self.execute_iron_condor(ic_strikes, contracts, expiration, market_data, oracle_advice)
 
         if position:
             self.daily_trade_executed[today] = True
@@ -1192,6 +1403,17 @@ class ARESTrader:
             logger.info(f"ARES: Position {position.position_id} opened successfully")
         else:
             result['actions'].append("Failed to execute Iron Condor")
+            self._log_skip_decision(
+                reason=f"Failed to execute Iron Condor order via Tradier API",
+                market_data=market_data,
+                oracle_advice=oracle_advice,
+                alternatives=[
+                    "Check Tradier API connectivity and account status",
+                    "Verify sufficient buying power",
+                    "Review option chain for liquidity issues",
+                    "Retry order submission"
+                ]
+            )
 
         result['open_positions'] = len(self.open_positions)
 
