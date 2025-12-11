@@ -1300,7 +1300,7 @@ class ARESTrader:
             }
 
             # Honor Oracle's SKIP advice
-            if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
+            if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP_TODAY:
                 logger.warning(f"ARES: Oracle advises SKIP - {oracle_advice.reasoning}")
                 result['actions'].append(f"Oracle SKIP: {oracle_advice.reasoning}")
                 self._log_skip_decision(
