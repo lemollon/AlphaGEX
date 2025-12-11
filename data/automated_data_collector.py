@@ -50,11 +50,24 @@ import sys
 import os
 from pathlib import Path
 
+# CRITICAL: Add project root to path for module imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / 'services'))
+
+# Also handle Render deployment paths
+render_root = Path('/opt/render/project/src')
+if render_root.exists():
+    sys.path.insert(0, str(render_root))
+    sys.path.insert(0, str(render_root / 'services'))
+
 # CRITICAL: Load environment variables from .env file FIRST
 # This is required for API keys to be available
 from dotenv import load_dotenv
-env_path = Path(__file__).parent.parent / '.env'
+env_path = project_root / '.env'
 load_dotenv(env_path)
+if render_root.exists():
+    load_dotenv(render_root / '.env')
 
 # Verify critical API keys are loaded
 if not os.getenv('TRADING_VOLATILITY_API_KEY') and not os.getenv('TV_USERNAME'):
