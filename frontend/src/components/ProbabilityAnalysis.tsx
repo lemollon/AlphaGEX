@@ -952,7 +952,9 @@ export default function ProbabilityAnalysis({ data, symbol, spotPrice }: Probabi
       </div>
 
       {/* Regime Edge Calculator */}
-      <RegimeEdgeCalculator edge={data.regime_edge} />
+      {data.regime_edge && (
+        <RegimeEdgeCalculator edge={data.regime_edge} />
+      )}
 
       {/* NEW: Two-column layout for Holding Period and Regime Stability */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -970,10 +972,12 @@ export default function ProbabilityAnalysis({ data, symbol, spotPrice }: Probabi
       )}
 
       {/* Wall Probability Tracker */}
-      <WallProbabilityTracker wallProbs={data.wall_probabilities} spotPrice={spotPrice} />
+      {data.wall_probabilities && (
+        <WallProbabilityTracker wallProbs={data.wall_probabilities} spotPrice={spotPrice} />
+      )}
 
       {/* Strike Probability Matrix */}
-      {data.strike_probabilities.length > 0 && (
+      {data.strike_probabilities && data.strike_probabilities.length > 0 && (
         <StrikeProbabilityMatrix
           strikes={data.strike_probabilities}
           spotPrice={spotPrice}
