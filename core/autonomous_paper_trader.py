@@ -189,6 +189,15 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
     Returns:
         Dict with quote data including bid, ask, mid, greeks
     """
+    # Round strike to valid option increment for the symbol
+    # SPY uses $1 increments, SPX uses $5 increments
+    if symbol.upper() in ['SPY', 'QQQ', 'IWM']:
+        strike = round(strike)  # Round to nearest $1
+    elif symbol.upper() in ['SPX', 'SPXW', 'NDX']:
+        strike = round(strike / 5) * 5  # Round to nearest $5
+    else:
+        strike = round(strike)  # Default to $1 increment
+
     # Try Tradier first (REAL-TIME data with Greeks)
     if UNIFIED_DATA_AVAILABLE:
         try:

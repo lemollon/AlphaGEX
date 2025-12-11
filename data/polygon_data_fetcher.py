@@ -358,6 +358,13 @@ class PolygonDataFetcher:
             type_char = 'C' if option_type.lower() == 'call' else 'P'
             # Ensure strike is a number (might be passed as string from API/database)
             strike_num = float(strike) if isinstance(strike, str) else strike
+            # Round strike to valid increment (SPY uses $1, SPX uses $5)
+            if symbol.upper() in ['SPY', 'QQQ', 'IWM']:
+                strike_num = round(strike_num)  # $1 increments
+            elif symbol.upper() in ['SPX', 'SPXW', 'NDX']:
+                strike_num = round(strike_num / 5) * 5  # $5 increments
+            else:
+                strike_num = round(strike_num)  # Default to $1
             strike_str = f"{int(strike_num * 1000):08d}"  # $570 -> "00570000"
 
             option_ticker = f"O:{symbol}{exp_str}{type_char}{strike_str}"
