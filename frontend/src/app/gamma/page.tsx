@@ -730,23 +730,25 @@ export default function GammaIntelligence() {
               </div>
 
               {/* Market Regime */}
-              <div className="card">
-                <h2 className="text-xl font-semibold text-text-primary mb-4">Market Regime</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="p-4 bg-background-hover rounded-lg">
-                    <p className="text-text-secondary text-sm mb-2">State</p>
-                    <p className="text-lg font-bold text-primary">{intelligence.market_regime.state}</p>
-                  </div>
-                  <div className="p-4 bg-background-hover rounded-lg">
-                    <p className="text-text-secondary text-sm mb-2">Volatility</p>
-                    <p className="text-lg font-bold text-warning">{intelligence.market_regime.volatility}</p>
-                  </div>
-                  <div className="p-4 bg-background-hover rounded-lg">
-                    <p className="text-text-secondary text-sm mb-2">Trend</p>
-                    <p className="text-lg font-bold text-success">{intelligence.market_regime.trend}</p>
+              {intelligence.market_regime && (
+                <div className="card">
+                  <h2 className="text-xl font-semibold text-text-primary mb-4">Market Regime</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="p-4 bg-background-hover rounded-lg">
+                      <p className="text-text-secondary text-sm mb-2">State</p>
+                      <p className="text-lg font-bold text-primary">{intelligence.market_regime.state || 'Unknown'}</p>
+                    </div>
+                    <div className="p-4 bg-background-hover rounded-lg">
+                      <p className="text-text-secondary text-sm mb-2">Volatility</p>
+                      <p className="text-lg font-bold text-warning">{intelligence.market_regime.volatility || 'Unknown'}</p>
+                    </div>
+                    <div className="p-4 bg-background-hover rounded-lg">
+                      <p className="text-text-secondary text-sm mb-2">Trend</p>
+                      <p className="text-lg font-bold text-success">{intelligence.market_regime.trend || 'Unknown'}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* Gamma Exposure Heatmap */}
               <div className="card">
@@ -767,11 +769,12 @@ export default function GammaIntelligence() {
                     <div className="max-h-80 overflow-y-auto space-y-1">
                       {intelligence.strikes.slice(0, 20).map((strike, idx) => {
                         const maxGamma = Math.max(
-                          ...intelligence.strikes!.map(s => Math.max(Math.abs(s.call_gamma), Math.abs(s.put_gamma)))
+                          ...intelligence.strikes!.map(s => Math.max(Math.abs(s.call_gamma ?? 0), Math.abs(s.put_gamma ?? 0))), 1
                         )
-                        const callWidth = (Math.abs(strike.call_gamma) / maxGamma) * 100
-                        const putWidth = (Math.abs(strike.put_gamma) / maxGamma) * 100
-                        const isNearSpot = Math.abs(strike.strike - intelligence.spot_price) < intelligence.spot_price * 0.02
+                        const callWidth = (Math.abs(strike.call_gamma ?? 0) / maxGamma) * 100
+                        const putWidth = (Math.abs(strike.put_gamma ?? 0) / maxGamma) * 100
+                        const spotPrice = intelligence.spot_price || 1
+                        const isNearSpot = Math.abs((strike.strike ?? 0) - spotPrice) < spotPrice * 0.02
 
                         return (
                           <div
@@ -780,15 +783,15 @@ export default function GammaIntelligence() {
                           >
                             <div className="flex items-center justify-between text-sm mb-1">
                               <span className="font-mono font-semibold text-text-primary w-20">
-                                ${strike.strike.toFixed(0)}
-                                {strike.strike === intelligence.flip_point && <span className="ml-1 text-xs text-warning">⚡</span>}
-                                {strike.strike === intelligence.call_wall && <span className="ml-1 text-xs text-success">🔼</span>}
-                                {strike.strike === intelligence.put_wall && <span className="ml-1 text-xs text-danger">🔽</span>}
+                                ${(strike.strike ?? 0).toFixed(0)}
+                                {(strike.strike ?? 0) === intelligence.flip_point && <span className="ml-1 text-xs text-warning">⚡</span>}
+                                {(strike.strike ?? 0) === intelligence.call_wall && <span className="ml-1 text-xs text-success">🔼</span>}
+                                {(strike.strike ?? 0) === intelligence.put_wall && <span className="ml-1 text-xs text-danger">🔽</span>}
                               </span>
-                              <span className="text-success font-mono w-24 text-right">{formatNumber(strike.call_gamma)}</span>
-                              <span className="text-danger font-mono w-24 text-right">{formatNumber(strike.put_gamma)}</span>
-                              <span className={`font-mono w-24 text-right ${strike.total_gamma > 0 ? 'text-success' : 'text-danger'}`}>
-                                {formatNumber(strike.total_gamma)}
+                              <span className="text-success font-mono w-24 text-right">{formatNumber(strike.call_gamma ?? 0)}</span>
+                              <span className="text-danger font-mono w-24 text-right">{formatNumber(strike.put_gamma ?? 0)}</span>
+                              <span className={`font-mono w-24 text-right ${(strike.total_gamma ?? 0) > 0 ? 'text-success' : 'text-danger'}`}>
+                                {formatNumber(strike.total_gamma ?? 0)}
                               </span>
                             </div>
                             <div className="flex gap-1">
@@ -858,7 +861,7 @@ export default function GammaIntelligence() {
                     </div>
                     <div className="px-4 py-2 rounded-lg bg-background-card">
                       <p className="text-xs text-text-muted mb-1">Confidence</p>
-                      <p className="text-2xl font-bold text-success">{intelligence.mm_state.confidence}%</p>
+                      <p className="text-2xl font-bold text-success">{intelligence.mm_state.confidence ?? 0}%</p>
                     </div>
                   </div>
 
@@ -1128,15 +1131,16 @@ export default function GammaIntelligence() {
                       {/* Price range visualization */}
                       <div className="space-y-2">
                         {intelligence.strikes.slice(0, 15).map((strike, idx) => {
-                          const distance = ((strike.strike - intelligence.spot_price) / intelligence.spot_price) * 100
-                          const netGamma = strike.total_gamma
-                          const maxAbsGamma = Math.max(...intelligence.strikes!.map(s => Math.abs(s.total_gamma)))
+                          const spotPrice = intelligence.spot_price || 1 // Prevent division by zero
+                          const distance = (((strike.strike ?? 0) - spotPrice) / spotPrice) * 100
+                          const netGamma = strike.total_gamma ?? 0
+                          const maxAbsGamma = Math.max(...intelligence.strikes!.map(s => Math.abs(s.total_gamma ?? 0)), 1)
                           const barWidth = (Math.abs(netGamma) / maxAbsGamma) * 100
 
                           return (
                             <div key={idx} className="flex items-center gap-2">
                               <span className="text-xs font-mono w-16 text-text-secondary">
-                                ${strike.strike.toFixed(0)}
+                                ${(strike.strike ?? 0).toFixed(0)}
                               </span>
                               <span className={`text-xs w-12 ${distance > 0 ? 'text-success' : 'text-danger'}`}>
                                 {distance > 0 ? '+' : ''}{distance.toFixed(1)}%
@@ -1204,67 +1208,100 @@ export default function GammaIntelligence() {
                     </div>
                   </div>
                 ) : historicalData.length > 0 ? (
-                  <div className="space-y-4">
-                    {/* Net GEX Trend */}
-                    <div>
-                      <h3 className="text-sm font-semibold text-text-secondary mb-2">Net GEX Over Time</h3>
-                      <div className="h-48 relative">
-                        <div className="space-y-1">
-                          {historicalData.slice(0, 20).map((point, idx) => {
-                            const maxAbsGex = Math.max(...historicalData.map(p => Math.abs(p.net_gex || 0)), 1)
-                            const barWidth = (Math.abs(point.net_gex || 0) / maxAbsGex) * 100
+                  <div className="space-y-6">
+                    {/* Historical Data Table - More Readable */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="text-left py-3 px-4 text-sm font-semibold text-text-secondary">Date</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">Price</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">Net GEX</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">Flip Point</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">IV</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">P/C Ratio</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historicalData.slice(0, 15).map((point, idx) => {
                             const dateStr = point.date ? point.date.replace('_', ' ') : ''
                             const date = dateStr ? new Date(dateStr) : new Date()
+                            const netGex = point.net_gex || 0
 
                             return (
-                              <div key={idx} className="flex items-center gap-2">
-                                <span className="text-xs font-mono w-24 text-text-muted">
+                              <tr key={idx} className="border-b border-border hover:bg-background-hover transition-colors">
+                                <td className="py-3 px-4 text-sm font-mono text-text-primary">
                                   {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })}
-                                </span>
-                                <span className="text-xs font-mono w-16 text-text-secondary">
+                                </td>
+                                <td className="py-3 px-4 text-sm font-mono text-text-primary text-right">
                                   ${(point.price || 0).toFixed(2)}
-                                </span>
-                                <div className="flex-1 h-5 bg-background-deep rounded relative overflow-hidden">
+                                </td>
+                                <td className={`py-3 px-4 text-sm font-mono font-semibold text-right ${netGex > 0 ? 'text-success' : 'text-danger'}`}>
+                                  {(netGex / 1e9).toFixed(2)}B
+                                </td>
+                                <td className="py-3 px-4 text-sm font-mono text-primary text-right">
+                                  ${(point.flip_point || 0).toFixed(2)}
+                                </td>
+                                <td className="py-3 px-4 text-sm font-mono text-warning text-right">
+                                  {((point.implied_volatility || 0) * 100).toFixed(1)}%
+                                </td>
+                                <td className="py-3 px-4 text-sm font-mono text-text-primary text-right">
+                                  {(point.put_call_ratio || 0).toFixed(2)}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Visual Charts */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Net GEX Trend */}
+                      <div>
+                        <h3 className="text-sm font-semibold text-text-secondary mb-3">Net GEX Trend</h3>
+                        <div className="space-y-2">
+                          {historicalData.slice(0, 10).map((point, idx) => {
+                            const maxAbsGex = Math.max(...historicalData.map(p => Math.abs(p.net_gex || 0)), 1)
+                            const barWidth = (Math.abs(point.net_gex || 0) / maxAbsGex) * 100
+                            const netGex = point.net_gex || 0
+
+                            return (
+                              <div key={idx} className="flex items-center gap-3">
+                                <div className="flex-1 h-6 bg-background-deep rounded relative overflow-hidden">
                                   <div
-                                    className={`h-full ${(point.net_gex || 0) > 0 ? 'bg-success' : 'bg-danger'} transition-all`}
+                                    className={`h-full ${netGex > 0 ? 'bg-success' : 'bg-danger'} transition-all`}
                                     style={{ width: `${barWidth}%` }}
                                   />
-                                  <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-white">
-                                    {((point.net_gex || 0) / 1e9).toFixed(2)}B
-                                  </span>
                                 </div>
+                                <span className={`text-sm font-mono font-semibold w-20 text-right ${netGex > 0 ? 'text-success' : 'text-danger'}`}>
+                                  {(netGex / 1e9).toFixed(2)}B
+                                </span>
                               </div>
                             )
                           })}
                         </div>
                       </div>
-                    </div>
 
-                    {/* IV Trend */}
-                    <div>
-                      <h3 className="text-sm font-semibold text-text-secondary mb-2">Implied Volatility Trend</h3>
-                      <div className="h-32 relative">
-                        <div className="space-y-1">
-                          {historicalData.slice(0, 15).map((point, idx) => {
+                      {/* IV Trend */}
+                      <div>
+                        <h3 className="text-sm font-semibold text-text-secondary mb-3">IV Trend</h3>
+                        <div className="space-y-2">
+                          {historicalData.slice(0, 10).map((point, idx) => {
                             const maxIV = Math.max(...historicalData.map(p => p.implied_volatility || 0), 0.01)
                             const barWidth = ((point.implied_volatility || 0) / maxIV) * 100
-                            const dateStr = point.date ? point.date.replace('_', ' ') : ''
-                            const date = dateStr ? new Date(dateStr) : new Date()
 
                             return (
-                              <div key={idx} className="flex items-center gap-2">
-                                <span className="text-xs font-mono w-24 text-text-muted">
-                                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })}
-                                </span>
-                                <div className="flex-1 h-4 bg-background-deep rounded relative overflow-hidden">
+                              <div key={idx} className="flex items-center gap-3">
+                                <div className="flex-1 h-6 bg-background-deep rounded relative overflow-hidden">
                                   <div
                                     className="h-full bg-warning transition-all"
                                     style={{ width: `${barWidth}%` }}
                                   />
-                                  <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-white">
-                                    {((point.implied_volatility || 0) * 100).toFixed(1)}%
-                                  </span>
                                 </div>
+                                <span className="text-sm font-mono font-semibold text-warning w-16 text-right">
+                                  {((point.implied_volatility || 0) * 100).toFixed(1)}%
+                                </span>
                               </div>
                             )
                           })}
