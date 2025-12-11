@@ -15,13 +15,13 @@ echo "   Commit: $(git rev-parse --short HEAD 2>/dev/null || echo 'NOT A GIT REP
 echo "   Branch: $(git branch --show-current 2>/dev/null || echo 'DETACHED HEAD')"
 echo "   Remote: $(git remote get-url origin 2>/dev/null || echo 'NO REMOTE')"
 echo ""
-echo "🔍 Checking config_and_database.py (line 7 should NOT have streamlit):"
+echo "🔍 Checking db/config_and_database.py (line 7 should NOT have streamlit):"
 echo "   Lines 5-10:"
-sed -n '5,10p' config_and_database.py
+sed -n '5,10p' db/config_and_database.py || echo "   [File not found - skipping check]"
 echo ""
-echo "🔍 Checking intelligence_and_strategies.py (lines 7-12 should have try/except):"
+echo "🔍 Checking core/intelligence_and_strategies.py (lines 7-12 should have try/except):"
 echo "   Lines 7-12:"
-sed -n '7,12p' intelligence_and_strategies.py
+sed -n '7,12p' core/intelligence_and_strategies.py || echo "   [File not found - skipping check]"
 echo ""
 echo "=========================================="
 echo "END VERIFICATION"
