@@ -472,8 +472,156 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
         ))
 
         conn.commit()
+        logger.info(f"✅ Saved backtest summary for job {job_id}")
+
+        # =================================================================
+        # SAVE INDIVIDUAL TRADES for ML training and analysis
+        # =================================================================
+        all_trades = results.get('all_trades', [])
+        if all_trades:
+            # Create trades table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS zero_dte_backtest_trades (
+                    id SERIAL PRIMARY KEY,
+                    backtest_id VARCHAR(100) NOT NULL,
+                    trade_date DATE,
+                    trade_number INTEGER,
+                    tier_name VARCHAR(50),
+
+                    -- Entry data
+                    underlying_price_entry DECIMAL(10,2),
+                    vix_entry DECIMAL(8,2),
+                    iv_used DECIMAL(10,6),
+                    expected_move_1d DECIMAL(10,2),
+                    sd_multiplier DECIMAL(6,3),
+
+                    -- Iron Condor strikes
+                    put_long_strike DECIMAL(10,2),
+                    put_short_strike DECIMAL(10,2),
+                    call_short_strike DECIMAL(10,2),
+                    call_long_strike DECIMAL(10,2),
+
+                    -- Credits
+                    put_credit DECIMAL(10,4),
+                    call_credit DECIMAL(10,4),
+                    total_credit DECIMAL(10,4),
+
+                    -- Exit/Results
+                    close_price DECIMAL(10,2),
+                    daily_high DECIMAL(10,2),
+                    daily_low DECIMAL(10,2),
+                    put_outcome VARCHAR(30),
+                    call_outcome VARCHAR(30),
+                    outcome VARCHAR(30),
+                    net_pnl DECIMAL(12,2),
+                    return_pct DECIMAL(10,4),
+
+                    -- GEX data (V2 enrichment for ML training)
+                    gex_net DECIMAL(20,2),
+                    gex_normalized DECIMAL(15,6),
+                    gex_regime VARCHAR(20),
+                    gex_flip_point DECIMAL(10,2),
+                    gex_call_wall DECIMAL(10,2),
+                    gex_put_wall DECIMAL(10,2),
+                    gex_distance_to_flip_pct DECIMAL(10,4),
+                    gex_between_walls BOOLEAN,
+
+                    created_at TIMESTAMP DEFAULT NOW(),
+
+                    CONSTRAINT fk_backtest FOREIGN KEY (backtest_id)
+                        REFERENCES zero_dte_backtest_results(job_id) ON DELETE CASCADE
+                )
+            """)
+
+            # Create indexes for efficient queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_backtest_trades_backtest_id
+                ON zero_dte_backtest_trades(backtest_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_backtest_trades_date
+                ON zero_dte_backtest_trades(trade_date)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_backtest_trades_outcome
+                ON zero_dte_backtest_trades(outcome)
+            """)
+
+            # Delete existing trades for this backtest (in case of re-run)
+            cursor.execute("""
+                DELETE FROM zero_dte_backtest_trades WHERE backtest_id = %s
+            """, (job_id,))
+
+            # Insert each trade
+            trades_saved = 0
+            for trade in all_trades:
+                try:
+                    cursor.execute("""
+                        INSERT INTO zero_dte_backtest_trades (
+                            backtest_id, trade_date, trade_number, tier_name,
+                            underlying_price_entry, vix_entry, iv_used, expected_move_1d, sd_multiplier,
+                            put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                            put_credit, call_credit, total_credit,
+                            close_price, daily_high, daily_low,
+                            put_outcome, call_outcome, outcome,
+                            net_pnl, return_pct,
+                            gex_net, gex_normalized, gex_regime, gex_flip_point,
+                            gex_call_wall, gex_put_wall, gex_distance_to_flip_pct, gex_between_walls
+                        ) VALUES (
+                            %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s,
+                            %s, %s, %s, %s,
+                            %s, %s, %s, %s
+                        )
+                    """, (
+                        job_id,
+                        trade.get('trade_date'),
+                        trade.get('trade_number'),
+                        trade.get('tier_name'),
+                        _sanitize_numeric(trade.get('open_price')),
+                        _sanitize_numeric(trade.get('vix')),
+                        _sanitize_numeric(trade.get('iv_used')),
+                        _sanitize_numeric(trade.get('expected_move_1d')),
+                        _sanitize_numeric(trade.get('sd_multiplier')),
+                        _sanitize_numeric(trade.get('put_long_strike')),
+                        _sanitize_numeric(trade.get('put_short_strike')),
+                        _sanitize_numeric(trade.get('call_short_strike')),
+                        _sanitize_numeric(trade.get('call_long_strike')),
+                        _sanitize_numeric(trade.get('put_credit_gross')),
+                        _sanitize_numeric(trade.get('call_credit_gross')),
+                        _sanitize_numeric(trade.get('total_credit')),
+                        _sanitize_numeric(trade.get('close_price')),
+                        _sanitize_numeric(trade.get('daily_high')),
+                        _sanitize_numeric(trade.get('daily_low')),
+                        trade.get('put_outcome'),
+                        trade.get('call_outcome'),
+                        trade.get('outcome'),
+                        _sanitize_numeric(trade.get('net_pnl')),
+                        _sanitize_numeric(trade.get('return_pct')),
+                        # GEX data (may be None if not enriched)
+                        _sanitize_numeric(trade.get('gex_net'), default=None) if trade.get('gex_net') is not None else None,
+                        _sanitize_numeric(trade.get('gex_normalized'), default=None) if trade.get('gex_normalized') is not None else None,
+                        trade.get('gex_regime'),
+                        _sanitize_numeric(trade.get('gex_flip_point'), default=None) if trade.get('gex_flip_point') is not None else None,
+                        _sanitize_numeric(trade.get('gex_call_wall'), default=None) if trade.get('gex_call_wall') is not None else None,
+                        _sanitize_numeric(trade.get('gex_put_wall'), default=None) if trade.get('gex_put_wall') is not None else None,
+                        _sanitize_numeric(trade.get('gex_distance_to_flip_pct'), default=None) if trade.get('gex_distance_to_flip_pct') is not None else None,
+                        trade.get('gex_between_walls'),
+                    ))
+                    trades_saved += 1
+                except Exception as trade_err:
+                    logger.warning(f"Failed to save trade {trade.get('trade_date')}: {trade_err}")
+
+            conn.commit()
+            logger.info(f"✅ Saved {trades_saved}/{len(all_trades)} individual trades for job {job_id}")
+            print(f"✅ KRONOS: Saved {trades_saved} trades to database (for ML training)", flush=True)
+
         conn.close()
-        logger.info(f"✅ Saved backtest results for job {job_id}")
         print(f"✅ KRONOS: Saved backtest results to database (job_id: {job_id})", flush=True)
 
     except Exception as e:
@@ -578,6 +726,146 @@ async def get_backtest_results(limit: int = 20):
     except Exception as e:
         logger.error(f"Failed to get results: {e}")
         return {"success": True, "results": []}  # Return empty if table doesn't exist
+
+
+@router.get("/trades/{backtest_id}")
+async def get_backtest_trades(backtest_id: str):
+    """
+    Get individual trades from a saved backtest for ML training.
+
+    Returns all trades with their features and outcomes for ARES ML advisor training.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT * FROM zero_dte_backtest_trades
+            WHERE backtest_id = %s
+            ORDER BY trade_date, trade_number
+        """, (backtest_id,))
+
+        trades = []
+        for row in cursor.fetchall():
+            trades.append({
+                'trade_date': str(row['trade_date']) if row['trade_date'] else None,
+                'trade_number': row['trade_number'],
+                'tier_name': row['tier_name'],
+                'underlying_price_entry': float(row['underlying_price_entry'] or 0),
+                'vix_entry': float(row['vix_entry'] or 0),
+                'iv_used': float(row['iv_used'] or 0),
+                'sd_multiplier': float(row['sd_multiplier'] or 0),
+                'put_long_strike': float(row['put_long_strike'] or 0),
+                'put_short_strike': float(row['put_short_strike'] or 0),
+                'call_short_strike': float(row['call_short_strike'] or 0),
+                'call_long_strike': float(row['call_long_strike'] or 0),
+                'total_credit': float(row['total_credit'] or 0),
+                'close_price': float(row['close_price'] or 0),
+                'outcome': row['outcome'],
+                'net_pnl': float(row['net_pnl'] or 0),
+                'return_pct': float(row['return_pct'] or 0),
+                # GEX features for ML
+                'gex_net': float(row['gex_net']) if row.get('gex_net') is not None else None,
+                'gex_normalized': float(row['gex_normalized']) if row.get('gex_normalized') is not None else None,
+                'gex_regime': row.get('gex_regime'),
+                'gex_flip_point': float(row['gex_flip_point']) if row.get('gex_flip_point') is not None else None,
+                'gex_between_walls': row.get('gex_between_walls'),
+            })
+
+        conn.close()
+        return {"success": True, "backtest_id": backtest_id, "trade_count": len(trades), "trades": trades}
+
+    except Exception as e:
+        logger.error(f"Failed to get trades: {e}")
+        return {"success": False, "error": str(e), "trades": []}
+
+
+@router.get("/trades-for-ml")
+async def get_all_trades_for_ml(limit: int = 10000):
+    """
+    Get all backtest trades for ML model training.
+
+    Returns trades from all backtests with features suitable for ARES ML advisor.
+    This endpoint is used by the ML training pipeline.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT
+                t.backtest_id,
+                t.trade_date,
+                t.trade_number,
+                t.tier_name,
+                t.underlying_price_entry,
+                t.vix_entry,
+                t.sd_multiplier,
+                t.put_short_strike,
+                t.call_short_strike,
+                t.total_credit,
+                t.close_price,
+                t.outcome,
+                t.net_pnl,
+                t.return_pct,
+                t.gex_net,
+                t.gex_normalized,
+                t.gex_regime,
+                t.gex_distance_to_flip_pct,
+                t.gex_between_walls,
+                r.strategy,
+                r.ticker
+            FROM zero_dte_backtest_trades t
+            JOIN zero_dte_backtest_results r ON t.backtest_id = r.job_id
+            ORDER BY t.trade_date DESC
+            LIMIT %s
+        """, (limit,))
+
+        trades = []
+        for row in cursor.fetchall():
+            # Convert to ML-friendly format
+            is_win = row['outcome'] == 'MAX_PROFIT'
+            trades.append({
+                'trade_date': str(row['trade_date']) if row['trade_date'] else None,
+                'backtest_id': row['backtest_id'],
+                'strategy': row['strategy'],
+                'ticker': row['ticker'],
+                # Features for ML
+                'vix': float(row['vix_entry'] or 0),
+                'price': float(row['underlying_price_entry'] or 0),
+                'sd_multiplier': float(row['sd_multiplier'] or 0),
+                'put_short_strike': float(row['put_short_strike'] or 0),
+                'call_short_strike': float(row['call_short_strike'] or 0),
+                'gex_normalized': float(row['gex_normalized']) if row.get('gex_normalized') is not None else None,
+                'gex_regime': row.get('gex_regime'),
+                'gex_distance_to_flip_pct': float(row['gex_distance_to_flip_pct']) if row.get('gex_distance_to_flip_pct') is not None else None,
+                'gex_between_walls': row.get('gex_between_walls'),
+                # Labels/outcomes
+                'outcome': row['outcome'],
+                'is_win': is_win,
+                'net_pnl': float(row['net_pnl'] or 0),
+                'return_pct': float(row['return_pct'] or 0),
+            })
+
+        conn.close()
+
+        # Summary stats
+        win_count = sum(1 for t in trades if t['is_win'])
+        total = len(trades)
+        win_rate = (win_count / total * 100) if total > 0 else 0
+
+        return {
+            "success": True,
+            "total_trades": total,
+            "win_count": win_count,
+            "loss_count": total - win_count,
+            "win_rate": round(win_rate, 2),
+            "trades": trades
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get trades for ML: {e}")
+        return {"success": False, "error": str(e), "trades": []}
 
 
 @router.get("/strategies")

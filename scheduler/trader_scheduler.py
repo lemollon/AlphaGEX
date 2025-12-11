@@ -16,6 +16,7 @@ TRADING BOTS:
 - PHOENIX: 0DTE options trading (hourly 10 AM - 3 PM ET)
 - ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
 - ARES: Aggressive Iron Condor targeting 10% monthly (daily at 10:15 AM ET)
+- ARES EOD: Process expired 0DTE positions (daily at 4:05 PM ET)
 
 This partitioning provides:
 - Aggressive short-term trading via PHOENIX
@@ -488,6 +489,61 @@ class AutonomousTraderScheduler:
             logger.info("ARES will continue despite error")
             logger.info(f"=" * 80)
 
+    def scheduled_ares_eod_logic(self):
+        """
+        ARES End-of-Day processing - runs daily at 4:05 PM ET
+
+        Processes expired 0DTE Iron Condor positions:
+        - Calculates realized P&L based on closing price
+        - Updates position status to 'expired'
+        - Feeds Oracle for ML training feedback loop
+        - Updates daily performance metrics
+        """
+        ny_tz = pytz.timezone('America/New_York')
+        now = datetime.now(ny_tz)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ARES EOD (End-of-Day) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.ares_trader:
+            logger.warning("ARES trader not available - skipping EOD processing")
+            return
+
+        # EOD processing happens after market close, so we don't check is_market_open()
+        logger.info("Processing expired ARES positions...")
+
+        try:
+            # Run the EOD expiration processing
+            result = self.ares_trader.process_expired_positions()
+
+            if result:
+                logger.info(f"ARES EOD processing completed:")
+                logger.info(f"  Processed: {result.get('processed_count', 0)} positions")
+                logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
+                logger.info(f"  Winners: {result.get('winners', 0)}")
+                logger.info(f"  Losers: {result.get('losers', 0)}")
+
+                # Log individual position results
+                for pos_result in result.get('positions', []):
+                    logger.info(f"    - {pos_result['position_id']}: {pos_result['outcome']} "
+                               f"P&L: ${pos_result['realized_pnl']:.2f}")
+
+                if result.get('errors'):
+                    for error in result['errors']:
+                        logger.warning(f"    Error: {error}")
+            else:
+                logger.info("ARES EOD: No positions to process")
+
+            logger.info(f"ARES EOD processing completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in ARES EOD processing: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("ARES EOD will retry next trading day")
+            logger.info(f"=" * 80)
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -572,6 +628,23 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             logger.info("✅ ARES job scheduled (10:15 AM ET daily)")
+
+            # =================================================================
+            # ARES EOD JOB: Process expired positions - runs at 4:05 PM ET
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_ares_eod_logic,
+                trigger=CronTrigger(
+                    hour=16,       # 4:00 PM - after market close
+                    minute=5,      # 4:05 PM to ensure market data is final
+                    day_of_week='mon-fri',
+                    timezone='America/New_York'
+                ),
+                id='ares_eod',
+                name='ARES - EOD Position Expiration',
+                replace_existing=True
+            )
+            logger.info("✅ ARES EOD job scheduled (4:05 PM ET daily)")
         else:
             logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
 

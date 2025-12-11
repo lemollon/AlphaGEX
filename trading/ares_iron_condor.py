@@ -1683,6 +1683,350 @@ class ARESTrader:
             logger.error(f"ARES: Failed to update daily performance: {e}")
             return False
 
+    # =========================================================================
+    # END-OF-DAY POSITION EXPIRATION PROCESSING
+    # =========================================================================
+
+    def process_expired_positions(self) -> Dict:
+        """
+        Process all 0DTE positions that expired today.
+
+        Called at market close (4:00-4:05 PM ET) to:
+        1. Find positions expiring today that are still 'open'
+        2. Get closing price of underlying
+        3. Determine outcome (MAX_PROFIT, PUT_BREACHED, CALL_BREACHED, DOUBLE_BREACH)
+        4. Calculate realized P&L
+        5. Update position status to 'expired'
+        6. Feed Oracle for ML feedback loop
+        7. Update daily performance metrics
+
+        Returns:
+            Dict with processing results
+        """
+        result = {
+            'processed_count': 0,
+            'total_pnl': 0.0,
+            'winners': 0,
+            'losers': 0,
+            'positions': [],
+            'errors': []
+        }
+
+        today = datetime.now(self.tz).strftime('%Y-%m-%d')
+        logger.info(f"ARES EOD: Processing expired positions for {today}")
+
+        try:
+            # Get closing price of underlying
+            ticker = self.get_trading_ticker()
+            closing_price = self._get_underlying_close_price(ticker)
+
+            if closing_price is None or closing_price <= 0:
+                result['errors'].append(f"Could not get closing price for {ticker}")
+                logger.error(f"ARES EOD: Could not get closing price for {ticker}")
+                return result
+
+            logger.info(f"ARES EOD: {ticker} closed at ${closing_price:.2f}")
+
+            # Find positions expiring today
+            positions_to_process = []
+
+            # Check in-memory open positions
+            for pos in self.open_positions[:]:  # Copy list to allow modification
+                if pos.expiration == today and pos.status == 'open':
+                    positions_to_process.append(pos)
+
+            # Also check database for any positions not in memory
+            db_positions = self._get_expiring_positions_from_db(today)
+            for db_pos in db_positions:
+                # Avoid duplicates
+                if not any(p.position_id == db_pos.position_id for p in positions_to_process):
+                    positions_to_process.append(db_pos)
+
+            if not positions_to_process:
+                logger.info(f"ARES EOD: No positions expiring today")
+                return result
+
+            logger.info(f"ARES EOD: Found {len(positions_to_process)} positions to process")
+
+            # Process each position
+            for position in positions_to_process:
+                try:
+                    # Determine outcome based on closing price vs strikes
+                    outcome = self._determine_expiration_outcome(position, closing_price)
+                    realized_pnl = self._calculate_expiration_pnl(position, outcome, closing_price)
+
+                    # Update position
+                    position.status = 'expired'
+                    position.close_date = today
+                    position.close_price = closing_price
+                    position.realized_pnl = realized_pnl
+
+                    # Move from open to closed
+                    if position in self.open_positions:
+                        self.open_positions.remove(position)
+                    self.closed_positions.append(position)
+
+                    # Update capital
+                    self.capital += realized_pnl
+                    self.total_pnl += realized_pnl
+
+                    if realized_pnl > 0:
+                        self.win_count += 1
+                        result['winners'] += 1
+                    else:
+                        result['losers'] += 1
+
+                    # Update high water mark
+                    if self.capital > self.high_water_mark:
+                        self.high_water_mark = self.capital
+
+                    # Save to database
+                    self._update_position_in_db(position)
+
+                    # Log the expiration
+                    self._log_expiration_decision(position, outcome, closing_price)
+
+                    result['processed_count'] += 1
+                    result['total_pnl'] += realized_pnl
+                    result['positions'].append({
+                        'position_id': position.position_id,
+                        'outcome': outcome,
+                        'realized_pnl': realized_pnl,
+                        'closing_price': closing_price,
+                        'put_short_strike': position.put_short_strike,
+                        'call_short_strike': position.call_short_strike
+                    })
+
+                    logger.info(f"ARES EOD: Processed {position.position_id} - {outcome} - P&L: ${realized_pnl:.2f}")
+
+                except Exception as e:
+                    error_msg = f"Error processing position {position.position_id}: {e}"
+                    result['errors'].append(error_msg)
+                    logger.error(f"ARES EOD: {error_msg}")
+
+            # Update daily performance
+            self._update_daily_performance()
+
+            logger.info(f"ARES EOD: Complete - Processed {result['processed_count']} positions, "
+                       f"Total P&L: ${result['total_pnl']:.2f}, "
+                       f"Winners: {result['winners']}, Losers: {result['losers']}")
+
+            return result
+
+        except Exception as e:
+            result['errors'].append(f"EOD processing failed: {e}")
+            logger.error(f"ARES EOD: Processing failed: {e}")
+            return result
+
+    def _get_underlying_close_price(self, ticker: str) -> Optional[float]:
+        """Get the closing price for the underlying."""
+        try:
+            # Try Tradier first
+            if self.tradier:
+                quote = self.tradier.get_quote(ticker)
+                if quote and 'close' in quote:
+                    return float(quote['close'])
+                if quote and 'last' in quote:
+                    return float(quote['last'])
+
+            # Fallback: use last known price
+            if self.tradier:
+                quote = self.tradier.get_quote(ticker)
+                if quote and 'last' in quote:
+                    return float(quote['last'])
+
+            return None
+        except Exception as e:
+            logger.error(f"ARES EOD: Error getting close price: {e}")
+            return None
+
+    def _get_expiring_positions_from_db(self, expiration_date: str) -> List[IronCondorPosition]:
+        """Get positions from database that are expiring on given date."""
+        positions = []
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT
+                    position_id, open_date, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss,
+                    put_spread_order_id, call_spread_order_id,
+                    status, underlying_price_at_entry, vix_at_entry, expected_move
+                FROM ares_positions
+                WHERE expiration = %s AND status = 'open' AND mode = %s
+            ''', (expiration_date, self.mode.value))
+
+            for row in cursor.fetchall():
+                pos = IronCondorPosition(
+                    position_id=row[0],
+                    open_date=row[1],
+                    expiration=row[2],
+                    put_long_strike=row[3],
+                    put_short_strike=row[4],
+                    call_short_strike=row[5],
+                    call_long_strike=row[6],
+                    put_credit=row[7],
+                    call_credit=row[8],
+                    total_credit=row[9],
+                    contracts=row[10],
+                    spread_width=row[11],
+                    max_loss=row[12],
+                    put_spread_order_id=row[13] or "",
+                    call_spread_order_id=row[14] or "",
+                    status=row[15],
+                    underlying_price_at_entry=row[16] or 0,
+                    vix_at_entry=row[17] or 0,
+                    expected_move=row[18] or 0
+                )
+                positions.append(pos)
+
+            conn.close()
+
+        except Exception as e:
+            logger.error(f"ARES EOD: Error loading expiring positions from DB: {e}")
+
+        return positions
+
+    def _determine_expiration_outcome(self, position: IronCondorPosition, closing_price: float) -> str:
+        """
+        Determine the outcome of an expired Iron Condor.
+
+        Outcomes:
+        - MAX_PROFIT: Price between short strikes, all options expire worthless
+        - PUT_BREACHED: Price below short put strike
+        - CALL_BREACHED: Price above short call strike
+        - DOUBLE_BREACH: Price somehow outside both (shouldn't happen same day)
+        """
+        put_breached = closing_price < position.put_short_strike
+        call_breached = closing_price > position.call_short_strike
+
+        if put_breached and call_breached:
+            return "DOUBLE_BREACH"  # Theoretical edge case
+        elif put_breached:
+            return "PUT_BREACHED"
+        elif call_breached:
+            return "CALL_BREACHED"
+        else:
+            return "MAX_PROFIT"
+
+    def _calculate_expiration_pnl(self, position: IronCondorPosition, outcome: str, closing_price: float) -> float:
+        """
+        Calculate realized P&L at expiration.
+
+        For Iron Condors at expiration:
+        - MAX_PROFIT: All options expire worthless, keep full credit
+        - PUT_BREACHED: Put spread is ITM, we owe the intrinsic value
+        - CALL_BREACHED: Call spread is ITM, we owe the intrinsic value
+
+        P&L = Credit Received - Settlement Cost
+        """
+        credit_received = position.total_credit * 100 * position.contracts
+        spread_width = position.spread_width
+
+        if outcome == "MAX_PROFIT":
+            # All options expire worthless - keep full credit
+            return credit_received
+
+        elif outcome == "PUT_BREACHED":
+            # Put spread is in the money
+            # Intrinsic value we owe = (put_short_strike - closing_price) capped at spread_width
+            put_spread_intrinsic = min(
+                position.put_short_strike - closing_price,
+                spread_width
+            )
+            # Settlement cost = intrinsic value per contract
+            settlement_cost = put_spread_intrinsic * 100 * position.contracts
+            # P&L = Credit received - Settlement cost
+            return credit_received - settlement_cost
+
+        elif outcome == "CALL_BREACHED":
+            # Call spread is in the money
+            # Intrinsic value we owe = (closing_price - call_short_strike) capped at spread_width
+            call_spread_intrinsic = min(
+                closing_price - position.call_short_strike,
+                spread_width
+            )
+            # Settlement cost = intrinsic value per contract
+            settlement_cost = call_spread_intrinsic * 100 * position.contracts
+            # P&L = Credit received - Settlement cost
+            return credit_received - settlement_cost
+
+        elif outcome == "DOUBLE_BREACH":
+            # Both sides ITM (theoretical - shouldn't happen same day)
+            # We owe max on both sides
+            max_settlement = spread_width * 100 * position.contracts * 2
+            return credit_received - max_settlement
+
+        # Fallback: max loss
+        return -(position.max_loss * 100 * position.contracts)
+
+    def _log_expiration_decision(self, position: IronCondorPosition, outcome: str, closing_price: float):
+        """Log the expiration event to the decision logger."""
+        if not self.decision_logger:
+            return
+
+        try:
+            from trading.decision_logger import (
+                TradeDecision, DecisionType, BotName, MarketContext,
+                DecisionReasoning, TradeLeg, DataSource
+            )
+
+            now = datetime.now(self.tz)
+
+            # Create expiration decision
+            decision = TradeDecision(
+                decision_id=f"{position.position_id}-EXP",
+                timestamp=now.isoformat(),
+                decision_type=DecisionType.EXIT_SIGNAL,
+                bot_name=BotName.ARES,
+                what=f"EXPIRED Iron Condor {position.contracts}x {position.put_short_strike}/{position.call_short_strike} - {outcome}",
+                why=f"0DTE expiration. {self.get_trading_ticker()} closed at ${closing_price:.2f}. " +
+                    f"Put short: ${position.put_short_strike}, Call short: ${position.call_short_strike}. " +
+                    f"P&L: ${position.realized_pnl:.2f}",
+                action="EXPIRED",
+                symbol=self.get_trading_ticker(),
+                strategy="ARES_IRON_CONDOR",
+                underlying_price_at_exit=closing_price,
+                actual_pnl=position.realized_pnl,
+                legs=[
+                    TradeLeg(leg_id=1, action="EXPIRED", option_type="put", strike=position.put_long_strike,
+                            expiration=position.expiration, realized_pnl=0),
+                    TradeLeg(leg_id=2, action="EXPIRED", option_type="put", strike=position.put_short_strike,
+                            expiration=position.expiration, entry_price=position.put_credit, realized_pnl=0),
+                    TradeLeg(leg_id=3, action="EXPIRED", option_type="call", strike=position.call_short_strike,
+                            expiration=position.expiration, entry_price=position.call_credit, realized_pnl=0),
+                    TradeLeg(leg_id=4, action="EXPIRED", option_type="call", strike=position.call_long_strike,
+                            expiration=position.expiration, realized_pnl=0),
+                ],
+                market_context=MarketContext(
+                    timestamp=now.isoformat(),
+                    spot_price=closing_price,
+                    spot_source=DataSource.TRADIER_LIVE
+                ),
+                reasoning=DecisionReasoning(
+                    primary_reason=f"0DTE expiration - {outcome}",
+                    supporting_factors=[
+                        f"Closing price: ${closing_price:.2f}",
+                        f"Put short strike: ${position.put_short_strike}",
+                        f"Call short strike: ${position.call_short_strike}",
+                        f"Credit received: ${position.total_credit:.2f}"
+                    ],
+                    risk_factors=[]
+                ),
+                position_size_contracts=position.contracts,
+                max_risk_dollars=position.max_loss * 100 * position.contracts,
+                outcome_notes=outcome
+            )
+
+            self.decision_logger.log_decision(decision)
+
+        except Exception as e:
+            logger.debug(f"ARES EOD: Could not log expiration decision: {e}")
+
     def get_status(self) -> Dict:
         """Get current ARES status"""
         now = datetime.now(self.tz)
