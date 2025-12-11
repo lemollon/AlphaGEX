@@ -1206,67 +1206,100 @@ export default function GammaIntelligence() {
                     </div>
                   </div>
                 ) : historicalData.length > 0 ? (
-                  <div className="space-y-4">
-                    {/* Net GEX Trend */}
-                    <div>
-                      <h3 className="text-sm font-semibold text-text-secondary mb-2">Net GEX Over Time</h3>
-                      <div className="h-48 relative">
-                        <div className="space-y-1">
-                          {historicalData.slice(0, 20).map((point, idx) => {
-                            const maxAbsGex = Math.max(...historicalData.map(p => Math.abs(p.net_gex || 0)), 1)
-                            const barWidth = (Math.abs(point.net_gex || 0) / maxAbsGex) * 100
+                  <div className="space-y-6">
+                    {/* Historical Data Table - More Readable */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="text-left py-3 px-4 text-sm font-semibold text-text-secondary">Date</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">Price</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">Net GEX</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">Flip Point</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">IV</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-text-secondary">P/C Ratio</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historicalData.slice(0, 15).map((point, idx) => {
                             const dateStr = point.date ? point.date.replace('_', ' ') : ''
                             const date = dateStr ? new Date(dateStr) : new Date()
+                            const netGex = point.net_gex || 0
 
                             return (
-                              <div key={idx} className="flex items-center gap-2">
-                                <span className="text-xs font-mono w-24 text-text-muted">
+                              <tr key={idx} className="border-b border-border hover:bg-background-hover transition-colors">
+                                <td className="py-3 px-4 text-sm font-mono text-text-primary">
                                   {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })}
-                                </span>
-                                <span className="text-xs font-mono w-16 text-text-secondary">
+                                </td>
+                                <td className="py-3 px-4 text-sm font-mono text-text-primary text-right">
                                   ${(point.price || 0).toFixed(2)}
-                                </span>
-                                <div className="flex-1 h-5 bg-background-deep rounded relative overflow-hidden">
+                                </td>
+                                <td className={`py-3 px-4 text-sm font-mono font-semibold text-right ${netGex > 0 ? 'text-success' : 'text-danger'}`}>
+                                  {(netGex / 1e9).toFixed(2)}B
+                                </td>
+                                <td className="py-3 px-4 text-sm font-mono text-primary text-right">
+                                  ${(point.flip_point || 0).toFixed(2)}
+                                </td>
+                                <td className="py-3 px-4 text-sm font-mono text-warning text-right">
+                                  {((point.implied_volatility || 0) * 100).toFixed(1)}%
+                                </td>
+                                <td className="py-3 px-4 text-sm font-mono text-text-primary text-right">
+                                  {(point.put_call_ratio || 0).toFixed(2)}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Visual Charts */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Net GEX Trend */}
+                      <div>
+                        <h3 className="text-sm font-semibold text-text-secondary mb-3">Net GEX Trend</h3>
+                        <div className="space-y-2">
+                          {historicalData.slice(0, 10).map((point, idx) => {
+                            const maxAbsGex = Math.max(...historicalData.map(p => Math.abs(p.net_gex || 0)), 1)
+                            const barWidth = (Math.abs(point.net_gex || 0) / maxAbsGex) * 100
+                            const netGex = point.net_gex || 0
+
+                            return (
+                              <div key={idx} className="flex items-center gap-3">
+                                <div className="flex-1 h-6 bg-background-deep rounded relative overflow-hidden">
                                   <div
-                                    className={`h-full ${(point.net_gex || 0) > 0 ? 'bg-success' : 'bg-danger'} transition-all`}
+                                    className={`h-full ${netGex > 0 ? 'bg-success' : 'bg-danger'} transition-all`}
                                     style={{ width: `${barWidth}%` }}
                                   />
-                                  <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-white">
-                                    {((point.net_gex || 0) / 1e9).toFixed(2)}B
-                                  </span>
                                 </div>
+                                <span className={`text-sm font-mono font-semibold w-20 text-right ${netGex > 0 ? 'text-success' : 'text-danger'}`}>
+                                  {(netGex / 1e9).toFixed(2)}B
+                                </span>
                               </div>
                             )
                           })}
                         </div>
                       </div>
-                    </div>
 
-                    {/* IV Trend */}
-                    <div>
-                      <h3 className="text-sm font-semibold text-text-secondary mb-2">Implied Volatility Trend</h3>
-                      <div className="h-32 relative">
-                        <div className="space-y-1">
-                          {historicalData.slice(0, 15).map((point, idx) => {
+                      {/* IV Trend */}
+                      <div>
+                        <h3 className="text-sm font-semibold text-text-secondary mb-3">IV Trend</h3>
+                        <div className="space-y-2">
+                          {historicalData.slice(0, 10).map((point, idx) => {
                             const maxIV = Math.max(...historicalData.map(p => p.implied_volatility || 0), 0.01)
                             const barWidth = ((point.implied_volatility || 0) / maxIV) * 100
-                            const dateStr = point.date ? point.date.replace('_', ' ') : ''
-                            const date = dateStr ? new Date(dateStr) : new Date()
 
                             return (
-                              <div key={idx} className="flex items-center gap-2">
-                                <span className="text-xs font-mono w-24 text-text-muted">
-                                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })}
-                                </span>
-                                <div className="flex-1 h-4 bg-background-deep rounded relative overflow-hidden">
+                              <div key={idx} className="flex items-center gap-3">
+                                <div className="flex-1 h-6 bg-background-deep rounded relative overflow-hidden">
                                   <div
                                     className="h-full bg-warning transition-all"
                                     style={{ width: `${barWidth}%` }}
                                   />
-                                  <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-white">
-                                    {((point.implied_volatility || 0) * 100).toFixed(1)}%
-                                  </span>
                                 </div>
+                                <span className="text-sm font-mono font-semibold text-warning w-16 text-right">
+                                  {((point.implied_volatility || 0) * 100).toFixed(1)}%
+                                </span>
                               </div>
                             )
                           })}
