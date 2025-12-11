@@ -11,13 +11,24 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Add project root to path
+# Add project root to path - try multiple locations
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / 'backend'))
+sys.path.insert(0, str(project_root / 'services'))
+
+# Also handle if running from /opt/render/project/src
+render_root = Path('/opt/render/project/src')
+if render_root.exists():
+    sys.path.insert(0, str(render_root))
+    sys.path.insert(0, str(render_root / 'backend'))
+    sys.path.insert(0, str(render_root / 'services'))
 
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv(project_root / '.env')
+if render_root.exists():
+    load_dotenv(render_root / '.env')
 
 print("=" * 70)
 print("🔍 ALPHAGEX RENDER DEPLOYMENT DIAGNOSTIC")
@@ -176,43 +187,46 @@ if db_connected:
         ('data_collection_log', 'Collection logs'),
     ]
 
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
+    empty_tables = []
+    # Check each table with a separate connection to avoid transaction abort issues
+    for table, description in tables_to_check:
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
 
-        empty_tables = []
-        for table, description in tables_to_check:
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            count = cursor.fetchone()[0]
+
+            # Check for recent data (last 24 hours)
+            recent = "N/A"
             try:
-                cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                count = cursor.fetchone()[0]
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {table}
+                    WHERE timestamp >= NOW() - INTERVAL '24 hours'
+                """)
+                recent = cursor.fetchone()[0]
+            except:
+                pass
 
-                # Check for recent data (last 24 hours)
-                try:
-                    cursor.execute(f"""
-                        SELECT COUNT(*) FROM {table}
-                        WHERE timestamp >= NOW() - INTERVAL '24 hours'
-                    """)
-                    recent = cursor.fetchone()[0]
-                except:
-                    recent = "N/A"
+            conn.close()
 
-                if count == 0:
-                    print(f"    ❌ {table}: EMPTY")
-                    empty_tables.append(table)
-                elif recent == 0 or recent == "N/A":
-                    print(f"    ⚠️  {table}: {count:,} total, no recent data")
-                    warnings.append(f"{table} has no data from last 24h")
-                else:
-                    print(f"    ✅ {table}: {count:,} total, {recent} recent")
-            except Exception as e:
-                print(f"    ⚠️  {table}: Error - {e}")
+            if count == 0:
+                print(f"    ❌ {table}: EMPTY")
+                empty_tables.append(table)
+            elif recent == 0 or recent == "N/A":
+                print(f"    ⚠️  {table}: {count:,} total, no recent data")
+                warnings.append(f"{table} has no data from last 24h")
+            else:
+                print(f"    ✅ {table}: {count:,} total, {recent} recent")
+        except Exception as e:
+            print(f"    ⚠️  {table}: Error - {str(e)[:60]}")
+            try:
+                conn.close()
+            except:
+                pass
 
-        if empty_tables:
-            warnings.append(f"Empty tables: {', '.join(empty_tables)}")
-
-        conn.close()
-    except Exception as e:
-        print(f"  ❌ Error checking data: {e}")
+    if empty_tables:
+        warnings.append(f"Empty tables: {', '.join(empty_tables)}")
 
 # =============================================================================
 # 5. RECENT GEX HISTORY CHECK
@@ -360,7 +374,7 @@ print("8️⃣  BACKEND API IMPORT TEST")
 print("=" * 70)
 
 try:
-    from backend.api.main import app
+    from backend.main import app
     print("  ✅ FastAPI app imports successfully")
 
     # List routes

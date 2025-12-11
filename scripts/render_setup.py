@@ -11,13 +11,24 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Add project root to path
+# Add project root to path - try multiple locations
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / 'backend'))
+sys.path.insert(0, str(project_root / 'services'))
+
+# Also handle if running from /opt/render/project/src
+render_root = Path('/opt/render/project/src')
+if render_root.exists():
+    sys.path.insert(0, str(render_root))
+    sys.path.insert(0, str(render_root / 'backend'))
+    sys.path.insert(0, str(render_root / 'services'))
 
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv(project_root / '.env')
+if render_root.exists():
+    load_dotenv(render_root / '.env')
 
 print("=" * 70)
 print("🚀 ALPHAGEX RENDER QUICK SETUP")
@@ -192,7 +203,7 @@ print("STEP 8: Testing Backend API Import")
 print("-" * 70)
 
 try:
-    from backend.api.main import app
+    from backend.main import app
     print("✅ FastAPI app loads successfully")
 except Exception as e:
     print(f"❌ Backend API failed to load: {e}")

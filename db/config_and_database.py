@@ -2602,16 +2602,21 @@ def init_database():
         )
     ''')
 
-    # gex_change_log - GEX change events
+    # gex_change_log - GEX change events and velocity tracking
     c.execute('''
         CREATE TABLE IF NOT EXISTS gex_change_log (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMPTZ DEFAULT NOW(),
             symbol TEXT NOT NULL,
-            change_type TEXT NOT NULL,
+            change_type TEXT,
             previous_value REAL,
             new_value REAL,
+            previous_gex REAL,
+            current_gex REAL,
+            change REAL,
             change_pct REAL,
+            velocity_trend TEXT,
+            direction_change BOOLEAN DEFAULT FALSE,
             trigger_event TEXT,
             spot_price REAL
         )
@@ -2961,6 +2966,30 @@ def init_database():
     except Exception as e:
         # Table might not exist yet on first run - that's fine
         pass
+
+    # Migrate gex_change_log table - add missing columns
+    try:
+        columns = get_table_columns(c, 'gex_change_log')
+        if columns:
+            # Add missing columns for GEX velocity tracking
+            if 'previous_gex' not in columns:
+                print("🔄 Migrating gex_change_log table: adding previous_gex column")
+                c.execute("ALTER TABLE gex_change_log ADD COLUMN previous_gex REAL")
+            if 'current_gex' not in columns:
+                print("🔄 Migrating gex_change_log table: adding current_gex column")
+                c.execute("ALTER TABLE gex_change_log ADD COLUMN current_gex REAL")
+            if 'change' not in columns:
+                print("🔄 Migrating gex_change_log table: adding change column")
+                c.execute("ALTER TABLE gex_change_log ADD COLUMN change REAL")
+            if 'velocity_trend' not in columns:
+                print("🔄 Migrating gex_change_log table: adding velocity_trend column")
+                c.execute("ALTER TABLE gex_change_log ADD COLUMN velocity_trend TEXT")
+            if 'direction_change' not in columns:
+                print("🔄 Migrating gex_change_log table: adding direction_change column")
+                c.execute("ALTER TABLE gex_change_log ADD COLUMN direction_change BOOLEAN DEFAULT FALSE")
+            print("✅ gex_change_log migration complete")
+    except Exception as e:
+        print(f"⚠️  gex_change_log migration skipped: {e}")
 
     conn.commit()
     conn.close()
