@@ -1127,9 +1127,9 @@ export default function GammaIntelligence() {
                 </div>
                 {intelligence && intelligence.strikes && intelligence.strikes.length > 0 ? (
                   <div className="space-y-4">
-                    <div className="h-64 relative">
+                    <div className="max-h-96 overflow-y-auto">
                       {/* Price range visualization */}
-                      <div className="space-y-2">
+                      <div className="space-y-1">
                         {intelligence.strikes.slice(0, 15).map((strike, idx) => {
                           const spotPrice = intelligence.spot_price || 1 // Prevent division by zero
                           const distance = (((strike.strike ?? 0) - spotPrice) / spotPrice) * 100
@@ -1138,22 +1138,22 @@ export default function GammaIntelligence() {
                           const barWidth = (Math.abs(netGamma) / maxAbsGamma) * 100
 
                           return (
-                            <div key={idx} className="flex items-center gap-2">
-                              <span className="text-xs font-mono w-16 text-text-secondary">
+                            <div key={idx} className="flex items-center gap-2 py-1">
+                              <span className="text-xs font-mono w-16 text-text-secondary flex-shrink-0">
                                 ${(strike.strike ?? 0).toFixed(0)}
                               </span>
-                              <span className={`text-xs w-12 ${distance > 0 ? 'text-success' : 'text-danger'}`}>
+                              <span className={`text-xs w-14 flex-shrink-0 ${distance > 0 ? 'text-success' : 'text-danger'}`}>
                                 {distance > 0 ? '+' : ''}{distance.toFixed(1)}%
                               </span>
-                              <div className="flex-1 h-6 bg-background-deep rounded relative overflow-hidden">
+                              <div className="flex-1 h-5 bg-background-deep rounded relative overflow-hidden min-w-0">
                                 <div
                                   className={`h-full ${netGamma > 0 ? 'bg-success' : 'bg-danger'} transition-all`}
                                   style={{ width: `${barWidth}%` }}
                                 />
-                                <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-white">
-                                  {formatNumber(netGamma)}
-                                </span>
                               </div>
+                              <span className={`text-xs font-mono w-16 text-right flex-shrink-0 ${netGamma > 0 ? 'text-success' : 'text-danger'}`}>
+                                {formatNumber(netGamma)}
+                              </span>
                             </div>
                           )
                         })}
@@ -1260,21 +1260,26 @@ export default function GammaIntelligence() {
                       {/* Net GEX Trend */}
                       <div>
                         <h3 className="text-sm font-semibold text-text-secondary mb-3">Net GEX Trend</h3>
-                        <div className="space-y-2">
+                        <div className="space-y-1">
                           {historicalData.slice(0, 10).map((point, idx) => {
                             const maxAbsGex = Math.max(...historicalData.map(p => Math.abs(p.net_gex || 0)), 1)
                             const barWidth = (Math.abs(point.net_gex || 0) / maxAbsGex) * 100
                             const netGex = point.net_gex || 0
+                            const dateStr = point.date ? point.date.replace('_', ' ') : ''
+                            const date = dateStr ? new Date(dateStr) : new Date()
 
                             return (
-                              <div key={idx} className="flex items-center gap-3">
-                                <div className="flex-1 h-6 bg-background-deep rounded relative overflow-hidden">
+                              <div key={idx} className="flex items-center gap-2 py-0.5">
+                                <span className="text-xs font-mono w-12 text-text-muted flex-shrink-0">
+                                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                </span>
+                                <div className="flex-1 h-5 bg-background-deep rounded relative overflow-hidden min-w-0">
                                   <div
                                     className={`h-full ${netGex > 0 ? 'bg-success' : 'bg-danger'} transition-all`}
                                     style={{ width: `${barWidth}%` }}
                                   />
                                 </div>
-                                <span className={`text-sm font-mono font-semibold w-20 text-right ${netGex > 0 ? 'text-success' : 'text-danger'}`}>
+                                <span className={`text-xs font-mono font-semibold w-14 text-right flex-shrink-0 ${netGex > 0 ? 'text-success' : 'text-danger'}`}>
                                   {(netGex / 1e9).toFixed(2)}B
                                 </span>
                               </div>
@@ -1286,20 +1291,25 @@ export default function GammaIntelligence() {
                       {/* IV Trend */}
                       <div>
                         <h3 className="text-sm font-semibold text-text-secondary mb-3">IV Trend</h3>
-                        <div className="space-y-2">
+                        <div className="space-y-1">
                           {historicalData.slice(0, 10).map((point, idx) => {
                             const maxIV = Math.max(...historicalData.map(p => p.implied_volatility || 0), 0.01)
                             const barWidth = ((point.implied_volatility || 0) / maxIV) * 100
+                            const dateStr = point.date ? point.date.replace('_', ' ') : ''
+                            const date = dateStr ? new Date(dateStr) : new Date()
 
                             return (
-                              <div key={idx} className="flex items-center gap-3">
-                                <div className="flex-1 h-6 bg-background-deep rounded relative overflow-hidden">
+                              <div key={idx} className="flex items-center gap-2 py-0.5">
+                                <span className="text-xs font-mono w-12 text-text-muted flex-shrink-0">
+                                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                </span>
+                                <div className="flex-1 h-5 bg-background-deep rounded relative overflow-hidden min-w-0">
                                   <div
                                     className="h-full bg-warning transition-all"
                                     style={{ width: `${barWidth}%` }}
                                   />
                                 </div>
-                                <span className="text-sm font-mono font-semibold text-warning w-16 text-right">
+                                <span className="text-xs font-mono font-semibold text-warning w-12 text-right flex-shrink-0">
                                   {((point.implied_volatility || 0) * 100).toFixed(1)}%
                                 </span>
                               </div>
