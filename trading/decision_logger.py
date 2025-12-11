@@ -989,8 +989,8 @@ def get_recent_decisions(bot_name: str = None, limit: int = 20) -> List[Dict]:
                 position_size_dollars,
                 actual_pnl,
                 COALESCE(full_decision->>'bot_name', 'PHOENIX') as bot_name,
-                COALESCE(full_decision->>'what', '') as what_summary,
-                COALESCE(full_decision->>'why', '') as why_summary
+                COALESCE(full_decision->>'what', '') as what,
+                COALESCE(full_decision->>'why', '') as why
             FROM trading_decisions
             {bot_filter}
             ORDER BY timestamp DESC

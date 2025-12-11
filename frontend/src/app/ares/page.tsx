@@ -519,7 +519,7 @@ export default function ARESPage() {
                 <Sword className="w-5 h-5 text-red-500" />
                 ARES Decision Log
               </h3>
-              <DecisionLogViewer />
+              <DecisionLogViewer defaultBot="ARES" />
             </div>
           )}
 
