@@ -75,11 +75,16 @@ interface BotStatus {
   }
 }
 
-export default function DecisionLogViewer() {
+interface DecisionLogViewerProps {
+  defaultBot?: string  // Lock to specific bot (e.g., 'ARES')
+  hideFilter?: boolean // Hide the bot filter dropdown
+}
+
+export default function DecisionLogViewer({ defaultBot, hideFilter = false }: DecisionLogViewerProps) {
   const [logs, setLogs] = useState<DecisionLog[]>([])
   const [summary, setSummary] = useState<DecisionSummary | null>(null)
   const [bots, setBots] = useState<Record<string, BotStatus>>({})
-  const [selectedBot, setSelectedBot] = useState<string>('all')
+  const [selectedBot, setSelectedBot] = useState<string>(defaultBot || 'all')
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [expandedLog, setExpandedLog] = useState<number | null>(null)
@@ -171,19 +176,21 @@ export default function DecisionLogViewer() {
         </div>
 
         <div className="flex gap-2">
-          {/* Bot Filter */}
-          <select
-            value={selectedBot}
-            onChange={(e) => setSelectedBot(e.target.value)}
-            className="bg-background-tertiary border border-border-secondary rounded px-3 py-1 text-sm text-text-primary"
-          >
-            <option value="all">All Bots</option>
-            <option value="PHOENIX">PHOENIX (0DTE)</option>
-            <option value="ATLAS">ATLAS (Wheel)</option>
-            <option value="ARES">ARES (Aggressive IC)</option>
-            <option value="HERMES">HERMES (Manual)</option>
-            <option value="ORACLE">ORACLE (Advisory)</option>
-          </select>
+          {/* Bot Filter - Hidden when defaultBot is set */}
+          {!hideFilter && !defaultBot && (
+            <select
+              value={selectedBot}
+              onChange={(e) => setSelectedBot(e.target.value)}
+              className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white"
+            >
+              <option value="all">All Bots</option>
+              <option value="PHOENIX">PHOENIX (0DTE)</option>
+              <option value="ATLAS">ATLAS (Wheel)</option>
+              <option value="ARES">ARES (Aggressive IC)</option>
+              <option value="HERMES">HERMES (Manual)</option>
+              <option value="ORACLE">ORACLE (Advisory)</option>
+            </select>
+          )}
 
           {/* Export Button */}
           <button
@@ -198,7 +205,7 @@ export default function DecisionLogViewer() {
           <button
             onClick={loadData}
             disabled={loading}
-            className="bg-background-tertiary hover:bg-background-hover border border-border-secondary text-text-primary px-3 py-1 rounded text-sm"
+            className="bg-gray-700 hover:bg-gray-600 border border-gray-600 text-white px-3 py-1 rounded text-sm"
           >
             {loading ? '...' : 'Refresh'}
           </button>
@@ -208,23 +215,23 @@ export default function DecisionLogViewer() {
       {/* Summary Cards */}
       {summary && (
         <div className="grid grid-cols-4 gap-4 mb-4">
-          <div className="bg-background-tertiary rounded-lg p-3 border border-border-secondary">
-            <p className="text-text-muted text-xs">Total Decisions</p>
-            <p className="text-xl font-bold text-text-primary">{summary.total_decisions}</p>
+          <div className="bg-gray-700 rounded-lg p-3 border border-gray-600">
+            <p className="text-gray-400 text-xs">Total Decisions</p>
+            <p className="text-xl font-bold text-white">{summary.total_decisions}</p>
           </div>
-          <div className="bg-background-tertiary rounded-lg p-3 border border-border-secondary">
-            <p className="text-text-muted text-xs">Trades Executed</p>
+          <div className="bg-gray-700 rounded-lg p-3 border border-gray-600">
+            <p className="text-gray-400 text-xs">Trades Executed</p>
             <p className="text-xl font-bold text-green-400">{summary.trades_executed}</p>
           </div>
-          <div className="bg-background-tertiary rounded-lg p-3 border border-border-secondary">
-            <p className="text-text-muted text-xs">Total P&L</p>
+          <div className="bg-gray-700 rounded-lg p-3 border border-gray-600">
+            <p className="text-gray-400 text-xs">Total P&L</p>
             <p className={`text-xl font-bold ${summary.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               ${summary.total_pnl?.toLocaleString() || '0'}
             </p>
           </div>
-          <div className="bg-background-tertiary rounded-lg p-3 border border-border-secondary">
-            <p className="text-text-muted text-xs">Active Bots</p>
-            <p className="text-xl font-bold text-accent-primary">
+          <div className="bg-gray-700 rounded-lg p-3 border border-gray-600">
+            <p className="text-gray-400 text-xs">Active Bots</p>
+            <p className="text-xl font-bold text-blue-400">
               {Object.values(bots).filter(b => b.scheduled).length}
             </p>
           </div>
@@ -241,7 +248,7 @@ export default function DecisionLogViewer() {
           logs.map((log) => (
             <div
               key={log.id}
-              className="bg-background-tertiary rounded-lg border border-border-secondary p-3 hover:border-accent-primary/50 cursor-pointer transition-colors"
+              className="bg-gray-700 rounded-lg border border-gray-600 p-3 hover:border-blue-500/50 cursor-pointer transition-colors"
               onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}
             >
               {/* Log Header */}
