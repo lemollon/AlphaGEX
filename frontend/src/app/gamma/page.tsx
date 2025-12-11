@@ -769,11 +769,12 @@ export default function GammaIntelligence() {
                     <div className="max-h-80 overflow-y-auto space-y-1">
                       {intelligence.strikes.slice(0, 20).map((strike, idx) => {
                         const maxGamma = Math.max(
-                          ...intelligence.strikes!.map(s => Math.max(Math.abs(s.call_gamma), Math.abs(s.put_gamma)))
+                          ...intelligence.strikes!.map(s => Math.max(Math.abs(s.call_gamma ?? 0), Math.abs(s.put_gamma ?? 0))), 1
                         )
-                        const callWidth = (Math.abs(strike.call_gamma) / maxGamma) * 100
-                        const putWidth = (Math.abs(strike.put_gamma) / maxGamma) * 100
-                        const isNearSpot = Math.abs(strike.strike - intelligence.spot_price) < intelligence.spot_price * 0.02
+                        const callWidth = (Math.abs(strike.call_gamma ?? 0) / maxGamma) * 100
+                        const putWidth = (Math.abs(strike.put_gamma ?? 0) / maxGamma) * 100
+                        const spotPrice = intelligence.spot_price || 1
+                        const isNearSpot = Math.abs((strike.strike ?? 0) - spotPrice) < spotPrice * 0.02
 
                         return (
                           <div
@@ -782,15 +783,15 @@ export default function GammaIntelligence() {
                           >
                             <div className="flex items-center justify-between text-sm mb-1">
                               <span className="font-mono font-semibold text-text-primary w-20">
-                                ${strike.strike.toFixed(0)}
-                                {strike.strike === intelligence.flip_point && <span className="ml-1 text-xs text-warning">⚡</span>}
-                                {strike.strike === intelligence.call_wall && <span className="ml-1 text-xs text-success">🔼</span>}
-                                {strike.strike === intelligence.put_wall && <span className="ml-1 text-xs text-danger">🔽</span>}
+                                ${(strike.strike ?? 0).toFixed(0)}
+                                {(strike.strike ?? 0) === intelligence.flip_point && <span className="ml-1 text-xs text-warning">⚡</span>}
+                                {(strike.strike ?? 0) === intelligence.call_wall && <span className="ml-1 text-xs text-success">🔼</span>}
+                                {(strike.strike ?? 0) === intelligence.put_wall && <span className="ml-1 text-xs text-danger">🔽</span>}
                               </span>
-                              <span className="text-success font-mono w-24 text-right">{formatNumber(strike.call_gamma)}</span>
-                              <span className="text-danger font-mono w-24 text-right">{formatNumber(strike.put_gamma)}</span>
-                              <span className={`font-mono w-24 text-right ${strike.total_gamma > 0 ? 'text-success' : 'text-danger'}`}>
-                                {formatNumber(strike.total_gamma)}
+                              <span className="text-success font-mono w-24 text-right">{formatNumber(strike.call_gamma ?? 0)}</span>
+                              <span className="text-danger font-mono w-24 text-right">{formatNumber(strike.put_gamma ?? 0)}</span>
+                              <span className={`font-mono w-24 text-right ${(strike.total_gamma ?? 0) > 0 ? 'text-success' : 'text-danger'}`}>
+                                {formatNumber(strike.total_gamma ?? 0)}
                               </span>
                             </div>
                             <div className="flex gap-1">
@@ -860,7 +861,7 @@ export default function GammaIntelligence() {
                     </div>
                     <div className="px-4 py-2 rounded-lg bg-background-card">
                       <p className="text-xs text-text-muted mb-1">Confidence</p>
-                      <p className="text-2xl font-bold text-success">{intelligence.mm_state.confidence}%</p>
+                      <p className="text-2xl font-bold text-success">{intelligence.mm_state.confidence ?? 0}%</p>
                     </div>
                   </div>
 
@@ -1130,15 +1131,16 @@ export default function GammaIntelligence() {
                       {/* Price range visualization */}
                       <div className="space-y-2">
                         {intelligence.strikes.slice(0, 15).map((strike, idx) => {
-                          const distance = ((strike.strike - intelligence.spot_price) / intelligence.spot_price) * 100
-                          const netGamma = strike.total_gamma
-                          const maxAbsGamma = Math.max(...intelligence.strikes!.map(s => Math.abs(s.total_gamma)))
+                          const spotPrice = intelligence.spot_price || 1 // Prevent division by zero
+                          const distance = (((strike.strike ?? 0) - spotPrice) / spotPrice) * 100
+                          const netGamma = strike.total_gamma ?? 0
+                          const maxAbsGamma = Math.max(...intelligence.strikes!.map(s => Math.abs(s.total_gamma ?? 0)), 1)
                           const barWidth = (Math.abs(netGamma) / maxAbsGamma) * 100
 
                           return (
                             <div key={idx} className="flex items-center gap-2">
                               <span className="text-xs font-mono w-16 text-text-secondary">
-                                ${strike.strike.toFixed(0)}
+                                ${(strike.strike ?? 0).toFixed(0)}
                               </span>
                               <span className={`text-xs w-12 ${distance > 0 ? 'text-success' : 'text-danger'}`}>
                                 {distance > 0 ? '+' : ''}{distance.toFixed(1)}%

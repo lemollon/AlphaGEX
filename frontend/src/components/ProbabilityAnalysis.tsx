@@ -123,10 +123,10 @@ interface ProbabilityAnalysisProps {
 }
 
 export const BestSetupCard: React.FC<{ setup: TradeSetup; symbol: string }> = ({ setup, symbol }) => {
-  const winRatePercent = (setup.win_rate * 100).toFixed(1)
-  const avgWinPercent = (setup.avg_win * 100).toFixed(1)
-  const avgLossPercent = (setup.avg_loss * 100).toFixed(1)
-  const expectedValueDollars = (setup.expected_value * 100).toFixed(0) // Assuming $100/contract basis
+  const winRatePercent = ((setup.win_rate ?? 0) * 100).toFixed(1)
+  const avgWinPercent = ((setup.avg_win ?? 0) * 100).toFixed(1)
+  const avgLossPercent = ((setup.avg_loss ?? 0) * 100).toFixed(1)
+  const expectedValueDollars = ((setup.expected_value ?? 0) * 100).toFixed(0) // Assuming $100/contract basis
 
   return (
     <div className="card border-2 border-success bg-success/5">
@@ -140,7 +140,7 @@ export const BestSetupCard: React.FC<{ setup: TradeSetup; symbol: string }> = ({
         </div>
         <div className="px-4 py-2 rounded-lg bg-success/20">
           <p className="text-xs text-success font-semibold uppercase">
-            {setup.mm_state} State
+            {setup.mm_state || 'Unknown'} State
           </p>
         </div>
       </div>
@@ -148,30 +148,30 @@ export const BestSetupCard: React.FC<{ setup: TradeSetup; symbol: string }> = ({
       <div className="space-y-4">
         {/* Setup Type */}
         <div className="p-4 bg-background-card rounded-lg border-l-4 border-success">
-          <h3 className="text-lg font-bold text-text-primary mb-1">{setup.setup_type}</h3>
-          <p className="text-sm text-text-secondary">Based on {setup.sample_size} historical similar setups • Hold for {setup.optimal_hold_days} days</p>
+          <h3 className="text-lg font-bold text-text-primary mb-1">{setup.setup_type || 'Trade Setup'}</h3>
+          <p className="text-sm text-text-secondary">Based on {setup.sample_size ?? 0} historical similar setups • Hold for {setup.optimal_hold_days ?? 1} days</p>
         </div>
 
         {/* NEW: Entry/Exit Prices */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="p-4 bg-primary/10 border-2 border-primary rounded-lg">
             <p className="text-xs text-text-muted uppercase mb-1">Entry Price (Low)</p>
-            <p className="text-2xl font-bold text-primary">${setup.entry_price_low.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-primary">${(setup.entry_price_low ?? 0).toFixed(2)}</p>
             <p className="text-xs text-text-secondary mt-1">Conservative entry</p>
           </div>
           <div className="p-4 bg-primary/10 border-2 border-primary rounded-lg">
             <p className="text-xs text-text-muted uppercase mb-1">Entry Price (High)</p>
-            <p className="text-2xl font-bold text-primary">${setup.entry_price_high.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-primary">${(setup.entry_price_high ?? 0).toFixed(2)}</p>
             <p className="text-xs text-text-secondary mt-1">Max entry</p>
           </div>
           <div className="p-4 bg-success/10 border-2 border-success rounded-lg">
             <p className="text-xs text-text-muted uppercase mb-1">Profit Target</p>
-            <p className="text-2xl font-bold text-success">${setup.profit_target.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-success">${(setup.profit_target ?? 0).toFixed(2)}</p>
             <p className="text-xs text-text-secondary mt-1">Take profit</p>
           </div>
           <div className="p-4 bg-danger/10 border-2 border-danger rounded-lg">
             <p className="text-xs text-text-muted uppercase mb-1">Stop Loss</p>
-            <p className="text-2xl font-bold text-danger">${setup.stop_loss.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-danger">${(setup.stop_loss ?? 0).toFixed(2)}</p>
             <p className="text-xs text-text-secondary mt-1">Exit if hit</p>
           </div>
         </div>
@@ -218,7 +218,9 @@ export const BestSetupCard: React.FC<{ setup: TradeSetup; symbol: string }> = ({
               <div className="h-3 bg-background-deep rounded-full overflow-hidden">
                 <div
                   className="h-full bg-success"
-                  style={{ width: `${Math.abs(setup.avg_win) / (Math.abs(setup.avg_win) + Math.abs(setup.avg_loss)) * 100}%` }}
+                  style={{ width: `${(Math.abs(setup.avg_win ?? 0) + Math.abs(setup.avg_loss ?? 0)) > 0
+                    ? (Math.abs(setup.avg_win ?? 0) / (Math.abs(setup.avg_win ?? 0) + Math.abs(setup.avg_loss ?? 0)) * 100)
+                    : 50}%` }}
                 />
               </div>
             </div>
@@ -230,13 +232,15 @@ export const BestSetupCard: React.FC<{ setup: TradeSetup; symbol: string }> = ({
               <div className="h-3 bg-background-deep rounded-full overflow-hidden">
                 <div
                   className="h-full bg-danger"
-                  style={{ width: `${Math.abs(setup.avg_loss) / (Math.abs(setup.avg_win) + Math.abs(setup.avg_loss)) * 100}%` }}
+                  style={{ width: `${(Math.abs(setup.avg_win ?? 0) + Math.abs(setup.avg_loss ?? 0)) > 0
+                    ? (Math.abs(setup.avg_loss ?? 0) / (Math.abs(setup.avg_win ?? 0) + Math.abs(setup.avg_loss ?? 0)) * 100)
+                    : 50}%` }}
                 />
               </div>
             </div>
           </div>
           <p className="text-xs text-text-muted mt-3">
-            Risk/Reward Ratio: {Math.abs(setup.avg_loss) > 0 ? (Math.abs(setup.avg_win) / Math.abs(setup.avg_loss)).toFixed(2) : '∞'}:1
+            Risk/Reward Ratio: {Math.abs(setup.avg_loss ?? 0) > 0 ? (Math.abs(setup.avg_win ?? 0) / Math.abs(setup.avg_loss ?? 1)).toFixed(2) : '∞'}:1
           </p>
         </div>
 
@@ -247,17 +251,17 @@ export const BestSetupCard: React.FC<{ setup: TradeSetup; symbol: string }> = ({
             <div className="h-2 w-32 bg-background-deep rounded-full overflow-hidden">
               <div
                 className={`h-full ${
-                  setup.confidence_score >= 80 ? 'bg-success' :
-                  setup.confidence_score >= 60 ? 'bg-warning' : 'bg-danger'
+                  (setup.confidence_score ?? 0) >= 80 ? 'bg-success' :
+                  (setup.confidence_score ?? 0) >= 60 ? 'bg-warning' : 'bg-danger'
                 }`}
-                style={{ width: `${setup.confidence_score}%` }}
+                style={{ width: `${setup.confidence_score ?? 0}%` }}
               />
             </div>
             <span className={`text-xl font-bold ${
-              setup.confidence_score >= 80 ? 'text-success' :
-              setup.confidence_score >= 60 ? 'text-warning' : 'text-danger'
+              (setup.confidence_score ?? 0) >= 80 ? 'text-success' :
+              (setup.confidence_score ?? 0) >= 60 ? 'text-warning' : 'text-danger'
             }`}>
-              {setup.confidence_score}%
+              {setup.confidence_score ?? 0}%
             </span>
           </div>
         </div>
@@ -295,7 +299,11 @@ export const StrikeProbabilityMatrix: React.FC<{
           </thead>
           <tbody>
             {strikes.map((strike, idx) => {
-              const isNearATM = Math.abs(strike.distance_pct) < 0.5
+              const distancePct = strike.distance_pct ?? 0
+              const winRate = strike.win_rate ?? 0
+              const expectedReturn = strike.expected_return ?? 0
+              const expectedValue = strike.expected_value ?? 0
+              const isNearATM = Math.abs(distancePct) < 0.5
               return (
                 <tr
                   key={idx}
@@ -305,48 +313,48 @@ export const StrikeProbabilityMatrix: React.FC<{
                 >
                   <td className="py-3 px-4">
                     <span className="font-mono font-semibold text-text-primary">
-                      ${strike.strike.toFixed(0)}
+                      ${(strike.strike ?? 0).toFixed(0)}
                       {isNearATM && <span className="ml-2 text-xs text-primary">ATM</span>}
                     </span>
                   </td>
                   <td className="py-3 px-4">
                     <span className={`font-mono ${
-                      strike.distance_pct > 0 ? 'text-success' : 'text-danger'
+                      distancePct > 0 ? 'text-success' : 'text-danger'
                     }`}>
-                      {strike.distance_pct > 0 ? '+' : ''}{strike.distance_pct.toFixed(2)}%
+                      {distancePct > 0 ? '+' : ''}{distancePct.toFixed(2)}%
                     </span>
                   </td>
                   <td className="py-3 px-4">
-                    <span className="font-mono text-text-primary">{strike.estimated_delta.toFixed(2)}</span>
+                    <span className="font-mono text-text-primary">{(strike.estimated_delta ?? 0).toFixed(2)}</span>
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2">
                       <div className="h-2 w-16 bg-background-deep rounded-full overflow-hidden">
                         <div
                           className={`h-full ${
-                            strike.win_rate >= 0.7 ? 'bg-success' :
-                            strike.win_rate >= 0.5 ? 'bg-warning' : 'bg-danger'
+                            winRate >= 0.7 ? 'bg-success' :
+                            winRate >= 0.5 ? 'bg-warning' : 'bg-danger'
                           }`}
-                          style={{ width: `${strike.win_rate * 100}%` }}
+                          style={{ width: `${winRate * 100}%` }}
                         />
                       </div>
                       <span className={`font-semibold ${
-                        strike.win_rate >= 0.7 ? 'text-success' :
-                        strike.win_rate >= 0.5 ? 'text-warning' : 'text-danger'
+                        winRate >= 0.7 ? 'text-success' :
+                        winRate >= 0.5 ? 'text-warning' : 'text-danger'
                       }`}>
-                        {(strike.win_rate * 100).toFixed(0)}%
+                        {(winRate * 100).toFixed(0)}%
                       </span>
                     </div>
                   </td>
                   <td className="py-3 px-4">
-                    <span className="font-semibold text-success">+{(strike.expected_return * 100).toFixed(0)}%</span>
+                    <span className="font-semibold text-success">+{(expectedReturn * 100).toFixed(0)}%</span>
                   </td>
                   <td className="py-3 px-4">
                     <span className={`font-bold ${
-                      strike.expected_value > 0.1 ? 'text-success' :
-                      strike.expected_value > 0 ? 'text-warning' : 'text-danger'
+                      expectedValue > 0.1 ? 'text-success' :
+                      expectedValue > 0 ? 'text-warning' : 'text-danger'
                     }`}>
-                      {strike.expected_value > 0 ? '+' : ''}{(strike.expected_value * 100).toFixed(1)}%
+                      {expectedValue > 0 ? '+' : ''}{(expectedValue * 100).toFixed(1)}%
                     </span>
                   </td>
                 </tr>
@@ -389,9 +397,9 @@ export const WallProbabilityTracker: React.FC<{
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="text-lg font-bold text-success mb-1">🔼 Call Wall</h3>
-                <p className="text-2xl font-bold text-text-primary font-mono">${call_wall.price.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-text-primary font-mono">${(call_wall.price ?? 0).toFixed(2)}</p>
                 <p className="text-sm text-text-secondary">
-                  +{((call_wall.price - spotPrice) / spotPrice * 100).toFixed(2)}% from spot
+                  +{(spotPrice > 0 ? (((call_wall.price ?? 0) - spotPrice) / spotPrice * 100) : 0).toFixed(2)}% from spot
                 </p>
               </div>
             </div>
@@ -400,30 +408,30 @@ export const WallProbabilityTracker: React.FC<{
               <div>
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-text-secondary">1-Day Probability</span>
-                  <span className="font-semibold text-success">{(call_wall.prob_1d * 100).toFixed(0)}%</span>
+                  <span className="font-semibold text-success">{((call_wall.prob_1d ?? 0) * 100).toFixed(0)}%</span>
                 </div>
                 <div className="h-2 bg-background-deep rounded-full overflow-hidden">
-                  <div className="h-full bg-success" style={{ width: `${call_wall.prob_1d * 100}%` }} />
+                  <div className="h-full bg-success" style={{ width: `${(call_wall.prob_1d ?? 0) * 100}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-text-secondary">3-Day Probability</span>
-                  <span className="font-semibold text-success">{(call_wall.prob_3d * 100).toFixed(0)}%</span>
+                  <span className="font-semibold text-success">{((call_wall.prob_3d ?? 0) * 100).toFixed(0)}%</span>
                 </div>
                 <div className="h-2 bg-background-deep rounded-full overflow-hidden">
-                  <div className="h-full bg-success" style={{ width: `${call_wall.prob_3d * 100}%` }} />
+                  <div className="h-full bg-success" style={{ width: `${(call_wall.prob_3d ?? 0) * 100}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-text-secondary">5-Day Probability</span>
-                  <span className="font-semibold text-success">{(call_wall.prob_5d * 100).toFixed(0)}%</span>
+                  <span className="font-semibold text-success">{((call_wall.prob_5d ?? 0) * 100).toFixed(0)}%</span>
                 </div>
                 <div className="h-2 bg-background-deep rounded-full overflow-hidden">
-                  <div className="h-full bg-success" style={{ width: `${call_wall.prob_5d * 100}%` }} />
+                  <div className="h-full bg-success" style={{ width: `${(call_wall.prob_5d ?? 0) * 100}%` }} />
                 </div>
               </div>
             </div>
@@ -436,9 +444,9 @@ export const WallProbabilityTracker: React.FC<{
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="text-lg font-bold text-danger mb-1">🔽 Put Wall</h3>
-                <p className="text-2xl font-bold text-text-primary font-mono">${put_wall.price.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-text-primary font-mono">${(put_wall.price ?? 0).toFixed(2)}</p>
                 <p className="text-sm text-text-secondary">
-                  {((put_wall.price - spotPrice) / spotPrice * 100).toFixed(2)}% from spot
+                  {(spotPrice > 0 ? (((put_wall.price ?? 0) - spotPrice) / spotPrice * 100) : 0).toFixed(2)}% from spot
                 </p>
               </div>
             </div>
@@ -447,30 +455,30 @@ export const WallProbabilityTracker: React.FC<{
               <div>
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-text-secondary">1-Day Probability</span>
-                  <span className="font-semibold text-danger">{(put_wall.prob_1d * 100).toFixed(0)}%</span>
+                  <span className="font-semibold text-danger">{((put_wall.prob_1d ?? 0) * 100).toFixed(0)}%</span>
                 </div>
                 <div className="h-2 bg-background-deep rounded-full overflow-hidden">
-                  <div className="h-full bg-danger" style={{ width: `${put_wall.prob_1d * 100}%` }} />
+                  <div className="h-full bg-danger" style={{ width: `${(put_wall.prob_1d ?? 0) * 100}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-text-secondary">3-Day Probability</span>
-                  <span className="font-semibold text-danger">{(put_wall.prob_3d * 100).toFixed(0)}%</span>
+                  <span className="font-semibold text-danger">{((put_wall.prob_3d ?? 0) * 100).toFixed(0)}%</span>
                 </div>
                 <div className="h-2 bg-background-deep rounded-full overflow-hidden">
-                  <div className="h-full bg-danger" style={{ width: `${put_wall.prob_3d * 100}%` }} />
+                  <div className="h-full bg-danger" style={{ width: `${(put_wall.prob_3d ?? 0) * 100}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-text-secondary">5-Day Probability</span>
-                  <span className="font-semibold text-danger">{(put_wall.prob_5d * 100).toFixed(0)}%</span>
+                  <span className="font-semibold text-danger">{((put_wall.prob_5d ?? 0) * 100).toFixed(0)}%</span>
                 </div>
                 <div className="h-2 bg-background-deep rounded-full overflow-hidden">
-                  <div className="h-full bg-danger" style={{ width: `${put_wall.prob_5d * 100}%` }} />
+                  <div className="h-full bg-danger" style={{ width: `${(put_wall.prob_5d ?? 0) * 100}%` }} />
                 </div>
               </div>
             </div>
@@ -489,8 +497,9 @@ export const WallProbabilityTracker: React.FC<{
 }
 
 export const RegimeEdgeCalculator: React.FC<{ edge: RegimeEdge }> = ({ edge }) => {
-  const edgeColor = edge.edge_percentage >= 30 ? 'success' : edge.edge_percentage >= 15 ? 'warning' : 'text-muted'
-  const edgeLabel = edge.edge_percentage >= 30 ? 'STRONG EDGE' : edge.edge_percentage >= 15 ? 'MODERATE EDGE' : edge.edge_percentage > 0 ? 'SLIGHT EDGE' : 'NO EDGE'
+  const edgePct = edge.edge_percentage ?? 0
+  const edgeColor = edgePct >= 30 ? 'success' : edgePct >= 15 ? 'warning' : 'text-muted'
+  const edgeLabel = edgePct >= 30 ? 'STRONG EDGE' : edgePct >= 15 ? 'MODERATE EDGE' : edgePct > 0 ? 'SLIGHT EDGE' : 'NO EDGE'
 
   return (
     <div className="card border-2 border-primary bg-primary/5">
@@ -504,17 +513,17 @@ export const RegimeEdgeCalculator: React.FC<{ edge: RegimeEdge }> = ({ edge }) =
         <div className="grid grid-cols-3 gap-4">
           <div className="p-4 bg-background-hover rounded-lg text-center">
             <p className="text-xs text-text-muted uppercase mb-1">Baseline (Coin Flip)</p>
-            <p className="text-3xl font-bold text-text-secondary">{edge.baseline_win_rate.toFixed(0)}%</p>
+            <p className="text-3xl font-bold text-text-secondary">{(edge.baseline_win_rate ?? 50).toFixed(0)}%</p>
           </div>
 
           <div className="p-4 bg-primary/10 rounded-lg text-center border-2 border-primary">
             <p className="text-xs text-text-muted uppercase mb-1">Current Regime</p>
-            <p className="text-3xl font-bold text-primary">{edge.current_win_rate.toFixed(1)}%</p>
+            <p className="text-3xl font-bold text-primary">{(edge.current_win_rate ?? 0).toFixed(1)}%</p>
           </div>
 
           <div className={`p-4 bg-${edgeColor}/10 rounded-lg text-center border-2 border-${edgeColor}`}>
             <p className="text-xs text-text-muted uppercase mb-1">Your Edge</p>
-            <p className={`text-3xl font-bold text-${edgeColor}`}>+{edge.edge_percentage.toFixed(1)}%</p>
+            <p className={`text-3xl font-bold text-${edgeColor}`}>+{edgePct.toFixed(1)}%</p>
           </div>
         </div>
 
@@ -524,11 +533,11 @@ export const RegimeEdgeCalculator: React.FC<{ edge: RegimeEdge }> = ({ edge }) =
             <div>
               <h3 className={`text-2xl font-bold text-${edgeColor} mb-1`}>{edgeLabel}</h3>
               <p className="text-sm text-text-secondary">
-                {edge.edge_percentage >= 30
+                {edgePct >= 30
                   ? 'Trade aggressively - this is your biggest advantage'
-                  : edge.edge_percentage >= 15
+                  : edgePct >= 15
                   ? 'Good opportunity - size positions appropriately'
-                  : edge.edge_percentage > 0
+                  : edgePct > 0
                   ? 'Small edge - reduce position size'
                   : 'No statistical edge - avoid trading or wait for better setup'
                 }
@@ -539,11 +548,11 @@ export const RegimeEdgeCalculator: React.FC<{ edge: RegimeEdge }> = ({ edge }) =
         </div>
 
         {/* Sample Size Badge */}
-        {Object.values(edge.regime_stats)[0] && (
+        {edge.regime_stats && Object.values(edge.regime_stats)[0] && (
           <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
             <span className="text-sm text-text-secondary">Based on historical patterns</span>
             <span className="text-sm font-semibold text-text-primary">
-              {Object.values(edge.regime_stats)[0].sample_size} similar setups
+              {Object.values(edge.regime_stats)[0]?.sample_size ?? 0} similar setups
             </span>
           </div>
         )}
@@ -569,10 +578,10 @@ export const PositionSizingCard: React.FC<{ sizing: PositionSizing; accountSize:
         <div className="p-6 bg-gradient-to-r from-primary/20 to-success/20 rounded-lg border-2 border-primary">
           <div className="text-center">
             <p className="text-sm text-text-muted uppercase mb-2">RECOMMENDED POSITION</p>
-            <p className="text-5xl font-bold text-primary mb-2">{sizing.recommended_contracts}</p>
+            <p className="text-5xl font-bold text-primary mb-2">{sizing.recommended_contracts ?? 1}</p>
             <p className="text-lg text-text-primary">contracts</p>
             <p className="text-sm text-text-secondary mt-2">
-              {sizing.conservative_pct.toFixed(1)}% of account (Half Kelly)
+              {(sizing.conservative_pct ?? 0).toFixed(1)}% of account (Half Kelly)
             </p>
           </div>
         </div>
@@ -581,17 +590,17 @@ export const PositionSizingCard: React.FC<{ sizing: PositionSizing; accountSize:
         <div className="grid grid-cols-3 gap-4">
           <div className="p-4 bg-background-hover rounded-lg text-center">
             <p className="text-xs text-text-muted uppercase mb-1">Conservative</p>
-            <p className="text-2xl font-bold text-success">{Math.max(1, Math.floor(sizing.recommended_contracts * 0.5))}</p>
+            <p className="text-2xl font-bold text-success">{Math.max(1, Math.floor((sizing.recommended_contracts ?? 1) * 0.5))}</p>
             <p className="text-xs text-text-secondary mt-1">Ultra-safe</p>
           </div>
           <div className="p-4 bg-primary/10 rounded-lg text-center border-2 border-primary">
             <p className="text-xs text-text-muted uppercase mb-1">Recommended</p>
-            <p className="text-2xl font-bold text-primary">{sizing.recommended_contracts}</p>
+            <p className="text-2xl font-bold text-primary">{sizing.recommended_contracts ?? 1}</p>
             <p className="text-xs text-text-secondary mt-1">Optimal</p>
           </div>
           <div className="p-4 bg-warning/10 rounded-lg text-center border border-warning">
             <p className="text-xs text-text-muted uppercase mb-1">Aggressive</p>
-            <p className="text-2xl font-bold text-warning">{sizing.max_contracts}</p>
+            <p className="text-2xl font-bold text-warning">{sizing.max_contracts ?? 1}</p>
             <p className="text-xs text-text-secondary mt-1">Max risk</p>
           </div>
         </div>
@@ -602,15 +611,15 @@ export const PositionSizingCard: React.FC<{ sizing: PositionSizing; accountSize:
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-sm text-text-secondary">Full Kelly</span>
-              <span className="font-semibold text-text-primary">{sizing.kelly_pct.toFixed(1)}%</span>
+              <span className="font-semibold text-text-primary">{(sizing.kelly_pct ?? 0).toFixed(1)}%</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-text-secondary">Half Kelly (Recommended)</span>
-              <span className="font-semibold text-primary">{sizing.conservative_pct.toFixed(1)}%</span>
+              <span className="font-semibold text-primary">{(sizing.conservative_pct ?? 0).toFixed(1)}%</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-text-secondary">Account Risk</span>
-              <span className="font-semibold text-text-primary">{sizing.account_risk_pct.toFixed(1)}%</span>
+              <span className="font-semibold text-text-primary">{(sizing.account_risk_pct ?? 0).toFixed(1)}%</span>
             </div>
           </div>
         </div>
@@ -628,7 +637,7 @@ export const PositionSizingCard: React.FC<{ sizing: PositionSizing; accountSize:
 
 // NEW: Risk Analysis Card
 export const RiskAnalysisCard: React.FC<{ risk: RiskAnalysis }> = ({ risk }) => {
-  const roi = risk.roi_percent
+  const roi = risk.roi_percent ?? 0
 
   return (
     <div className="card border-2 border-success bg-success/5">
@@ -646,7 +655,7 @@ export const RiskAnalysisCard: React.FC<{ risk: RiskAnalysis }> = ({ risk }) => 
           <div className="text-center">
             <p className="text-sm text-text-muted uppercase mb-2">EXPECTED VALUE</p>
             <p className="text-5xl font-bold text-success mb-2">
-              ${risk.expected_value_dollars >= 0 ? '+' : ''}{risk.expected_value_dollars.toFixed(0)}
+              ${(risk.expected_value_dollars ?? 0) >= 0 ? '+' : ''}{(risk.expected_value_dollars ?? 0).toFixed(0)}
             </p>
             <p className="text-lg text-text-primary">per trade</p>
             <p className="text-sm text-success mt-2">
@@ -659,17 +668,17 @@ export const RiskAnalysisCard: React.FC<{ risk: RiskAnalysis }> = ({ risk }) => 
         <div className="grid grid-cols-3 gap-4">
           <div className="p-4 bg-background-hover rounded-lg text-center">
             <p className="text-xs text-text-muted uppercase mb-1">Total Cost</p>
-            <p className="text-xl font-bold text-text-primary">${risk.total_cost.toFixed(0)}</p>
+            <p className="text-xl font-bold text-text-primary">${(risk.total_cost ?? 0).toFixed(0)}</p>
             <p className="text-xs text-text-secondary mt-1">Initial investment</p>
           </div>
           <div className="p-4 bg-success/10 rounded-lg text-center border-2 border-success">
             <p className="text-xs text-text-muted uppercase mb-1">Best Case</p>
-            <p className="text-xl font-bold text-success">+${risk.best_case_profit.toFixed(0)}</p>
+            <p className="text-xl font-bold text-success">+${(risk.best_case_profit ?? 0).toFixed(0)}</p>
             <p className="text-xs text-text-secondary mt-1">If win</p>
           </div>
           <div className="p-4 bg-danger/10 rounded-lg text-center border-2 border-danger">
             <p className="text-xs text-text-muted uppercase mb-1">Worst Case</p>
-            <p className="text-xl font-bold text-danger">-${Math.abs(risk.worst_case_loss).toFixed(0)}</p>
+            <p className="text-xl font-bold text-danger">-${Math.abs(risk.worst_case_loss ?? 0).toFixed(0)}</p>
             <p className="text-xs text-text-secondary mt-1">If loss</p>
           </div>
         </div>
@@ -679,24 +688,24 @@ export const RiskAnalysisCard: React.FC<{ risk: RiskAnalysis }> = ({ risk }) => 
           <div className="flex justify-between items-center mb-2">
             <span className="text-sm text-text-secondary">Max Account Risk</span>
             <span className={`text-2xl font-bold ${
-              risk.max_account_risk_pct <= 2 ? 'text-success' :
-              risk.max_account_risk_pct <= 5 ? 'text-warning' : 'text-danger'
+              (risk.max_account_risk_pct ?? 0) <= 2 ? 'text-success' :
+              (risk.max_account_risk_pct ?? 0) <= 5 ? 'text-warning' : 'text-danger'
             }`}>
-              {risk.max_account_risk_pct.toFixed(1)}%
+              {(risk.max_account_risk_pct ?? 0).toFixed(1)}%
             </span>
           </div>
           <div className="h-3 bg-background-deep rounded-full overflow-hidden">
             <div
               className={`h-full ${
-                risk.max_account_risk_pct <= 2 ? 'bg-success' :
-                risk.max_account_risk_pct <= 5 ? 'bg-warning' : 'bg-danger'
+                (risk.max_account_risk_pct ?? 0) <= 2 ? 'bg-success' :
+                (risk.max_account_risk_pct ?? 0) <= 5 ? 'bg-warning' : 'bg-danger'
               }`}
-              style={{ width: `${Math.min(risk.max_account_risk_pct, 10) * 10}%` }}
+              style={{ width: `${Math.min(risk.max_account_risk_pct ?? 0, 10) * 10}%` }}
             />
           </div>
           <p className="text-xs text-text-muted mt-2">
-            {risk.max_account_risk_pct <= 2 ? '✅ Safe risk level' :
-             risk.max_account_risk_pct <= 5 ? '⚠️ Moderate risk' : '🚨 High risk - reduce position'}
+            {(risk.max_account_risk_pct ?? 0) <= 2 ? '✅ Safe risk level' :
+             (risk.max_account_risk_pct ?? 0) <= 5 ? '⚠️ Moderate risk' : '🚨 High risk - reduce position'}
           </p>
         </div>
       </div>
@@ -707,14 +716,14 @@ export const RiskAnalysisCard: React.FC<{ risk: RiskAnalysis }> = ({ risk }) => 
 // NEW: Holding Period Chart
 export const HoldingPeriodChart: React.FC<{ holding: HoldingPeriod }> = ({ holding }) => {
   const days = [
-    { day: 1, rate: holding.day_1_win_rate },
-    { day: 2, rate: holding.day_2_win_rate },
-    { day: 3, rate: holding.day_3_win_rate },
-    { day: 4, rate: holding.day_4_win_rate },
-    { day: 5, rate: holding.day_5_win_rate },
+    { day: 1, rate: holding.day_1_win_rate ?? 0 },
+    { day: 2, rate: holding.day_2_win_rate ?? 0 },
+    { day: 3, rate: holding.day_3_win_rate ?? 0 },
+    { day: 4, rate: holding.day_4_win_rate ?? 0 },
+    { day: 5, rate: holding.day_5_win_rate ?? 0 },
   ]
 
-  const maxRate = Math.max(...days.map(d => d.rate))
+  const maxRate = Math.max(...days.map(d => d.rate), 0.01)
 
   return (
     <div className="card">
@@ -723,14 +732,14 @@ export const HoldingPeriodChart: React.FC<{ holding: HoldingPeriod }> = ({ holdi
         Optimal Holding Period
       </h2>
       <p className="text-sm text-text-secondary mb-4">
-        💰 <strong>HOW TO USE:</strong> Day {holding.optimal_day} has highest win rate. Exit before theta decay erodes gains.
+        💰 <strong>HOW TO USE:</strong> Day {holding.optimal_day ?? 3} has highest win rate. Exit before theta decay erodes gains.
       </p>
 
       <div className="space-y-4">
         {/* Optimal Day - Prominent */}
         <div className="p-6 bg-gradient-to-r from-primary/20 to-success/20 rounded-lg border-2 border-primary text-center">
           <p className="text-sm text-text-muted uppercase mb-2">OPTIMAL HOLDING PERIOD</p>
-          <p className="text-5xl font-bold text-primary mb-2">{holding.optimal_day}</p>
+          <p className="text-5xl font-bold text-primary mb-2">{holding.optimal_day ?? 3}</p>
           <p className="text-lg text-text-primary">days</p>
           <p className="text-sm text-success mt-2">
             {(maxRate * 100).toFixed(1)}% win rate
@@ -740,7 +749,7 @@ export const HoldingPeriodChart: React.FC<{ holding: HoldingPeriod }> = ({ holdi
         {/* Day-by-Day Chart */}
         <div className="space-y-3">
           {days.map((day) => {
-            const isOptimal = day.day === holding.optimal_day
+            const isOptimal = day.day === (holding.optimal_day ?? 3)
             return (
               <div key={day.day} className={`p-3 rounded-lg ${isOptimal ? 'bg-primary/10 border-2 border-primary' : 'bg-background-hover'}`}>
                 <div className="flex justify-between items-center mb-2">
@@ -826,29 +835,33 @@ export const HistoricalSetupsTable: React.FC<{ setups: HistoricalSetup[] }> = ({
             </tr>
           </thead>
           <tbody>
-            {setups.map((setup, idx) => (
-              <tr key={idx} className="border-b border-border hover:bg-background-hover transition-colors">
-                <td className="py-2 px-3 text-sm text-text-primary">{setup.date}</td>
-                <td className="py-2 px-3">
-                  <span className={`text-xs font-semibold px-2 py-1 rounded ${
-                    setup.outcome === 'WIN' ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
+            {setups.map((setup, idx) => {
+              const pnlDollars = setup.pnl_dollars ?? 0
+              const pnlPercent = setup.pnl_percent ?? 0
+              return (
+                <tr key={idx} className="border-b border-border hover:bg-background-hover transition-colors">
+                  <td className="py-2 px-3 text-sm text-text-primary">{setup.date || 'N/A'}</td>
+                  <td className="py-2 px-3">
+                    <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                      setup.outcome === 'WIN' ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
+                    }`}>
+                      {setup.outcome || 'N/A'}
+                    </span>
+                  </td>
+                  <td className={`py-2 px-3 text-right font-semibold ${
+                    pnlDollars >= 0 ? 'text-success' : 'text-danger'
                   }`}>
-                    {setup.outcome}
-                  </span>
-                </td>
-                <td className={`py-2 px-3 text-right font-semibold ${
-                  setup.pnl_dollars >= 0 ? 'text-success' : 'text-danger'
-                }`}>
-                  {setup.pnl_dollars >= 0 ? '+' : ''}${setup.pnl_dollars.toFixed(0)}
-                </td>
-                <td className={`py-2 px-3 text-right font-semibold ${
-                  setup.pnl_percent >= 0 ? 'text-success' : 'text-danger'
-                }`}>
-                  {setup.pnl_percent >= 0 ? '+' : ''}{setup.pnl_percent.toFixed(1)}%
-                </td>
-                <td className="py-2 px-3 text-right text-sm text-text-primary">{setup.hold_days}</td>
-              </tr>
-            ))}
+                    {pnlDollars >= 0 ? '+' : ''}${pnlDollars.toFixed(0)}
+                  </td>
+                  <td className={`py-2 px-3 text-right font-semibold ${
+                    pnlPercent >= 0 ? 'text-success' : 'text-danger'
+                  }`}>
+                    {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(1)}%
+                  </td>
+                  <td className="py-2 px-3 text-right text-sm text-text-primary">{setup.hold_days ?? 0}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -858,8 +871,10 @@ export const HistoricalSetupsTable: React.FC<{ setups: HistoricalSetup[] }> = ({
 
 // NEW: Regime Stability Indicator
 export const RegimeStabilityIndicator: React.FC<{ stability: RegimeStability }> = ({ stability }) => {
-  const stayProb = stability.stay_probability * 100
-  const isStable = stayProb >= stability.alert_threshold
+  const stayProb = (stability.stay_probability ?? 0) * 100
+  const alertThreshold = stability.alert_threshold ?? 70
+  const isStable = stayProb >= alertThreshold
+  const shiftProbabilities = stability.shift_probabilities ?? {}
 
   return (
     <div className={`card border-2 ${isStable ? 'border-success bg-success/5' : 'border-warning bg-warning/5'}`}>
@@ -877,7 +892,7 @@ export const RegimeStabilityIndicator: React.FC<{ stability: RegimeStability }> 
           <div className="flex justify-between items-center">
             <div>
               <p className="text-xs text-text-muted uppercase mb-1">Current Regime</p>
-              <p className="text-2xl font-bold text-primary">{stability.current_state}</p>
+              <p className="text-2xl font-bold text-primary">{stability.current_state || 'Unknown'}</p>
             </div>
             <div className="text-right">
               <p className="text-xs text-text-muted uppercase mb-1">Stay Probability</p>
@@ -905,14 +920,14 @@ export const RegimeStabilityIndicator: React.FC<{ stability: RegimeStability }> 
         </div>
 
         {/* Shift Probabilities */}
-        {Object.keys(stability.shift_probabilities).length > 0 && (
+        {Object.keys(shiftProbabilities).length > 0 && (
           <div className="p-4 bg-background-hover rounded-lg">
             <h3 className="text-sm font-semibold text-text-primary mb-3">Regime Shift Probabilities</h3>
             <div className="space-y-2">
-              {Object.entries(stability.shift_probabilities).map(([state, prob]) => (
+              {Object.entries(shiftProbabilities).map(([state, prob]) => (
                 <div key={state} className="flex justify-between items-center">
                   <span className="text-sm text-text-secondary">→ {state}</span>
-                  <span className="font-semibold text-text-primary">{(prob * 100).toFixed(0)}%</span>
+                  <span className="font-semibold text-text-primary">{((prob ?? 0) * 100).toFixed(0)}%</span>
                 </div>
               ))}
             </div>
@@ -926,7 +941,7 @@ export const RegimeStabilityIndicator: React.FC<{ stability: RegimeStability }> 
           <p className="text-sm font-semibold text-text-primary mb-1">
             {isStable ? '✅ RECOMMENDATION' : '⚠️ RECOMMENDATION'}
           </p>
-          <p className="text-sm text-text-secondary">{stability.recommendation}</p>
+          <p className="text-sm text-text-secondary">{stability.recommendation || 'No recommendation available'}</p>
         </div>
       </div>
     </div>
