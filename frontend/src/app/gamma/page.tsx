@@ -1374,7 +1374,7 @@ export default function GammaIntelligence() {
                           const currGex = curr.net_gex || 0
                           const prevGex = prev.net_gex || 0
                           const currIV = curr.implied_volatility || 0
-                          const prevIV = prev.implied_volatility || 0.01
+                          const prevIV = prev.implied_volatility || 0
 
                           // Detect GEX flip
                           if ((prevGex > 0 && currGex < 0) || (prevGex < 0 && currGex > 0)) {
@@ -1387,14 +1387,17 @@ export default function GammaIntelligence() {
                           }
 
                           // Detect major IV changes (>10% change)
-                          const ivChange = Math.abs((currIV - prevIV) / prevIV)
-                          if (ivChange > 0.1) {
-                            const daysAgo = i
-                            regimeChanges.push({
-                              daysAgo,
-                              type: currIV > prevIV ? 'IV Spike +' + (ivChange * 100).toFixed(0) + '%' : 'IV Drop -' + (ivChange * 100).toFixed(0) + '%',
-                              color: currIV > prevIV ? 'text-warning' : 'text-primary'
-                            })
+                          // Only calculate if both values are non-zero (have real data)
+                          if (currIV > 0.01 && prevIV > 0.01) {
+                            const ivChange = Math.abs((currIV - prevIV) / prevIV)
+                            if (ivChange > 0.1) {
+                              const daysAgo = i
+                              regimeChanges.push({
+                                daysAgo,
+                                type: currIV > prevIV ? 'IV Spike +' + (ivChange * 100).toFixed(0) + '%' : 'IV Drop ' + (ivChange * 100).toFixed(0) + '%',
+                                color: currIV > prevIV ? 'text-warning' : 'text-primary'
+                              })
+                            }
                           }
                         }
 

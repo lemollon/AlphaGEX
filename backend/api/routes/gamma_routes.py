@@ -502,7 +502,7 @@ async def get_gamma_expiration_waterfall(symbol: str):
 
 @router.get("/{symbol}/history")
 async def get_gamma_history(symbol: str, days: int = 30):
-    """Get historical gamma data."""
+    """Get historical gamma data with IV and put/call ratio."""
     try:
         from database_adapter import get_connection
         from datetime import timedelta
@@ -513,23 +513,47 @@ async def get_gamma_history(symbol: str, days: int = 30):
 
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
+        # Join gex_history with vix_term_structure to get IV and put/call ratio
+        # Use a time-based join (same day) since they're collected at different intervals
         cursor.execute("""
-            SELECT timestamp, net_gex, spot_price, flip_point, call_wall, put_wall, regime
-            FROM gex_history
-            WHERE symbol = %s AND DATE(timestamp) >= %s
-            ORDER BY timestamp ASC
+            SELECT
+                g.timestamp,
+                g.net_gex,
+                g.spot_price,
+                g.flip_point,
+                g.call_wall,
+                g.put_wall,
+                g.regime,
+                COALESCE(v.vix_spot, 0.18) / 100 as implied_volatility,
+                COALESCE(v.put_call_ratio, 0.8) as put_call_ratio
+            FROM gex_history g
+            LEFT JOIN LATERAL (
+                SELECT vix_spot, put_call_ratio
+                FROM vix_term_structure
+                WHERE DATE(timestamp) = DATE(g.timestamp)
+                ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - g.timestamp)))
+                LIMIT 1
+            ) v ON true
+            WHERE g.symbol = %s AND DATE(g.timestamp) >= %s
+            ORDER BY g.timestamp ASC
         """, (symbol, start_date))
 
         history = []
         for row in cursor.fetchall():
+            # Format for frontend HistoricalData interface
+            ts = row['timestamp']
             history.append({
-                "timestamp": row['timestamp'].isoformat() if row['timestamp'] else None,
+                "date": ts.strftime('%Y-%m-%d_%H:%M') if ts else None,
+                "timestamp": ts.isoformat() if ts else None,
                 "net_gex": safe_round(row['net_gex']),
-                "call_gex": safe_round(row.get('call_wall') or 0),
-                "put_gex": safe_round(row.get('put_wall') or 0),
+                "price": safe_round(row['spot_price']),
                 "spot_price": safe_round(row['spot_price']),
                 "flip_point": safe_round(row.get('flip_point') or 0),
-                "regime": row.get('regime')
+                "call_gex": safe_round(row.get('call_wall') or 0),
+                "put_gex": safe_round(row.get('put_wall') or 0),
+                "regime": row.get('regime'),
+                "implied_volatility": float(row.get('implied_volatility') or 0.18),
+                "put_call_ratio": float(row.get('put_call_ratio') or 0.8)
             })
 
         conn.close()
