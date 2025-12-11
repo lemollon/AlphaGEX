@@ -1809,7 +1809,7 @@ class ARESTrader:
         try:
             # Get account balances
             try:
-                balances = tradier_client.get_balances()
+                balances = tradier_client.get_account_balance()
                 if balances:
                     result['account'] = {
                         'total_equity': balances.get('total_equity', 0),
