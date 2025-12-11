@@ -92,6 +92,26 @@ export default function GEXHistory() {
     return `$${billions.toFixed(2)}B`
   }
 
+  const formatTimestamp = (dateStr: string) => {
+    return new Date(dateStr).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'America/Chicago'
+    })
+  }
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'America/Chicago'
+    })
+  }
+
   // Calculate summary stats
   const currentSnapshot = history.length > 0 ? history[0] : null
   const avgNetGEX = history.length > 0
@@ -230,7 +250,7 @@ export default function GEXHistory() {
                         {regimeChanges.map((change, idx) => (
                           <tr key={idx} className="hover:bg-gray-750">
                             <td className="px-6 py-4 text-sm text-gray-300">
-                              {new Date(change.change_date).toLocaleDateString()}
+                              {formatDate(change.change_date)}
                             </td>
                             <td className="px-6 py-4 text-sm">
                               <div className="flex items-center gap-2">
@@ -297,7 +317,7 @@ export default function GEXHistory() {
                         {history.map((snapshot, idx) => (
                           <tr key={idx} className="hover:bg-gray-750">
                             <td className="px-6 py-4 text-sm text-gray-300">
-                              {new Date(snapshot.timestamp).toLocaleString()}
+                              {formatTimestamp(snapshot.timestamp)}
                             </td>
                             <td className="px-6 py-4 text-sm">
                               <span className={`font-bold ${snapshot.net_gex >= 0 ? 'text-green-400' : 'text-red-400'}`}>
