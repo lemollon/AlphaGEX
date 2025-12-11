@@ -1211,25 +1211,26 @@ export default function GammaIntelligence() {
                       <div className="h-48 relative">
                         <div className="space-y-1">
                           {historicalData.slice(0, 20).map((point, idx) => {
-                            const maxAbsGex = Math.max(...historicalData.map(p => Math.abs(p.net_gex)))
-                            const barWidth = (Math.abs(point.net_gex) / maxAbsGex) * 100
-                            const date = new Date(point.date.replace('_', ' '))
+                            const maxAbsGex = Math.max(...historicalData.map(p => Math.abs(p.net_gex || 0)), 1)
+                            const barWidth = (Math.abs(point.net_gex || 0) / maxAbsGex) * 100
+                            const dateStr = point.date ? point.date.replace('_', ' ') : ''
+                            const date = dateStr ? new Date(dateStr) : new Date()
 
                             return (
                               <div key={idx} className="flex items-center gap-2">
                                 <span className="text-xs font-mono w-24 text-text-muted">
-                                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })}
                                 </span>
                                 <span className="text-xs font-mono w-16 text-text-secondary">
-                                  ${point.price.toFixed(2)}
+                                  ${(point.price || 0).toFixed(2)}
                                 </span>
                                 <div className="flex-1 h-5 bg-background-deep rounded relative overflow-hidden">
                                   <div
-                                    className={`h-full ${point.net_gex > 0 ? 'bg-success' : 'bg-danger'} transition-all`}
+                                    className={`h-full ${(point.net_gex || 0) > 0 ? 'bg-success' : 'bg-danger'} transition-all`}
                                     style={{ width: `${barWidth}%` }}
                                   />
                                   <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-white">
-                                    {(point.net_gex / 1e9).toFixed(2)}B
+                                    {((point.net_gex || 0) / 1e9).toFixed(2)}B
                                   </span>
                                 </div>
                               </div>
@@ -1245,14 +1246,15 @@ export default function GammaIntelligence() {
                       <div className="h-32 relative">
                         <div className="space-y-1">
                           {historicalData.slice(0, 15).map((point, idx) => {
-                            const maxIV = Math.max(...historicalData.map(p => p.implied_volatility))
-                            const barWidth = (point.implied_volatility / maxIV) * 100
-                            const date = new Date(point.date.replace('_', ' '))
+                            const maxIV = Math.max(...historicalData.map(p => p.implied_volatility || 0), 0.01)
+                            const barWidth = ((point.implied_volatility || 0) / maxIV) * 100
+                            const dateStr = point.date ? point.date.replace('_', ' ') : ''
+                            const date = dateStr ? new Date(dateStr) : new Date()
 
                             return (
                               <div key={idx} className="flex items-center gap-2">
                                 <span className="text-xs font-mono w-24 text-text-muted">
-                                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })}
                                 </span>
                                 <div className="flex-1 h-4 bg-background-deep rounded relative overflow-hidden">
                                   <div
@@ -1260,7 +1262,7 @@ export default function GammaIntelligence() {
                                     style={{ width: `${barWidth}%` }}
                                   />
                                   <span className="absolute inset-0 flex items-center justify-center text-xs font-mono text-white">
-                                    {(point.implied_volatility * 100).toFixed(1)}%
+                                    {((point.implied_volatility || 0) * 100).toFixed(1)}%
                                   </span>
                                 </div>
                               </div>
@@ -1288,31 +1290,31 @@ export default function GammaIntelligence() {
                       <div className="flex justify-between items-center p-3 bg-background-hover rounded-lg">
                         <span className="text-text-secondary">Avg Net GEX</span>
                         <span className="text-text-primary font-semibold">
-                          ${(historicalData.reduce((sum, p) => sum + p.net_gex, 0) / historicalData.length / 1e9).toFixed(2)}B
+                          ${(historicalData.reduce((sum, p) => sum + (p.net_gex || 0), 0) / historicalData.length / 1e9).toFixed(2)}B
                         </span>
                       </div>
                       <div className="flex justify-between items-center p-3 bg-background-hover rounded-lg">
                         <span className="text-text-secondary">Max GEX</span>
                         <span className="text-success font-semibold">
-                          ${(Math.max(...historicalData.map(p => p.net_gex)) / 1e9).toFixed(2)}B
+                          ${(Math.max(...historicalData.map(p => p.net_gex || 0)) / 1e9).toFixed(2)}B
                         </span>
                       </div>
                       <div className="flex justify-between items-center p-3 bg-background-hover rounded-lg">
                         <span className="text-text-secondary">Min GEX</span>
                         <span className="text-danger font-semibold">
-                          ${(Math.min(...historicalData.map(p => p.net_gex)) / 1e9).toFixed(2)}B
+                          ${(Math.min(...historicalData.map(p => p.net_gex || 0)) / 1e9).toFixed(2)}B
                         </span>
                       </div>
                       <div className="flex justify-between items-center p-3 bg-background-hover rounded-lg">
                         <span className="text-text-secondary">Avg IV</span>
                         <span className="text-warning font-semibold">
-                          {(historicalData.reduce((sum, p) => sum + p.implied_volatility, 0) / historicalData.length * 100).toFixed(1)}%
+                          {(historicalData.reduce((sum, p) => sum + (p.implied_volatility || 0), 0) / historicalData.length * 100).toFixed(1)}%
                         </span>
                       </div>
                       <div className="flex justify-between items-center p-3 bg-background-hover rounded-lg">
                         <span className="text-text-secondary">Avg Put/Call Ratio</span>
                         <span className="text-text-primary font-semibold">
-                          {(historicalData.reduce((sum, p) => sum + p.put_call_ratio, 0) / historicalData.length).toFixed(2)}
+                          {(historicalData.reduce((sum, p) => sum + (p.put_call_ratio || 0), 0) / historicalData.length).toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -1332,25 +1334,29 @@ export default function GammaIntelligence() {
                         for (let i = 1; i < historicalData.length && regimeChanges.length < 5; i++) {
                           const curr = historicalData[i]
                           const prev = historicalData[i - 1]
+                          const currGex = curr.net_gex || 0
+                          const prevGex = prev.net_gex || 0
+                          const currIV = curr.implied_volatility || 0
+                          const prevIV = prev.implied_volatility || 0.01
 
                           // Detect GEX flip
-                          if ((prev.net_gex > 0 && curr.net_gex < 0) || (prev.net_gex < 0 && curr.net_gex > 0)) {
+                          if ((prevGex > 0 && currGex < 0) || (prevGex < 0 && currGex > 0)) {
                             const daysAgo = i
                             regimeChanges.push({
                               daysAgo,
-                              type: curr.net_gex > 0 ? 'Negative → Positive GEX' : 'Positive → Negative GEX',
-                              color: curr.net_gex > 0 ? 'text-success' : 'text-danger'
+                              type: currGex > 0 ? 'Negative → Positive GEX' : 'Positive → Negative GEX',
+                              color: currGex > 0 ? 'text-success' : 'text-danger'
                             })
                           }
 
                           // Detect major IV changes (>10% change)
-                          const ivChange = Math.abs((curr.implied_volatility - prev.implied_volatility) / prev.implied_volatility)
+                          const ivChange = Math.abs((currIV - prevIV) / prevIV)
                           if (ivChange > 0.1) {
                             const daysAgo = i
                             regimeChanges.push({
                               daysAgo,
-                              type: curr.implied_volatility > prev.implied_volatility ? 'IV Spike +' + (ivChange * 100).toFixed(0) + '%' : 'IV Drop -' + (ivChange * 100).toFixed(0) + '%',
-                              color: curr.implied_volatility > prev.implied_volatility ? 'text-warning' : 'text-primary'
+                              type: currIV > prevIV ? 'IV Spike +' + (ivChange * 100).toFixed(0) + '%' : 'IV Drop -' + (ivChange * 100).toFixed(0) + '%',
+                              color: currIV > prevIV ? 'text-warning' : 'text-primary'
                             })
                           }
                         }
@@ -1381,20 +1387,24 @@ export default function GammaIntelligence() {
                   <div className="space-y-4">
                     {(() => {
                       // Calculate correlation between price and net_gex
-                      const prices = historicalData.map(d => d.price)
-                      const gexes = historicalData.map(d => d.net_gex)
-                      const ivs = historicalData.map(d => d.implied_volatility)
-                      const pcrs = historicalData.map(d => d.put_call_ratio)
+                      const prices = historicalData.map(d => d.price || 0)
+                      const gexes = historicalData.map(d => d.net_gex || 0)
+                      const ivs = historicalData.map(d => d.implied_volatility || 0)
+                      const pcrs = historicalData.map(d => d.put_call_ratio || 0)
 
                       const correlation = (x: number[], y: number[]) => {
                         const n = x.length
+                        if (n === 0) return 0
                         const sum_x = x.reduce((a, b) => a + b, 0)
                         const sum_y = y.reduce((a, b) => a + b, 0)
                         const sum_xy = x.reduce((sum, xi, i) => sum + xi * y[i], 0)
                         const sum_x2 = x.reduce((sum, xi) => sum + xi * xi, 0)
                         const sum_y2 = y.reduce((sum, yi) => sum + yi * yi, 0)
 
-                        return (n * sum_xy - sum_x * sum_y) / Math.sqrt((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y))
+                        const denominator = Math.sqrt((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y))
+                        if (denominator === 0 || isNaN(denominator)) return 0
+                        const result = (n * sum_xy - sum_x * sum_y) / denominator
+                        return isNaN(result) ? 0 : result
                       }
 
                       const correlations = [
