@@ -1473,8 +1473,8 @@ class ClaudeIntelligence:
             except (AttributeError, KeyError, Exception):
                 self.api_key = ""  # Streamlit secrets not available
 
-        # Use Claude Haiku 4.5 - fast and efficient model (2x faster than old haiku, much smarter)
-        self.model = "claude-haiku-4-5-20251001"
+        # Use Claude Sonnet 4.5 (latest) for intelligent conversational responses
+        self.model = "claude-sonnet-4-5-latest"
         self.conversation_history = []
         self.fred = FREDIntegration()
 

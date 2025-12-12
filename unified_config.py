@@ -132,7 +132,7 @@ class APIConfig:
 
     # Claude AI
     ANTHROPIC_API_KEY: Optional[str] = os.getenv('ANTHROPIC_API_KEY')
-    CLAUDE_MODEL: str = os.getenv('CLAUDE_MODEL', 'claude-haiku-4-5-20251001')
+    CLAUDE_MODEL: str = os.getenv('CLAUDE_MODEL', 'claude-sonnet-4-5-latest')
 
     # Rate Limits
     TRADING_VOL_RATE_LIMIT: int = env_int('TRADING_VOL_RATE_LIMIT', 20)  # calls per minute

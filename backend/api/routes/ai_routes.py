@@ -95,7 +95,7 @@ Be concise but thorough. Focus on practical trading insights."""
         client = anthropic.Anthropic(api_key=api_key)
 
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",  # Use Sonnet for vision capabilities
+            model="claude-sonnet-4-5-latest",  # Always use latest Sonnet 4.5
             max_tokens=1500,
             messages=[
                 {
