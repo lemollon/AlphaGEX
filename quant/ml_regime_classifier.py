@@ -146,6 +146,57 @@ class MLRegimeClassifier:
         # Try to load existing model
         self._load_model()
 
+    def _log_prediction_to_db(
+        self,
+        prediction: 'MLPrediction',
+        features_dict: Dict[str, float]
+    ) -> Optional[int]:
+        """
+        Log ML prediction to ml_predictions table for tracking and analysis.
+
+        This ensures every prediction is captured for:
+        - Performance analysis
+        - Model drift detection
+        - Feature importance tracking
+        """
+        if not DB_AVAILABLE:
+            return None
+
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            c.execute("""
+                INSERT INTO ml_predictions (
+                    timestamp, symbol, prediction_type, predicted_value,
+                    confidence, features_used
+                ) VALUES (NOW(), %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                self.symbol,
+                'REGIME_ACTION',
+                prediction.predicted_action.value,
+                prediction.confidence,
+                json.dumps({
+                    'features': features_dict,
+                    'probabilities': prediction.probabilities,
+                    'feature_importance': dict(list(prediction.feature_importance.items())[:5]),
+                    'model_version': prediction.model_version,
+                    'is_trained': prediction.is_trained
+                })
+            ))
+
+            result = c.fetchone()
+            prediction_id = result[0] if result else None
+            conn.commit()
+            conn.close()
+
+            return prediction_id
+
+        except Exception as e:
+            print(f"Failed to log ML prediction: {e}")
+            return None
+
     def _load_model(self) -> bool:
         """Load pre-trained model if available"""
         model_file = os.path.join(self.MODEL_PATH, f'{self.symbol}_regime_model.pkl')
@@ -650,7 +701,7 @@ class MLRegimeClassifier:
         # Calculate confidence (max probability * 100)
         confidence = max(proba) * 100
 
-        return MLPrediction(
+        result = MLPrediction(
             predicted_action=MLRegimeAction(prediction),
             confidence=confidence,
             probabilities=probabilities,
@@ -658,6 +709,12 @@ class MLRegimeClassifier:
             model_version=self.model_version,
             is_trained=self.is_trained
         )
+
+        # Log prediction to database for tracking
+        features_dict = dict(zip(self.FEATURE_COLS, features[0].tolist()))
+        self._log_prediction_to_db(result, features_dict)
+
+        return result
 
     def _fallback_prediction(
         self,
