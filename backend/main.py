@@ -55,6 +55,7 @@ from backend.api.routes import (
     volatility_surface_routes,  # Volatility surface analysis (previously orphaned)
     zero_dte_backtest_routes,  # 0DTE Iron Condor hybrid scaling backtest
     ares_routes,  # ARES Aggressive Iron Condor bot endpoints
+    logs_routes,  # Comprehensive logs API for ALL 22 logging tables
 )
 
 # ============================================================================
@@ -274,6 +275,7 @@ app.include_router(regime_routes.router)
 app.include_router(volatility_surface_routes.router)
 app.include_router(zero_dte_backtest_routes.router)
 app.include_router(ares_routes.router)
+app.include_router(logs_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares")
 
 # Initialize existing AlphaGEX components (singleton pattern)
