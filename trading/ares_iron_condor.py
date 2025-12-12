@@ -135,7 +135,7 @@ class ARESConfig:
     risk_per_trade_pct: float = 10.0     # 10% of capital per trade
     spread_width: float = 10.0            # $10 wide spreads (SPX)
     spread_width_spy: float = 2.0         # $2 wide spreads (SPY for sandbox)
-    sd_multiplier: float = 1.0            # 1 SD strikes
+    sd_multiplier: float = 0.5            # 0.5 SD strikes (closer to ATM for better liquidity)
 
     # Execution parameters
     ticker: str = "SPX"                   # Trade SPX in production
@@ -143,7 +143,7 @@ class ARESConfig:
     use_0dte: bool = True                 # Use 0DTE options
     max_contracts: int = 1000             # Max contracts per trade
     min_credit_per_spread: float = 1.50   # Minimum credit to accept (SPX)
-    min_credit_per_spread_spy: float = 0.15  # Minimum credit (SPY ~1/10)
+    min_credit_per_spread_spy: float = 0.02  # Minimum credit (SPY - lowered for liquidity)
 
     # Trade management
     use_stop_loss: bool = False           # NO stop loss (defined risk)
