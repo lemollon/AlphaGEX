@@ -94,6 +94,17 @@ try:
 except ImportError:
     DB_AVAILABLE = False
 
+# Comprehensive bot logger
+try:
+    from trading.bot_logger import (
+        log_bot_decision, BotDecision, MarketContext as BotLogMarketContext,
+        ClaudeContext, generate_session_id
+    )
+    BOT_LOGGER_AVAILABLE = True
+except ImportError:
+    BOT_LOGGER_AVAILABLE = False
+    log_bot_decision = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -1500,6 +1511,41 @@ class OracleAdvisor:
             conn.commit()
             conn.close()
             logger.info(f"Stored Oracle prediction for {prediction.bot_name.value}")
+
+            # === COMPREHENSIVE BOT LOGGER ===
+            if BOT_LOGGER_AVAILABLE and log_bot_decision:
+                try:
+                    comprehensive = BotDecision(
+                        bot_name="ORACLE",
+                        decision_type="ANALYSIS",
+                        action=prediction.advice.value,
+                        symbol="SPY",
+                        strategy="oracle_ml_prediction",
+                        session_id=generate_session_id(),
+                        market_context=BotLogMarketContext(
+                            spot_price=context.spot_price,
+                            vix=context.vix,
+                            net_gex=context.gex_net,
+                            gex_regime=context.gex_regime.value if hasattr(context.gex_regime, 'value') else str(context.gex_regime),
+                            flip_point=context.gex_flip_point,
+                            call_wall=context.gex_call_wall,
+                            put_wall=context.gex_put_wall,
+                        ),
+                        claude_context=ClaudeContext(
+                            response=prediction.reasoning or "",
+                            confidence=f"{prediction.win_probability:.1%}",
+                        ),
+                        entry_reasoning=f"Oracle {prediction.advice.value}: Win prob {prediction.win_probability:.1%}, Risk {prediction.suggested_risk_pct:.1%}",
+                        backtest_win_rate=prediction.win_probability * 100,
+                        kelly_pct=prediction.suggested_risk_pct,
+                        passed_all_checks=prediction.advice.value != "SKIP_TODAY",
+                        blocked_reason="" if prediction.advice.value != "SKIP_TODAY" else prediction.reasoning or "Low win probability",
+                    )
+                    comp_id = log_bot_decision(comprehensive)
+                    logger.info(f"Oracle logged to bot_decision_logs: {comp_id}")
+                except Exception as comp_e:
+                    logger.warning(f"Could not log Oracle to comprehensive table: {comp_e}")
+
             return True
 
         except Exception as e:

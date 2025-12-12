@@ -84,6 +84,17 @@ try:
 except ImportError:
     DECISION_LOGGING_AVAILABLE = False
 
+# Comprehensive bot logger
+try:
+    from trading.bot_logger import (
+        log_bot_decision, BotDecision, MarketContext as BotLogMarketContext,
+        ClaudeContext, Alternative, RiskCheck, ExecutionTimeline, generate_session_id
+    )
+    BOT_LOGGER_AVAILABLE = True
+except ImportError:
+    BOT_LOGGER_AVAILABLE = False
+    log_bot_decision = None
+
 # Walk-Forward Optimization for preventing overfitting
 try:
     from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
@@ -813,6 +824,64 @@ class SPXWheelTrader:
 
             decision_id = self.decision_logger.log_decision(decision)
             logger.info(f"ATLAS logged decision: {decision_id} - {action}")
+
+            # === COMPREHENSIVE BOT LOGGER ===
+            if BOT_LOGGER_AVAILABLE and log_bot_decision:
+                try:
+                    # Map decision type
+                    dt_str = "ENTRY" if decision_type == "ENTRY" else "EXIT" if decision_type in ["EXIT", "EXPIRATION"] else "SKIP"
+
+                    # Build risk checks
+                    risk_checks = []
+                    if vix > 0:
+                        risk_checks.append(RiskCheck(
+                            check_name="VIX_RANGE",
+                            passed=self.params.min_vix <= vix <= self.params.max_vix,
+                            current_value=vix,
+                            limit_value=self.params.max_vix,
+                            message=f"VIX at {vix:.1f}"
+                        ))
+
+                    comprehensive = BotDecision(
+                        bot_name="ATLAS",
+                        decision_type=dt_str,
+                        action=action,
+                        symbol="SPX",
+                        strategy="SPX_WHEEL_CSP",
+                        strike=strike,
+                        expiration=expiration,
+                        option_type="PUT",
+                        contracts=contracts,
+                        session_id=generate_session_id(),
+                        market_context=BotLogMarketContext(
+                            spot_price=spot_price,
+                            vix=vix,
+                        ),
+                        entry_reasoning=why.split('.')[0] if '.' in why else why,
+                        strike_reasoning=f"Strike ${strike} at delta {self.params.put_delta}",
+                        size_reasoning=f"{contracts} contracts",
+                        exit_reasoning=why if dt_str == "EXIT" else "",
+                        kelly_pct=self.params.position_size_pct,
+                        position_size_dollars=premium if premium > 0 else 0,
+                        max_risk_dollars=strike * 100 * contracts if strike > 0 else 0,
+                        backtest_win_rate=self.params.backtest_win_rate,
+                        backtest_expectancy=self.params.backtest_expectancy,
+                        risk_checks=risk_checks,
+                        passed_all_checks=decision_type != "NO_TRADE",
+                        blocked_reason="" if decision_type != "NO_TRADE" else why,
+                        actual_pnl=pnl if pnl is not None else 0,
+                        execution=ExecutionTimeline(
+                            order_submitted_at=now,
+                            expected_fill_price=entry_price if entry_price > 0 else premium / 100 / max(contracts, 1),
+                            broker_order_id=order_id,
+                            broker_status="FILLED" if order_id else "PENDING",
+                        ) if dt_str == "ENTRY" else ExecutionTimeline(),
+                    )
+                    comp_id = log_bot_decision(comprehensive)
+                    logger.info(f"ATLAS logged to bot_decision_logs: {comp_id}")
+                except Exception as comp_e:
+                    logger.warning(f"Could not log ATLAS to comprehensive table: {comp_e}")
+
             return decision_id
 
         except Exception as e:

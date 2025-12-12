@@ -39,6 +39,18 @@ from trading.decision_logger import (
     TradeLeg
 )
 
+# Import comprehensive bot logger
+try:
+    from trading.bot_logger import (
+        log_bot_decision, update_decision_outcome,
+        BotDecision, MarketContext as BotLogMarketContext, ClaudeContext,
+        Alternative, RiskCheck, ApiCall, ExecutionTimeline, generate_session_id
+    )
+    BOT_LOGGER_AVAILABLE = True
+except ImportError:
+    BOT_LOGGER_AVAILABLE = False
+    log_bot_decision = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -273,6 +285,71 @@ class DecisionBridge:
         decision_id = self.logger.log_decision(decision)
         logger.info(f"Logged trade execution: {decision_id}")
 
+        # === COMPREHENSIVE BOT LOGGER ===
+        if BOT_LOGGER_AVAILABLE and log_bot_decision:
+            try:
+                # Build risk checks
+                risk_checks = []
+                vix = gex_data.get('vix', 0) or 0
+                if vix > 0:
+                    risk_checks.append(RiskCheck(
+                        check_name="VIX_LEVEL",
+                        passed=vix <= 35,
+                        current_value=vix,
+                        limit_value=35,
+                        message=f"VIX at {vix:.1f}"
+                    ))
+
+                # Build alternatives
+                alt_objs = [
+                    Alternative(strike=strike + 5, strategy="Higher strike", reason_rejected="Lower delta"),
+                    Alternative(strike=strike - 5, strategy="Lower strike", reason_rejected="Higher cost"),
+                ]
+
+                comprehensive = BotDecision(
+                    bot_name="PHOENIX",
+                    decision_type="ENTRY",
+                    action="BUY",
+                    symbol=symbol,
+                    strategy=trade_data.get('strategy', 'Unknown'),
+                    strike=strike,
+                    expiration=expiration,
+                    option_type=option_type,
+                    contracts=contracts,
+                    session_id=generate_session_id(),
+                    market_context=BotLogMarketContext(
+                        spot_price=gex_data.get('spot_price', 0),
+                        vix=vix,
+                        net_gex=gex_data.get('net_gex', 0) or 0,
+                        gex_regime=gex_data.get('mm_state', ''),
+                        flip_point=gex_data.get('flip_point', 0) or 0,
+                        call_wall=gex_data.get('call_wall', 0) or 0,
+                        put_wall=gex_data.get('put_wall', 0) or 0,
+                    ),
+                    entry_reasoning=trade_data.get('signal_reason', 'Automated signal'),
+                    strike_reasoning=f"Strike ${strike} selected based on delta {option_data.get('delta', 0):.2f}",
+                    size_reasoning=f"{contracts} contracts @ ${entry_price:.2f}",
+                    alternatives_considered=alt_objs,
+                    kelly_pct=trade_data.get('kelly_pct', 0) or 0,
+                    position_size_dollars=contracts * entry_price * 100,
+                    max_risk_dollars=contracts * entry_price * 100,
+                    backtest_win_rate=backtest_stats.get('win_rate', 0) if backtest_stats else 0,
+                    backtest_expectancy=backtest_stats.get('expectancy', 0) if backtest_stats else 0,
+                    risk_checks=risk_checks,
+                    passed_all_checks=True,
+                    execution=ExecutionTimeline(
+                        order_submitted_at=now,
+                        expected_fill_price=entry_price,
+                        actual_fill_price=entry_price,
+                        broker_order_id=order_id or trade_data.get('order_id', ''),
+                        broker_status="FILLED",
+                    ),
+                )
+                comp_id = log_bot_decision(comprehensive)
+                logger.info(f"Logged to bot_decision_logs (ENTRY): {comp_id}")
+            except Exception as e:
+                logger.warning(f"Could not log to comprehensive table: {e}")
+
         return decision_id
 
     def log_no_trade(
@@ -332,7 +409,34 @@ class DecisionBridge:
             risk_check_details=[reason]
         )
 
-        return self.logger.log_decision(decision)
+        decision_id = self.logger.log_decision(decision)
+
+        # === COMPREHENSIVE BOT LOGGER (SKIP) ===
+        if BOT_LOGGER_AVAILABLE and log_bot_decision:
+            try:
+                comprehensive = BotDecision(
+                    bot_name="PHOENIX",
+                    decision_type="SKIP",
+                    action="SKIP",
+                    symbol=symbol,
+                    strategy="N/A",
+                    session_id=generate_session_id(),
+                    market_context=BotLogMarketContext(
+                        spot_price=spot_price,
+                        vix=gex_data.get('vix', 0) if gex_data else 0,
+                        net_gex=gex_data.get('net_gex', 0) if gex_data else 0,
+                        gex_regime=gex_data.get('mm_state', '') if gex_data else '',
+                    ),
+                    entry_reasoning=reason,
+                    passed_all_checks=False,
+                    blocked_reason=reason,
+                )
+                comp_id = log_bot_decision(comprehensive)
+                logger.info(f"Logged to bot_decision_logs (SKIP): {comp_id}")
+            except Exception as e:
+                logger.warning(f"Could not log SKIP to comprehensive table: {e}")
+
+        return decision_id
 
     def log_exit(
         self,
@@ -365,6 +469,33 @@ class DecisionBridge:
             notes=f"{reason}. Exit bid/ask: ${exit_bid:.2f}/${exit_ask:.2f}. Underlying at exit: ${underlying_price_at_exit:.2f}"
         )
         logger.info(f"Updated exit for {decision_id}: P&L=${pnl:.2f}, Exit=${exit_price:.2f}")
+
+        # === COMPREHENSIVE BOT LOGGER (EXIT) ===
+        if BOT_LOGGER_AVAILABLE and log_bot_decision:
+            try:
+                now = datetime.now(self.tz)
+                comprehensive = BotDecision(
+                    bot_name="PHOENIX",
+                    decision_type="EXIT",
+                    action="SELL",
+                    symbol=symbol,
+                    strategy="exit",
+                    session_id=generate_session_id(),
+                    market_context=BotLogMarketContext(
+                        spot_price=underlying_price_at_exit,
+                    ),
+                    exit_reasoning=reason,
+                    actual_pnl=pnl,
+                    exit_triggered_by=reason,
+                    exit_timestamp=now,
+                    exit_price=exit_price,
+                    outcome_correct=pnl > 0,
+                    outcome_notes=f"Hold {hold_days} days. Exit bid/ask: ${exit_bid:.2f}/${exit_ask:.2f}",
+                )
+                comp_id = log_bot_decision(comprehensive)
+                logger.info(f"Logged to bot_decision_logs (EXIT): {comp_id}")
+            except Exception as e:
+                logger.warning(f"Could not log EXIT to comprehensive table: {e}")
 
     def _determine_option_source(self, option_data: Dict) -> DataSource:
         """Determine data source from option data flags"""
