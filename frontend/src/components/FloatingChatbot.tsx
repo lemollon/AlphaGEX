@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, X, Minimize2, Maximize2, Image, Trash2, User, Loader2, Sparkles, Zap } from 'lucide-react'
+import { Send, X, Minimize2, Maximize2, Image, Trash2, User, Loader2, Bot } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
 interface Message {
@@ -15,14 +15,11 @@ interface Message {
 const STORAGE_KEY = 'alphagex_chat_history'
 const MAX_STORED_MESSAGES = 50
 
-// Cool animated AI icon component
-function AIIcon({ className = "w-6 h-6" }: { className?: string }) {
+// Cool animated AI robot icon component
+function AIRobotIcon({ className = "w-6 h-6", animate = false }: { className?: string, animate?: boolean }) {
   return (
     <div className="relative">
-      <Sparkles className={`${className} text-white relative z-10`} />
-      <div className="absolute inset-0 blur-sm">
-        <Sparkles className={`${className} text-cyan-400 animate-pulse`} />
-      </div>
+      <Bot className={`${className} text-white relative z-10 ${animate ? 'animate-pulse' : ''}`} />
     </div>
   )
 }
@@ -267,7 +264,7 @@ export default function FloatingChatbot() {
 
         {/* Icon */}
         <div className="relative z-10 flex items-center justify-center">
-          <Zap className="w-7 h-7 text-white drop-shadow-lg" />
+          <Bot className="w-7 h-7 text-white drop-shadow-lg" />
         </div>
 
         {/* Online indicator */}
@@ -288,7 +285,7 @@ export default function FloatingChatbot() {
           boxShadow: '0 0 20px rgba(99, 102, 241, 0.4)'
         }}
       >
-        <Zap className="w-5 h-5 text-white" />
+        <Bot className="w-5 h-5 text-white" />
         <span className="text-sm text-white font-medium">AI Copilot</span>
         <button
           onClick={() => setIsMinimized(false)}
@@ -324,7 +321,7 @@ export default function FloatingChatbot() {
       >
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
-            <Zap className="w-5 h-5 text-white" />
+            <Bot className="w-5 h-5 text-white" />
           </div>
           <div>
             <h3 className="text-sm font-bold text-white">AI Copilot</h3>
@@ -375,7 +372,7 @@ export default function FloatingChatbot() {
           >
             {message.role === 'assistant' && (
               <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                <Zap className="w-4 h-4 text-white" />
+                <Bot className="w-4 h-4 text-white" />
               </div>
             )}
 
@@ -414,7 +411,7 @@ export default function FloatingChatbot() {
         {loading && (
           <div className="flex gap-2.5">
             <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-              <Zap className="w-4 h-4 text-white" />
+              <Bot className="w-4 h-4 text-white animate-pulse" />
             </div>
             <div className="bg-background-hover rounded-2xl rounded-bl-md px-4 py-3">
               <div className="flex items-center gap-2">
