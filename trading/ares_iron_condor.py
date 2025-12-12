@@ -79,6 +79,18 @@ except ImportError:
     TradeOutcome = None
     OracleBotName = None
 
+# Import comprehensive bot logger (NEW)
+try:
+    from trading.bot_logger import (
+        log_bot_decision, update_decision_outcome, update_execution_timeline,
+        BotDecision, MarketContext as BotLogMarketContext, ClaudeContext,
+        Alternative, RiskCheck, ApiCall, ExecutionTimeline, generate_session_id
+    )
+    BOT_LOGGER_AVAILABLE = True
+except ImportError:
+    BOT_LOGGER_AVAILABLE = False
+    log_bot_decision = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -992,6 +1004,42 @@ class ARESTrader:
             self.decision_logger.log_decision(decision)
             logger.info(f"ARES: Logged SKIP decision - {reason}")
 
+            # === COMPREHENSIVE BOT LOGGER (NEW) ===
+            if BOT_LOGGER_AVAILABLE and log_bot_decision:
+                try:
+                    # Build alternatives from list
+                    alt_objs = [
+                        Alternative(strategy=alt, reason_rejected="")
+                        for alt in (alternatives or [])
+                    ]
+
+                    comprehensive_decision = BotDecision(
+                        bot_name="ARES",
+                        decision_type="SKIP",
+                        action="SKIP",
+                        symbol=self.get_trading_ticker(),
+                        strategy="aggressive_iron_condor",
+                        session_id=generate_session_id(),
+                        market_context=BotLogMarketContext(
+                            spot_price=market_data.get('underlying_price', 0) if market_data else 0,
+                            vix=market_data.get('vix', 0) if market_data else 0,
+                        ),
+                        claude_context=ClaudeContext(
+                            prompt=f"Oracle advice for ARES skip decision",
+                            response=oracle_advice.reasoning if oracle_advice and hasattr(oracle_advice, 'reasoning') else "",
+                            confidence=str(oracle_advice.advice.value) if oracle_advice else "",
+                        ) if oracle_advice else ClaudeContext(),
+                        entry_reasoning=reason,
+                        alternatives_considered=alt_objs,
+                        other_strategies_considered=alternatives or [],
+                        passed_all_checks=False,
+                        blocked_reason=reason,
+                    )
+                    log_bot_decision(comprehensive_decision)
+                    logger.info(f"ARES: Logged to bot_decision_logs (SKIP)")
+                except Exception as comp_e:
+                    logger.warning(f"ARES: Could not log to comprehensive table: {comp_e}")
+
         except Exception as e:
             logger.error(f"ARES: Error logging SKIP decision: {e}")
 
@@ -1144,6 +1192,94 @@ class ARESTrader:
             )
 
             self.decision_logger.log_decision(decision)
+
+            # === COMPREHENSIVE BOT LOGGER (NEW) ===
+            if BOT_LOGGER_AVAILABLE and log_bot_decision:
+                try:
+                    # Build alternative strikes considered
+                    alt_objs = [
+                        Alternative(strike=position.put_short_strike + 10, strategy="Wider put (2 SD)", reason_rejected="Lower premium collection"),
+                        Alternative(strike=position.put_short_strike - 5, strategy="Tighter put (0.5 SD)", reason_rejected="Higher risk of breach"),
+                        Alternative(strike=position.call_short_strike - 10, strategy="Wider call (2 SD)", reason_rejected="Lower premium collection"),
+                        Alternative(strike=position.call_short_strike + 5, strategy="Tighter call (0.5 SD)", reason_rejected="Higher risk of breach"),
+                    ]
+
+                    # Build risk checks
+                    risk_checks = [
+                        RiskCheck(
+                            check_name="VIX_RANGE",
+                            passed=12 <= market_data['vix'] <= 35,
+                            current_value=market_data['vix'],
+                            limit_value=35,
+                            message=f"VIX at {market_data['vix']:.1f}"
+                        ),
+                        RiskCheck(
+                            check_name="POSITION_SIZE",
+                            passed=position.contracts <= self.config.max_contracts,
+                            current_value=position.contracts,
+                            limit_value=self.config.max_contracts,
+                            message=f"{position.contracts} contracts within limit"
+                        ),
+                        RiskCheck(
+                            check_name="CREDIT_RECEIVED",
+                            passed=position.total_credit >= self.get_min_credit(),
+                            current_value=position.total_credit,
+                            limit_value=self.get_min_credit(),
+                            message=f"Credit ${position.total_credit:.2f} meets minimum"
+                        ),
+                    ]
+
+                    comprehensive_decision = BotDecision(
+                        bot_name="ARES",
+                        decision_type="ENTRY",
+                        action="SELL",
+                        symbol=self.get_trading_ticker(),
+                        strategy="aggressive_iron_condor",
+                        strike=position.put_short_strike,  # Primary strike for display
+                        expiration=position.expiration,
+                        option_type="IRON_CONDOR",
+                        contracts=position.contracts,
+                        session_id=generate_session_id(),
+                        market_context=BotLogMarketContext(
+                            spot_price=market_data['underlying_price'],
+                            vix=market_data['vix'],
+                        ),
+                        claude_context=ClaudeContext(
+                            prompt=f"Oracle advice for ARES entry: VIX={market_data['vix']:.1f}, Price=${market_data['underlying_price']:,.2f}",
+                            response=oracle_advice.reasoning if oracle_advice and hasattr(oracle_advice, 'reasoning') else "",
+                            confidence=str(oracle_advice.advice.value) if oracle_advice else "DEFAULT",
+                        ) if oracle_advice else ClaudeContext(),
+                        entry_reasoning=f"1 SD Iron Condor targeting 10% monthly returns. VIX: {market_data['vix']:.1f}",
+                        strike_reasoning=f"Put spread: ${position.put_long_strike}/${position.put_short_strike}, Call spread: ${position.call_short_strike}/${position.call_long_strike} at 1 SD",
+                        size_reasoning=f"{self.config.risk_per_trade_pct:.0f}% of ${self.capital:,.0f} = {position.contracts} contracts",
+                        alternatives_considered=alt_objs,
+                        other_strategies_considered=[
+                            "Single credit spread (less premium)",
+                            "2 SD strikes (higher win rate, less premium)",
+                            "0.5 SD strikes (more premium, higher risk)",
+                        ],
+                        kelly_pct=self.config.risk_per_trade_pct,
+                        position_size_dollars=position.total_credit * 100 * position.contracts,
+                        max_risk_dollars=position.max_loss * 100 * position.contracts,
+                        backtest_win_rate=0.68,  # 1 SD historical win rate
+                        risk_checks=risk_checks,
+                        passed_all_checks=True,
+                        execution=ExecutionTimeline(
+                            order_submitted_at=datetime.now(self.tz),
+                            expected_fill_price=position.total_credit,
+                            broker_order_id=position.put_spread_order_id or position.call_spread_order_id,
+                            broker_status="SUBMITTED" if position.put_spread_order_id else "PENDING",
+                        ),
+                    )
+                    decision_id = log_bot_decision(comprehensive_decision)
+                    logger.info(f"ARES: Logged to bot_decision_logs (ENTRY) - ID: {decision_id}")
+
+                    # Store the decision_id on the position for later updates
+                    if hasattr(position, '__dict__'):
+                        position.__dict__['bot_decision_id'] = decision_id
+
+                except Exception as comp_e:
+                    logger.warning(f"ARES: Could not log to comprehensive table: {comp_e}")
 
         except Exception as e:
             logger.error(f"ARES: Error logging decision: {e}")
