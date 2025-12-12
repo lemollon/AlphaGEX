@@ -303,7 +303,7 @@ class OracleClaudeEnhancer:
     3. Identify patterns in training data
     """
 
-    CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # Haiku 4.5
+    CLAUDE_MODEL = "claude-sonnet-4-5-latest"  # Always use latest Sonnet 4.5
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize Claude AI enhancer"""

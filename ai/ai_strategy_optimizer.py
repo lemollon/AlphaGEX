@@ -58,7 +58,7 @@ class StrategyOptimizerAgent:
         # Initialize Claude via LangChain (simplified - no deprecated agent framework)
         # Using Haiku 4.5: 67% cheaper, 2x faster, 73% as good as Sonnet for analysis
         self.llm = ChatAnthropic(
-            model="claude-haiku-4-5-20251001",  # Latest Haiku 4.5 (Oct 2025)
+            model="claude-sonnet-4-5-latest",  # Always use latest Sonnet 4.5
             anthropic_api_key=self.api_key,
             temperature=0.1,  # Low temperature for consistent analysis
             max_tokens=4096

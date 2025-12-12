@@ -1473,8 +1473,8 @@ class ClaudeIntelligence:
             except (AttributeError, KeyError, Exception):
                 self.api_key = ""  # Streamlit secrets not available
 
-        # Use Claude Haiku 4.5 - fast and efficient model (2x faster than old haiku, much smarter)
-        self.model = "claude-haiku-4-5-20251001"
+        # Use Claude Sonnet 4.5 (latest) for intelligent conversational responses
+        self.model = "claude-sonnet-4-5-latest"
         self.conversation_history = []
         self.fred = FREDIntegration()
 
@@ -1583,13 +1583,35 @@ class ClaudeIntelligence:
         if not self.api_key:
             return self._fallback_analysis_with_rag(market_data, user_query)
 
-        # STEP 2: Extract symbol from query if mentioned
+        # STEP 2: Extract symbol from query if explicitly mentioned
+        # Only recognize known stock symbols to avoid treating words like "TELL", "WHAT" as symbols
+        KNOWN_SYMBOLS = {
+            'SPY', 'QQQ', 'IWM', 'DIA', 'SPX', 'NDX', 'VIX', 'UVXY', 'SQQQ', 'TQQQ',
+            'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'NFLX',
+            'JPM', 'BAC', 'GS', 'MS', 'V', 'MA', 'PYPL', 'SQ', 'COIN',
+            'XOM', 'CVX', 'COP', 'OXY', 'SLB', 'HAL',
+            'BA', 'LMT', 'RTX', 'NOC', 'GD',
+            'JNJ', 'PFE', 'MRNA', 'UNH', 'ABBV', 'LLY', 'BMY',
+            'WMT', 'TGT', 'COST', 'HD', 'LOW', 'NKE', 'SBUX', 'MCD', 'DIS',
+            'XLF', 'XLE', 'XLK', 'XLV', 'XLI', 'XLP', 'XLU', 'XLB', 'XLRE',
+            'GLD', 'SLV', 'USO', 'UNG',
+        }
+
         query_upper = user_query.upper()
         mentioned_symbol = None
-        for word in query_upper.split():
-            if len(word) <= 5 and word.isalpha():
-                mentioned_symbol = word
-                break
+
+        # Look for $SYMBOL pattern first (e.g., "$AAPL")
+        import re
+        dollar_match = re.search(r'\$([A-Z]{1,5})', query_upper)
+        if dollar_match and dollar_match.group(1) in KNOWN_SYMBOLS:
+            mentioned_symbol = dollar_match.group(1)
+        else:
+            # Look for known symbols in query
+            for word in query_upper.split():
+                clean_word = re.sub(r'[^A-Z]', '', word)
+                if clean_word in KNOWN_SYMBOLS:
+                    mentioned_symbol = clean_word
+                    break
 
         symbol = market_data.get('symbol', mentioned_symbol or 'SPY')
 
@@ -2391,13 +2413,34 @@ Your reputation is built on making traders profitable. Protect that reputation f
     def _fallback_analysis_with_rag(self, market_data: Dict, user_query: str) -> str:
         """Enhanced fallback analysis with RAG - ALWAYS provides a trade"""
 
-        # Extract symbol from query or market data
+        # Extract symbol from query or market data - only known symbols
+        import re
+        KNOWN_SYMBOLS = {
+            'SPY', 'QQQ', 'IWM', 'DIA', 'SPX', 'NDX', 'VIX', 'UVXY', 'SQQQ', 'TQQQ',
+            'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'NFLX',
+            'JPM', 'BAC', 'GS', 'MS', 'V', 'MA', 'PYPL', 'SQ', 'COIN',
+            'XOM', 'CVX', 'COP', 'OXY', 'SLB', 'HAL',
+            'BA', 'LMT', 'RTX', 'NOC', 'GD',
+            'JNJ', 'PFE', 'MRNA', 'UNH', 'ABBV', 'LLY', 'BMY',
+            'WMT', 'TGT', 'COST', 'HD', 'LOW', 'NKE', 'SBUX', 'MCD', 'DIS',
+            'XLF', 'XLE', 'XLK', 'XLV', 'XLI', 'XLP', 'XLU', 'XLB', 'XLRE',
+            'GLD', 'SLV', 'USO', 'UNG',
+        }
+
         query_upper = user_query.upper()
         symbol = market_data.get('symbol', 'SPY')
-        for word in query_upper.split():
-            if len(word) <= 5 and word.isalpha():
-                symbol = word
-                break
+
+        # Look for $SYMBOL pattern first
+        dollar_match = re.search(r'\$([A-Z]{1,5})', query_upper)
+        if dollar_match and dollar_match.group(1) in KNOWN_SYMBOLS:
+            symbol = dollar_match.group(1)
+        else:
+            # Look for known symbols in query
+            for word in query_upper.split():
+                clean_word = re.sub(r'[^A-Z]', '', word)
+                if clean_word in KNOWN_SYMBOLS:
+                    symbol = clean_word
+                    break
 
         rag = TradingRAG()
         rag_context = rag.build_context_for_claude(market_data, user_query)

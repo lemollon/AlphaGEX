@@ -51,7 +51,7 @@ class LangChainIntelligence:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-haiku-4-5-20251001",  # Haiku 4.5 (Oct 2025)
+        model: str = "claude-sonnet-4-5-latest",  # Always use latest Sonnet 4.5
         temperature: float = 0.7,
         max_tokens: int = 4096
     ):
