@@ -30,7 +30,8 @@ import {
   Settings,
   RotateCcw,
   Sword,
-  Eye
+  Eye,
+  FileText
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -66,6 +67,7 @@ const navItems = [
   { href: '/settings/system', label: 'System Settings', icon: Settings, category: 'System' },
   { href: '/settings/notifications', label: 'Notification Settings', icon: Bell, category: 'System' },
   { href: '/database', label: 'Database Admin', icon: Database, category: 'System' },
+  { href: '/logs', label: 'Decision Logs', icon: FileText, category: 'System' },
 ]
 
 export default function Navigation() {

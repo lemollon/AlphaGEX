@@ -50,7 +50,9 @@ data/prices/
 # Strategy Stats (auto-generated, don't commit)
 .strategy_stats/
 
-# Logs (runtime artifacts)
-logs/
+# Logs (runtime artifacts - only root logs directory)
+/logs/
 *.log
+# Don't ignore frontend app/logs page
+!frontend/src/app/logs/
 quant/.models/
