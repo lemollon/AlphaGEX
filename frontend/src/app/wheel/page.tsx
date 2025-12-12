@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import WheelDashboard from '@/components/trader/WheelDashboard'
+import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import ExportButtons from '@/components/trader/ExportButtons'
 import { apiClient } from '@/lib/api'
 
@@ -285,6 +286,15 @@ export default function WheelPage() {
 
         {/* Main Dashboard */}
         <WheelDashboard />
+
+        {/* HERMES Decision Log */}
+        <div className="mt-6 bg-gray-800 rounded-lg p-6 border border-gray-700">
+          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <RotateCcw className="w-5 h-5 text-purple-500" />
+            HERMES Decision Log
+          </h3>
+          <DecisionLogViewer defaultBot="HERMES" />
+        </div>
       </main>
     </div>
   )
