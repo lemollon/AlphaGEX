@@ -8,6 +8,7 @@ import {
   FileText, Activity
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient, api } from '@/lib/api'
 
 interface MLLog {
@@ -832,6 +833,16 @@ export default function SPXWheelPage() {
                 )}
               </>
             )}
+          </div>
+
+          {/* ATLAS DECISION LOG - Trading Decisions */}
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Database className="w-6 h-6 text-blue-400" />
+              <h2 className="text-xl font-bold">ATLAS Trading Decisions</h2>
+              <span className="text-sm text-gray-400">(Entry/Exit reasoning with full transparency)</span>
+            </div>
+            <DecisionLogViewer defaultBot="ATLAS" />
           </div>
 
         </div>

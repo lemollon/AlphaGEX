@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, Brain, Activity, RefreshCw, Trash2, Play, CheckCircle, XCircle, AlertCircle, Sparkles } from 'lucide-react'
+import { Eye, Brain, Activity, RefreshCw, Trash2, Play, CheckCircle, XCircle, AlertCircle, Sparkles, FileText } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
 
 interface OracleStatus {
@@ -478,6 +479,15 @@ export default function OraclePage() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* ORACLE Decision Log */}
+        <div className="card mt-6">
+          <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-green-500" />
+            ORACLE Decision Log
+          </h3>
+          <DecisionLogViewer defaultBot="ORACLE" />
         </div>
       </main>
     </div>
