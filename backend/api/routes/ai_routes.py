@@ -3,6 +3,7 @@ AI Copilot API routes - Claude AI integration for market analysis and trade advi
 """
 
 import os
+import re
 import base64
 from datetime import datetime
 
@@ -11,6 +12,37 @@ from fastapi import APIRouter, HTTPException
 from backend.api.dependencies import api_client, claude_ai, get_connection
 
 router = APIRouter(prefix="/api/ai", tags=["AI Copilot"])
+
+# Known stock symbols for extraction from queries
+KNOWN_SYMBOLS = {
+    'SPY', 'QQQ', 'IWM', 'DIA', 'SPX', 'NDX', 'VIX', 'UVXY', 'SQQQ', 'TQQQ',
+    'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'NFLX',
+    'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'V', 'MA', 'PYPL', 'SQ',
+    'XOM', 'CVX', 'COP', 'OXY', 'SLB', 'HAL', 'MPC', 'VLO', 'PSX',
+    'JNJ', 'PFE', 'UNH', 'ABBV', 'MRK', 'LLY', 'BMY', 'AMGN', 'GILD',
+    'HD', 'LOW', 'TGT', 'WMT', 'COST', 'NKE', 'SBUX', 'MCD', 'DIS',
+    'BA', 'CAT', 'GE', 'MMM', 'HON', 'UPS', 'FDX', 'LMT', 'RTX',
+    'CRM', 'ORCL', 'IBM', 'INTC', 'CSCO', 'ADBE', 'NOW', 'SNOW', 'PLTR',
+    'BTC', 'ETH', 'COIN', 'MSTR', 'RIOT', 'MARA', 'BITF', 'HUT',
+    'GME', 'AMC', 'BBBY', 'BB', 'NOK', 'SOFI', 'HOOD', 'RIVN', 'LCID'
+}
+
+
+def extract_symbol_from_query(query: str, default: str = 'SPY') -> str:
+    """Extract stock symbol from user query, or return default."""
+    query_upper = query.upper()
+
+    # Look for $SYMBOL pattern first (e.g., "$AAPL")
+    dollar_match = re.search(r'\$([A-Z]{1,5})', query_upper)
+    if dollar_match and dollar_match.group(1) in KNOWN_SYMBOLS:
+        return dollar_match.group(1)
+
+    # Look for known symbols in the query (whole word match)
+    for symbol in KNOWN_SYMBOLS:
+        if re.search(rf'\b{symbol}\b', query_upper):
+            return symbol
+
+    return default
 
 
 @router.post("/analyze-with-image")
@@ -29,13 +61,19 @@ async def ai_analyze_with_image(request: dict):
     try:
         import anthropic
 
-        symbol = request.get('symbol', 'SPY').upper()
         query = request.get('query', 'Please analyze this image and provide trading insights.')
         image_data = request.get('image_data', '')
         market_data = request.get('market_data', {})
 
         if not image_data:
             raise HTTPException(status_code=400, detail="image_data is required")
+
+        # Extract symbol from query - use provided symbol only if it's not default SPY
+        provided_symbol = request.get('symbol', 'SPY').upper()
+        if provided_symbol == 'SPY':
+            symbol = extract_symbol_from_query(query, default='SPY')
+        else:
+            symbol = provided_symbol
 
         # Get API key
         api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
@@ -154,13 +192,20 @@ async def ai_analyze_market(request: dict):
     try:
         import anthropic
 
-        symbol = request.get('symbol', 'SPY').upper()
         query = request.get('query', '')
         market_data = request.get('market_data', {})
         gamma_intel = request.get('gamma_intel')
 
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
+
+        # Extract symbol from query - use provided symbol only if it's not default SPY
+        provided_symbol = request.get('symbol', 'SPY').upper()
+        if provided_symbol == 'SPY':
+            # Try to detect actual symbol from query
+            symbol = extract_symbol_from_query(query, default='SPY')
+        else:
+            symbol = provided_symbol
 
         # Get API key fresh (not cached)
         api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
