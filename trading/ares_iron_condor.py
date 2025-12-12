@@ -1337,11 +1337,15 @@ class ARESTrader:
             )
             return result
 
-        # Calculate expected move with Oracle's SD multiplier if available
+        # Calculate expected move with SD multiplier
+        # Use config's SD multiplier if explicitly set, otherwise use Oracle's suggestion
         adjusted_expected_move = market_data['expected_move']
-        if oracle_sd_mult:
-            adjusted_expected_move = market_data['expected_move'] * oracle_sd_mult
-            logger.info(f"  Oracle SD Mult: {oracle_sd_mult:.2f} -> Adjusted Move: ${adjusted_expected_move:.2f}")
+        effective_sd_mult = self.config.sd_multiplier  # Default to config
+        if self.config.sd_multiplier == 1.0 and oracle_sd_mult:
+            # Only use Oracle's suggestion if config is at default
+            effective_sd_mult = oracle_sd_mult
+        adjusted_expected_move = market_data['expected_move'] * effective_sd_mult
+        logger.info(f"  SD Mult: {effective_sd_mult:.2f} (config={self.config.sd_multiplier}, oracle={oracle_sd_mult}) -> Adjusted Move: ${adjusted_expected_move:.2f}")
 
         # Find Iron Condor strikes (with Oracle's SD multiplier applied)
         ic_strikes = self.find_iron_condor_strikes(
