@@ -214,6 +214,14 @@ export const apiClient = {
     gamma_intel?: any
   }) => api.post('/api/ai/analyze', data),
 
+  // AI Copilot with Image Analysis
+  analyzeWithImage: (data: {
+    symbol: string
+    query: string
+    image_data: string  // Base64 encoded image or data URL
+    market_data?: any
+  }) => api.post('/api/ai/analyze-with-image', data),
+
   // Autonomous Trader
   getTraderStatus: () => api.get('/api/trader/status'),
   getTraderLiveStatus: () => api.get('/api/trader/live-status'),
