@@ -84,12 +84,14 @@ try:
     from trading.bot_logger import (
         log_bot_decision, update_decision_outcome, update_execution_timeline,
         BotDecision, MarketContext as BotLogMarketContext, ClaudeContext,
-        Alternative, RiskCheck, ApiCall, ExecutionTimeline, generate_session_id
+        Alternative, RiskCheck, ApiCall, ExecutionTimeline, generate_session_id,
+        get_session_tracker  # For scan_cycle and decision_sequence tracking
     )
     BOT_LOGGER_AVAILABLE = True
 except ImportError:
     BOT_LOGGER_AVAILABLE = False
     log_bot_decision = None
+    get_session_tracker = None
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +267,12 @@ class ARESTrader:
                 logger.info("ARES: Oracle AI advisor initialized")
             except Exception as e:
                 logger.warning(f"ARES: Failed to initialize Oracle AI: {e}")
+
+        # Session tracking for scan_cycle and decision_sequence
+        self.session_tracker = None
+        if BOT_LOGGER_AVAILABLE and get_session_tracker:
+            self.session_tracker = get_session_tracker("ARES")
+            logger.info("ARES: Session tracker initialized for decision logging")
 
         # State tracking
         self.open_positions: List[IronCondorPosition] = []
@@ -1019,14 +1027,30 @@ class ARESTrader:
                         action="SKIP",
                         symbol=self.get_trading_ticker(),
                         strategy="aggressive_iron_condor",
-                        session_id=generate_session_id(),
+                        session_id=self.session_tracker.session_id if self.session_tracker else generate_session_id(),
+                        scan_cycle=self.session_tracker.current_cycle if self.session_tracker else 0,
+                        decision_sequence=self.session_tracker.next_decision() if self.session_tracker else 0,
                         market_context=BotLogMarketContext(
                             spot_price=market_data.get('underlying_price', 0) if market_data else 0,
                             vix=market_data.get('vix', 0) if market_data else 0,
                         ),
                         claude_context=ClaudeContext(
-                            prompt=f"Oracle advice for ARES skip decision",
-                            response=oracle_advice.reasoning if oracle_advice and hasattr(oracle_advice, 'reasoning') else "",
+                            # Use REAL Claude data from oracle_advice.claude_analysis
+                            prompt=(oracle_advice.claude_analysis.raw_prompt
+                                    if oracle_advice and oracle_advice.claude_analysis and oracle_advice.claude_analysis.raw_prompt
+                                    else "No Claude validation for SKIP decision"),
+                            response=(oracle_advice.claude_analysis.raw_response
+                                      if oracle_advice and oracle_advice.claude_analysis and oracle_advice.claude_analysis.raw_response
+                                      else oracle_advice.reasoning if oracle_advice else ""),
+                            model=(oracle_advice.claude_analysis.model_used
+                                   if oracle_advice and oracle_advice.claude_analysis
+                                   else ""),
+                            tokens_used=(oracle_advice.claude_analysis.tokens_used
+                                         if oracle_advice and oracle_advice.claude_analysis
+                                         else 0),
+                            response_time_ms=(oracle_advice.claude_analysis.response_time_ms
+                                              if oracle_advice and oracle_advice.claude_analysis
+                                              else 0),
                             confidence=str(oracle_advice.advice.value) if oracle_advice else "",
                         ) if oracle_advice else ClaudeContext(),
                         entry_reasoning=reason,
@@ -1239,14 +1263,30 @@ class ARESTrader:
                         expiration=position.expiration,
                         option_type="IRON_CONDOR",
                         contracts=position.contracts,
-                        session_id=generate_session_id(),
+                        session_id=self.session_tracker.session_id if self.session_tracker else generate_session_id(),
+                        scan_cycle=self.session_tracker.current_cycle if self.session_tracker else 0,
+                        decision_sequence=self.session_tracker.next_decision() if self.session_tracker else 0,
                         market_context=BotLogMarketContext(
                             spot_price=market_data['underlying_price'],
                             vix=market_data['vix'],
                         ),
                         claude_context=ClaudeContext(
-                            prompt=f"Oracle advice for ARES entry: VIX={market_data['vix']:.1f}, Price=${market_data['underlying_price']:,.2f}",
-                            response=oracle_advice.reasoning if oracle_advice and hasattr(oracle_advice, 'reasoning') else "",
+                            # Use REAL Claude data from oracle_advice.claude_analysis
+                            prompt=(oracle_advice.claude_analysis.raw_prompt
+                                    if oracle_advice and oracle_advice.claude_analysis and oracle_advice.claude_analysis.raw_prompt
+                                    else f"No Claude validation (VIX={market_data['vix']:.1f}, Price=${market_data['underlying_price']:,.2f})"),
+                            response=(oracle_advice.claude_analysis.raw_response
+                                      if oracle_advice and oracle_advice.claude_analysis and oracle_advice.claude_analysis.raw_response
+                                      else oracle_advice.reasoning if oracle_advice else ""),
+                            model=(oracle_advice.claude_analysis.model_used
+                                   if oracle_advice and oracle_advice.claude_analysis
+                                   else ""),
+                            tokens_used=(oracle_advice.claude_analysis.tokens_used
+                                         if oracle_advice and oracle_advice.claude_analysis
+                                         else 0),
+                            response_time_ms=(oracle_advice.claude_analysis.response_time_ms
+                                              if oracle_advice and oracle_advice.claude_analysis
+                                              else 0),
                             confidence=str(oracle_advice.advice.value) if oracle_advice else "DEFAULT",
                         ) if oracle_advice else ClaudeContext(),
                         entry_reasoning=f"1 SD Iron Condor targeting 10% monthly returns. VIX: {market_data['vix']:.1f}",
@@ -1361,6 +1401,11 @@ class ARESTrader:
         """
         now = datetime.now(self.tz)
         today = now.strftime('%Y-%m-%d')
+
+        # Start a new scan cycle for session tracking
+        if self.session_tracker:
+            cycle_num = self.session_tracker.new_cycle()
+            logger.info(f"ARES: Starting scan cycle {cycle_num} for session {self.session_tracker.session_id}")
 
         logger.info(f"=" * 60)
         logger.info(f"ARES Daily Cycle - {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")

@@ -314,6 +314,68 @@ def generate_session_id() -> str:
     return f"{now.strftime('%Y-%m-%d')}-{period}"
 
 
+class SessionTracker:
+    """
+    Track scan_cycle and decision_sequence within a trading session.
+
+    Usage:
+        tracker = get_session_tracker("ARES")
+        tracker.new_cycle()  # Start a new scan cycle (scan_cycle += 1)
+        scan = tracker.current_cycle
+        seq = tracker.next_decision()  # Get next decision_sequence
+
+    Each bot should have its own tracker instance.
+    """
+
+    _instances: Dict[str, 'SessionTracker'] = {}
+
+    def __init__(self, bot_name: str):
+        self.bot_name = bot_name
+        self._session_id = generate_session_id()
+        self._scan_cycle = 0
+        self._decision_sequence = 0
+        self._last_reset = datetime.now()
+
+    @property
+    def session_id(self) -> str:
+        # Check if we need to roll over to a new session (e.g., new day or AM/PM switch)
+        new_session = generate_session_id()
+        if new_session != self._session_id:
+            self._session_id = new_session
+            self._scan_cycle = 0
+            self._decision_sequence = 0
+            self._last_reset = datetime.now()
+        return self._session_id
+
+    @property
+    def current_cycle(self) -> int:
+        return self._scan_cycle
+
+    def new_cycle(self) -> int:
+        """Start a new scan cycle. Returns the new cycle number."""
+        # Ensure session is current
+        _ = self.session_id
+        self._scan_cycle += 1
+        self._decision_sequence = 0
+        return self._scan_cycle
+
+    def next_decision(self) -> int:
+        """Get the next decision sequence number for the current cycle."""
+        # Ensure session is current
+        _ = self.session_id
+        if self._scan_cycle == 0:
+            self._scan_cycle = 1  # Auto-start first cycle
+        self._decision_sequence += 1
+        return self._decision_sequence
+
+
+def get_session_tracker(bot_name: str) -> SessionTracker:
+    """Get or create a session tracker for a bot."""
+    if bot_name not in SessionTracker._instances:
+        SessionTracker._instances[bot_name] = SessionTracker(bot_name)
+    return SessionTracker._instances[bot_name]
+
+
 def log_bot_decision(decision: BotDecision) -> Optional[str]:
     """
     Log a comprehensive bot decision to the bot_decision_logs table.

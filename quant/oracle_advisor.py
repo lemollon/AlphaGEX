@@ -50,6 +50,7 @@ import math
 import json
 import pickle
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass, asdict, field
@@ -198,6 +199,9 @@ class OraclePrediction:
     # Raw probabilities
     probabilities: Dict[str, float] = None
 
+    # Claude AI analysis data for logging transparency
+    claude_analysis: Optional['ClaudeAnalysis'] = None
+
 
 @dataclass
 class TrainingMetrics:
@@ -225,13 +229,21 @@ class TrainingMetrics:
 
 @dataclass
 class ClaudeAnalysis:
-    """Claude AI analysis result"""
+    """Claude AI analysis result with full transparency"""
     analysis: str
     confidence_adjustment: float  # -0.1 to +0.1 adjustment
     risk_factors: List[str]
     opportunities: List[str]
     recommendation: str  # "AGREE", "ADJUST", "OVERRIDE"
     override_advice: Optional[str] = None
+    # Raw Claude interaction data for logging transparency
+    raw_prompt: Optional[str] = None
+    raw_response: Optional[str] = None
+    tokens_used: int = 0  # input_tokens + output_tokens
+    input_tokens: int = 0
+    output_tokens: int = 0
+    response_time_ms: int = 0
+    model_used: Optional[str] = None
 
 
 # =============================================================================
@@ -412,7 +424,11 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
             "win_prob": ml_prediction.get('win_probability', 0.68)
         })
 
+        # Build full prompt for logging
+        full_prompt = f"SYSTEM:\n{system_prompt}\n\nUSER:\n{user_prompt}"
+
         try:
+            start_time = time.time()
             message = self._client.messages.create(
                 model=self.CLAUDE_MODEL,
                 max_tokens=1024,
@@ -421,13 +437,31 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
                 ],
                 system=system_prompt
             )
+            response_time_ms = int((time.time() - start_time) * 1000)
 
             response = message.content[0].text
+
+            # Extract token counts from response
+            input_tokens = getattr(message.usage, 'input_tokens', 0) if hasattr(message, 'usage') else 0
+            output_tokens = getattr(message.usage, 'output_tokens', 0) if hasattr(message, 'usage') else 0
+            tokens_used = input_tokens + output_tokens
+
             result = self._parse_validation_response(response)
+
+            # Add raw Claude data for transparency
+            result.raw_prompt = full_prompt
+            result.raw_response = response
+            result.tokens_used = tokens_used
+            result.input_tokens = input_tokens
+            result.output_tokens = output_tokens
+            result.response_time_ms = response_time_ms
+            result.model_used = self.CLAUDE_MODEL
 
             self.live_log.log("VALIDATE_DONE", f"Claude recommends: {result.recommendation}", {
                 "confidence_adj": result.confidence_adjustment,
-                "risk_factors": result.risk_factors
+                "risk_factors": result.risk_factors,
+                "tokens": tokens_used,
+                "time_ms": response_time_ms
             })
 
             return result
@@ -439,7 +473,8 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
                 confidence_adjustment=0.0,
                 risk_factors=[],
                 opportunities=[],
-                recommendation="AGREE"
+                recommendation="AGREE",
+                raw_prompt=full_prompt
             )
 
     def _parse_validation_response(self, response: str) -> ClaudeAnalysis:
@@ -954,7 +989,8 @@ class OracleAdvisor:
             top_factors=base_pred['top_factors'],
             reasoning=" | ".join(reasoning_parts),
             model_version=self.model_version,
-            probabilities=base_pred['probabilities']
+            probabilities=base_pred['probabilities'],
+            claude_analysis=claude_analysis  # Include real Claude data for logging
         )
 
     def get_atlas_advice(self, context: MarketContext) -> OraclePrediction:
@@ -994,7 +1030,11 @@ class OracleAdvisor:
             probabilities=base_pred['probabilities']
         )
 
-    def get_phoenix_advice(self, context: MarketContext) -> OraclePrediction:
+    def get_phoenix_advice(
+        self,
+        context: MarketContext,
+        use_claude_validation: bool = True
+    ) -> OraclePrediction:
         """
         Get directional call advice for PHOENIX.
 
@@ -1011,6 +1051,20 @@ class OracleAdvisor:
             reasoning_parts.append("Positive GEX = mean reversion, less directional opportunity")
             base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - 0.10)
 
+        # =========================================================================
+        # CLAUDE AI VALIDATION (if enabled)
+        # =========================================================================
+        claude_analysis = None
+        if use_claude_validation and self.claude_available:
+            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.PHOENIX)
+
+            # Apply Claude's confidence adjustment
+            if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
+                base_pred['win_probability'] = max(0.30, min(0.80,
+                    base_pred['win_probability'] + claude_analysis.confidence_adjustment
+                ))
+                reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
+
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
         return OraclePrediction(
@@ -1023,7 +1077,8 @@ class OracleAdvisor:
             top_factors=base_pred['top_factors'],
             reasoning=" | ".join(reasoning_parts),
             model_version=self.model_version,
-            probabilities=base_pred['probabilities']
+            probabilities=base_pred['probabilities'],
+            claude_analysis=claude_analysis  # Include real Claude data for logging
         )
 
     # =========================================================================

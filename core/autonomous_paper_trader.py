@@ -1021,7 +1021,8 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                             self.decision_bridge.log_no_trade(
                                 symbol=self.symbol,
                                 spot_price=spot_price,
-                                reason=f'Oracle SKIP: {oracle_advice.reasoning}'
+                                reason=f'Oracle SKIP: {oracle_advice.reasoning}',
+                                oracle_advice=oracle_advice  # Pass REAL Claude data for transparency
                             )
                         except Exception:
                             pass
@@ -1471,13 +1472,15 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                                 'strategy': trade.get('strategy', 'Unknown'),
                                 'signal_reason': trade.get('signal_reason', 'Automated signal'),
                                 'confidence': trade.get('confidence', 70),
-                                'expiration': exp_date
+                                'expiration': exp_date,
+                                'alternatives_considered': trade.get('alternatives_considered', [])
                             },
                             gex_data=gex_data,
                             option_data=option_price_data,
                             contracts=contracts,
                             entry_price=entry_price,
-                            regime=trade.get('regime')
+                            regime=trade.get('regime'),
+                            oracle_advice=self._last_oracle_advice  # Pass REAL Oracle/Claude data for transparency
                         )
                         self.log_action('TRANSPARENCY', f'Decision logged: {decision_id}', success=True)
                     except Exception as e:
