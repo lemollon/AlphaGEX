@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
+import json
 
 # Try to import scikit-learn
 try:
@@ -183,7 +184,7 @@ class PatternLearner:
         original_confidence = regime.get('confidence_score', 50)
         adjusted_confidence = original_confidence * prob
 
-        return {
+        result = {
             'success_probability': prob,
             'ml_confidence': ml_confidence,
             'adjusted_confidence': adjusted_confidence,
@@ -191,6 +192,20 @@ class PatternLearner:
             'original_confidence': original_confidence,
             'ml_boost': prob - 0.5  # How much ML adjusts from baseline
         }
+
+        # Log pattern to database for tracking
+        pattern_name = regime.get('pattern', regime.get('detected_pattern', 'UNKNOWN'))
+        pattern_data = {
+            'pattern': pattern_name,
+            'confidence': original_confidence,
+            'ml_probability': prob,
+            'ml_confidence': ml_confidence,
+            'recommendation': recommendation,
+            'features': features if features else []
+        }
+        self.log_pattern_to_db(pattern_name, pattern_data)
+
+        return result
 
     def analyze_pattern_similarity(self, current_regime: Dict, top_n: int = 5) -> List[Dict]:
         """
@@ -386,6 +401,96 @@ class PatternLearner:
         conn.close()
 
         return patterns
+
+    def log_pattern_to_db(
+        self,
+        pattern_name: str,
+        pattern_data: Dict,
+        success_rate: Optional[float] = None,
+        avg_return: Optional[float] = None
+    ) -> Optional[int]:
+        """
+        Log detected pattern to pattern_learning table for tracking and analysis.
+
+        This ensures every pattern detection is captured for:
+        - Pattern performance tracking
+        - Success rate analysis
+        - Model improvement data
+        """
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            # Check if pattern already exists
+            c.execute("""
+                SELECT id, occurrences, success_rate, avg_return
+                FROM pattern_learning
+                WHERE pattern_name = %s
+            """, (pattern_name,))
+
+            existing = c.fetchone()
+
+            if existing:
+                # Update existing pattern
+                pattern_id = existing[0]
+                new_occurrences = existing[1] + 1
+
+                # Running average for success rate and avg_return
+                old_success_rate = existing[2] or 0.5
+                old_avg_return = existing[3] or 0.0
+
+                if success_rate is not None:
+                    new_success_rate = (old_success_rate * existing[1] + success_rate) / new_occurrences
+                else:
+                    new_success_rate = old_success_rate
+
+                if avg_return is not None:
+                    new_avg_return = (old_avg_return * existing[1] + avg_return) / new_occurrences
+                else:
+                    new_avg_return = old_avg_return
+
+                c.execute("""
+                    UPDATE pattern_learning
+                    SET occurrences = %s,
+                        success_rate = %s,
+                        avg_return = %s,
+                        pattern_data = %s,
+                        last_seen = NOW()
+                    WHERE id = %s
+                """, (
+                    new_occurrences,
+                    new_success_rate,
+                    new_avg_return,
+                    json.dumps(pattern_data),
+                    pattern_id
+                ))
+            else:
+                # Insert new pattern
+                c.execute("""
+                    INSERT INTO pattern_learning (
+                        pattern_name, pattern_data, occurrences,
+                        success_rate, avg_return
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    pattern_name,
+                    json.dumps(pattern_data),
+                    1,
+                    success_rate or 0.5,
+                    avg_return or 0.0
+                ))
+
+                result = c.fetchone()
+                pattern_id = result[0] if result else None
+
+            conn.commit()
+            conn.close()
+
+            return pattern_id
+
+        except Exception as e:
+            print(f"Failed to log pattern: {e}")
+            return None
 
     def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
         """Calculate cosine similarity between two feature vectors"""

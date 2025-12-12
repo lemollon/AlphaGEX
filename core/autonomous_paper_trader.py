@@ -632,12 +632,14 @@ class AutonomousPaperTrader(
             conn.close()
 
     def log_action(self, action: str, details: str, position_id: int = None, success: bool = True):
-        """Log trading actions"""
+        """Log trading actions to both tables for comprehensive logging"""
         conn = get_connection()
         try:
             c = conn.cursor()
 
             now = datetime.now(CENTRAL_TZ)
+
+            # Write to legacy autonomous_trade_log for backward compatibility
             c.execute("""
                 INSERT INTO autonomous_trade_log (date, time, action, details, position_id, success)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -648,6 +650,19 @@ class AutonomousPaperTrader(
                 details,
                 position_id,
                 1 if success else 0
+            ))
+
+            # Also write to autonomous_trade_activity (consolidated table)
+            c.execute("""
+                INSERT INTO autonomous_trade_activity (
+                    timestamp, action, reason, success, symbol
+                ) VALUES (%s, %s, %s, %s, %s)
+            """, (
+                now,
+                action,
+                details,
+                success,
+                'SPY'
             ))
 
             conn.commit()
