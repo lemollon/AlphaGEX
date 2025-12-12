@@ -2175,6 +2175,129 @@ def init_database():
         )
     ''')
 
+    # =========================================================================
+    # BOT_DECISION_LOGS - COMPREHENSIVE UNIFIED LOGGING TABLE
+    # =========================================================================
+    # This is the master logging table with FULL transparency on every decision
+    # Includes: Claude AI prompts/responses, execution timeline, alternatives,
+    # session tracking, risk checks, and error logging
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS bot_decision_logs (
+            id SERIAL PRIMARY KEY,
+
+            -- IDENTIFICATION
+            decision_id TEXT UNIQUE NOT NULL,
+            bot_name TEXT NOT NULL,  -- PHOENIX, ATLAS, ARES, HERMES, ORACLE
+            session_id TEXT,
+            scan_cycle INTEGER,
+            decision_sequence INTEGER,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+
+            -- DECISION
+            decision_type TEXT,  -- ENTRY, EXIT, SKIP, ADJUSTMENT
+            action TEXT,         -- BUY, SELL, HOLD
+            symbol TEXT,
+            strategy TEXT,
+
+            -- TRADE DETAILS
+            strike REAL,
+            expiration DATE,
+            option_type TEXT,
+            contracts INTEGER,
+
+            -- MARKET CONTEXT (flattened for filtering)
+            spot_price REAL,
+            vix REAL,
+            net_gex REAL,
+            gex_regime TEXT,
+            flip_point REAL,
+            call_wall REAL,
+            put_wall REAL,
+            trend TEXT,
+
+            -- AI REASONING (full transparency)
+            claude_prompt TEXT,
+            claude_response TEXT,
+            claude_model TEXT,
+            claude_tokens_used INTEGER,
+            claude_response_time_ms INTEGER,
+            langchain_chain TEXT,
+            ai_confidence TEXT,
+            ai_warnings JSONB,
+
+            -- REASONING BREAKDOWN
+            entry_reasoning TEXT,
+            strike_reasoning TEXT,
+            size_reasoning TEXT,
+            exit_reasoning TEXT,
+
+            -- ALTERNATIVES
+            alternatives_considered JSONB,  -- [{strike: 5850, reason_rejected: "too close to put wall"}]
+            rejection_reasons JSONB,
+            other_strategies_considered JSONB,
+
+            -- PSYCHOLOGY/PATTERNS
+            psychology_pattern TEXT,
+            liberation_setup BOOLEAN,
+            false_floor_detected BOOLEAN,
+            forward_magnets JSONB,
+
+            -- POSITION SIZING
+            kelly_pct REAL,
+            position_size_dollars REAL,
+            max_risk_dollars REAL,
+
+            -- BACKTEST REFERENCE
+            backtest_win_rate REAL,
+            backtest_expectancy REAL,
+            backtest_sharpe REAL,
+
+            -- RISK CHECKS
+            risk_checks_performed JSONB,  -- [{check: "max_position", passed: true, value: 15000, limit: 25000}]
+            passed_all_checks BOOLEAN,
+            blocked_reason TEXT,
+
+            -- EXECUTION TIMELINE
+            order_submitted_at TIMESTAMPTZ,
+            order_filled_at TIMESTAMPTZ,
+            broker_order_id TEXT,
+            expected_fill_price REAL,
+            actual_fill_price REAL,
+            slippage_pct REAL,
+            broker_status TEXT,
+            execution_notes TEXT,
+
+            -- OUTCOME (filled later)
+            actual_pnl REAL,
+            exit_triggered_by TEXT,  -- 'PROFIT_TARGET', 'STOP_LOSS', 'TIME_DECAY', 'MANUAL', 'GEX_REGIME_CHANGE'
+            exit_timestamp TIMESTAMPTZ,
+            exit_price REAL,
+            exit_slippage_pct REAL,
+            outcome_correct BOOLEAN,
+            outcome_notes TEXT,
+
+            -- DEBUGGING
+            api_calls_made JSONB,  -- [{api: "tradier", endpoint: "quotes", time_ms: 150, success: true}]
+            errors_encountered JSONB,  -- [{timestamp, error, retried, resolved}]
+            processing_time_ms INTEGER,
+
+            -- FULL BLOB (for export)
+            full_decision JSONB,
+
+            -- TIMESTAMPS
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
+    # Indexes for fast filtering on bot_decision_logs
+    safe_index("CREATE INDEX IF NOT EXISTS idx_bot_logs_bot ON bot_decision_logs(bot_name)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_bot_logs_timestamp ON bot_decision_logs(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_bot_logs_session ON bot_decision_logs(session_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_bot_logs_outcome ON bot_decision_logs(actual_pnl)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_bot_logs_decision_type ON bot_decision_logs(decision_type)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_bot_logs_symbol ON bot_decision_logs(symbol)")
+
     # ----- From core/vix_hedge_manager.py -----
     # vix_hedge_signals - VIX hedge signal tracking
     c.execute('''

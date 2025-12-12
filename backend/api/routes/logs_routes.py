@@ -789,3 +789,521 @@ async def export_logs(
     # For other log types, use the respective endpoints
     # This is a simplified version - could be expanded
     raise HTTPException(status_code=400, detail=f"Export not yet implemented for {log_type}")
+
+
+# ============================================================================
+# BOT DECISION LOGS - COMPREHENSIVE UNIFIED LOGGING
+# ============================================================================
+
+@router.get("/bot-decisions")
+async def get_bot_decisions(
+    bot: Optional[str] = None,
+    decision_type: Optional[str] = None,
+    session_id: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    outcome: Optional[str] = None,  # 'profit', 'loss', 'pending'
+    limit: int = Query(50, le=500),
+    offset: int = 0,
+    search: Optional[str] = None  # Full-text search
+):
+    """
+    Get comprehensive bot decisions with full filtering.
+
+    This is THE main endpoint for the unified logging system.
+    Returns all decision details including Claude prompts, execution timeline, etc.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Check if table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'bot_decision_logs'
+            )
+        """)
+        if not cursor.fetchone()[0]:
+            return {
+                'success': True,
+                'data': {
+                    'decisions': [],
+                    'total': 0,
+                    'message': 'bot_decision_logs table not yet created. Run database migration.'
+                }
+            }
+
+        where_clauses = []
+        params = []
+
+        if bot:
+            where_clauses.append("bot_name = %s")
+            params.append(bot.upper())
+
+        if decision_type:
+            where_clauses.append("decision_type = %s")
+            params.append(decision_type.upper())
+
+        if session_id:
+            where_clauses.append("session_id = %s")
+            params.append(session_id)
+
+        if start_date:
+            where_clauses.append("timestamp >= %s")
+            params.append(start_date)
+
+        if end_date:
+            where_clauses.append("timestamp <= %s")
+            params.append(end_date + " 23:59:59")
+
+        if outcome:
+            if outcome == 'profit':
+                where_clauses.append("actual_pnl > 0")
+            elif outcome == 'loss':
+                where_clauses.append("actual_pnl < 0")
+            elif outcome == 'pending':
+                where_clauses.append("actual_pnl IS NULL")
+
+        if search:
+            where_clauses.append("""
+                (entry_reasoning ILIKE %s OR
+                 strike_reasoning ILIKE %s OR
+                 claude_response ILIKE %s OR
+                 outcome_notes ILIKE %s)
+            """)
+            search_pattern = f"%{search}%"
+            params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        # Get total count
+        cursor.execute(f"SELECT COUNT(*) FROM bot_decision_logs {where_sql}", params)
+        total = cursor.fetchone()[0]
+
+        # Get decisions with all fields
+        cursor.execute(f"""
+            SELECT
+                decision_id, bot_name, session_id, scan_cycle, decision_sequence,
+                timestamp, decision_type, action, symbol, strategy,
+                strike, expiration, option_type, contracts,
+                spot_price, vix, net_gex, gex_regime, flip_point, call_wall, put_wall, trend,
+                claude_prompt, claude_response, claude_model, claude_tokens_used, claude_response_time_ms,
+                langchain_chain, ai_confidence, ai_warnings,
+                entry_reasoning, strike_reasoning, size_reasoning, exit_reasoning,
+                alternatives_considered, other_strategies_considered,
+                psychology_pattern, liberation_setup, false_floor_detected, forward_magnets,
+                kelly_pct, position_size_dollars, max_risk_dollars,
+                backtest_win_rate, backtest_expectancy, backtest_sharpe,
+                risk_checks_performed, passed_all_checks, blocked_reason,
+                order_submitted_at, order_filled_at, broker_order_id,
+                expected_fill_price, actual_fill_price, slippage_pct, broker_status, execution_notes,
+                actual_pnl, exit_triggered_by, exit_timestamp, exit_price, exit_slippage_pct,
+                outcome_correct, outcome_notes,
+                api_calls_made, errors_encountered, processing_time_ms,
+                created_at
+            FROM bot_decision_logs
+            {where_sql}
+            ORDER BY timestamp DESC
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
+
+        columns = [desc[0] for desc in cursor.description]
+        decisions = []
+
+        for row in cursor.fetchall():
+            d = dict(zip(columns, row))
+
+            # Convert datetime objects to strings
+            for key in ['timestamp', 'expiration', 'order_submitted_at', 'order_filled_at',
+                       'exit_timestamp', 'created_at']:
+                if d.get(key):
+                    d[key] = str(d[key])
+
+            # Parse JSON fields
+            for key in ['ai_warnings', 'alternatives_considered', 'other_strategies_considered',
+                       'forward_magnets', 'risk_checks_performed', 'api_calls_made', 'errors_encountered']:
+                if d.get(key) and isinstance(d[key], str):
+                    try:
+                        d[key] = json.loads(d[key])
+                    except:
+                        pass
+
+            decisions.append(d)
+
+        cursor.close()
+        conn.close()
+
+        return {
+            'success': True,
+            'data': {
+                'decisions': decisions,
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+                'filters_applied': {
+                    'bot': bot,
+                    'decision_type': decision_type,
+                    'session_id': session_id,
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'outcome': outcome,
+                    'search': search
+                }
+            }
+        }
+
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        logger.error(f"Error getting bot decisions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/bot-decisions/{bot_name}")
+async def get_bot_specific_decisions(
+    bot_name: str,
+    limit: int = Query(50, le=500),
+    decision_type: Optional[str] = None,
+    days: int = 30
+):
+    """
+    Get decisions for a specific bot.
+
+    Shortcut endpoint for per-bot log pages.
+    """
+    return await get_bot_decisions(
+        bot=bot_name,
+        decision_type=decision_type,
+        start_date=(datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'),
+        limit=limit
+    )
+
+
+@router.get("/bot-decisions/session/{session_id}")
+async def get_session_decisions(session_id: str):
+    """
+    Get all decisions from a specific session.
+
+    Sessions group decisions by date + time period (AM/PM).
+    Example session_id: "2024-12-12-AM"
+    """
+    return await get_bot_decisions(session_id=session_id, limit=100)
+
+
+@router.get("/bot-decisions/decision/{decision_id}")
+async def get_decision_detail(decision_id: str):
+    """
+    Get full details for a single decision.
+
+    Returns EVERYTHING including full Claude prompt/response.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT * FROM bot_decision_logs WHERE decision_id = %s
+        """, (decision_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Decision {decision_id} not found")
+
+        columns = [desc[0] for desc in cursor.description]
+        decision = dict(zip(columns, row))
+
+        # Convert datetime objects
+        for key in decision:
+            if isinstance(decision[key], datetime):
+                decision[key] = decision[key].isoformat()
+
+        # Parse JSON fields
+        json_fields = ['ai_warnings', 'alternatives_considered', 'other_strategies_considered',
+                      'forward_magnets', 'risk_checks_performed', 'api_calls_made',
+                      'errors_encountered', 'full_decision', 'rejection_reasons']
+        for key in json_fields:
+            if decision.get(key) and isinstance(decision[key], str):
+                try:
+                    decision[key] = json.loads(decision[key])
+                except:
+                    pass
+
+        cursor.close()
+        conn.close()
+
+        return {
+            'success': True,
+            'data': decision
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        logger.error(f"Error getting decision detail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/bot-decisions/stats")
+async def get_bot_decision_stats(
+    bot: Optional[str] = None,
+    days: int = 30
+):
+    """
+    Get aggregated statistics for bot decisions.
+
+    Returns:
+    - Total decisions by type
+    - Win/loss rate
+    - Average P&L
+    - Decisions per session
+    - Error rate
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'bot_decision_logs'
+            )
+        """)
+        if not cursor.fetchone()[0]:
+            return {'success': True, 'data': {'message': 'Table not created yet'}}
+
+        bot_filter = "AND bot_name = %s" if bot else ""
+        params = [days]
+        if bot:
+            params.append(bot.upper())
+
+        # Overall stats
+        cursor.execute(f"""
+            SELECT
+                COUNT(*) as total_decisions,
+                COUNT(DISTINCT session_id) as total_sessions,
+                COUNT(CASE WHEN decision_type = 'ENTRY' THEN 1 END) as entry_decisions,
+                COUNT(CASE WHEN decision_type = 'EXIT' THEN 1 END) as exit_decisions,
+                COUNT(CASE WHEN decision_type = 'SKIP' THEN 1 END) as skip_decisions,
+                COUNT(CASE WHEN actual_pnl > 0 THEN 1 END) as profitable_trades,
+                COUNT(CASE WHEN actual_pnl < 0 THEN 1 END) as losing_trades,
+                COUNT(CASE WHEN actual_pnl IS NOT NULL THEN 1 END) as closed_trades,
+                AVG(actual_pnl) FILTER (WHERE actual_pnl IS NOT NULL) as avg_pnl,
+                SUM(actual_pnl) FILTER (WHERE actual_pnl IS NOT NULL) as total_pnl,
+                AVG(slippage_pct) FILTER (WHERE slippage_pct IS NOT NULL) as avg_slippage,
+                AVG(claude_response_time_ms) FILTER (WHERE claude_response_time_ms > 0) as avg_claude_time,
+                COUNT(CASE WHEN errors_encountered IS NOT NULL AND errors_encountered != '[]' THEN 1 END) as decisions_with_errors
+            FROM bot_decision_logs
+            WHERE timestamp >= NOW() - INTERVAL '%s days'
+            {bot_filter}
+        """, params)
+
+        row = cursor.fetchone()
+        stats = {
+            'total_decisions': row[0] or 0,
+            'total_sessions': row[1] or 0,
+            'entry_decisions': row[2] or 0,
+            'exit_decisions': row[3] or 0,
+            'skip_decisions': row[4] or 0,
+            'profitable_trades': row[5] or 0,
+            'losing_trades': row[6] or 0,
+            'closed_trades': row[7] or 0,
+            'avg_pnl': float(row[8]) if row[8] else 0,
+            'total_pnl': float(row[9]) if row[9] else 0,
+            'avg_slippage_pct': float(row[10]) if row[10] else 0,
+            'avg_claude_response_ms': float(row[11]) if row[11] else 0,
+            'decisions_with_errors': row[12] or 0
+        }
+
+        # Win rate
+        if stats['closed_trades'] > 0:
+            stats['win_rate'] = (stats['profitable_trades'] / stats['closed_trades']) * 100
+        else:
+            stats['win_rate'] = 0
+
+        # By bot breakdown
+        cursor.execute(f"""
+            SELECT
+                bot_name,
+                COUNT(*) as count,
+                COUNT(CASE WHEN actual_pnl > 0 THEN 1 END) as wins,
+                SUM(actual_pnl) FILTER (WHERE actual_pnl IS NOT NULL) as total_pnl
+            FROM bot_decision_logs
+            WHERE timestamp >= NOW() - INTERVAL '%s days'
+            GROUP BY bot_name
+            ORDER BY count DESC
+        """, [days])
+
+        by_bot = []
+        for row in cursor.fetchall():
+            by_bot.append({
+                'bot_name': row[0],
+                'decisions': row[1],
+                'wins': row[2] or 0,
+                'total_pnl': float(row[3]) if row[3] else 0
+            })
+
+        cursor.close()
+        conn.close()
+
+        return {
+            'success': True,
+            'data': {
+                'stats': stats,
+                'by_bot': by_bot,
+                'days_analyzed': days,
+                'bot_filter': bot
+            }
+        }
+
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        logger.error(f"Error getting bot decision stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/bot-decisions/export")
+async def export_bot_decisions(
+    bot: Optional[str] = None,
+    format: str = Query("csv", regex="^(csv|json|excel)$"),
+    days: int = 30,
+    include_claude: bool = False  # Include full Claude prompts/responses (large!)
+):
+    """
+    Export bot decisions to CSV, JSON, or Excel.
+
+    Args:
+        bot: Filter by bot name
+        format: csv, json, or excel
+        days: Number of days to export
+        include_claude: Include full Claude prompts/responses (can be very large)
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'bot_decision_logs'
+            )
+        """)
+        if not cursor.fetchone()[0]:
+            raise HTTPException(status_code=400, detail="Table not created yet")
+
+        bot_filter = "AND bot_name = %s" if bot else ""
+        params = [days]
+        if bot:
+            params.append(bot.upper())
+
+        # Select fields based on include_claude
+        if include_claude:
+            fields = "*"
+        else:
+            fields = """
+                decision_id, bot_name, session_id, timestamp,
+                decision_type, action, symbol, strategy,
+                strike, expiration, option_type, contracts,
+                spot_price, vix, net_gex, gex_regime,
+                entry_reasoning, strike_reasoning,
+                psychology_pattern, position_size_dollars,
+                passed_all_checks, blocked_reason,
+                order_submitted_at, order_filled_at,
+                actual_fill_price, slippage_pct,
+                actual_pnl, exit_triggered_by, outcome_notes
+            """
+
+        cursor.execute(f"""
+            SELECT {fields}
+            FROM bot_decision_logs
+            WHERE timestamp >= NOW() - INTERVAL '%s days'
+            {bot_filter}
+            ORDER BY timestamp DESC
+        """, params)
+
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        if format == "json":
+            data = []
+            for row in rows:
+                d = dict(zip(columns, row))
+                # Convert datetime objects
+                for key in d:
+                    if isinstance(d[key], datetime):
+                        d[key] = d[key].isoformat()
+                data.append(d)
+            return data
+
+        elif format == "csv":
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(columns)
+
+            for row in rows:
+                # Convert datetime objects to strings
+                processed_row = []
+                for val in row:
+                    if isinstance(val, datetime):
+                        processed_row.append(val.isoformat())
+                    elif isinstance(val, (dict, list)):
+                        processed_row.append(json.dumps(val))
+                    else:
+                        processed_row.append(val)
+                writer.writerow(processed_row)
+
+            output.seek(0)
+            filename = f"bot_decisions_{bot or 'all'}_{datetime.now().strftime('%Y%m%d')}.csv"
+
+            return StreamingResponse(
+                io.StringIO(output.getvalue()),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+
+        elif format == "excel":
+            # For Excel, we need openpyxl
+            try:
+                from openpyxl import Workbook
+                from openpyxl.utils.dataframe import dataframe_to_rows
+                import pandas as pd
+
+                data = []
+                for row in rows:
+                    d = dict(zip(columns, row))
+                    for key in d:
+                        if isinstance(d[key], datetime):
+                            d[key] = d[key].isoformat()
+                        elif isinstance(d[key], (dict, list)):
+                            d[key] = json.dumps(d[key])
+                    data.append(d)
+
+                df = pd.DataFrame(data)
+
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, sheet_name='Bot Decisions', index=False)
+
+                output.seek(0)
+                filename = f"bot_decisions_{bot or 'all'}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+
+                return StreamingResponse(
+                    output,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"}
+                )
+
+            except ImportError:
+                raise HTTPException(status_code=400, detail="Excel export requires openpyxl and pandas")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting bot decisions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
