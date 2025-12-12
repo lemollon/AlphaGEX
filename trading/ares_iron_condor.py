@@ -135,7 +135,7 @@ class ARESConfig:
     risk_per_trade_pct: float = 10.0     # 10% of capital per trade
     spread_width: float = 10.0            # $10 wide spreads (SPX)
     spread_width_spy: float = 2.0         # $2 wide spreads (SPY for sandbox)
-    sd_multiplier: float = 1.0            # 1 SD strikes
+    sd_multiplier: float = 0.5            # 0.5 SD strikes (closer to ATM for better liquidity)
 
     # Execution parameters
     ticker: str = "SPX"                   # Trade SPX in production
@@ -143,7 +143,7 @@ class ARESConfig:
     use_0dte: bool = True                 # Use 0DTE options
     max_contracts: int = 1000             # Max contracts per trade
     min_credit_per_spread: float = 1.50   # Minimum credit to accept (SPX)
-    min_credit_per_spread_spy: float = 0.15  # Minimum credit (SPY ~1/10)
+    min_credit_per_spread_spy: float = 0.02  # Minimum credit (SPY - lowered for liquidity)
 
     # Trade management
     use_stop_loss: bool = False           # NO stop loss (defined risk)
@@ -152,7 +152,7 @@ class ARESConfig:
     # Trading schedule
     trade_every_day: bool = True          # Trade Mon-Fri
     entry_time_start: str = "09:35"       # Entry window start (after market open)
-    entry_time_end: str = "15:30"         # Entry window end (before close)
+    entry_time_end: str = "15:55"         # Entry window end (before close)
 
 
 class ARESTrader:
@@ -1337,11 +1337,15 @@ class ARESTrader:
             )
             return result
 
-        # Calculate expected move with Oracle's SD multiplier if available
+        # Calculate expected move with SD multiplier
+        # Use config's SD multiplier if explicitly set, otherwise use Oracle's suggestion
         adjusted_expected_move = market_data['expected_move']
-        if oracle_sd_mult:
-            adjusted_expected_move = market_data['expected_move'] * oracle_sd_mult
-            logger.info(f"  Oracle SD Mult: {oracle_sd_mult:.2f} -> Adjusted Move: ${adjusted_expected_move:.2f}")
+        effective_sd_mult = self.config.sd_multiplier  # Default to config
+        if self.config.sd_multiplier == 1.0 and oracle_sd_mult:
+            # Only use Oracle's suggestion if config is at default
+            effective_sd_mult = oracle_sd_mult
+        adjusted_expected_move = market_data['expected_move'] * effective_sd_mult
+        logger.info(f"  SD Mult: {effective_sd_mult:.2f} (config={self.config.sd_multiplier}, oracle={oracle_sd_mult}) -> Adjusted Move: ${adjusted_expected_move:.2f}")
 
         # Find Iron Condor strikes (with Oracle's SD multiplier applied)
         ic_strikes = self.find_iron_condor_strikes(
@@ -1374,10 +1378,10 @@ class ARESTrader:
 
         # Use Oracle's risk percentage if available
         if oracle_risk_pct:
-            original_risk_pct = self.config.risk_per_trade
-            self.config.risk_per_trade = oracle_risk_pct
+            original_risk_pct = self.config.risk_per_trade_pct
+            self.config.risk_per_trade_pct = oracle_risk_pct
             contracts = self.calculate_position_size(max_loss)
-            self.config.risk_per_trade = original_risk_pct  # Restore original
+            self.config.risk_per_trade_pct = original_risk_pct  # Restore original
             logger.info(f"  Oracle Risk Adj: {oracle_risk_pct:.1%} (default: {original_risk_pct:.1%})")
         else:
             contracts = self.calculate_position_size(max_loss)
