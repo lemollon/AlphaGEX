@@ -3,6 +3,7 @@ AI Copilot API routes - Claude AI integration for market analysis and trade advi
 """
 
 import os
+import re
 import base64
 from datetime import datetime
 
@@ -11,6 +12,37 @@ from fastapi import APIRouter, HTTPException
 from backend.api.dependencies import api_client, claude_ai, get_connection
 
 router = APIRouter(prefix="/api/ai", tags=["AI Copilot"])
+
+# Known stock symbols for extraction from queries
+KNOWN_SYMBOLS = {
+    'SPY', 'QQQ', 'IWM', 'DIA', 'SPX', 'NDX', 'VIX', 'UVXY', 'SQQQ', 'TQQQ',
+    'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'NFLX',
+    'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'V', 'MA', 'PYPL', 'SQ',
+    'XOM', 'CVX', 'COP', 'OXY', 'SLB', 'HAL', 'MPC', 'VLO', 'PSX',
+    'JNJ', 'PFE', 'UNH', 'ABBV', 'MRK', 'LLY', 'BMY', 'AMGN', 'GILD',
+    'HD', 'LOW', 'TGT', 'WMT', 'COST', 'NKE', 'SBUX', 'MCD', 'DIS',
+    'BA', 'CAT', 'GE', 'MMM', 'HON', 'UPS', 'FDX', 'LMT', 'RTX',
+    'CRM', 'ORCL', 'IBM', 'INTC', 'CSCO', 'ADBE', 'NOW', 'SNOW', 'PLTR',
+    'BTC', 'ETH', 'COIN', 'MSTR', 'RIOT', 'MARA', 'BITF', 'HUT',
+    'GME', 'AMC', 'BBBY', 'BB', 'NOK', 'SOFI', 'HOOD', 'RIVN', 'LCID'
+}
+
+
+def extract_symbol_from_query(query: str, default: str = 'SPY') -> str:
+    """Extract stock symbol from user query, or return default."""
+    query_upper = query.upper()
+
+    # Look for $SYMBOL pattern first (e.g., "$AAPL")
+    dollar_match = re.search(r'\$([A-Z]{1,5})', query_upper)
+    if dollar_match and dollar_match.group(1) in KNOWN_SYMBOLS:
+        return dollar_match.group(1)
+
+    # Look for known symbols in the query (whole word match)
+    for symbol in KNOWN_SYMBOLS:
+        if re.search(rf'\b{symbol}\b', query_upper):
+            return symbol
+
+    return default
 
 
 @router.post("/analyze-with-image")
@@ -29,13 +61,19 @@ async def ai_analyze_with_image(request: dict):
     try:
         import anthropic
 
-        symbol = request.get('symbol', 'SPY').upper()
         query = request.get('query', 'Please analyze this image and provide trading insights.')
         image_data = request.get('image_data', '')
         market_data = request.get('market_data', {})
 
         if not image_data:
             raise HTTPException(status_code=400, detail="image_data is required")
+
+        # Extract symbol from query - use provided symbol only if it's not default SPY
+        provided_symbol = request.get('symbol', 'SPY').upper()
+        if provided_symbol == 'SPY':
+            symbol = extract_symbol_from_query(query, default='SPY')
+        else:
+            symbol = provided_symbol
 
         # Get API key
         api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
@@ -152,7 +190,8 @@ async def ai_analyze_market(request: dict):
     }
     """
     try:
-        symbol = request.get('symbol', 'SPY').upper()
+        import anthropic
+
         query = request.get('query', '')
         market_data = request.get('market_data', {})
         gamma_intel = request.get('gamma_intel')
@@ -160,21 +199,76 @@ async def ai_analyze_market(request: dict):
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
-        # If no market data provided, fetch it
-        if not market_data:
-            gex_data = api_client.get_net_gamma(symbol)
-            market_data = {
-                'net_gex': gex_data.get('net_gex', 0),
-                'spot_price': gex_data.get('spot_price', 0),
-                'flip_point': gex_data.get('flip_point', 0),
-                'symbol': symbol
-            }
+        # Extract symbol from query - use provided symbol only if it's not default SPY
+        provided_symbol = request.get('symbol', 'SPY').upper()
+        if provided_symbol == 'SPY':
+            # Try to detect actual symbol from query
+            symbol = extract_symbol_from_query(query, default='SPY')
+        else:
+            symbol = provided_symbol
 
-        ai_response = claude_ai.analyze_market(
-            market_data=market_data,
-            user_query=query,
-            gamma_intel=gamma_intel
+        # Get API key fresh (not cached)
+        api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if not api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Claude API key not configured. Set CLAUDE_API_KEY environment variable."
+            )
+
+        # If no market data provided, fetch it
+        if not market_data or not market_data.get('spot_price'):
+            try:
+                gex_data = api_client.get_net_gamma(symbol) if api_client else {}
+                if gex_data and not gex_data.get('error'):
+                    market_data = {
+                        'net_gex': gex_data.get('net_gex', 0),
+                        'spot_price': gex_data.get('spot_price', 0),
+                        'flip_point': gex_data.get('flip_point', 0),
+                        'call_wall': gex_data.get('call_wall', 0),
+                        'put_wall': gex_data.get('put_wall', 0),
+                        'symbol': symbol
+                    }
+            except Exception:
+                pass  # Continue without market data
+
+        # Build context for Claude
+        context = f"""You are an expert AI trading assistant for AlphaGEX, a gamma exposure (GEX) analysis platform.
+
+You should be conversational, helpful, and engaging. Answer questions naturally like a knowledgeable friend who happens to be an expert trader.
+
+Current Market Context for {symbol}:
+- Spot Price: ${market_data.get('spot_price', 'N/A')}
+- Net GEX: {market_data.get('net_gex', 'N/A')}
+- Flip Point: ${market_data.get('flip_point', 'N/A')}
+- Call Wall: ${market_data.get('call_wall', 'N/A')}
+- Put Wall: ${market_data.get('put_wall', 'N/A')}
+
+Guidelines:
+- Be conversational and natural, not robotic or templated
+- If asked general questions, answer them helpfully
+- Only provide trading analysis when specifically asked about trades or market analysis
+- If market data is available, incorporate it into your analysis when relevant
+- Keep responses concise but informative"""
+
+        if gamma_intel:
+            context += f"\n\nAdditional Gamma Intelligence:\n{gamma_intel}"
+
+        # Call Claude API directly
+        client = anthropic.Anthropic(api_key=api_key)
+
+        message = client.messages.create(
+            model="claude-sonnet-4-5-latest",
+            max_tokens=1500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"{context}\n\nUser's question: {query}"
+                }
+            ],
         )
+
+        # Extract the response
+        ai_response = message.content[0].text if message.content else "No analysis generated."
 
         return {
             "success": True,
@@ -186,6 +280,8 @@ async def ai_analyze_market(request: dict):
             "timestamp": datetime.now().isoformat()
         }
 
+    except anthropic.APIError as e:
+        raise HTTPException(status_code=500, detail=f"Claude API error: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

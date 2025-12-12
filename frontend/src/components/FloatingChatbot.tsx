@@ -15,6 +15,43 @@ interface Message {
 const STORAGE_KEY = 'alphagex_chat_history'
 const MAX_STORED_MESSAGES = 50
 
+// Known stock symbols for extraction
+const KNOWN_SYMBOLS = new Set([
+  'SPY', 'QQQ', 'IWM', 'DIA', 'SPX', 'NDX', 'VIX', 'UVXY', 'SQQQ', 'TQQQ',
+  'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'NFLX',
+  'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'V', 'MA', 'PYPL', 'SQ',
+  'XOM', 'CVX', 'COP', 'OXY', 'SLB', 'HAL', 'MPC', 'VLO', 'PSX',
+  'JNJ', 'PFE', 'UNH', 'ABBV', 'MRK', 'LLY', 'BMY', 'AMGN', 'GILD',
+  'HD', 'LOW', 'TGT', 'WMT', 'COST', 'NKE', 'SBUX', 'MCD', 'DIS',
+  'BA', 'CAT', 'GE', 'MMM', 'HON', 'UPS', 'FDX', 'LMT', 'RTX',
+  'CRM', 'ORCL', 'IBM', 'INTC', 'CSCO', 'ADBE', 'NOW', 'SNOW', 'PLTR',
+  'BTC', 'ETH', 'COIN', 'MSTR', 'RIOT', 'MARA', 'BITF', 'HUT',
+  'GME', 'AMC', 'BBBY', 'BB', 'NOK', 'SOFI', 'HOOD', 'RIVN', 'LCID'
+])
+
+// Extract symbol from user query
+function extractSymbolFromQuery(query: string): string {
+  const upperQuery = query.toUpperCase()
+
+  // Look for $SYMBOL pattern first (e.g., "$AAPL")
+  const dollarMatch = upperQuery.match(/\$([A-Z]{1,5})/)
+  if (dollarMatch && KNOWN_SYMBOLS.has(dollarMatch[1])) {
+    return dollarMatch[1]
+  }
+
+  // Look for known symbols in the query
+  for (const symbol of KNOWN_SYMBOLS) {
+    // Match whole word only (not part of another word)
+    const regex = new RegExp(`\\b${symbol}\\b`)
+    if (regex.test(upperQuery)) {
+      return symbol
+    }
+  }
+
+  // Default to SPY
+  return 'SPY'
+}
+
 // Cool animated AI robot icon component
 function AIRobotIcon({ className = "w-6 h-6", animate = false }: { className?: string, animate?: boolean }) {
   return (
@@ -160,17 +197,20 @@ export default function FloatingChatbot() {
     try {
       let response
 
+      // Extract symbol from user query (or default to SPY)
+      const detectedSymbol = extractSymbolFromQuery(currentInput)
+
       if (currentImage) {
         // Use image analysis endpoint
         response = await apiClient.analyzeWithImage({
-          symbol: 'SPY',
+          symbol: detectedSymbol,
           query: currentInput || 'Please analyze this image and provide trading insights.',
           image_data: currentImage
         })
       } else {
         // Use regular analysis endpoint
         response = await apiClient.analyzeMarket({
-          symbol: 'SPY',
+          symbol: detectedSymbol,
           query: currentInput,
           market_data: {},
           gamma_intel: {}
