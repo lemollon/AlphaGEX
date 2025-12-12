@@ -68,6 +68,10 @@ export default function LogsPage() {
   const [activeCategory, setActiveCategory] = useState<LogCategory>('trading')
   const [activeBot, setActiveBot] = useState<string>('all')
 
+  // Date range filter
+  const [dateRange, setDateRange] = useState({ start: '', end: '' })
+  const [exporting, setExporting] = useState(false)
+
   // Data for different log types
   const [mlLogs, setMlLogs] = useState<MLLog[]>([])
   const [oraclePredictions, setOraclePredictions] = useState<OraclePrediction[]>([])
@@ -186,6 +190,62 @@ export default function LogsPage() {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }))
   }
 
+  // Export functions
+  const handleExportCSV = async () => {
+    setExporting(true)
+    try {
+      const response = await apiClient.exportDecisionLogsCSV({
+        bot: activeBot === 'all' ? undefined : activeBot,
+        start_date: dateRange.start || undefined,
+        end_date: dateRange.end || undefined,
+      })
+      const blob = new Blob([response.data], { type: 'text/csv' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `alphagex-${activeCategory}-logs-${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (error) {
+      console.error('Error exporting CSV:', error)
+    }
+    setExporting(false)
+  }
+
+  const handleExportJSON = async () => {
+    setExporting(true)
+    try {
+      let data: any[] = []
+      if (activeCategory === 'trading') {
+        const response = await api.get('/api/trader/logs/decisions', {
+          params: { bot: activeBot === 'all' ? undefined : activeBot, limit: 1000 }
+        })
+        data = response.data?.data?.decisions || []
+      } else if (activeCategory === 'ml') {
+        data = mlLogs
+      } else if (activeCategory === 'oracle') {
+        data = oraclePredictions
+      } else if (activeCategory === 'autonomous') {
+        data = autonomousLogs
+      }
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `alphagex-${activeCategory}-logs-${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (error) {
+      console.error('Error exporting JSON:', error)
+    }
+    setExporting(false)
+  }
+
   return (
     <div className="min-h-screen bg-gray-900">
       <Navigation />
@@ -263,6 +323,59 @@ export default function LogsPage() {
                 </button>
               )
             })}
+          </div>
+
+          {/* Filters & Export Bar */}
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-6">
+            <div className="flex flex-wrap items-center gap-4">
+              {/* Date Range Filter */}
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-gray-400" />
+                <input
+                  type="date"
+                  value={dateRange.start}
+                  onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white"
+                />
+                <span className="text-gray-500">to</span>
+                <input
+                  type="date"
+                  value={dateRange.end}
+                  onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white"
+                />
+                {(dateRange.start || dateRange.end) && (
+                  <button
+                    onClick={() => setDateRange({ start: '', end: '' })}
+                    className="text-xs text-gray-400 hover:text-white px-2"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              <div className="flex-1" />
+
+              {/* Export Buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportCSV}
+                  disabled={exporting}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded text-sm font-medium disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  Export CSV
+                </button>
+                <button
+                  onClick={handleExportJSON}
+                  disabled={exporting}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm font-medium disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  Export JSON
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Trading Decisions View */}
