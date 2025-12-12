@@ -15,7 +15,7 @@ TRADING BOTS:
 ============
 - PHOENIX: 0DTE options trading (hourly 10 AM - 3 PM ET)
 - ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
-- ARES: Aggressive Iron Condor targeting 10% monthly (daily at 10:15 AM ET)
+- ARES: Aggressive Iron Condor targeting 10% monthly (daily at 9:35 AM ET)
 - ARES EOD: Process expired 0DTE positions (daily at 4:05 PM ET)
 
 This partitioning provides:
@@ -434,7 +434,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_ares_logic(self):
         """
-        ARES (Aggressive Iron Condor) trading logic - runs daily at 10:15 AM ET
+        ARES (Aggressive Iron Condor) trading logic - runs daily at 9:35 AM ET
 
         The aggressive Iron Condor strategy:
         - Targets 10% monthly returns
@@ -561,7 +561,7 @@ class AutonomousTraderScheduler:
         logger.info(f"Timezone: America/New_York (Eastern Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 10:05 AM ET, Mon-Fri")
-        logger.info(f"ARES Schedule: Daily at 10:15 AM ET, Mon-Fri")
+        logger.info(f"ARES Schedule: Daily at 9:35 AM ET, Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -612,14 +612,14 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ATLAS not available - wheel trading disabled")
 
         # =================================================================
-        # ARES JOB: Aggressive Iron Condor - runs once daily at 10:15 AM ET
+        # ARES JOB: Aggressive Iron Condor - runs once daily at 9:35 AM ET
         # =================================================================
         if self.ares_trader:
             self.scheduler.add_job(
                 self.scheduled_ares_logic,
                 trigger=CronTrigger(
-                    hour=10,       # 10:00 AM - after market settles
-                    minute=15,     # 10:15 AM to avoid conflict with PHOENIX/ATLAS
+                    hour=9,        # 9:00 AM
+                    minute=35,     # 9:35 AM - 5 min after market open for max premium
                     day_of_week='mon-fri',
                     timezone='America/New_York'
                 ),
@@ -627,7 +627,7 @@ class AutonomousTraderScheduler:
                 name='ARES - Aggressive Iron Condor',
                 replace_existing=True
             )
-            logger.info("✅ ARES job scheduled (10:15 AM ET daily)")
+            logger.info("✅ ARES job scheduled (9:35 AM ET daily)")
 
             # =================================================================
             # ARES EOD JOB: Process expired positions - runs at 4:05 PM ET
