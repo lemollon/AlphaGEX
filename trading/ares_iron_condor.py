@@ -1378,10 +1378,10 @@ class ARESTrader:
 
         # Use Oracle's risk percentage if available
         if oracle_risk_pct:
-            original_risk_pct = self.config.risk_per_trade
-            self.config.risk_per_trade = oracle_risk_pct
+            original_risk_pct = self.config.risk_per_trade_pct
+            self.config.risk_per_trade_pct = oracle_risk_pct
             contracts = self.calculate_position_size(max_loss)
-            self.config.risk_per_trade = original_risk_pct  # Restore original
+            self.config.risk_per_trade_pct = original_risk_pct  # Restore original
             logger.info(f"  Oracle Risk Adj: {oracle_risk_pct:.1%} (default: {original_risk_pct:.1%})")
         else:
             contracts = self.calculate_position_size(max_loss)
