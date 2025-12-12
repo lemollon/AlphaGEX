@@ -525,7 +525,9 @@ class DecisionBridge:
                     action="SELL",
                     symbol=symbol,
                     strategy="exit",
-                    session_id=generate_session_id(),
+                    session_id=_phoenix_session_tracker.session_id if _phoenix_session_tracker else generate_session_id(),
+                    scan_cycle=_phoenix_session_tracker.current_cycle if _phoenix_session_tracker else 0,
+                    decision_sequence=_phoenix_session_tracker.next_decision() if _phoenix_session_tracker else 0,
                     market_context=BotLogMarketContext(
                         spot_price=underlying_price_at_exit,
                     ),

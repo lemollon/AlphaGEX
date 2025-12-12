@@ -85,13 +85,14 @@ try:
         log_bot_decision, update_decision_outcome, update_execution_timeline,
         BotDecision, MarketContext as BotLogMarketContext, ClaudeContext,
         Alternative, RiskCheck, ApiCall, ExecutionTimeline, generate_session_id,
-        get_session_tracker  # For scan_cycle and decision_sequence tracking
+        get_session_tracker, DecisionTracker  # For tracking API calls, errors, timing
     )
     BOT_LOGGER_AVAILABLE = True
 except ImportError:
     BOT_LOGGER_AVAILABLE = False
     log_bot_decision = None
     get_session_tracker = None
+    DecisionTracker = None
 
 logger = logging.getLogger(__name__)
 
@@ -731,7 +732,8 @@ class ARESTrader:
         contracts: int,
         expiration: str,
         market_data: Dict,
-        oracle_advice: Optional[Any] = None
+        oracle_advice: Optional[Any] = None,
+        decision_tracker: Optional[Any] = None
     ) -> Optional[IronCondorPosition]:
         """
         Execute Iron Condor order via Tradier.
@@ -908,7 +910,7 @@ class ARESTrader:
             self.trade_count += 1
 
             # Log decision with Oracle advice included
-            self._log_entry_decision(position, market_data, oracle_advice)
+            self._log_entry_decision(position, market_data, oracle_advice, decision_tracker)
 
             # Save position to database for persistence
             self._save_position_to_db(position)
@@ -920,7 +922,8 @@ class ARESTrader:
             return None
 
     def _log_skip_decision(self, reason: str, market_data: Optional[Dict] = None,
-                           oracle_advice: Optional[Any] = None, alternatives: Optional[List[str]] = None):
+                           oracle_advice: Optional[Any] = None, alternatives: Optional[List[str]] = None,
+                           decision_tracker: Optional[Any] = None):
         """
         Log a SKIP decision with full transparency about WHY we didn't trade.
 
@@ -1058,6 +1061,10 @@ class ARESTrader:
                         other_strategies_considered=alternatives or [],
                         passed_all_checks=False,
                         blocked_reason=reason,
+                        # Add API tracking data if available
+                        api_calls=decision_tracker.api_calls if decision_tracker else [],
+                        errors_encountered=decision_tracker.errors if decision_tracker else [],
+                        processing_time_ms=decision_tracker.elapsed_ms if decision_tracker else 0,
                     )
                     log_bot_decision(comprehensive_decision)
                     logger.info(f"ARES: Logged to bot_decision_logs (SKIP)")
@@ -1068,7 +1075,7 @@ class ARESTrader:
             logger.error(f"ARES: Error logging SKIP decision: {e}")
 
     def _log_entry_decision(self, position: IronCondorPosition, market_data: Dict,
-                           oracle_advice: Optional[Any] = None):
+                           oracle_advice: Optional[Any] = None, decision_tracker: Optional[Any] = None):
         """Log entry decision with full transparency including Oracle reasoning"""
         if not self.decision_logger or not LOGGER_AVAILABLE:
             return
@@ -1310,6 +1317,10 @@ class ARESTrader:
                             broker_order_id=position.put_spread_order_id or position.call_spread_order_id,
                             broker_status="SUBMITTED" if position.put_spread_order_id else "PENDING",
                         ),
+                        # Add API tracking data if available
+                        api_calls=decision_tracker.api_calls if decision_tracker else [],
+                        errors_encountered=decision_tracker.errors if decision_tracker else [],
+                        processing_time_ms=decision_tracker.elapsed_ms if decision_tracker else 0,
                     )
                     decision_id = log_bot_decision(comprehensive_decision)
                     logger.info(f"ARES: Logged to bot_decision_logs (ENTRY) - ID: {decision_id}")
@@ -1407,6 +1418,12 @@ class ARESTrader:
             cycle_num = self.session_tracker.new_cycle()
             logger.info(f"ARES: Starting scan cycle {cycle_num} for session {self.session_tracker.session_id}")
 
+        # Create decision tracker for API calls, errors, and timing
+        decision_tracker = None
+        if BOT_LOGGER_AVAILABLE and DecisionTracker:
+            decision_tracker = DecisionTracker()
+            decision_tracker.start()
+
         logger.info(f"=" * 60)
         logger.info(f"ARES Daily Cycle - {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         logger.info(f"Mode: {self.mode.value.upper()}")
@@ -1430,7 +1447,8 @@ class ARESTrader:
                 reason="Outside trading window (9:35 AM - 3:30 PM ET)",
                 market_data=None,
                 oracle_advice=None,
-                alternatives=["Wait for trading window to open"]
+                alternatives=["Wait for trading window to open"],
+                decision_tracker=decision_tracker
             )
             return result
 
@@ -1441,12 +1459,17 @@ class ARESTrader:
                 reason="Already traded today or have existing position for today's expiration",
                 market_data=None,
                 oracle_advice=None,
-                alternatives=["ARES trades once per day - position already established"]
+                alternatives=["ARES trades once per day - position already established"],
+                decision_tracker=decision_tracker
             )
             return result
 
-        # Get market data
-        market_data = self.get_current_market_data()
+        # Get market data - track API call timing
+        if decision_tracker:
+            with decision_tracker.track_api("tradier", "quotes"):
+                market_data = self.get_current_market_data()
+        else:
+            market_data = self.get_current_market_data()
         if not market_data:
             logger.warning("ARES: Could not get market data")
             result['actions'].append("Failed to get market data")
@@ -1454,7 +1477,8 @@ class ARESTrader:
                 reason="Failed to get market data from Tradier API",
                 market_data=None,
                 oracle_advice=None,
-                alternatives=["Retry later when market data is available", "Check Tradier API status"]
+                alternatives=["Retry later when market data is available", "Check Tradier API status"],
+                decision_tracker=decision_tracker
             )
             return result
 
@@ -1467,7 +1491,12 @@ class ARESTrader:
         # =========================================================================
         # CONSULT ORACLE AI FOR TRADING ADVICE
         # =========================================================================
-        oracle_advice = self.consult_oracle(market_data)
+        # Track Oracle API call timing (includes Claude)
+        if decision_tracker:
+            with decision_tracker.track_api("oracle", "consult"):
+                oracle_advice = self.consult_oracle(market_data)
+        else:
+            oracle_advice = self.consult_oracle(market_data)
         oracle_risk_pct = None
         oracle_sd_mult = None
 
@@ -1492,7 +1521,8 @@ class ARESTrader:
                         "Proceed with trade anyway (ignoring Oracle)",
                         "Wait for better market conditions",
                         "Adjust strike selection to improve win probability"
-                    ]
+                    ],
+                    decision_tracker=decision_tracker
                 )
                 return result
 
@@ -1514,7 +1544,8 @@ class ARESTrader:
                 reason="Could not determine today's expiration date for 0DTE options",
                 market_data=market_data,
                 oracle_advice=oracle_advice,
-                alternatives=["Check Tradier API for expiration calendar", "Retry later"]
+                alternatives=["Check Tradier API for expiration calendar", "Retry later"],
+                decision_tracker=decision_tracker
             )
             return result
 
@@ -1529,11 +1560,20 @@ class ARESTrader:
         logger.info(f"  SD Mult: {effective_sd_mult:.2f} (config={self.config.sd_multiplier}, oracle={oracle_sd_mult}) -> Adjusted Move: ${adjusted_expected_move:.2f}")
 
         # Find Iron Condor strikes (with Oracle's SD multiplier applied)
-        ic_strikes = self.find_iron_condor_strikes(
-            market_data['underlying_price'],
-            adjusted_expected_move,
-            expiration
-        )
+        # Track option chain API call
+        if decision_tracker:
+            with decision_tracker.track_api("tradier", "option_chain"):
+                ic_strikes = self.find_iron_condor_strikes(
+                    market_data['underlying_price'],
+                    adjusted_expected_move,
+                    expiration
+                )
+        else:
+            ic_strikes = self.find_iron_condor_strikes(
+                market_data['underlying_price'],
+                adjusted_expected_move,
+                expiration
+            )
 
         if not ic_strikes:
             logger.info("ARES: Could not find suitable Iron Condor strikes")
@@ -1546,7 +1586,8 @@ class ARESTrader:
                     "Widen strike selection criteria",
                     "Try different expiration date",
                     "Market may have insufficient options liquidity today"
-                ]
+                ],
+                decision_tracker=decision_tracker
             )
             return result
 
@@ -1572,7 +1613,7 @@ class ARESTrader:
         logger.info(f"  Max Risk: ${max_loss * 100 * contracts:,.2f}")
 
         # Execute the trade with Oracle advice for logging
-        position = self.execute_iron_condor(ic_strikes, contracts, expiration, market_data, oracle_advice)
+        position = self.execute_iron_condor(ic_strikes, contracts, expiration, market_data, oracle_advice, decision_tracker)
 
         if position:
             self.daily_trade_executed[today] = True
@@ -1597,7 +1638,8 @@ class ARESTrader:
                     "Verify sufficient buying power",
                     "Review option chain for liquidity issues",
                     "Retry order submission"
-                ]
+                ],
+                decision_tracker=decision_tracker
             )
 
         result['open_positions'] = len(self.open_positions)

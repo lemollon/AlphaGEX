@@ -376,6 +376,108 @@ def get_session_tracker(bot_name: str) -> SessionTracker:
     return SessionTracker._instances[bot_name]
 
 
+class DecisionTracker:
+    """
+    Track API calls, errors, and processing time for a single decision.
+
+    Usage:
+        tracker = DecisionTracker()
+        tracker.start()  # Start timing
+
+        # Track API calls
+        with tracker.track_api("tradier", "quotes"):
+            data = tradier.get_quotes(...)
+
+        # Track errors
+        try:
+            risky_operation()
+        except Exception as e:
+            tracker.add_error(str(e), "risky_operation")
+
+        # Get results
+        decision.api_calls = tracker.api_calls
+        decision.errors_encountered = tracker.errors
+        decision.processing_time_ms = tracker.elapsed_ms
+    """
+
+    def __init__(self):
+        self._start_time: Optional[float] = None
+        self._api_calls: List[ApiCall] = []
+        self._errors: List[Dict[str, Any]] = []
+
+    def start(self):
+        """Start timing the decision process"""
+        self._start_time = time.time()
+
+    @property
+    def elapsed_ms(self) -> int:
+        """Get elapsed time since start() in milliseconds"""
+        if self._start_time is None:
+            return 0
+        return int((time.time() - self._start_time) * 1000)
+
+    @property
+    def api_calls(self) -> List[ApiCall]:
+        return self._api_calls
+
+    @property
+    def errors(self) -> List[Dict[str, Any]]:
+        return self._errors
+
+    def track_api(self, api_name: str, endpoint: str):
+        """Context manager to track an API call"""
+        return _ApiCallTracker(self, api_name, endpoint)
+
+    def add_api_call(self, api_name: str, endpoint: str, time_ms: int, success: bool = True, error: str = ""):
+        """Manually add an API call record"""
+        self._api_calls.append(ApiCall(
+            api_name=api_name,
+            endpoint=endpoint,
+            time_ms=time_ms,
+            success=success,
+            error=error
+        ))
+
+    def add_error(self, error: str, context: str = "", retried: bool = False, resolved: bool = False):
+        """Add an error record"""
+        self._errors.append({
+            "timestamp": datetime.now().isoformat(),
+            "error": error,
+            "context": context,
+            "retried": retried,
+            "resolved": resolved
+        })
+
+
+class _ApiCallTracker:
+    """Context manager for tracking API call timing"""
+
+    def __init__(self, parent: DecisionTracker, api_name: str, endpoint: str):
+        self._parent = parent
+        self._api_name = api_name
+        self._endpoint = endpoint
+        self._start: float = 0
+        self._error: str = ""
+
+    def __enter__(self):
+        self._start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        elapsed_ms = int((time.time() - self._start) * 1000)
+        success = exc_type is None
+        error = str(exc_val) if exc_val else ""
+
+        self._parent.add_api_call(
+            self._api_name,
+            self._endpoint,
+            elapsed_ms,
+            success,
+            error
+        )
+        return False  # Don't suppress exceptions
+
+
 def log_bot_decision(decision: BotDecision) -> Optional[str]:
     """
     Log a comprehensive bot decision to the bot_decision_logs table.
