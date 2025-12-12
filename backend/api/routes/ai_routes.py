@@ -152,6 +152,8 @@ async def ai_analyze_market(request: dict):
     }
     """
     try:
+        import anthropic
+
         symbol = request.get('symbol', 'SPY').upper()
         query = request.get('query', '')
         market_data = request.get('market_data', {})
@@ -160,21 +162,68 @@ async def ai_analyze_market(request: dict):
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
-        # If no market data provided, fetch it
-        if not market_data:
-            gex_data = api_client.get_net_gamma(symbol)
-            market_data = {
-                'net_gex': gex_data.get('net_gex', 0),
-                'spot_price': gex_data.get('spot_price', 0),
-                'flip_point': gex_data.get('flip_point', 0),
-                'symbol': symbol
-            }
+        # Get API key fresh (not cached)
+        api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if not api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Claude API key not configured. Set CLAUDE_API_KEY environment variable."
+            )
 
-        ai_response = claude_ai.analyze_market(
-            market_data=market_data,
-            user_query=query,
-            gamma_intel=gamma_intel
+        # If no market data provided, fetch it
+        if not market_data or not market_data.get('spot_price'):
+            try:
+                gex_data = api_client.get_net_gamma(symbol) if api_client else {}
+                if gex_data and not gex_data.get('error'):
+                    market_data = {
+                        'net_gex': gex_data.get('net_gex', 0),
+                        'spot_price': gex_data.get('spot_price', 0),
+                        'flip_point': gex_data.get('flip_point', 0),
+                        'call_wall': gex_data.get('call_wall', 0),
+                        'put_wall': gex_data.get('put_wall', 0),
+                        'symbol': symbol
+                    }
+            except Exception:
+                pass  # Continue without market data
+
+        # Build context for Claude
+        context = f"""You are an expert AI trading assistant for AlphaGEX, a gamma exposure (GEX) analysis platform.
+
+You should be conversational, helpful, and engaging. Answer questions naturally like a knowledgeable friend who happens to be an expert trader.
+
+Current Market Context for {symbol}:
+- Spot Price: ${market_data.get('spot_price', 'N/A')}
+- Net GEX: {market_data.get('net_gex', 'N/A')}
+- Flip Point: ${market_data.get('flip_point', 'N/A')}
+- Call Wall: ${market_data.get('call_wall', 'N/A')}
+- Put Wall: ${market_data.get('put_wall', 'N/A')}
+
+Guidelines:
+- Be conversational and natural, not robotic or templated
+- If asked general questions, answer them helpfully
+- Only provide trading analysis when specifically asked about trades or market analysis
+- If market data is available, incorporate it into your analysis when relevant
+- Keep responses concise but informative"""
+
+        if gamma_intel:
+            context += f"\n\nAdditional Gamma Intelligence:\n{gamma_intel}"
+
+        # Call Claude API directly
+        client = anthropic.Anthropic(api_key=api_key)
+
+        message = client.messages.create(
+            model="claude-sonnet-4-5-latest",
+            max_tokens=1500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"{context}\n\nUser's question: {query}"
+                }
+            ],
         )
+
+        # Extract the response
+        ai_response = message.content[0].text if message.content else "No analysis generated."
 
         return {
             "success": True,
@@ -186,6 +235,8 @@ async def ai_analyze_market(request: dict):
             "timestamp": datetime.now().isoformat()
         }
 
+    except anthropic.APIError as e:
+        raise HTTPException(status_code=500, detail=f"Claude API error: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
