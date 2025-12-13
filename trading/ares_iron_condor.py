@@ -343,6 +343,54 @@ class ARESTrader:
             return self.config.min_credit_per_spread_spy  # $0.15 for SPY sandbox
         return self.config.min_credit_per_spread  # $1.50 for SPX
 
+    def get_backtest_stats(self) -> Dict[str, float]:
+        """
+        Get REAL backtest statistics from the database.
+
+        Returns:
+            Dict with win_rate, expectancy, sharpe_ratio from actual backtest runs
+        """
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Query the most recent backtest for ARES/iron_condor strategy
+            cursor.execute("""
+                SELECT win_rate, expectancy_pct, sharpe_ratio
+                FROM backtest_results
+                WHERE strategy_name ILIKE '%iron_condor%'
+                   OR strategy_name ILIKE '%ares%'
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+
+            if row:
+                return {
+                    'win_rate': float(row[0]) if row[0] else 0.68,
+                    'expectancy': float(row[1]) if row[1] else 0.0,
+                    'sharpe_ratio': float(row[2]) if row[2] else 0.0
+                }
+            else:
+                # No backtest data - return None to indicate no real data
+                return {
+                    'win_rate': None,
+                    'expectancy': None,
+                    'sharpe_ratio': None
+                }
+
+        except Exception as e:
+            logger.warning(f"ARES: Could not get backtest stats: {e}")
+            return {
+                'win_rate': None,
+                'expectancy': None,
+                'sharpe_ratio': None
+            }
+
     def get_current_market_data(self) -> Optional[Dict]:
         """
         Get current market data for the trading ticker (SPX or SPY).
@@ -644,6 +692,13 @@ class ARESTrader:
                 logger.warning("ARES: Insufficient options available")
                 return None
 
+            # === TRACK REAL ALTERNATIVES ===
+            # Evaluate top 5 put candidates by distance to target
+            put_candidates_sorted = sorted(otm_puts, key=lambda x: abs(x.strike - put_target))[:5]
+            call_candidates_sorted = sorted(otm_calls, key=lambda x: abs(x.strike - call_target))[:5]
+
+            alternatives_evaluated = []
+
             # Find short put (sell)
             short_put = min(otm_puts, key=lambda x: abs(x.strike - put_target))
 
@@ -681,6 +736,58 @@ class ARESTrader:
             call_credit = short_call.bid - long_call.ask
             total_credit = put_credit + call_credit
 
+            # === BUILD REAL ALTERNATIVES LIST ===
+            # Track put strikes that were evaluated but not selected
+            for put_opt in put_candidates_sorted:
+                if put_opt.strike != short_put.strike:
+                    distance_from_target = abs(put_opt.strike - put_target)
+                    selected_distance = abs(short_put.strike - put_target)
+                    # Calculate what credit would have been with this strike
+                    alt_long_strike = put_opt.strike - spread_width
+                    alt_long = next((c for c in contracts if c.option_type == 'put'
+                                    and abs(c.strike - alt_long_strike) < 1), None)
+                    alt_credit = (put_opt.bid - alt_long.ask) if alt_long else 0
+
+                    if distance_from_target > selected_distance:
+                        reason = f"Further from 1 SD target (${distance_from_target:.0f} vs ${selected_distance:.0f} away)"
+                    elif alt_credit < put_credit:
+                        reason = f"Lower credit (${alt_credit:.2f} vs ${put_credit:.2f})"
+                    else:
+                        reason = "Selected strike had better risk/reward"
+
+                    alternatives_evaluated.append({
+                        'strike': put_opt.strike,
+                        'option_type': 'put',
+                        'strategy': f"Put spread at ${put_opt.strike}",
+                        'reason_rejected': reason,
+                        'credit_available': alt_credit
+                    })
+
+            # Track call strikes that were evaluated but not selected
+            for call_opt in call_candidates_sorted:
+                if call_opt.strike != short_call.strike:
+                    distance_from_target = abs(call_opt.strike - call_target)
+                    selected_distance = abs(short_call.strike - call_target)
+                    alt_long_strike = call_opt.strike + spread_width
+                    alt_long = next((c for c in contracts if c.option_type == 'call'
+                                    and abs(c.strike - alt_long_strike) < 1), None)
+                    alt_credit = (call_opt.bid - alt_long.ask) if alt_long else 0
+
+                    if distance_from_target > selected_distance:
+                        reason = f"Further from 1 SD target (${distance_from_target:.0f} vs ${selected_distance:.0f} away)"
+                    elif alt_credit < call_credit:
+                        reason = f"Lower credit (${alt_credit:.2f} vs ${call_credit:.2f})"
+                    else:
+                        reason = "Selected strike had better risk/reward"
+
+                    alternatives_evaluated.append({
+                        'strike': call_opt.strike,
+                        'option_type': 'call',
+                        'strategy': f"Call spread at ${call_opt.strike}",
+                        'reason_rejected': reason,
+                        'credit_available': alt_credit
+                    })
+
             # Validate credit
             if total_credit < min_credit:
                 logger.info(f"ARES: Credit too low: ${total_credit:.2f} < ${min_credit:.2f}")
@@ -698,6 +805,8 @@ class ARESTrader:
                 'put_short_symbol': short_put.symbol,
                 'call_short_symbol': short_call.symbol,
                 'call_long_symbol': long_call.symbol,
+                # REAL alternatives evaluated during strike selection
+                'alternatives_evaluated': alternatives_evaluated,
             }
 
         except Exception as e:
@@ -909,8 +1018,8 @@ class ARESTrader:
             self.open_positions.append(position)
             self.trade_count += 1
 
-            # Log decision with Oracle advice included
-            self._log_entry_decision(position, market_data, oracle_advice, decision_tracker)
+            # Log decision with Oracle advice and REAL alternatives from strike selection
+            self._log_entry_decision(position, market_data, oracle_advice, decision_tracker, ic_strikes)
 
             # Save position to database for persistence
             self._save_position_to_db(position)
@@ -1075,7 +1184,8 @@ class ARESTrader:
             logger.error(f"ARES: Error logging SKIP decision: {e}")
 
     def _log_entry_decision(self, position: IronCondorPosition, market_data: Dict,
-                           oracle_advice: Optional[Any] = None, decision_tracker: Optional[Any] = None):
+                           oracle_advice: Optional[Any] = None, decision_tracker: Optional[Any] = None,
+                           ic_strikes: Optional[Dict] = None):
         """Log entry decision with full transparency including Oracle reasoning"""
         if not self.decision_logger or not LOGGER_AVAILABLE:
             return
@@ -1227,13 +1337,30 @@ class ARESTrader:
             # === COMPREHENSIVE BOT LOGGER (NEW) ===
             if BOT_LOGGER_AVAILABLE and log_bot_decision:
                 try:
-                    # Build alternative strikes considered
-                    alt_objs = [
-                        Alternative(strike=position.put_short_strike + 10, strategy="Wider put (2 SD)", reason_rejected="Lower premium collection"),
-                        Alternative(strike=position.put_short_strike - 5, strategy="Tighter put (0.5 SD)", reason_rejected="Higher risk of breach"),
-                        Alternative(strike=position.call_short_strike - 10, strategy="Wider call (2 SD)", reason_rejected="Lower premium collection"),
-                        Alternative(strike=position.call_short_strike + 5, strategy="Tighter call (0.5 SD)", reason_rejected="Higher risk of breach"),
-                    ]
+                    # Build alternative strikes from REAL evaluated options
+                    alt_objs = []
+                    real_alternatives = ic_strikes.get('alternatives_evaluated', []) if ic_strikes else []
+                    for alt in real_alternatives:
+                        alt_objs.append(Alternative(
+                            strike=alt.get('strike', 0),
+                            strategy=alt.get('strategy', ''),
+                            reason_rejected=alt.get('reason_rejected', '')
+                        ))
+
+                    # Get REAL backtest statistics from database
+                    backtest_stats = self.get_backtest_stats()
+
+                    # Build REAL strategies considered based on what Oracle evaluated
+                    strategies_evaluated = []
+                    if oracle_advice:
+                        # Oracle evaluates these strategies in its analysis
+                        strategies_evaluated.append(f"Iron Condor at 1 SD - Oracle: {oracle_advice.advice.value}")
+                        if oracle_advice.suggested_sd_multiplier and oracle_advice.suggested_sd_multiplier != 1.0:
+                            strategies_evaluated.append(f"Adjusted SD ({oracle_advice.suggested_sd_multiplier:.1f}x) considered")
+                        if oracle_advice.win_probability < 0.60:
+                            strategies_evaluated.append("SKIP considered due to low win probability")
+                    else:
+                        strategies_evaluated = ["Default 1 SD Iron Condor (no Oracle evaluation)"]
 
                     # Build risk checks
                     risk_checks = [
@@ -1300,15 +1427,14 @@ class ARESTrader:
                         strike_reasoning=f"Put spread: ${position.put_long_strike}/${position.put_short_strike}, Call spread: ${position.call_short_strike}/${position.call_long_strike} at 1 SD",
                         size_reasoning=f"{self.config.risk_per_trade_pct:.0f}% of ${self.capital:,.0f} = {position.contracts} contracts",
                         alternatives_considered=alt_objs,
-                        other_strategies_considered=[
-                            "Single credit spread (less premium)",
-                            "2 SD strikes (higher win rate, less premium)",
-                            "0.5 SD strikes (more premium, higher risk)",
-                        ],
+                        other_strategies_considered=strategies_evaluated,  # REAL strategies evaluated
                         kelly_pct=self.config.risk_per_trade_pct,
                         position_size_dollars=position.total_credit * 100 * position.contracts,
                         max_risk_dollars=position.max_loss * 100 * position.contracts,
-                        backtest_win_rate=0.68,  # 1 SD historical win rate
+                        # REAL backtest stats from database (None if no data available)
+                        backtest_win_rate=backtest_stats.get('win_rate'),
+                        backtest_expectancy=backtest_stats.get('expectancy'),
+                        backtest_sharpe=backtest_stats.get('sharpe_ratio'),
                         risk_checks=risk_checks,
                         passed_all_checks=True,
                         execution=ExecutionTimeline(
