@@ -631,6 +631,35 @@ export const apiClient = {
       eventSource.close()
     }
   },
+
+  // Bot Decision Logs
+  getBotDecisions: (params: {
+    bot?: string
+    decision_type?: string
+    session_id?: string
+    start_date?: string
+    end_date?: string
+    outcome?: string
+    search?: string
+    limit?: number
+    offset?: number
+  }) => api.get('/api/logs/bot-decisions', { params }),
+
+  getBotDecisionStats: (bot?: string, days: number = 30) =>
+    api.get('/api/logs/bot-decisions/stats', { params: { bot, days } }),
+
+  getBotDecisionDetail: (decisionId: string) =>
+    api.get(`/api/logs/bot-decisions/decision/${decisionId}`),
+
+  exportBotDecisions: (params: {
+    bot?: string
+    format?: 'csv' | 'json' | 'excel'
+    days?: number
+    include_claude?: boolean
+  }) => api.get('/api/logs/bot-decisions/export', {
+    params,
+    responseType: params.format === 'json' ? 'json' : 'blob' as const
+  }),
 }
 
 // WebSocket connection
