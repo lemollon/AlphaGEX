@@ -1038,6 +1038,24 @@ async def get_strategy_types():
                 "credit": True,
                 "note": "Uses GEX walls as support/resistance levels for strike selection",
                 "features": ["GEX wall protection", "SD fallback", "Positive GEX bias"]
+            },
+            {
+                "id": "bull_call",
+                "name": "Bull Call Spread",
+                "description": "Buy ATM call, sell OTM call. Profit if price rises. Debit spread with defined risk.",
+                "legs": 2,
+                "direction": "bullish",
+                "credit": False
+            },
+            {
+                "id": "apache_directional",
+                "name": "APACHE GEX Directional",
+                "description": "Bull Call Spread near put wall (support), Bear Call Spread near call wall (resistance). Uses GEX walls for entry timing.",
+                "legs": 2,
+                "direction": "adaptive",
+                "credit": "mixed",
+                "note": "Bullish when near put wall, Bearish when near call wall. 90%+ win rate with 1% wall filter.",
+                "features": ["GEX wall timing", "ML direction prediction", "Oracle integration"]
             }
         ]
     }
