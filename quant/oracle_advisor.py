@@ -119,6 +119,7 @@ class BotName(Enum):
     ATLAS = "ATLAS"        # SPX Wheel Strategy
     PHOENIX = "PHOENIX"    # Directional Calls
     HERMES = "HERMES"      # Manual Wheel via UI
+    APACHE = "APACHE"      # Directional Spreads (Bull Call / Bear Call)
 
 
 class TradeOutcome(Enum):
@@ -1079,6 +1080,142 @@ class OracleAdvisor:
             model_version=self.model_version,
             probabilities=base_pred['probabilities'],
             claude_analysis=claude_analysis  # Include real Claude data for logging
+        )
+
+    def get_apache_advice(
+        self,
+        context: MarketContext,
+        use_gex_walls: bool = True,
+        use_claude_validation: bool = True
+    ) -> OraclePrediction:
+        """
+        Get directional spread advice for APACHE.
+
+        APACHE trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
+        Uses GEX walls for entry timing and direction confirmation.
+
+        Strategy:
+        - BULLISH: Buy ATM call, Sell OTM call (Bull Call Spread)
+        - BEARISH: Sell ATM call, Buy OTM call (Bear Call Spread)
+
+        GEX Wall Logic:
+        - Near Put Wall (support) + BULLISH signal = Strong entry for Bull Call Spread
+        - Near Call Wall (resistance) + BEARISH signal = Strong entry for Bear Call Spread
+        """
+        base_pred = self._get_base_prediction(context)
+        reasoning_parts = []
+
+        # Determine directional bias from GEX structure
+        direction = "FLAT"
+        direction_confidence = 0.5
+
+        # Calculate distance to walls
+        dist_to_call_wall = 0
+        dist_to_put_wall = 0
+
+        if context.gex_call_wall > 0 and context.spot_price > 0:
+            dist_to_call_wall = (context.gex_call_wall - context.spot_price) / context.spot_price * 100
+        if context.gex_put_wall > 0 and context.spot_price > 0:
+            dist_to_put_wall = (context.spot_price - context.gex_put_wall) / context.spot_price * 100
+
+        # GEX-based directional logic
+        if context.gex_regime == GEXRegime.NEGATIVE:
+            # Negative GEX = trending market, directional opportunity
+            if context.gex_distance_to_flip_pct < -1:
+                # Price well below flip point = bearish momentum
+                direction = "BEARISH"
+                direction_confidence = 0.60
+                reasoning_parts.append("Negative GEX below flip = bearish momentum")
+            elif context.gex_distance_to_flip_pct > 1:
+                # Price above flip in negative GEX = potential reversal
+                direction = "BULLISH"
+                direction_confidence = 0.55
+                reasoning_parts.append("Price above flip in negative GEX = squeeze potential")
+        elif context.gex_regime == GEXRegime.POSITIVE:
+            # Positive GEX = mean reversion
+            if dist_to_put_wall < 1.0 and dist_to_put_wall > 0:
+                # Near support
+                direction = "BULLISH"
+                direction_confidence = 0.65
+                reasoning_parts.append(f"Near put wall support ({dist_to_put_wall:.1f}%)")
+            elif dist_to_call_wall < 1.0 and dist_to_call_wall > 0:
+                # Near resistance
+                direction = "BEARISH"
+                direction_confidence = 0.65
+                reasoning_parts.append(f"Near call wall resistance ({dist_to_call_wall:.1f}%)")
+
+        # Wall filter check
+        wall_filter_passed = False
+        if use_gex_walls:
+            if direction == "BULLISH" and dist_to_put_wall < 1.5:
+                wall_filter_passed = True
+                reasoning_parts.append("Wall filter PASSED: Near put wall for bullish")
+            elif direction == "BEARISH" and dist_to_call_wall < 1.5:
+                wall_filter_passed = True
+                reasoning_parts.append("Wall filter PASSED: Near call wall for bearish")
+            else:
+                reasoning_parts.append(f"Wall filter: Call wall {dist_to_call_wall:.1f}%, Put wall {dist_to_put_wall:.1f}%")
+
+        # Adjust win probability based on direction confidence
+        if direction != "FLAT":
+            base_pred['win_probability'] = max(0.40, min(0.85, direction_confidence))
+            if wall_filter_passed:
+                base_pred['win_probability'] = min(0.90, base_pred['win_probability'] + 0.10)
+        else:
+            base_pred['win_probability'] = 0.45  # No directional bias
+
+        # VIX impact
+        if context.vix > 25:
+            reasoning_parts.append("High VIX = wider spreads, more premium")
+        elif context.vix < 15:
+            reasoning_parts.append("Low VIX = narrower spreads")
+
+        # =========================================================================
+        # CLAUDE AI VALIDATION (if enabled)
+        # =========================================================================
+        claude_analysis = None
+        if use_claude_validation and self.claude_available:
+            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.APACHE)
+
+            if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
+                base_pred['win_probability'] = max(0.30, min(0.85,
+                    base_pred['win_probability'] + claude_analysis.confidence_adjustment
+                ))
+                reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
+
+        advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
+
+        # Suggested strikes based on direction
+        suggested_put = None
+        suggested_call = None
+        spread_direction = None
+
+        if direction == "BULLISH" and advice != TradingAdvice.SKIP_TODAY:
+            # Bull Call Spread: Buy ATM call, Sell OTM call
+            suggested_call = round(context.spot_price)  # ATM
+            spread_direction = "BULL_CALL_SPREAD"
+            reasoning_parts.append(f"Recommend: {spread_direction}")
+        elif direction == "BEARISH" and advice != TradingAdvice.SKIP_TODAY:
+            # Bear Call Spread: Sell ATM call, Buy OTM call
+            suggested_call = round(context.spot_price)  # ATM
+            spread_direction = "BEAR_CALL_SPREAD"
+            reasoning_parts.append(f"Recommend: {spread_direction}")
+
+        return OraclePrediction(
+            bot_name=BotName.APACHE,
+            advice=advice,
+            win_probability=base_pred['win_probability'],
+            confidence=min(100, direction_confidence * 100),
+            suggested_risk_pct=risk_pct * 0.5,  # Conservative for directional spreads
+            suggested_sd_multiplier=1.0,
+            use_gex_walls=use_gex_walls,
+            suggested_put_strike=suggested_put,
+            suggested_call_strike=suggested_call,
+            top_factors=base_pred.get('top_factors', []),
+            reasoning=" | ".join(reasoning_parts) + f" | Direction: {direction}",
+            model_version=self.model_version,
+            probabilities=base_pred.get('probabilities', {}),
+            claude_analysis=claude_analysis
         )
 
     # =========================================================================
