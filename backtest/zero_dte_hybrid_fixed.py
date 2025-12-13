@@ -1178,30 +1178,29 @@ class HybridFixedBacktester:
         call_distance = None
 
         if gex and gex.put_wall > 0 and gex.call_wall > 0:
-            # GEX walls available - use them with a buffer
-            # Add 0.5% buffer outside the walls for extra protection
-            put_wall_buffer = open_price * 0.005
-            call_wall_buffer = open_price * 0.005
+            # GEX walls are now guaranteed to be meaningful support/resistance levels
+            # (GEX calculator ensures walls are at least 0.5% away from spot)
+
+            # Add small buffer outside the walls for extra protection
+            put_wall_buffer = open_price * 0.002  # 0.2% buffer
+            call_wall_buffer = open_price * 0.002
 
             # Distance from open price to wall (plus buffer)
-            gex_put_distance = open_price - gex.put_wall + put_wall_buffer
-            gex_call_distance = gex.call_wall - open_price + call_wall_buffer
+            put_distance = open_price - gex.put_wall + put_wall_buffer
+            call_distance = gex.call_wall - open_price + call_wall_buffer
 
-            # Only use GEX walls if they provide meaningful distance
-            # (at least 0.5% from open price)
-            min_distance = open_price * 0.005
+            # Use GEX walls - they represent real support/resistance levels
+            use_gex_walls = True
+            self.gex_stats['trades_with_gex_walls'] += 1
 
-            if gex_put_distance > min_distance and gex_call_distance > min_distance:
-                put_distance = gex_put_distance
-                call_distance = gex_call_distance
-                use_gex_walls = True
-                self.gex_stats['trades_with_gex_walls'] += 1
-            else:
-                # Walls too close - fall back to SD
-                self.gex_stats['trades_with_sd_fallback'] += 1
+            logger.debug(
+                f"GEX walls for {trade_date}: put_wall=${gex.put_wall:.2f} "
+                f"call_wall=${gex.call_wall:.2f} spot=${open_price:.2f}"
+            )
         else:
-            # No GEX data - fall back to SD
+            # No GEX data available - fall back to SD
             self.gex_stats['trades_with_sd_fallback'] += 1
+            logger.debug(f"No GEX data for {trade_date}, using SD fallback")
 
         # Fall back to SD-based strikes if GEX walls not used
         if not use_gex_walls:

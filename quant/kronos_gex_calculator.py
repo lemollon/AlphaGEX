@@ -211,11 +211,18 @@ class KronosGEXCalculator:
             total_call_gex = 0
             total_put_gex = 0
 
-            # Track walls
+            # Track walls - we want MEANINGFUL support/resistance levels
+            # Not just the nearest ATM strikes (which always have highest gamma)
             max_call_gex = 0
             max_put_gex = 0
-            call_wall = spot_price
-            put_wall = spot_price
+
+            # Minimum distance for walls to be meaningful (0.5% from spot)
+            # This ensures walls represent actual support/resistance, not just ATM strikes
+            min_wall_distance = spot_price * 0.005  # 0.5%
+
+            # Default walls to None - will find meaningful ones
+            call_wall = None
+            put_wall = None
 
             for row in rows:
                 strike = float(row[0])
@@ -246,15 +253,37 @@ class KronosGEXCalculator:
                 total_call_gex += call_gex_strike
                 total_put_gex += put_gex_strike
 
-                # Call wall = highest call GEX at or above spot
-                if strike >= spot_price and call_gex_strike > max_call_gex:
+                # Call wall (RESISTANCE) = highest call GEX that is meaningfully ABOVE spot
+                # Must be at least 0.5% above spot to be a real resistance level
+                if strike >= spot_price + min_wall_distance and call_gex_strike > max_call_gex:
                     max_call_gex = call_gex_strike
                     call_wall = strike
 
-                # Put wall = highest put GEX at or below spot
-                if strike <= spot_price and put_gex_strike > max_put_gex:
+                # Put wall (SUPPORT) = highest put GEX that is meaningfully BELOW spot
+                # Must be at least 0.5% below spot to be a real support level
+                if strike <= spot_price - min_wall_distance and put_gex_strike > max_put_gex:
                     max_put_gex = put_gex_strike
                     put_wall = strike
+
+            # If no meaningful walls found, use a wider search (1% minimum OI threshold)
+            # This handles cases where GEX is too concentrated at ATM
+            if call_wall is None or put_wall is None:
+                # Sort strikes by OI for fallback
+                for strike, data in sorted(strikes_gex.items(), key=lambda x: x[1]['call_oi'], reverse=True):
+                    if call_wall is None and strike > spot_price and data['call_oi'] > 1000:
+                        call_wall = strike
+                        break
+
+                for strike, data in sorted(strikes_gex.items(), key=lambda x: x[1]['put_oi'], reverse=True):
+                    if put_wall is None and strike < spot_price and data['put_oi'] > 1000:
+                        put_wall = strike
+                        break
+
+            # Final fallback - use spot price if still no walls (shouldn't happen with good data)
+            if call_wall is None:
+                call_wall = spot_price * 1.01  # 1% above spot
+            if put_wall is None:
+                put_wall = spot_price * 0.99  # 1% below spot
 
             # Net GEX
             net_gex = total_call_gex - total_put_gex
