@@ -172,11 +172,32 @@ class KronosGEXCalculator:
             """, (self.ticker, trade_date, dte_max))
 
             rows = cursor.fetchall()
-            conn.close()
 
             if not rows:
-                logger.debug(f"No ORAT data for {trade_date}")
+                # Run diagnostic query to understand WHY no data
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total_rows,
+                        COUNT(CASE WHEN gamma IS NOT NULL THEN 1 END) as gamma_not_null,
+                        COUNT(CASE WHEN gamma > 0 THEN 1 END) as gamma_positive,
+                        COUNT(CASE WHEN call_oi > 0 OR put_oi > 0 THEN 1 END) as has_oi,
+                        COUNT(CASE WHEN dte <= %s THEN 1 END) as dte_eligible
+                    FROM orat_options_eod
+                    WHERE ticker = %s AND trade_date = %s
+                """, (dte_max, self.ticker, trade_date))
+                diag = cursor.fetchone()
+                conn.close()
+
+                if diag and diag[0] > 0:
+                    logger.warning(
+                        f"GEX FAIL for {trade_date}: {diag[0]} rows exist but "
+                        f"gamma_not_null={diag[1]}, gamma>0={diag[2]}, has_oi={diag[3]}, dte<={dte_max}={diag[4]}"
+                    )
+                else:
+                    logger.debug(f"No ORAT data for {trade_date} - no rows in database")
                 return None
+
+            conn.close()
 
             # Get spot price from first row
             spot_price = float(rows[0][4])  # underlying_price
