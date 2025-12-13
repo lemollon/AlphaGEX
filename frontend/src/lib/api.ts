@@ -314,6 +314,17 @@ export const apiClient = {
   getARESPositions: () => api.get('/api/ares/positions'),
   getARESMarketData: () => api.get('/api/ares/market-data'),
 
+  // APACHE - Directional Spread Bot
+  getAPACHEStatus: () => api.get('/api/apache/status'),
+  getAPACHEPositions: (status?: string) => api.get('/api/apache/positions', { params: status ? { status_filter: status } : {} }),
+  getAPACHESignals: (limit: number = 50) => api.get('/api/apache/signals', { params: { limit } }),
+  getAPACHELogs: (level?: string, limit: number = 100) => api.get('/api/apache/logs', { params: { level, limit } }),
+  getAPACHEPerformance: (days: number = 30) => api.get('/api/apache/performance', { params: { days } }),
+  getAPACHEConfig: () => api.get('/api/apache/config'),
+  updateAPACHEConfig: (name: string, value: string) => api.post(`/api/apache/config/${name}`, null, { params: { value } }),
+  runAPACHECycle: () => api.post('/api/apache/run'),
+  getAPACHEOracleAdvice: () => api.get('/api/apache/oracle-advice'),
+
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {
     symbol: string,
