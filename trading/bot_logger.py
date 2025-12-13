@@ -314,6 +314,170 @@ def generate_session_id() -> str:
     return f"{now.strftime('%Y-%m-%d')}-{period}"
 
 
+class SessionTracker:
+    """
+    Track scan_cycle and decision_sequence within a trading session.
+
+    Usage:
+        tracker = get_session_tracker("ARES")
+        tracker.new_cycle()  # Start a new scan cycle (scan_cycle += 1)
+        scan = tracker.current_cycle
+        seq = tracker.next_decision()  # Get next decision_sequence
+
+    Each bot should have its own tracker instance.
+    """
+
+    _instances: Dict[str, 'SessionTracker'] = {}
+
+    def __init__(self, bot_name: str):
+        self.bot_name = bot_name
+        self._session_id = generate_session_id()
+        self._scan_cycle = 0
+        self._decision_sequence = 0
+        self._last_reset = datetime.now()
+
+    @property
+    def session_id(self) -> str:
+        # Check if we need to roll over to a new session (e.g., new day or AM/PM switch)
+        new_session = generate_session_id()
+        if new_session != self._session_id:
+            self._session_id = new_session
+            self._scan_cycle = 0
+            self._decision_sequence = 0
+            self._last_reset = datetime.now()
+        return self._session_id
+
+    @property
+    def current_cycle(self) -> int:
+        return self._scan_cycle
+
+    def new_cycle(self) -> int:
+        """Start a new scan cycle. Returns the new cycle number."""
+        # Ensure session is current
+        _ = self.session_id
+        self._scan_cycle += 1
+        self._decision_sequence = 0
+        return self._scan_cycle
+
+    def next_decision(self) -> int:
+        """Get the next decision sequence number for the current cycle."""
+        # Ensure session is current
+        _ = self.session_id
+        if self._scan_cycle == 0:
+            self._scan_cycle = 1  # Auto-start first cycle
+        self._decision_sequence += 1
+        return self._decision_sequence
+
+
+def get_session_tracker(bot_name: str) -> SessionTracker:
+    """Get or create a session tracker for a bot."""
+    if bot_name not in SessionTracker._instances:
+        SessionTracker._instances[bot_name] = SessionTracker(bot_name)
+    return SessionTracker._instances[bot_name]
+
+
+class DecisionTracker:
+    """
+    Track API calls, errors, and processing time for a single decision.
+
+    Usage:
+        tracker = DecisionTracker()
+        tracker.start()  # Start timing
+
+        # Track API calls
+        with tracker.track_api("tradier", "quotes"):
+            data = tradier.get_quotes(...)
+
+        # Track errors
+        try:
+            risky_operation()
+        except Exception as e:
+            tracker.add_error(str(e), "risky_operation")
+
+        # Get results
+        decision.api_calls = tracker.api_calls
+        decision.errors_encountered = tracker.errors
+        decision.processing_time_ms = tracker.elapsed_ms
+    """
+
+    def __init__(self):
+        self._start_time: Optional[float] = None
+        self._api_calls: List[ApiCall] = []
+        self._errors: List[Dict[str, Any]] = []
+
+    def start(self):
+        """Start timing the decision process"""
+        self._start_time = time.time()
+
+    @property
+    def elapsed_ms(self) -> int:
+        """Get elapsed time since start() in milliseconds"""
+        if self._start_time is None:
+            return 0
+        return int((time.time() - self._start_time) * 1000)
+
+    @property
+    def api_calls(self) -> List[ApiCall]:
+        return self._api_calls
+
+    @property
+    def errors(self) -> List[Dict[str, Any]]:
+        return self._errors
+
+    def track_api(self, api_name: str, endpoint: str):
+        """Context manager to track an API call"""
+        return _ApiCallTracker(self, api_name, endpoint)
+
+    def add_api_call(self, api_name: str, endpoint: str, time_ms: int, success: bool = True, error: str = ""):
+        """Manually add an API call record"""
+        self._api_calls.append(ApiCall(
+            api_name=api_name,
+            endpoint=endpoint,
+            time_ms=time_ms,
+            success=success,
+            error=error
+        ))
+
+    def add_error(self, error: str, context: str = "", retried: bool = False, resolved: bool = False):
+        """Add an error record"""
+        self._errors.append({
+            "timestamp": datetime.now().isoformat(),
+            "error": error,
+            "context": context,
+            "retried": retried,
+            "resolved": resolved
+        })
+
+
+class _ApiCallTracker:
+    """Context manager for tracking API call timing"""
+
+    def __init__(self, parent: DecisionTracker, api_name: str, endpoint: str):
+        self._parent = parent
+        self._api_name = api_name
+        self._endpoint = endpoint
+        self._start: float = 0
+        self._error: str = ""
+
+    def __enter__(self):
+        self._start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        elapsed_ms = int((time.time() - self._start) * 1000)
+        success = exc_type is None
+        error = str(exc_val) if exc_val else ""
+
+        self._parent.add_api_call(
+            self._api_name,
+            self._endpoint,
+            elapsed_ms,
+            success,
+            error
+        )
+        return False  # Don't suppress exceptions
+
+
 def log_bot_decision(decision: BotDecision) -> Optional[str]:
     """
     Log a comprehensive bot decision to the bot_decision_logs table.

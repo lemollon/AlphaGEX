@@ -44,9 +44,11 @@ try:
     from trading.bot_logger import (
         log_bot_decision, update_decision_outcome,
         BotDecision, MarketContext as BotLogMarketContext, ClaudeContext,
-        Alternative, RiskCheck, ApiCall, ExecutionTimeline, generate_session_id
+        Alternative, RiskCheck, ApiCall, ExecutionTimeline, generate_session_id,
+        get_session_tracker  # For scan_cycle and decision_sequence tracking
     )
     BOT_LOGGER_AVAILABLE = True
+    _phoenix_session_tracker = get_session_tracker("PHOENIX") if BOT_LOGGER_AVAILABLE else None
 except ImportError:
     BOT_LOGGER_AVAILABLE = False
     log_bot_decision = None
@@ -75,7 +77,8 @@ class DecisionBridge:
         entry_price: float,
         regime: Any = None,
         backtest_stats: Dict = None,
-        order_id: str = ""
+        order_id: str = "",
+        oracle_advice: Any = None  # OraclePrediction with claude_analysis for transparency
     ) -> str:
         """
         Log a trade execution with full transparency.
@@ -87,6 +90,7 @@ class DecisionBridge:
         - Order ID and fill details
         - Underlying price at entry
         - VIX level
+        - REAL Claude AI prompts and responses (from oracle_advice.claude_analysis)
 
         Args:
             trade_data: Trade parameters (strike, dte, option_type, strategy, etc.)
@@ -97,6 +101,7 @@ class DecisionBridge:
             regime: Market regime classification
             backtest_stats: Statistics from backtested strategy
             order_id: Broker order ID if available
+            oracle_advice: OraclePrediction object with claude_analysis for real Claude data
 
         Returns:
             decision_id for later outcome update
@@ -300,11 +305,30 @@ class DecisionBridge:
                         message=f"VIX at {vix:.1f}"
                     ))
 
-                # Build alternatives
-                alt_objs = [
-                    Alternative(strike=strike + 5, strategy="Higher strike", reason_rejected="Lower delta"),
-                    Alternative(strike=strike - 5, strategy="Lower strike", reason_rejected="Higher cost"),
-                ]
+                # Build alternatives from trade_data if available, otherwise note none recorded
+                alt_objs = []
+                alternatives_list = trade_data.get('alternatives_considered', [])
+                for alt in alternatives_list:
+                    if isinstance(alt, dict):
+                        alt_objs.append(Alternative(
+                            strike=alt.get('strike', 0),
+                            strategy=alt.get('strategy', ''),
+                            reason_rejected=alt.get('reason_rejected', '')
+                        ))
+
+                # Build Claude context from oracle_advice if available
+                claude_ctx = None
+                if oracle_advice and hasattr(oracle_advice, 'claude_analysis') and oracle_advice.claude_analysis:
+                    ca = oracle_advice.claude_analysis
+                    claude_ctx = ClaudeContext(
+                        prompt=ca.raw_prompt or "",
+                        response=ca.raw_response or "",
+                        model=ca.model_used or "",
+                        tokens_used=ca.tokens_used or 0,
+                        response_time_ms=ca.response_time_ms or 0,
+                        confidence=ca.recommendation or "",
+                        warnings=ca.risk_factors or []
+                    )
 
                 comprehensive = BotDecision(
                     bot_name="PHOENIX",
@@ -316,7 +340,9 @@ class DecisionBridge:
                     expiration=expiration,
                     option_type=option_type,
                     contracts=contracts,
-                    session_id=generate_session_id(),
+                    session_id=_phoenix_session_tracker.session_id if _phoenix_session_tracker else generate_session_id(),
+                    scan_cycle=_phoenix_session_tracker.current_cycle if _phoenix_session_tracker else 0,
+                    decision_sequence=_phoenix_session_tracker.next_decision() if _phoenix_session_tracker else 0,
                     market_context=BotLogMarketContext(
                         spot_price=gex_data.get('spot_price', 0),
                         vix=vix,
@@ -326,10 +352,11 @@ class DecisionBridge:
                         call_wall=gex_data.get('call_wall', 0) or 0,
                         put_wall=gex_data.get('put_wall', 0) or 0,
                     ),
+                    claude_context=claude_ctx,  # REAL Claude data from Oracle
                     entry_reasoning=trade_data.get('signal_reason', 'Automated signal'),
                     strike_reasoning=f"Strike ${strike} selected based on delta {option_data.get('delta', 0):.2f}",
                     size_reasoning=f"{contracts} contracts @ ${entry_price:.2f}",
-                    alternatives_considered=alt_objs,
+                    alternatives_considered=alt_objs if alt_objs else None,
                     kelly_pct=trade_data.get('kelly_pct', 0) or 0,
                     position_size_dollars=contracts * entry_price * 100,
                     max_risk_dollars=contracts * entry_price * 100,
@@ -358,7 +385,8 @@ class DecisionBridge:
         spot_price: float,
         reason: str,
         gex_data: Dict = None,
-        regime: Any = None
+        regime: Any = None,
+        oracle_advice: Any = None  # OraclePrediction with claude_analysis for transparency
     ) -> str:
         """Log when no trade is taken (equally important for audit)"""
         now = datetime.now(self.tz)
@@ -414,19 +442,36 @@ class DecisionBridge:
         # === COMPREHENSIVE BOT LOGGER (SKIP) ===
         if BOT_LOGGER_AVAILABLE and log_bot_decision:
             try:
+                # Build Claude context from oracle_advice if available
+                claude_ctx = None
+                if oracle_advice and hasattr(oracle_advice, 'claude_analysis') and oracle_advice.claude_analysis:
+                    ca = oracle_advice.claude_analysis
+                    claude_ctx = ClaudeContext(
+                        prompt=ca.raw_prompt or "",
+                        response=ca.raw_response or "",
+                        model=ca.model_used or "",
+                        tokens_used=ca.tokens_used or 0,
+                        response_time_ms=ca.response_time_ms or 0,
+                        confidence=ca.recommendation or "",
+                        warnings=ca.risk_factors or []
+                    )
+
                 comprehensive = BotDecision(
                     bot_name="PHOENIX",
                     decision_type="SKIP",
                     action="SKIP",
                     symbol=symbol,
                     strategy="N/A",
-                    session_id=generate_session_id(),
+                    session_id=_phoenix_session_tracker.session_id if _phoenix_session_tracker else generate_session_id(),
+                    scan_cycle=_phoenix_session_tracker.current_cycle if _phoenix_session_tracker else 0,
+                    decision_sequence=_phoenix_session_tracker.next_decision() if _phoenix_session_tracker else 0,
                     market_context=BotLogMarketContext(
                         spot_price=spot_price,
                         vix=gex_data.get('vix', 0) if gex_data else 0,
                         net_gex=gex_data.get('net_gex', 0) if gex_data else 0,
                         gex_regime=gex_data.get('mm_state', '') if gex_data else '',
                     ),
+                    claude_context=claude_ctx,  # REAL Claude data from Oracle
                     entry_reasoning=reason,
                     passed_all_checks=False,
                     blocked_reason=reason,
@@ -480,7 +525,9 @@ class DecisionBridge:
                     action="SELL",
                     symbol=symbol,
                     strategy="exit",
-                    session_id=generate_session_id(),
+                    session_id=_phoenix_session_tracker.session_id if _phoenix_session_tracker else generate_session_id(),
+                    scan_cycle=_phoenix_session_tracker.current_cycle if _phoenix_session_tracker else 0,
+                    decision_sequence=_phoenix_session_tracker.next_decision() if _phoenix_session_tracker else 0,
                     market_context=BotLogMarketContext(
                         spot_price=underlying_price_at_exit,
                     ),
