@@ -45,20 +45,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     import numpy as np
     import pandas as pd
-    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import TimeSeriesSplit
     from sklearn.metrics import (
         accuracy_score, precision_score, recall_score, f1_score,
         roc_auc_score, brier_score_loss, confusion_matrix
     )
-    from sklearn.calibration import CalibratedClassifierCV
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
     np = None
     pd = None
     print("Warning: ML libraries not available. Install with: pip install scikit-learn pandas numpy")
+
+# XGBoost for all ML in AlphaGEX
+try:
+    import xgboost as xgb
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
+    print("Warning: XGBoost not installed. Install with: pip install xgboost")
 
 # Database
 try:
@@ -432,15 +438,23 @@ class AresMLAdvisor:
         n_splits = 5
         tscv = TimeSeriesSplit(n_splits=n_splits)
 
-        # Train Gradient Boosting (works well on tabular data)
-        self.model = GradientBoostingClassifier(
+        # Train XGBoost (best performance on tabular data)
+        if not HAS_XGBOOST:
+            raise ImportError("XGBoost required. Install with: pip install xgboost")
+
+        self.model = xgb.XGBClassifier(
             n_estimators=150,
             max_depth=4,
             learning_rate=0.1,
-            min_samples_split=20,
-            min_samples_leaf=10,
+            min_child_weight=10,
             subsample=0.8,
-            random_state=42
+            colsample_bytree=0.8,
+            reg_alpha=0.1,  # L1 regularization
+            reg_lambda=1.0,  # L2 regularization
+            random_state=42,
+            use_label_encoder=False,
+            eval_metric='logloss',
+            verbosity=0
         )
 
         # Cross-validation metrics
@@ -857,15 +871,20 @@ class AresMLAdvisor:
             self.scaler = StandardScaler()
             X_scaled = self.scaler.fit_transform(X)
 
-            # Retrain with same architecture
-            self.model = GradientBoostingClassifier(
+            # Retrain with XGBoost (same architecture)
+            self.model = xgb.XGBClassifier(
                 n_estimators=150,
                 max_depth=4,
                 learning_rate=0.1,
-                min_samples_split=20,
-                min_samples_leaf=10,
+                min_child_weight=10,
                 subsample=0.8,
-                random_state=42
+                colsample_bytree=0.8,
+                reg_alpha=0.1,
+                reg_lambda=1.0,
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric='logloss',
+                verbosity=0
             )
 
             self.model.fit(X_scaled, y)

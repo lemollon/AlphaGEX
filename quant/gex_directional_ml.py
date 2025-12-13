@@ -42,12 +42,18 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 import joblib
+
+# XGBoost for all ML in AlphaGEX
+try:
+    import xgboost as xgb
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
+    print("Warning: XGBoost not installed. Install with: pip install xgboost")
 
 # Add parent directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -447,18 +453,27 @@ class GEXDirectionalPredictor:
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
 
-            # Scale features
+            # Scale features (XGBoost doesn't require scaling, but helps with consistency)
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
 
-            # Train model
-            model = GradientBoostingClassifier(
+            # Train XGBoost model
+            if not HAS_XGBOOST:
+                raise ImportError("XGBoost required. Install with: pip install xgboost")
+
+            model = xgb.XGBClassifier(
                 n_estimators=100,
                 max_depth=4,
                 learning_rate=0.1,
-                min_samples_split=20,
-                min_samples_leaf=10,
-                random_state=42
+                min_child_weight=10,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=0.1,  # L1 regularization
+                reg_lambda=1.0,  # L2 regularization
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric='mlogloss',
+                verbosity=0
             )
             model.fit(X_train_scaled, y_train)
 
@@ -475,30 +490,34 @@ class GEXDirectionalPredictor:
 
         # Final training on all data
         print("\n" + "-" * 60)
-        print("Final training on all data...")
+        print("Final training on all data with XGBoost...")
 
         X_scaled = self.scaler.fit_transform(X)
 
-        # Use calibrated classifier for better probability estimates
-        base_model = GradientBoostingClassifier(
+        # XGBoost with optimized hyperparameters
+        self.model = xgb.XGBClassifier(
             n_estimators=150,
             max_depth=4,
             learning_rate=0.1,
-            min_samples_split=20,
-            min_samples_leaf=10,
-            random_state=42
+            min_child_weight=10,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,  # L1 regularization
+            reg_lambda=1.0,  # L2 regularization
+            random_state=42,
+            use_label_encoder=False,
+            eval_metric='mlogloss',
+            verbosity=0
         )
-
-        self.model = CalibratedClassifierCV(base_model, cv=3, method='isotonic')
         self.model.fit(X_scaled, y_encoded)
 
         # Store feature names for later use
         self.feature_names = feature_names
 
-        # Get feature importance from base estimator
+        # Get feature importance from XGBoost model
         self.feature_importance = dict(zip(
             feature_names,
-            base_model.fit(X_scaled, y_encoded).feature_importances_
+            self.model.feature_importances_
         ))
 
         self.is_trained = True
