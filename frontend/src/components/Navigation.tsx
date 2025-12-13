@@ -60,6 +60,7 @@ const navItems = [
   { href: '/wheel', label: 'HERMES (Manual Wheel)', icon: RotateCcw, category: 'Automation' },
   { href: '/spx-wheel', label: 'ATLAS (SPX Wheel)', icon: Target, category: 'Automation' },
   { href: '/ares', label: 'ARES (SPX Iron Condor)', icon: Sword, category: 'Automation' },
+  { href: '/apache', label: 'APACHE (Directional Spreads)', icon: Target, category: 'Automation' },
   { href: '/spx', label: 'SPX Institutional', icon: TrendingUp, category: 'Automation' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Automation' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Automation' },
