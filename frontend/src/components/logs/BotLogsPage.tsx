@@ -6,7 +6,7 @@ import Navigation from '@/components/Navigation'
 import DecisionFilterPanel from './DecisionFilterPanel'
 import ClaudeConversationViewer from './ClaudeConversationViewer'
 import ExecutionTimeline from './ExecutionTimeline'
-import api from '@/lib/api'
+import { api } from '@/lib/api'
 
 interface Decision {
   decision_id: string
