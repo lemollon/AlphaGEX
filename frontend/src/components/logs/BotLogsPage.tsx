@@ -131,18 +131,15 @@ export default function BotLogsPage({ botName, botColor, botDescription }: BotLo
   const fetchDecisions = useCallback(async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = {
+      const response = await api.getBotDecisions({
         bot: botName,
-        limit: '100'
-      }
-
-      if (filters.decisionType !== 'all') params.decision_type = filters.decisionType
-      if (filters.outcome !== 'all') params.outcome = filters.outcome
-      if (filters.startDate) params.start_date = filters.startDate
-      if (filters.endDate) params.end_date = filters.endDate
-      if (filters.search) params.search = filters.search
-
-      const response = await api.get('/api/logs/bot-decisions', { params })
+        limit: 100,
+        decision_type: filters.decisionType !== 'all' ? filters.decisionType : undefined,
+        outcome: filters.outcome !== 'all' ? filters.outcome : undefined,
+        start_date: filters.startDate || undefined,
+        end_date: filters.endDate || undefined,
+        search: filters.search || undefined,
+      })
       setDecisions(response.data?.data?.decisions || [])
     } catch (error) {
       console.error('Error fetching decisions:', error)
@@ -152,9 +149,7 @@ export default function BotLogsPage({ botName, botColor, botDescription }: BotLo
 
   const fetchStats = useCallback(async () => {
     try {
-      const response = await api.get('/api/logs/bot-decisions/stats', {
-        params: { bot: botName, days: 30 }
-      })
+      const response = await api.getBotDecisionStats(botName, 30)
       setStats(response.data?.data?.stats || null)
     } catch (error) {
       console.error('Error fetching stats:', error)
@@ -169,9 +164,10 @@ export default function BotLogsPage({ botName, botColor, botDescription }: BotLo
   const handleExport = async (format: 'csv' | 'json' | 'excel') => {
     setIsExporting(true)
     try {
-      const response = await api.get('/api/logs/bot-decisions/export', {
-        params: { bot: botName, format, days: 30 },
-        responseType: format === 'json' ? 'json' : 'blob'
+      const response = await api.exportBotDecisions({
+        bot: botName,
+        format,
+        days: 30
       })
 
       if (format === 'json') {
