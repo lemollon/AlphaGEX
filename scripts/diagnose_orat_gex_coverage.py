@@ -49,6 +49,7 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
     print(f"\nTicker: {ticker}")
 
     # 1. Overall date range
+    print("\n[1/7] Querying date range...", end=" ", flush=True)
     cur.execute("""
         SELECT
             MIN(trade_date) as first_date,
@@ -59,6 +60,7 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
         WHERE ticker = %s
     """, (ticker,))
     result = cur.fetchone()
+    print("✓")
 
     if not result or not result[0]:
         print(f"\n❌ NO DATA FOUND for ticker {ticker}")
@@ -88,14 +90,17 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
     print("             AND dte <= 7 (for 0DTE/weekly options)")
 
     # Days with ANY data
+    print("\n[2/7] Counting days with any data...", end=" ", flush=True)
     cur.execute(f"""
         SELECT COUNT(DISTINCT trade_date)
         FROM orat_options_eod
         WHERE ticker = %s {date_filter}
     """, params)
     days_with_any_data = cur.fetchone()[0]
+    print("✓")
 
     # Days with gamma data (non-NULL)
+    print("[3/7] Counting days with gamma NOT NULL...", end=" ", flush=True)
     cur.execute(f"""
         SELECT COUNT(DISTINCT trade_date)
         FROM orat_options_eod
@@ -104,8 +109,10 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
           {date_filter}
     """, params)
     days_with_gamma_not_null = cur.fetchone()[0]
+    print("✓")
 
     # Days with gamma > 0
+    print("[4/7] Counting days with gamma > 0...", end=" ", flush=True)
     cur.execute(f"""
         SELECT COUNT(DISTINCT trade_date)
         FROM orat_options_eod
@@ -115,8 +122,10 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
           {date_filter}
     """, params)
     days_with_gamma_positive = cur.fetchone()[0]
+    print("✓")
 
     # Days with OI data
+    print("[5/7] Counting days with OI data...", end=" ", flush=True)
     cur.execute(f"""
         SELECT COUNT(DISTINCT trade_date)
         FROM orat_options_eod
@@ -125,8 +134,10 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
           {date_filter}
     """, params)
     days_with_oi = cur.fetchone()[0]
+    print("✓")
 
     # Days with FULL GEX eligibility (all requirements met)
+    print("[6/7] Counting GEX-eligible days (all requirements)...", end=" ", flush=True)
     cur.execute(f"""
         SELECT COUNT(DISTINCT trade_date)
         FROM orat_options_eod
@@ -138,7 +149,11 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
           {date_filter}
     """, params)
     days_gex_eligible = cur.fetchone()[0]
+    print("✓")
 
+    print("\n" + "=" * 70)
+    print("RESULTS")
+    print("=" * 70)
     print(f"\n{'Metric':<45} {'Count':>8} {'%':>8}")
     print("-" * 65)
     print(f"{'Days with ANY ORAT data':<45} {days_with_any_data:>8}")
@@ -166,8 +181,7 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
 
     # 4. Monthly breakdown
     print("\n" + "-" * 70)
-    print("MONTHLY BREAKDOWN (Recent 12 months)")
-    print("-" * 70)
+    print("[7/7] Querying monthly breakdown (this may take a moment)...", end=" ", flush=True)
 
     cur.execute(f"""
         SELECT
@@ -186,7 +200,11 @@ def analyze_orat_coverage(ticker: str = 'SPY', start_date: str = None, end_date:
         ORDER BY month DESC
         LIMIT 12
     """, params)
+    print("✓")
 
+    print("\n" + "-" * 70)
+    print("MONTHLY BREAKDOWN (Recent 12 months)")
+    print("-" * 70)
     print(f"\n{'Month':<12} {'Total':<8} {'w/Gamma':<10} {'GEX OK':<10} {'Coverage':<10}")
     print("-" * 55)
 
