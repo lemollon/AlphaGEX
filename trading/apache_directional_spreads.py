@@ -313,16 +313,22 @@ class APACHETrader:
             return None
 
         try:
-            gex = self.kronos.calculate_gex(self.config.ticker)
+            # Get today's date for GEX calculation
+            today = datetime.now().strftime("%Y-%m-%d")
+
+            # Use calculate_gex_for_date method
+            gex = self.kronos.calculate_gex_for_date(today, dte_max=7)
             if gex:
                 return {
                     'net_gex': gex.net_gex,
                     'call_wall': gex.call_wall,
                     'put_wall': gex.put_wall,
-                    'flip_point': gex.gex_flip_point,
+                    'flip_point': gex.flip_point,
                     'spot_price': gex.spot_price,
-                    'regime': 'POSITIVE' if gex.net_gex > 0 else 'NEGATIVE'
+                    'regime': gex.gex_regime  # Already calculated by Kronos
                 }
+            else:
+                self._log_to_db("WARNING", f"No GEX data for {today}")
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to get GEX data: {e}")
 
