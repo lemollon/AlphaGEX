@@ -345,6 +345,56 @@ class HybridFixedBacktester:
             'gex_unavailable_days': 0,
         }
 
+        # ML Model for directional prediction (Apache strategy)
+        self.ml_predictor = None
+        self.ml_stats = {
+            'ml_predictions': 0,
+            'ml_confirmed_trades': 0,
+            'ml_rejected_trades': 0,
+            'ml_unavailable': 0,
+        }
+        if self.strategy_type == 'apache_directional':
+            self._load_ml_model()
+
+    def _load_ml_model(self):
+        """Load ML model for directional prediction if available"""
+        try:
+            from quant.gex_directional_ml import GEXDirectionalPredictor
+            model_path = 'models/gex_directional_model.joblib'
+            if os.path.exists(model_path):
+                self.ml_predictor = GEXDirectionalPredictor(ticker=self.ticker)
+                self.ml_predictor.load_model(model_path)
+                print(f"✅ Loaded ML model from {model_path}")
+            else:
+                print(f"⚠️ ML model not found at {model_path} - using wall proximity only")
+        except Exception as e:
+            print(f"⚠️ Could not load ML model: {e}")
+            self.ml_predictor = None
+
+    def _get_ml_prediction(self, gex_data: Dict, vix: float = None) -> Optional[str]:
+        """Get ML prediction for direction: BULLISH, BEARISH, or FLAT"""
+        if not self.ml_predictor:
+            self.ml_stats['ml_unavailable'] += 1
+            return None
+
+        try:
+            # Build features for prediction
+            features = {
+                'net_gex': gex_data.get('net_gex', 0),
+                'call_wall': gex_data.get('call_wall', 0),
+                'put_wall': gex_data.get('put_wall', 0),
+                'total_call_gex': gex_data.get('total_call_gex', 0),
+                'total_put_gex': gex_data.get('total_put_gex', 0),
+                'vix': vix or 20,
+            }
+
+            prediction = self.ml_predictor.predict(features)
+            self.ml_stats['ml_predictions'] += 1
+            return prediction.direction.value if prediction else None
+        except Exception as e:
+            self.ml_stats['ml_unavailable'] += 1
+            return None
+
     def get_connection(self):
         """
         Get database connection for ORAT options data.
@@ -1078,15 +1128,19 @@ class HybridFixedBacktester:
     def find_apache_directional(self, options: List[Dict], open_price: float,
                                  strike_distance: float, target_dte: int,
                                  use_raw_distance: bool = False,
-                                 gex_data: Dict = None) -> Optional[Dict]:
+                                 gex_data: Dict = None,
+                                 vix: float = None) -> Optional[Dict]:
         """
-        APACHE Directional Spread - uses GEX walls to determine direction.
+        APACHE Directional Spread - uses GEX walls + ML to determine direction.
         DEBIT SPREADS ONLY for defined risk.
 
-        - Near put wall (support): Bull Call Spread (bullish debit)
-        - Near call wall (resistance): Bear Put Spread (bearish debit)
+        Strategy:
+        1. Check if near a GEX wall (put wall = support, call wall = resistance)
+        2. Get ML prediction for direction confirmation
+        3. Trade only if wall proximity AND ML agree (or ML unavailable)
 
-        Only trades when price is near a GEX wall (within wall_filter_pct).
+        - Near put wall + ML BULLISH: Bull Call Spread
+        - Near call wall + ML BEARISH: Bear Put Spread
         """
         # Calculate GEX walls from the options data we have
         if not gex_data:
@@ -1097,7 +1151,7 @@ class HybridFixedBacktester:
         spot = open_price
 
         if not put_wall or not call_wall:
-            # Can't determine walls - skip trade (debit-only strategy)
+            # Can't determine walls - skip trade
             return None
 
         # Calculate proximity to walls
@@ -1105,19 +1159,39 @@ class HybridFixedBacktester:
         put_wall_distance_pct = abs(spot - put_wall) / spot * 100
         call_wall_distance_pct = abs(spot - call_wall) / spot * 100
 
-        # Determine direction based on wall proximity
+        # Determine wall proximity
         near_put_wall = put_wall_distance_pct <= wall_filter_pct
         near_call_wall = call_wall_distance_pct <= wall_filter_pct
 
+        # Get ML prediction (if available)
+        ml_prediction = self._get_ml_prediction(gex_data, vix)
+
         if near_put_wall and not near_call_wall:
-            # Bullish - near support, expect bounce up
-            return self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            # Near support - check ML confirms bullish
+            if ml_prediction is None or ml_prediction == 'BULLISH':
+                if ml_prediction:
+                    self.ml_stats['ml_confirmed_trades'] += 1
+                return self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            else:
+                # ML says BEARISH or FLAT - skip
+                self.ml_stats['ml_rejected_trades'] += 1
+                return None
+
         elif near_call_wall and not near_put_wall:
-            # Bearish - near resistance, expect rejection down
-            return self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            # Near resistance - check ML confirms bearish
+            if ml_prediction is None or ml_prediction == 'BEARISH':
+                if ml_prediction:
+                    self.ml_stats['ml_confirmed_trades'] += 1
+                return self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            else:
+                # ML says BULLISH or FLAT - skip
+                self.ml_stats['ml_rejected_trades'] += 1
+                return None
+
         elif near_put_wall and near_call_wall:
             # In a squeeze - skip trade
             return None
+
         else:
             # Not near either wall - skip trade (only trade at walls)
             return None
