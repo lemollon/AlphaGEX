@@ -44,6 +44,7 @@ interface BacktestConfig {
   commission_per_leg: number | null
   slippage_per_spread: number | null
   hold_days: number
+  wall_proximity_pct: number
 }
 
 interface BacktestJob {
@@ -143,6 +144,7 @@ export default function ZeroDTEBacktestPage() {
     commission_per_leg: null,
     slippage_per_spread: null,
     hold_days: 1,
+    wall_proximity_pct: 1.0,
   })
 
   // UI state
@@ -1126,6 +1128,21 @@ export default function ZeroDTEBacktestPage() {
                     <option value={2}>Swing 2 Days</option>
                     <option value={3}>Swing 3 Days</option>
                     <option value={5}>Swing 5 Days (1 week)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Wall Proximity % (Apache)</label>
+                  <select
+                    value={config.wall_proximity_pct}
+                    onChange={e => setConfig(prev => ({ ...prev, wall_proximity_pct: Number(e.target.value) }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                  >
+                    <option value={0.5}>0.5% (very tight)</option>
+                    <option value={1.0}>1.0% (default)</option>
+                    <option value={1.5}>1.5%</option>
+                    <option value={2.0}>2.0%</option>
+                    <option value={3.0}>3.0% (loose)</option>
+                    <option value={5.0}>5.0% (very loose)</option>
                   </select>
                 </div>
                 </div>

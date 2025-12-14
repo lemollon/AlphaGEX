@@ -236,6 +236,8 @@ class HybridFixedBacktester:
         target_delta: float = 0.16,  # For delta method: target delta for short strikes
         # Swing trading
         hold_days: int = 1,  # 1 = day trade, 2+ = swing trade
+        # Apache directional settings
+        wall_proximity_pct: float = 1.0,  # How close to wall to trigger (1.0 = 1%, 2.0 = 2%)
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -264,6 +266,9 @@ class HybridFixedBacktester:
         # Swing trading
         self.hold_days = hold_days
         self.open_positions = []  # Track positions for swing trades
+
+        # Apache directional settings
+        self.wall_proximity_pct = wall_proximity_pct
         self.swing_stats = {
             'positions_opened': 0,
             'positions_closed': 0,
@@ -1166,7 +1171,7 @@ class HybridFixedBacktester:
             return None
 
         # Calculate proximity to walls
-        wall_filter_pct = 1.0  # 1% default
+        wall_filter_pct = self.wall_proximity_pct  # Configurable threshold
         put_wall_distance_pct = abs(spot - put_wall) / spot * 100
         call_wall_distance_pct = abs(spot - call_wall) / spot * 100
 
