@@ -387,24 +387,36 @@ class HybridFixedBacktester:
             print(f"⚠️ Could not load ML model: {e}")
             self.ml_predictor = None
 
-    def _get_ml_prediction(self, gex_data: Dict, vix: float = None) -> Optional[str]:
+    def _get_ml_prediction(self, gex_data: Dict, vix: float = None, spot_price: float = None) -> Optional[str]:
         """Get ML prediction for direction: BULLISH, BEARISH, or FLAT"""
         if not self.ml_predictor:
             self.ml_stats['ml_unavailable'] += 1
             return None
 
         try:
-            # Build features for prediction
-            features = {
+            # Build GEX data in the format expected by GEXDirectionalPredictor
+            # The predictor expects: spot_price, net_gex, gex_normalized, gex_regime,
+            # call_wall, put_wall, flip_point, between_walls, etc.
+            ml_gex_data = {
+                'spot_price': spot_price or gex_data.get('spot_price', 0),
                 'net_gex': gex_data.get('net_gex', 0),
+                'gex_normalized': gex_data.get('gex_normalized', 0),
+                'gex_regime': gex_data.get('gex_regime', 'NEUTRAL'),
                 'call_wall': gex_data.get('call_wall', 0),
                 'put_wall': gex_data.get('put_wall', 0),
-                'total_call_gex': gex_data.get('total_call_gex', 0),
+                'flip_point': gex_data.get('flip_point', 0),
+                'between_walls': gex_data.get('between_walls', True),
+                'above_call_wall': gex_data.get('above_call_wall', False),
+                'below_put_wall': gex_data.get('below_put_wall', False),
+                'distance_to_flip_pct': gex_data.get('distance_to_flip_pct', 0),
+                # MAGNET theory features
+                'put_gex': gex_data.get('total_put_gex', 0),
+                'call_gex': gex_data.get('total_call_gex', 0),
                 'total_put_gex': gex_data.get('total_put_gex', 0),
-                'vix': vix or 20,
+                'total_call_gex': gex_data.get('total_call_gex', 0),
             }
 
-            prediction = self.ml_predictor.predict(features)
+            prediction = self.ml_predictor.predict(ml_gex_data, vix=vix or 20)
             self.ml_stats['ml_predictions'] += 1
             return prediction.direction.value if prediction else None
         except Exception as e:
@@ -1213,7 +1225,7 @@ class HybridFixedBacktester:
         MIN_RATIO_FOR_BULLISH = 0.67  # Call GEX 1.5x Put GEX → price pulled UP
 
         # Get ML prediction (if available)
-        ml_prediction = self._get_ml_prediction(gex_data, vix)
+        ml_prediction = self._get_ml_prediction(gex_data, vix, spot_price=spot)
 
         if gex_ratio >= MIN_RATIO_FOR_BEARISH and near_put_wall:
             # Strong put GEX = price magnet pulling DOWN → BEARISH
@@ -2753,8 +2765,21 @@ def main():
     parser.add_argument('--ticker', default='SPX')
     parser.add_argument('--strategy', default='iron_condor',
                        choices=['iron_condor', 'gex_protected_iron_condor', 'bull_put',
-                               'bear_call', 'iron_butterfly', 'diagonal_call', 'diagonal_put'],
+                               'bear_call', 'iron_butterfly', 'diagonal_call', 'diagonal_put',
+                               'apache_directional'],
                        help='Strategy type (default: iron_condor)')
+
+    # VIX filter options (15-25 gives best risk-adjusted returns)
+    parser.add_argument('--min-vix', type=float, default=None,
+                       help='Minimum VIX level to trade (e.g., 15)')
+    parser.add_argument('--max-vix', type=float, default=None,
+                       help='Maximum VIX level to trade (e.g., 25)')
+
+    # Apache directional strategy options
+    parser.add_argument('--hold-days', type=int, default=1,
+                       help='Hold duration: 1=day trade, 2+=swing trade (default: 1)')
+    parser.add_argument('--wall-proximity', type=float, default=3.0,
+                       help='Wall proximity %% to trigger trade (default: 3.0)')
 
     args = parser.parse_args()
 
@@ -2767,6 +2792,10 @@ def main():
         risk_per_trade_pct=args.risk,
         ticker=args.ticker,
         strategy_type=args.strategy,
+        min_vix=args.min_vix,
+        max_vix=args.max_vix,
+        hold_days=args.hold_days,
+        wall_proximity_pct=args.wall_proximity,
     )
 
     results = backtester.run()

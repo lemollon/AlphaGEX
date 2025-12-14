@@ -120,9 +120,19 @@ class GEXDirectionalPredictor:
         'above_call_wall',
         'below_put_wall',
 
+        # MAGNET THEORY features (key for directional prediction)
+        'gex_ratio',              # put_gex / call_gex - primary signal
+        'gex_ratio_log',          # log(gex_ratio) for better scaling
+        'near_put_wall',          # within proximity of put wall
+        'near_call_wall',         # within proximity of call wall
+        'gex_asymmetry_strong',   # ratio > 1.5 or < 0.67
+
         # Market context
         'vix_level',
         'vix_percentile',
+        'vix_regime_low',         # VIX < 15 (low vol, trending)
+        'vix_regime_mid',         # VIX 15-25 (best risk-adjusted)
+        'vix_regime_high',        # VIX > 25 (high vol, mean-revert)
 
         # Momentum features
         'gex_change_1d',
@@ -327,11 +337,36 @@ class GEXDirectionalPredictor:
             (df['spot_price'] - df['put_wall']) / df['spot_price'] * 100
         ).fillna(0)
 
+        # === MAGNET THEORY Features (KEY for directional prediction) ===
+        # GEX Ratio: put_gex / call_gex
+        # Higher ratio = stronger put side = price pulled DOWN (BEARISH)
+        # Lower ratio = stronger call side = price pulled UP (BULLISH)
+        df['gex_ratio'] = df.apply(
+            lambda row: row['put_gex'] / row['call_gex'] if row['call_gex'] > 0 else (10.0 if row['put_gex'] > 0 else 1.0),
+            axis=1
+        ).fillna(1.0)
+
+        # Log of ratio for better ML scaling (centered around 0)
+        df['gex_ratio_log'] = np.log(df['gex_ratio'].clip(0.1, 10.0))
+
+        # Near wall indicators (within 3% of wall)
+        WALL_PROXIMITY_PCT = 3.0
+        df['near_put_wall'] = (df['distance_to_put_wall_pct'].abs() <= WALL_PROXIMITY_PCT).astype(int)
+        df['near_call_wall'] = (df['distance_to_call_wall_pct'].abs() <= WALL_PROXIMITY_PCT).astype(int)
+
+        # Strong asymmetry indicator (ratio > 1.5 or < 0.67)
+        df['gex_asymmetry_strong'] = ((df['gex_ratio'] >= 1.5) | (df['gex_ratio'] <= 0.67)).astype(int)
+
         # === VIX Features ===
         df['vix_level'] = df['vix_close'].fillna(20)
         df['vix_percentile'] = df['vix_level'].rolling(30, min_periods=5).apply(
             lambda x: (x.iloc[-1] - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
         ).fillna(0.5)
+
+        # VIX regime indicators (15-25 has best risk-adjusted returns)
+        df['vix_regime_low'] = (df['vix_level'] < 15).astype(int)
+        df['vix_regime_mid'] = ((df['vix_level'] >= 15) & (df['vix_level'] <= 25)).astype(int)
+        df['vix_regime_high'] = (df['vix_level'] > 25).astype(int)
 
         # === Momentum Features ===
         # GEX change from previous day
@@ -632,17 +667,47 @@ class GEXDirectionalPredictor:
         # Distance to walls
         call_wall = gex_data.get('call_wall', spot)
         put_wall = gex_data.get('put_wall', spot)
-        features['distance_to_call_wall_pct'] = (call_wall - spot) / spot * 100 if spot > 0 else 0
-        features['distance_to_put_wall_pct'] = (spot - put_wall) / spot * 100 if spot > 0 else 0
+        distance_to_call_wall_pct = (call_wall - spot) / spot * 100 if spot > 0 else 0
+        distance_to_put_wall_pct = (spot - put_wall) / spot * 100 if spot > 0 else 0
+        features['distance_to_call_wall_pct'] = distance_to_call_wall_pct
+        features['distance_to_put_wall_pct'] = distance_to_put_wall_pct
 
         # Position features
         features['between_walls'] = int(gex_data.get('between_walls', True))
         features['above_call_wall'] = int(gex_data.get('above_call_wall', False))
         features['below_put_wall'] = int(gex_data.get('below_put_wall', False))
 
-        # VIX features
+        # === MAGNET THEORY Features (KEY for directional prediction) ===
+        # Get put/call GEX values
+        put_gex = gex_data.get('put_gex', gex_data.get('total_put_gex', 0))
+        call_gex = gex_data.get('call_gex', gex_data.get('total_call_gex', 0))
+
+        # GEX Ratio: put_gex / call_gex
+        if call_gex > 0:
+            gex_ratio = put_gex / call_gex
+        else:
+            gex_ratio = 10.0 if put_gex > 0 else 1.0
+        features['gex_ratio'] = gex_ratio
+
+        # Log ratio for better scaling
+        features['gex_ratio_log'] = np.log(max(0.1, min(10.0, gex_ratio)))
+
+        # Near wall indicators (within 3% proximity)
+        WALL_PROXIMITY_PCT = 3.0
+        features['near_put_wall'] = 1 if abs(distance_to_put_wall_pct) <= WALL_PROXIMITY_PCT else 0
+        features['near_call_wall'] = 1 if abs(distance_to_call_wall_pct) <= WALL_PROXIMITY_PCT else 0
+
+        # Strong GEX asymmetry (ratio > 1.5 or < 0.67)
+        features['gex_asymmetry_strong'] = 1 if (gex_ratio >= 1.5 or gex_ratio <= 0.67) else 0
+
+        # === VIX Features ===
         features['vix_level'] = vix
         features['vix_percentile'] = 0.5  # Would need historical data
+
+        # VIX regime indicators
+        features['vix_regime_low'] = 1 if vix < 15 else 0
+        features['vix_regime_mid'] = 1 if 15 <= vix <= 25 else 0
+        features['vix_regime_high'] = 1 if vix > 25 else 0
 
         # Momentum (would need previous day's data)
         features['gex_change_1d'] = 0
