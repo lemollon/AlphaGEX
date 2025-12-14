@@ -680,7 +680,8 @@ class HybridFixedBacktester:
                 SELECT
                     strike, underlying_price, dte,
                     put_bid, put_ask, call_bid, call_ask,
-                    delta, put_iv, call_iv
+                    delta, put_iv, call_iv,
+                    gamma, call_oi, put_oi
                 FROM orat_options_eod
                 WHERE ticker = %s
                   AND trade_date = %s
@@ -690,7 +691,8 @@ class HybridFixedBacktester:
             """, (self.ticker, trade_date, min_dte, max_dte, target_dte))
 
             columns = ['strike', 'underlying_price', 'dte', 'put_bid', 'put_ask',
-                       'call_bid', 'call_ask', 'delta', 'put_iv', 'call_iv']
+                       'call_bid', 'call_ask', 'delta', 'put_iv', 'call_iv',
+                       'gamma', 'call_oi', 'put_oi']
 
             options = []
             for row in cursor.fetchall():
@@ -927,6 +929,152 @@ class HybridFixedBacktester:
             'max_loss': net_debit
         }
 
+    def find_bear_put_spread(self, options: List[Dict], open_price: float,
+                              strike_distance: float, target_dte: int,
+                              use_raw_distance: bool = False) -> Optional[Dict]:
+        """
+        Find Bear Put Spread (put debit spread) - bearish strategy.
+
+        Buy ATM/near-money put, sell OTM put below.
+        Profit when underlying falls below long strike - debit paid.
+
+        Used for bearish directional plays.
+        """
+        if not options:
+            return None
+
+        available_dtes = list(set(o['dte'] for o in options))
+        if not available_dtes:
+            return None
+
+        actual_dte = min(available_dtes, key=lambda x: abs(x - target_dte))
+        dte_options = [o for o in options if o['dte'] == actual_dte]
+
+        if not dte_options:
+            return None
+
+        underlying = dte_options[0]['underlying_price']
+
+        # Target long put strike at or slightly above current price (ATM or slightly ITM)
+        if use_raw_distance:
+            long_put_target = open_price + (strike_distance * 0.25)  # Slightly ITM for better delta
+        else:
+            long_put_target = open_price + (self.sd_multiplier * strike_distance * 0.25)
+        long_put_target = round(long_put_target / 5) * 5
+
+        # Find puts near the money
+        near_puts = [o for o in dte_options
+                    if o.get('put_ask', 0) and o['put_ask'] > 0.05
+                    and o.get('put_bid', 0) and o['put_bid'] > 0.05]
+
+        if not near_puts:
+            return None
+
+        # Long put at target (buy at ask)
+        long_put = min(near_puts, key=lambda x: abs(x['strike'] - long_put_target))
+
+        # Short put below (sell at bid) - spread_width away
+        short_put_strike = long_put['strike'] - self.spread_width
+        short_put_candidates = [o for o in dte_options
+                               if abs(o['strike'] - short_put_strike) < 2
+                               and o.get('put_bid', 0) and o['put_bid'] > 0]
+        if not short_put_candidates:
+            return None
+        short_put = min(short_put_candidates, key=lambda x: abs(x['strike'] - short_put_strike))
+
+        # Debit spread: pay ask for long, receive bid for short
+        long_cost = long_put.get('put_ask', 0) or 0
+        short_credit = short_put.get('put_bid', 0) or 0
+        net_debit = long_cost - short_credit  # Positive = cost
+
+        if net_debit <= 0:
+            return None
+
+        # Max profit = spread width - debit paid
+        max_profit = self.spread_width - net_debit
+        if max_profit <= 0:
+            return None
+
+        return {
+            'actual_dte': actual_dte,
+            'put_short_strike': short_put['strike'],
+            'put_long_strike': long_put['strike'],
+            'put_credit': -net_debit,  # Negative credit = debit
+            'call_short_strike': 0,
+            'call_long_strike': 0,
+            'call_credit': 0,
+            'total_credit': -net_debit,  # Negative = debit spread
+            'strategy_type': 'bear_put',
+            'is_debit_spread': True,
+            'is_put_debit_spread': True,  # Flag for P&L calculation
+            'max_profit': max_profit,
+            'max_loss': net_debit
+        }
+
+    def calculate_gex_walls_from_options(self, options: List[Dict], spot_price: float) -> Dict:
+        """
+        Calculate GEX walls from historical options data.
+
+        GEX = gamma × open_interest × 100 × spot_price²
+
+        Returns dict with put_wall (support) and call_wall (resistance).
+        """
+        if not options:
+            return {'put_wall': 0, 'call_wall': 0, 'net_gex': 0}
+
+        # Group by strike and calculate GEX
+        strike_gex = {}
+
+        for opt in options:
+            strike = opt.get('strike', 0)
+            gamma = opt.get('gamma', 0) or 0
+            call_oi = opt.get('call_oi', 0) or 0
+            put_oi = opt.get('put_oi', 0) or 0
+
+            if strike not in strike_gex:
+                strike_gex[strike] = {'call_gex': 0, 'put_gex': 0}
+
+            # GEX formula: gamma × OI × 100 × spot²
+            # Calls have positive gamma exposure, puts have negative
+            if gamma > 0:
+                call_gex = gamma * call_oi * 100 * (spot_price ** 2) / 1e9  # Scale down
+                put_gex = gamma * put_oi * 100 * (spot_price ** 2) / 1e9
+
+                strike_gex[strike]['call_gex'] += call_gex
+                strike_gex[strike]['put_gex'] += put_gex
+
+        if not strike_gex:
+            return {'put_wall': 0, 'call_wall': 0, 'net_gex': 0}
+
+        # Find call wall (highest call GEX above spot - resistance)
+        call_wall = 0
+        max_call_gex = 0
+        for strike, gex in strike_gex.items():
+            if strike > spot_price and gex['call_gex'] > max_call_gex:
+                max_call_gex = gex['call_gex']
+                call_wall = strike
+
+        # Find put wall (highest put GEX below spot - support)
+        put_wall = 0
+        max_put_gex = 0
+        for strike, gex in strike_gex.items():
+            if strike < spot_price and gex['put_gex'] > max_put_gex:
+                max_put_gex = gex['put_gex']
+                put_wall = strike
+
+        # Calculate net GEX
+        total_call_gex = sum(g['call_gex'] for g in strike_gex.values())
+        total_put_gex = sum(g['put_gex'] for g in strike_gex.values())
+        net_gex = total_call_gex - total_put_gex
+
+        return {
+            'put_wall': put_wall,
+            'call_wall': call_wall,
+            'net_gex': net_gex,
+            'total_call_gex': total_call_gex,
+            'total_put_gex': total_put_gex
+        }
+
     def find_apache_directional(self, options: List[Dict], open_price: float,
                                  strike_distance: float, target_dte: int,
                                  use_raw_distance: bool = False,
@@ -939,26 +1087,16 @@ class HybridFixedBacktester:
 
         Wall proximity is determined by wall_filter_pct (default 1%).
         """
+        # Calculate GEX walls from the options data we have
         if not gex_data:
-            # Try to get GEX data from KRONOS
-            try:
-                from quant.kronos_gex import KronosGEXCalculator
-                from datetime import datetime
-                kronos = KronosGEXCalculator()
-                today = datetime.now().strftime("%Y-%m-%d")
-                gex_data = kronos.calculate_gex_for_date(today, dte_max=7)
-            except Exception:
-                gex_data = None
-
-        if not gex_data:
-            # Fall back to bear call (safer default)
-            return self.find_bear_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            gex_data = self.calculate_gex_walls_from_options(options, open_price)
 
         put_wall = gex_data.get('put_wall', 0)
         call_wall = gex_data.get('call_wall', 0)
         spot = open_price
 
         if not put_wall or not call_wall:
+            # Can't determine walls - fall back to bear call (safer default)
             return self.find_bear_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
 
         # Calculate proximity to walls
@@ -1425,6 +1563,8 @@ class HybridFixedBacktester:
             return self.find_bear_call_spread(options, open_price, call_distance, target_dte, use_raw_distance=True)
         elif self.strategy_type == 'bull_call':
             return self.find_bull_call_spread(options, open_price, call_distance, target_dte, use_raw_distance=True)
+        elif self.strategy_type == 'bear_put':
+            return self.find_bear_put_spread(options, open_price, put_distance, target_dte, use_raw_distance=True)
         elif self.strategy_type == 'apache_directional':
             return self.find_apache_directional(options, open_price, call_distance, target_dte, use_raw_distance=True)
         elif self.strategy_type == 'iron_butterfly':
@@ -1644,7 +1784,28 @@ class HybridFixedBacktester:
         # Put spread P&L at close (if applicable)
         put_pnl = 0
         put_breached = False
-        if ic['put_credit'] > 0:  # Only calculate if we have a put spread
+        is_put_debit_spread = ic.get('is_put_debit_spread', False)
+
+        if is_put_debit_spread and ic['put_credit'] < 0:
+            # PUT DEBIT SPREAD (Bear Put Spread) - long at higher strike, short at lower strike
+            # put_long_strike = higher strike (bought), put_short_strike = lower strike (sold)
+            debit_paid = abs(ic['put_credit'])  # Positive value
+
+            if close_price > ic['put_long_strike']:
+                # Both OTM at close - max loss (lose the debit)
+                put_pnl = -debit_paid
+                put_breached = True  # We lost money
+            elif close_price > ic['put_short_strike']:
+                # Long put ITM, short put OTM - partial profit
+                intrinsic = ic['put_long_strike'] - close_price
+                put_pnl = intrinsic - debit_paid
+                put_breached = put_pnl < 0
+            else:
+                # Both ITM - max profit (spread width - debit paid)
+                put_pnl = self.spread_width - debit_paid
+                put_breached = False  # Max profit scenario
+
+        elif ic['put_credit'] > 0:  # CREDIT SPREAD - Only calculate if we have a put credit spread
             if close_price >= ic['put_short_strike']:
                 # Both OTM at close - collect full premium
                 put_pnl = ic['put_credit']
