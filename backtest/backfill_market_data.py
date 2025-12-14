@@ -214,6 +214,7 @@ def backfill_all(start_date: str = "2020-01-01", end_date: Optional[str] = None)
     symbols = [
         ("^GSPC", "SPX"),   # S&P 500 index
         ("^VIX", "VIX"),    # VIX volatility index
+        ("SPY", "SPY"),     # SPY ETF
     ]
 
     print("=" * 60)
@@ -256,7 +257,7 @@ def check_data_status():
 
     print("\n--- Stored Data Status ---")
 
-    for symbol in ["SPX", "VIX"]:
+    for symbol in ["SPX", "VIX", "SPY"]:
         try:
             # Get count
             cursor.execute("""
