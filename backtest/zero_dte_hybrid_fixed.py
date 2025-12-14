@@ -1164,37 +1164,56 @@ class HybridFixedBacktester:
 
         put_wall = gex_data.get('put_wall', 0)
         call_wall = gex_data.get('call_wall', 0)
+        total_put_gex = gex_data.get('total_put_gex', 0)
+        total_call_gex = gex_data.get('total_call_gex', 0)
+        net_gex = gex_data.get('net_gex', 0)
         spot = open_price
 
         if not put_wall or not call_wall:
             # Can't determine walls - skip trade
             return None
 
+        # ========== NEW LOGIC: Use GEX STRENGTH, not just proximity ==========
+        #
+        # Key insight: The RATIO of put_gex to call_gex tells us the bias
+        # - Put GEX 3x Call GEX → Strong support, expect bounce UP (BULLISH)
+        # - Call GEX 3x Put GEX → Strong resistance, expect rejection DOWN (BEARISH)
+        #
+        # This is what we see when reading the GEX chart!
+
+        # Calculate GEX ratio (put strength vs call strength)
+        # Higher ratio = put side stronger = more bullish support
+        if total_call_gex > 0:
+            gex_ratio = total_put_gex / total_call_gex
+        else:
+            gex_ratio = 10.0 if total_put_gex > 0 else 1.0
+
         # Calculate distance to walls (as percentage)
         put_wall_distance_pct = abs(spot - put_wall) / spot * 100
         call_wall_distance_pct = abs(spot - call_wall) / spot * 100
-
-        # NEW LOGIC: Trade based on which wall is CLOSER (within max threshold)
-        # - If closer to put wall → expect bounce → bullish (bull call spread)
-        # - If closer to call wall → expect rejection → bearish (bear put spread)
-        max_wall_distance = self.wall_proximity_pct  # Max distance to consider trading
+        max_wall_distance = self.wall_proximity_pct
 
         # Check if we're within trading range of at least one wall
-        near_any_wall = (put_wall_distance_pct <= max_wall_distance or
-                        call_wall_distance_pct <= max_wall_distance)
+        near_put_wall = put_wall_distance_pct <= max_wall_distance
+        near_call_wall = call_wall_distance_pct <= max_wall_distance
 
-        if not near_any_wall:
+        if not near_put_wall and not near_call_wall:
             # Too far from both walls - no edge
             return None
 
-        # Determine direction based on which wall is closer
-        closer_to_put = put_wall_distance_pct < call_wall_distance_pct
+        # Determine direction based on GEX RATIO (wall strength)
+        # Ratio > 1.5 = put side stronger = BULLISH (expect support/bounce)
+        # Ratio < 0.67 = call side stronger = BEARISH (expect resistance/rejection)
+        # Ratio between = no clear bias
+
+        MIN_RATIO_FOR_BULLISH = 1.5   # Put GEX must be 1.5x Call GEX for bullish
+        MIN_RATIO_FOR_BEARISH = 0.67  # Call GEX must be 1.5x Put GEX for bearish
 
         # Get ML prediction (if available)
         ml_prediction = self._get_ml_prediction(gex_data, vix)
 
-        if closer_to_put:
-            # Closer to put wall (support) → expect bounce → BULLISH
+        if gex_ratio >= MIN_RATIO_FOR_BULLISH and near_put_wall:
+            # Strong put wall (support) + near it → BULLISH
             if ml_prediction is None or ml_prediction == 'BULLISH':
                 if ml_prediction:
                     self.ml_stats['ml_confirmed_trades'] += 1
@@ -1202,8 +1221,9 @@ class HybridFixedBacktester:
             else:
                 self.ml_stats['ml_rejected_trades'] += 1
                 return None
-        else:
-            # Closer to call wall (resistance) → expect rejection → BEARISH
+
+        elif gex_ratio <= MIN_RATIO_FOR_BEARISH and near_call_wall:
+            # Strong call wall (resistance) + near it → BEARISH
             if ml_prediction is None or ml_prediction == 'BEARISH':
                 if ml_prediction:
                     self.ml_stats['ml_confirmed_trades'] += 1
@@ -1211,6 +1231,10 @@ class HybridFixedBacktester:
             else:
                 self.ml_stats['ml_rejected_trades'] += 1
                 return None
+
+        else:
+            # No clear GEX asymmetry - skip (this is when ratio is between 0.67 and 1.5)
+            return None
 
     def find_iron_butterfly(self, options: List[Dict], open_price: float,
                             expected_move: float, target_dte: int) -> Optional[Dict]:
