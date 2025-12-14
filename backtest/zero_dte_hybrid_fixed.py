@@ -1081,11 +1081,12 @@ class HybridFixedBacktester:
                                  gex_data: Dict = None) -> Optional[Dict]:
         """
         APACHE Directional Spread - uses GEX walls to determine direction.
+        DEBIT SPREADS ONLY for defined risk.
 
         - Near put wall (support): Bull Call Spread (bullish debit)
-        - Near call wall (resistance): Bear Call Spread (bearish credit)
+        - Near call wall (resistance): Bear Put Spread (bearish debit)
 
-        Wall proximity is determined by wall_filter_pct (default 1%).
+        Only trades when price is near a GEX wall (within wall_filter_pct).
         """
         # Calculate GEX walls from the options data we have
         if not gex_data:
@@ -1096,8 +1097,8 @@ class HybridFixedBacktester:
         spot = open_price
 
         if not put_wall or not call_wall:
-            # Can't determine walls - fall back to bear call (safer default)
-            return self.find_bear_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            # Can't determine walls - skip trade (debit-only strategy)
+            return None
 
         # Calculate proximity to walls
         wall_filter_pct = 1.0  # 1% default
@@ -1109,22 +1110,17 @@ class HybridFixedBacktester:
         near_call_wall = call_wall_distance_pct <= wall_filter_pct
 
         if near_put_wall and not near_call_wall:
-            # Bullish - near support
+            # Bullish - near support, expect bounce up
             return self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
         elif near_call_wall and not near_put_wall:
-            # Bearish - near resistance
-            return self.find_bear_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            # Bearish - near resistance, expect rejection down
+            return self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
         elif near_put_wall and near_call_wall:
-            # In a squeeze - skip or use tighter spread
+            # In a squeeze - skip trade
             return None
         else:
-            # Not near either wall - use trend direction
-            if spot > (put_wall + call_wall) / 2:
-                # Above midpoint - lean bearish
-                return self.find_bear_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
-            else:
-                # Below midpoint - lean bullish
-                return self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            # Not near either wall - skip trade (only trade at walls)
+            return None
 
     def find_iron_butterfly(self, options: List[Dict], open_price: float,
                             expected_move: float, target_dte: int) -> Optional[Dict]:

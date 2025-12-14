@@ -1058,12 +1058,12 @@ async def get_strategy_types():
             {
                 "id": "apache_directional",
                 "name": "APACHE GEX Directional",
-                "description": "Bull Call Spread near put wall (support), Bear Call Spread near call wall (resistance). Uses GEX walls for entry timing.",
+                "description": "DEBIT SPREADS ONLY. Bull Call near put wall (support), Bear Put near call wall (resistance). Only trades at GEX walls.",
                 "legs": 2,
                 "direction": "adaptive",
-                "credit": "mixed",
-                "note": "Bullish when near put wall, Bearish when near call wall. 90%+ win rate with 1% wall filter.",
-                "features": ["GEX wall timing", "ML direction prediction", "Oracle integration"]
+                "credit": False,
+                "note": "Bullish debit when near put wall, Bearish debit when near call wall. Skips trades when not near walls.",
+                "features": ["GEX wall timing", "Debit spreads only", "Defined risk"]
             }
         ]
     }
