@@ -2081,8 +2081,8 @@ class HybridFixedBacktester:
         if not options:
             return None
 
-        # Calculate expected move
-        iv = self.estimate_iv(options)
+        # Calculate expected move (IV from VIX)
+        iv = vix / 100
         expected_move = self.calculate_expected_move(open_price, iv, tier.sd_days)
 
         # Find strategy
