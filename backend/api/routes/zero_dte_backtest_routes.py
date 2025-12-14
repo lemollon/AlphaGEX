@@ -82,6 +82,9 @@ class ZeroDTEBacktestConfig(BaseModel):
     # Swing trading
     hold_days: int = Field(default=1, description="Hold duration: 1=day trade (exit same day), 2+=swing trade")
 
+    # Apache directional settings
+    wall_proximity_pct: float = Field(default=1.0, description="Wall proximity threshold for Apache (1.0=1%, 2.0=2%, etc)")
+
 
 class BacktestJobStatus(BaseModel):
     """Status of a running backtest job"""
@@ -279,6 +282,8 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
             target_delta=config.target_delta,
             # Swing trading
             hold_days=config.hold_days,
+            # Apache directional settings
+            wall_proximity_pct=config.wall_proximity_pct,
         )
 
         _jobs[job_id]['progress'] = 15

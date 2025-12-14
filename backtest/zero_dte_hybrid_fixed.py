@@ -236,6 +236,8 @@ class HybridFixedBacktester:
         target_delta: float = 0.16,  # For delta method: target delta for short strikes
         # Swing trading
         hold_days: int = 1,  # 1 = day trade, 2+ = swing trade
+        # Apache directional settings
+        wall_proximity_pct: float = 1.0,  # How close to wall to trigger (1.0 = 1%, 2.0 = 2%)
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -264,6 +266,9 @@ class HybridFixedBacktester:
         # Swing trading
         self.hold_days = hold_days
         self.open_positions = []  # Track positions for swing trades
+
+        # Apache directional settings
+        self.wall_proximity_pct = wall_proximity_pct
         self.swing_stats = {
             'positions_opened': 0,
             'positions_closed': 0,
@@ -1165,47 +1170,47 @@ class HybridFixedBacktester:
             # Can't determine walls - skip trade
             return None
 
-        # Calculate proximity to walls
-        wall_filter_pct = 1.0  # 1% default
+        # Calculate distance to walls (as percentage)
         put_wall_distance_pct = abs(spot - put_wall) / spot * 100
         call_wall_distance_pct = abs(spot - call_wall) / spot * 100
 
-        # Determine wall proximity
-        near_put_wall = put_wall_distance_pct <= wall_filter_pct
-        near_call_wall = call_wall_distance_pct <= wall_filter_pct
+        # NEW LOGIC: Trade based on which wall is CLOSER (within max threshold)
+        # - If closer to put wall → expect bounce → bullish (bull call spread)
+        # - If closer to call wall → expect rejection → bearish (bear put spread)
+        max_wall_distance = self.wall_proximity_pct  # Max distance to consider trading
+
+        # Check if we're within trading range of at least one wall
+        near_any_wall = (put_wall_distance_pct <= max_wall_distance or
+                        call_wall_distance_pct <= max_wall_distance)
+
+        if not near_any_wall:
+            # Too far from both walls - no edge
+            return None
+
+        # Determine direction based on which wall is closer
+        closer_to_put = put_wall_distance_pct < call_wall_distance_pct
 
         # Get ML prediction (if available)
         ml_prediction = self._get_ml_prediction(gex_data, vix)
 
-        if near_put_wall and not near_call_wall:
-            # Near support - check ML confirms bullish
+        if closer_to_put:
+            # Closer to put wall (support) → expect bounce → BULLISH
             if ml_prediction is None or ml_prediction == 'BULLISH':
                 if ml_prediction:
                     self.ml_stats['ml_confirmed_trades'] += 1
                 return self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
             else:
-                # ML says BEARISH or FLAT - skip
                 self.ml_stats['ml_rejected_trades'] += 1
                 return None
-
-        elif near_call_wall and not near_put_wall:
-            # Near resistance - check ML confirms bearish
+        else:
+            # Closer to call wall (resistance) → expect rejection → BEARISH
             if ml_prediction is None or ml_prediction == 'BEARISH':
                 if ml_prediction:
                     self.ml_stats['ml_confirmed_trades'] += 1
                 return self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
             else:
-                # ML says BULLISH or FLAT - skip
                 self.ml_stats['ml_rejected_trades'] += 1
                 return None
-
-        elif near_put_wall and near_call_wall:
-            # In a squeeze - skip trade
-            return None
-
-        else:
-            # Not near either wall - skip trade (only trade at walls)
-            return None
 
     def find_iron_butterfly(self, options: List[Dict], open_price: float,
                             expected_move: float, target_dte: int) -> Optional[Dict]:
