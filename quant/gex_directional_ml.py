@@ -338,11 +338,12 @@ class GEXDirectionalPredictor:
         ).fillna(0)
 
         # === MAGNET THEORY Features (KEY for directional prediction) ===
-        # GEX Ratio: put_gex / call_gex
+        # GEX Ratio: |put_gex| / |call_gex| using ABSOLUTE VALUES
+        # (put_gex is typically negative in the database)
         # Higher ratio = stronger put side = price pulled DOWN (BEARISH)
         # Lower ratio = stronger call side = price pulled UP (BULLISH)
         df['gex_ratio'] = df.apply(
-            lambda row: row['put_gex'] / row['call_gex'] if row['call_gex'] > 0 else (10.0 if row['put_gex'] > 0 else 1.0),
+            lambda row: abs(row['put_gex']) / abs(row['call_gex']) if row['call_gex'] != 0 else (10.0 if row['put_gex'] != 0 else 1.0),
             axis=1
         ).fillna(1.0)
 
@@ -682,11 +683,15 @@ class GEXDirectionalPredictor:
         put_gex = gex_data.get('put_gex', gex_data.get('total_put_gex', 0))
         call_gex = gex_data.get('call_gex', gex_data.get('total_call_gex', 0))
 
-        # GEX Ratio: put_gex / call_gex
-        if call_gex > 0:
-            gex_ratio = put_gex / call_gex
+        # GEX Ratio: |put_gex| / |call_gex| using ABSOLUTE VALUES
+        # (put_gex is typically negative in the database)
+        abs_put_gex = abs(put_gex)
+        abs_call_gex = abs(call_gex)
+
+        if abs_call_gex > 0:
+            gex_ratio = abs_put_gex / abs_call_gex
         else:
-            gex_ratio = 10.0 if put_gex > 0 else 1.0
+            gex_ratio = 10.0 if abs_put_gex > 0 else 1.0
         features['gex_ratio'] = gex_ratio
 
         # Log ratio for better scaling
