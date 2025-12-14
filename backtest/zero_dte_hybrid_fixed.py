@@ -1202,32 +1202,35 @@ class HybridFixedBacktester:
             return None
 
         # Determine direction based on GEX RATIO (wall strength)
-        # Ratio > 1.5 = put side stronger = BULLISH (expect support/bounce)
-        # Ratio < 0.67 = call side stronger = BEARISH (expect resistance/rejection)
-        # Ratio between = no clear bias
+        #
+        # MAGNET THEORY: Price is pulled TOWARD high GEX strikes
+        # - High put GEX = price pulled DOWN toward puts → BEARISH
+        # - High call GEX = price pulled UP toward calls → BULLISH
+        #
+        # This is OPPOSITE of "support/resistance" theory!
 
-        MIN_RATIO_FOR_BULLISH = 1.5   # Put GEX must be 1.5x Call GEX for bullish
-        MIN_RATIO_FOR_BEARISH = 0.67  # Call GEX must be 1.5x Put GEX for bearish
+        MIN_RATIO_FOR_BEARISH = 1.5   # Put GEX 1.5x Call GEX → price pulled DOWN
+        MIN_RATIO_FOR_BULLISH = 0.67  # Call GEX 1.5x Put GEX → price pulled UP
 
         # Get ML prediction (if available)
         ml_prediction = self._get_ml_prediction(gex_data, vix)
 
-        if gex_ratio >= MIN_RATIO_FOR_BULLISH and near_put_wall:
-            # Strong put wall (support) + near it → BULLISH
-            if ml_prediction is None or ml_prediction == 'BULLISH':
-                if ml_prediction:
-                    self.ml_stats['ml_confirmed_trades'] += 1
-                return self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
-            else:
-                self.ml_stats['ml_rejected_trades'] += 1
-                return None
-
-        elif gex_ratio <= MIN_RATIO_FOR_BEARISH and near_call_wall:
-            # Strong call wall (resistance) + near it → BEARISH
+        if gex_ratio >= MIN_RATIO_FOR_BEARISH and near_put_wall:
+            # Strong put GEX = price magnet pulling DOWN → BEARISH
             if ml_prediction is None or ml_prediction == 'BEARISH':
                 if ml_prediction:
                     self.ml_stats['ml_confirmed_trades'] += 1
                 return self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+            else:
+                self.ml_stats['ml_rejected_trades'] += 1
+                return None
+
+        elif gex_ratio <= MIN_RATIO_FOR_BULLISH and near_call_wall:
+            # Strong call GEX = price magnet pulling UP → BULLISH
+            if ml_prediction is None or ml_prediction == 'BULLISH':
+                if ml_prediction:
+                    self.ml_stats['ml_confirmed_trades'] += 1
+                return self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
             else:
                 self.ml_stats['ml_rejected_trades'] += 1
                 return None
