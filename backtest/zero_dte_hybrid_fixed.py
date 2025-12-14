@@ -1187,18 +1187,21 @@ class HybridFixedBacktester:
 
         # ========== NEW LOGIC: Use GEX STRENGTH, not just proximity ==========
         #
-        # Key insight: The RATIO of put_gex to call_gex tells us the bias
-        # - Put GEX 3x Call GEX → Strong support, expect bounce UP (BULLISH)
-        # - Call GEX 3x Put GEX → Strong resistance, expect rejection DOWN (BEARISH)
+        # Key insight: The RATIO of |put_gex| to |call_gex| tells us the bias
+        # Using ABSOLUTE VALUES because put_gex is typically negative in the database
         #
-        # This is what we see when reading the GEX chart!
+        # MAGNET THEORY:
+        # - High |put_gex| / |call_gex| ratio → price pulled DOWN toward puts → BEARISH
+        # - Low |put_gex| / |call_gex| ratio → price pulled UP toward calls → BULLISH
 
-        # Calculate GEX ratio (put strength vs call strength)
-        # Higher ratio = put side stronger = more bullish support
-        if total_call_gex > 0:
-            gex_ratio = total_put_gex / total_call_gex
+        # Calculate GEX ratio using ABSOLUTE values (put_gex is negative in DB)
+        abs_put_gex = abs(total_put_gex)
+        abs_call_gex = abs(total_call_gex)
+
+        if abs_call_gex > 0:
+            gex_ratio = abs_put_gex / abs_call_gex
         else:
-            gex_ratio = 10.0 if total_put_gex > 0 else 1.0
+            gex_ratio = 10.0 if abs_put_gex > 0 else 1.0
 
         # Calculate distance to walls (as percentage)
         put_wall_distance_pct = abs(spot - put_wall) / spot * 100
