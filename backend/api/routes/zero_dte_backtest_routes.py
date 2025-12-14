@@ -1048,6 +1048,14 @@ async def get_strategy_types():
                 "credit": False
             },
             {
+                "id": "bear_put",
+                "name": "Bear Put Spread",
+                "description": "Buy ATM put, sell OTM put below. Profit if price falls. Debit spread with defined risk.",
+                "legs": 2,
+                "direction": "bearish",
+                "credit": False
+            },
+            {
                 "id": "apache_directional",
                 "name": "APACHE GEX Directional",
                 "description": "Bull Call Spread near put wall (support), Bear Call Spread near call wall (resistance). Uses GEX walls for entry timing.",
