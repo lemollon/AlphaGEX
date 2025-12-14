@@ -43,6 +43,7 @@ interface BacktestConfig {
   max_contracts_override: number | null
   commission_per_leg: number | null
   slippage_per_spread: number | null
+  hold_days: number
 }
 
 interface BacktestJob {
@@ -141,6 +142,7 @@ export default function ZeroDTEBacktestPage() {
     max_contracts_override: null,
     commission_per_leg: null,
     slippage_per_spread: null,
+    hold_days: 1,
   })
 
   // UI state
@@ -1112,6 +1114,19 @@ export default function ZeroDTEBacktestPage() {
                     onChange={e => setConfig(prev => ({ ...prev, slippage_per_spread: e.target.value ? Number(e.target.value) : null }))}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
                   />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Hold Duration</label>
+                  <select
+                    value={config.hold_days}
+                    onChange={e => setConfig(prev => ({ ...prev, hold_days: Number(e.target.value) }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                  >
+                    <option value={1}>Day Trade (exit same day)</option>
+                    <option value={2}>Swing 2 Days</option>
+                    <option value={3}>Swing 3 Days</option>
+                    <option value={5}>Swing 5 Days (1 week)</option>
+                  </select>
                 </div>
                 </div>
               </div>

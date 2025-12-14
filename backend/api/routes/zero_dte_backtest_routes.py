@@ -79,6 +79,9 @@ class ZeroDTEBacktestConfig(BaseModel):
     commission_per_leg: Optional[float] = Field(default=None, description="Override commission (None = use tier default)")
     slippage_per_spread: Optional[float] = Field(default=None, description="Override slippage (None = use tier default)")
 
+    # Swing trading
+    hold_days: int = Field(default=1, description="Hold duration: 1=day trade (exit same day), 2+=swing trade")
+
 
 class BacktestJobStatus(BaseModel):
     """Status of a running backtest job"""
@@ -274,6 +277,8 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
             strike_selection=config.strike_selection,
             fixed_strike_distance=config.fixed_strike_distance,
             target_delta=config.target_delta,
+            # Swing trading
+            hold_days=config.hold_days,
         )
 
         _jobs[job_id]['progress'] = 15

@@ -234,6 +234,8 @@ class HybridFixedBacktester:
         strike_selection: str = "sd",  # sd, fixed, delta
         fixed_strike_distance: float = 50.0,  # For fixed method: points from price
         target_delta: float = 0.16,  # For delta method: target delta for short strikes
+        # Swing trading
+        hold_days: int = 1,  # 1 = day trade, 2+ = swing trade
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -258,6 +260,15 @@ class HybridFixedBacktester:
         self.strike_selection = strike_selection
         self.fixed_strike_distance = fixed_strike_distance
         self.target_delta = target_delta
+
+        # Swing trading
+        self.hold_days = hold_days
+        self.open_positions = []  # Track positions for swing trades
+        self.swing_stats = {
+            'positions_opened': 0,
+            'positions_closed': 0,
+            'avg_hold_days': 0,
+        }
 
         # Debug mode - traces all execution paths
         self.debug_mode = True  # Enable detailed logging
@@ -2054,10 +2065,211 @@ class HybridFixedBacktester:
 
         return trade
 
+    # ==================== SWING TRADING METHODS ====================
+
+    def _open_swing_position(self, trade_date: str, tier, vix: float) -> Optional[Dict]:
+        """Open a new swing position"""
+        # Get OHLC data
+        ohlc = self.spx_ohlc.get(trade_date)
+        if not ohlc:
+            return None
+
+        open_price = ohlc['open']
+
+        # Get options
+        options = self.get_options_for_date(trade_date, tier.target_dte)
+        if not options:
+            return None
+
+        # Calculate expected move
+        iv = self.estimate_iv(options)
+        expected_move = self.calculate_expected_move(open_price, iv, tier.sd_days)
+
+        # Find strategy
+        ic = self.find_strategy(options, open_price, iv, expected_move, tier.sd_days, tier.target_dte, vix)
+        if not ic:
+            return None
+
+        # Create position record
+        return {
+            'entry_date': trade_date,
+            'entry_price': open_price,
+            'strategy': ic,
+            'tier': tier,
+            'vix': vix,
+            'days_held': 0,
+        }
+
+    def _close_mature_positions(self, current_date: str, trading_days: List[str], current_idx: int):
+        """Close positions that have been held for hold_days"""
+        positions_to_close = []
+
+        for pos in self.open_positions:
+            # Find how many trading days since entry
+            try:
+                entry_idx = trading_days.index(pos['entry_date'])
+                days_held = current_idx - entry_idx
+                pos['days_held'] = days_held
+
+                if days_held >= self.hold_days:
+                    positions_to_close.append(pos)
+            except ValueError:
+                # Entry date not found, close anyway
+                positions_to_close.append(pos)
+
+        # Close mature positions
+        for pos in positions_to_close:
+            trade = self._close_swing_position(pos, current_date)
+            if trade:
+                self.all_trades.append(trade)
+            self.open_positions.remove(pos)
+            self.swing_stats['positions_closed'] += 1
+
+    def _close_swing_position(self, position: Dict, exit_date: str) -> Optional:
+        """Close a swing position and calculate P&L"""
+        ohlc = self.spx_ohlc.get(exit_date)
+        if not ohlc:
+            return None
+
+        close_price = ohlc['close']
+        ic = position['strategy']
+        tier = position['tier']
+
+        # Calculate P&L same as day trade but with swing entry/exit
+        is_debit_spread = ic.get('is_debit_spread', False)
+        is_put_debit_spread = ic.get('is_put_debit_spread', False)
+
+        put_pnl = 0
+        call_pnl = 0
+
+        # Put spread P&L
+        if is_put_debit_spread and ic['put_credit'] < 0:
+            debit_paid = abs(ic['put_credit'])
+            if close_price > ic['put_long_strike']:
+                put_pnl = -debit_paid
+            elif close_price > ic['put_short_strike']:
+                intrinsic = ic['put_long_strike'] - close_price
+                put_pnl = intrinsic - debit_paid
+            else:
+                put_pnl = self.spread_width - debit_paid
+        elif ic['put_credit'] > 0:
+            if close_price >= ic['put_short_strike']:
+                put_pnl = ic['put_credit']
+            elif close_price > ic['put_long_strike']:
+                intrinsic = ic['put_short_strike'] - close_price
+                put_pnl = ic['put_credit'] - intrinsic
+            else:
+                put_pnl = ic['put_credit'] - self.spread_width
+
+        # Call spread P&L
+        if is_debit_spread and ic['call_credit'] < 0:
+            debit_paid = abs(ic['call_credit'])
+            if close_price < ic['call_long_strike']:
+                call_pnl = -debit_paid
+            elif close_price < ic['call_short_strike']:
+                intrinsic = close_price - ic['call_long_strike']
+                call_pnl = intrinsic - debit_paid
+            else:
+                call_pnl = self.spread_width - debit_paid
+        elif ic['call_credit'] > 0:
+            if close_price <= ic['call_short_strike']:
+                call_pnl = ic['call_credit']
+            elif close_price < ic['call_long_strike']:
+                intrinsic = close_price - ic['call_short_strike']
+                call_pnl = ic['call_credit'] - intrinsic
+            else:
+                call_pnl = ic['call_credit'] - self.spread_width
+
+        # Total P&L
+        contracts = 1  # Simplified for swing
+        gross_pnl = (put_pnl + call_pnl) * 100 * contracts
+        total_costs = 10  # Simple cost estimate for swing
+        net_pnl = gross_pnl - total_costs
+
+        # Update equity
+        self.equity += net_pnl
+
+        # Track consecutive wins/losses
+        if net_pnl > 0:
+            self.current_consecutive_losses = 0
+        else:
+            self.current_consecutive_losses += 1
+            self.max_consecutive_losses = max(self.max_consecutive_losses, self.current_consecutive_losses)
+
+        # Create trade record matching DayTrade dataclass
+        self.trade_counter += 1
+        entry_ohlc = self.spx_ohlc.get(position['entry_date'], {})
+        entry_high = entry_ohlc.get('high', position['entry_price'])
+        entry_low = entry_ohlc.get('low', position['entry_price'])
+
+        trade = DayTrade(
+            trade_date=position['entry_date'],
+            trade_number=self.trade_counter,
+            tier_name=tier.name,
+            account_equity=self.equity,
+            target_dte=tier.target_dte,
+            actual_dte=ic.get('actual_dte', tier.target_dte),
+            sd_days_used=tier.sd_days,
+            vix=position['vix'],
+            open_price=position['entry_price'],
+            close_price=close_price,
+            daily_high=entry_high,
+            daily_low=entry_low,
+            underlying_price=position['entry_price'],
+            iv_used=ic.get('iv', position['vix'] / 100),
+            expected_move_1d=ic.get('expected_move', 0),
+            expected_move_sd=ic.get('expected_move', 0),
+            sd_multiplier=self.sd_multiplier,
+            put_short_strike=ic.get('put_short_strike', 0),
+            put_long_strike=ic.get('put_long_strike', 0),
+            put_credit_gross=ic.get('put_credit', 0),
+            put_credit_net=ic.get('put_credit', 0),
+            put_distance_from_open=position['entry_price'] - ic.get('put_short_strike', 0) if ic.get('put_short_strike') else 0,
+            call_short_strike=ic.get('call_short_strike', 0),
+            call_long_strike=ic.get('call_long_strike', 0),
+            call_credit_gross=ic.get('call_credit', 0),
+            call_credit_net=ic.get('call_credit', 0),
+            call_distance_from_open=ic.get('call_short_strike', 0) - position['entry_price'] if ic.get('call_short_strike') else 0,
+            total_credit_gross=ic.get('total_credit', 0),
+            total_credit_net=ic.get('total_credit', 0),
+            spread_width=self.spread_width,
+            max_loss=abs(ic.get('total_credit', 0)) if is_debit_spread else self.spread_width - ic.get('total_credit', 0),
+            total_costs=total_costs,
+            contracts=contracts,
+            contracts_requested=contracts,
+            total_premium=abs(ic.get('total_credit', 0)) * 100 * contracts,
+            total_risk=self.spread_width * 100 * contracts,
+            risk_pct=(self.spread_width * 100 * contracts) / self.equity * 100,
+            put_pnl=put_pnl * 100 * contracts,
+            call_pnl=call_pnl * 100 * contracts,
+            gross_pnl=gross_pnl,
+            net_pnl=net_pnl,
+            return_pct=(net_pnl / (self.spread_width * 100 * contracts)) * 100 if self.spread_width else 0,
+            outcome='WIN' if net_pnl > 0 else 'LOSS',
+            put_breached=put_pnl < 0,
+            call_breached=call_pnl < 0,
+            intraday_put_threat=False,
+            intraday_call_threat=False,
+        )
+
+        return trade
+
+    def _close_all_positions(self, exit_date: str):
+        """Close all remaining open positions"""
+        for pos in self.open_positions[:]:
+            trade = self._close_swing_position(pos, exit_date)
+            if trade:
+                self.all_trades.append(trade)
+            self.swing_stats['positions_closed'] += 1
+        self.open_positions.clear()
+
+    # ==================== MAIN RUN METHOD ====================
+
     def run(self) -> Dict:
         """Run the fixed hybrid backtest"""
+        trade_type = "SWING TRADES" if self.hold_days > 1 else "DAY TRADES"
         print("\n" + "=" * 80)
-        print("HYBRID SCALING STRATEGY - FIXED (DAY TRADES)")
+        print(f"HYBRID SCALING STRATEGY - FIXED ({trade_type})")
         print("=" * 80)
         print(f"Period:             {self.start_date} to {self.end_date}")
         print(f"Initial Capital:    ${self.initial_capital:,.2f}")
@@ -2154,11 +2366,27 @@ class HybridFixedBacktester:
             if not self.should_trade_today(trade_date, tier, vix_today):
                 continue
 
-            # Execute and settle trade (day trade)
-            trade = self.execute_and_settle_trade(trade_date, tier)
+            # Swing trading: Close positions that have reached hold_days
+            if self.hold_days > 1:
+                self._close_mature_positions(trade_date, trading_days, i)
 
-            if trade:
-                self.all_trades.append(trade)
+            # Execute and settle trade
+            if self.hold_days == 1:
+                # Day trade: enter and exit same day
+                trade = self.execute_and_settle_trade(trade_date, tier)
+                if trade:
+                    self.all_trades.append(trade)
+            else:
+                # Swing trade: open position if we don't have too many open
+                if len(self.open_positions) < 3:  # Max 3 concurrent positions
+                    position = self._open_swing_position(trade_date, tier, vix_today)
+                    if position:
+                        self.open_positions.append(position)
+                        self.swing_stats['positions_opened'] += 1
+
+        # Close any remaining open positions at end
+        if self.hold_days > 1 and self.open_positions:
+            self._close_all_positions(trading_days[-1] if trading_days else None)
 
         print(f"\r  [{'█' * 40}] 100.0% Complete!{' ' * 40}")
 
