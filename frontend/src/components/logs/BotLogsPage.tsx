@@ -6,7 +6,7 @@ import Navigation from '@/components/Navigation'
 import DecisionFilterPanel from './DecisionFilterPanel'
 import ClaudeConversationViewer from './ClaudeConversationViewer'
 import ExecutionTimeline from './ExecutionTimeline'
-import { api } from '@/lib/api'
+import apiClient from '@/lib/api'
 
 interface Decision {
   decision_id: string
@@ -131,7 +131,7 @@ export default function BotLogsPage({ botName, botColor, botDescription }: BotLo
   const fetchDecisions = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await api.getBotDecisions({
+      const response = await apiClient.getBotDecisions({
         bot: botName,
         limit: 100,
         decision_type: filters.decisionType !== 'all' ? filters.decisionType : undefined,
@@ -149,7 +149,7 @@ export default function BotLogsPage({ botName, botColor, botDescription }: BotLo
 
   const fetchStats = useCallback(async () => {
     try {
-      const response = await api.getBotDecisionStats(botName, 30)
+      const response = await apiClient.getBotDecisionStats(botName, 30)
       setStats(response.data?.data?.stats || null)
     } catch (error) {
       console.error('Error fetching stats:', error)
@@ -164,7 +164,7 @@ export default function BotLogsPage({ botName, botColor, botDescription }: BotLo
   const handleExport = async (format: 'csv' | 'json' | 'excel') => {
     setIsExporting(true)
     try {
-      const response = await api.exportBotDecisions({
+      const response = await apiClient.exportBotDecisions({
         bot: botName,
         format,
         days: 30
