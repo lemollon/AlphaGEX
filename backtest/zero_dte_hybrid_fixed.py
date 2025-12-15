@@ -194,6 +194,11 @@ class DayTrade:
     gex_call_wall: Optional[float] = None
     gex_regime: str = ""
 
+    # Intraday exit info
+    exit_type: str = "EOD"  # EOD, TAKE_PROFIT, STOP_LOSS, WALL_BREAK, TIME_EXIT
+    exit_price: Optional[float] = None  # Price at exit (if not EOD)
+    exit_pnl_pct: Optional[float] = None  # P&L % at exit point
+
 
 class HybridFixedBacktester:
     """
@@ -239,6 +244,11 @@ class HybridFixedBacktester:
         # Apache directional settings
         wall_proximity_pct: float = 1.0,  # How close to wall to trigger (1.0 = 1%, 2.0 = 2%)
         gex_regime_filter: str = None,  # 'positive', 'negative', or None (any)
+        # Intraday exit strategies
+        take_profit_pct: float = None,  # Exit at X% of max profit (e.g., 0.5 = 50%)
+        intraday_stop_loss_pct: float = None,  # Exit at X% of max loss (e.g., 0.4 = 40%)
+        exit_on_wall_break: bool = False,  # Exit if price breaks opposite GEX wall
+        exit_by_hour: int = None,  # Exit by this hour if profitable (e.g., 14 = 2pm)
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -271,6 +281,22 @@ class HybridFixedBacktester:
         # Apache directional settings
         self.wall_proximity_pct = wall_proximity_pct
         self.gex_regime_filter = gex_regime_filter  # 'positive', 'negative', or None
+
+        # Intraday exit strategies
+        self.take_profit_pct = take_profit_pct
+        self.intraday_stop_loss_pct = intraday_stop_loss_pct
+        self.exit_on_wall_break = exit_on_wall_break
+        self.exit_by_hour = exit_by_hour
+
+        # Intraday exit stats
+        self.intraday_exit_stats = {
+            'take_profit_exits': 0,
+            'stop_loss_exits': 0,
+            'wall_break_exits': 0,
+            'time_based_exits': 0,
+            'held_to_close': 0,
+        }
+
         self.swing_stats = {
             'positions_opened': 0,
             'positions_closed': 0,
@@ -432,6 +458,274 @@ class HybridFixedBacktester:
         except Exception as e:
             self.ml_stats['ml_unavailable'] += 1
             return None
+
+    def simulate_intraday_exit(
+        self,
+        strategy_type: str,
+        is_debit_spread: bool,
+        debit_paid: float,
+        spread_width: float,
+        # Strikes
+        long_strike: float,
+        short_strike: float,
+        # OHLC
+        open_price: float,
+        high_price: float,
+        low_price: float,
+        close_price: float,
+        # GEX walls (for wall break exit)
+        put_wall: float = None,
+        call_wall: float = None,
+        entry_direction: str = None,  # 'BULLISH' or 'BEARISH'
+    ) -> Dict:
+        """
+        Simulate intraday exit logic for debit spreads.
+
+        Uses OHLC to estimate if exit conditions would be triggered.
+        Since we don't have minute data, we make conservative assumptions.
+
+        Returns:
+            Dict with:
+                - exit_type: 'EOD', 'TAKE_PROFIT', 'STOP_LOSS', 'WALL_BREAK', 'TIME_EXIT'
+                - exit_price: estimated price at exit
+                - exit_pnl: P&L at exit
+                - exit_pnl_pct: P&L as % of max profit
+        """
+        # Calculate max profit and max loss for debit spread
+        max_profit = spread_width - debit_paid
+        max_loss = debit_paid
+
+        def calc_spread_value(price: float) -> float:
+            """Calculate spread value at a given price"""
+            if strategy_type in ['bull_call', 'bull_call_spread']:
+                # Bull Call: long lower call, short higher call
+                # long_strike = lower, short_strike = higher
+                if price <= long_strike:
+                    return 0  # Both OTM
+                elif price >= short_strike:
+                    return spread_width  # Both ITM, max profit
+                else:
+                    return price - long_strike  # Long ITM, short OTM
+            else:  # bear_put, bear_put_spread
+                # Bear Put: long higher put, short lower put
+                # long_strike = higher, short_strike = lower
+                if price >= long_strike:
+                    return 0  # Both OTM
+                elif price <= short_strike:
+                    return spread_width  # Both ITM, max profit
+                else:
+                    return long_strike - price  # Long ITM, short OTM
+
+        def calc_pnl(price: float) -> float:
+            """Calculate P&L at a given price"""
+            return calc_spread_value(price) - debit_paid
+
+        def calc_pnl_pct(price: float) -> float:
+            """Calculate P&L as % of max profit"""
+            pnl = calc_pnl(price)
+            if max_profit > 0:
+                return (pnl / max_profit) * 100
+            return 0
+
+        # Default: hold to close
+        result = {
+            'exit_type': 'EOD',
+            'exit_price': close_price,
+            'exit_pnl': calc_pnl(close_price),
+            'exit_pnl_pct': calc_pnl_pct(close_price),
+        }
+
+        # === TAKE PROFIT CHECK ===
+        # For bullish trades, check if high reached take profit
+        # For bearish trades, check if low reached take profit
+        if self.take_profit_pct is not None:
+            take_profit_threshold = max_profit * self.take_profit_pct
+
+            if strategy_type in ['bull_call', 'bull_call_spread']:
+                # Bullish: profit increases as price goes UP
+                high_pnl = calc_pnl(high_price)
+                if high_pnl >= take_profit_threshold:
+                    # Find estimated exit price for take profit
+                    # Solve: calc_pnl(exit_price) = take_profit_threshold
+                    # exit_price - long_strike - debit_paid = take_profit_threshold
+                    estimated_exit = long_strike + debit_paid + take_profit_threshold
+                    estimated_exit = min(estimated_exit, high_price)  # Can't exit higher than high
+                    result = {
+                        'exit_type': 'TAKE_PROFIT',
+                        'exit_price': estimated_exit,
+                        'exit_pnl': take_profit_threshold,
+                        'exit_pnl_pct': self.take_profit_pct * 100,
+                    }
+                    self.intraday_exit_stats['take_profit_exits'] += 1
+                    return result
+            else:  # bear_put
+                # Bearish: profit increases as price goes DOWN
+                low_pnl = calc_pnl(low_price)
+                if low_pnl >= take_profit_threshold:
+                    # Solve: long_strike - exit_price - debit_paid = take_profit_threshold
+                    estimated_exit = long_strike - debit_paid - take_profit_threshold
+                    estimated_exit = max(estimated_exit, low_price)  # Can't exit lower than low
+                    result = {
+                        'exit_type': 'TAKE_PROFIT',
+                        'exit_price': estimated_exit,
+                        'exit_pnl': take_profit_threshold,
+                        'exit_pnl_pct': self.take_profit_pct * 100,
+                    }
+                    self.intraday_exit_stats['take_profit_exits'] += 1
+                    return result
+
+        # === STOP LOSS CHECK ===
+        # For bullish trades, check if low triggered stop
+        # For bearish trades, check if high triggered stop
+        if self.intraday_stop_loss_pct is not None:
+            stop_loss_threshold = -max_loss * self.intraday_stop_loss_pct  # Negative P&L
+
+            if strategy_type in ['bull_call', 'bull_call_spread']:
+                # Bullish: loss increases as price goes DOWN
+                low_pnl = calc_pnl(low_price)
+                if low_pnl <= stop_loss_threshold:
+                    # Stop triggered at low
+                    result = {
+                        'exit_type': 'STOP_LOSS',
+                        'exit_price': low_price,
+                        'exit_pnl': stop_loss_threshold,
+                        'exit_pnl_pct': -self.intraday_stop_loss_pct * 100,
+                    }
+                    self.intraday_exit_stats['stop_loss_exits'] += 1
+                    return result
+            else:  # bear_put
+                # Bearish: loss increases as price goes UP
+                high_pnl = calc_pnl(high_price)
+                if high_pnl <= stop_loss_threshold:
+                    # Stop triggered at high
+                    result = {
+                        'exit_type': 'STOP_LOSS',
+                        'exit_price': high_price,
+                        'exit_pnl': stop_loss_threshold,
+                        'exit_pnl_pct': -self.intraday_stop_loss_pct * 100,
+                    }
+                    self.intraday_exit_stats['stop_loss_exits'] += 1
+                    return result
+
+        # === WALL BREAK EXIT ===
+        # Exit if price breaks through the OPPOSITE wall (thesis broken)
+        if self.exit_on_wall_break:
+            if strategy_type in ['bull_call', 'bull_call_spread'] and put_wall:
+                # Bullish trade near put wall - exit if price BREAKS BELOW put wall
+                if low_price < put_wall:
+                    result = {
+                        'exit_type': 'WALL_BREAK',
+                        'exit_price': put_wall,  # Assume exit at wall
+                        'exit_pnl': calc_pnl(put_wall),
+                        'exit_pnl_pct': calc_pnl_pct(put_wall),
+                    }
+                    self.intraday_exit_stats['wall_break_exits'] += 1
+                    return result
+            elif strategy_type in ['bear_put', 'bear_put_spread'] and call_wall:
+                # Bearish trade near call wall - exit if price BREAKS ABOVE call wall
+                if high_price > call_wall:
+                    result = {
+                        'exit_type': 'WALL_BREAK',
+                        'exit_price': call_wall,  # Assume exit at wall
+                        'exit_pnl': calc_pnl(call_wall),
+                        'exit_pnl_pct': calc_pnl_pct(call_wall),
+                    }
+                    self.intraday_exit_stats['wall_break_exits'] += 1
+                    return result
+
+        # === TIME-BASED EXIT ===
+        # Exit at specified hour if profitable
+        # Since we only have OHLC, we estimate mid-day price
+        if self.exit_by_hour is not None:
+            # Estimate price at exit hour using linear interpolation
+            # Market hours: 9:30 AM to 4:00 PM = 6.5 hours
+            # If exit_by_hour = 14 (2 PM), that's 4.5 hours into the day (69% through)
+            hours_in_day = 6.5
+            hours_to_exit = self.exit_by_hour - 9.5  # Hours from market open
+            if hours_to_exit > 0 and hours_to_exit < hours_in_day:
+                progress = hours_to_exit / hours_in_day
+
+                # Simple model: price moves open -> (high or low) -> close
+                # Estimate mid-day price based on high/low proximity to open/close
+                if abs(high_price - open_price) < abs(high_price - close_price):
+                    # High was hit earlier in day
+                    if progress < 0.5:
+                        estimated_price = open_price + (high_price - open_price) * (progress * 2)
+                    else:
+                        estimated_price = high_price + (close_price - high_price) * ((progress - 0.5) * 2)
+                else:
+                    # High was hit later in day - assume low was hit first
+                    if progress < 0.5:
+                        estimated_price = open_price + (low_price - open_price) * (progress * 2)
+                    else:
+                        estimated_price = low_price + (close_price - low_price) * ((progress - 0.5) * 2)
+
+                # Only exit if profitable at estimated time
+                estimated_pnl = calc_pnl(estimated_price)
+                if estimated_pnl > 0:
+                    result = {
+                        'exit_type': 'TIME_EXIT',
+                        'exit_price': estimated_price,
+                        'exit_pnl': estimated_pnl,
+                        'exit_pnl_pct': calc_pnl_pct(estimated_price),
+                    }
+                    self.intraday_exit_stats['time_based_exits'] += 1
+                    return result
+
+        # No early exit - hold to close
+        self.intraday_exit_stats['held_to_close'] += 1
+        return result
+
+    def _update_trade_stats(self, trade: DayTrade, tier: 'ScalingTier', net_pnl: float, trade_date: str):
+        """Helper method to update all trade statistics after a trade."""
+        # Update equity
+        self.equity += net_pnl
+        self.high_water_mark = max(self.high_water_mark, self.equity)
+
+        # Track daily return for risk metrics
+        if self.equity > 0:
+            daily_return = net_pnl / (self.equity - net_pnl) if (self.equity - net_pnl) > 0 else 0
+            self.daily_returns.append(daily_return)
+
+        # Track equity curve
+        drawdown_pct = (self.high_water_mark - self.equity) / self.high_water_mark * 100 if self.high_water_mark > 0 else 0
+        self.equity_curve.append({
+            'date': trade_date,
+            'equity': self.equity,
+            'drawdown_pct': drawdown_pct,
+            'daily_pnl': net_pnl
+        })
+
+        # Tier stats
+        self.tier_stats[tier.name]['trades'] += 1
+        self.tier_stats[tier.name]['pnl'] += net_pnl
+        if net_pnl > 0:
+            self.tier_stats[tier.name]['wins'] += 1
+            self.current_consecutive_losses = 0
+        else:
+            self.tier_stats[tier.name]['losses'] += 1
+            self.current_consecutive_losses += 1
+            self.max_consecutive_losses = max(self.max_consecutive_losses, self.current_consecutive_losses)
+
+        # Day of week stats
+        dt = datetime.strptime(trade_date, '%Y-%m-%d')
+        weekday = dt.weekday()
+        if weekday in self.day_of_week_stats:
+            self.day_of_week_stats[weekday]['trades'] += 1
+            self.day_of_week_stats[weekday]['pnl'] += net_pnl
+            if net_pnl > 0:
+                self.day_of_week_stats[weekday]['wins'] += 1
+
+        # VIX level stats
+        vix = trade.vix
+        vix_level = 'low' if vix < 15 else ('medium' if vix < 25 else 'high')
+        self.vix_level_stats[vix_level]['trades'] += 1
+        self.vix_level_stats[vix_level]['pnl'] += net_pnl
+        if net_pnl > 0:
+            self.vix_level_stats[vix_level]['wins'] += 1
+
+        # Add trade to list
+        self.all_trades.append(trade)
 
     def get_connection(self):
         """
@@ -2020,10 +2314,261 @@ class HybridFixedBacktester:
         # This is where we PROPERLY simulate exiting at EOD
         strategy_type = ic.get('strategy_type', 'iron_condor')
 
+        # === INTRADAY EXIT SIMULATION FOR DEBIT SPREADS ===
+        # Check if this is a debit spread with intraday exit options enabled
+        is_debit_spread = ic.get('is_debit_spread', False)
+        is_put_debit_spread = ic.get('is_put_debit_spread', False)
+        has_intraday_exit_options = (
+            self.take_profit_pct is not None or
+            self.intraday_stop_loss_pct is not None or
+            self.exit_on_wall_break or
+            self.exit_by_hour is not None
+        )
+
+        # Initialize exit tracking
+        exit_type = 'EOD'
+        exit_price = close_price
+        exit_pnl_pct = None
+
+        # Apply intraday exit simulation for debit spreads
+        if has_intraday_exit_options and (is_debit_spread or is_put_debit_spread):
+            # Determine strategy type for exit simulation
+            if is_debit_spread and ic['call_credit'] < 0:
+                # Bull Call Spread
+                debit_paid = abs(ic['call_credit'])
+                exit_result = self.simulate_intraday_exit(
+                    strategy_type='bull_call',
+                    is_debit_spread=True,
+                    debit_paid=debit_paid,
+                    spread_width=self.spread_width,
+                    long_strike=ic['call_long_strike'],
+                    short_strike=ic['call_short_strike'],
+                    open_price=open_price,
+                    high_price=daily_high,
+                    low_price=daily_low,
+                    close_price=close_price,
+                    put_wall=ic.get('gex_put_wall'),
+                    call_wall=ic.get('gex_call_wall'),
+                    entry_direction='BULLISH',
+                )
+                exit_type = exit_result['exit_type']
+                exit_price = exit_result['exit_price']
+                exit_pnl_pct = exit_result['exit_pnl_pct']
+
+                # Use the exit P&L directly if early exit
+                if exit_type != 'EOD':
+                    # Calculate call P&L at exit price
+                    if exit_price < ic['call_long_strike']:
+                        call_pnl = -debit_paid
+                        call_breached = True
+                    elif exit_price >= ic['call_short_strike']:
+                        call_pnl = self.spread_width - debit_paid
+                        call_breached = False
+                    else:
+                        intrinsic = exit_price - ic['call_long_strike']
+                        call_pnl = intrinsic - debit_paid
+                        call_breached = call_pnl < 0
+
+                    put_pnl = 0
+                    put_breached = False
+
+                    # Skip normal P&L calculation
+                    gross_pnl = (put_pnl + call_pnl) * 100 * contracts
+                    net_pnl = gross_pnl - total_costs
+                    return_pct = (net_pnl / (max_loss * 100 * contracts) * 100) if max_loss > 0 else 0
+
+                    outcome = "EARLY_EXIT_" + exit_type
+                    if call_pnl > 0:
+                        outcome = "TAKE_PROFIT" if exit_type == 'TAKE_PROFIT' else outcome
+
+                    # Jump to trade creation
+                    intraday_put_threat = ic['put_short_strike'] > 0 and daily_low < ic['put_short_strike']
+                    intraday_call_threat = ic['call_short_strike'] > 0 and daily_high > ic['call_short_strike']
+
+                    self.trade_counter += 1
+                    self.trades_this_week += 1
+
+                    trade = DayTrade(
+                        trade_date=trade_date,
+                        trade_number=self.trade_counter,
+                        tier_name=tier.name,
+                        account_equity=self.equity,
+                        target_dte=tier.target_dte,
+                        actual_dte=ic['actual_dte'],
+                        sd_days_used=tier.sd_days,
+                        vix=vix,
+                        open_price=open_price,
+                        close_price=close_price,
+                        daily_high=daily_high,
+                        daily_low=daily_low,
+                        underlying_price=underlying,
+                        iv_used=iv,
+                        expected_move_1d=expected_move_1d,
+                        expected_move_sd=expected_move_sd,
+                        sd_multiplier=self.sd_multiplier,
+                        put_short_strike=ic['put_short_strike'],
+                        put_long_strike=ic['put_long_strike'],
+                        put_credit_gross=ic['put_credit'],
+                        put_credit_net=put_credit_net,
+                        put_distance_from_open=open_price - ic['put_short_strike'],
+                        call_short_strike=ic['call_short_strike'],
+                        call_long_strike=ic['call_long_strike'],
+                        call_credit_gross=ic['call_credit'],
+                        call_credit_net=call_credit_net,
+                        call_distance_from_open=ic['call_short_strike'] - open_price,
+                        total_credit_gross=ic['total_credit'],
+                        total_credit_net=total_credit_net,
+                        spread_width=self.spread_width,
+                        max_loss=max_loss,
+                        total_costs=total_costs,
+                        contracts=contracts,
+                        contracts_requested=contracts_requested,
+                        total_premium=total_credit_net * 100 * contracts,
+                        total_risk=max_loss * 100 * contracts,
+                        risk_pct=(max_loss * 100 * contracts / self.equity) * 100,
+                        put_pnl=put_pnl,
+                        call_pnl=call_pnl,
+                        gross_pnl=gross_pnl,
+                        net_pnl=net_pnl,
+                        return_pct=return_pct,
+                        outcome=outcome,
+                        put_breached=put_breached,
+                        call_breached=call_breached,
+                        intraday_put_threat=intraday_put_threat,
+                        intraday_call_threat=intraday_call_threat,
+                        gex_protected=ic.get('gex_protected', False),
+                        gex_put_wall=ic.get('gex_put_wall'),
+                        gex_call_wall=ic.get('gex_call_wall'),
+                        gex_regime=ic.get('gex_regime', ''),
+                        exit_type=exit_type,
+                        exit_price=exit_price,
+                        exit_pnl_pct=exit_pnl_pct,
+                    )
+
+                    # Update equity and stats (same as normal flow)
+                    self._update_trade_stats(trade, tier, net_pnl, trade_date)
+                    return trade
+
+            elif is_put_debit_spread and ic['put_credit'] < 0:
+                # Bear Put Spread
+                debit_paid = abs(ic['put_credit'])
+                exit_result = self.simulate_intraday_exit(
+                    strategy_type='bear_put',
+                    is_debit_spread=True,
+                    debit_paid=debit_paid,
+                    spread_width=self.spread_width,
+                    long_strike=ic['put_long_strike'],
+                    short_strike=ic['put_short_strike'],
+                    open_price=open_price,
+                    high_price=daily_high,
+                    low_price=daily_low,
+                    close_price=close_price,
+                    put_wall=ic.get('gex_put_wall'),
+                    call_wall=ic.get('gex_call_wall'),
+                    entry_direction='BEARISH',
+                )
+                exit_type = exit_result['exit_type']
+                exit_price = exit_result['exit_price']
+                exit_pnl_pct = exit_result['exit_pnl_pct']
+
+                # Use the exit P&L directly if early exit
+                if exit_type != 'EOD':
+                    # Calculate put P&L at exit price
+                    if exit_price > ic['put_long_strike']:
+                        put_pnl = -debit_paid
+                        put_breached = True
+                    elif exit_price <= ic['put_short_strike']:
+                        put_pnl = self.spread_width - debit_paid
+                        put_breached = False
+                    else:
+                        intrinsic = ic['put_long_strike'] - exit_price
+                        put_pnl = intrinsic - debit_paid
+                        put_breached = put_pnl < 0
+
+                    call_pnl = 0
+                    call_breached = False
+
+                    # Calculate final P&L
+                    gross_pnl = (put_pnl + call_pnl) * 100 * contracts
+                    net_pnl = gross_pnl - total_costs
+                    return_pct = (net_pnl / (max_loss * 100 * contracts) * 100) if max_loss > 0 else 0
+
+                    outcome = "EARLY_EXIT_" + exit_type
+                    if put_pnl > 0:
+                        outcome = "TAKE_PROFIT" if exit_type == 'TAKE_PROFIT' else outcome
+
+                    # Check intraday threats
+                    intraday_put_threat = ic['put_short_strike'] > 0 and daily_low < ic['put_short_strike']
+                    intraday_call_threat = ic['call_short_strike'] > 0 and daily_high > ic['call_short_strike']
+
+                    self.trade_counter += 1
+                    self.trades_this_week += 1
+
+                    trade = DayTrade(
+                        trade_date=trade_date,
+                        trade_number=self.trade_counter,
+                        tier_name=tier.name,
+                        account_equity=self.equity,
+                        target_dte=tier.target_dte,
+                        actual_dte=ic['actual_dte'],
+                        sd_days_used=tier.sd_days,
+                        vix=vix,
+                        open_price=open_price,
+                        close_price=close_price,
+                        daily_high=daily_high,
+                        daily_low=daily_low,
+                        underlying_price=underlying,
+                        iv_used=iv,
+                        expected_move_1d=expected_move_1d,
+                        expected_move_sd=expected_move_sd,
+                        sd_multiplier=self.sd_multiplier,
+                        put_short_strike=ic['put_short_strike'],
+                        put_long_strike=ic['put_long_strike'],
+                        put_credit_gross=ic['put_credit'],
+                        put_credit_net=put_credit_net,
+                        put_distance_from_open=open_price - ic['put_short_strike'],
+                        call_short_strike=ic['call_short_strike'],
+                        call_long_strike=ic['call_long_strike'],
+                        call_credit_gross=ic['call_credit'],
+                        call_credit_net=call_credit_net,
+                        call_distance_from_open=ic['call_short_strike'] - open_price,
+                        total_credit_gross=ic['total_credit'],
+                        total_credit_net=total_credit_net,
+                        spread_width=self.spread_width,
+                        max_loss=max_loss,
+                        total_costs=total_costs,
+                        contracts=contracts,
+                        contracts_requested=contracts_requested,
+                        total_premium=total_credit_net * 100 * contracts,
+                        total_risk=max_loss * 100 * contracts,
+                        risk_pct=(max_loss * 100 * contracts / self.equity) * 100,
+                        put_pnl=put_pnl,
+                        call_pnl=call_pnl,
+                        gross_pnl=gross_pnl,
+                        net_pnl=net_pnl,
+                        return_pct=return_pct,
+                        outcome=outcome,
+                        put_breached=put_breached,
+                        call_breached=call_breached,
+                        intraday_put_threat=intraday_put_threat,
+                        intraday_call_threat=intraday_call_threat,
+                        gex_protected=ic.get('gex_protected', False),
+                        gex_put_wall=ic.get('gex_put_wall'),
+                        gex_call_wall=ic.get('gex_call_wall'),
+                        gex_regime=ic.get('gex_regime', ''),
+                        exit_type=exit_type,
+                        exit_price=exit_price,
+                        exit_pnl_pct=exit_pnl_pct,
+                    )
+
+                    # Update equity and stats
+                    self._update_trade_stats(trade, tier, net_pnl, trade_date)
+                    return trade
+
+        # === NORMAL EOD P&L CALCULATION (fallback) ===
         # Put spread P&L at close (if applicable)
         put_pnl = 0
         put_breached = False
-        is_put_debit_spread = ic.get('is_put_debit_spread', False)
 
         if is_put_debit_spread and ic['put_credit'] < 0:
             # PUT DEBIT SPREAD (Bear Put Spread) - long at higher strike, short at lower strike
@@ -2174,52 +2719,14 @@ class HybridFixedBacktester:
             gex_put_wall=ic.get('gex_put_wall'),
             gex_call_wall=ic.get('gex_call_wall'),
             gex_regime=ic.get('gex_regime', ''),
+            # Intraday exit info (EOD for normal flow)
+            exit_type=exit_type,
+            exit_price=exit_price,
+            exit_pnl_pct=exit_pnl_pct,
         )
 
-        # Update equity and stats
-        self.equity += net_pnl
-        self.high_water_mark = max(self.high_water_mark, self.equity)
-
-        # Track daily return for risk metrics
-        if self.equity > 0:
-            daily_return = net_pnl / (self.equity - net_pnl) if (self.equity - net_pnl) > 0 else 0
-            self.daily_returns.append(daily_return)
-
-        # Track equity curve
-        drawdown_pct = (self.high_water_mark - self.equity) / self.high_water_mark * 100 if self.high_water_mark > 0 else 0
-        self.equity_curve.append({
-            'date': trade_date,
-            'equity': self.equity,
-            'drawdown_pct': drawdown_pct,
-            'daily_pnl': net_pnl
-        })
-
-        # Tier stats
-        self.tier_stats[tier.name]['trades'] += 1
-        self.tier_stats[tier.name]['pnl'] += net_pnl
-        if net_pnl > 0:
-            self.tier_stats[tier.name]['wins'] += 1
-            self.current_consecutive_losses = 0
-        else:
-            self.tier_stats[tier.name]['losses'] += 1
-            self.current_consecutive_losses += 1
-            self.max_consecutive_losses = max(self.max_consecutive_losses, self.current_consecutive_losses)
-
-        # Day of week stats
-        dt = datetime.strptime(trade_date, '%Y-%m-%d')
-        weekday = dt.weekday()
-        if weekday in self.day_of_week_stats:
-            self.day_of_week_stats[weekday]['trades'] += 1
-            self.day_of_week_stats[weekday]['pnl'] += net_pnl
-            if net_pnl > 0:
-                self.day_of_week_stats[weekday]['wins'] += 1
-
-        # VIX level stats
-        vix_level = 'low' if vix < 15 else ('medium' if vix < 25 else 'high')
-        self.vix_level_stats[vix_level]['trades'] += 1
-        self.vix_level_stats[vix_level]['pnl'] += net_pnl
-        if net_pnl > 0:
-            self.vix_level_stats[vix_level]['wins'] += 1
+        # Update equity and stats using helper method
+        self._update_trade_stats(trade, tier, net_pnl, trade_date)
 
         return trade
 
@@ -2762,6 +3269,8 @@ class HybridFixedBacktester:
             'equity_curve': self.equity_curve,
             'all_trades': all_trades_dicts,
             'gex_stats': self.gex_stats if self.strategy_type == 'gex_protected_iron_condor' else None,
+            'intraday_exit_stats': self.intraday_exit_stats,
+            'ml_stats': self.ml_stats if self.strategy_type == 'apache_directional' else None,
         }
 
     def print_results(self, results: Dict):
@@ -2837,6 +3346,35 @@ class HybridFixedBacktester:
                 print(f"  SD Fallback Trades:   {sd_fallback_trades:>10} ({100 - gex_wall_pct:.1f}%)")
                 print(f"  GEX Unavailable Days: {gex_stats.get('gex_unavailable_days', 0):>10}")
 
+        # Intraday exit stats (for apache_directional with exit options)
+        intraday_stats = results.get('intraday_exit_stats', {})
+        total_exits = sum(intraday_stats.values()) if intraday_stats else 0
+        if total_exits > 0 and any(v > 0 for k, v in intraday_stats.items() if k != 'held_to_close'):
+            print(f"\nINTRADAY EXIT STATS")
+            tp = intraday_stats.get('take_profit_exits', 0)
+            sl = intraday_stats.get('stop_loss_exits', 0)
+            wb = intraday_stats.get('wall_break_exits', 0)
+            te = intraday_stats.get('time_based_exits', 0)
+            eod = intraday_stats.get('held_to_close', 0)
+            if tp > 0:
+                print(f"  Take Profit Exits:    {tp:>10} ({tp/total_exits*100:.1f}%)")
+            if sl > 0:
+                print(f"  Stop Loss Exits:      {sl:>10} ({sl/total_exits*100:.1f}%)")
+            if wb > 0:
+                print(f"  Wall Break Exits:     {wb:>10} ({wb/total_exits*100:.1f}%)")
+            if te > 0:
+                print(f"  Time-Based Exits:     {te:>10} ({te/total_exits*100:.1f}%)")
+            print(f"  Held to Close (EOD):  {eod:>10} ({eod/total_exits*100:.1f}%)")
+
+        # ML stats (for apache_directional)
+        ml_stats = results.get('ml_stats')
+        if ml_stats and ml_stats.get('ml_predictions', 0) > 0:
+            print(f"\nML PREDICTION STATS")
+            print(f"  ML Predictions:       {ml_stats.get('ml_predictions', 0):>10}")
+            print(f"  ML Confirmed:         {ml_stats.get('ml_confirmed_trades', 0):>10}")
+            print(f"  ML Rejected:          {ml_stats.get('ml_rejected_trades', 0):>10}")
+            print(f"  ML Unavailable:       {ml_stats.get('ml_unavailable', 0):>10}")
+
         print(f"\nOUTCOME BREAKDOWN")
         for outcome, count in sorted(o.items(), key=lambda x: -x[1]):
             pct = count / t['total'] * 100
@@ -2906,6 +3444,16 @@ def main():
     parser.add_argument('--gex-regime', type=str, default=None, choices=['positive', 'negative'],
                        help='GEX regime filter: positive (mean-reverting), negative (trending), or omit for any')
 
+    # Intraday exit options (for debit spreads like apache_directional)
+    parser.add_argument('--take-profit', type=float, default=None,
+                       help='Take profit at X%% of max profit (e.g., 0.5 = 50%%). Exit early when spread reaches target.')
+    parser.add_argument('--stop-loss', type=float, default=None,
+                       help='Stop loss at X%% of max loss (e.g., 0.4 = 40%%). Exit early to limit losses.')
+    parser.add_argument('--exit-on-wall-break', action='store_true',
+                       help='Exit if price breaks through the GEX wall (thesis broken)')
+    parser.add_argument('--exit-by-hour', type=int, default=None,
+                       help='Exit by this hour (EST) if profitable (e.g., 14 = 2pm). Range: 10-15')
+
     # Cost overrides for testing
     parser.add_argument('--slippage', type=float, default=None,
                        help='Override slippage per spread (default: tier-based, 0.15 for 0DTE)')
@@ -2928,6 +3476,12 @@ def main():
         hold_days=args.hold_days,
         wall_proximity_pct=args.wall_proximity,
         gex_regime_filter=args.gex_regime,
+        # Intraday exit options
+        take_profit_pct=args.take_profit,
+        intraday_stop_loss_pct=args.stop_loss,
+        exit_on_wall_break=args.exit_on_wall_break,
+        exit_by_hour=args.exit_by_hour,
+        # Cost overrides
         slippage_per_spread_override=args.slippage,
         commission_per_leg_override=args.commission,
     )
