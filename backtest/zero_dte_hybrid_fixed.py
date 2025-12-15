@@ -1242,6 +1242,11 @@ class HybridFixedBacktester:
         call_wall_distance_pct = abs(spot - call_wall) / spot * 100 if call_wall else 100
         max_wall_distance = self.wall_proximity_pct
 
+        # One-time debug output for wall distance
+        if not hasattr(self, '_wall_debug_shown'):
+            self._wall_debug_shown = True
+            print(f"   WALL DEBUG: spot=${spot:.0f}, put_wall=${put_wall:.0f}, distance={put_wall_distance_pct:.1f}%, threshold={max_wall_distance}%")
+
         # Check if we're within trading range of available walls
         near_put_wall = put_wall and put_wall_distance_pct <= max_wall_distance
         near_call_wall = call_wall and call_wall_distance_pct <= max_wall_distance
