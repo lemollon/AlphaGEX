@@ -297,6 +297,13 @@ class HybridFixedBacktester:
                 'no_long_call': 0,
                 'bad_put_credit': 0,
                 'bad_call_credit': 0,
+                # Apache directional specific
+                'apache_no_gex_walls': 0,
+                'apache_no_gamma_data': 0,
+                'apache_not_near_wall': 0,
+                'apache_no_gex_asymmetry': 0,
+                'apache_ml_rejected': 0,
+                'apache_spread_failed': 0,
             }
         }
 
@@ -1098,10 +1105,14 @@ class HybridFixedBacktester:
         Returns dict with put_wall (support) and call_wall (resistance).
         """
         if not options:
-            return {'put_wall': 0, 'call_wall': 0, 'net_gex': 0}
+            return {'put_wall': 0, 'call_wall': 0, 'net_gex': 0, 'has_gamma_data': False}
 
         # Group by strike and calculate GEX
         strike_gex = {}
+        has_any_gamma = False
+        has_any_oi = False
+        debug_gamma_count = 0
+        debug_oi_count = 0
 
         for opt in options:
             strike = opt.get('strike', 0)
@@ -1115,14 +1126,27 @@ class HybridFixedBacktester:
             # GEX formula: gamma × OI × 100 × spot²
             # Calls have positive gamma exposure, puts have negative
             if gamma > 0:
+                has_any_gamma = True
+                debug_gamma_count += 1
+                if call_oi > 0 or put_oi > 0:
+                    has_any_oi = True
+                    debug_oi_count += 1
                 call_gex = gamma * call_oi * 100 * (spot_price ** 2) / 1e9  # Scale down
                 put_gex = gamma * put_oi * 100 * (spot_price ** 2) / 1e9
 
                 strike_gex[strike]['call_gex'] += call_gex
                 strike_gex[strike]['put_gex'] += put_gex
 
-        if not strike_gex:
-            return {'put_wall': 0, 'call_wall': 0, 'net_gex': 0}
+        # One-time debug output
+        if not hasattr(self, '_gex_debug_shown'):
+            self._gex_debug_shown = True
+            print(f"\n   GEX DEBUG: {len(options)} options, {debug_gamma_count} with gamma>0, {debug_oi_count} with OI>0")
+            if options:
+                sample = options[0]
+                print(f"   Sample option: gamma={sample.get('gamma')}, call_oi={sample.get('call_oi')}, put_oi={sample.get('put_oi')}")
+
+        if not strike_gex or not has_any_gamma:
+            return {'put_wall': 0, 'call_wall': 0, 'net_gex': 0, 'has_gamma_data': False}
 
         # Find call wall (highest call GEX above spot - resistance)
         call_wall = 0
@@ -1150,7 +1174,8 @@ class HybridFixedBacktester:
             'call_wall': call_wall,
             'net_gex': net_gex,
             'total_call_gex': total_call_gex,
-            'total_put_gex': total_put_gex
+            'total_put_gex': total_put_gex,
+            'has_gamma_data': True
         }
 
     def find_apache_directional(self, options: List[Dict], open_price: float,
@@ -1179,10 +1204,17 @@ class HybridFixedBacktester:
         total_put_gex = gex_data.get('total_put_gex', 0)
         total_call_gex = gex_data.get('total_call_gex', 0)
         net_gex = gex_data.get('net_gex', 0)
+        has_gamma_data = gex_data.get('has_gamma_data', True)
         spot = open_price
+
+        # Check if we have valid gamma data
+        if not has_gamma_data:
+            self.debug_stats['strategy_failures']['apache_no_gamma_data'] += 1
+            return None
 
         if not put_wall or not call_wall:
             # Can't determine walls - skip trade
+            self.debug_stats['strategy_failures']['apache_no_gex_walls'] += 1
             return None
 
         # ========== NEW LOGIC: Use GEX STRENGTH, not just proximity ==========
@@ -1214,6 +1246,7 @@ class HybridFixedBacktester:
 
         if not near_put_wall and not near_call_wall:
             # Too far from both walls - no edge
+            self.debug_stats['strategy_failures']['apache_not_near_wall'] += 1
             return None
 
         # Determine direction based on GEX RATIO (wall strength)
@@ -1235,9 +1268,13 @@ class HybridFixedBacktester:
             if ml_prediction is None or ml_prediction == 'BEARISH':
                 if ml_prediction:
                     self.ml_stats['ml_confirmed_trades'] += 1
-                return self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+                result = self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+                if not result:
+                    self.debug_stats['strategy_failures']['apache_spread_failed'] += 1
+                return result
             else:
                 self.ml_stats['ml_rejected_trades'] += 1
+                self.debug_stats['strategy_failures']['apache_ml_rejected'] += 1
                 return None
 
         elif gex_ratio <= MIN_RATIO_FOR_BULLISH and near_call_wall:
@@ -1245,13 +1282,18 @@ class HybridFixedBacktester:
             if ml_prediction is None or ml_prediction == 'BULLISH':
                 if ml_prediction:
                     self.ml_stats['ml_confirmed_trades'] += 1
-                return self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+                result = self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+                if not result:
+                    self.debug_stats['strategy_failures']['apache_spread_failed'] += 1
+                return result
             else:
                 self.ml_stats['ml_rejected_trades'] += 1
+                self.debug_stats['strategy_failures']['apache_ml_rejected'] += 1
                 return None
 
         else:
             # No clear GEX asymmetry - skip (this is when ratio is between 0.67 and 1.5)
+            self.debug_stats['strategy_failures']['apache_no_gex_asymmetry'] += 1
             return None
 
     def find_iron_butterfly(self, options: List[Dict], open_price: float,
@@ -2463,6 +2505,15 @@ class HybridFixedBacktester:
             print(f"  - No long call at spread width: {sf['no_long_call']}")
             print(f"  - Bad put credit (<=0): {sf['bad_put_credit']}")
             print(f"  - Bad call credit (<=0): {sf['bad_call_credit']}")
+            # Apache directional specific
+            if self.strategy_type == 'apache_directional':
+                print(f"\nApache directional failures:")
+                print(f"  - No gamma data: {sf.get('apache_no_gamma_data', 0)}")
+                print(f"  - No GEX walls found: {sf.get('apache_no_gex_walls', 0)}")
+                print(f"  - Not near any wall: {sf.get('apache_not_near_wall', 0)}")
+                print(f"  - No GEX asymmetry (ratio 0.67-1.5): {sf.get('apache_no_gex_asymmetry', 0)}")
+                print(f"  - ML rejected trade: {sf.get('apache_ml_rejected', 0)}")
+                print(f"  - Spread construction failed: {sf.get('apache_spread_failed', 0)}")
             print("=" * 60 + "\n")
 
         # Calculate results
