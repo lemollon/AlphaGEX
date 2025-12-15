@@ -706,16 +706,18 @@ class HybridFixedBacktester:
                 print(f"  Yahoo API error for {symbol}: {e}")
                 return []
 
-        # Fetch SPX
-        spx_data = fetch_yahoo_data("^GSPC", start_str, end_str)
-        for rec in spx_data:
+        # Fetch OHLC for the ticker we're backtesting
+        # SPY uses "SPY", SPX uses "^GSPC" (S&P 500 index)
+        yahoo_symbol = "^GSPC" if self.ticker == "SPX" else self.ticker
+        ohlc_data = fetch_yahoo_data(yahoo_symbol, start_str, end_str)
+        for rec in ohlc_data:
             self.spx_ohlc[rec["date"]] = {
                 'open': rec["open"],
                 'high': rec["high"],
                 'low': rec["low"],
                 'close': rec["close"],
             }
-        print(f"  Loaded {len(self.spx_ohlc)} days of SPX data from Yahoo API")
+        print(f"  Loaded {len(self.spx_ohlc)} days of {self.ticker} data from Yahoo API")
 
         # Fetch VIX
         vix_data = fetch_yahoo_data("^VIX", start_str, end_str)
