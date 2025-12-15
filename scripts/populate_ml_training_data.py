@@ -16,6 +16,8 @@ import sys
 import argparse
 from datetime import datetime, timedelta
 
+import pandas as pd
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
@@ -89,15 +91,69 @@ def create_tables_if_needed(cur):
 
 def populate_underlying_prices(cur, ticker: str, start_date: str):
     """
-    Populate underlying_prices from ORAT options data.
-
-    ORAT provides underlying_price which represents the spot at time of recording.
-    We calculate daily OHLC from the underlying_price values.
+    Populate underlying_prices with real OHLC data from Yahoo Finance.
     """
-    print(f"\n2. Populating underlying_prices for {ticker}...")
+    print(f"\n2. Populating underlying_prices for {ticker} from Yahoo Finance...")
 
-    # Get daily price stats from ORAT options data
-    # Use the underlying_price column which contains spot price at time of snapshot
+    try:
+        import yfinance as yf
+
+        # Fetch real OHLC from Yahoo
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+
+        if data.empty:
+            print("  No data from Yahoo Finance, falling back to ORAT")
+            return populate_underlying_prices_from_orat(cur, ticker, start_date)
+
+        inserted = 0
+        for date, row in data.iterrows():
+            trade_date = date.strftime('%Y-%m-%d')
+
+            # Handle both single and multi-index columns from yfinance
+            if isinstance(row.index, pd.MultiIndex):
+                open_price = float(row[('Open', ticker)])
+                high = float(row[('High', ticker)])
+                low = float(row[('Low', ticker)])
+                close = float(row[('Close', ticker)])
+                volume = int(row[('Volume', ticker)])
+            else:
+                open_price = float(row['Open'])
+                high = float(row['High'])
+                low = float(row['Low'])
+                close = float(row['Close'])
+                volume = int(row['Volume'])
+
+            cur.execute('''
+                INSERT INTO underlying_prices (trade_date, symbol, open, high, low, close, volume)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (trade_date, symbol) DO UPDATE SET
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume
+            ''', (trade_date, ticker, open_price, high, low, close, volume))
+            inserted += 1
+
+        print(f"  Inserted/updated {inserted} price records from Yahoo Finance")
+        return inserted
+
+    except ImportError:
+        print("  yfinance not installed, falling back to ORAT data")
+        return populate_underlying_prices_from_orat(cur, ticker, start_date)
+    except Exception as e:
+        print(f"  Yahoo Finance error: {e}, falling back to ORAT data")
+        return populate_underlying_prices_from_orat(cur, ticker, start_date)
+
+
+def populate_underlying_prices_from_orat(cur, ticker: str, start_date: str):
+    """
+    Fallback: Populate underlying_prices from ORAT options data.
+    Note: ORAT only has end-of-day spot price, not real OHLC.
+    """
+    print(f"  Using ORAT data (approximated OHLC)...")
+
     cur.execute('''
         SELECT
             trade_date,
@@ -121,9 +177,8 @@ def populate_underlying_prices(cur, ticker: str, start_date: str):
 
     inserted = 0
     for trade_date, low, high, avg_price in daily_prices:
-        # Since ORAT is end-of-day data, use avg_price for open/close
-        # This is an approximation but works for ML training
-        open_price = float(avg_price) * 0.9995  # Slight offset for realism
+        # ORAT is end-of-day - approximate open/close
+        open_price = float(avg_price) * 0.9995
         close_price = float(avg_price)
 
         cur.execute('''
