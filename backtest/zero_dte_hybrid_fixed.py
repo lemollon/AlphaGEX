@@ -238,6 +238,7 @@ class HybridFixedBacktester:
         hold_days: int = 1,  # 1 = day trade, 2+ = swing trade
         # Apache directional settings
         wall_proximity_pct: float = 1.0,  # How close to wall to trigger (1.0 = 1%, 2.0 = 2%)
+        gex_regime_filter: str = None,  # 'positive', 'negative', or None (any)
     ):
         self.start_date = start_date
         self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -269,6 +270,7 @@ class HybridFixedBacktester:
 
         # Apache directional settings
         self.wall_proximity_pct = wall_proximity_pct
+        self.gex_regime_filter = gex_regime_filter  # 'positive', 'negative', or None
         self.swing_stats = {
             'positions_opened': 0,
             'positions_closed': 0,
@@ -304,6 +306,7 @@ class HybridFixedBacktester:
                 'apache_no_gex_asymmetry': 0,
                 'apache_ml_rejected': 0,
                 'apache_spread_failed': 0,
+                'apache_gex_regime_rejected': 0,  # Filtered by GEX regime
             }
         }
 
@@ -1214,6 +1217,17 @@ class HybridFixedBacktester:
             self.debug_stats['strategy_failures']['apache_no_gamma_data'] += 1
             return None
 
+        # ========== GEX REGIME FILTER ==========
+        # net_gex > 0: Dealers LONG gamma → mean-reverting → walls hold (good for debit spreads)
+        # net_gex < 0: Dealers SHORT gamma → trending/volatile → walls may break
+        if self.gex_regime_filter:
+            if self.gex_regime_filter == 'positive' and net_gex <= 0:
+                self.debug_stats['strategy_failures']['apache_gex_regime_rejected'] += 1
+                return None
+            elif self.gex_regime_filter == 'negative' and net_gex >= 0:
+                self.debug_stats['strategy_failures']['apache_gex_regime_rejected'] += 1
+                return None
+
         # Allow trading with just one wall (when data only has put_oi OR call_oi)
         # ORAT data often only has put_oi, so call_wall will be 0
         if not put_wall and not call_wall:
@@ -1247,7 +1261,9 @@ class HybridFixedBacktester:
         # One-time debug output for wall distance
         if not hasattr(self, '_wall_debug_shown'):
             self._wall_debug_shown = True
+            gex_regime = "POSITIVE (mean-revert)" if net_gex > 0 else "NEGATIVE (trending)"
             print(f"   WALL DEBUG: spot=${spot:.0f}, put_wall=${put_wall:.0f}, distance={put_wall_distance_pct:.1f}%, threshold={max_wall_distance}%")
+            print(f"   GEX REGIME: net_gex={net_gex:.2f}, regime={gex_regime}, filter={self.gex_regime_filter or 'any'}")
 
         # Check if we're within trading range of available walls
         near_put_wall = put_wall and put_wall_distance_pct <= max_wall_distance
@@ -2887,6 +2903,8 @@ def main():
                        help='Hold duration: 1=day trade, 2+=swing trade (default: 1)')
     parser.add_argument('--wall-proximity', type=float, default=3.0,
                        help='Wall proximity %% to trigger trade (default: 3.0)')
+    parser.add_argument('--gex-regime', type=str, default=None, choices=['positive', 'negative'],
+                       help='GEX regime filter: positive (mean-reverting), negative (trending), or omit for any')
 
     # Cost overrides for testing
     parser.add_argument('--slippage', type=float, default=None,
@@ -2909,6 +2927,7 @@ def main():
         max_vix=args.max_vix,
         hold_days=args.hold_days,
         wall_proximity_pct=args.wall_proximity,
+        gex_regime_filter=args.gex_regime,
         slippage_per_spread_override=args.slippage,
         commission_per_leg_override=args.commission,
     )
