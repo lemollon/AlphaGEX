@@ -2888,6 +2888,12 @@ def main():
     parser.add_argument('--wall-proximity', type=float, default=3.0,
                        help='Wall proximity %% to trigger trade (default: 3.0)')
 
+    # Cost overrides for testing
+    parser.add_argument('--slippage', type=float, default=None,
+                       help='Override slippage per spread (default: tier-based, 0.15 for 0DTE)')
+    parser.add_argument('--commission', type=float, default=None,
+                       help='Override commission per leg (default: 0.65)')
+
     args = parser.parse_args()
 
     backtester = HybridFixedBacktester(
@@ -2903,6 +2909,8 @@ def main():
         max_vix=args.max_vix,
         hold_days=args.hold_days,
         wall_proximity_pct=args.wall_proximity,
+        slippage_per_spread_override=args.slippage,
+        commission_per_leg_override=args.commission,
     )
 
     results = backtester.run()
