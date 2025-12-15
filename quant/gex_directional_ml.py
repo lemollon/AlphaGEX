@@ -53,7 +53,10 @@ try:
     HAS_XGBOOST = True
 except ImportError:
     HAS_XGBOOST = False
-    print("Warning: XGBoost not installed. Install with: pip install xgboost")
+    print("Warning: XGBoost not installed. Using sklearn GradientBoosting as fallback.")
+
+# Fallback to sklearn GradientBoosting
+from sklearn.ensemble import GradientBoostingClassifier
 
 # Add parent directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -489,28 +492,35 @@ class GEXDirectionalPredictor:
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
 
-            # Scale features (XGBoost doesn't require scaling, but helps with consistency)
+            # Scale features
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
 
-            # Train XGBoost model
-            if not HAS_XGBOOST:
-                raise ImportError("XGBoost required. Install with: pip install xgboost")
-
-            model = xgb.XGBClassifier(
-                n_estimators=100,
-                max_depth=4,
-                learning_rate=0.1,
-                min_child_weight=10,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=0.1,  # L1 regularization
-                reg_lambda=1.0,  # L2 regularization
-                random_state=42,
-                use_label_encoder=False,
-                eval_metric='mlogloss',
-                verbosity=0
-            )
+            # Train model (XGBoost if available, else sklearn GradientBoosting)
+            if HAS_XGBOOST:
+                model = xgb.XGBClassifier(
+                    n_estimators=100,
+                    max_depth=4,
+                    learning_rate=0.1,
+                    min_child_weight=10,
+                    subsample=0.8,
+                    colsample_bytree=0.8,
+                    reg_alpha=0.1,
+                    reg_lambda=1.0,
+                    random_state=42,
+                    use_label_encoder=False,
+                    eval_metric='mlogloss',
+                    verbosity=0
+                )
+            else:
+                model = GradientBoostingClassifier(
+                    n_estimators=100,
+                    max_depth=4,
+                    learning_rate=0.1,
+                    min_samples_leaf=10,
+                    subsample=0.8,
+                    random_state=42
+                )
             model.fit(X_train_scaled, y_train)
 
             # Predict
@@ -526,25 +536,36 @@ class GEXDirectionalPredictor:
 
         # Final training on all data
         print("\n" + "-" * 60)
-        print("Final training on all data with XGBoost...")
+        model_type = "XGBoost" if HAS_XGBOOST else "sklearn GradientBoosting"
+        print(f"Final training on all data with {model_type}...")
 
         X_scaled = self.scaler.fit_transform(X)
 
-        # XGBoost with optimized hyperparameters
-        self.model = xgb.XGBClassifier(
-            n_estimators=150,
-            max_depth=4,
-            learning_rate=0.1,
-            min_child_weight=10,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.1,  # L1 regularization
-            reg_lambda=1.0,  # L2 regularization
-            random_state=42,
-            use_label_encoder=False,
-            eval_metric='mlogloss',
-            verbosity=0
-        )
+        # Final model with optimized hyperparameters
+        if HAS_XGBOOST:
+            self.model = xgb.XGBClassifier(
+                n_estimators=150,
+                max_depth=4,
+                learning_rate=0.1,
+                min_child_weight=10,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=0.1,
+                reg_lambda=1.0,
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric='mlogloss',
+                verbosity=0
+            )
+        else:
+            self.model = GradientBoostingClassifier(
+                n_estimators=150,
+                max_depth=4,
+                learning_rate=0.1,
+                min_samples_leaf=10,
+                subsample=0.8,
+                random_state=42
+            )
         self.model.fit(X_scaled, y_encoded)
 
         # Store feature names for later use
