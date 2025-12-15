@@ -1110,6 +1110,9 @@ class HybridFixedBacktester:
         # Group by strike and calculate GEX
         strike_gex = {}
         has_any_gamma = False
+        has_any_oi = False
+        debug_gamma_count = 0
+        debug_oi_count = 0
 
         for opt in options:
             strike = opt.get('strike', 0)
@@ -1124,11 +1127,23 @@ class HybridFixedBacktester:
             # Calls have positive gamma exposure, puts have negative
             if gamma > 0:
                 has_any_gamma = True
+                debug_gamma_count += 1
+                if call_oi > 0 or put_oi > 0:
+                    has_any_oi = True
+                    debug_oi_count += 1
                 call_gex = gamma * call_oi * 100 * (spot_price ** 2) / 1e9  # Scale down
                 put_gex = gamma * put_oi * 100 * (spot_price ** 2) / 1e9
 
                 strike_gex[strike]['call_gex'] += call_gex
                 strike_gex[strike]['put_gex'] += put_gex
+
+        # One-time debug output
+        if not hasattr(self, '_gex_debug_shown'):
+            self._gex_debug_shown = True
+            print(f"\n   GEX DEBUG: {len(options)} options, {debug_gamma_count} with gamma>0, {debug_oi_count} with OI>0")
+            if options:
+                sample = options[0]
+                print(f"   Sample option: gamma={sample.get('gamma')}, call_oi={sample.get('call_oi')}, put_oi={sample.get('put_oi')}")
 
         if not strike_gex or not has_any_gamma:
             return {'put_wall': 0, 'call_wall': 0, 'net_gex': 0, 'has_gamma_data': False}
