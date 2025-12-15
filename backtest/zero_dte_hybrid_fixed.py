@@ -1212,73 +1212,60 @@ class HybridFixedBacktester:
             self.debug_stats['strategy_failures']['apache_no_gamma_data'] += 1
             return None
 
-        if not put_wall or not call_wall:
-            # Can't determine walls - skip trade
+        # Allow trading with just one wall (when data only has put_oi OR call_oi)
+        # ORAT data often only has put_oi, so call_wall will be 0
+        if not put_wall and not call_wall:
+            # Can't determine ANY walls - skip trade
             self.debug_stats['strategy_failures']['apache_no_gex_walls'] += 1
             return None
 
-        # ========== NEW LOGIC: Use GEX STRENGTH, not just proximity ==========
+        # ========== SIMPLIFIED LOGIC: Use available wall data ==========
         #
-        # Key insight: The RATIO of |put_gex| to |call_gex| tells us the bias
-        # Using ABSOLUTE VALUES because put_gex is typically negative in the database
+        # When only put_oi exists (call_oi=0), we can only find put_wall
+        # Strategy: Trade based on proximity to the available wall
         #
-        # MAGNET THEORY:
-        # - High |put_gex| / |call_gex| ratio → price pulled DOWN toward puts → BEARISH
-        # - Low |put_gex| / |call_gex| ratio → price pulled UP toward calls → BULLISH
+        # PUT WALL ONLY MODE (most common with ORAT data):
+        # - Near put wall → bullish bounce expected → BULL CALL SPREAD
+        #
+        # CALL WALL ONLY MODE:
+        # - Near call wall → bearish rejection expected → BEAR PUT SPREAD
+        #
+        # BOTH WALLS MODE (original logic):
+        # - Use GEX ratio to determine direction
 
-        # Calculate GEX ratio using ABSOLUTE values (put_gex is negative in DB)
+        # Calculate GEX values
         abs_put_gex = abs(total_put_gex)
         abs_call_gex = abs(total_call_gex)
 
-        if abs_call_gex > 0:
-            gex_ratio = abs_put_gex / abs_call_gex
-        else:
-            gex_ratio = 10.0 if abs_put_gex > 0 else 1.0
-
-        # Calculate distance to walls (as percentage)
-        put_wall_distance_pct = abs(spot - put_wall) / spot * 100
-        call_wall_distance_pct = abs(spot - call_wall) / spot * 100
+        # Calculate distance to walls (as percentage) - handle missing walls
+        put_wall_distance_pct = abs(spot - put_wall) / spot * 100 if put_wall else 100
+        call_wall_distance_pct = abs(spot - call_wall) / spot * 100 if call_wall else 100
         max_wall_distance = self.wall_proximity_pct
 
-        # Check if we're within trading range of at least one wall
-        near_put_wall = put_wall_distance_pct <= max_wall_distance
-        near_call_wall = call_wall_distance_pct <= max_wall_distance
+        # Check if we're within trading range of available walls
+        near_put_wall = put_wall and put_wall_distance_pct <= max_wall_distance
+        near_call_wall = call_wall and call_wall_distance_pct <= max_wall_distance
 
         if not near_put_wall and not near_call_wall:
-            # Too far from both walls - no edge
+            # Too far from all available walls - no edge
             self.debug_stats['strategy_failures']['apache_not_near_wall'] += 1
             return None
-
-        # Determine direction based on GEX RATIO (wall strength)
-        #
-        # MAGNET THEORY: Price is pulled TOWARD high GEX strikes
-        # - High put GEX = price pulled DOWN toward puts → BEARISH
-        # - High call GEX = price pulled UP toward calls → BULLISH
-        #
-        # This is OPPOSITE of "support/resistance" theory!
-
-        MIN_RATIO_FOR_BEARISH = 1.5   # Put GEX 1.5x Call GEX → price pulled DOWN
-        MIN_RATIO_FOR_BULLISH = 0.67  # Call GEX 1.5x Put GEX → price pulled UP
 
         # Get ML prediction (if available)
         ml_prediction = self._get_ml_prediction(gex_data, vix, spot_price=spot)
 
-        if gex_ratio >= MIN_RATIO_FOR_BEARISH and near_put_wall:
-            # Strong put GEX = price magnet pulling DOWN → BEARISH
-            if ml_prediction is None or ml_prediction == 'BEARISH':
-                if ml_prediction:
-                    self.ml_stats['ml_confirmed_trades'] += 1
-                result = self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
-                if not result:
-                    self.debug_stats['strategy_failures']['apache_spread_failed'] += 1
-                return result
-            else:
-                self.ml_stats['ml_rejected_trades'] += 1
-                self.debug_stats['strategy_failures']['apache_ml_rejected'] += 1
-                return None
+        # ========== TRADING LOGIC ==========
+        #
+        # PUT WALL = SUPPORT (price tends to bounce UP from here)
+        # CALL WALL = RESISTANCE (price tends to bounce DOWN from here)
 
-        elif gex_ratio <= MIN_RATIO_FOR_BULLISH and near_call_wall:
-            # Strong call GEX = price magnet pulling UP → BULLISH
+        # ========== SINGLE WALL MODE (when call_oi=0 in data) ==========
+        # PUT WALL = SUPPORT → price bounces UP → BULL CALL SPREAD
+        # CALL WALL = RESISTANCE → price bounces DOWN → BEAR PUT SPREAD
+
+        if near_put_wall and not call_wall:
+            # Only put wall available - PUT WALL = SUPPORT
+            # Near support → expect bullish bounce → BULL CALL SPREAD
             if ml_prediction is None or ml_prediction == 'BULLISH':
                 if ml_prediction:
                     self.ml_stats['ml_confirmed_trades'] += 1
@@ -1291,8 +1278,67 @@ class HybridFixedBacktester:
                 self.debug_stats['strategy_failures']['apache_ml_rejected'] += 1
                 return None
 
+        elif near_call_wall and not put_wall:
+            # Only call wall available - CALL WALL = RESISTANCE
+            # Near resistance → expect bearish rejection → BEAR PUT SPREAD
+            if ml_prediction is None or ml_prediction == 'BEARISH':
+                if ml_prediction:
+                    self.ml_stats['ml_confirmed_trades'] += 1
+                result = self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+                if not result:
+                    self.debug_stats['strategy_failures']['apache_spread_failed'] += 1
+                return result
+            else:
+                self.ml_stats['ml_rejected_trades'] += 1
+                self.debug_stats['strategy_failures']['apache_ml_rejected'] += 1
+                return None
+
+        # ========== BOTH WALLS MODE (original logic) ==========
+        # Use GEX ratio to determine direction when both walls available
+        elif put_wall and call_wall:
+            if abs_call_gex > 0:
+                gex_ratio = abs_put_gex / abs_call_gex
+            else:
+                gex_ratio = 10.0 if abs_put_gex > 0 else 1.0
+
+            MIN_RATIO_FOR_BEARISH = 1.5
+            MIN_RATIO_FOR_BULLISH = 0.67
+
+            if gex_ratio >= MIN_RATIO_FOR_BEARISH and near_put_wall:
+                # High put GEX ratio → BEARISH
+                if ml_prediction is None or ml_prediction == 'BEARISH':
+                    if ml_prediction:
+                        self.ml_stats['ml_confirmed_trades'] += 1
+                    result = self.find_bear_put_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+                    if not result:
+                        self.debug_stats['strategy_failures']['apache_spread_failed'] += 1
+                    return result
+                else:
+                    self.ml_stats['ml_rejected_trades'] += 1
+                    self.debug_stats['strategy_failures']['apache_ml_rejected'] += 1
+                    return None
+
+            elif gex_ratio <= MIN_RATIO_FOR_BULLISH and near_call_wall:
+                # Low put GEX ratio → BULLISH
+                if ml_prediction is None or ml_prediction == 'BULLISH':
+                    if ml_prediction:
+                        self.ml_stats['ml_confirmed_trades'] += 1
+                    result = self.find_bull_call_spread(options, open_price, strike_distance, target_dte, use_raw_distance)
+                    if not result:
+                        self.debug_stats['strategy_failures']['apache_spread_failed'] += 1
+                    return result
+                else:
+                    self.ml_stats['ml_rejected_trades'] += 1
+                    self.debug_stats['strategy_failures']['apache_ml_rejected'] += 1
+                    return None
+
+            else:
+                # Ratio between 0.67-1.5, no clear signal
+                self.debug_stats['strategy_failures']['apache_no_gex_asymmetry'] += 1
+                return None
+
         else:
-            # No clear GEX asymmetry - skip (this is when ratio is between 0.67 and 1.5)
+            # Shouldn't reach here but handle gracefully
             self.debug_stats['strategy_failures']['apache_no_gex_asymmetry'] += 1
             return None
 
