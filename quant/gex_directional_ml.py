@@ -508,8 +508,8 @@ class GEXDirectionalPredictor:
                     reg_alpha=0.1,
                     reg_lambda=1.0,
                     random_state=42,
-                    use_label_encoder=False,
-                    eval_metric='mlogloss',
+                    objective='multi:softprob',
+                    num_class=3,
                     verbosity=0
                 )
             else:
@@ -553,8 +553,8 @@ class GEXDirectionalPredictor:
                 reg_alpha=0.1,
                 reg_lambda=1.0,
                 random_state=42,
-                use_label_encoder=False,
-                eval_metric='mlogloss',
+                objective='multi:softprob',
+                num_class=3,
                 verbosity=0
             )
         else:
