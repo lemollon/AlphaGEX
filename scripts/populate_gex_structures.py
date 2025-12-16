@@ -127,11 +127,20 @@ def create_tables(conn):
             open_to_flip_distance_pct NUMERIC(10,4),
             open_in_pin_zone BOOLEAN,          -- Between two large magnets?
 
-            -- Outcome (labels for training)
-            close_vs_open_pct NUMERIC(10,4),   -- (close-open)/open * 100
-            close_vs_flip VARCHAR(10),         -- ABOVE, BELOW, AT_FLIP
-            close_vs_nearest_magnet VARCHAR(20), -- REACHED, BOUNCED, PINNED
+            -- Raw outcomes (NO BIAS - let the data speak)
+            price_open NUMERIC(12,4),          -- Open price
+            price_close NUMERIC(12,4),         -- Close price
+            price_high NUMERIC(12,4),          -- High price
+            price_low NUMERIC(12,4),           -- Low price
+            price_change_pct NUMERIC(10,4),    -- (close-open)/open * 100
             price_range_pct NUMERIC(10,4),     -- (high-low)/open * 100
+
+            -- Raw distances at close (for model to learn from)
+            close_distance_to_flip_pct NUMERIC(10,4),      -- How far close was from flip
+            close_distance_to_magnet1_pct NUMERIC(10,4),   -- How far close was from magnet 1
+            close_distance_to_magnet2_pct NUMERIC(10,4),   -- How far close was from magnet 2
+            close_distance_to_call_wall_pct NUMERIC(10,4), -- How far close was from call wall
+            close_distance_to_put_wall_pct NUMERIC(10,4),  -- How far close was from put wall
 
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
@@ -355,36 +364,22 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
         if low_magnet < spot_open < high_magnet:
             in_pin_zone = True
 
-    # Outcome labels
-    close_vs_open = (ohlc['close'] - ohlc['open']) / ohlc['open'] * 100
-    price_range = (ohlc['high'] - ohlc['low']) / ohlc['open'] * 100
+    # Raw outcomes - NO BIAS, just measurements
+    price_change_pct = (ohlc['close'] - ohlc['open']) / ohlc['open'] * 100
+    price_range_pct = (ohlc['high'] - ohlc['low']) / ohlc['open'] * 100
 
-    # Close vs flip
-    if flip_point:
-        if ohlc['close'] > flip_point * 1.001:
-            close_vs_flip = 'ABOVE'
-        elif ohlc['close'] < flip_point * 0.999:
-            close_vs_flip = 'BELOW'
-        else:
-            close_vs_flip = 'AT_FLIP'
-    else:
-        close_vs_flip = None
+    # Raw distances at close (let model learn what these mean)
+    close_distance_to_flip = ((ohlc['close'] - flip_point) / ohlc['close'] * 100) if flip_point else None
 
-    # Close vs nearest magnet
-    close_vs_magnet = None
-    if nearest_magnet:
-        magnet_strike = nearest_magnet['strike']
-        dist_at_open = abs(spot_open - magnet_strike)
-        dist_at_close = abs(ohlc['close'] - magnet_strike)
+    close_distance_to_magnet1 = None
+    close_distance_to_magnet2 = None
+    if len(magnets) > 0:
+        close_distance_to_magnet1 = (ohlc['close'] - magnets[0]['strike']) / ohlc['close'] * 100
+    if len(magnets) > 1:
+        close_distance_to_magnet2 = (ohlc['close'] - magnets[1]['strike']) / ohlc['close'] * 100
 
-        if dist_at_close < spot_open * 0.002:  # Within 0.2% of magnet
-            close_vs_magnet = 'REACHED'
-        elif dist_at_close < dist_at_open:
-            close_vs_magnet = 'MOVED_TOWARD'
-        elif in_pin_zone and abs(close_vs_open) < 0.5:
-            close_vs_magnet = 'PINNED'
-        else:
-            close_vs_magnet = 'BOUNCED'
+    close_distance_to_call_wall = ((ohlc['close'] - call_wall) / ohlc['close'] * 100) if call_wall else None
+    close_distance_to_put_wall = ((ohlc['close'] - put_wall) / ohlc['close'] * 100) if put_wall else None
 
     return {
         'strike_data': strike_data,
@@ -417,10 +412,19 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
             'nearest_magnet_distance_pct': nearest_magnet_distance,
             'open_to_flip_distance_pct': open_to_flip,
             'open_in_pin_zone': in_pin_zone,
-            'close_vs_open_pct': close_vs_open,
-            'close_vs_flip': close_vs_flip,
-            'close_vs_nearest_magnet': close_vs_magnet,
-            'price_range_pct': price_range,
+            # Raw outcomes - NO BIAS
+            'price_open': ohlc['open'],
+            'price_close': ohlc['close'],
+            'price_high': ohlc['high'],
+            'price_low': ohlc['low'],
+            'price_change_pct': price_change_pct,
+            'price_range_pct': price_range_pct,
+            # Raw distances at close
+            'close_distance_to_flip_pct': close_distance_to_flip,
+            'close_distance_to_magnet1_pct': close_distance_to_magnet1,
+            'close_distance_to_magnet2_pct': close_distance_to_magnet2,
+            'close_distance_to_call_wall_pct': close_distance_to_call_wall,
+            'close_distance_to_put_wall_pct': close_distance_to_put_wall,
         }
     }
 
@@ -476,7 +480,11 @@ def insert_gex_structure(conn, structure: Dict):
             num_magnets_above, num_magnets_below,
             nearest_magnet_strike, nearest_magnet_distance_pct,
             open_to_flip_distance_pct, open_in_pin_zone,
-            close_vs_open_pct, close_vs_flip, close_vs_nearest_magnet, price_range_pct
+            price_open, price_close, price_high, price_low,
+            price_change_pct, price_range_pct,
+            close_distance_to_flip_pct, close_distance_to_magnet1_pct,
+            close_distance_to_magnet2_pct, close_distance_to_call_wall_pct,
+            close_distance_to_put_wall_pct
         ) VALUES (
             %(trade_date)s, %(symbol)s,
             %(spot_open)s, %(spot_high)s, %(spot_low)s, %(spot_close)s,
@@ -490,7 +498,11 @@ def insert_gex_structure(conn, structure: Dict):
             %(num_magnets_above)s, %(num_magnets_below)s,
             %(nearest_magnet_strike)s, %(nearest_magnet_distance_pct)s,
             %(open_to_flip_distance_pct)s, %(open_in_pin_zone)s,
-            %(close_vs_open_pct)s, %(close_vs_flip)s, %(close_vs_nearest_magnet)s, %(price_range_pct)s
+            %(price_open)s, %(price_close)s, %(price_high)s, %(price_low)s,
+            %(price_change_pct)s, %(price_range_pct)s,
+            %(close_distance_to_flip_pct)s, %(close_distance_to_magnet1_pct)s,
+            %(close_distance_to_magnet2_pct)s, %(close_distance_to_call_wall_pct)s,
+            %(close_distance_to_put_wall_pct)s
         )
         ON CONFLICT (trade_date, symbol) DO UPDATE SET
             spot_open = EXCLUDED.spot_open,
@@ -519,10 +531,17 @@ def insert_gex_structure(conn, structure: Dict):
             nearest_magnet_distance_pct = EXCLUDED.nearest_magnet_distance_pct,
             open_to_flip_distance_pct = EXCLUDED.open_to_flip_distance_pct,
             open_in_pin_zone = EXCLUDED.open_in_pin_zone,
-            close_vs_open_pct = EXCLUDED.close_vs_open_pct,
-            close_vs_flip = EXCLUDED.close_vs_flip,
-            close_vs_nearest_magnet = EXCLUDED.close_vs_nearest_magnet,
+            price_open = EXCLUDED.price_open,
+            price_close = EXCLUDED.price_close,
+            price_high = EXCLUDED.price_high,
+            price_low = EXCLUDED.price_low,
+            price_change_pct = EXCLUDED.price_change_pct,
             price_range_pct = EXCLUDED.price_range_pct,
+            close_distance_to_flip_pct = EXCLUDED.close_distance_to_flip_pct,
+            close_distance_to_magnet1_pct = EXCLUDED.close_distance_to_magnet1_pct,
+            close_distance_to_magnet2_pct = EXCLUDED.close_distance_to_magnet2_pct,
+            close_distance_to_call_wall_pct = EXCLUDED.close_distance_to_call_wall_pct,
+            close_distance_to_put_wall_pct = EXCLUDED.close_distance_to_put_wall_pct,
             created_at = CURRENT_TIMESTAMP
     """, s)
 
@@ -567,7 +586,8 @@ def show_structure(conn, symbol: str, trade_date: str):
     print(f"   High:  ${summary['spot_high']:,.2f}")
     print(f"   Low:   ${summary['spot_low']:,.2f}")
     print(f"   Close: ${summary['spot_close']:,.2f}")
-    print(f"   Change: {summary['close_vs_open_pct']:+.2f}%")
+    print(f"   Change: {summary['price_change_pct']:+.2f}%")
+    print(f"   Range:  {summary['price_range_pct']:.2f}%")
 
     print(f"\n🧲 KEY LEVELS")
     print(f"   Flip Point:  ${summary['flip_point']:,.2f}" if summary['flip_point'] else "   Flip Point:  N/A")
@@ -589,9 +609,17 @@ def show_structure(conn, symbol: str, trade_date: str):
     print(f"   In Pin Zone: {'YES' if summary['open_in_pin_zone'] else 'NO'}")
     print(f"   Nearest Magnet: ${summary['nearest_magnet_strike']:,.0f} ({summary['nearest_magnet_distance_pct']:.2f}% away)" if summary['nearest_magnet_strike'] else "")
 
-    print(f"\n🎯 OUTCOME")
-    print(f"   Close vs Flip: {summary['close_vs_flip']}")
-    print(f"   Close vs Magnet: {summary['close_vs_nearest_magnet']}")
+    print(f"\n📍 DISTANCES AT CLOSE (raw)")
+    if summary['close_distance_to_flip_pct'] is not None:
+        print(f"   To Flip Point: {summary['close_distance_to_flip_pct']:+.2f}%")
+    if summary['close_distance_to_magnet1_pct'] is not None:
+        print(f"   To Magnet #1:  {summary['close_distance_to_magnet1_pct']:+.2f}%")
+    if summary['close_distance_to_magnet2_pct'] is not None:
+        print(f"   To Magnet #2:  {summary['close_distance_to_magnet2_pct']:+.2f}%")
+    if summary['close_distance_to_call_wall_pct'] is not None:
+        print(f"   To Call Wall:  {summary['close_distance_to_call_wall_pct']:+.2f}%")
+    if summary['close_distance_to_put_wall_pct'] is not None:
+        print(f"   To Put Wall:   {summary['close_distance_to_put_wall_pct']:+.2f}%")
 
     # ASCII bar chart
     print(f"\n📊 GAMMA BAR CHART (strikes near spot)")
