@@ -50,6 +50,15 @@ def get_connection():
     )
 
 
+def drop_tables(conn):
+    """Drop existing GEX tables (for schema migration)"""
+    cursor = conn.cursor()
+    cursor.execute("DROP TABLE IF EXISTS gex_strikes CASCADE")
+    cursor.execute("DROP TABLE IF EXISTS gex_structure_daily CASCADE")
+    conn.commit()
+    print("✓ Dropped existing gex_strikes and gex_structure_daily tables")
+
+
 def create_tables(conn):
     """Create tables for GEX structure data"""
     cursor = conn.cursor()
@@ -685,11 +694,17 @@ def main():
     parser.add_argument('--symbol', type=str, choices=['SPX', 'SPY'], help='Symbol (default: both)')
     parser.add_argument('--show-structure', type=str, metavar='DATE', help='Show structure for a specific date')
     parser.add_argument('--force', action='store_true', help='Recalculate existing dates')
+    parser.add_argument('--recreate-tables', action='store_true', help='Drop and recreate tables (required for schema changes)')
 
     args = parser.parse_args()
 
     print("Connecting to database...")
     conn = get_connection()
+
+    # Recreate tables if requested (for schema migration)
+    if args.recreate_tables:
+        print("Recreating tables with new schema...")
+        drop_tables(conn)
 
     # Create tables
     create_tables(conn)
@@ -717,6 +732,7 @@ def main():
 
         success = 0
         failed = 0
+        first_error_shown = False
 
         for i, trade_date in enumerate(available_dates):
             if i % 25 == 0:
@@ -731,8 +747,15 @@ def main():
                 else:
                     failed += 1
             except Exception as e:
-                print(f"\n  Error on {trade_date}: {e}")
+                # Rollback transaction to recover from error state
+                conn.rollback()
                 failed += 1
+                # Show first error with full details for debugging
+                if not first_error_shown:
+                    import traceback
+                    print(f"\n  FIRST ERROR on {trade_date}: {e}")
+                    traceback.print_exc()
+                    first_error_shown = True
 
         print(f"\r  Processing: 100% ({len(available_dates)}/{len(available_dates)})")
         print(f"  ✓ Success: {success}, ✗ Failed: {failed}")
