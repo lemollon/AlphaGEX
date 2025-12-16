@@ -234,12 +234,13 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
     ticker = 'SPX' if symbol == 'SPX' else 'SPY'
 
     # Get all options data for this date
+    # Schema: each row has strike with both call_oi and put_oi
     cursor.execute("""
         SELECT
             strike,
-            option_type,
             gamma,
-            open_interest,
+            call_oi,
+            put_oi,
             underlying_price
         FROM orat_options_eod
         WHERE ticker = %s
@@ -248,7 +249,7 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
         AND dte >= 0
         AND gamma IS NOT NULL
         AND gamma > 0
-        AND open_interest > 0
+        AND (call_oi > 0 OR put_oi > 0)
         ORDER BY strike
     """, (ticker, trade_date, dte_max))
 
@@ -266,16 +267,21 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
     spot_open = ohlc['open']
 
     # Build per-strike gamma
+    # Each row has both call and put OI, so we calculate both GEX values per strike
     strike_data = {}  # strike -> {call_gamma, put_gamma, net_gamma, call_oi, put_oi}
 
     for row in rows:
         strike = float(row[0])
-        option_type = row[1]  # 'call' or 'put'
-        gamma = float(row[2])
-        oi = int(row[3])
+        gamma = float(row[1])
+        call_oi = int(row[2]) if row[2] else 0
+        put_oi = int(row[3]) if row[3] else 0
 
-        # GEX = gamma × OI × 100 × spot
-        gex = gamma * oi * 100 * spot_open
+        # GEX = gamma × OI × 100 × spot²  (using spot² like kronos_gex_calculator)
+        call_gex = gamma * call_oi * 100 * (spot_open ** 2) if call_oi > 0 else 0
+        put_gex = gamma * put_oi * 100 * (spot_open ** 2) if put_oi > 0 else 0
+
+        # Net GEX = call - put (puts have negative effect on price)
+        net_gex = call_gex - put_gex
 
         if strike not in strike_data:
             strike_data[strike] = {
@@ -283,18 +289,12 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
                 'call_oi': 0, 'put_oi': 0
             }
 
-        if option_type == 'call':
-            strike_data[strike]['call_gamma'] += gex
-            strike_data[strike]['call_oi'] += oi
-        else:
-            strike_data[strike]['put_gamma'] -= gex  # Negative for puts
-            strike_data[strike]['put_oi'] += oi
-
-    # Calculate net gamma per strike
-    for strike in strike_data:
-        strike_data[strike]['net_gamma'] = (
-            strike_data[strike]['call_gamma'] + strike_data[strike]['put_gamma']
-        )
+        # Aggregate (in case multiple expirations have same strike)
+        strike_data[strike]['call_gamma'] += call_gex
+        strike_data[strike]['put_gamma'] += -put_gex  # Store as negative for puts
+        strike_data[strike]['net_gamma'] += net_gex
+        strike_data[strike]['call_oi'] += call_oi
+        strike_data[strike]['put_oi'] += put_oi
 
     # Find magnets (top 3 by absolute net gamma)
     sorted_by_gamma = sorted(
