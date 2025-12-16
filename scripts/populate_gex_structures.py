@@ -237,7 +237,7 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
     cursor.execute("""
         SELECT
             strike,
-            call_put,
+            option_type,
             gamma,
             open_interest,
             underlying_price
@@ -270,7 +270,7 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
 
     for row in rows:
         strike = float(row[0])
-        call_put = row[1]
+        option_type = row[1]  # 'call' or 'put'
         gamma = float(row[2])
         oi = int(row[3])
 
@@ -283,7 +283,7 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
                 'call_oi': 0, 'put_oi': 0
             }
 
-        if call_put == 'C':
+        if option_type == 'call':
             strike_data[strike]['call_gamma'] += gex
             strike_data[strike]['call_oi'] += oi
         else:
