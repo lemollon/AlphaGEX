@@ -246,7 +246,6 @@ class HybridFixedBacktester:
         gex_regime_filter: str = None,  # 'positive', 'negative', or None (any)
         # Intraday exit strategies
         take_profit_pct: float = None,  # Exit at X% of max profit (e.g., 0.5 = 50%)
-        intraday_stop_loss_pct: float = None,  # Exit at X% of max loss (e.g., 0.4 = 40%)
         exit_on_wall_break: bool = False,  # Exit if price breaks opposite GEX wall
         exit_by_hour: int = None,  # Exit by this hour if profitable (e.g., 14 = 2pm)
     ):
@@ -284,14 +283,12 @@ class HybridFixedBacktester:
 
         # Intraday exit strategies
         self.take_profit_pct = take_profit_pct
-        self.intraday_stop_loss_pct = intraday_stop_loss_pct
         self.exit_on_wall_break = exit_on_wall_break
         self.exit_by_hour = exit_by_hour
 
         # Intraday exit stats
         self.intraday_exit_stats = {
             'take_profit_exits': 0,
-            'stop_loss_exits': 0,
             'wall_break_exits': 0,
             'time_based_exits': 0,
             'held_to_close': 0,
@@ -572,39 +569,6 @@ class HybridFixedBacktester:
                         'exit_pnl_pct': self.take_profit_pct * 100,
                     }
                     self.intraday_exit_stats['take_profit_exits'] += 1
-                    return result
-
-        # === STOP LOSS CHECK ===
-        # For bullish trades, check if low triggered stop
-        # For bearish trades, check if high triggered stop
-        if self.intraday_stop_loss_pct is not None:
-            stop_loss_threshold = -max_loss * self.intraday_stop_loss_pct  # Negative P&L
-
-            if strategy_type in ['bull_call', 'bull_call_spread']:
-                # Bullish: loss increases as price goes DOWN
-                low_pnl = calc_pnl(low_price)
-                if low_pnl <= stop_loss_threshold:
-                    # Stop triggered at low
-                    result = {
-                        'exit_type': 'STOP_LOSS',
-                        'exit_price': low_price,
-                        'exit_pnl': stop_loss_threshold,
-                        'exit_pnl_pct': -self.intraday_stop_loss_pct * 100,
-                    }
-                    self.intraday_exit_stats['stop_loss_exits'] += 1
-                    return result
-            else:  # bear_put
-                # Bearish: loss increases as price goes UP
-                high_pnl = calc_pnl(high_price)
-                if high_pnl <= stop_loss_threshold:
-                    # Stop triggered at high
-                    result = {
-                        'exit_type': 'STOP_LOSS',
-                        'exit_price': high_price,
-                        'exit_pnl': stop_loss_threshold,
-                        'exit_pnl_pct': -self.intraday_stop_loss_pct * 100,
-                    }
-                    self.intraday_exit_stats['stop_loss_exits'] += 1
                     return result
 
         # === WALL BREAK EXIT ===
@@ -2320,7 +2284,6 @@ class HybridFixedBacktester:
         is_put_debit_spread = ic.get('is_put_debit_spread', False)
         has_intraday_exit_options = (
             self.take_profit_pct is not None or
-            self.intraday_stop_loss_pct is not None or
             self.exit_on_wall_break or
             self.exit_by_hour is not None
         )
@@ -3352,14 +3315,11 @@ class HybridFixedBacktester:
         if total_exits > 0 and any(v > 0 for k, v in intraday_stats.items() if k != 'held_to_close'):
             print(f"\nINTRADAY EXIT STATS")
             tp = intraday_stats.get('take_profit_exits', 0)
-            sl = intraday_stats.get('stop_loss_exits', 0)
             wb = intraday_stats.get('wall_break_exits', 0)
             te = intraday_stats.get('time_based_exits', 0)
             eod = intraday_stats.get('held_to_close', 0)
             if tp > 0:
                 print(f"  Take Profit Exits:    {tp:>10} ({tp/total_exits*100:.1f}%)")
-            if sl > 0:
-                print(f"  Stop Loss Exits:      {sl:>10} ({sl/total_exits*100:.1f}%)")
             if wb > 0:
                 print(f"  Wall Break Exits:     {wb:>10} ({wb/total_exits*100:.1f}%)")
             if te > 0:
@@ -3447,8 +3407,6 @@ def main():
     # Intraday exit options (for debit spreads like apache_directional)
     parser.add_argument('--take-profit', type=float, default=None,
                        help='Take profit at X%% of max profit (e.g., 0.5 = 50%%). Exit early when spread reaches target.')
-    parser.add_argument('--stop-loss', type=float, default=None,
-                       help='Stop loss at X%% of max loss (e.g., 0.4 = 40%%). Exit early to limit losses.')
     parser.add_argument('--exit-on-wall-break', action='store_true',
                        help='Exit if price breaks through the GEX wall (thesis broken)')
     parser.add_argument('--exit-by-hour', type=int, default=None,
@@ -3478,7 +3436,6 @@ def main():
         gex_regime_filter=args.gex_regime,
         # Intraday exit options
         take_profit_pct=args.take_profit,
-        intraday_stop_loss_pct=args.stop_loss,
         exit_on_wall_break=args.exit_on_wall_break,
         exit_by_hour=args.exit_by_hour,
         # Cost overrides
