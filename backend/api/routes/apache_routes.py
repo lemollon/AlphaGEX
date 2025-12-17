@@ -675,22 +675,21 @@ async def get_apache_diagnostics():
                 user=result.username,
                 password=result.password,
                 database=result.path[1:],
-                connect_timeout=10
+                connect_timeout=5
             )
             c = conn.cursor()
+            # Quick query - just get max date, don't count all rows
             c.execute("""
-                SELECT COUNT(*), MAX(trade_date)
+                SELECT MAX(trade_date)
                 FROM orat_options_eod
                 WHERE ticker = 'SPX'
-                  AND gamma IS NOT NULL
-                  AND gamma > 0
+                LIMIT 1
             """)
             row = c.fetchone()
             conn.close()
             diagnostics["data_availability"]["orat_database"] = {
                 "connected": True,
-                "spx_rows_with_gamma": row[0] if row else 0,
-                "most_recent_date": str(row[1]) if row and row[1] else None
+                "most_recent_date": str(row[0]) if row and row[0] else None
             }
         except Exception as e:
             diagnostics["data_availability"]["orat_database"] = {
