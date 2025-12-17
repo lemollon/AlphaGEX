@@ -40,13 +40,20 @@ def get_apache_instance():
         # Try to get from scheduler first
         from scheduler.trader_scheduler import get_apache_trader
         apache_trader = get_apache_trader()
-        return apache_trader
-    except Exception:
-        # Initialize a new instance if needed
-        if APACHE_AVAILABLE:
+        if apache_trader:
+            return apache_trader
+    except Exception as e:
+        logger.debug(f"Could not get APACHE from scheduler: {e}")
+
+    # Initialize a new instance if needed
+    if APACHE_AVAILABLE:
+        try:
             apache_trader = run_apache(capital=100_000, mode="paper")
             return apache_trader
-        return None
+        except Exception as e:
+            logger.error(f"Failed to initialize APACHE: {e}")
+
+    return None
 
 
 @router.get("/status")
@@ -75,6 +82,7 @@ async def get_apache_status():
                 "is_active": False,
                 "oracle_available": False,
                 "kronos_available": False,
+                "gex_ml_available": False,
                 "config": {
                     "risk_per_trade": 2.0,
                     "spread_width": 2,
@@ -489,4 +497,68 @@ async def get_current_oracle_advice():
         }
     except Exception as e:
         logger.error(f"Error getting Oracle advice: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ml-signal")
+async def get_current_ml_signal():
+    """
+    Get current ML signal from GEX probability models without executing a trade.
+
+    Returns the ML-based trading signal using the 5 GEX probability models:
+    - Direction probability (UP/DOWN/FLAT)
+    - Flip gravity probability
+    - Magnet attraction probability
+    - Expected volatility
+    - Pin zone probability
+
+    Combined into a LONG/SHORT/STAY_OUT recommendation.
+    """
+    apache = get_apache_instance()
+
+    if not apache:
+        raise HTTPException(status_code=503, detail="APACHE not available")
+
+    try:
+        # Get current GEX data
+        gex_data = apache.get_gex_data()
+        if not gex_data:
+            return {
+                "success": True,
+                "data": None,
+                "message": "No GEX data available - Kronos may be unavailable"
+            }
+
+        # Get ML signal
+        ml_signal = apache.get_ml_signal(gex_data)
+
+        if not ml_signal:
+            return {
+                "success": True,
+                "data": None,
+                "message": "ML models not loaded - run train_gex_probability_models.py first"
+            }
+
+        return {
+            "success": True,
+            "data": {
+                "advice": ml_signal['advice'],
+                "spread_type": ml_signal['spread_type'],
+                "confidence": ml_signal['confidence'],
+                "win_probability": ml_signal['win_probability'],
+                "expected_volatility": ml_signal['expected_volatility'],
+                "suggested_strikes": ml_signal['suggested_strikes'],
+                "reasoning": ml_signal['reasoning'],
+                "model_predictions": ml_signal['model_predictions'],
+                "gex_context": {
+                    "spot_price": gex_data.get('spot_price'),
+                    "regime": gex_data.get('regime'),
+                    "call_wall": gex_data.get('call_wall'),
+                    "put_wall": gex_data.get('put_wall'),
+                    "net_gex": gex_data.get('net_gex')
+                }
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting ML signal: {e}")
         raise HTTPException(status_code=500, detail=str(e))
