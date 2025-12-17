@@ -85,6 +85,15 @@ except ImportError:
     GEXSignalIntegration = None
     get_signal_integration = None
 
+# Import Tradier GEX Calculator for live GEX (fallback when ORAT unavailable)
+try:
+    from data.gex_calculator import TradierGEXCalculator, get_gex_calculator
+    TRADIER_GEX_AVAILABLE = True
+except ImportError:
+    TRADIER_GEX_AVAILABLE = False
+    TradierGEXCalculator = None
+    get_gex_calculator = None
+
 # Import comprehensive bot logger
 try:
     from trading.bot_logger import (
@@ -348,7 +357,7 @@ class APACHETrader:
             except Exception as e:
                 self._log_to_db("WARNING", f"Kronos calculation failed: {e}")
 
-        # Fallback: Get most recent GEX data from database
+        # Fallback 1: Get most recent GEX data from database
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -375,6 +384,41 @@ class APACHETrader:
                 }
         except Exception as e:
             self._log_to_db("WARNING", f"Database GEX fallback failed: {e}")
+
+        # Fallback 2: Calculate live GEX from Tradier options chain
+        if TRADIER_GEX_AVAILABLE and get_gex_calculator:
+            try:
+                self._log_to_db("INFO", "Attempting Tradier live GEX calculation")
+                gex_calc = get_gex_calculator()
+                # Use the ticker - for SPX, Tradier uses SPY as proxy
+                ticker = 'SPY' if self.config.ticker == 'SPX' else self.config.ticker
+                gex_data = gex_calc.get_gex(ticker)
+
+                if gex_data and 'error' not in gex_data:
+                    # Determine regime from net GEX
+                    net_gex = gex_data.get('net_gex', 0)
+                    if net_gex > 0.5e9:
+                        regime = 'POSITIVE'
+                    elif net_gex < -0.5e9:
+                        regime = 'NEGATIVE'
+                    else:
+                        regime = 'NEUTRAL'
+
+                    self._log_to_db("INFO", f"Using Tradier live GEX: net_gex={net_gex:,.0f}, regime={regime}")
+                    return {
+                        'net_gex': net_gex,
+                        'call_wall': gex_data.get('call_wall', 0),
+                        'put_wall': gex_data.get('put_wall', 0),
+                        'flip_point': gex_data.get('flip_point', gex_data.get('gamma_flip', 0)),
+                        'spot_price': gex_data.get('spot_price', 0),
+                        'regime': regime,
+                        'source': 'tradier_live'
+                    }
+                else:
+                    error_msg = gex_data.get('error', 'Unknown error') if gex_data else 'No data'
+                    self._log_to_db("WARNING", f"Tradier GEX calculation failed: {error_msg}")
+            except Exception as e:
+                self._log_to_db("WARNING", f"Tradier GEX fallback failed: {e}")
 
         self._log_to_db("WARNING", "No GEX data available from any source")
         return None
@@ -1176,6 +1220,7 @@ class APACHETrader:
             'oracle_available': self.oracle is not None,
             'kronos_available': self.kronos is not None,
             'tradier_available': self.tradier is not None,
+            'tradier_gex_available': TRADIER_GEX_AVAILABLE,
             'gex_ml_available': self.gex_ml is not None
         }
 
