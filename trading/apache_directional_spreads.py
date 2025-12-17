@@ -76,6 +76,15 @@ except ImportError:
     KRONOS_AVAILABLE = False
     KronosGEXCalculator = None
 
+# Import GEX ML Signal Integration
+try:
+    from quant.gex_signal_integration import GEXSignalIntegration, get_signal_integration
+    GEX_ML_AVAILABLE = True
+except ImportError:
+    GEX_ML_AVAILABLE = False
+    GEXSignalIntegration = None
+    get_signal_integration = None
+
 # Import comprehensive bot logger
 try:
     from trading.bot_logger import (
@@ -233,6 +242,19 @@ class APACHETrader:
             except Exception as e:
                 logger.warning(f"APACHE: Could not initialize Tradier: {e}")
 
+        # Initialize GEX ML Signal Integration
+        self.gex_ml: Optional[GEXSignalIntegration] = None
+        if GEX_ML_AVAILABLE:
+            try:
+                self.gex_ml = GEXSignalIntegration()
+                if self.gex_ml.load_models():
+                    logger.info("APACHE: GEX ML signal integration initialized")
+                else:
+                    logger.warning("APACHE: GEX ML models not found - run train_gex_probability_models.py")
+                    self.gex_ml = None
+            except Exception as e:
+                logger.warning(f"APACHE: Could not initialize GEX ML: {e}")
+
         # Position tracking
         self.open_positions: List[SpreadPosition] = []
         self.closed_positions: List[SpreadPosition] = []
@@ -389,6 +411,59 @@ class APACHETrader:
             return advice
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to get Oracle advice: {e}")
+            return None
+
+    def get_ml_signal(self, gex_data: Dict = None) -> Optional[Dict]:
+        """
+        Get trading signal from GEX ML models.
+
+        Returns signal dict with:
+        - advice: 'LONG', 'SHORT', or 'STAY_OUT'
+        - spread_type: 'BULL_CALL_SPREAD', 'BEAR_CALL_SPREAD', or 'NONE'
+        - confidence: float 0-1
+        - win_probability: float 0-1
+        - expected_volatility: float (expected range %)
+        - reasoning: str
+        - model_predictions: dict with all 5 model outputs
+        """
+        if not self.gex_ml:
+            self._log_to_db("WARNING", "GEX ML not available")
+            return None
+
+        # Get GEX data if not provided
+        if not gex_data:
+            gex_data = self.get_gex_data()
+            if not gex_data:
+                self._log_to_db("WARNING", "No GEX data available for ML signal")
+                return None
+
+        # Get VIX
+        vix = 20.0
+        if UNIFIED_DATA_AVAILABLE:
+            try:
+                from data.unified_data_provider import get_vix
+                vix = get_vix() or 20.0
+            except:
+                pass
+
+        try:
+            # Get signal from ML models
+            signal = self.gex_ml.get_signal_for_apache(gex_data, vix=vix)
+
+            self._log_to_db("INFO", f"ML Signal: {signal['advice']}", {
+                'confidence': signal['confidence'],
+                'win_probability': signal['win_probability'],
+                'spread_type': signal['spread_type'],
+                'expected_volatility': signal['expected_volatility'],
+                'model_predictions': signal['model_predictions']
+            })
+
+            return signal
+
+        except Exception as e:
+            self._log_to_db("ERROR", f"Failed to get ML signal: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _is_between_walls(self, gex_data: Dict) -> bool:
@@ -793,7 +868,7 @@ class APACHETrader:
             self._log_to_db("ERROR", f"Failed to log exit: {e}")
 
     def run_daily_cycle(self) -> Dict[str, Any]:
-        """Run the daily trading cycle"""
+        """Run the daily trading cycle using ML signals"""
         self._log_to_db("INFO", "=== APACHE Daily Cycle Starting ===")
 
         result = {
@@ -801,6 +876,7 @@ class APACHETrader:
             'trades_executed': 0,
             'positions_closed': 0,
             'daily_pnl': 0,
+            'signal_source': None,
             'errors': []
         }
 
@@ -811,52 +887,95 @@ class APACHETrader:
             result['errors'].append(reason)
             return result
 
-        # Get Oracle advice
-        advice = self.get_oracle_advice()
-        if not advice:
-            self._log_to_db("WARNING", "No Oracle advice available")
-            result['errors'].append("No Oracle advice")
-            return result
-
-        result['trades_attempted'] = 1
-
-        # Check if Oracle recommends trading
-        if advice.advice == TradingAdvice.SKIP_TODAY:
-            self._log_to_db("INFO", f"Oracle says SKIP: {advice.reasoning}")
-            return result
-
-        # Get GEX data for execution
+        # Get GEX data first (needed for both ML and Oracle)
         gex_data = self.get_gex_data()
         if not gex_data:
             result['errors'].append("No GEX data")
             return result
 
-        # Save signal
-        signal_id = self.save_signal_to_db(advice, gex_data)
-
-        # Determine spread type from Oracle reasoning
+        # === PRIMARY: Use ML Signal ===
+        ml_signal = None
         spread_type = None
-        if "BULL_CALL_SPREAD" in advice.reasoning:
-            spread_type = SpreadType.BULL_CALL_SPREAD
-        elif "BEAR_CALL_SPREAD" in advice.reasoning:
-            spread_type = SpreadType.BEAR_CALL_SPREAD
+        signal_source = "ML"
 
+        if self.gex_ml:
+            ml_signal = self.get_ml_signal(gex_data)
+
+            if ml_signal and ml_signal['advice'] in ['LONG', 'SHORT']:
+                result['trades_attempted'] = 1
+
+                # Determine spread type from ML signal
+                if ml_signal['spread_type'] == 'BULL_CALL_SPREAD':
+                    spread_type = SpreadType.BULL_CALL_SPREAD
+                elif ml_signal['spread_type'] == 'BEAR_CALL_SPREAD':
+                    spread_type = SpreadType.BEAR_CALL_SPREAD
+
+                self._log_to_db("INFO", f"ML Signal: {ml_signal['advice']}", {
+                    'confidence': ml_signal['confidence'],
+                    'spread_type': ml_signal['spread_type']
+                })
+
+            elif ml_signal and ml_signal['advice'] == 'STAY_OUT':
+                self._log_to_db("INFO", f"ML says STAY_OUT: {ml_signal['reasoning']}")
+                result['signal_source'] = 'ML'
+                # Still check exits
+                closed = self.check_exits()
+                result['positions_closed'] = len(closed)
+                result['daily_pnl'] = sum(p.realized_pnl for p in closed)
+                return result
+
+        # === FALLBACK: Use Oracle if ML unavailable ===
+        if not spread_type and ORACLE_AVAILABLE:
+            signal_source = "Oracle"
+            advice = self.get_oracle_advice()
+
+            if advice:
+                result['trades_attempted'] = 1
+
+                if advice.advice == TradingAdvice.SKIP_TODAY:
+                    self._log_to_db("INFO", f"Oracle says SKIP: {advice.reasoning}")
+                    result['signal_source'] = 'Oracle'
+                    return result
+
+                # Determine spread type from Oracle reasoning
+                if "BULL_CALL_SPREAD" in advice.reasoning:
+                    spread_type = SpreadType.BULL_CALL_SPREAD
+                elif "BEAR_CALL_SPREAD" in advice.reasoning:
+                    spread_type = SpreadType.BEAR_CALL_SPREAD
+
+        # No actionable signal
         if not spread_type:
-            self._log_to_db("INFO", "No clear direction from Oracle")
+            self._log_to_db("INFO", "No actionable signal from ML or Oracle")
+            result['errors'].append("No actionable signal")
             return result
+
+        result['signal_source'] = signal_source
+
+        # Save signal to database
+        signal_id = self._save_ml_signal_to_db(ml_signal, gex_data) if ml_signal else None
+
+        # Create a mock advice object for execution (to maintain compatibility)
+        class MockAdvice:
+            def __init__(self, ml_sig):
+                self.confidence = ml_sig['confidence'] if ml_sig else 0.5
+                self.win_probability = ml_sig['win_probability'] if ml_sig else 0.5
+                self.reasoning = ml_sig['reasoning'] if ml_sig else "Oracle signal"
+                self.claude_analysis = None
+
+        advice_obj = MockAdvice(ml_signal)
 
         # Execute spread
         position = self.execute_spread(
             spread_type=spread_type,
             spot_price=gex_data['spot_price'],
             gex_data=gex_data,
-            advice=advice,
+            advice=advice_obj,
             signal_id=signal_id
         )
 
         if position:
             result['trades_executed'] = 1
-            self._log_to_db("INFO", f"Trade executed: {position.position_id}")
+            self._log_to_db("INFO", f"Trade executed: {position.position_id} ({signal_source})")
 
         # Check exits for existing positions
         closed = self.check_exits()
@@ -866,6 +985,48 @@ class APACHETrader:
         self._log_to_db("INFO", f"=== APACHE Cycle Complete ===", result)
 
         return result
+
+    def _save_ml_signal_to_db(self, ml_signal: Dict, gex_data: Dict) -> Optional[int]:
+        """Save ML signal to apache_signals table"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            direction = "FLAT"
+            if ml_signal['advice'] == 'LONG':
+                direction = "BULLISH"
+            elif ml_signal['advice'] == 'SHORT':
+                direction = "BEARISH"
+
+            c.execute("""
+                INSERT INTO apache_signals (
+                    ticker, signal_direction, ml_confidence, oracle_advice,
+                    gex_regime, call_wall, put_wall, spot_price,
+                    spread_type, reasoning
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                self.config.ticker,
+                direction,
+                ml_signal['confidence'],
+                ml_signal['advice'],
+                gex_data.get('regime', 'NEUTRAL'),
+                gex_data.get('call_wall'),
+                gex_data.get('put_wall'),
+                gex_data.get('spot_price'),
+                ml_signal['spread_type'],
+                ml_signal['reasoning'][:500]
+            ))
+
+            signal_id = c.fetchone()[0]
+            conn.commit()
+            conn.close()
+
+            self._log_to_db("INFO", f"ML Signal saved: {direction}", {'signal_id': signal_id})
+            return signal_id
+        except Exception as e:
+            self._log_to_db("ERROR", f"Failed to save ML signal: {e}")
+            return None
 
     def get_status(self) -> Dict[str, Any]:
         """Get current bot status"""
