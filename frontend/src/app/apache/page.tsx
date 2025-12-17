@@ -65,6 +65,14 @@ interface Signal {
   status: string
 }
 
+interface LogEntry {
+  id: number
+  created_at: string
+  level: string
+  message: string
+  details: Record<string, any> | null
+}
+
 interface OracleAdvice {
   advice: string
   win_probability: number
@@ -123,6 +131,7 @@ export default function APACHEPage() {
   const [oracleAdvice, setOracleAdvice] = useState<OracleAdvice | null>(null)
   const [mlSignal, setMLSignal] = useState<MLSignal | null>(null)
   const [performance, setPerformance] = useState<PerformanceData | null>(null)
+  const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
@@ -135,13 +144,14 @@ export default function APACHEPage() {
       setLoading(true)
       setError(null)
 
-      const [statusRes, positionsRes, signalsRes, performanceRes, adviceRes, mlSignalRes] = await Promise.all([
+      const [statusRes, positionsRes, signalsRes, performanceRes, adviceRes, mlSignalRes, logsRes] = await Promise.all([
         apiClient.getAPACHEStatus().catch(() => ({ data: null })),
         apiClient.getAPACHEPositions().catch(() => ({ data: null })),
         apiClient.getAPACHESignals(20).catch(() => ({ data: null })),
         apiClient.getAPACHEPerformance(30).catch(() => ({ data: null })),
         apiClient.getAPACHEOracleAdvice().catch(() => ({ data: null })),
-        apiClient.getAPACHEMLSignal().catch(() => ({ data: null }))
+        apiClient.getAPACHEMLSignal().catch(() => ({ data: null })),
+        apiClient.getAPACHELogs(undefined, 50).catch(() => ({ data: null }))
       ])
 
       if (statusRes.data?.data) setStatus(statusRes.data.data)
@@ -150,6 +160,7 @@ export default function APACHEPage() {
       if (performanceRes.data?.data) setPerformance(performanceRes.data.data)
       if (adviceRes.data?.data) setOracleAdvice(adviceRes.data.data)
       if (mlSignalRes.data?.data) setMLSignal(mlSignalRes.data.data)
+      if (logsRes.data?.data) setLogs(logsRes.data.data)
 
       setLastUpdate(new Date())
     } catch (err) {
@@ -645,13 +656,48 @@ export default function APACHEPage() {
 
           {activeTab === 'logs' && (
             <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <div className="p-4 border-b border-gray-700">
-                <h2 className="text-lg font-semibold text-white">Activity Logs</h2>
+              <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                <h2 className="text-lg font-semibold text-white">Recent Activity Logs</h2>
+                <a href="/apache/logs" className="text-sm text-orange-400 hover:underline">View all logs →</a>
               </div>
-              <div className="p-4">
-                <p className="text-gray-500 text-center py-8">
-                  View detailed logs at <a href="/apache/logs" className="text-orange-400 hover:underline">/apache/logs</a>
-                </p>
+              <div className="divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
+                {logs.map((log) => (
+                  <div key={log.id} className={`p-3 ${
+                    log.level === 'ERROR' ? 'bg-red-900/20' :
+                    log.level === 'WARNING' ? 'bg-yellow-900/20' :
+                    ''
+                  }`}>
+                    <div className="flex items-center gap-3 mb-1">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                        log.level === 'ERROR' ? 'bg-red-900 text-red-300' :
+                        log.level === 'WARNING' ? 'bg-yellow-900 text-yellow-300' :
+                        log.level === 'INFO' ? 'bg-blue-900 text-blue-300' :
+                        'bg-gray-700 text-gray-300'
+                      }`}>
+                        {log.level}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {new Date(log.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-gray-200 text-sm">{log.message}</p>
+                    {log.details && (
+                      <details className="mt-2">
+                        <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
+                          View details
+                        </summary>
+                        <pre className="mt-2 text-xs text-gray-400 bg-gray-900 rounded p-2 overflow-x-auto">
+                          {JSON.stringify(log.details, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
+                {logs.length === 0 && (
+                  <div className="p-8 text-center text-gray-500">
+                    No logs found
+                  </div>
+                )}
               </div>
             </div>
           )}
