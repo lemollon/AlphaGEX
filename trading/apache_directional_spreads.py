@@ -1042,7 +1042,8 @@ class APACHETrader:
                            if p.close_date and p.close_date.startswith(datetime.now().strftime("%Y-%m-%d"))),
             'oracle_available': self.oracle is not None,
             'kronos_available': self.kronos is not None,
-            'tradier_available': self.tradier is not None
+            'tradier_available': self.tradier is not None,
+            'gex_ml_available': self.gex_ml is not None
         }
 
 

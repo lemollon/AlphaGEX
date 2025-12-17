@@ -79,6 +79,16 @@ except ImportError:
     ARESTradingMode = None
     print("Warning: ARESTrader not available. ARES bot will be disabled.")
 
+# Import APACHE (Directional Spreads)
+try:
+    from trading.apache_directional_spreads import APACHETrader, TradingMode as APACHETradingMode
+    APACHE_AVAILABLE = True
+except ImportError:
+    APACHE_AVAILABLE = False
+    APACHETrader = None
+    APACHETradingMode = None
+    print("Warning: APACHETrader not available. APACHE bot will be disabled.")
+
 # Import decision logger for comprehensive logging
 try:
     from trading.decision_logger import get_phoenix_logger, get_atlas_logger, get_ares_logger, BotName
@@ -156,6 +166,21 @@ class AutonomousTraderScheduler:
                 logger.warning(f"ARES initialization failed: {e}")
                 self.ares_trader = None
 
+        # APACHE - GEX-Based Directional Spreads
+        # Capital: $100,000 (from Reserve)
+        # Uses ML probability models for signal generation
+        self.apache_trader = None
+        if APACHE_AVAILABLE:
+            try:
+                self.apache_trader = APACHETrader(
+                    initial_capital=100_000,  # Uses portion of reserve
+                    config=None  # Will load from database
+                )
+                logger.info(f"✅ APACHE initialized with $100,000 capital (PAPER mode, GEX ML signals)")
+            except Exception as e:
+                logger.warning(f"APACHE initialization failed: {e}")
+                self.apache_trader = None
+
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
         logger.info(f"   PHOENIX: ${CAPITAL_ALLOCATION['PHOENIX']:,}")
@@ -169,10 +194,12 @@ class AutonomousTraderScheduler:
         self.last_position_check = None
         self.last_atlas_check = None
         self.last_ares_check = None
+        self.last_apache_check = None
         self.last_error = None
         self.execution_count = 0
         self.atlas_execution_count = 0
         self.ares_execution_count = 0
+        self.apache_execution_count = 0
 
         # Load saved state from database
         self._load_state()
@@ -544,6 +571,63 @@ class AutonomousTraderScheduler:
             logger.info("ARES EOD will retry next trading day")
             logger.info(f"=" * 80)
 
+    def scheduled_apache_logic(self):
+        """
+        APACHE (GEX Directional Spreads) trading logic - runs daily at 9:40 AM ET
+
+        The GEX-based directional spread strategy:
+        - Uses ML probability models for signal generation
+        - Bull Call Spreads for bullish, Bear Call Spreads for bearish
+        - 0DTE options on SPY
+        - GEX wall proximity filter for high probability setups
+        """
+        ny_tz = pytz.timezone('America/New_York')
+        now = datetime.now(ny_tz)
+
+        logger.info(f"=" * 80)
+        logger.info(f"APACHE (GEX Directional) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.apache_trader:
+            logger.warning("APACHE trader not available - skipping")
+            return
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping APACHE logic.")
+            return
+
+        logger.info("Market is OPEN. Running APACHE GEX directional strategy...")
+
+        try:
+            self.last_apache_check = now
+
+            # Run the daily APACHE cycle
+            result = self.apache_trader.run_daily_cycle()
+
+            if result:
+                logger.info(f"APACHE daily cycle completed:")
+                logger.info(f"  Signal Source: {result.get('signal_source', 'N/A')}")
+                logger.info(f"  Trades Attempted: {result.get('trades_attempted', 0)}")
+                logger.info(f"  Trades Executed: {result.get('trades_executed', 0)}")
+                logger.info(f"  Positions Closed: {result.get('positions_closed', 0)}")
+                logger.info(f"  Daily P&L: ${result.get('daily_pnl', 0):,.2f}")
+
+                if result.get('errors'):
+                    for error in result['errors']:
+                        logger.warning(f"    Warning: {error}")
+            else:
+                logger.info("APACHE: No actions taken today")
+
+            self.apache_execution_count += 1
+            logger.info(f"APACHE cycle #{self.apache_execution_count} completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in APACHE trading logic: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("APACHE will continue despite error")
+            logger.info(f"=" * 80)
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -557,11 +641,12 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC)")
+        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), APACHE (GEX Directional)")
         logger.info(f"Timezone: America/New_York (Eastern Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 10:05 AM ET, Mon-Fri")
         logger.info(f"ARES Schedule: Daily at 9:35 AM ET, Mon-Fri")
+        logger.info(f"APACHE Schedule: Daily at 9:40 AM ET, Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -647,6 +732,26 @@ class AutonomousTraderScheduler:
             logger.info("✅ ARES EOD job scheduled (4:05 PM ET daily)")
         else:
             logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
+
+        # =================================================================
+        # APACHE JOB: GEX Directional Spreads - runs once daily at 9:40 AM ET
+        # =================================================================
+        if self.apache_trader:
+            self.scheduler.add_job(
+                self.scheduled_apache_logic,
+                trigger=CronTrigger(
+                    hour=9,        # 9:00 AM
+                    minute=40,     # 9:40 AM - after ARES entry
+                    day_of_week='mon-fri',
+                    timezone='America/New_York'
+                ),
+                id='apache_trading',
+                name='APACHE - GEX Directional Spreads',
+                replace_existing=True
+            )
+            logger.info("✅ APACHE job scheduled (9:40 AM ET daily)")
+        else:
+            logger.warning("⚠️ APACHE not available - GEX directional trading disabled")
 
         self.scheduler.start()
         self.is_running = True
@@ -758,6 +863,12 @@ def get_atlas_trader():
     """Get the ATLAS trader instance from the scheduler"""
     scheduler = get_scheduler()
     return scheduler.atlas_trader if scheduler else None
+
+
+def get_apache_trader():
+    """Get the APACHE trader instance from the scheduler"""
+    scheduler = get_scheduler()
+    return scheduler.apache_trader if scheduler else None
 
 
 # ============================================================================

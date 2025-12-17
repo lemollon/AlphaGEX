@@ -324,6 +324,7 @@ export const apiClient = {
   updateAPACHEConfig: (name: string, value: string) => api.post(`/api/apache/config/${name}`, null, { params: { value } }),
   runAPACHECycle: () => api.post('/api/apache/run'),
   getAPACHEOracleAdvice: () => api.get('/api/apache/oracle-advice'),
+  getAPACHEMLSignal: () => api.get('/api/apache/ml-signal'),
 
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {

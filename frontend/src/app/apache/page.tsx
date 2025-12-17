@@ -16,6 +16,7 @@ interface APACHEStatus {
   oracle_available: boolean
   kronos_available: boolean
   tradier_available: boolean
+  gex_ml_available: boolean
   is_active: boolean
   config?: {
     risk_per_trade: number
@@ -73,6 +74,30 @@ interface OracleAdvice {
   use_gex_walls: boolean
 }
 
+interface MLSignal {
+  advice: string
+  spread_type: string
+  confidence: number
+  win_probability: number
+  expected_volatility: number
+  suggested_strikes: { entry_strike: number, exit_strike: number }
+  reasoning: string
+  model_predictions: {
+    direction: string
+    flip_gravity: number
+    magnet_attraction: number
+    pin_zone: number
+    volatility: number
+  }
+  gex_context: {
+    spot_price: number
+    regime: string
+    call_wall: number
+    put_wall: number
+    net_gex: number
+  }
+}
+
 interface PerformanceData {
   summary: {
     total_trades: number
@@ -96,6 +121,7 @@ export default function APACHEPage() {
   const [positions, setPositions] = useState<SpreadPosition[]>([])
   const [signals, setSignals] = useState<Signal[]>([])
   const [oracleAdvice, setOracleAdvice] = useState<OracleAdvice | null>(null)
+  const [mlSignal, setMLSignal] = useState<MLSignal | null>(null)
   const [performance, setPerformance] = useState<PerformanceData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -109,12 +135,13 @@ export default function APACHEPage() {
       setLoading(true)
       setError(null)
 
-      const [statusRes, positionsRes, signalsRes, performanceRes, adviceRes] = await Promise.all([
+      const [statusRes, positionsRes, signalsRes, performanceRes, adviceRes, mlSignalRes] = await Promise.all([
         apiClient.getAPACHEStatus().catch(() => ({ data: null })),
         apiClient.getAPACHEPositions().catch(() => ({ data: null })),
         apiClient.getAPACHESignals(20).catch(() => ({ data: null })),
         apiClient.getAPACHEPerformance(30).catch(() => ({ data: null })),
-        apiClient.getAPACHEOracleAdvice().catch(() => ({ data: null }))
+        apiClient.getAPACHEOracleAdvice().catch(() => ({ data: null })),
+        apiClient.getAPACHEMLSignal().catch(() => ({ data: null }))
       ])
 
       if (statusRes.data?.data) setStatus(statusRes.data.data)
@@ -122,6 +149,7 @@ export default function APACHEPage() {
       if (signalsRes.data?.data) setSignals(signalsRes.data.data)
       if (performanceRes.data?.data) setPerformance(performanceRes.data.data)
       if (adviceRes.data?.data) setOracleAdvice(adviceRes.data.data)
+      if (mlSignalRes.data?.data) setMLSignal(mlSignalRes.data.data)
 
       setLastUpdate(new Date())
     } catch (err) {
@@ -275,6 +303,10 @@ export default function APACHEPage() {
                   </div>
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${status?.gex_ml_available ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <span className="text-sm text-gray-300">GEX ML</span>
+                    </div>
+                    <div className="flex items-center gap-2">
                       <span className={`w-2 h-2 rounded-full ${status?.oracle_available ? 'bg-green-500' : 'bg-red-500'}`} />
                       <span className="text-sm text-gray-300">Oracle</span>
                     </div>
@@ -290,11 +322,98 @@ export default function APACHEPage() {
                 </div>
               </div>
 
-              {/* Oracle Advice Card */}
+              {/* ML Signal Card (Primary Signal Source) */}
+              <div className="bg-gray-800 rounded-xl p-6 border border-orange-700/50 mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Activity className="w-5 h-5 text-orange-500" />
+                  <h2 className="text-lg font-semibold text-white">GEX ML Signal</h2>
+                  <span className="px-2 py-0.5 text-xs bg-orange-900/50 text-orange-400 rounded">PRIMARY</span>
+                </div>
+                {mlSignal ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div>
+                        <p className="text-gray-400 text-sm mb-1">Recommendation</p>
+                        <p className={`text-xl font-bold ${
+                          mlSignal.advice === 'LONG' ? 'text-green-400' :
+                          mlSignal.advice === 'SHORT' ? 'text-red-400' :
+                          'text-gray-400'
+                        }`}>
+                          {mlSignal.advice}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 text-sm mb-1">Spread Type</p>
+                        <p className={`text-lg font-semibold ${
+                          mlSignal.spread_type === 'BULL_CALL_SPREAD' ? 'text-green-400' :
+                          mlSignal.spread_type === 'BEAR_CALL_SPREAD' ? 'text-red-400' :
+                          'text-gray-400'
+                        }`}>
+                          {mlSignal.spread_type?.replace('_', ' ') || 'NONE'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 text-sm mb-1">Confidence</p>
+                        <p className="text-xl font-bold text-white">
+                          {(mlSignal.confidence * 100).toFixed(1)}%
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 text-sm mb-1">Win Probability</p>
+                        <p className="text-xl font-bold text-white">
+                          {(mlSignal.win_probability * 100).toFixed(1)}%
+                        </p>
+                      </div>
+                    </div>
+
+                    {mlSignal.model_predictions && (
+                      <div className="pt-4 border-t border-gray-700">
+                        <p className="text-gray-400 text-sm mb-2">Model Predictions</p>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                          <div className="bg-gray-900 rounded p-2">
+                            <p className="text-xs text-gray-500">Direction</p>
+                            <p className={`text-sm font-medium ${
+                              mlSignal.model_predictions.direction === 'UP' ? 'text-green-400' :
+                              mlSignal.model_predictions.direction === 'DOWN' ? 'text-red-400' :
+                              'text-gray-400'
+                            }`}>{mlSignal.model_predictions.direction}</p>
+                          </div>
+                          <div className="bg-gray-900 rounded p-2">
+                            <p className="text-xs text-gray-500">Flip Gravity</p>
+                            <p className="text-sm font-medium text-white">{(mlSignal.model_predictions.flip_gravity * 100).toFixed(0)}%</p>
+                          </div>
+                          <div className="bg-gray-900 rounded p-2">
+                            <p className="text-xs text-gray-500">Magnet Attraction</p>
+                            <p className="text-sm font-medium text-white">{(mlSignal.model_predictions.magnet_attraction * 100).toFixed(0)}%</p>
+                          </div>
+                          <div className="bg-gray-900 rounded p-2">
+                            <p className="text-xs text-gray-500">Pin Zone</p>
+                            <p className="text-sm font-medium text-white">{(mlSignal.model_predictions.pin_zone * 100).toFixed(0)}%</p>
+                          </div>
+                          <div className="bg-gray-900 rounded p-2">
+                            <p className="text-xs text-gray-500">Exp. Volatility</p>
+                            <p className="text-sm font-medium text-white">{mlSignal.model_predictions.volatility?.toFixed(2)}%</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-3">
+                      <p className="text-gray-400 text-sm mb-1">Reasoning</p>
+                      <p className="text-gray-300 text-sm">{mlSignal.reasoning}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-gray-500">No ML signal available (train models with train_gex_probability_models.py)</p>
+                )}
+              </div>
+
+              {/* Oracle Advice Card (Fallback) */}
               <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 mb-6">
                 <div className="flex items-center gap-2 mb-4">
                   <Zap className="w-5 h-5 text-yellow-500" />
-                  <h2 className="text-lg font-semibold text-white">Current Oracle Advice</h2>
+                  <h2 className="text-lg font-semibold text-white">Oracle Advice</h2>
+                  <span className="px-2 py-0.5 text-xs bg-gray-700 text-gray-400 rounded">FALLBACK</span>
                 </div>
                 {oracleAdvice ? (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
