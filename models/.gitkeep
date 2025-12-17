@@ -1,0 +1,3 @@
+# Keep this directory in git
+# ML models will be trained on startup if missing
+# See scripts/ensure_models.py
