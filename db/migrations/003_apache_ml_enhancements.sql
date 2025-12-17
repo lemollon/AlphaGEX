@@ -59,6 +59,16 @@ CREATE INDEX IF NOT EXISTS idx_apache_signals_direction ON apache_signals(direct
 CREATE INDEX IF NOT EXISTS idx_apache_positions_ml ON apache_positions(ml_signal_used);
 
 -- ============================================================================
+-- INCREASE REASONING COLUMN SIZES
+-- ============================================================================
+
+-- Change reasoning column to TEXT (unlimited) if not already
+ALTER TABLE apache_signals ALTER COLUMN reasoning TYPE TEXT;
+
+-- Change oracle_reasoning column to TEXT (unlimited) if not already
+ALTER TABLE apache_positions ALTER COLUMN oracle_reasoning TYPE TEXT;
+
+-- ============================================================================
 -- VERIFICATION
 -- ============================================================================
 SELECT 'Apache ML enhancements applied successfully' as status;

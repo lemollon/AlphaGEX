@@ -455,7 +455,9 @@ class APACHETrader:
                 'win_probability': signal['win_probability'],
                 'spread_type': signal['spread_type'],
                 'expected_volatility': signal['expected_volatility'],
-                'model_predictions': signal['model_predictions']
+                'model_predictions': signal['model_predictions'],
+                'reasoning': signal['reasoning'],
+                'suggested_strikes': signal.get('suggested_strikes', {})
             })
 
             return signal
@@ -540,7 +542,7 @@ class APACHETrader:
                 gex_data.get('put_wall'),
                 gex_data.get('spot_price'),
                 spread_type,
-                advice.reasoning[:500]  # Truncate reasoning
+                advice.reasoning[:1000]  # Store more reasoning
             ))
 
             signal_id = c.fetchone()[0]
@@ -629,7 +631,7 @@ class APACHETrader:
                 call_wall_at_entry=gex_data.get('call_wall', 0),
                 put_wall_at_entry=gex_data.get('put_wall', 0),
                 oracle_confidence=advice.confidence,
-                oracle_reasoning=advice.reasoning[:200]
+                oracle_reasoning=advice.reasoning[:1000]  # Store more reasoning
             )
 
             self.open_positions.append(position)
@@ -1089,7 +1091,7 @@ class APACHETrader:
                     gex_data.get('put_wall'),
                     gex_data.get('spot_price'),
                     ml_signal['spread_type'],
-                    ml_signal['reasoning'][:500],
+                    ml_signal['reasoning'][:1000],  # Store more reasoning
                     'ml',  # signal_source
                     model_preds.get('direction', 'FLAT'),  # direction_prediction
                     json.dumps(model_preds),  # ml_predictions as JSON
@@ -1118,7 +1120,7 @@ class APACHETrader:
                     gex_data.get('put_wall'),
                     gex_data.get('spot_price'),
                     ml_signal['spread_type'],
-                    ml_signal['reasoning'][:500]
+                    ml_signal['reasoning'][:1000]  # Store more reasoning
                 ))
 
             signal_id = c.fetchone()[0]
