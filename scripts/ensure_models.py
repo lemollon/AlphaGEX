@@ -40,9 +40,24 @@ def ensure_models():
 
         generator = GEXSignalGenerator()
 
-        # Check if we have training data
-        from database_adapter import get_connection
-        conn = get_connection()
+        # Check if we have training data (in ORAT database)
+        import psycopg2
+        from urllib.parse import urlparse
+
+        db_url = os.environ.get('ORAT_DATABASE_URL') or os.environ.get('DATABASE_URL')
+        if not db_url:
+            print("[ensure_models] No database URL configured")
+            return False
+
+        result = urlparse(db_url)
+        conn = psycopg2.connect(
+            host=result.hostname,
+            port=result.port or 5432,
+            user=result.username,
+            password=result.password,
+            database=result.path[1:],
+            connect_timeout=10
+        )
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM gex_structure_daily")
         count = c.fetchone()[0]
