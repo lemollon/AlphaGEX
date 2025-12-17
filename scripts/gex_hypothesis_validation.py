@@ -85,9 +85,21 @@ def fetch_and_store_vix(conn, start_date: str = '2020-01-01', end_date: str = No
     cursor = conn.cursor()
     inserted = 0
 
+    import pandas as pd
+
     for date, row in vix.iterrows():
         trade_date = date.strftime('%Y-%m-%d')
         try:
+            # Handle both single and multi-level column formats from yfinance
+            def get_value(col):
+                val = row[col]
+                # If it's a Series (multi-level columns), get the first value
+                if hasattr(val, 'iloc'):
+                    val = val.iloc[0]
+                if pd.isna(val):
+                    return None
+                return float(val)
+
             cursor.execute("""
                 INSERT INTO vix_daily (trade_date, vix_open, vix_high, vix_low, vix_close)
                 VALUES (%s, %s, %s, %s, %s)
@@ -98,10 +110,10 @@ def fetch_and_store_vix(conn, start_date: str = '2020-01-01', end_date: str = No
                     vix_close = EXCLUDED.vix_close
             """, (
                 trade_date,
-                float(row['Open']) if not row.isna()['Open'] else None,
-                float(row['High']) if not row.isna()['High'] else None,
-                float(row['Low']) if not row.isna()['Low'] else None,
-                float(row['Close']) if not row.isna()['Close'] else None,
+                get_value('Open'),
+                get_value('High'),
+                get_value('Low'),
+                get_value('Close'),
             ))
             inserted += 1
         except Exception as e:
