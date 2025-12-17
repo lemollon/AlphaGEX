@@ -285,6 +285,40 @@ def test_run_cycle():
     except Exception as e:
         return test_result("Run Cycle", False, str(e))
 
+def test_diagnostics():
+    """Test 10: Diagnostics Endpoint"""
+    try:
+        resp = requests.get(f"{API_URL}/api/apache/diagnostics", timeout=20)
+        if resp.status_code != 200:
+            return test_result("Diagnostics", False, f"Status: {resp.status_code}")
+
+        data = resp.json().get('data', {})
+
+        # Extract key info
+        subsystems = data.get('subsystems', {})
+        data_avail = data.get('data_availability', {})
+        env = data.get('environment', {})
+
+        details = {
+            'apache_available': data.get('apache_available'),
+            'kronos': subsystems.get('kronos', {}).get('available'),
+            'oracle': subsystems.get('oracle', {}).get('available'),
+            'gex_ml': subsystems.get('gex_ml', {}).get('available'),
+            'gex_data_source': data_avail.get('gex_data', {}).get('source'),
+            'ml_model_exists': data_avail.get('ml_model_file', {}).get('exists'),
+            'database_url_set': env.get('database_url')
+        }
+
+        # Check database GEX data
+        db_gex = data_avail.get('database_gex', [])
+        if isinstance(db_gex, list) and db_gex:
+            details['latest_gex_symbol'] = db_gex[0].get('symbol')
+            details['latest_gex_date'] = db_gex[0].get('latest_date')
+
+        return test_result("Diagnostics", True, details)
+    except Exception as e:
+        return test_result("Diagnostics", False, str(e))
+
 def main():
     print("=" * 70)
     print("APACHE DIRECTIONAL STRATEGY - END-TO-END TEST")
@@ -302,6 +336,7 @@ def main():
         test_positions,
         test_performance,
         test_logs,
+        test_diagnostics,
         test_run_cycle,
     ]
 
