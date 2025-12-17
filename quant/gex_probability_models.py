@@ -1043,16 +1043,38 @@ class GEXSignalGenerator:
         overall_conviction = np.mean(conviction_factors)
 
         # Determine trade recommendation
-        if direction.prediction == Direction.UP.value:
-            if overall_conviction > 0.6 and direction.confidence > 0.5:
+        # Use probability-based approach instead of hard classification
+        # This generates more signals when there's directional edge
+
+        # Get raw probabilities from direction model
+        dir_probs = direction.probabilities or {}
+        up_prob = dir_probs.get('UP', 0.33)
+        down_prob = dir_probs.get('DOWN', 0.33)
+        flat_prob = dir_probs.get('FLAT', 0.34)
+
+        # Directional edge = difference between UP and DOWN
+        directional_edge = abs(up_prob - down_prob)
+
+        # Signal thresholds (tunable)
+        MIN_DIRECTIONAL_PROB = 0.35  # Min probability for direction
+        MIN_EDGE = 0.10              # Min edge over opposite direction
+        MIN_CONVICTION = 0.55        # Min overall conviction
+
+        if up_prob >= MIN_DIRECTIONAL_PROB and up_prob > down_prob + MIN_EDGE:
+            if overall_conviction >= MIN_CONVICTION:
                 recommendation = 'LONG'
             else:
                 recommendation = 'STAY_OUT'
-        elif direction.prediction == Direction.DOWN.value:
-            if overall_conviction > 0.6 and direction.confidence > 0.5:
+        elif down_prob >= MIN_DIRECTIONAL_PROB and down_prob > up_prob + MIN_EDGE:
+            if overall_conviction >= MIN_CONVICTION:
                 recommendation = 'SHORT'
             else:
                 recommendation = 'STAY_OUT'
+        elif direction.prediction == Direction.UP.value and direction.confidence > 0.6:
+            # Fallback to high-confidence predictions
+            recommendation = 'LONG' if overall_conviction >= MIN_CONVICTION else 'STAY_OUT'
+        elif direction.prediction == Direction.DOWN.value and direction.confidence > 0.6:
+            recommendation = 'SHORT' if overall_conviction >= MIN_CONVICTION else 'STAY_OUT'
         else:
             recommendation = 'STAY_OUT'
 
