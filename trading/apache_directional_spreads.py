@@ -338,57 +338,17 @@ class APACHETrader:
             logger.debug(f"Could not log to DB: {e}")
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
-        """Get current GEX data from Kronos or database fallback"""
-        # Try Kronos first (with automatic fallback to most recent date)
-        if self.kronos:
-            try:
-                # Use the new method that handles today vs historical fallback
-                gex, source = self.kronos.get_gex_for_today_or_recent(dte_max=7)
-                if gex:
-                    return {
-                        'net_gex': gex.net_gex,
-                        'call_wall': gex.call_wall,
-                        'put_wall': gex.put_wall,
-                        'flip_point': gex.flip_point,
-                        'spot_price': gex.spot_price,
-                        'regime': gex.gex_regime,
-                        'source': source
-                    }
-            except Exception as e:
-                self._log_to_db("WARNING", f"Kronos calculation failed: {e}")
+        """
+        Get current GEX data for trading decisions.
 
-        # Fallback 1: Get most recent GEX data from database
-        try:
-            conn = get_connection()
-            c = conn.cursor()
-            c.execute("""
-                SELECT net_gex, call_wall, put_wall, flip_point, spot_price, gex_regime, trade_date
-                FROM gex_daily
-                WHERE symbol = %s
-                ORDER BY trade_date DESC
-                LIMIT 1
-            """, (self.config.ticker,))
-            row = c.fetchone()
-            conn.close()
-
-            if row:
-                self._log_to_db("INFO", f"Using cached GEX data from {row[6]}")
-                return {
-                    'net_gex': float(row[0]) if row[0] else 0,
-                    'call_wall': float(row[1]) if row[1] else 0,
-                    'put_wall': float(row[2]) if row[2] else 0,
-                    'flip_point': float(row[3]) if row[3] else 0,
-                    'spot_price': float(row[4]) if row[4] else 0,
-                    'regime': row[5] or 'UNKNOWN',
-                    'source': f'database_{row[6]}'
-                }
-        except Exception as e:
-            self._log_to_db("WARNING", f"Database GEX fallback failed: {e}")
-
-        # Fallback 2: Calculate live GEX from Tradier options chain
+        Priority order:
+        1. Tradier LIVE - real-time options chain (best for live trading)
+        2. Kronos/ORAT - historical data with recent date fallback
+        3. Database cache - last resort
+        """
+        # PRIMARY: Tradier live GEX (real-time data for live trading)
         if TRADIER_GEX_AVAILABLE and get_gex_calculator:
             try:
-                self._log_to_db("INFO", "Attempting Tradier live GEX calculation")
                 gex_calc = get_gex_calculator()
                 # Use the ticker - for SPX, Tradier uses SPY as proxy
                 ticker = 'SPY' if self.config.ticker == 'SPX' else self.config.ticker
@@ -416,9 +376,55 @@ class APACHETrader:
                     }
                 else:
                     error_msg = gex_data.get('error', 'Unknown error') if gex_data else 'No data'
-                    self._log_to_db("WARNING", f"Tradier GEX calculation failed: {error_msg}")
+                    self._log_to_db("DEBUG", f"Tradier GEX not available: {error_msg}")
             except Exception as e:
-                self._log_to_db("WARNING", f"Tradier GEX fallback failed: {e}")
+                self._log_to_db("DEBUG", f"Tradier GEX failed: {e}")
+
+        # FALLBACK 1: Kronos/ORAT historical data (with recent date fallback)
+        if self.kronos:
+            try:
+                gex, source = self.kronos.get_gex_for_today_or_recent(dte_max=7)
+                if gex:
+                    self._log_to_db("INFO", f"Using Kronos GEX: {source}")
+                    return {
+                        'net_gex': gex.net_gex,
+                        'call_wall': gex.call_wall,
+                        'put_wall': gex.put_wall,
+                        'flip_point': gex.flip_point,
+                        'spot_price': gex.spot_price,
+                        'regime': gex.gex_regime,
+                        'source': source
+                    }
+            except Exception as e:
+                self._log_to_db("WARNING", f"Kronos calculation failed: {e}")
+
+        # FALLBACK 2: Database cache (last resort)
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute("""
+                SELECT net_gex, call_wall, put_wall, flip_point, spot_price, gex_regime, trade_date
+                FROM gex_daily
+                WHERE symbol = %s
+                ORDER BY trade_date DESC
+                LIMIT 1
+            """, (self.config.ticker,))
+            row = c.fetchone()
+            conn.close()
+
+            if row:
+                self._log_to_db("INFO", f"Using cached GEX data from {row[6]}")
+                return {
+                    'net_gex': float(row[0]) if row[0] else 0,
+                    'call_wall': float(row[1]) if row[1] else 0,
+                    'put_wall': float(row[2]) if row[2] else 0,
+                    'flip_point': float(row[3]) if row[3] else 0,
+                    'spot_price': float(row[4]) if row[4] else 0,
+                    'regime': row[5] or 'UNKNOWN',
+                    'source': f'database_{row[6]}'
+                }
+        except Exception as e:
+            self._log_to_db("WARNING", f"Database GEX fallback failed: {e}")
 
         self._log_to_db("WARNING", "No GEX data available from any source")
         return None
