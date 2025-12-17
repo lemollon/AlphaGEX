@@ -47,7 +47,10 @@ def test_result(name, passed, details=None):
 def test_api_health():
     """Test 1: API Health Check"""
     try:
-        resp = requests.get(f"{API_URL}/api/health", timeout=10)
+        # Try /health first (FastAPI standard), fallback to /api/health
+        resp = requests.get(f"{API_URL}/health", timeout=10)
+        if resp.status_code == 404:
+            resp = requests.get(f"{API_URL}/api/health", timeout=10)
         return test_result(
             "API Health Check",
             resp.status_code == 200,
@@ -155,13 +158,14 @@ def test_signals_history():
         data = resp.json().get('data', [])
         details = {
             'count': len(data),
-            'latest_signal': data[0].get('signal_direction') if data else 'None'
+            'latest_signal': data[0].get('direction', data[0].get('signal_direction')) if data else 'None'
         }
 
         if data:
             latest = data[0]
             details['latest_date'] = latest.get('created_at', 'unknown')[:19]
-            details['latest_confidence'] = f"{latest.get('ml_confidence', 0) * 100:.1f}%"
+            conf = latest.get('confidence', latest.get('ml_confidence', 0))
+            details['latest_confidence'] = f"{conf * 100:.1f}%"
 
         return test_result("Signals History", True, details)
     except Exception as e:
@@ -175,8 +179,9 @@ def test_positions():
             return test_result("Positions", False, f"Status: {resp.status_code}")
 
         data = resp.json().get('data', [])
-        open_positions = [p for p in data if p.get('status') == 'OPEN']
-        closed_positions = [p for p in data if p.get('status') == 'CLOSED']
+        # Handle both uppercase and lowercase status values
+        open_positions = [p for p in data if p.get('status', '').lower() == 'open']
+        closed_positions = [p for p in data if p.get('status', '').lower() == 'closed']
 
         details = {
             'total': len(data),
@@ -260,8 +265,8 @@ def test_run_cycle():
                 f"Skipped (market closed). Current time: {now.strftime('%Y-%m-%d %H:%M %Z')}"
             )
 
-        # Run the cycle
-        resp = requests.post(f"{API_URL}/api/apache/run-cycle", timeout=60)
+        # Run the cycle (endpoint is /api/apache/run)
+        resp = requests.post(f"{API_URL}/api/apache/run", timeout=60)
         if resp.status_code != 200:
             return test_result("Run Cycle", False, f"Status: {resp.status_code}")
 
