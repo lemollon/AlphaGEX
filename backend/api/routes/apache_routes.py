@@ -562,3 +562,106 @@ async def get_current_ml_signal():
     except Exception as e:
         logger.error(f"Error getting ML signal: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/diagnostics")
+async def get_apache_diagnostics():
+    """
+    Diagnostic endpoint for troubleshooting Apache issues.
+
+    Returns detailed status of all subsystems:
+    - Kronos (GEX calculator)
+    - Oracle (ML advisor)
+    - GEX ML models
+    - Tradier (execution)
+    - Database connectivity
+    - Recent GEX data availability
+    """
+    import os
+
+    diagnostics = {
+        "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+        "subsystems": {},
+        "data_availability": {},
+        "environment": {}
+    }
+
+    # Check Apache availability
+    apache = get_apache_instance()
+    diagnostics["apache_available"] = apache is not None
+
+    if apache:
+        # Subsystem status
+        diagnostics["subsystems"]["kronos"] = {
+            "available": apache.kronos is not None,
+            "type": type(apache.kronos).__name__ if apache.kronos else None
+        }
+        diagnostics["subsystems"]["oracle"] = {
+            "available": apache.oracle is not None,
+            "type": type(apache.oracle).__name__ if apache.oracle else None
+        }
+        diagnostics["subsystems"]["gex_ml"] = {
+            "available": apache.gex_ml is not None,
+            "type": type(apache.gex_ml).__name__ if apache.gex_ml else None
+        }
+        diagnostics["subsystems"]["tradier"] = {
+            "available": apache.tradier is not None,
+            "type": type(apache.tradier).__name__ if apache.tradier else None
+        }
+
+        # Try to get GEX data
+        try:
+            gex_data = apache.get_gex_data()
+            diagnostics["data_availability"]["gex_data"] = {
+                "available": gex_data is not None,
+                "source": gex_data.get('source') if gex_data else None,
+                "spot_price": gex_data.get('spot_price') if gex_data else None,
+                "regime": gex_data.get('regime') if gex_data else None
+            }
+        except Exception as e:
+            diagnostics["data_availability"]["gex_data"] = {
+                "available": False,
+                "error": str(e)
+            }
+
+    # Check ML model file
+    model_path = "models/gex_signal_generator.joblib"
+    diagnostics["data_availability"]["ml_model_file"] = {
+        "path": model_path,
+        "exists": os.path.exists(model_path),
+        "size_kb": os.path.getsize(model_path) // 1024 if os.path.exists(model_path) else 0
+    }
+
+    # Check database GEX data
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Get latest GEX data date
+        c.execute("""
+            SELECT symbol, MAX(trade_date) as latest_date, COUNT(*) as total_records
+            FROM gex_daily
+            GROUP BY symbol
+            ORDER BY latest_date DESC
+            LIMIT 5
+        """)
+        rows = c.fetchall()
+        diagnostics["data_availability"]["database_gex"] = [
+            {"symbol": r[0], "latest_date": str(r[1]), "records": r[2]}
+            for r in rows
+        ]
+
+        conn.close()
+    except Exception as e:
+        diagnostics["data_availability"]["database_gex"] = {"error": str(e)}
+
+    # Environment checks
+    diagnostics["environment"]["polygon_api_key"] = bool(os.environ.get("POLYGON_API_KEY"))
+    diagnostics["environment"]["tradier_token"] = bool(os.environ.get("TRADIER_ACCESS_TOKEN"))
+    diagnostics["environment"]["anthropic_key"] = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"))
+    diagnostics["environment"]["database_url"] = bool(os.environ.get("DATABASE_URL"))
+
+    return {
+        "success": True,
+        "data": diagnostics
+    }

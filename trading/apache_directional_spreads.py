@@ -329,31 +329,54 @@ class APACHETrader:
             logger.debug(f"Could not log to DB: {e}")
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
-        """Get current GEX data from Kronos"""
-        if not self.kronos:
-            self._log_to_db("WARNING", "Kronos not available for GEX data")
-            return None
+        """Get current GEX data from Kronos or database fallback"""
+        # Try Kronos first
+        if self.kronos:
+            try:
+                today = datetime.now().strftime("%Y-%m-%d")
+                gex = self.kronos.calculate_gex_for_date(today, dte_max=7)
+                if gex:
+                    return {
+                        'net_gex': gex.net_gex,
+                        'call_wall': gex.call_wall,
+                        'put_wall': gex.put_wall,
+                        'flip_point': gex.flip_point,
+                        'spot_price': gex.spot_price,
+                        'regime': gex.gex_regime,
+                        'source': 'kronos_live'
+                    }
+            except Exception as e:
+                self._log_to_db("WARNING", f"Kronos calculation failed: {e}")
 
+        # Fallback: Get most recent GEX data from database
         try:
-            # Get today's date for GEX calculation
-            today = datetime.now().strftime("%Y-%m-%d")
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute("""
+                SELECT net_gex, call_wall, put_wall, flip_point, spot_price, gex_regime, trade_date
+                FROM gex_daily
+                WHERE symbol = %s
+                ORDER BY trade_date DESC
+                LIMIT 1
+            """, (self.config.ticker,))
+            row = c.fetchone()
+            conn.close()
 
-            # Use calculate_gex_for_date method
-            gex = self.kronos.calculate_gex_for_date(today, dte_max=7)
-            if gex:
+            if row:
+                self._log_to_db("INFO", f"Using cached GEX data from {row[6]}")
                 return {
-                    'net_gex': gex.net_gex,
-                    'call_wall': gex.call_wall,
-                    'put_wall': gex.put_wall,
-                    'flip_point': gex.flip_point,
-                    'spot_price': gex.spot_price,
-                    'regime': gex.gex_regime  # Already calculated by Kronos
+                    'net_gex': float(row[0]) if row[0] else 0,
+                    'call_wall': float(row[1]) if row[1] else 0,
+                    'put_wall': float(row[2]) if row[2] else 0,
+                    'flip_point': float(row[3]) if row[3] else 0,
+                    'spot_price': float(row[4]) if row[4] else 0,
+                    'regime': row[5] or 'UNKNOWN',
+                    'source': f'database_{row[6]}'
                 }
-            else:
-                self._log_to_db("WARNING", f"No GEX data for {today}")
         except Exception as e:
-            self._log_to_db("ERROR", f"Failed to get GEX data: {e}")
+            self._log_to_db("WARNING", f"Database GEX fallback failed: {e}")
 
+        self._log_to_db("WARNING", "No GEX data available from any source")
         return None
 
     def get_oracle_advice(self) -> Optional[OraclePrediction]:
