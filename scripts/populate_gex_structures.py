@@ -223,6 +223,62 @@ def get_ohlc_from_yahoo(symbol: str, trade_date: str) -> Optional[Dict]:
     return None
 
 
+# Global cache for OHLC data
+_ohlc_cache = {}
+
+
+def prefetch_ohlc_data(symbol: str, start_date: str, end_date: str) -> int:
+    """
+    Pre-fetch all OHLC data for a symbol in bulk.
+    Much faster than fetching one day at a time.
+    Returns number of days fetched.
+    """
+    global _ohlc_cache
+    import yfinance as yf
+
+    ticker_map = {'SPX': '^GSPC', 'SPY': 'SPY'}
+    ticker = ticker_map.get(symbol, symbol)
+
+    print(f"  Fetching OHLC data for {symbol} ({start_date} to {end_date})...")
+
+    try:
+        data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+
+        if len(data) == 0:
+            print(f"  WARNING: No OHLC data returned for {symbol}")
+            return 0
+
+        count = 0
+        for date, row in data.iterrows():
+            date_str = date.strftime('%Y-%m-%d')
+            cache_key = f"{symbol}_{date_str}"
+            _ohlc_cache[cache_key] = {
+                'open': float(row['Open']),
+                'high': float(row['High']),
+                'low': float(row['Low']),
+                'close': float(row['Close'])
+            }
+            count += 1
+
+        print(f"  ✓ Cached {count} days of OHLC data for {symbol}")
+        return count
+    except Exception as e:
+        print(f"  ERROR fetching OHLC for {symbol}: {e}")
+        return 0
+
+
+def get_cached_ohlc(symbol: str, trade_date: str) -> Optional[Dict]:
+    """Get OHLC from cache, falling back to Yahoo Finance if not cached"""
+    global _ohlc_cache
+    cache_key = f"{symbol}_{trade_date}"
+
+    if cache_key in _ohlc_cache:
+        return _ohlc_cache[cache_key]
+
+    # Fallback to single fetch if not cached
+    return get_ohlc_from_yahoo(symbol, trade_date)
+
+
 def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7) -> Optional[Dict]:
     """
     Calculate complete GEX structure for a date.
@@ -258,11 +314,12 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
     if not rows:
         return None
 
-    # Get spot price and OHLC
+    # Get spot price and OHLC (use cached data for bulk operations)
     spot_price = float(rows[0][4])
-    ohlc = get_ohlc_from_yahoo(symbol, trade_date)
+    ohlc = get_cached_ohlc(symbol, trade_date)
     if not ohlc:
-        ohlc = {'open': spot_price, 'high': spot_price, 'low': spot_price, 'close': spot_price}
+        # Fallback: use spot_price with estimated range (not ideal but better than 0)
+        ohlc = {'open': spot_price, 'high': spot_price * 1.005, 'low': spot_price * 0.995, 'close': spot_price}
 
     spot_open = ohlc['open']
 
@@ -729,6 +786,11 @@ def main():
 
         if not available_dates:
             continue
+
+        # Pre-fetch OHLC data in bulk (much faster than per-date fetching)
+        start_dt = available_dates[0]
+        end_dt = available_dates[-1]
+        prefetch_ohlc_data(symbol, start_dt, end_dt)
 
         success = 0
         failed = 0
