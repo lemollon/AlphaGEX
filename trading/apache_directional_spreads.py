@@ -330,11 +330,11 @@ class APACHETrader:
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
         """Get current GEX data from Kronos or database fallback"""
-        # Try Kronos first
+        # Try Kronos first (with automatic fallback to most recent date)
         if self.kronos:
             try:
-                today = datetime.now().strftime("%Y-%m-%d")
-                gex = self.kronos.calculate_gex_for_date(today, dte_max=7)
+                # Use the new method that handles today vs historical fallback
+                gex, source = self.kronos.get_gex_for_today_or_recent(dte_max=7)
                 if gex:
                     return {
                         'net_gex': gex.net_gex,
@@ -343,7 +343,7 @@ class APACHETrader:
                         'flip_point': gex.flip_point,
                         'spot_price': gex.spot_price,
                         'regime': gex.gex_regime,
-                        'source': 'kronos_live'
+                        'source': source
                     }
             except Exception as e:
                 self._log_to_db("WARNING", f"Kronos calculation failed: {e}")

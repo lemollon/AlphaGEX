@@ -660,6 +660,43 @@ async def get_apache_diagnostics():
     diagnostics["environment"]["tradier_token"] = bool(os.environ.get("TRADIER_ACCESS_TOKEN"))
     diagnostics["environment"]["anthropic_key"] = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"))
     diagnostics["environment"]["database_url"] = bool(os.environ.get("DATABASE_URL"))
+    diagnostics["environment"]["orat_database_url"] = bool(os.environ.get("ORAT_DATABASE_URL"))
+
+    # Check ORAT database connectivity and data availability
+    orat_url = os.environ.get("ORAT_DATABASE_URL") or os.environ.get("DATABASE_URL")
+    if orat_url:
+        try:
+            import psycopg2
+            from urllib.parse import urlparse
+            result = urlparse(orat_url)
+            conn = psycopg2.connect(
+                host=result.hostname,
+                port=result.port or 5432,
+                user=result.username,
+                password=result.password,
+                database=result.path[1:],
+                connect_timeout=10
+            )
+            c = conn.cursor()
+            c.execute("""
+                SELECT COUNT(*), MAX(trade_date)
+                FROM orat_options_eod
+                WHERE ticker = 'SPX'
+                  AND gamma IS NOT NULL
+                  AND gamma > 0
+            """)
+            row = c.fetchone()
+            conn.close()
+            diagnostics["data_availability"]["orat_database"] = {
+                "connected": True,
+                "spx_rows_with_gamma": row[0] if row else 0,
+                "most_recent_date": str(row[1]) if row and row[1] else None
+            }
+        except Exception as e:
+            diagnostics["data_availability"]["orat_database"] = {
+                "connected": False,
+                "error": str(e)
+            }
 
     return {
         "success": True,

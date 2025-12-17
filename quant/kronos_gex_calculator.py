@@ -33,7 +33,7 @@ import os
 import sys
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 # Add parent to path
@@ -129,6 +129,68 @@ class KronosGEXCalculator:
             connect_timeout=30
         )
         return conn
+
+    def get_most_recent_date(self) -> Optional[str]:
+        """
+        Get the most recent date with ORAT data for this ticker.
+
+        Returns:
+            Date string in YYYY-MM-DD format, or None if no data
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT MAX(trade_date)
+                FROM orat_options_eod
+                WHERE ticker = %s
+                  AND gamma IS NOT NULL
+                  AND gamma > 0
+                  AND (call_oi > 0 OR put_oi > 0)
+            """, (self.ticker,))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row and row[0]:
+                return row[0].strftime('%Y-%m-%d')
+            return None
+        except Exception as e:
+            logger.error(f"Error getting most recent ORAT date: {e}")
+            return None
+
+    def get_gex_for_today_or_recent(self, dte_max: int = 7) -> Tuple[Optional['GEXData'], str]:
+        """
+        Get GEX data for today, or fall back to most recent available date.
+
+        ORAT data is end-of-day, so today's date won't have data until after market close.
+        This method handles that by falling back to the most recent available date.
+
+        Args:
+            dte_max: Maximum days to expiration to include
+
+        Returns:
+            Tuple of (GEXData or None, source description string)
+        """
+        from datetime import datetime
+
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # Try today first
+        gex = self.calculate_gex_for_date(today, dte_max)
+        if gex:
+            return gex, f'kronos_live_{today}'
+
+        # Fall back to most recent available date
+        recent_date = self.get_most_recent_date()
+        if recent_date:
+            logger.info(f"No ORAT data for today ({today}), using most recent: {recent_date}")
+            gex = self.calculate_gex_for_date(recent_date, dte_max)
+            if gex:
+                return gex, f'kronos_historical_{recent_date}'
+
+        return None, 'no_data'
 
     def calculate_gex_for_date(
         self,
