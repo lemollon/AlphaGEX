@@ -818,6 +818,9 @@ class APACHETrader:
             'realized_pnl': position.realized_pnl
         })
 
+        # Update daily performance tracking
+        self._update_daily_performance(position)
+
     def _update_position_in_db(self, position: SpreadPosition, exit_reason: str) -> None:
         """Update position status in database"""
         try:
@@ -841,6 +844,67 @@ class APACHETrader:
             conn.close()
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to update position: {e}")
+
+    def _update_daily_performance(self, position: SpreadPosition) -> None:
+        """Update daily performance table after closing a position"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            is_win = position.realized_pnl > 0
+            is_bullish = position.spread_type == SpreadType.BULL_CALL_SPREAD
+
+            # Try to update existing row, or insert new one
+            c.execute("""
+                INSERT INTO apache_performance (
+                    trade_date, trades_executed, trades_won, trades_lost,
+                    gross_pnl, net_pnl, starting_capital, ending_capital,
+                    bullish_trades, bearish_trades
+                ) VALUES (
+                    %s, 1, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (trade_date) DO UPDATE SET
+                    trades_executed = apache_performance.trades_executed + 1,
+                    trades_won = apache_performance.trades_won + EXCLUDED.trades_won,
+                    trades_lost = apache_performance.trades_lost + EXCLUDED.trades_lost,
+                    gross_pnl = apache_performance.gross_pnl + EXCLUDED.gross_pnl,
+                    net_pnl = apache_performance.net_pnl + EXCLUDED.net_pnl,
+                    ending_capital = EXCLUDED.ending_capital,
+                    bullish_trades = apache_performance.bullish_trades + EXCLUDED.bullish_trades,
+                    bearish_trades = apache_performance.bearish_trades + EXCLUDED.bearish_trades,
+                    win_rate = CASE
+                        WHEN (apache_performance.trades_executed + 1) > 0
+                        THEN (apache_performance.trades_won + EXCLUDED.trades_won)::float / (apache_performance.trades_executed + 1)
+                        ELSE 0
+                    END,
+                    daily_return_pct = CASE
+                        WHEN apache_performance.starting_capital > 0
+                        THEN ((EXCLUDED.ending_capital - apache_performance.starting_capital) / apache_performance.starting_capital) * 100
+                        ELSE 0
+                    END
+            """, (
+                today,
+                1 if is_win else 0,  # trades_won
+                0 if is_win else 1,  # trades_lost
+                position.realized_pnl,  # gross_pnl
+                position.realized_pnl,  # net_pnl (commissions deducted later)
+                self.config.initial_capital,  # starting_capital
+                self.current_capital,  # ending_capital
+                1 if is_bullish else 0,  # bullish_trades
+                0 if is_bullish else 1   # bearish_trades
+            ))
+
+            conn.commit()
+            conn.close()
+
+            self._log_to_db("DEBUG", "Daily performance updated", {
+                'date': today,
+                'pnl': position.realized_pnl,
+                'win': is_win
+            })
+        except Exception as e:
+            self._log_to_db("ERROR", f"Failed to update daily performance: {e}")
 
     def _log_exit_decision(self, position: SpreadPosition, reason: str) -> None:
         """Log exit decision"""
@@ -987,8 +1051,9 @@ class APACHETrader:
         return result
 
     def _save_ml_signal_to_db(self, ml_signal: Dict, gex_data: Dict) -> Optional[int]:
-        """Save ML signal to apache_signals table"""
+        """Save ML signal to apache_signals table with full ML model data"""
         try:
+            import json
             conn = get_connection()
             c = conn.cursor()
 
@@ -998,31 +1063,74 @@ class APACHETrader:
             elif ml_signal['advice'] == 'SHORT':
                 direction = "BEARISH"
 
-            c.execute("""
-                INSERT INTO apache_signals (
-                    ticker, signal_direction, ml_confidence, oracle_advice,
-                    gex_regime, call_wall, put_wall, spot_price,
-                    spread_type, reasoning
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                self.config.ticker,
-                direction,
-                ml_signal['confidence'],
-                ml_signal['advice'],
-                gex_data.get('regime', 'NEUTRAL'),
-                gex_data.get('call_wall'),
-                gex_data.get('put_wall'),
-                gex_data.get('spot_price'),
-                ml_signal['spread_type'],
-                ml_signal['reasoning'][:500]
-            ))
+            # Extract model predictions
+            model_preds = ml_signal.get('model_predictions', {})
+
+            # Try enhanced insert with ML columns (may fail if migration not run)
+            try:
+                c.execute("""
+                    INSERT INTO apache_signals (
+                        ticker, signal_direction, ml_confidence, oracle_advice,
+                        gex_regime, call_wall, put_wall, spot_price,
+                        spread_type, reasoning, signal_source,
+                        direction_prediction, ml_predictions,
+                        flip_gravity_prob, magnet_attraction_prob,
+                        pin_zone_prob, expected_volatility_pct,
+                        overall_conviction
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    self.config.ticker,
+                    direction,
+                    ml_signal['confidence'],
+                    ml_signal['advice'],
+                    gex_data.get('regime', 'NEUTRAL'),
+                    gex_data.get('call_wall'),
+                    gex_data.get('put_wall'),
+                    gex_data.get('spot_price'),
+                    ml_signal['spread_type'],
+                    ml_signal['reasoning'][:500],
+                    'ml',  # signal_source
+                    model_preds.get('direction', 'FLAT'),  # direction_prediction
+                    json.dumps(model_preds),  # ml_predictions as JSON
+                    model_preds.get('flip_gravity'),
+                    model_preds.get('magnet_attraction'),
+                    model_preds.get('pin_zone'),
+                    model_preds.get('volatility'),
+                    ml_signal.get('win_probability', 0.5)  # overall_conviction
+                ))
+            except Exception:
+                # Fallback to basic insert if new columns don't exist
+                c.execute("""
+                    INSERT INTO apache_signals (
+                        ticker, signal_direction, ml_confidence, oracle_advice,
+                        gex_regime, call_wall, put_wall, spot_price,
+                        spread_type, reasoning
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    self.config.ticker,
+                    direction,
+                    ml_signal['confidence'],
+                    ml_signal['advice'],
+                    gex_data.get('regime', 'NEUTRAL'),
+                    gex_data.get('call_wall'),
+                    gex_data.get('put_wall'),
+                    gex_data.get('spot_price'),
+                    ml_signal['spread_type'],
+                    ml_signal['reasoning'][:500]
+                ))
 
             signal_id = c.fetchone()[0]
             conn.commit()
             conn.close()
 
-            self._log_to_db("INFO", f"ML Signal saved: {direction}", {'signal_id': signal_id})
+            self._log_to_db("INFO", f"ML Signal saved: {direction}", {
+                'signal_id': signal_id,
+                'direction': model_preds.get('direction'),
+                'confidence': ml_signal['confidence'],
+                'win_probability': ml_signal.get('win_probability')
+            })
             return signal_id
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to save ML signal: {e}")
