@@ -1496,7 +1496,7 @@ async def startup_event():
 
         # =====================================================================
         # Register ARES + ATLAS Scheduler (APScheduler-based trading bots)
-        # ARES: Aggressive Iron Condor - 10:15 AM ET daily ($200K)
+        # ARES: Aggressive Iron Condor - 9:35 AM ET daily ($200K)
         # ATLAS: SPX Wheel Strategy - 10:05 AM ET daily ($400K)
         # =====================================================================
         try:
@@ -1533,7 +1533,7 @@ async def startup_event():
                 max_restarts=10
             )
             print("✅ Registered: ARES_ATLAS_Scheduler")
-            print("   • ARES (Aggressive Iron Condor): 10:15 AM ET daily, $200K capital")
+            print("   • ARES (Aggressive Iron Condor): 9:35 AM ET daily, $200K capital")
             print("   • ATLAS (SPX Wheel): 10:05 AM ET daily, $400K capital")
         except Exception as e:
             print(f"⚠️  Could not register ARES_ATLAS_Scheduler: {e}")
@@ -1577,7 +1577,7 @@ async def startup_event():
     print("=" * 80)
     print("✅ Thread Watchdog: ACTIVE (auto-restarts crashed threads)")
     print("✅ PHOENIX Trader: MONITORED (0DTE options, every 5 min)")
-    print("✅ ARES Trader: MONITORED (Iron Condor, 10:15 AM ET daily, $200K)")
+    print("✅ ARES Trader: MONITORED (Iron Condor, 9:35 AM ET daily, $200K)")
     print("✅ ATLAS Trader: MONITORED (SPX Wheel, 10:05 AM ET daily, $400K)")
     print("✅ Data Collector: MONITORED (GEX snapshots every 5 min)")
     print("✅ Notification Monitor: RUNNING (checks every 60 sec)")
@@ -1585,7 +1585,7 @@ async def startup_event():
     print("")
     print("📊 TRADING BOTS (ALL AUTOMATED):")
     print("   • PHOENIX: 0DTE SPY/SPX options - every 5 min during market hours")
-    print("   • ARES: Aggressive Iron Condor - 10:15 AM ET daily (targets 10% monthly)")
+    print("   • ARES: Aggressive Iron Condor - 9:35 AM ET daily (targets 10% monthly)")
     print("   • ATLAS: SPX Cash-Secured Put Wheel - 10:05 AM ET daily")
     print("   • Oracle AI: Provides recommendations to ARES for trade decisions")
     print("")
