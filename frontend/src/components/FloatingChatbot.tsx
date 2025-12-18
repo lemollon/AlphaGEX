@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, X, Minimize2, Maximize2, Image, Trash2, User, Loader2, Bot } from 'lucide-react'
+import { Send, X, Minimize2, Maximize2, Image, Trash2, User, Loader2, Bot, Download, Volume2, VolumeX, Sparkles, Terminal, AlertTriangle } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
 interface Message {
@@ -10,6 +10,7 @@ interface Message {
   content: string
   timestamp: Date
   imageUrl?: string // Base64 image data URL
+  type?: 'normal' | 'command' | 'briefing' | 'alert' // Message type for styling
 }
 
 // GEXIS Configuration
@@ -18,7 +19,20 @@ const GEXIS_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
 const USER_NAME = 'Optionist Prime'
 
 const STORAGE_KEY = 'alphagex_chat_history'
+const SESSION_KEY = 'alphagex_session_id'
+const SOUND_PREF_KEY = 'alphagex_sound_enabled'
 const MAX_STORED_MESSAGES = 50
+
+// Quick commands
+const QUICK_COMMANDS = [
+  { cmd: '/help', desc: 'Show available commands' },
+  { cmd: '/status', desc: 'System & bot status' },
+  { cmd: '/gex', desc: 'GEX data (e.g., /gex SPY)' },
+  { cmd: '/positions', desc: 'Open positions' },
+  { cmd: '/pnl', desc: 'P&L summary' },
+  { cmd: '/briefing', desc: 'Daily market briefing' },
+  { cmd: '/alerts', desc: 'Active alerts' },
+]
 
 // Known stock symbols for extraction
 const KNOWN_SYMBOLS = new Set([
@@ -33,6 +47,11 @@ const KNOWN_SYMBOLS = new Set([
   'BTC', 'ETH', 'COIN', 'MSTR', 'RIOT', 'MARA', 'BITF', 'HUT',
   'GME', 'AMC', 'BBBY', 'BB', 'NOK', 'SOFI', 'HOOD', 'RIVN', 'LCID'
 ])
+
+// Generate session ID
+function generateSessionId(): string {
+  return Math.random().toString(36).substring(2, 10)
+}
 
 // Extract symbol from user query
 function extractSymbolFromQuery(query: string): string {
@@ -72,7 +91,10 @@ function getGexisWelcomeMessage(): string {
 
 All systems are operational. I have full access to AlphaGEX's trading intelligence, including real-time GEX analysis, bot status monitoring, trade recommendations, and your trading history.
 
-How may I assist you today? You can ask me about market analysis, upload charts for review, or brainstorm trading strategies.`
+**Quick Commands:**
+Type /help for available commands, or ask me anything naturally.
+
+How may I assist you today?`
 }
 
 // Get GEXIS chat cleared message
@@ -80,13 +102,27 @@ function getGexisClearMessage(): string {
   return `Chat cleared, ${USER_NAME}. Ready for a fresh conversation. What shall we analyze?`
 }
 
-// Cool animated AI robot icon component
-function AIRobotIcon({ className = "w-6 h-6", animate = false }: { className?: string, animate?: boolean }) {
-  return (
-    <div className="relative">
-      <Bot className={`${className} text-white relative z-10 ${animate ? 'animate-pulse' : ''}`} />
-    </div>
-  )
+// Play notification sound
+function playNotificationSound() {
+  try {
+    // Create a simple beep sound using Web Audio API
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+
+    oscillator.frequency.value = 800
+    oscillator.type = 'sine'
+    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime)
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2)
+
+    oscillator.start(audioContext.currentTime)
+    oscillator.stop(audioContext.currentTime + 0.2)
+  } catch (e) {
+    // Silently fail if audio not supported
+  }
 }
 
 export default function FloatingChatbot() {
@@ -97,9 +133,31 @@ export default function FloatingChatbot() {
   const [loading, setLoading] = useState(false)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [sessionId, setSessionId] = useState<string>('')
+  const [soundEnabled, setSoundEnabled] = useState(true)
+  const [showCommands, setShowCommands] = useState(false)
+  const [alertCount, setAlertCount] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Initialize session ID
+  useEffect(() => {
+    let storedSession = localStorage.getItem(SESSION_KEY)
+    if (!storedSession) {
+      storedSession = generateSessionId()
+      localStorage.setItem(SESSION_KEY, storedSession)
+    }
+    setSessionId(storedSession)
+  }, [])
+
+  // Load sound preference
+  useEffect(() => {
+    const pref = localStorage.getItem(SOUND_PREF_KEY)
+    if (pref !== null) {
+      setSoundEnabled(pref === 'true')
+    }
+  }, [])
 
   // Load messages from localStorage on mount
   useEffect(() => {
@@ -125,6 +183,27 @@ export default function FloatingChatbot() {
     } catch (e) {
       console.error('Failed to load chat history:', e)
     }
+  }, [])
+
+  // Check for alerts periodically
+  useEffect(() => {
+    const checkAlerts = async () => {
+      try {
+        const response = await fetch('/api/ai/gexis/alerts')
+        const data = await response.json()
+        if (data.success && data.count > 0) {
+          setAlertCount(data.count)
+        } else {
+          setAlertCount(0)
+        }
+      } catch (e) {
+        // Silently fail
+      }
+    }
+
+    checkAlerts()
+    const interval = setInterval(checkAlerts, 60000) // Check every minute
+    return () => clearInterval(interval)
   }, [])
 
   // Save messages to localStorage whenever they change
@@ -154,6 +233,17 @@ export default function FloatingChatbot() {
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
     }
   }, [input])
+
+  // Show command suggestions when typing /
+  useEffect(() => {
+    setShowCommands(input.startsWith('/') && !input.includes(' '))
+  }, [input])
+
+  const toggleSound = () => {
+    const newValue = !soundEnabled
+    setSoundEnabled(newValue)
+    localStorage.setItem(SOUND_PREF_KEY, String(newValue))
+  }
 
   const handleImageSelect = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -201,6 +291,26 @@ export default function FloatingChatbot() {
     }
   }
 
+  // Handle quick commands
+  const handleCommand = async (command: string): Promise<string | null> => {
+    try {
+      const response = await fetch('/api/ai/gexis/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command })
+      })
+      const data = await response.json()
+
+      if (data.success) {
+        return data.response || data.briefing || 'Command executed successfully.'
+      } else {
+        return data.error || 'Command failed.'
+      }
+    } catch (e) {
+      return 'Failed to execute command. Please try again.'
+    }
+  }
+
   const handleSend = async () => {
     if ((!input.trim() && !selectedImage) || loading) return
 
@@ -209,7 +319,8 @@ export default function FloatingChatbot() {
       role: 'user',
       content: input || (selectedImage ? '[Image uploaded for analysis]' : ''),
       timestamp: new Date(),
-      imageUrl: selectedImage || undefined
+      imageUrl: selectedImage || undefined,
+      type: input.startsWith('/') ? 'command' : 'normal'
     }
 
     setMessages(prev => [...prev, userMessage])
@@ -217,6 +328,7 @@ export default function FloatingChatbot() {
     const currentImage = selectedImage
     setInput('')
     setSelectedImage(null)
+    setShowCommands(false)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -224,42 +336,58 @@ export default function FloatingChatbot() {
 
     try {
       let response
-
-      // Extract symbol from user query (or default to SPY)
-      const detectedSymbol = extractSymbolFromQuery(currentInput)
-
-      if (currentImage) {
-        // Use image analysis endpoint
-        response = await apiClient.analyzeWithImage({
-          symbol: detectedSymbol,
-          query: currentInput || 'Please analyze this image and provide trading insights.',
-          image_data: currentImage
-        })
-      } else {
-        // Use regular analysis endpoint
-        response = await apiClient.analyzeMarket({
-          symbol: detectedSymbol,
-          query: currentInput,
-          market_data: {},
-          gamma_intel: {}
-        })
-      }
-
-      // Handle various response formats
-      const responseData = response.data
       let analysisText = ''
+      let messageType: 'normal' | 'command' | 'briefing' | 'alert' = 'normal'
 
-      if (responseData?.success && responseData?.data) {
-        // New format: { success: true, data: { analysis: "..." } }
-        analysisText = responseData.data.analysis || responseData.data.response || ''
-      } else if (responseData?.response) {
-        // Old format: { response: "..." }
-        analysisText = responseData.response
-      } else if (responseData?.analysis) {
-        // Direct analysis: { analysis: "..." }
-        analysisText = responseData.analysis
-      } else if (typeof responseData === 'string') {
-        analysisText = responseData
+      // Check if it's a quick command
+      if (currentInput.trim().startsWith('/')) {
+        const commandResult = await handleCommand(currentInput.trim())
+        analysisText = commandResult || 'Command processed.'
+        messageType = currentInput.includes('briefing') ? 'briefing' :
+                      currentInput.includes('alert') ? 'alert' : 'command'
+      } else {
+        // Extract symbol from user query (or default to SPY)
+        const detectedSymbol = extractSymbolFromQuery(currentInput)
+
+        if (currentImage) {
+          // Use image analysis endpoint
+          response = await apiClient.analyzeWithImage({
+            symbol: detectedSymbol,
+            query: currentInput || 'Please analyze this image and provide trading insights.',
+            image_data: currentImage
+          })
+        } else {
+          // Use analysis with context endpoint for conversation memory
+          response = await fetch('/api/ai/gexis/analyze-with-context', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: currentInput,
+              symbol: detectedSymbol,
+              session_id: sessionId,
+              market_data: {}
+            })
+          })
+          const data = await response.json()
+
+          if (data.success && data.data) {
+            analysisText = data.data.analysis || ''
+          } else if (data.error) {
+            throw new Error(data.error)
+          }
+        }
+
+        // Handle API client response format
+        if (response && 'data' in response) {
+          const responseData = response.data
+          if (responseData?.success && responseData?.data) {
+            analysisText = responseData.data.analysis || responseData.data.response || ''
+          } else if (responseData?.response) {
+            analysisText = responseData.response
+          } else if (responseData?.analysis) {
+            analysisText = responseData.analysis
+          }
+        }
       }
 
       if (analysisText) {
@@ -267,9 +395,15 @@ export default function FloatingChatbot() {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
           content: analysisText,
-          timestamp: new Date()
+          timestamp: new Date(),
+          type: messageType
         }
         setMessages(prev => [...prev, aiMessage])
+
+        // Play notification sound
+        if (soundEnabled) {
+          playNotificationSound()
+        }
       } else {
         throw new Error('No analysis in response')
       }
@@ -296,7 +430,18 @@ export default function FloatingChatbot() {
     }
   }
 
+  const handleCommandClick = (cmd: string) => {
+    setInput(cmd + ' ')
+    setShowCommands(false)
+    textareaRef.current?.focus()
+  }
+
   const clearHistory = () => {
+    // Generate new session ID
+    const newSession = generateSessionId()
+    localStorage.setItem(SESSION_KEY, newSession)
+    setSessionId(newSession)
+
     setMessages([{
       id: Date.now().toString(),
       role: 'assistant',
@@ -306,12 +451,48 @@ export default function FloatingChatbot() {
     localStorage.removeItem(STORAGE_KEY)
   }
 
+  const exportConversation = async () => {
+    try {
+      const response = await fetch(`/api/ai/gexis/export/${sessionId}?format=markdown`)
+      const data = await response.json()
+
+      if (data.success && data.content) {
+        // Create and download file
+        const blob = new Blob([data.content], { type: 'text/markdown' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `gexis-conversation-${sessionId}.md`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      }
+    } catch (e) {
+      console.error('Failed to export conversation:', e)
+    }
+  }
+
   const formatTime = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
       hour: 'numeric',
       minute: '2-digit',
       hour12: true
     }).format(date)
+  }
+
+  // Get message style based on type
+  const getMessageStyle = (type?: string) => {
+    switch (type) {
+      case 'command':
+        return 'border-l-4 border-cyan-500 bg-cyan-500/10'
+      case 'briefing':
+        return 'border-l-4 border-emerald-500 bg-emerald-500/10'
+      case 'alert':
+        return 'border-l-4 border-amber-500 bg-amber-500/10'
+      default:
+        return ''
+    }
   }
 
   // Closed state - cool floating icon with glow effect
@@ -335,8 +516,15 @@ export default function FloatingChatbot() {
           <Bot className="w-7 h-7 text-white drop-shadow-lg" />
         </div>
 
+        {/* Alert badge */}
+        {alertCount > 0 && (
+          <span className="absolute top-0 right-0 w-5 h-5 bg-amber-500 rounded-full border-2 border-white shadow-lg flex items-center justify-center">
+            <span className="text-xs font-bold text-white">{alertCount}</span>
+          </span>
+        )}
+
         {/* Online indicator */}
-        <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full border-2 border-white shadow-lg">
+        <span className="absolute bottom-1 right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full border-2 border-white shadow-lg">
           <span className="absolute inset-0 bg-emerald-400 rounded-full animate-ping opacity-75" />
         </span>
       </button>
@@ -355,6 +543,11 @@ export default function FloatingChatbot() {
       >
         <Bot className="w-5 h-5 text-white" />
         <span className="text-sm text-white font-medium">{GEXIS_NAME}</span>
+        {alertCount > 0 && (
+          <span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
+            <AlertTriangle className="w-3 h-3 text-white" />
+          </span>
+        )}
         <button
           onClick={() => setIsMinimized(false)}
           className="p-1 hover:bg-white/20 rounded-full transition-colors"
@@ -393,10 +586,28 @@ export default function FloatingChatbot() {
           </div>
           <div>
             <h3 className="text-sm font-bold text-white">{GEXIS_NAME}</h3>
-            <p className="text-xs text-white/70">{GEXIS_FULL_NAME}</p>
+            <p className="text-xs text-white/70">Session: {sessionId}</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={toggleSound}
+            className="p-2 hover:bg-white/20 rounded-full transition-colors"
+            title={soundEnabled ? 'Mute sounds' : 'Enable sounds'}
+          >
+            {soundEnabled ? (
+              <Volume2 className="w-4 h-4 text-white/80" />
+            ) : (
+              <VolumeX className="w-4 h-4 text-white/80" />
+            )}
+          </button>
+          <button
+            onClick={exportConversation}
+            className="p-2 hover:bg-white/20 rounded-full transition-colors"
+            title="Export conversation"
+          >
+            <Download className="w-4 h-4 text-white/80" />
+          </button>
           <button
             onClick={clearHistory}
             className="p-2 hover:bg-white/20 rounded-full transition-colors"
@@ -440,7 +651,15 @@ export default function FloatingChatbot() {
           >
             {message.role === 'assistant' && (
               <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                <Bot className="w-4 h-4 text-white" />
+                {message.type === 'command' ? (
+                  <Terminal className="w-4 h-4 text-white" />
+                ) : message.type === 'briefing' ? (
+                  <Sparkles className="w-4 h-4 text-white" />
+                ) : message.type === 'alert' ? (
+                  <AlertTriangle className="w-4 h-4 text-white" />
+                ) : (
+                  <Bot className="w-4 h-4 text-white" />
+                )}
               </div>
             )}
 
@@ -457,8 +676,10 @@ export default function FloatingChatbot() {
               <div
                 className={`rounded-2xl px-4 py-2.5 ${
                   message.role === 'user'
-                    ? 'bg-primary text-white rounded-br-md'
-                    : 'bg-background-hover text-text-primary rounded-bl-md'
+                    ? message.type === 'command'
+                      ? 'bg-cyan-600 text-white rounded-br-md'
+                      : 'bg-primary text-white rounded-br-md'
+                    : `bg-background-hover text-text-primary rounded-bl-md ${getMessageStyle(message.type)}`
                 }`}
               >
                 <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
@@ -483,8 +704,12 @@ export default function FloatingChatbot() {
             </div>
             <div className="bg-background-hover rounded-2xl rounded-bl-md px-4 py-3">
               <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                <span className="text-sm text-text-muted">Analyzing...</span>
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+                <span className="text-sm text-text-muted">GEXIS is thinking...</span>
               </div>
             </div>
           </div>
@@ -492,6 +717,24 @@ export default function FloatingChatbot() {
 
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Command suggestions */}
+      {showCommands && (
+        <div className="px-3 py-2 border-t border-border bg-background-deep/50 max-h-32 overflow-y-auto">
+          <p className="text-xs text-text-muted mb-2">Quick Commands:</p>
+          <div className="flex flex-wrap gap-1">
+            {QUICK_COMMANDS.filter(c => c.cmd.startsWith(input)).map((cmd) => (
+              <button
+                key={cmd.cmd}
+                onClick={() => handleCommandClick(cmd.cmd)}
+                className="px-2 py-1 text-xs bg-background-hover hover:bg-primary/20 rounded-lg transition-colors text-text-secondary hover:text-primary"
+              >
+                {cmd.cmd}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Image preview */}
       {selectedImage && (
@@ -540,7 +783,7 @@ export default function FloatingChatbot() {
                 handleSend()
               }
             }}
-            placeholder={`Ask GEXIS about markets, strategies...`}
+            placeholder={`Ask GEXIS or type / for commands...`}
             className="flex-1 bg-background-card border border-border rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder-text-muted resize-none min-h-[44px] max-h-[120px] focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
             disabled={loading}
             rows={1}
@@ -558,6 +801,9 @@ export default function FloatingChatbot() {
             <Send className="w-5 h-5 text-white" />
           </button>
         </div>
+        <p className="text-xs text-text-muted mt-1.5 text-center">
+          Type / for commands | Shift+Enter for new line
+        </p>
       </div>
     </div>
   )
