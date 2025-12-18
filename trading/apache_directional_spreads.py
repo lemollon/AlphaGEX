@@ -1084,7 +1084,11 @@ class APACHETrader:
             'positions_closed': 0,
             'daily_pnl': 0,
             'signal_source': None,
-            'errors': []
+            'errors': [],
+            # Detailed decision info for logging
+            'decision_reason': None,
+            'ml_signal': None,
+            'gex_context': None
         }
 
         # Check if we should trade
@@ -1092,13 +1096,25 @@ class APACHETrader:
         if not should_trade:
             self._log_to_db("INFO", f"Skipping trade: {reason}")
             result['errors'].append(reason)
+            result['decision_reason'] = f"SKIP: {reason}"
             return result
 
         # Get GEX data first (needed for both ML and Oracle)
         gex_data = self.get_gex_data()
         if not gex_data:
             result['errors'].append("No GEX data")
+            result['decision_reason'] = "SKIP: No GEX data available"
             return result
+
+        # Store GEX context for logging
+        result['gex_context'] = {
+            'spot_price': gex_data.get('spot_price'),
+            'call_wall': gex_data.get('call_wall'),
+            'put_wall': gex_data.get('put_wall'),
+            'regime': gex_data.get('regime'),
+            'net_gex': gex_data.get('net_gex'),
+            'source': gex_data.get('source')
+        }
 
         # === PRIMARY: Use ML Signal ===
         ml_signal = None
@@ -1107,6 +1123,17 @@ class APACHETrader:
 
         if self.gex_ml:
             ml_signal = self.get_ml_signal(gex_data)
+
+            if ml_signal:
+                # Store ML signal for logging
+                result['ml_signal'] = {
+                    'advice': ml_signal['advice'],
+                    'direction': ml_signal.get('model_predictions', {}).get('direction', 'UNKNOWN'),
+                    'confidence': ml_signal['confidence'],
+                    'win_probability': ml_signal['win_probability'],
+                    'spread_type': ml_signal['spread_type'],
+                    'reasoning': ml_signal['reasoning']
+                }
 
             if ml_signal and ml_signal['advice'] in ['LONG', 'SHORT']:
                 result['trades_attempted'] = 1
@@ -1125,6 +1152,7 @@ class APACHETrader:
             elif ml_signal and ml_signal['advice'] == 'STAY_OUT':
                 self._log_to_db("INFO", f"ML says STAY_OUT: {ml_signal['reasoning']}")
                 result['signal_source'] = 'ML'
+                result['decision_reason'] = f"NO TRADE: ML says STAY_OUT - {ml_signal['reasoning']}"
                 # Still check exits
                 closed = self.check_exits()
                 result['positions_closed'] = len(closed)
@@ -1142,6 +1170,7 @@ class APACHETrader:
                 if advice.advice == TradingAdvice.SKIP_TODAY:
                     self._log_to_db("INFO", f"Oracle says SKIP: {advice.reasoning}")
                     result['signal_source'] = 'Oracle'
+                    result['decision_reason'] = f"NO TRADE: Oracle says SKIP - {advice.reasoning}"
                     return result
 
                 # Determine spread type from Oracle reasoning
@@ -1154,6 +1183,7 @@ class APACHETrader:
         if not spread_type:
             self._log_to_db("INFO", "No actionable signal from ML or Oracle")
             result['errors'].append("No actionable signal")
+            result['decision_reason'] = "NO TRADE: No actionable signal from ML or Oracle"
             return result
 
         result['signal_source'] = signal_source
@@ -1171,6 +1201,7 @@ class APACHETrader:
                 {'rr_ratio': rr_ratio, 'min_required': self.config.min_rr_ratio, 'reasoning': rr_reasoning}
             )
             result['errors'].append(f"R:R {rr_ratio:.2f}:1 < {self.config.min_rr_ratio}:1 minimum")
+            result['decision_reason'] = f"NO TRADE: R:R {rr_ratio:.2f}:1 below {self.config.min_rr_ratio}:1 minimum - {rr_reasoning}"
             # Still check exits for existing positions
             closed = self.check_exits()
             result['positions_closed'] = len(closed)
@@ -1206,7 +1237,15 @@ class APACHETrader:
 
         if position:
             result['trades_executed'] = 1
+            result['decision_reason'] = (
+                f"TRADE EXECUTED: {spread_type.value} | "
+                f"Strikes: {position.long_strike}/{position.short_strike} | "
+                f"Contracts: {position.contracts} | "
+                f"R:R: {rr_ratio:.2f}:1"
+            )
             self._log_to_db("INFO", f"Trade executed: {position.position_id} ({signal_source})")
+        else:
+            result['decision_reason'] = "NO TRADE: Execution failed"
 
         # Check exits for existing positions
         closed = self.check_exits()

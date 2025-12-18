@@ -624,21 +624,39 @@ class AutonomousTraderScheduler:
 
             if result:
                 logger.info(f"APACHE intraday scan completed:")
-                logger.info(f"  Signal Source: {result.get('signal_source', 'N/A')}")
-                logger.info(f"  Trades Attempted: {result.get('trades_attempted', 0)}")
-                logger.info(f"  Trades Executed: {result.get('trades_executed', 0)}")
-                logger.info(f"  Positions Closed: {result.get('positions_closed', 0)}")
-                logger.info(f"  Daily P&L: ${result.get('daily_pnl', 0):,.2f}")
+
+                # === GEX CONTEXT ===
+                gex_ctx = result.get('gex_context')
+                if gex_ctx:
+                    logger.info(f"  GEX Context:")
+                    logger.info(f"    SPY: ${gex_ctx.get('spot_price', 0):.2f}")
+                    logger.info(f"    Walls: Put ${gex_ctx.get('put_wall', 0):.0f} | Call ${gex_ctx.get('call_wall', 0):.0f}")
+                    logger.info(f"    Regime: {gex_ctx.get('regime', 'N/A')} | Source: {gex_ctx.get('source', 'N/A')}")
+
+                # === ML SIGNAL ===
+                ml_sig = result.get('ml_signal')
+                if ml_sig:
+                    logger.info(f"  ML Signal:")
+                    logger.info(f"    Direction: {ml_sig.get('direction', 'N/A')} | Advice: {ml_sig.get('advice', 'N/A')}")
+                    logger.info(f"    Confidence: {ml_sig.get('confidence', 0)*100:.1f}% | Win Prob: {ml_sig.get('win_probability', 0)*100:.1f}%")
+
+                # === DECISION REASON ===
+                decision = result.get('decision_reason')
+                if decision:
+                    logger.info(f"  >>> DECISION: {decision}")
+
+                # === TRADE STATS ===
+                logger.info(f"  Stats: Attempted={result.get('trades_attempted', 0)} | Executed={result.get('trades_executed', 0)} | Closed={result.get('positions_closed', 0)}")
+
+                if result.get('daily_pnl', 0) != 0:
+                    logger.info(f"  Daily P&L: ${result.get('daily_pnl', 0):,.2f}")
 
                 # Log R:R ratio if available
                 if result.get('rr_ratio'):
                     logger.info(f"  R:R Ratio: {result.get('rr_ratio', 0):.2f}:1")
 
-                if result.get('errors'):
-                    for error in result['errors']:
-                        logger.info(f"    Note: {error}")
             else:
-                logger.info("APACHE: No actionable signal this interval")
+                logger.info("APACHE: No result returned")
 
             self.apache_execution_count += 1
             logger.info(f"APACHE scan #{self.apache_execution_count} completed (next scan in 30 min)")
