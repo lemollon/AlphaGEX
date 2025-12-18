@@ -319,6 +319,411 @@ Exit Rules:
 - Stop loss at -30% (directional)
 - Exit on GEX regime change
 - Exit 1 DTE or less
+
+=== LOGGING SYSTEM ===
+
+Log Locations:
+- Console output: stdout with color-coded levels
+- Database: trading_decisions table for audit trail
+- Bot-specific: Each bot has its own logger
+
+Log Formatters:
+1. QuantFormatter (JSON) - Production, structured logs
+   - Fields: timestamp, level, logger, module, function, line, message, context, metrics
+   - Use: Machine parsing, log aggregation
+
+2. HumanReadableFormatter - Development
+   - Format: [TIMESTAMP] LEVEL - MODULE:LINE - MESSAGE
+   - Colors: DEBUG=cyan, INFO=green, WARNING=yellow, ERROR=red
+
+Key Logging Functions:
+- setup_logger(name, level, json_output) - Create module logger
+- log_trade_entry() - Log trade opens with full context
+- log_trade_exit() - Log trade closes with P&L
+- log_risk_alert() - Log risk threshold breaches
+- @track_calculation decorator - Time and log calculations
+
+Decision Logging (trading/decision_logger.py):
+- DecisionLogger class - Full audit trail for every trade decision
+- TradeDecision dataclass - Complete trade record
+- Bot loggers: get_ares_logger(), get_phoenix_logger(), get_atlas_logger()
+- Export functions: export_decisions_json(), export_decisions_csv()
+
+Viewing Logs:
+- /logs page in frontend - Filter by level, bot, time
+- GET /api/logs - Query log API
+- Database: SELECT * FROM trading_decisions ORDER BY timestamp DESC
+
+=== TEST SUITES ===
+
+Main Test Runner:
+- scripts/run_all_tests.py - Master test pipeline
+- Runs 5 sequential tests with 2-minute timeout each
+
+Pipeline Tests (/scripts/):
+1. test_01_data_sources.py - Polygon API, Trading Volatility API
+2. test_02_backtest_execution.py - SPX Wheel backtest engine
+3. test_03_ml_training.py - Feature extraction, model training
+4. test_04_api_endpoints.py - FastAPI routes validation
+5. test_05_end_to_end.py - Complete pipeline validation
+
+Unit Tests (/tests/):
+- test_api_endpoints.py - All API route tests
+- test_tradier.py - Tradier API integration
+- test_ares_tradier_integration.py - ARES + Tradier
+- test_apache_e2e.py - APACHE end-to-end
+- test_autonomous_trader.py - Bot autonomy tests
+- test_database_schema.py - Schema validation
+- test_decision_logger.py - Audit trail tests
+- test_logging_system.py - Log system tests
+- test_position_sizing.py - Kelly/sizing tests
+- test_trading_logic.py - Core trading rules
+- test_gex_protected_strategy.py - GEX strategy tests
+- test_all_systems.py - Full system check
+
+Running Tests:
+```bash
+# All pipeline tests
+python scripts/run_all_tests.py
+
+# Specific test
+python -m pytest tests/test_tradier.py -v
+
+# All unit tests
+python -m pytest tests/ -v
+
+# With coverage
+python -m pytest tests/ --cov=. --cov-report=html
+```
+
+=== COMMON BUGS & TROUBLESHOOTING ===
+
+Data Source Issues:
+
+1. "No GEX data available"
+   - Cause: ORAT API rate limit or stale cache
+   - Fix: Check TRADING_VOLATILITY_API_KEY, wait 5 seconds between calls
+   - Fallback: Uses Tradier-calculated GEX
+
+2. "Tradier API timeout"
+   - Cause: Network issues or API overload
+   - Fix: Check TRADIER_API_KEY, verify sandbox vs live mode
+   - Retry: System auto-retries with exponential backoff
+
+3. "ORAT date not found"
+   - Cause: Today's data not yet available (before market open)
+   - Fix: System falls back to most recent available date
+
+Database Issues:
+
+4. "Column not found" errors
+   - Cause: Schema mismatch after updates
+   - Fix: Run db/config_and_database.py to apply migrations
+   - Check: Compare column names in error vs schema
+
+5. "Connection refused" to PostgreSQL
+   - Cause: Database not running or wrong DATABASE_URL
+   - Fix: Verify DATABASE_URL in .env, check PostgreSQL service
+
+Bot Issues:
+
+6. ARES not trading
+   - Check: Is it within trading hours (10:15 AM ET)?
+   - Check: Is VIX in acceptable range?
+   - Check: Are there existing open positions?
+   - Logs: Look for "STAY_FLAT" decisions with reasoning
+
+7. APACHE signals but no trades
+   - Check: Wall proximity filter (0.5-1% threshold)
+   - Check: Oracle confidence level (needs >60%)
+   - Check: Risk checks passing in logs
+
+8. ML model not loading
+   - Check: Are models trained? (need 30+ trades)
+   - Fix: Run scripts/train_ares_ml.py
+   - Check: Model files in /models/ directory
+
+Frontend Issues:
+
+9. "Failed to fetch" in browser
+   - Cause: Backend not running or CORS issue
+   - Fix: Start backend with uvicorn, check port 8000
+   - Check: Browser console for detailed error
+
+10. Charts not loading
+    - Cause: Missing data or API error
+    - Fix: Check backend logs, verify data endpoints
+
+=== DEBUGGING COMMANDS ===
+
+Health Checks:
+```bash
+# Full system health check
+python scripts/full_system_health_check.py
+
+# Test all data sources
+python tests/test_all_data_sources.py
+
+# Verify bot communication
+python scripts/verify_ares_communication.py
+
+# Check database connection
+python scripts/test_db_connection.py
+```
+
+Quick Diagnostics:
+```bash
+# Check API keys
+python -c "from config import settings; print(settings.dict())"
+
+# Test Tradier connection
+python tests/test_tradier.py
+
+# Check GEX data
+python test_gex_calculator.py
+
+# Verify ML models
+python scripts/test_ml_standalone.py
+```
+
+Log Analysis:
+```bash
+# Recent ARES decisions
+python -c "from trading.decision_logger import get_recent_decisions; print(get_recent_decisions('ARES', 10))"
+
+# Decision summary
+python -c "from trading.decision_logger import get_bot_decision_summary; print(get_bot_decision_summary('ARES', 7))"
+```
+
+=== ENVIRONMENT VARIABLES ===
+
+Required:
+- DATABASE_URL - PostgreSQL connection string
+- ANTHROPIC_API_KEY - Claude AI (or CLAUDE_API_KEY)
+- TRADIER_API_KEY - Live options data
+- TRADIER_SANDBOX_API_KEY - Paper trading
+- TRADING_VOLATILITY_API_KEY - GEX data (ORAT)
+
+Optional:
+- POLYGON_API_KEY - Historical data fallback
+- ORAT_DATABASE_URL - Direct ORAT database access
+- ENABLE_DEBUG_LOGGING - Verbose logging (True/False)
+- LOG_LEVEL - INFO, DEBUG, WARNING, ERROR
+
+=== STARTUP SEQUENCE ===
+
+1. Backend Start:
+   ```bash
+   cd backend && uvicorn main:app --reload --port 8000
+   ```
+   - Initializes database schema (migrations auto-run)
+   - Loads AI models and dependencies
+   - Starts API server
+
+2. Frontend Start:
+   ```bash
+   cd frontend && npm run dev
+   ```
+   - Connects to backend at localhost:8000
+   - Serves on localhost:3000
+
+3. Bot Activation:
+   - Via Trader Control Center UI, or
+   - POST /api/autonomous/ares/start
+   - Bots run on scheduler (market hours only)
+
+=== PERFORMANCE TIPS ===
+
+GEX Data:
+- Cache duration: 5 minutes (avoid rate limits)
+- Bulk fetch: Use multi-ticker endpoint for efficiency
+- Fallback chain: ORAT → Tradier → Database cache
+
+Database:
+- Index usage: Check EXPLAIN ANALYZE for slow queries
+- Connection pooling: Uses psycopg2 connection pool
+- Vacuum: Run VACUUM ANALYZE weekly on large tables
+
+API Optimization:
+- Batch requests where possible
+- Use WebSocket for real-time updates
+- Implement client-side caching for static data
+
+=== DATABASE TABLES (60+ Tables) ===
+
+Core Trading Tables:
+- autonomous_positions: Open/closed autonomous trades (symbol, strike, entry_price, unrealized_pnl, status, confidence)
+- autonomous_trade_log: Trade execution history (action, details, position_id, realized_pnl)
+- ares_positions: ARES iron condor positions (put_long/short_strike, call_short/long_strike, total_credit, contracts)
+- apache_positions: APACHE spread positions (spread_type, long_strike, short_strike, entry_premium)
+- trades: All trade records (symbol, strike, entry_price, exit_price, pattern_type, realized_pnl)
+- recommendations: AI trade recommendations (symbol, strategy, confidence, entry/target/stop prices)
+- trading_decisions: Full audit trail for every decision (decision_id, action, reasoning, market_context)
+
+GEX Analysis Tables:
+- gex_history: Historical GEX snapshots (symbol, net_gex, flip_point, call_wall, put_wall, mm_state)
+- gex_levels: Gamma exposure key levels (call_wall, put_wall, flip_point, max_gamma_strike)
+- gex_snapshots_detailed: Strike-by-strike gamma data
+- regime_signals: Market regime history (primary_regime_type, confidence_score, trade_direction, liberation_setup)
+
+Psychology & Market Analysis:
+- psychology_analysis: Market regime/psychology detection (regime_type, psychology_trap, trap_probability)
+- liberation_outcomes: Liberation setup tracking (liberation_strike, outcome_price, target_met)
+- market_snapshots: Comprehensive market state (price, gex, vix, multi-timeframe RSI)
+
+ML/AI Learning Tables:
+- ml_models: ML model registry (model_name, version, accuracy, training_samples, features)
+- ml_predictions: Every ML prediction (model_id, predicted_value, confidence, actual_value, correct)
+- ai_predictions: AI model predictions (pattern_type, trade_direction, confidence, actual_outcome)
+- pattern_learning: Pattern-specific learning (pattern_name, success_rate, avg_return)
+- ai_performance: Daily AI accuracy (predictions_made, correct_predictions, accuracy_rate)
+
+Data Collection:
+- price_history: OHLCV bars (symbol, timeframe, open, high, low, close, volume)
+- greeks_snapshots: Greeks at every moment (strike, delta, gamma, theta, vega, implied_volatility)
+- vix_term_structure: Full VIX curve (vix_spot, vix_9d, vix_3m, contango_pct)
+- options_flow: Unusual options activity (call_volume, put_volume, unusual_strikes)
+
+Strategy & Performance:
+- strategy_config: Strategy configuration (max_position_size, risk_per_trade, parameters)
+- strategy_competition: Multi-strategy comparison (total_trades, win_rate, sharpe_ratio)
+- performance: Daily performance analytics (win_rate, avg_winner, max_drawdown)
+- backtest_trades: Backtest individual trades
+- walk_forward_results: Walk-forward validation (is_avg_win_rate, oos_avg_win_rate, is_robust)
+
+=== ML MODELS ===
+
+ML Regime Classifier (quant/ml_regime_classifier.py):
+- Predicts: Market regime action (SELL_PREMIUM, BUY_CALLS, BUY_PUTS, STAY_FLAT)
+- Models: GradientBoostingClassifier + RandomForestClassifier ensemble
+- Calibration: CalibratedClassifierCV for probability calibration
+- Input Features (17):
+  * gex_normalized, gex_percentile, gex_change_1d/5d
+  * vix, vix_percentile, vix_change_1d
+  * iv_rank, iv_hv_ratio
+  * distance_to_flip (% from gamma flip point)
+  * momentum_1h, momentum_4h
+  * above_20ma, above_50ma (binary)
+  * regime_duration, day_of_week, days_to_opex
+- Training: TimeSeriesSplit cross-validation (prevents lookahead bias)
+- Validation: Out-of-sample testing required
+
+ARES ML Advisor (quant/ares_ml_advisor.py):
+- Predicts: Iron condor trade quality score (0-100%)
+- Factors: VIX level, IV rank, time of day, recent win rate, consecutive losses
+- Output: TRADE, SKIP, or MONITOR recommendation
+- Training: Needs 30+ trades for initial model, 50+ for high confidence
+
+GEX ML Signal (quant/gex_directional_ml.py):
+- Predicts: Direction (UP/DOWN/NEUTRAL), spread type, win probability
+- Outputs:
+  * Direction: UP/DOWN/NEUTRAL with probability
+  * Flip Gravity: % chance price moves toward flip point
+  * Magnet Attraction: % probability of moving toward gamma wall
+  * Pin Zone: % chance price pins at key gamma level
+  * Expected Volatility: IV forecast
+
+Oracle Advisor ML (quant/oracle_advisor.py):
+- Aggregates all signals into bot-specific advice
+- Per-bot predictions:
+  * ARES: Win probability, risk %, skip signals
+  * ATLAS: Best strike, assignment probability
+  * PHOENIX: Direction confidence, entry timing
+  * APACHE: Spread direction, wall proximity quality
+- Output: TRADE_FULL, TRADE_REDUCED, or SKIP_TODAY
+
+=== REASONING SYSTEMS ===
+
+Oracle Advisor Logic:
+```
+MarketContext → Signal Aggregator → Confidence Calibration → Bot-Specific Advice
+     ↓              ↓                      ↓                        ↓
+[GEX, VIX,    [GEX regime,         [Brier score,            [TRADE_FULL,
+ momentum]     ML prediction,       accuracy metrics]        TRADE_REDUCED,
+              historical]                                    SKIP_TODAY]
+```
+
+Signal Aggregation:
+1. GEX Signals: Regime (POSITIVE/NEGATIVE/NEUTRAL), flip distance, wall proximity
+2. ML Predictions: Regime classifier action + confidence
+3. VIX Regime: Current VIX, percentile, change %, contango state
+4. Time Context: Day of week, days to expiration, recent performance
+
+Psychology Trap Detection (5-Layer System):
+1. Volatility Regime: EXPLOSIVE_VOLATILITY, NEGATIVE_GAMMA_RISK, COMPRESSION_PIN, POSITIVE_GAMMA_STABLE
+2. Multi-Timeframe RSI: Signals on 5m, 15m, 1h, 4h, 1d (aligned overbought/oversold, coiling)
+3. Gamma Wall Detection: Current walls, distance, strength, dealer positioning
+4. Gamma Expiration Timeline: 0DTE, weekly, next week gamma, persistence ratio
+5. Forward GEX Magnets: Liberation setups, false floors, path of least resistance
+
+Autonomous AI Reasoning (LangChain + Claude):
+- Strike Selection: Analyzes alternatives vs gamma walls, RSI signals
+- Position Sizing: Kelly Criterion (fractional 1/4 to 1/2), max 20% per trade
+- Trade Evaluation: Setup validity, expected outcome, risk/reward
+- Model: Claude Sonnet 4.5, temperature=0.1 (consistent reasoning)
+
+Confidence Calibration:
+- Calibrated ML probabilities (0-100%)
+- Brier score tracking for model accuracy
+- Historical accuracy by pattern/regime
+- Continuous adjustment based on outcomes
+
+=== TRADING STRATEGIES (Detailed) ===
+
+ARES - Aggressive Iron Condor:
+- What: Daily 0DTE SPX Iron Condors
+- Strike Selection: 1 SD (0.5 delta) balanced, ~68% probability both sides
+- Spread Width: $10 wide (SPX) / $2 wide (SPY sandbox)
+- Entry: 9:30 AM - 4:00 PM ET daily
+- Exit: 50% profit target OR let expire (no stop loss - defined risk)
+- Sizing: Aggressive Kelly (10% per trade)
+- Target: 10% monthly via 0.5% daily compound
+- Win Rate: 68% expected
+
+APACHE - GEX Directional Spreads:
+- What: Vertical spreads based on gamma wall proximity
+- Signal: GEX ML (primary) + Oracle (fallback)
+- Trade Types: BULL_CALL_SPREAD or BEAR_CALL_SPREAD
+- Entry: Within 0.5-1% of gamma wall
+  * Buy calls near PUT wall (support) for bullish
+  * Sell calls near CALL wall (resistance) for bearish
+- Spread Width: $2, 2% risk per trade
+- Exit: 0.3% trailing stop, monitor regime changes
+- Backtest: 90-98% win rate with wall filter
+
+ATLAS - SPX Wheel Strategy:
+- Phase 1 (CSP): Sell 30-delta puts, 45 DTE, collect premium
+- Phase 2 (Assignment): Accept shares, track cost basis
+- Phase 3 (CC): Sell 30-delta calls on shares, collect more premium
+- Cycle: Repeat until called away
+- Win Rate: ~80% historical
+- Three Edges: Volatility risk premium, theta decay, probability
+
+Strategy Ensemble (quant/ensemble_strategy.py):
+- Combines 5 signals with learned weights:
+  1. GEX_REGIME (base classifier)
+  2. PSYCHOLOGY_TRAP (trap detector)
+  3. RSI_MULTI_TF (multi-timeframe)
+  4. VOL_SURFACE (volatility analysis)
+  5. ML_CLASSIFIER (ML predictions)
+- Weight = historical win rate × Sharpe × regime adjustment × recency
+- Only trade when confidence > 60%
+
+=== FEEDBACK LOOP ===
+
+The complete learning cycle:
+```
+Backtests → Extract Features → Train Models → Query Oracle → Bot Live Trades
+    ↑                                                              ↓
+    ←←←←←←←←←←← Store Outcomes ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+```
+
+Tables involved in learning:
+- ai_predictions: Stores every prediction for later evaluation
+- ai_performance: Daily accuracy aggregation
+- pattern_learning: Pattern-specific win rates
+- ml_models: Model version and accuracy tracking
+- trading_decisions: Full audit trail for post-analysis
 """
 
 # =============================================================================
