@@ -416,6 +416,54 @@ export const apiClient = {
   getProbabilityWeights: () => api.get('/api/probability/weights'),
   getCalibrationHistory: (days?: number) => api.get('/api/probability/calibration-history', { params: { days: days || 90 } }),
 
+  // ML System - SPX Wheel ML Training & Predictions
+  getMLStatus: () => api.get('/api/ml/status'),
+  trainML: (minSamples: number = 30) => api.post('/api/ml/train', { min_samples: minSamples }),
+  getMLPrediction: (data: {
+    trade_date: string
+    strike: number
+    underlying_price: number
+    dte: number
+    premium: number
+    iv: number
+    iv_rank: number
+    vix: number
+    delta?: number
+    vix_percentile?: number
+    vix_term_structure?: number
+    put_wall_distance_pct?: number
+    call_wall_distance_pct?: number
+    net_gex?: number
+    spx_20d_return?: number
+    spx_5d_return?: number
+    spx_distance_from_high?: number
+  }) => api.post('/api/ml/predict', data),
+  recordMLEntry: (tradeId: string, data: any) =>
+    api.post('/api/ml/record-entry', data, { params: { trade_id: tradeId } }),
+  recordMLOutcome: (data: {
+    trade_id: string
+    outcome: 'WIN' | 'LOSS'
+    pnl: number
+    settlement_price: number
+    max_drawdown?: number
+  }) => api.post('/api/ml/record-outcome', data),
+  getMLFeatureImportance: () => api.get('/api/ml/feature-importance'),
+  getMLStrategyExplanation: () => api.get('/api/ml/strategy-explanation'),
+  getMLDataQuality: () => api.get('/api/ml/data-quality'),
+  getMLLogs: (limit: number = 100, actionFilter?: string) =>
+    api.get('/api/ml/logs', { params: { limit, action_filter: actionFilter } }),
+  getMLLogsSummary: () => api.get('/api/ml/logs/summary'),
+  scoreAndLogTrade: (data: {
+    strike: number
+    underlying_price: number
+    dte: number
+    premium: number
+    iv?: number
+    iv_rank?: number
+    vix?: number
+    trade_id?: string
+  }) => api.post('/api/ml/score-and-log', null, { params: data }),
+
   // Conversation History
   getConversations: (limit?: number) => api.get('/api/ai/conversations', { params: { limit: limit || 50 } }),
   getConversation: (id: number) => api.get(`/api/ai/conversation/${id}`),
@@ -558,6 +606,8 @@ export const apiClient = {
   getOracleStatus: () => api.get('/api/zero-dte/oracle/status'),
   getOracleLogs: () => api.get('/api/zero-dte/oracle/logs'),
   clearOracleLogs: () => api.delete('/api/zero-dte/oracle/logs'),
+  getOraclePredictions: (params?: { limit?: number, bot_name?: string, days?: number }) =>
+    api.get('/api/logs/oracle', { params }),
   oracleAnalyze: (data: {
     spot_price: number
     vix: number
