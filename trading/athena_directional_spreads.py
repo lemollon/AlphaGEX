@@ -303,7 +303,7 @@ class ATHENATrader:
             for row in rows:
                 name, value = row
                 if name == 'enabled' and value == 'false':
-                    logger.warning("APACHE is DISABLED in config")
+                    logger.warning("ATHENA is DISABLED in config")
                 elif name == 'mode':
                     self.config.mode = TradingMode.PAPER if value == 'paper' else TradingMode.LIVE
                 elif name == 'wall_filter_pct':
@@ -324,7 +324,7 @@ class ATHENATrader:
             conn.close()
             logger.info("ATHENA: Loaded config from database")
         except Exception as e:
-            logger.debug(f"APACHE: Could not load config from DB: {e}")
+            logger.debug(f"ATHENA: Could not load config from DB: {e}")
 
     def _log_to_db(self, level: str, message: str, details: Optional[Dict] = None) -> None:
         """Log message to apache_logs table"""

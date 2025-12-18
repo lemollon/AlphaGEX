@@ -300,7 +300,7 @@ def test_diagnostics():
         env = data.get('environment', {})
 
         details = {
-            'athena_available': data.get('apache_available'),
+            'athena_available': data.get('athena_available'),
             'kronos': subsystems.get('kronos', {}).get('available'),
             'oracle': subsystems.get('oracle', {}).get('available'),
             'gex_ml': subsystems.get('gex_ml', {}).get('available'),
@@ -329,7 +329,7 @@ def main():
 
     tests = [
         test_api_health,
-        test_apache_status,
+        test_athena_status,
         test_ml_signal,
         test_oracle_advice,
         test_signals_history,
