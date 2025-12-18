@@ -1,13 +1,13 @@
 """
-GEX Signal Integration for Apache Strategy
+GEX Signal Integration for ATHENA Strategy
 ===========================================
 
-Integrates the 5 GEX probability models with the Apache Directional Strategy.
+Integrates the 5 GEX probability models with the ATHENA Directional Strategy.
 
 This module provides:
 1. Feature extraction from live GEX data
 2. Real-time predictions from all 5 models
-3. Combined trading signals for Apache
+3. Combined trading signals for ATHENA
 
 Usage:
     from quant.gex_signal_integration import GEXSignalIntegration
@@ -61,7 +61,7 @@ class EnhancedTradingSignal:
     overall_conviction: float
     trade_recommendation: str  # LONG, SHORT, STAY_OUT
 
-    # Apache-specific
+    # ATHENA-specific
     suggested_spread: str  # BULL_CALL_SPREAD, BEAR_CALL_SPREAD, NONE
     suggested_strikes: Dict[str, float]  # entry_strike, exit_strike
     risk_adjusted_score: float
@@ -89,7 +89,7 @@ class EnhancedTradingSignal:
 
 class GEXSignalIntegration:
     """
-    Integrates GEX probability models with Apache trading strategy.
+    Integrates GEX probability models with ATHENA trading strategy.
 
     Extracts features from live GEX data and generates trading signals.
     """
@@ -279,7 +279,7 @@ class GEXSignalIntegration:
             logger.error(f"Prediction failed: {e}")
             return self._create_fallback_signal(gex_data)
 
-        # Determine Apache-specific spread
+        # Determine ATHENA-specific spread
         suggested_spread = "NONE"
         suggested_strikes = {'entry_strike': 0, 'exit_strike': 0}
         reasoning_parts = []
@@ -371,15 +371,15 @@ class GEXSignalIntegration:
             reasoning="Models not available - defaulting to STAY_OUT"
         )
 
-    def get_signal_for_apache(
+    def get_signal_for_athena(
         self,
         gex_data: Dict[str, Any],
         vix: float = 20.0
     ) -> Dict[str, Any]:
         """
-        Get signal formatted for Apache strategy integration.
+        Get signal formatted for Athena strategy integration.
 
-        Returns dict compatible with Apache's existing signal format.
+        Returns dict compatible with Athena's existing signal format.
         """
         signal = self.get_trading_signal(gex_data, vix, self._prev_gex_data)
 
@@ -387,7 +387,7 @@ class GEXSignalIntegration:
         self._prev_gex_data = gex_data.copy()
         self._prev_date = datetime.now().strftime("%Y-%m-%d")
 
-        # Format for Apache
+        # Format for ATHENA
         return {
             'advice': signal.trade_recommendation,
             'spread_type': signal.suggested_spread,
@@ -464,11 +464,11 @@ def main():
     print(f"  Conviction: {signal.overall_conviction:.1%}")
     print(f"  Reasoning: {signal.reasoning}")
 
-    # Get Apache-formatted signal
-    apache_signal = integration.get_signal_for_apache(mock_gex_data, vix=18.0)
+    # Get Athena-formatted signal
+    athena_signal = integration.get_signal_for_athena(mock_gex_data, vix=18.0)
 
-    print("\nApache-Formatted Signal:")
-    for k, v in apache_signal.items():
+    print("\nAthena-Formatted Signal:")
+    for k, v in athena_signal.items():
         if isinstance(v, dict):
             print(f"  {k}:")
             for k2, v2 in v.items():

@@ -119,7 +119,7 @@ class BotName(Enum):
     ATLAS = "ATLAS"        # SPX Wheel Strategy
     PHOENIX = "PHOENIX"    # Directional Calls
     HERMES = "HERMES"      # Manual Wheel via UI
-    APACHE = "APACHE"      # Directional Spreads (Bull Call / Bear Call)
+    ATHENA = "ATHENA"      # Directional Spreads (Bull Call / Bear Call)
 
 
 class TradeOutcome(Enum):
@@ -1082,16 +1082,16 @@ class OracleAdvisor:
             claude_analysis=claude_analysis  # Include real Claude data for logging
         )
 
-    def get_apache_advice(
+    def get_athena_advice(
         self,
         context: MarketContext,
         use_gex_walls: bool = True,
         use_claude_validation: bool = True
     ) -> OraclePrediction:
         """
-        Get directional spread advice for APACHE.
+        Get directional spread advice for ATHENA.
 
-        APACHE trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
+        ATHENA trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
         Uses GEX walls for entry timing and direction confirmation.
 
         Strategy:
@@ -1175,7 +1175,7 @@ class OracleAdvisor:
         # =========================================================================
         claude_analysis = None
         if use_claude_validation and self.claude_available:
-            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.APACHE)
+            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.ATHENA)
 
             if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
                 base_pred['win_probability'] = max(0.30, min(0.85,
@@ -1202,7 +1202,7 @@ class OracleAdvisor:
             reasoning_parts.append(f"Recommend: {spread_direction}")
 
         return OraclePrediction(
-            bot_name=BotName.APACHE,
+            bot_name=BotName.ATHENA,
             advice=advice,
             win_probability=base_pred['win_probability'],
             confidence=min(100, direction_confidence * 100),

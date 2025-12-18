@@ -1,15 +1,15 @@
 """
-APACHE - Directional Spread Trading Bot
+ATHENA - Directional Spread Trading Bot
 =========================================
 
-Named after the Apache warrior - swift, strategic, and precise.
+Named after Athena, Greek goddess of wisdom and strategic warfare.
 
 STRATEGY: GEX-Based Directional Spreads
 - BULLISH: Bull Call Spread (buy ATM call, sell OTM call)
 - BEARISH: Bear Call Spread (sell ATM call, buy OTM call)
 
 SIGNAL FLOW:
-    KRONOS (GEX Calculator) --> ORACLE (ML Advisor) --> APACHE (Execution)
+    KRONOS (GEX Calculator) --> ORACLE (ML Advisor) --> ATHENA (Execution)
 
 The key edge is the GEX wall proximity filter:
 - Buy calls near put wall (support) for bullish
@@ -20,9 +20,9 @@ Backtest Results (2024 out-of-sample):
 - With 0.5% wall filter: 98% win rate, 18.19x profit ratio
 
 Usage:
-    from trading.apache_directional_spreads import APACHETrader
-    apache = APACHETrader(initial_capital=100_000)
-    apache.run_daily_cycle()
+    from trading.athena_directional_spreads import ATHENATrader
+    athena = ATHENATrader(initial_capital=100_000)
+    athena.run_daily_cycle()
 
 Author: AlphaGEX Quant
 Date: 2025-12
@@ -181,8 +181,8 @@ class SpreadPosition:
 
 
 @dataclass
-class APACHEConfig:
-    """Configuration for APACHE trading bot"""
+class ATHENAConfig:
+    """Configuration for ATHENA trading bot"""
     # Risk parameters
     risk_per_trade_pct: float = 2.0      # 2% of capital per trade (conservative for directional)
     max_daily_trades: int = 5             # Max trades per day
@@ -209,9 +209,9 @@ class APACHEConfig:
     exit_by_time: str = "15:55"           # Exit all by this time (0DTE)
 
 
-class APACHETrader:
+class ATHENATrader:
     """
-    APACHE - Directional Spread Trading Bot
+    ATHENA - Directional Spread Trading Bot
 
     Uses GEX signals from KRONOS, processed through ORACLE ML advisor,
     to execute Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
@@ -220,39 +220,39 @@ class APACHETrader:
     def __init__(
         self,
         initial_capital: float = 100_000,
-        config: Optional[APACHEConfig] = None
+        config: Optional[ATHENAConfig] = None
     ):
-        """Initialize APACHE trader"""
+        """Initialize ATHENA trader"""
         self.initial_capital = initial_capital
         self.current_capital = initial_capital
-        self.config = config or APACHEConfig()
+        self.config = config or ATHENAConfig()
 
         # Initialize Oracle advisor
         self.oracle: Optional[OracleAdvisor] = None
         if ORACLE_AVAILABLE:
             try:
                 self.oracle = OracleAdvisor()
-                logger.info("APACHE: Oracle advisor initialized")
+                logger.info("ATHENA: Oracle advisor initialized")
             except Exception as e:
-                logger.warning(f"APACHE: Could not initialize Oracle: {e}")
+                logger.warning(f"ATHENA: Could not initialize Oracle: {e}")
 
         # Initialize Kronos GEX calculator
         self.kronos: Optional[KronosGEXCalculator] = None
         if KRONOS_AVAILABLE:
             try:
                 self.kronos = KronosGEXCalculator()
-                logger.info("APACHE: Kronos GEX calculator initialized")
+                logger.info("ATHENA: Kronos GEX calculator initialized")
             except Exception as e:
-                logger.warning(f"APACHE: Could not initialize Kronos: {e}")
+                logger.warning(f"ATHENA: Could not initialize Kronos: {e}")
 
         # Initialize Tradier for execution
         self.tradier: Optional[TradierDataFetcher] = None
         if TRADIER_AVAILABLE and self.config.mode != TradingMode.BACKTEST:
             try:
                 self.tradier = TradierDataFetcher()
-                logger.info("APACHE: Tradier execution initialized")
+                logger.info("ATHENA: Tradier execution initialized")
             except Exception as e:
-                logger.warning(f"APACHE: Could not initialize Tradier: {e}")
+                logger.warning(f"ATHENA: Could not initialize Tradier: {e}")
 
         # Initialize GEX ML Signal Integration
         self.gex_ml: Optional[GEXSignalIntegration] = None
@@ -260,12 +260,12 @@ class APACHETrader:
             try:
                 self.gex_ml = GEXSignalIntegration()
                 if self.gex_ml.load_models():
-                    logger.info("APACHE: GEX ML signal integration initialized")
+                    logger.info("ATHENA: GEX ML signal integration initialized")
                 else:
-                    logger.warning("APACHE: GEX ML models not found - run train_gex_probability_models.py")
+                    logger.warning("ATHENA: GEX ML models not found - run train_gex_probability_models.py")
                     self.gex_ml = None
             except Exception as e:
-                logger.warning(f"APACHE: Could not initialize GEX ML: {e}")
+                logger.warning(f"ATHENA: Could not initialize GEX ML: {e}")
 
         # Position tracking
         self.open_positions: List[SpreadPosition] = []
@@ -276,12 +276,12 @@ class APACHETrader:
         # Session tracking for logging
         self.session_tracker = None
         if BOT_LOGGER_AVAILABLE and get_session_tracker:
-            self.session_tracker = get_session_tracker("APACHE")
+            self.session_tracker = get_session_tracker("ATHENA")
 
         # Load config from database if available
         self._load_config_from_db()
 
-        logger.info(f"APACHE initialized: capital=${initial_capital:,.2f}, mode={self.config.mode.value}")
+        logger.info(f"ATHENA initialized: capital=${initial_capital:,.2f}, mode={self.config.mode.value}")
 
     def _load_config_from_db(self) -> None:
         """Load configuration from apache_config table"""
@@ -303,7 +303,7 @@ class APACHETrader:
             for row in rows:
                 name, value = row
                 if name == 'enabled' and value == 'false':
-                    logger.warning("APACHE is DISABLED in config")
+                    logger.warning("ATHENA is DISABLED in config")
                 elif name == 'mode':
                     self.config.mode = TradingMode.PAPER if value == 'paper' else TradingMode.LIVE
                 elif name == 'wall_filter_pct':
@@ -322,9 +322,9 @@ class APACHETrader:
                     self.config.min_rr_ratio = float(value)
 
             conn.close()
-            logger.info("APACHE: Loaded config from database")
+            logger.info("ATHENA: Loaded config from database")
         except Exception as e:
-            logger.debug(f"APACHE: Could not load config from DB: {e}")
+            logger.debug(f"ATHENA: Could not load config from DB: {e}")
 
     def _log_to_db(self, level: str, message: str, details: Optional[Dict] = None) -> None:
         """Log message to apache_logs table"""
@@ -474,8 +474,8 @@ class APACHETrader:
         )
 
         try:
-            # Get APACHE-specific advice from Oracle
-            advice = self.oracle.get_apache_advice(
+            # Get ATHENA-specific advice from Oracle
+            advice = self.oracle.get_athena_advice(
                 context=context,
                 use_gex_walls=self.config.use_gex_walls,
                 use_claude_validation=self.config.use_claude_validation
@@ -527,7 +527,7 @@ class APACHETrader:
 
         try:
             # Get signal from ML models
-            signal = self.gex_ml.get_signal_for_apache(gex_data, vix=vix)
+            signal = self.gex_ml.get_signal_for_athena(gex_data, vix=vix)
 
             self._log_to_db("INFO", f"ML Signal: {signal['advice']}", {
                 'confidence': signal['confidence'],
@@ -756,7 +756,7 @@ class APACHETrader:
             # Create position
             import uuid
             position = SpreadPosition(
-                position_id=f"APACHE-{uuid.uuid4().hex[:8]}",
+                position_id=f"ATHENA-{uuid.uuid4().hex[:8]}",
                 open_date=today,
                 expiration=today,  # 0DTE
                 spread_type=spread_type,
@@ -869,7 +869,7 @@ class APACHETrader:
 
             # Create decision object
             decision = BotDecision(
-                bot_name="APACHE",
+                bot_name="ATHENA",
                 decision_type="ENTRY",
                 action="SELL" if position.spread_type == SpreadType.BEAR_CALL_SPREAD else "BUY",
                 symbol=self.config.ticker,
@@ -1056,7 +1056,7 @@ class APACHETrader:
 
         try:
             decision = BotDecision(
-                bot_name="APACHE",
+                bot_name="ATHENA",
                 decision_type="EXIT",
                 action="CLOSE",
                 symbol=self.config.ticker,
@@ -1076,7 +1076,7 @@ class APACHETrader:
 
     def run_daily_cycle(self) -> Dict[str, Any]:
         """Run the daily trading cycle using ML signals"""
-        self._log_to_db("INFO", "=== APACHE Daily Cycle Starting ===")
+        self._log_to_db("INFO", "=== ATHENA Daily Cycle Starting ===")
 
         result = {
             'trades_attempted': 0,
@@ -1252,7 +1252,7 @@ class APACHETrader:
         result['positions_closed'] = len(closed)
         result['daily_pnl'] = sum(p.realized_pnl for p in closed)
 
-        self._log_to_db("INFO", f"=== APACHE Cycle Complete ===", result)
+        self._log_to_db("INFO", f"=== ATHENA Cycle Complete ===", result)
 
         return result
 
@@ -1345,7 +1345,7 @@ class APACHETrader:
     def get_status(self) -> Dict[str, Any]:
         """Get current bot status"""
         return {
-            'bot_name': 'APACHE',
+            'bot_name': 'ATHENA',
             'mode': self.config.mode.value,
             'capital': self.current_capital,
             'open_positions': len(self.open_positions),
@@ -1362,13 +1362,13 @@ class APACHETrader:
         }
 
 
-# Convenience function for running Apache
-def run_apache(capital: float = 100_000, mode: str = "paper") -> APACHETrader:
-    """Quick start Apache trading bot"""
-    config = APACHEConfig(
+# Convenience function for running ATHENA
+def run_athena(capital: float = 100_000, mode: str = "paper") -> ATHENATrader:
+    """Quick start ATHENA trading bot"""
+    config = ATHENAConfig(
         mode=TradingMode.PAPER if mode == "paper" else TradingMode.LIVE
     )
-    trader = APACHETrader(initial_capital=capital, config=config)
+    trader = ATHENATrader(initial_capital=capital, config=config)
     return trader
 
 
@@ -1376,10 +1376,10 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     # Test run
-    apache = run_apache()
-    status = apache.get_status()
-    print(f"\nAPACHE Status: {status}")
+    athena = run_athena()
+    status = athena.get_status()
+    print(f"\nATHENA Status: {status}")
 
     # Run cycle
-    result = apache.run_daily_cycle()
+    result = athena.run_daily_cycle()
     print(f"\nCycle Result: {result}")

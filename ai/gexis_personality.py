@@ -99,7 +99,7 @@ ALPHAGEX PLATFORM KNOWLEDGE:
 
 SIGNAL FLOW (How Components Connect):
 ```
-KRONOS (GEX Calculator) → ORACLE (AI Advisor) → Trading Bots (ARES/APACHE/ATLAS)
+KRONOS (GEX Calculator) → ORACLE (AI Advisor) → Trading Bots (ARES/ATHENA/ATLAS)
        ↓                        ↓                         ↓
   gex_history DB          oracle_signals DB         positions DB
        ↓                        ↓                         ↓
@@ -131,7 +131,7 @@ AI Layer (/ai/):
 
 Trading Bots (/trading/):
 - ares_iron_condor.py - ARES bot (0DTE Iron Condors)
-- apache_directional_spreads.py - APACHE bot (GEX directional)
+- athena_directional_spreads.py - ATHENA bot (GEX directional)
 - position_monitor.py - Live position tracking
 - decision_logger.py - Trade decision logging
 
@@ -142,7 +142,7 @@ Database (/db/):
 Frontend (Next.js/React):
 - /frontend/src/app/trader/page.tsx - Trader Control Center
 - /frontend/src/app/ares/page.tsx - ARES dashboard
-- /frontend/src/app/apache/page.tsx - APACHE dashboard
+- /frontend/src/app/athena/page.tsx - ATHENA dashboard
 - /frontend/src/app/gex/page.tsx - GEX analysis multi-ticker
 - /frontend/src/app/gamma/page.tsx - Gamma intelligence
 - /frontend/src/components/FloatingChatbot.tsx - GEXIS chat widget
@@ -161,7 +161,7 @@ Bot Control:
 - POST /api/autonomous/ares/start - Start ARES
 - POST /api/autonomous/ares/stop - Stop ARES
 - GET /api/autonomous/ares/status - ARES status
-- POST /api/autonomous/apache/cycle - Run APACHE cycle
+- POST /api/autonomous/athena/cycle - Run ATHENA cycle
 - GET /api/autonomous/positions - All open positions
 
 GEX Data:
@@ -185,8 +185,8 @@ Trading:
 - autonomous_decisions - Every bot decision with reasoning
 - autonomous_trade_log - Trade execution history
 - ares_positions - ARES Iron Condor positions
-- apache_positions - APACHE spread positions
-- apache_signals - APACHE signal history
+- athena_positions - ATHENA spread positions
+- athena_signals - ATHENA signal history
 
 GEX Data:
 - gex_history - Historical GEX snapshots
@@ -216,8 +216,8 @@ Configuration:
    - Entry time: 10:15 AM ET
    - Exit: Let expire or stop loss
 
-2. APACHE (Directional Spreads)
-   - File: /trading/apache_directional_spreads.py
+2. ATHENA (Directional Spreads)
+   - File: /trading/athena_directional_spreads.py
    - Strategy: GEX-based directional spreads
    - Signal sources:
      * PRIMARY: GEX ML Signal (trained model)
@@ -371,7 +371,7 @@ Unit Tests (/tests/):
 - test_api_endpoints.py - All API route tests
 - test_tradier.py - Tradier API integration
 - test_ares_tradier_integration.py - ARES + Tradier
-- test_apache_e2e.py - APACHE end-to-end
+- test_athena_e2e.py - ATHENA end-to-end
 - test_autonomous_trader.py - Bot autonomy tests
 - test_database_schema.py - Schema validation
 - test_decision_logger.py - Audit trail tests
@@ -555,7 +555,7 @@ Core Trading Tables:
 - autonomous_positions: Open/closed autonomous trades (symbol, strike, entry_price, unrealized_pnl, status, confidence)
 - autonomous_trade_log: Trade execution history (action, details, position_id, realized_pnl)
 - ares_positions: ARES iron condor positions (put_long/short_strike, call_short/long_strike, total_credit, contracts)
-- apache_positions: APACHE spread positions (spread_type, long_strike, short_strike, entry_premium)
+- athena_positions: ATHENA spread positions (spread_type, long_strike, short_strike, entry_premium)
 - trades: All trade records (symbol, strike, entry_price, exit_price, pattern_type, realized_pnl)
 - recommendations: AI trade recommendations (symbol, strategy, confidence, entry/target/stop prices)
 - trading_decisions: Full audit trail for every decision (decision_id, action, reasoning, market_context)

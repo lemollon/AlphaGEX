@@ -15,7 +15,7 @@ interface LogEntry {
 
 type LogLevel = 'ALL' | 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR'
 
-export default function ApacheLogsPage() {
+export default function AthenaLogsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -28,7 +28,7 @@ export default function ApacheLogsPage() {
     try {
       setLoading(true)
       const levelFilter = filter === 'ALL' ? undefined : filter
-      const res = await apiClient.getAPACHELogs(levelFilter, limit)
+      const res = await apiClient.getATHENALogs(levelFilter, limit)
       if (res.data?.data) {
         setLogs(res.data.data)
       }
@@ -108,7 +108,7 @@ export default function ApacheLogsPage() {
             <div className="flex items-center gap-3">
               <Activity className="w-8 h-8 text-orange-500" />
               <div>
-                <h1 className="text-2xl font-bold text-white">APACHE Logs</h1>
+                <h1 className="text-2xl font-bold text-white">ATHENA Logs</h1>
                 <p className="text-gray-400 text-sm">GEX Directional Strategy Activity</p>
               </div>
             </div>

@@ -41,7 +41,7 @@ class BotName(Enum):
     ARES = "ARES"
     HERMES = "HERMES"
     ORACLE = "ORACLE"
-    APACHE = "APACHE"  # Directional Spreads (Bull Call / Bear Call)
+    ATHENA = "ATHENA"  # Directional Spreads (Bull Call / Bear Call)
 
 
 class DecisionType(Enum):

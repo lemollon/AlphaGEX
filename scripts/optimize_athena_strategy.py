@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Apache GEX Directional Strategy - Optimizer & ML Trainer
+ATHENA GEX Directional Strategy - Optimizer & ML Trainer
 
 This script:
 1. Trains the MAGNET theory ML model
-2. Tests the Apache strategy with different configurations
+2. Tests the ATHENA strategy with different configurations
 3. Finds the optimal combination of parameters
 
 MAGNET THEORY (KEY INSIGHT):
@@ -20,13 +20,13 @@ Best Configuration Found:
 
 Usage:
     # Train ML model and run optimized backtest
-    python scripts/optimize_apache_strategy.py --train-ml
+    python scripts/optimize_athena_strategy.py --train-ml
 
     # Run backtest with VIX filter + 3-year period
-    python scripts/optimize_apache_strategy.py --vix-filter
+    python scripts/optimize_athena_strategy.py --vix-filter
 
     # Run full optimization suite
-    python scripts/optimize_apache_strategy.py --full
+    python scripts/optimize_athena_strategy.py --full
 """
 
 import sys
@@ -99,7 +99,7 @@ def train_ml_model(start_date='2022-01-01', end_date=None, ticker='SPX'):
         return False
 
 
-def run_apache_backtest(
+def run_athena_backtest(
     start_date='2024-01-01',
     end_date=None,
     ticker='SPX',
@@ -109,7 +109,7 @@ def run_apache_backtest(
     wall_proximity_pct=3.0,
     capital=100_000
 ):
-    """Run Apache directional backtest with specified parameters"""
+    """Run ATHENA directional backtest with specified parameters"""
     from backtest.zero_dte_hybrid_fixed import HybridFixedBacktester
 
     end_date = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -168,7 +168,7 @@ def run_optimization_suite():
 
     for config in configs:
         try:
-            results = run_apache_backtest(
+            results = run_athena_backtest(
                 start_date='2022-01-01',
                 end_date=datetime.now().strftime('%Y-%m-%d'),
                 min_vix=config.get('min_vix'),
@@ -214,28 +214,28 @@ def run_optimization_suite():
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Apache GEX Directional Strategy - Optimizer & ML Trainer',
+        description='ATHENA GEX Directional Strategy - Optimizer & ML Trainer',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Train ML model only
-  python scripts/optimize_apache_strategy.py --train-ml
+  python scripts/optimize_athena_strategy.py --train-ml
 
   # Run backtest with VIX 15-25 filter (best risk-adjusted)
-  python scripts/optimize_apache_strategy.py --vix-filter
+  python scripts/optimize_athena_strategy.py --vix-filter
 
   # Run backtest on specific date range
-  python scripts/optimize_apache_strategy.py --backtest --start 2022-01-01 --end 2024-12-31
+  python scripts/optimize_athena_strategy.py --backtest --start 2022-01-01 --end 2024-12-31
 
   # Run full optimization suite
-  python scripts/optimize_apache_strategy.py --full
+  python scripts/optimize_athena_strategy.py --full
         """
     )
 
     parser.add_argument('--train-ml', action='store_true',
                        help='Train the ML model with MAGNET theory features')
     parser.add_argument('--backtest', action='store_true',
-                       help='Run Apache backtest')
+                       help='Run ATHENA backtest')
     parser.add_argument('--vix-filter', action='store_true',
                        help='Run backtest with VIX 15-25 filter')
     parser.add_argument('--full', action='store_true',
@@ -271,9 +271,9 @@ Examples:
 
     if args.vix_filter:
         print("\n" + "=" * 70)
-        print("Running Apache with VIX 15-25 Filter (Best Risk-Adjusted)")
+        print("Running ATHENA with VIX 15-25 Filter (Best Risk-Adjusted)")
         print("=" * 70)
-        run_apache_backtest(
+        run_athena_backtest(
             start_date=args.start,
             end_date=args.end,
             ticker=args.ticker,
@@ -284,7 +284,7 @@ Examples:
         )
 
     if args.backtest:
-        run_apache_backtest(
+        run_athena_backtest(
             start_date=args.start,
             end_date=args.end,
             ticker=args.ticker,
@@ -312,9 +312,9 @@ Examples:
         print("\n" + "=" * 70)
         print("Quick Start:")
         print("=" * 70)
-        print("\n1. Train ML model:     python scripts/optimize_apache_strategy.py --train-ml")
-        print("2. Test VIX filter:    python scripts/optimize_apache_strategy.py --vix-filter")
-        print("3. Full optimization:  python scripts/optimize_apache_strategy.py --full")
+        print("\n1. Train ML model:     python scripts/optimize_athena_strategy.py --train-ml")
+        print("2. Test VIX filter:    python scripts/optimize_athena_strategy.py --vix-filter")
+        print("3. Full optimization:  python scripts/optimize_athena_strategy.py --full")
 
 
 if __name__ == '__main__':

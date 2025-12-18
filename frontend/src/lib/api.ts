@@ -314,17 +314,17 @@ export const apiClient = {
   getARESPositions: () => api.get('/api/ares/positions'),
   getARESMarketData: () => api.get('/api/ares/market-data'),
 
-  // APACHE - Directional Spread Bot
-  getAPACHEStatus: () => api.get('/api/apache/status'),
-  getAPACHEPositions: (status?: string) => api.get('/api/apache/positions', { params: status ? { status_filter: status } : {} }),
-  getAPACHESignals: (limit: number = 50) => api.get('/api/apache/signals', { params: { limit } }),
-  getAPACHELogs: (level?: string, limit: number = 100) => api.get('/api/apache/logs', { params: { level, limit } }),
-  getAPACHEPerformance: (days: number = 30) => api.get('/api/apache/performance', { params: { days } }),
-  getAPACHEConfig: () => api.get('/api/apache/config'),
-  updateAPACHEConfig: (name: string, value: string) => api.post(`/api/apache/config/${name}`, null, { params: { value } }),
-  runAPACHECycle: () => api.post('/api/apache/run'),
-  getAPACHEOracleAdvice: () => api.get('/api/apache/oracle-advice'),
-  getAPACHEMLSignal: () => api.get('/api/apache/ml-signal'),
+  // ATHENA - Directional Spread Bot
+  getATHENAStatus: () => api.get('/api/athena/status'),
+  getATHENAPositions: (status?: string) => api.get('/api/athena/positions', { params: status ? { status_filter: status } : {} }),
+  getATHENASignals: (limit: number = 50) => api.get('/api/athena/signals', { params: { limit } }),
+  getATHENALogs: (level?: string, limit: number = 100) => api.get('/api/athena/logs', { params: { level, limit } }),
+  getATHENAPerformance: (days: number = 30) => api.get('/api/athena/performance', { params: { days } }),
+  getATHENAConfig: () => api.get('/api/athena/config'),
+  updateATHENAConfig: (name: string, value: string) => api.post(`/api/athena/config/${name}`, null, { params: { value } }),
+  runATHENACycle: () => api.post('/api/athena/run'),
+  getATHENAOracleAdvice: () => api.get('/api/athena/oracle-advice'),
+  getATHENAMLSignal: () => api.get('/api/athena/ml-signal'),
 
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {

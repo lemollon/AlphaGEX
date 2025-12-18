@@ -1131,7 +1131,7 @@ export default function ZeroDTEBacktestPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Wall Proximity % (Apache)</label>
+                  <label className="block text-sm text-gray-400 mb-1">Wall Proximity % (ATHENA)</label>
                   <select
                     value={config.wall_proximity_pct}
                     onChange={e => setConfig(prev => ({ ...prev, wall_proximity_pct: Number(e.target.value) }))}
