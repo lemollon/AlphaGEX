@@ -6,8 +6,11 @@ Powered by GEXIS (Gamma Exposure eXpert Intelligence System)
 
 import os
 import re
+import json
+import uuid
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -644,5 +647,1038 @@ All systems are operational. I have full access to AlphaGEX's trading intelligen
 
 How may I assist you today?"""
             }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# GEXIS DAILY BRIEFING
+# =============================================================================
+
+@router.get("/gexis/daily-briefing")
+async def get_daily_briefing():
+    """
+    Generate GEXIS morning market briefing.
+    Provides comprehensive market overview, bot status, and recommendations.
+    """
+    try:
+        import anthropic
+
+        # Gather all relevant data
+        briefing_data = {
+            "market": {},
+            "bots": {},
+            "positions": {},
+            "performance": {}
+        }
+
+        # 1. Get GEX data for SPY
+        try:
+            gex_data = api_client.get_net_gamma('SPY') if api_client else {}
+            if gex_data and not gex_data.get('error'):
+                briefing_data["market"] = {
+                    "symbol": "SPY",
+                    "spot_price": gex_data.get('spot_price', 0),
+                    "net_gex": gex_data.get('net_gex', 0),
+                    "flip_point": gex_data.get('flip_point', 0),
+                    "call_wall": gex_data.get('call_wall', 0),
+                    "put_wall": gex_data.get('put_wall', 0)
+                }
+        except Exception:
+            pass
+
+        # 2. Get bot status
+        conn = get_connection()
+        c = conn.cursor()
+
+        try:
+            c.execute("""
+                SELECT bot_name, is_active, last_heartbeat
+                FROM autonomous_config
+                WHERE bot_name IN ('ARES', 'APACHE', 'ATLAS')
+            """)
+            for row in c.fetchall():
+                briefing_data["bots"][row[0]] = {
+                    "active": row[1],
+                    "last_heartbeat": row[2].isoformat() if row[2] else None
+                }
+        except Exception:
+            pass
+
+        # 3. Get open positions count
+        try:
+            c.execute("""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN unrealized_pnl > 0 THEN 1 ELSE 0 END) as winning,
+                       COALESCE(SUM(unrealized_pnl), 0) as total_pnl
+                FROM autonomous_positions
+                WHERE status = 'open'
+            """)
+            row = c.fetchone()
+            if row:
+                briefing_data["positions"] = {
+                    "open_count": row[0] or 0,
+                    "winning_count": row[1] or 0,
+                    "total_unrealized_pnl": float(row[2] or 0)
+                }
+        except Exception:
+            briefing_data["positions"] = {"open_count": 0, "winning_count": 0, "total_unrealized_pnl": 0}
+
+        # 4. Get recent performance (last 7 days)
+        try:
+            c.execute("""
+                SELECT
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(realized_pnl), 0) as total_pnl
+                FROM autonomous_positions
+                WHERE status = 'closed'
+                AND closed_at >= NOW() - INTERVAL '7 days'
+            """)
+            row = c.fetchone()
+            if row and row[0] > 0:
+                briefing_data["performance"] = {
+                    "trades_7d": row[0],
+                    "wins_7d": row[1] or 0,
+                    "win_rate_7d": round((row[1] or 0) / row[0] * 100, 1) if row[0] > 0 else 0,
+                    "pnl_7d": float(row[2] or 0)
+                }
+        except Exception:
+            pass
+
+        conn.close()
+
+        # Build GEXIS briefing prompt
+        hour = datetime.now().hour
+        if 5 <= hour < 12:
+            time_context = "morning"
+            greeting = "Good morning"
+        elif 12 <= hour < 17:
+            time_context = "afternoon"
+            greeting = "Good afternoon"
+        else:
+            time_context = "evening"
+            greeting = "Good evening"
+
+        briefing_prompt = f"""You are GEXIS generating a {time_context} market briefing for {USER_NAME}.
+
+MARKET DATA:
+- SPY Spot: ${briefing_data['market'].get('spot_price', 'N/A')}
+- Net GEX: {briefing_data['market'].get('net_gex', 'N/A')}
+- Flip Point: ${briefing_data['market'].get('flip_point', 'N/A')}
+- Call Wall: ${briefing_data['market'].get('call_wall', 'N/A')}
+- Put Wall: ${briefing_data['market'].get('put_wall', 'N/A')}
+
+BOT STATUS:
+- ARES: {'Active' if briefing_data['bots'].get('ARES', {}).get('active') else 'Inactive'}
+- APACHE: {'Active' if briefing_data['bots'].get('APACHE', {}).get('active') else 'Inactive'}
+- ATLAS: {'Active' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Inactive'}
+
+POSITIONS:
+- Open positions: {briefing_data['positions'].get('open_count', 0)}
+- Currently winning: {briefing_data['positions'].get('winning_count', 0)}
+- Unrealized P&L: ${briefing_data['positions'].get('total_unrealized_pnl', 0):.2f}
+
+7-DAY PERFORMANCE:
+- Trades: {briefing_data['performance'].get('trades_7d', 0)}
+- Win rate: {briefing_data['performance'].get('win_rate_7d', 0)}%
+- P&L: ${briefing_data['performance'].get('pnl_7d', 0):.2f}
+
+Generate a concise {time_context} briefing that:
+1. Starts with "{greeting}, {USER_NAME}. Here's your {time_context} briefing."
+2. Summarizes market conditions based on GEX positioning
+3. Reports bot status and any concerns
+4. Highlights open positions and unrealized P&L
+5. Summarizes recent performance
+6. Provides 2-3 key recommendations for the day
+7. Ends with an offer to dive deeper into any area
+
+Keep it professional, concise, and actionable. Use GEXIS personality (J.A.R.V.I.S.-style).
+No emojis. Format with clear sections."""
+
+        # Call Claude for briefing generation
+        api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if api_key:
+            client = anthropic.Anthropic(api_key=api_key)
+            message = client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=1500,
+                messages=[{"role": "user", "content": briefing_prompt}]
+            )
+            briefing_text = message.content[0].text if message.content else None
+        else:
+            # Fallback briefing without AI
+            briefing_text = f"""{greeting}, {USER_NAME}. Here's your {time_context} briefing.
+
+**Market Overview**
+SPY is trading at ${briefing_data['market'].get('spot_price', 'N/A')} with Net GEX at {briefing_data['market'].get('net_gex', 'N/A')}.
+
+**Bot Status**
+- ARES: {'Online' if briefing_data['bots'].get('ARES', {}).get('active') else 'Offline'}
+- APACHE: {'Online' if briefing_data['bots'].get('APACHE', {}).get('active') else 'Offline'}
+- ATLAS: {'Online' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Offline'}
+
+**Positions**
+You have {briefing_data['positions'].get('open_count', 0)} open positions with ${briefing_data['positions'].get('total_unrealized_pnl', 0):.2f} unrealized P&L.
+
+**Performance (7 Days)**
+{briefing_data['performance'].get('trades_7d', 0)} trades with {briefing_data['performance'].get('win_rate_7d', 0)}% win rate.
+
+Shall I elaborate on any specific area, {USER_NAME}?"""
+
+        return {
+            "success": True,
+            "briefing": briefing_text,
+            "data": briefing_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# GEXIS QUICK COMMANDS
+# =============================================================================
+
+QUICK_COMMANDS = {
+    "/status": "Get system and bot status",
+    "/gex": "Get GEX data for a symbol (e.g., /gex SPY)",
+    "/positions": "Show open positions",
+    "/pnl": "Show P&L summary",
+    "/help": "Show available commands",
+    "/briefing": "Get daily market briefing",
+    "/alerts": "Check active alerts"
+}
+
+
+@router.post("/gexis/command")
+async def execute_quick_command(request: dict):
+    """
+    Execute a GEXIS quick command.
+
+    Commands:
+    - /status - System and bot status
+    - /gex [symbol] - GEX data for symbol
+    - /positions - Open positions
+    - /pnl - P&L summary
+    - /help - Available commands
+    - /briefing - Daily briefing
+    - /alerts - Active alerts
+    """
+    try:
+        command_text = request.get('command', '').strip().lower()
+
+        if not command_text.startswith('/'):
+            return {"success": False, "error": "Commands must start with /"}
+
+        parts = command_text.split()
+        command = parts[0]
+        args = parts[1:] if len(parts) > 1 else []
+
+        # /help - Show available commands
+        if command == "/help":
+            help_text = f"Available commands, {USER_NAME}:\n\n"
+            for cmd, desc in QUICK_COMMANDS.items():
+                help_text += f"**{cmd}** - {desc}\n"
+            help_text += f"\nYou can also ask me anything in natural language."
+            return {
+                "success": True,
+                "command": "/help",
+                "response": help_text,
+                "type": "help"
+            }
+
+        # /status - System and bot status
+        elif command == "/status":
+            conn = get_connection()
+            c = conn.cursor()
+
+            status = {"bots": {}, "system": "operational"}
+
+            try:
+                c.execute("""
+                    SELECT bot_name, is_active, last_heartbeat,
+                           COALESCE(config_data->>'mode', 'unknown') as mode
+                    FROM autonomous_config
+                    WHERE bot_name IN ('ARES', 'APACHE', 'ATLAS')
+                """)
+                for row in c.fetchall():
+                    heartbeat_age = None
+                    if row[2]:
+                        # Handle timezone-aware timestamps from PostgreSQL
+                        last_heartbeat = row[2]
+                        now = datetime.now()
+                        # Make both naive for comparison if heartbeat has timezone
+                        if hasattr(last_heartbeat, 'tzinfo') and last_heartbeat.tzinfo is not None:
+                            last_heartbeat = last_heartbeat.replace(tzinfo=None)
+                        heartbeat_age = (now - last_heartbeat).total_seconds()
+                    status["bots"][row[0]] = {
+                        "active": row[1],
+                        "mode": row[3],
+                        "healthy": heartbeat_age is None or heartbeat_age < 300 if row[1] else True
+                    }
+            except Exception:
+                pass
+
+            conn.close()
+
+            # Format response
+            status_text = f"System Status Report, {USER_NAME}:\n\n"
+            status_text += f"**System:** {status['system'].upper()}\n\n"
+            status_text += "**Trading Bots:**\n"
+            for bot, info in status["bots"].items():
+                state = "ACTIVE" if info.get("active") else "INACTIVE"
+                health = "Healthy" if info.get("healthy", True) else "Check Required"
+                status_text += f"- {bot}: {state} ({info.get('mode', 'N/A')}) - {health}\n"
+
+            return {
+                "success": True,
+                "command": "/status",
+                "response": status_text,
+                "data": status,
+                "type": "status"
+            }
+
+        # /gex [symbol] - GEX data
+        elif command == "/gex":
+            symbol = args[0].upper() if args else "SPY"
+
+            try:
+                gex_data = api_client.get_net_gamma(symbol) if api_client else {}
+            except Exception:
+                gex_data = {}
+
+            if gex_data and not gex_data.get('error'):
+                gex_text = f"GEX Analysis for {symbol}, {USER_NAME}:\n\n"
+                gex_text += f"**Spot Price:** ${gex_data.get('spot_price', 'N/A')}\n"
+                gex_text += f"**Net GEX:** {gex_data.get('net_gex', 'N/A')}\n"
+                gex_text += f"**Flip Point:** ${gex_data.get('flip_point', 'N/A')}\n"
+                gex_text += f"**Call Wall:** ${gex_data.get('call_wall', 'N/A')}\n"
+                gex_text += f"**Put Wall:** ${gex_data.get('put_wall', 'N/A')}\n"
+
+                # Add interpretation
+                net_gex = gex_data.get('net_gex', 0)
+                if net_gex and isinstance(net_gex, (int, float)):
+                    if net_gex > 0:
+                        gex_text += f"\n_Positive GEX suggests stable, mean-reverting price action._"
+                    else:
+                        gex_text += f"\n_Negative GEX suggests elevated volatility potential._"
+
+                return {
+                    "success": True,
+                    "command": "/gex",
+                    "response": gex_text,
+                    "data": gex_data,
+                    "type": "gex"
+                }
+            else:
+                return {
+                    "success": True,
+                    "command": "/gex",
+                    "response": f"Unable to retrieve GEX data for {symbol} at this time, {USER_NAME}.",
+                    "type": "gex"
+                }
+
+        # /positions - Open positions
+        elif command == "/positions":
+            conn = get_connection()
+            c = conn.cursor()
+
+            positions = []
+            try:
+                c.execute("""
+                    SELECT symbol, strike, option_type, contracts, entry_price,
+                           unrealized_pnl, confidence, bot_name
+                    FROM autonomous_positions
+                    WHERE status = 'open'
+                    ORDER BY opened_at DESC
+                    LIMIT 10
+                """)
+                for row in c.fetchall():
+                    positions.append({
+                        "symbol": row[0],
+                        "strike": row[1],
+                        "type": row[2],
+                        "contracts": row[3],
+                        "entry": row[4],
+                        "pnl": row[5],
+                        "confidence": row[6],
+                        "bot": row[7]
+                    })
+            except Exception:
+                pass
+
+            conn.close()
+
+            if positions:
+                pos_text = f"Open Positions Report, {USER_NAME}:\n\n"
+                total_pnl = 0
+                for p in positions:
+                    pnl = p.get('pnl', 0) or 0
+                    total_pnl += pnl
+                    pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+                    pos_text += f"- **{p['symbol']}** {p['strike']} {p['type']} x{p['contracts']} | P&L: {pnl_str} | {p['bot']}\n"
+
+                pos_text += f"\n**Total Unrealized:** {'$' + str(round(total_pnl, 2)) if total_pnl >= 0 else '-$' + str(abs(round(total_pnl, 2)))}"
+            else:
+                pos_text = f"No open positions at this time, {USER_NAME}."
+
+            return {
+                "success": True,
+                "command": "/positions",
+                "response": pos_text,
+                "data": {"positions": positions},
+                "type": "positions"
+            }
+
+        # /pnl - P&L summary
+        elif command == "/pnl":
+            conn = get_connection()
+            c = conn.cursor()
+
+            pnl_data = {"today": 0, "week": 0, "month": 0, "total": 0}
+
+            try:
+                # Today's P&L
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM autonomous_positions
+                    WHERE status = 'closed' AND DATE(closed_at) = CURRENT_DATE
+                """)
+                pnl_data["today"] = float(c.fetchone()[0] or 0)
+
+                # This week
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM autonomous_positions
+                    WHERE status = 'closed' AND closed_at >= NOW() - INTERVAL '7 days'
+                """)
+                pnl_data["week"] = float(c.fetchone()[0] or 0)
+
+                # This month
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM autonomous_positions
+                    WHERE status = 'closed' AND closed_at >= DATE_TRUNC('month', NOW())
+                """)
+                pnl_data["month"] = float(c.fetchone()[0] or 0)
+
+                # All time
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM autonomous_positions
+                    WHERE status = 'closed'
+                """)
+                pnl_data["total"] = float(c.fetchone()[0] or 0)
+
+                # Add unrealized
+                c.execute("""
+                    SELECT COALESCE(SUM(unrealized_pnl), 0)
+                    FROM autonomous_positions
+                    WHERE status = 'open'
+                """)
+                pnl_data["unrealized"] = float(c.fetchone()[0] or 0)
+
+            except Exception:
+                pass
+
+            conn.close()
+
+            def format_pnl(val):
+                return f"+${val:.2f}" if val >= 0 else f"-${abs(val):.2f}"
+
+            pnl_text = f"P&L Summary, {USER_NAME}:\n\n"
+            pnl_text += f"**Today:** {format_pnl(pnl_data['today'])}\n"
+            pnl_text += f"**This Week:** {format_pnl(pnl_data['week'])}\n"
+            pnl_text += f"**This Month:** {format_pnl(pnl_data['month'])}\n"
+            pnl_text += f"**All Time:** {format_pnl(pnl_data['total'])}\n"
+            pnl_text += f"\n**Unrealized:** {format_pnl(pnl_data.get('unrealized', 0))}"
+
+            return {
+                "success": True,
+                "command": "/pnl",
+                "response": pnl_text,
+                "data": pnl_data,
+                "type": "pnl"
+            }
+
+        # /briefing - Daily briefing shortcut
+        elif command == "/briefing":
+            return await get_daily_briefing()
+
+        # /alerts - Active alerts
+        elif command == "/alerts":
+            alerts = await get_active_alerts()
+            return {
+                "success": True,
+                "command": "/alerts",
+                "response": alerts.get("response", f"No active alerts, {USER_NAME}."),
+                "data": alerts.get("alerts", []),
+                "type": "alerts"
+            }
+
+        else:
+            return {
+                "success": False,
+                "error": f"Unknown command: {command}. Type /help for available commands."
+            }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# GEXIS PROACTIVE ALERTS
+# =============================================================================
+
+@router.get("/gexis/alerts")
+async def get_active_alerts():
+    """
+    Get proactive alerts from GEXIS.
+    Checks for regime changes, position alerts, and market conditions.
+    """
+    try:
+        alerts = []
+
+        conn = get_connection()
+        c = conn.cursor()
+
+        # 1. Check for positions with significant P&L
+        try:
+            c.execute("""
+                SELECT symbol, strike, option_type, unrealized_pnl,
+                       entry_price, confidence, bot_name, contracts
+                FROM autonomous_positions
+                WHERE status = 'open'
+                AND (unrealized_pnl > entry_price * COALESCE(contracts, 1) * 100 * 0.5
+                     OR unrealized_pnl < -entry_price * COALESCE(contracts, 1) * 100 * 0.3)
+            """)
+            for row in c.fetchall():
+                pnl = row[3] or 0
+                alert_type = "profit_target" if pnl > 0 else "stop_loss"
+                alerts.append({
+                    "type": alert_type,
+                    "severity": "high",
+                    "title": f"Position Alert: {row[0]} {row[1]} {row[2]}",
+                    "message": f"Position has {'reached profit target' if pnl > 0 else 'hit stop loss level'}. P&L: ${pnl:.2f}",
+                    "action": "Consider closing position",
+                    "data": {"symbol": row[0], "strike": row[1], "pnl": pnl}
+                })
+        except Exception:
+            pass
+
+        # 2. Check for regime changes (GEX flip)
+        try:
+            gex_data = api_client.get_net_gamma('SPY') if api_client else {}
+            if gex_data and not gex_data.get('error'):
+                spot = gex_data.get('spot_price', 0)
+                flip = gex_data.get('flip_point', 0)
+                net_gex = gex_data.get('net_gex', 0)
+
+                if spot and flip:
+                    distance = abs(spot - flip) / spot * 100
+                    if distance < 0.3:  # Within 0.3% of flip
+                        alerts.append({
+                            "type": "regime_change",
+                            "severity": "medium",
+                            "title": "Near GEX Flip Point",
+                            "message": f"SPY is within 0.3% of the gamma flip point (${flip:.2f}). Regime change possible.",
+                            "action": "Monitor positions for volatility shift",
+                            "data": {"spot": spot, "flip": flip, "distance_pct": distance}
+                        })
+        except Exception:
+            pass
+
+        # 3. Check for bot issues (stale heartbeat or NULL heartbeat for active bots)
+        try:
+            c.execute("""
+                SELECT bot_name, last_heartbeat
+                FROM autonomous_config
+                WHERE is_active = TRUE
+                AND (last_heartbeat IS NULL
+                     OR last_heartbeat < NOW() - INTERVAL '10 minutes')
+            """)
+            for row in c.fetchall():
+                alerts.append({
+                    "type": "bot_health",
+                    "severity": "high",
+                    "title": f"Bot Health Alert: {row[0]}",
+                    "message": f"{row[0]} has not reported in over 10 minutes.",
+                    "action": "Check bot logs and restart if needed"
+                })
+        except Exception:
+            pass
+
+        conn.close()
+
+        # Format response
+        if alerts:
+            response = f"Active Alerts for {USER_NAME}:\n\n"
+            for i, alert in enumerate(alerts, 1):
+                severity_icon = {"high": "[!]", "medium": "[*]", "low": "[-]"}.get(alert["severity"], "[?]")
+                response += f"{severity_icon} **{alert['title']}**\n"
+                response += f"   {alert['message']}\n"
+                response += f"   _Recommended: {alert['action']}_\n\n"
+        else:
+            response = f"All clear, {USER_NAME}. No active alerts at this time."
+
+        return {
+            "success": True,
+            "alerts": alerts,
+            "count": len(alerts),
+            "response": response,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e), "alerts": []}
+
+
+# =============================================================================
+# GEXIS CONVERSATION MEMORY
+# =============================================================================
+
+@router.post("/gexis/conversation/save")
+async def save_conversation(request: dict):
+    """
+    Save a conversation to GEXIS memory for context retention.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        session_id = request.get('session_id', str(uuid.uuid4())[:8])
+        user_message = request.get('user_message', '')
+        ai_response = request.get('ai_response', '')
+        context_data = request.get('context', {})
+
+        c.execute('''
+            INSERT INTO conversations (timestamp, user_message, ai_response, context_data, session_id)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        ''', (datetime.now(), user_message, ai_response, json.dumps(context_data), session_id))
+
+        conversation_id = c.fetchone()[0]
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "conversation_id": conversation_id,
+            "session_id": session_id
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/gexis/conversation/context/{session_id}")
+async def get_conversation_context(session_id: str, limit: int = 5):
+    """
+    Get recent conversation context for a session.
+    Used to maintain context across messages.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT user_message, ai_response, timestamp
+            FROM conversations
+            WHERE session_id = %s
+            ORDER BY timestamp DESC
+            LIMIT %s
+        ''', (session_id, limit))
+
+        messages = []
+        for row in c.fetchall():
+            messages.append({
+                "user": row[0],
+                "assistant": row[1],
+                "timestamp": row[2].isoformat() if row[2] else None
+            })
+
+        conn.close()
+
+        # Return in chronological order
+        messages.reverse()
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "messages": messages,
+            "count": len(messages)
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e), "messages": []}
+
+
+@router.post("/gexis/analyze-with-context")
+async def ai_analyze_with_context(request: dict):
+    """
+    Generate AI analysis with conversation context.
+    Maintains memory of recent conversation for coherent multi-turn dialogue.
+    """
+    try:
+        import anthropic
+
+        query = request.get('query', '')
+        session_id = request.get('session_id', str(uuid.uuid4())[:8])
+        market_data = request.get('market_data', {})
+
+        if not query:
+            raise HTTPException(status_code=400, detail="Query is required")
+
+        # Get conversation context
+        context_result = await get_conversation_context(session_id, limit=5)
+        conversation_history = context_result.get("messages", [])
+
+        # Extract symbol
+        provided_symbol = request.get('symbol', 'SPY').upper()
+        symbol = extract_symbol_from_query(query, default=provided_symbol)
+
+        # Fetch market data if not provided
+        if not market_data or not market_data.get('spot_price'):
+            try:
+                gex_data = api_client.get_net_gamma(symbol) if api_client else {}
+                if gex_data and not gex_data.get('error'):
+                    market_data = {
+                        'net_gex': gex_data.get('net_gex', 0),
+                        'spot_price': gex_data.get('spot_price', 0),
+                        'flip_point': gex_data.get('flip_point', 0),
+                        'call_wall': gex_data.get('call_wall', 0),
+                        'put_wall': gex_data.get('put_wall', 0),
+                        'symbol': symbol
+                    }
+            except Exception:
+                pass
+
+        # Build context with history
+        if GEXIS_AVAILABLE:
+            market_context = {
+                'symbol': symbol,
+                'spot_price': market_data.get('spot_price', 'N/A'),
+                'net_gex': market_data.get('net_gex', 'N/A'),
+                'flip_point': market_data.get('flip_point', 'N/A'),
+                'call_wall': market_data.get('call_wall', 'N/A'),
+                'put_wall': market_data.get('put_wall', 'N/A'),
+            }
+            system_prompt = build_gexis_conversation_prompt(market_data=market_context)
+        else:
+            system_prompt = f"""You are GEXIS, the AI assistant for AlphaGEX.
+Address the user as "{USER_NAME}". Be helpful, witty, and professional."""
+
+        # Build message history for Claude
+        messages = []
+        for msg in conversation_history:
+            if msg.get("user"):
+                messages.append({"role": "user", "content": msg["user"]})
+            if msg.get("assistant"):
+                messages.append({"role": "assistant", "content": msg["assistant"]})
+
+        # Add current query
+        messages.append({"role": "user", "content": query})
+
+        # Get API key
+        api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if not api_key:
+            raise HTTPException(status_code=503, detail="Claude API key not configured")
+
+        # Call Claude
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1500,
+            system=system_prompt,
+            messages=messages
+        )
+
+        ai_response = message.content[0].text if message.content else "No response generated."
+
+        # Save to conversation history
+        await save_conversation({
+            "session_id": session_id,
+            "user_message": query,
+            "ai_response": ai_response,
+            "context": {"symbol": symbol, "market_data": market_data}
+        })
+
+        return {
+            "success": True,
+            "data": {
+                "analysis": ai_response,
+                "symbol": symbol,
+                "query": query,
+                "session_id": session_id,
+                "context_messages": len(conversation_history)
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except anthropic.APIError as e:
+        raise HTTPException(status_code=500, detail=f"Claude API error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# GEXIS TRADE EXECUTION ASSISTANT
+# =============================================================================
+
+@router.post("/gexis/trade-assistant")
+async def trade_execution_assistant(request: dict):
+    """
+    GEXIS Trade Execution Assistant.
+    Helps validate and execute trades with guidance.
+
+    Request:
+    {
+        "action": "validate" | "explain" | "execute",
+        "trade": {
+            "symbol": "SPY",
+            "strategy": "vertical_spread",
+            "direction": "bullish",
+            "strikes": [580, 582],
+            "expiration": "2024-01-19",
+            "contracts": 1
+        }
+    }
+    """
+    try:
+        import anthropic
+
+        action = request.get('action', 'validate')
+        trade = request.get('trade', {})
+
+        if not trade:
+            return {"success": False, "error": "Trade details required"}
+
+        symbol = trade.get('symbol', 'SPY')
+        strategy = trade.get('strategy', 'unknown')
+        direction = trade.get('direction', 'neutral')
+        strikes = trade.get('strikes', [])
+        expiration = trade.get('expiration', '')
+        contracts = trade.get('contracts', 1)
+
+        # Get current market data
+        try:
+            gex_data = api_client.get_net_gamma(symbol) if api_client else {}
+        except Exception:
+            gex_data = {}
+
+        # Build context for trade assistant
+        trade_context = f"""TRADE DETAILS:
+Symbol: {symbol}
+Strategy: {strategy}
+Direction: {direction}
+Strikes: {strikes}
+Expiration: {expiration}
+Contracts: {contracts}
+
+CURRENT MARKET:
+Spot Price: ${gex_data.get('spot_price', 'N/A')}
+Net GEX: {gex_data.get('net_gex', 'N/A')}
+Flip Point: ${gex_data.get('flip_point', 'N/A')}
+Call Wall: ${gex_data.get('call_wall', 'N/A')}
+Put Wall: ${gex_data.get('put_wall', 'N/A')}
+"""
+
+        if action == "validate":
+            # Validate trade against GEX and risk rules
+            validation = {
+                "valid": True,
+                "warnings": [],
+                "suggestions": []
+            }
+
+            spot = gex_data.get('spot_price', 0)
+            net_gex = gex_data.get('net_gex', 0)
+            call_wall = gex_data.get('call_wall', 0)
+            put_wall = gex_data.get('put_wall', 0)
+
+            # Check direction vs GEX
+            if net_gex and spot:
+                if net_gex > 0 and direction == "bullish":
+                    validation["suggestions"].append("Positive GEX favors mean reversion. Consider shorter duration.")
+                elif net_gex < 0 and direction == "neutral":
+                    validation["warnings"].append("Negative GEX suggests high volatility. Neutral strategies may be risky.")
+
+            # Check strikes vs walls
+            if strikes and len(strikes) >= 1:
+                strike = strikes[0]
+                if call_wall and strike > call_wall:
+                    validation["warnings"].append(f"Strike {strike} is above call wall ({call_wall}). May face resistance.")
+                if put_wall and strike < put_wall:
+                    validation["warnings"].append(f"Strike {strike} is below put wall ({put_wall}). May find support.")
+
+            validation["gex_alignment"] = "aligned" if (
+                (direction == "bullish" and net_gex and net_gex < 0) or
+                (direction == "bearish" and net_gex and net_gex > 0) or
+                (direction == "neutral" and net_gex and net_gex > 0)
+            ) else "caution"
+
+            response_text = f"Trade Validation for {USER_NAME}:\n\n"
+            response_text += f"**Trade:** {strategy} {direction} on {symbol}\n"
+            response_text += f"**GEX Alignment:** {validation['gex_alignment'].upper()}\n\n"
+
+            if validation["warnings"]:
+                response_text += "**Warnings:**\n"
+                for w in validation["warnings"]:
+                    response_text += f"- {w}\n"
+
+            if validation["suggestions"]:
+                response_text += "\n**Suggestions:**\n"
+                for s in validation["suggestions"]:
+                    response_text += f"- {s}\n"
+
+            if not validation["warnings"] and not validation["suggestions"]:
+                response_text += "No concerns detected. Trade appears aligned with current conditions."
+
+            return {
+                "success": True,
+                "action": "validate",
+                "validation": validation,
+                "response": response_text
+            }
+
+        elif action == "explain":
+            # Get AI explanation of the trade
+            api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+            if not api_key:
+                return {"success": False, "error": "Claude API key not configured"}
+
+            explain_prompt = f"""You are GEXIS explaining a trade to {USER_NAME}.
+
+{trade_context}
+
+Explain this trade setup in 3-4 concise paragraphs:
+1. What this trade is (strategy mechanics)
+2. Max profit, max loss, and breakeven points
+3. How current GEX positioning affects this trade
+4. Key risks and what to watch for
+
+Use GEXIS personality - professional, helpful, occasional dry wit. Address {USER_NAME} naturally."""
+
+            client = anthropic.Anthropic(api_key=api_key)
+            message = client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=1000,
+                messages=[{"role": "user", "content": explain_prompt}]
+            )
+
+            explanation = message.content[0].text if message.content else "Unable to generate explanation."
+
+            return {
+                "success": True,
+                "action": "explain",
+                "response": explanation,
+                "trade": trade
+            }
+
+        elif action == "execute":
+            # This would integrate with actual order execution
+            # For now, return confirmation prompt
+            return {
+                "success": True,
+                "action": "execute",
+                "response": f"Trade execution requested, {USER_NAME}. This would submit the following order:\n\n"
+                           f"**{strategy.upper()}** on {symbol}\n"
+                           f"Strikes: {strikes}\n"
+                           f"Contracts: {contracts}\n"
+                           f"Expiration: {expiration}\n\n"
+                           f"_Note: Actual execution requires integration with your broker._",
+                "ready_to_execute": True,
+                "trade": trade
+            }
+
+        else:
+            return {"success": False, "error": f"Unknown action: {action}"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# GEXIS EXPORT CONVERSATION
+# =============================================================================
+
+@router.get("/gexis/export/{session_id}")
+async def export_conversation(session_id: str, format: str = "json"):
+    """
+    Export conversation history for a session.
+
+    Formats: json, markdown, text
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT user_message, ai_response, timestamp, context_data
+            FROM conversations
+            WHERE session_id = %s
+            ORDER BY timestamp ASC
+        ''', (session_id,))
+
+        messages = []
+        for row in c.fetchall():
+            messages.append({
+                "user": row[0],
+                "assistant": row[1],
+                "timestamp": row[2].isoformat() if row[2] else None,
+                "context": row[3]
+            })
+
+        conn.close()
+
+        if format == "json":
+            return {
+                "success": True,
+                "session_id": session_id,
+                "messages": messages,
+                "export_format": "json"
+            }
+
+        elif format == "markdown":
+            md = f"# GEXIS Conversation Export\n\n"
+            md += f"**Session:** {session_id}\n"
+            md += f"**Exported:** {datetime.now().isoformat()}\n\n---\n\n"
+
+            for msg in messages:
+                ts = msg.get("timestamp", "")
+                md += f"### {USER_NAME} ({ts})\n{msg['user']}\n\n"
+                md += f"### GEXIS\n{msg['assistant']}\n\n---\n\n"
+
+            return {
+                "success": True,
+                "session_id": session_id,
+                "content": md,
+                "export_format": "markdown"
+            }
+
+        elif format == "text":
+            txt = f"GEXIS Conversation Export\n"
+            txt += f"Session: {session_id}\n"
+            txt += f"Exported: {datetime.now().isoformat()}\n"
+            txt += "=" * 50 + "\n\n"
+
+            for msg in messages:
+                ts = msg.get("timestamp", "")
+                txt += f"[{ts}] {USER_NAME}:\n{msg['user']}\n\n"
+                txt += f"GEXIS:\n{msg['assistant']}\n\n"
+                txt += "-" * 30 + "\n\n"
+
+            return {
+                "success": True,
+                "session_id": session_id,
+                "content": txt,
+                "export_format": "text"
+            }
+
+        else:
+            return {"success": False, "error": f"Unknown format: {format}"}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
