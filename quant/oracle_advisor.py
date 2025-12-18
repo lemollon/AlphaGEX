@@ -829,6 +829,9 @@ class OracleAdvisor:
         self.model_version = "0.0.0"
         self._has_gex_features = False
 
+        # Live log for frontend transparency
+        self.live_log = oracle_live_log
+
         # Thresholds
         self.high_confidence_threshold = 0.70
         self.low_confidence_threshold = 0.55
@@ -844,6 +847,13 @@ class OracleAdvisor:
 
         # Try to load existing model
         self._load_model()
+
+        # Log initialization
+        self.live_log.log("INIT", f"Oracle Advisor initialized (model v{self.model_version})", {
+            "model_trained": self.is_trained,
+            "claude_enabled": enable_claude,
+            "has_gex_features": self._has_gex_features
+        })
 
     @property
     def claude_available(self) -> bool:
@@ -920,6 +930,15 @@ class OracleAdvisor:
         Returns:
             OraclePrediction with IC-specific advice
         """
+        # Log prediction request
+        self.live_log.log("PREDICT", "ARES advice requested", {
+            "vix": context.vix,
+            "gex_regime": context.gex_regime.value,
+            "spot_price": context.spot_price,
+            "use_gex_walls": use_gex_walls,
+            "use_claude": use_claude_validation
+        })
+
         # Get base prediction
         base_pred = self._get_base_prediction(context)
 
@@ -977,7 +996,7 @@ class OracleAdvisor:
         else:
             sd_mult = 1.2  # Wider, safer
 
-        return OraclePrediction(
+        prediction = OraclePrediction(
             bot_name=BotName.ARES,
             advice=advice,
             win_probability=base_pred['win_probability'],
@@ -994,6 +1013,16 @@ class OracleAdvisor:
             claude_analysis=claude_analysis  # Include real Claude data for logging
         )
 
+        # Log prediction result
+        self.live_log.log("PREDICT_DONE", f"ARES: {advice.value} ({base_pred['win_probability']:.1%})", {
+            "advice": advice.value,
+            "win_probability": base_pred['win_probability'],
+            "risk_pct": risk_pct,
+            "claude_validated": claude_analysis is not None
+        })
+
+        return prediction
+
     def get_atlas_advice(self, context: MarketContext) -> OraclePrediction:
         """
         Get Wheel strategy advice for ATLAS.
@@ -1001,6 +1030,13 @@ class OracleAdvisor:
         ATLAS trades cash-secured puts and covered calls.
         GEX signals help with entry timing.
         """
+        # Log prediction request
+        self.live_log.log("PREDICT", "ATLAS advice requested", {
+            "vix": context.vix,
+            "gex_regime": context.gex_regime.value,
+            "spot_price": context.spot_price
+        })
+
         base_pred = self._get_base_prediction(context)
         reasoning_parts = []
 
@@ -1018,7 +1054,7 @@ class OracleAdvisor:
 
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
-        return OraclePrediction(
+        prediction = OraclePrediction(
             bot_name=BotName.ATLAS,
             advice=advice,
             win_probability=base_pred['win_probability'],
@@ -1031,6 +1067,15 @@ class OracleAdvisor:
             probabilities=base_pred['probabilities']
         )
 
+        # Log prediction result
+        self.live_log.log("PREDICT_DONE", f"ATLAS: {advice.value} ({base_pred['win_probability']:.1%})", {
+            "advice": advice.value,
+            "win_probability": base_pred['win_probability'],
+            "risk_pct": risk_pct
+        })
+
+        return prediction
+
     def get_phoenix_advice(
         self,
         context: MarketContext,
@@ -1041,6 +1086,14 @@ class OracleAdvisor:
 
         PHOENIX trades long calls, needs directional bias.
         """
+        # Log prediction request
+        self.live_log.log("PREDICT", "PHOENIX advice requested", {
+            "vix": context.vix,
+            "gex_regime": context.gex_regime.value,
+            "spot_price": context.spot_price,
+            "claude_validation": use_claude_validation
+        })
+
         base_pred = self._get_base_prediction(context)
         reasoning_parts = []
 
@@ -1068,7 +1121,7 @@ class OracleAdvisor:
 
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
-        return OraclePrediction(
+        prediction = OraclePrediction(
             bot_name=BotName.PHOENIX,
             advice=advice,
             win_probability=base_pred['win_probability'],
@@ -1081,6 +1134,16 @@ class OracleAdvisor:
             probabilities=base_pred['probabilities'],
             claude_analysis=claude_analysis  # Include real Claude data for logging
         )
+
+        # Log prediction result
+        self.live_log.log("PREDICT_DONE", f"PHOENIX: {advice.value} ({base_pred['win_probability']:.1%})", {
+            "advice": advice.value,
+            "win_probability": base_pred['win_probability'],
+            "risk_pct": risk_pct,
+            "claude_validated": claude_analysis is not None
+        })
+
+        return prediction
 
     def get_athena_advice(
         self,
@@ -1102,6 +1165,15 @@ class OracleAdvisor:
         - Near Put Wall (support) + BULLISH signal = Strong entry for Bull Call Spread
         - Near Call Wall (resistance) + BEARISH signal = Strong entry for Bear Call Spread
         """
+        # Log prediction request
+        self.live_log.log("PREDICT", "ATHENA advice requested", {
+            "vix": context.vix,
+            "gex_regime": context.gex_regime.value,
+            "spot_price": context.spot_price,
+            "use_gex_walls": use_gex_walls,
+            "claude_validation": use_claude_validation
+        })
+
         base_pred = self._get_base_prediction(context)
         reasoning_parts = []
 
@@ -1201,7 +1273,7 @@ class OracleAdvisor:
             spread_direction = "BEAR_CALL_SPREAD"
             reasoning_parts.append(f"Recommend: {spread_direction}")
 
-        return OraclePrediction(
+        prediction = OraclePrediction(
             bot_name=BotName.ATHENA,
             advice=advice,
             win_probability=base_pred['win_probability'],
@@ -1217,6 +1289,17 @@ class OracleAdvisor:
             probabilities=base_pred.get('probabilities', {}),
             claude_analysis=claude_analysis
         )
+
+        # Log prediction result
+        self.live_log.log("PREDICT_DONE", f"ATHENA: {advice.value} ({base_pred['win_probability']:.1%})", {
+            "advice": advice.value,
+            "win_probability": base_pred['win_probability'],
+            "direction": direction,
+            "spread_type": spread_direction,
+            "claude_validated": claude_analysis is not None
+        })
+
+        return prediction
 
     # =========================================================================
     # BASE PREDICTION
@@ -1519,7 +1602,14 @@ class OracleAdvisor:
         min_samples: int = 100
     ) -> TrainingMetrics:
         """Train Oracle from KRONOS backtest results"""
+        # Log training start
+        self.live_log.log("TRAIN_START", "Oracle training initiated from KRONOS data", {
+            "test_size": test_size,
+            "min_samples": min_samples
+        })
+
         if not ML_AVAILABLE:
+            self.live_log.log("TRAIN_ERROR", "ML libraries not available", {})
             raise ImportError("ML libraries required")
 
         df = self.extract_features_from_kronos(backtest_results)
@@ -1599,6 +1689,15 @@ class OracleAdvisor:
         self.is_trained = True
         self.model_version = "1.0.0"
         self._save_model()
+
+        # Log training complete
+        self.live_log.log("TRAIN_DONE", f"Oracle trained - Accuracy: {self.training_metrics.accuracy:.1%}", {
+            "accuracy": self.training_metrics.accuracy,
+            "auc_roc": self.training_metrics.auc_roc,
+            "total_samples": self.training_metrics.total_samples,
+            "win_rate_actual": self.training_metrics.win_rate_actual,
+            "model_version": self.model_version
+        })
 
         logger.info(f"Oracle trained successfully:")
         logger.info(f"  Accuracy: {self.training_metrics.accuracy:.2%}")
