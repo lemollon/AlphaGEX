@@ -2300,16 +2300,7 @@ class ARESTrader:
         logger.info(f"ARES EOD: Processing expired positions (expiration <= {today})")
 
         try:
-            # Get closing price of underlying
             ticker = self.get_trading_ticker()
-            closing_price = self._get_underlying_close_price(ticker)
-
-            if closing_price is None or closing_price <= 0:
-                result['errors'].append(f"Could not get closing price for {ticker}")
-                logger.error(f"ARES EOD: Could not get closing price for {ticker}")
-                return result
-
-            logger.info(f"ARES EOD: {ticker} current price ${closing_price:.2f}")
 
             # Find ALL positions that should have expired (expiration <= today)
             positions_to_process = []
@@ -2334,16 +2325,27 @@ class ARESTrader:
 
             logger.info(f"ARES EOD: Found {len(positions_to_process)} positions to process")
 
-            # Process each position
+            # Process each position with its own expiration date's closing price
             for position in positions_to_process:
                 try:
+                    # Get closing price for THIS position's expiration date
+                    closing_price = self._get_underlying_close_price(ticker, position.expiration)
+
+                    if closing_price is None or closing_price <= 0:
+                        error_msg = f"Could not get closing price for {ticker} on {position.expiration}"
+                        result['errors'].append(error_msg)
+                        logger.error(f"ARES EOD: {error_msg}")
+                        continue
+
+                    logger.info(f"ARES EOD: {ticker} close on {position.expiration}: ${closing_price:.2f}")
+
                     # Determine outcome based on closing price vs strikes
                     outcome = self._determine_expiration_outcome(position, closing_price)
                     realized_pnl = self._calculate_expiration_pnl(position, outcome, closing_price)
 
                     # Update position
                     position.status = 'expired'
-                    position.close_date = today
+                    position.close_date = position.expiration  # Use actual expiration date, not today
                     position.close_price = closing_price
                     position.realized_pnl = realized_pnl
 
@@ -2404,8 +2406,28 @@ class ARESTrader:
             logger.error(f"ARES EOD: Processing failed: {e}")
             return result
 
-    def _get_underlying_close_price(self, ticker: str) -> Optional[float]:
-        """Get the closing/current price for the underlying."""
+    def _get_underlying_close_price(self, ticker: str, for_date: str = None) -> Optional[float]:
+        """
+        Get the closing price for the underlying on a specific date.
+
+        Args:
+            ticker: Stock symbol (SPY, SPX, etc.)
+            for_date: Date string (YYYY-MM-DD) to get price for. If None, gets current price.
+
+        Returns:
+            Closing price or None if unavailable
+        """
+        today = datetime.now(self.tz).strftime('%Y-%m-%d')
+
+        # If requesting today's price or no date specified, get current/latest price
+        if for_date is None or for_date >= today:
+            return self._get_current_price(ticker)
+
+        # For past dates, look up historical price
+        return self._get_historical_close_price(ticker, for_date)
+
+    def _get_current_price(self, ticker: str) -> Optional[float]:
+        """Get current/latest price for the underlying."""
         try:
             # Try Tradier production first
             if self.tradier:
@@ -2439,7 +2461,77 @@ class ARESTrader:
 
             return None
         except Exception as e:
-            logger.error(f"ARES EOD: Error getting close price: {e}")
+            logger.error(f"ARES EOD: Error getting current price: {e}")
+            return None
+
+    def _get_historical_close_price(self, ticker: str, for_date: str) -> Optional[float]:
+        """
+        Get historical closing price for a specific past date.
+
+        Args:
+            ticker: Stock symbol
+            for_date: Date string (YYYY-MM-DD)
+
+        Returns:
+            Closing price for that date or None
+        """
+        try:
+            # Try unified data provider for historical bars
+            try:
+                from data.unified_data_provider import get_unified_provider
+                provider = get_unified_provider()
+                if provider:
+                    # Get enough days of history to cover the date
+                    days_back = (datetime.now(self.tz) - datetime.strptime(for_date, '%Y-%m-%d').replace(tzinfo=self.tz)).days + 5
+                    bars = provider.get_historical_bars(ticker, days=days_back, interval='day')
+
+                    if bars:
+                        # Find the bar matching our date
+                        for bar in bars:
+                            bar_date = bar.timestamp.strftime('%Y-%m-%d')
+                            if bar_date == for_date:
+                                logger.info(f"ARES EOD: Found historical {ticker} close for {for_date}: ${bar.close:.2f}")
+                                return bar.close
+
+                        # If exact date not found, try closest date before
+                        for bar in sorted(bars, key=lambda x: x.timestamp, reverse=True):
+                            bar_date = bar.timestamp.strftime('%Y-%m-%d')
+                            if bar_date <= for_date:
+                                logger.info(f"ARES EOD: Using {ticker} close from {bar_date} for {for_date}: ${bar.close:.2f}")
+                                return bar.close
+
+            except Exception as e:
+                logger.warning(f"ARES EOD: Unified provider historical lookup failed: {e}")
+
+            # Fallback: try Tradier historical endpoint directly
+            if self.tradier:
+                try:
+                    params = {
+                        'symbol': ticker,
+                        'start': for_date,
+                        'end': for_date,
+                        'interval': 'daily'
+                    }
+                    response = self.tradier._make_request('GET', 'markets/history', params=params)
+                    history = response.get('history', {})
+                    if history and history != 'null':
+                        day_data = history.get('day', {})
+                        if day_data:
+                            if isinstance(day_data, list):
+                                day_data = day_data[0]
+                            close = day_data.get('close')
+                            if close:
+                                logger.info(f"ARES EOD: Found Tradier historical {ticker} close for {for_date}: ${close:.2f}")
+                                return float(close)
+                except Exception as e:
+                    logger.warning(f"ARES EOD: Tradier historical lookup failed: {e}")
+
+            # Last resort: use current price with warning
+            logger.warning(f"ARES EOD: Could not find historical price for {for_date}, using current price")
+            return self._get_current_price(ticker)
+
+        except Exception as e:
+            logger.error(f"ARES EOD: Error getting historical close price for {for_date}: {e}")
             return None
 
     def _get_expiring_positions_from_db(self, expiration_date: str) -> List[IronCondorPosition]:
