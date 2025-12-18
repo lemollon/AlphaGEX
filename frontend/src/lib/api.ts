@@ -222,6 +222,22 @@ export const apiClient = {
     market_data?: any
   }) => api.post('/api/ai/analyze-with-image', data),
 
+  // GEXIS Chatbot - Session-based conversational AI
+  gexisAnalyzeWithContext: (data: {
+    query: string
+    symbol?: string
+    session_id: string
+    market_data?: any
+  }) => api.post('/api/ai/gexis/analyze-with-context', data),
+
+  gexisCommand: (command: string) =>
+    api.post('/api/ai/gexis/command', { command }),
+
+  gexisAlerts: () => api.get('/api/ai/gexis/alerts'),
+
+  gexisExportConversation: (sessionId: string, format: string = 'markdown') =>
+    api.get(`/api/ai/gexis/export/${sessionId}`, { params: { format } }),
+
   // Autonomous Trader
   getTraderStatus: () => api.get('/api/trader/status'),
   getTraderLiveStatus: () => api.get('/api/trader/live-status'),
