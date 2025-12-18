@@ -7,6 +7,29 @@ import { MessageSquare, Send, Sparkles, TrendingUp, BarChart3, Zap, Clock, User,
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 
+// GEXIS Configuration
+const GEXIS_NAME = 'GEXIS'
+const GEXIS_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
+const USER_NAME = 'Optionist Prime'
+
+// Get time-based greeting for GEXIS
+function getTimeGreeting(): string {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 12) return 'Good morning'
+  if (hour >= 12 && hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+// Get GEXIS welcome message
+function getGexisWelcomeMessage(): string {
+  const greeting = getTimeGreeting()
+  return `${greeting}, ${USER_NAME}. GEXIS online and at your service.
+
+I have full access to AlphaGEX's trading intelligence. I can analyze market conditions, interpret gamma exposure levels, evaluate trade setups, and provide strategic insights.
+
+How may I assist you today?`
+}
+
 interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -25,7 +48,7 @@ export default function AICopilot() {
     {
       id: '1',
       role: 'assistant',
-      content: "Hi! I'm your AI trading copilot. I can analyze market conditions, explain gamma exposure, suggest trades, and answer any questions about options trading. How can I help you today?",
+      content: getGexisWelcomeMessage(),
       timestamp: new Date()
     }
   ])
@@ -88,19 +111,19 @@ export default function AICopilot() {
     } catch (error: any) {
       logger.error('Error getting AI response:', error)
 
-      // Show actual error with retry option
+      // Show GEXIS-style error with retry option
       const errorType = error?.type || 'unknown'
       const errorMessage = error?.message || 'Unknown error occurred'
 
       let userFriendlyMessage = ''
       if (errorType === 'network') {
-        userFriendlyMessage = `**Connection Error**: Unable to reach the analysis service. Please check your internet connection and try again.\n\n_Error: ${errorMessage}_`
+        userFriendlyMessage = `I apologize, ${USER_NAME}. I'm having difficulty connecting to the analysis systems. Please verify your connection and I'll try again.\n\n_Technical details: ${errorMessage}_`
       } else if (errorType === 'server') {
-        userFriendlyMessage = `**Server Error**: The analysis service is temporarily unavailable. Please try again in a few moments.\n\n_Error: ${errorMessage}_`
+        userFriendlyMessage = `My apologies, ${USER_NAME}. The analysis service appears to be temporarily unavailable. Shall I try again in a moment?\n\n_Technical details: ${errorMessage}_`
       } else if (errorType === 'timeout') {
-        userFriendlyMessage = `**Request Timeout**: The analysis is taking too long. Please try a simpler question or try again later.\n\n_Error: ${errorMessage}_`
+        userFriendlyMessage = `The analysis is taking longer than expected, ${USER_NAME}. Perhaps a more focused question would help, or I can try again.\n\n_Technical details: ${errorMessage}_`
       } else {
-        userFriendlyMessage = `**Analysis Failed**: ${errorMessage}\n\nPlease try rephrasing your question or try again later.`
+        userFriendlyMessage = `I've encountered an issue, ${USER_NAME}: ${errorMessage}\n\nShall I try a different approach?`
       }
 
       const errorAiMessage: Message = {
@@ -137,8 +160,8 @@ export default function AICopilot() {
           <div className="h-[calc(100vh-12rem)] flex flex-col">
             {/* Header */}
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-text-primary">AI Copilot</h1>
-        <p className="text-text-secondary mt-1">Ask anything about market analysis, gamma exposure, or trading strategies</p>
+        <h1 className="text-3xl font-bold text-text-primary">{GEXIS_NAME}</h1>
+        <p className="text-text-secondary mt-1">{GEXIS_FULL_NAME} - Your intelligent trading assistant</p>
       </div>
 
       {/* Chat Container */}
@@ -283,7 +306,7 @@ export default function AICopilot() {
                   handleSend()
                 }
               }}
-              placeholder="Ask about market conditions, gamma levels, trading strategies..."
+              placeholder={`Ask ${GEXIS_NAME} about markets, gamma levels, strategies...`}
               className="input flex-1"
               disabled={loading}
             />

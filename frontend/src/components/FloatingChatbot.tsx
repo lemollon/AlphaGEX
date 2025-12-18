@@ -12,6 +12,11 @@ interface Message {
   imageUrl?: string // Base64 image data URL
 }
 
+// GEXIS Configuration
+const GEXIS_NAME = 'GEXIS'
+const GEXIS_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
+const USER_NAME = 'Optionist Prime'
+
 const STORAGE_KEY = 'alphagex_chat_history'
 const MAX_STORED_MESSAGES = 50
 
@@ -52,6 +57,29 @@ function extractSymbolFromQuery(query: string): string {
   return 'SPY'
 }
 
+// Get time-based greeting for GEXIS
+function getTimeGreeting(): string {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 12) return 'Good morning'
+  if (hour >= 12 && hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+// Get GEXIS welcome message
+function getGexisWelcomeMessage(): string {
+  const greeting = getTimeGreeting()
+  return `${greeting}, ${USER_NAME}. GEXIS online and at your service.
+
+All systems are operational. I have full access to AlphaGEX's trading intelligence, including real-time GEX analysis, bot status monitoring, trade recommendations, and your trading history.
+
+How may I assist you today? You can ask me about market analysis, upload charts for review, or brainstorm trading strategies.`
+}
+
+// Get GEXIS chat cleared message
+function getGexisClearMessage(): string {
+  return `Chat cleared, ${USER_NAME}. Ready for a fresh conversation. What shall we analyze?`
+}
+
 // Cool animated AI robot icon component
 function AIRobotIcon({ className = "w-6 h-6", animate = false }: { className?: string, animate?: boolean }) {
   return (
@@ -86,11 +114,11 @@ export default function FloatingChatbot() {
         }))
         setMessages(messagesWithDates)
       } else {
-        // Add welcome message if no history
+        // Add GEXIS welcome message if no history
         setMessages([{
           id: '1',
           role: 'assistant',
-          content: "Hey! I'm your AI trading copilot powered by Claude. Ask me anything about market analysis, gamma exposure, or trading strategies. You can also drop images (charts, option chains) for analysis!",
+          content: getGexisWelcomeMessage(),
           timestamp: new Date()
         }])
       }
@@ -259,7 +287,7 @@ export default function FloatingChatbot() {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `Sorry, I encountered an error: ${errorMsg}\n\nPlease try again or rephrase your question.`,
+        content: `I apologize, ${USER_NAME}. I've encountered an issue: ${errorMsg}\n\nShall I try again, or would you like to rephrase your question?`,
         timestamp: new Date()
       }
       setMessages(prev => [...prev, errorMessage])
@@ -272,7 +300,7 @@ export default function FloatingChatbot() {
     setMessages([{
       id: Date.now().toString(),
       role: 'assistant',
-      content: "Chat cleared! What would you like to analyze?",
+      content: getGexisClearMessage(),
       timestamp: new Date()
     }])
     localStorage.removeItem(STORAGE_KEY)
@@ -296,7 +324,7 @@ export default function FloatingChatbot() {
           background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%)',
           boxShadow: '0 0 30px rgba(99, 102, 241, 0.5), 0 0 60px rgba(139, 92, 246, 0.3)'
         }}
-        title="Open AI Copilot"
+        title="Open GEXIS"
       >
         {/* Animated background rings */}
         <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: 'linear-gradient(135deg, #6366f1, #06b6d4)' }} />
@@ -326,7 +354,7 @@ export default function FloatingChatbot() {
         }}
       >
         <Bot className="w-5 h-5 text-white" />
-        <span className="text-sm text-white font-medium">AI Copilot</span>
+        <span className="text-sm text-white font-medium">{GEXIS_NAME}</span>
         <button
           onClick={() => setIsMinimized(false)}
           className="p-1 hover:bg-white/20 rounded-full transition-colors"
@@ -364,8 +392,8 @@ export default function FloatingChatbot() {
             <Bot className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white">AI Copilot</h3>
-            <p className="text-xs text-white/70">Powered by Claude</p>
+            <h3 className="text-sm font-bold text-white">{GEXIS_NAME}</h3>
+            <p className="text-xs text-white/70">{GEXIS_FULL_NAME}</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -456,7 +484,7 @@ export default function FloatingChatbot() {
             <div className="bg-background-hover rounded-2xl rounded-bl-md px-4 py-3">
               <div className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                <span className="text-sm text-text-muted">Thinking...</span>
+                <span className="text-sm text-text-muted">Analyzing...</span>
               </div>
             </div>
           </div>
@@ -512,7 +540,7 @@ export default function FloatingChatbot() {
                 handleSend()
               }
             }}
-            placeholder="Ask about markets, upload charts..."
+            placeholder={`Ask GEXIS about markets, strategies...`}
             className="flex-1 bg-background-card border border-border rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder-text-muted resize-none min-h-[44px] max-h-[120px] focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
             disabled={loading}
             rows={1}
