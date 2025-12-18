@@ -2,6 +2,8 @@
 Probability Prediction API routes - Self-learning probability calibration.
 """
 
+import json
+
 from fastapi import APIRouter, HTTPException
 
 from backend.api.dependencies import probability_calc, get_connection
@@ -135,28 +137,59 @@ async def get_probability_weights():
         conn = get_connection()
         c = conn.cursor()
 
+        # Get the active weights row (column-based storage)
         c.execute('''
             SELECT
-                weight_name,
-                weight_value,
-                description,
-                last_updated,
+                gex_wall_strength,
+                volatility_impact,
+                psychology_signal,
+                mm_positioning,
+                historical_pattern,
+                timestamp,
                 calibration_count
             FROM probability_weights
-            ORDER BY weight_name
+            WHERE active = TRUE
+            ORDER BY timestamp DESC
+            LIMIT 1
         ''')
 
-        weights = []
-        for row in c.fetchall():
-            weights.append({
-                'weight_name': row[0],
-                'weight_value': row[1],
-                'description': row[2],
-                'last_updated': row[3],
-                'calibration_count': row[4]
-            })
-
+        row = c.fetchone()
         conn.close()
+
+        # Transform column-based weights into row-based format for frontend
+        weight_descriptions = {
+            'gex_wall_strength': 'How much GEX walls influence probability',
+            'volatility_impact': 'How much VIX/IV affects price ranges',
+            'psychology_signal': 'How much FOMO/Fear affects prediction',
+            'mm_positioning': 'How much Market Maker state matters',
+            'historical_pattern': 'How much historical data confirms patterns'
+        }
+
+        weights = []
+        if row:
+            weight_names = ['gex_wall_strength', 'volatility_impact', 'psychology_signal',
+                          'mm_positioning', 'historical_pattern']
+            for i, name in enumerate(weight_names):
+                weights.append({
+                    'weight_name': name.replace('_', ' ').title(),
+                    'weight_value': row[i] if row[i] is not None else 0.0,
+                    'description': weight_descriptions.get(name, ''),
+                    'last_updated': row[5],  # timestamp
+                    'calibration_count': row[6] if row[6] is not None else 0
+                })
+        else:
+            # Return defaults if no weights in DB
+            defaults = [0.35, 0.25, 0.20, 0.15, 0.05]
+            weight_names = ['gex_wall_strength', 'volatility_impact', 'psychology_signal',
+                          'mm_positioning', 'historical_pattern']
+            for i, name in enumerate(weight_names):
+                weights.append({
+                    'weight_name': name.replace('_', ' ').title(),
+                    'weight_value': defaults[i],
+                    'description': weight_descriptions.get(name, ''),
+                    'last_updated': None,
+                    'calibration_count': 0
+                })
 
         return {
             "success": True,
@@ -173,31 +206,53 @@ async def get_calibration_history(days: int = 90):
         conn = get_connection()
         c = conn.cursor()
 
+        # Get calibration events with adjustments JSON
         c.execute('''
             SELECT
                 calibration_date,
-                weight_name,
-                old_value,
-                new_value,
-                reason,
-                performance_delta
+                timestamp,
+                predictions_analyzed,
+                overall_accuracy,
+                high_conf_accuracy,
+                adjustments_made
             FROM calibration_history
-            WHERE calibration_date >= NOW() - INTERVAL '1 day' * %s
-            ORDER BY calibration_date DESC
+            WHERE timestamp >= NOW() - INTERVAL '1 day' * %s
+            ORDER BY timestamp DESC
         ''', (days,))
 
-        history = []
-        for row in c.fetchall():
-            history.append({
-                'calibration_date': row[0],
-                'weight_name': row[1],
-                'old_value': row[2],
-                'new_value': row[3],
-                'reason': row[4],
-                'performance_delta': row[5]
-            })
-
+        rows = c.fetchall()
         conn.close()
+
+        # Transform calibration records into weight-level changes for frontend
+        history = []
+        for row in rows:
+            calibration_date = row[0] or row[1]  # Use calibration_date or timestamp
+            overall_accuracy = row[3]
+            adjustments = row[5]
+
+            # Parse adjustments JSON and create a row per weight changed
+            if adjustments:
+                try:
+                    adj_dict = adjustments if isinstance(adjustments, dict) else json.loads(adjustments)
+                    for weight_name, new_value in adj_dict.items():
+                        history.append({
+                            'calibration_date': calibration_date,
+                            'weight_name': weight_name.replace('_', ' ').title(),
+                            'old_value': 0.0,  # We don't track old values currently
+                            'new_value': new_value,
+                            'reason': f'Accuracy: {overall_accuracy*100:.1f}%' if overall_accuracy else 'Calibration adjustment',
+                            'performance_delta': 0.0  # Would need before/after comparison
+                        })
+                except (json.JSONDecodeError, TypeError):
+                    # If JSON parsing fails, add a summary row
+                    history.append({
+                        'calibration_date': calibration_date,
+                        'weight_name': 'Multiple Weights',
+                        'old_value': 0.0,
+                        'new_value': 0.0,
+                        'reason': f'Analyzed {row[2]} predictions' if row[2] else 'Calibration event',
+                        'performance_delta': 0.0
+                    })
 
         return {
             "success": True,

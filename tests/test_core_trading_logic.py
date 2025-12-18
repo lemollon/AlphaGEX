@@ -601,5 +601,226 @@ class TestStrategyStatsDefaults:
         assert breakeven_wr > 0.55, "Break-even WR should be > 55% with these defaults"
 
 
+class TestProbabilityEngine:
+    """Tests for ProbabilityEngine trade setup calculations"""
+
+    def test_probability_engine_initialization(self):
+        """Test ProbabilityEngine initializes correctly"""
+        try:
+            from backend.probability_engine import ProbabilityEngine
+        except ImportError:
+            pytest.skip("probability_engine not available")
+
+        engine = ProbabilityEngine()
+
+        # Should have mm_state_win_rates dict
+        assert hasattr(engine, 'mm_state_win_rates')
+        assert 'PANICKING' in engine.mm_state_win_rates
+        assert 'DEFENDING' in engine.mm_state_win_rates
+        assert 'NEUTRAL' in engine.mm_state_win_rates
+
+    def test_calculate_best_setup_panicking(self):
+        """Test best setup calculation for PANICKING state"""
+        try:
+            from backend.probability_engine import ProbabilityEngine
+        except ImportError:
+            pytest.skip("probability_engine not available")
+
+        engine = ProbabilityEngine()
+        setup = engine.calculate_best_setup(
+            mm_state='PANICKING',
+            spot_price=570.0,
+            flip_point=568.0,
+            call_wall=575.0,
+            put_wall=565.0,
+            net_gex=-2e9
+        )
+
+        assert setup is not None
+        assert setup.mm_state == 'PANICKING'
+        assert setup.win_rate > 0.80  # High win rate in panic squeeze
+        assert 'Call' in setup.setup_type
+
+    def test_calculate_best_setup_defending(self):
+        """Test best setup calculation for DEFENDING state"""
+        try:
+            from backend.probability_engine import ProbabilityEngine
+        except ImportError:
+            pytest.skip("probability_engine not available")
+
+        engine = ProbabilityEngine()
+        setup = engine.calculate_best_setup(
+            mm_state='DEFENDING',
+            spot_price=570.0,
+            flip_point=568.0,
+            call_wall=575.0,
+            put_wall=565.0,
+            net_gex=2e9
+        )
+
+        assert setup is not None
+        assert setup.mm_state == 'DEFENDING'
+        assert 'Condor' in setup.setup_type  # Should recommend iron condor
+
+    def test_calculate_best_setup_neutral_no_edge(self):
+        """Test that NEUTRAL state returns no clear edge"""
+        try:
+            from backend.probability_engine import ProbabilityEngine
+        except ImportError:
+            pytest.skip("probability_engine not available")
+
+        engine = ProbabilityEngine()
+        setup = engine.calculate_best_setup(
+            mm_state='NEUTRAL',
+            spot_price=570.0,
+            flip_point=None,
+            call_wall=None,
+            put_wall=None,
+            net_gex=0
+        )
+
+        # NEUTRAL should return None (no clear edge)
+        assert setup is None
+
+    def test_position_sizing_kelly(self):
+        """Test Kelly Criterion position sizing"""
+        try:
+            from backend.probability_engine import ProbabilityEngine
+        except ImportError:
+            pytest.skip("probability_engine not available")
+
+        engine = ProbabilityEngine()
+        sizing = engine.calculate_position_sizing(
+            win_rate=0.87,  # 87% win rate
+            avg_win=0.24,   # 24% avg win
+            avg_loss=-0.30, # 30% max loss
+            account_size=10000,
+            option_price=3.20
+        )
+
+        # Kelly should be positive with these parameters
+        assert sizing.kelly_pct > 0
+        # Conservative should be half of Kelly
+        assert sizing.conservative_pct == pytest.approx(sizing.kelly_pct / 2, rel=0.01)
+        # Should recommend at least 1 contract
+        assert sizing.recommended_contracts >= 1
+
+    def test_regime_edge_calculation(self):
+        """Test regime edge calculation"""
+        try:
+            from backend.probability_engine import ProbabilityEngine
+        except ImportError:
+            pytest.skip("probability_engine not available")
+
+        engine = ProbabilityEngine()
+
+        # PANICKING should have positive edge
+        edge_data = engine.calculate_regime_edge('PANICKING')
+        assert edge_data['edge'] > 30  # Should be 35%+ edge
+
+        # NEUTRAL should have no edge
+        edge_data = engine.calculate_regime_edge('NEUTRAL')
+        assert edge_data['edge'] == 0
+
+
+class TestProbabilityCalculatorLogic:
+    """Tests for ProbabilityCalculator non-database logic"""
+
+    def test_gex_probability_positive_gex(self):
+        """Test GEX probability calculation with positive GEX"""
+        try:
+            from core.probability_calculator import ProbabilityCalculator
+        except ImportError:
+            pytest.skip("probability_calculator not available")
+
+        # Create instance without database (will use defaults)
+        try:
+            calc = ProbabilityCalculator()
+        except Exception:
+            pytest.skip("ProbabilityCalculator requires database")
+
+        gex_data = {'net_gex': 2e9, 'flip_point': 570.0}
+        prob_in, prob_above, prob_below = calc._calculate_gex_probability(
+            gex_data, current_price=570.0
+        )
+
+        # Positive GEX = higher probability of range-bound
+        assert prob_in > 0.50
+        assert prob_in > prob_above
+        assert prob_in > prob_below
+        # Probabilities should roughly sum to 1
+        assert 0.95 < (prob_in + prob_above + prob_below) < 1.05
+
+    def test_volatility_adjustment(self):
+        """Test volatility adjustment factor"""
+        try:
+            from core.probability_calculator import ProbabilityCalculator
+        except ImportError:
+            pytest.skip("probability_calculator not available")
+
+        try:
+            calc = ProbabilityCalculator()
+        except Exception:
+            pytest.skip("ProbabilityCalculator requires database")
+
+        # Low VIX = higher confidence
+        adj_low = calc._calculate_volatility_adjustment(vix=12, implied_vol=0.2)
+        assert adj_low > 1.0
+
+        # High VIX = lower confidence
+        adj_high = calc._calculate_volatility_adjustment(vix=35, implied_vol=0.4)
+        assert adj_high < 1.0
+
+    def test_mm_state_impact(self):
+        """Test MM state impact calculation"""
+        try:
+            from core.probability_calculator import ProbabilityCalculator
+        except ImportError:
+            pytest.skip("probability_calculator not available")
+
+        try:
+            calc = ProbabilityCalculator()
+        except Exception:
+            pytest.skip("ProbabilityCalculator requires database")
+
+        # DEFENDING should increase confidence
+        adj, insight = calc._calculate_mm_state_impact('DEFENDING')
+        assert adj > 1.0
+        assert 'dampened' in insight.lower() or 'defending' in insight.lower()
+
+        # PANICKING should decrease confidence
+        adj, insight = calc._calculate_mm_state_impact('PANICKING')
+        assert adj < 1.0
+
+    def test_psychology_adjustment_extreme_fomo(self):
+        """Test psychology adjustment with extreme FOMO"""
+        try:
+            from core.probability_calculator import ProbabilityCalculator
+        except ImportError:
+            pytest.skip("probability_calculator not available")
+
+        try:
+            calc = ProbabilityCalculator()
+        except Exception:
+            pytest.skip("ProbabilityCalculator requires database")
+
+        # Extreme FOMO = reversal risk
+        adj, insight = calc._calculate_psychology_adjustment({'fomo_level': 90, 'fear_level': 20})
+        assert adj < 1.0
+        assert 'reversal' in insight.lower() or 'fomo' in insight.lower()
+
+    def test_vol_adj_to_text(self):
+        """Test volatility adjustment text helper"""
+        try:
+            from core.probability_calculator import vol_adj_to_text
+        except ImportError:
+            pytest.skip("vol_adj_to_text not available")
+
+        assert 'low' in vol_adj_to_text(1.2).lower()
+        assert 'normal' in vol_adj_to_text(1.0).lower()
+        assert 'elevated' in vol_adj_to_text(0.8).lower()
+        assert 'high' in vol_adj_to_text(0.6).lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
