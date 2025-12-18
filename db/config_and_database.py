@@ -3114,6 +3114,77 @@ def init_database():
     except Exception as e:
         print(f"⚠️  gex_change_log migration skipped: {e}")
 
+    # Migrate ai_predictions table - add columns for SmartTradeAdvisor learning system
+    try:
+        columns = get_table_columns(c, 'ai_predictions')
+        if columns:
+            # Add columns needed by ai_trade_advisor.py
+            if 'pattern_type' not in columns:
+                print("🔄 Migrating ai_predictions table: adding pattern_type column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN pattern_type TEXT")
+            if 'trade_direction' not in columns:
+                print("🔄 Migrating ai_predictions table: adding trade_direction column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN trade_direction TEXT")
+            if 'predicted_outcome' not in columns:
+                print("🔄 Migrating ai_predictions table: adding predicted_outcome column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN predicted_outcome TEXT")
+            if 'confidence_score' not in columns:
+                print("🔄 Migrating ai_predictions table: adding confidence_score column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN confidence_score REAL")
+            if 'reasoning' not in columns:
+                print("🔄 Migrating ai_predictions table: adding reasoning column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN reasoning TEXT")
+            if 'market_context' not in columns:
+                print("🔄 Migrating ai_predictions table: adding market_context column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN market_context TEXT")
+            if 'vix_level' not in columns:
+                print("🔄 Migrating ai_predictions table: adding vix_level column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN vix_level REAL")
+            if 'volatility_regime' not in columns:
+                print("🔄 Migrating ai_predictions table: adding volatility_regime column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN volatility_regime TEXT")
+            if 'actual_outcome' not in columns:
+                print("🔄 Migrating ai_predictions table: adding actual_outcome column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN actual_outcome TEXT")
+            if 'outcome_pnl' not in columns:
+                print("🔄 Migrating ai_predictions table: adding outcome_pnl column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN outcome_pnl REAL")
+            if 'prediction_correct' not in columns:
+                print("🔄 Migrating ai_predictions table: adding prediction_correct column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN prediction_correct INTEGER")
+            if 'feedback_timestamp' not in columns:
+                print("🔄 Migrating ai_predictions table: adding feedback_timestamp column")
+                c.execute("ALTER TABLE ai_predictions ADD COLUMN feedback_timestamp TIMESTAMPTZ")
+            print("✅ ai_predictions migration complete")
+    except Exception as e:
+        print(f"⚠️  ai_predictions migration skipped: {e}")
+
+    # Migrate ai_performance table - add columns for SmartTradeAdvisor tracking
+    try:
+        columns = get_table_columns(c, 'ai_performance')
+        if columns:
+            if 'total_predictions' not in columns:
+                print("🔄 Migrating ai_performance table: adding total_predictions column")
+                c.execute("ALTER TABLE ai_performance ADD COLUMN total_predictions INTEGER DEFAULT 0")
+            if 'correct_predictions' not in columns:
+                print("🔄 Migrating ai_performance table: adding correct_predictions column")
+                c.execute("ALTER TABLE ai_performance ADD COLUMN correct_predictions INTEGER DEFAULT 0")
+            if 'profitable_trades' not in columns:
+                print("🔄 Migrating ai_performance table: adding profitable_trades column")
+                c.execute("ALTER TABLE ai_performance ADD COLUMN profitable_trades INTEGER DEFAULT 0")
+            if 'losing_trades' not in columns:
+                print("🔄 Migrating ai_performance table: adding losing_trades column")
+                c.execute("ALTER TABLE ai_performance ADD COLUMN losing_trades INTEGER DEFAULT 0")
+            if 'net_pnl' not in columns:
+                print("🔄 Migrating ai_performance table: adding net_pnl column")
+                c.execute("ALTER TABLE ai_performance ADD COLUMN net_pnl REAL DEFAULT 0")
+            if 'accuracy_rate' not in columns:
+                print("🔄 Migrating ai_performance table: adding accuracy_rate column")
+                c.execute("ALTER TABLE ai_performance ADD COLUMN accuracy_rate REAL")
+            print("✅ ai_performance migration complete")
+    except Exception as e:
+        print(f"⚠️  ai_performance migration skipped: {e}")
+
     conn.commit()
     conn.close()
 
