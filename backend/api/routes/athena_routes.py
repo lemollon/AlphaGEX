@@ -1,11 +1,11 @@
 """
-APACHE Directional Spread Bot API Routes
+ATHENA Directional Spread Bot API Routes
 ==========================================
 
-API endpoints for the APACHE directional spread trading bot.
+API endpoints for the ATHENA directional spread trading bot.
 Provides status, positions, signals, logs, and performance metrics.
 
-APACHE trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish)
+ATHENA trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish)
 based on GEX signals from KRONOS and ML advice from ORACLE.
 """
 
@@ -17,39 +17,39 @@ from zoneinfo import ZoneInfo
 
 from database_adapter import get_connection
 
-router = APIRouter(prefix="/api/apache", tags=["APACHE"])
+router = APIRouter(prefix="/api/athena", tags=["ATHENA"])
 logger = logging.getLogger(__name__)
 
 # Try to import APACHE trader
-apache_trader = None
+athena_trader = None
 try:
-    from trading.apache_directional_spreads import APACHETrader, TradingMode, run_apache
-    APACHE_AVAILABLE = True
+    from trading.athena_directional_spreads import ATHENATrader, TradingMode, run_athena
+    ATHENA_AVAILABLE = True
 except ImportError as e:
-    APACHE_AVAILABLE = False
+    ATHENA_AVAILABLE = False
     logger.warning(f"APACHE module not available: {e}")
 
 
-def get_apache_instance():
+def get_athena_instance():
     """Get the APACHE trader instance"""
-    global apache_trader
-    if apache_trader:
-        return apache_trader
+    global athena_trader
+    if athena_trader:
+        return athena_trader
 
     try:
         # Try to get from scheduler first
-        from scheduler.trader_scheduler import get_apache_trader
-        apache_trader = get_apache_trader()
-        if apache_trader:
-            return apache_trader
+        from scheduler.trader_scheduler import get_athena_trader
+        athena_trader = get_athena_trader()
+        if athena_trader:
+            return athena_trader
     except Exception as e:
         logger.debug(f"Could not get APACHE from scheduler: {e}")
 
     # Initialize a new instance if needed
-    if APACHE_AVAILABLE:
+    if ATHENA_AVAILABLE:
         try:
-            apache_trader = run_apache(capital=100_000, mode="paper")
-            return apache_trader
+            athena_trader = run_athena(capital=100_000, mode="paper")
+            return athena_trader
         except Exception as e:
             logger.error(f"Failed to initialize APACHE: {e}")
 
@@ -57,15 +57,15 @@ def get_apache_instance():
 
 
 @router.get("/status")
-async def get_apache_status():
+async def get_athena_status():
     """
     Get current APACHE bot status.
 
     Returns mode, capital, P&L, positions, and configuration.
     """
-    apache = get_apache_instance()
+    athena = get_athena_instance()
 
-    if not apache:
+    if not athena:
         # Return default status when APACHE not initialized
         return {
             "success": True,
@@ -90,12 +90,12 @@ async def get_apache_status():
                     "ticker": "SPY",
                     "max_daily_trades": 5
                 },
-                "message": "APACHE not yet initialized"
+                "message": "ATHENA not yet initialized"
             }
         }
 
     try:
-        status = apache.get_status()
+        status = athena.get_status()
         status['is_active'] = True
 
         return {
@@ -108,7 +108,7 @@ async def get_apache_status():
 
 
 @router.get("/positions")
-async def get_apache_positions(
+async def get_athena_positions(
     status_filter: Optional[str] = Query(None, description="Filter by status: open, closed, all"),
     limit: int = Query(50, description="Max positions to return")
 ):
@@ -180,7 +180,7 @@ async def get_apache_positions(
 
 
 @router.get("/signals")
-async def get_apache_signals(
+async def get_athena_signals(
     limit: int = Query(50, description="Max signals to return"),
     direction: Optional[str] = Query(None, description="Filter by direction: BULLISH, BEARISH")
 ):
@@ -244,7 +244,7 @@ async def get_apache_signals(
 
 
 @router.get("/logs")
-async def get_apache_logs(
+async def get_athena_logs(
     level: Optional[str] = Query(None, description="Filter by level: DEBUG, INFO, WARNING, ERROR"),
     limit: int = Query(100, description="Max logs to return")
 ):
@@ -295,7 +295,7 @@ async def get_apache_logs(
 
 
 @router.get("/performance")
-async def get_apache_performance(
+async def get_athena_performance(
     days: int = Query(30, description="Number of days to include")
 ):
     """
@@ -370,7 +370,7 @@ async def get_apache_performance(
 
 
 @router.get("/config")
-async def get_apache_config():
+async def get_athena_config():
     """
     Get APACHE configuration settings.
     """
@@ -405,7 +405,7 @@ async def get_apache_config():
 
 
 @router.post("/config/{setting_name}")
-async def update_apache_config(setting_name: str, value: str):
+async def update_athena_config(setting_name: str, value: str):
     """
     Update an APACHE configuration setting.
     """
@@ -440,19 +440,19 @@ async def update_apache_config(setting_name: str, value: str):
 
 
 @router.post("/run")
-async def run_apache_cycle():
+async def run_athena_cycle():
     """
     Manually trigger an APACHE trading cycle.
 
     Use for testing or forcing a trade check outside the scheduler.
     """
-    apache = get_apache_instance()
+    athena = get_athena_instance()
 
-    if not apache:
-        raise HTTPException(status_code=503, detail="APACHE not available")
+    if not athena:
+        raise HTTPException(status_code=503, detail="ATHENA not available")
 
     try:
-        result = apache.run_daily_cycle()
+        result = athena.run_daily_cycle()
         return {
             "success": True,
             "data": result
@@ -469,13 +469,13 @@ async def get_current_oracle_advice():
 
     Useful for monitoring what Oracle would recommend right now.
     """
-    apache = get_apache_instance()
+    athena = get_athena_instance()
 
-    if not apache:
-        raise HTTPException(status_code=503, detail="APACHE not available")
+    if not athena:
+        raise HTTPException(status_code=503, detail="ATHENA not available")
 
     try:
-        advice = apache.get_oracle_advice()
+        advice = athena.get_oracle_advice()
 
         if not advice:
             return {
@@ -514,14 +514,14 @@ async def get_current_ml_signal():
 
     Combined into a LONG/SHORT/STAY_OUT recommendation.
     """
-    apache = get_apache_instance()
+    athena = get_athena_instance()
 
-    if not apache:
-        raise HTTPException(status_code=503, detail="APACHE not available")
+    if not athena:
+        raise HTTPException(status_code=503, detail="ATHENA not available")
 
     try:
         # Get current GEX data
-        gex_data = apache.get_gex_data()
+        gex_data = athena.get_gex_data()
         if not gex_data:
             return {
                 "success": True,
@@ -530,7 +530,7 @@ async def get_current_ml_signal():
             }
 
         # Get ML signal
-        ml_signal = apache.get_ml_signal(gex_data)
+        ml_signal = athena.get_ml_signal(gex_data)
 
         if not ml_signal:
             return {
@@ -565,7 +565,7 @@ async def get_current_ml_signal():
 
 
 @router.get("/diagnostics")
-async def get_apache_diagnostics():
+async def get_athena_diagnostics():
     """
     Diagnostic endpoint for troubleshooting Apache issues.
 
@@ -587,31 +587,31 @@ async def get_apache_diagnostics():
     }
 
     # Check Apache availability
-    apache = get_apache_instance()
-    diagnostics["apache_available"] = apache is not None
+    athena = get_athena_instance()
+    diagnostics["athena_available"] = athena is not None
 
-    if apache:
+    if athena:
         # Subsystem status
         diagnostics["subsystems"]["kronos"] = {
-            "available": apache.kronos is not None,
-            "type": type(apache.kronos).__name__ if apache.kronos else None
+            "available": athena.kronos is not None,
+            "type": type(athena.kronos).__name__ if athena.kronos else None
         }
         diagnostics["subsystems"]["oracle"] = {
-            "available": apache.oracle is not None,
-            "type": type(apache.oracle).__name__ if apache.oracle else None
+            "available": athena.oracle is not None,
+            "type": type(athena.oracle).__name__ if athena.oracle else None
         }
         diagnostics["subsystems"]["gex_ml"] = {
-            "available": apache.gex_ml is not None,
-            "type": type(apache.gex_ml).__name__ if apache.gex_ml else None
+            "available": athena.gex_ml is not None,
+            "type": type(athena.gex_ml).__name__ if athena.gex_ml else None
         }
         diagnostics["subsystems"]["tradier"] = {
-            "available": apache.tradier is not None,
-            "type": type(apache.tradier).__name__ if apache.tradier else None
+            "available": athena.tradier is not None,
+            "type": type(athena.tradier).__name__ if athena.tradier else None
         }
 
         # Try to get GEX data
         try:
-            gex_data = apache.get_gex_data()
+            gex_data = athena.get_gex_data()
             diagnostics["data_availability"]["gex_data"] = {
                 "available": gex_data is not None,
                 "source": gex_data.get('source') if gex_data else None,

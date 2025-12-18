@@ -17,7 +17,7 @@ TRADING BOTS:
 - ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
 - ARES: Aggressive Iron Condor targeting 10% monthly (daily at 9:35 AM ET)
 - ARES EOD: Process expired 0DTE positions (daily at 4:05 PM ET)
-- APACHE: GEX Directional Spreads (every 30 min 9:35 AM - 3:30 PM ET)
+- ATHENA: GEX Directional Spreads (every 30 min 9:35 AM - 3:30 PM ET)
 
 This partitioning provides:
 - Aggressive short-term trading via PHOENIX
@@ -82,15 +82,15 @@ except ImportError:
     ARESTradingMode = None
     print("Warning: ARESTrader not available. ARES bot will be disabled.")
 
-# Import APACHE (Directional Spreads)
+# Import ATHENA (Directional Spreads)
 try:
-    from trading.apache_directional_spreads import APACHETrader, TradingMode as APACHETradingMode
-    APACHE_AVAILABLE = True
+    from trading.athena_directional_spreads import ATHENATrader, TradingMode as ATHENATradingMode
+    ATHENA_AVAILABLE = True
 except ImportError:
-    APACHE_AVAILABLE = False
-    APACHETrader = None
-    APACHETradingMode = None
-    print("Warning: APACHETrader not available. APACHE bot will be disabled.")
+    ATHENA_AVAILABLE = False
+    ATHENATrader = None
+    ATHENATradingMode = None
+    print("Warning: ATHENATrader not available. ATHENA bot will be disabled.")
 
 # Import decision logger for comprehensive logging
 try:
@@ -169,20 +169,20 @@ class AutonomousTraderScheduler:
                 logger.warning(f"ARES initialization failed: {e}")
                 self.ares_trader = None
 
-        # APACHE - GEX-Based Directional Spreads
+        # ATHENA - GEX-Based Directional Spreads
         # Capital: $100,000 (from Reserve)
         # Uses ML probability models for signal generation
-        self.apache_trader = None
-        if APACHE_AVAILABLE:
+        self.athena_trader = None
+        if ATHENA_AVAILABLE:
             try:
-                self.apache_trader = APACHETrader(
+                self.athena_trader = ATHENATrader(
                     initial_capital=100_000,  # Uses portion of reserve
                     config=None  # Will load from database
                 )
-                logger.info(f"✅ APACHE initialized with $100,000 capital (PAPER mode, GEX ML signals)")
+                logger.info(f"✅ ATHENA initialized with $100,000 capital (PAPER mode, GEX ML signals)")
             except Exception as e:
-                logger.warning(f"APACHE initialization failed: {e}")
-                self.apache_trader = None
+                logger.warning(f"ATHENA initialization failed: {e}")
+                self.athena_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -197,12 +197,12 @@ class AutonomousTraderScheduler:
         self.last_position_check = None
         self.last_atlas_check = None
         self.last_ares_check = None
-        self.last_apache_check = None
+        self.last_athena_check = None
         self.last_error = None
         self.execution_count = 0
         self.atlas_execution_count = 0
         self.ares_execution_count = 0
-        self.apache_execution_count = 0
+        self.athena_execution_count = 0
 
         # Load saved state from database
         self._load_state()
@@ -574,9 +574,9 @@ class AutonomousTraderScheduler:
             logger.info("ARES EOD will retry next trading day")
             logger.info(f"=" * 80)
 
-    def scheduled_apache_logic(self):
+    def scheduled_athena_logic(self):
         """
-        APACHE (GEX Directional Spreads) trading logic - runs every 30 minutes during market hours
+        ATHENA (GEX Directional Spreads) trading logic - runs every 30 minutes during market hours
 
         The GEX-based directional spread strategy:
         - Uses live Tradier GEX data for real-time signal generation
@@ -591,14 +591,14 @@ class AutonomousTraderScheduler:
         now = datetime.now(ny_tz)
 
         logger.info(f"=" * 80)
-        logger.info(f"APACHE (GEX Directional) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"ATHENA (GEX Directional) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.apache_trader:
-            logger.warning("APACHE trader not available - skipping")
+        if not self.athena_trader:
+            logger.warning("ATHENA trader not available - skipping")
             return
 
         if not self.is_market_open():
-            logger.info("Market is CLOSED. Skipping APACHE logic.")
+            logger.info("Market is CLOSED. Skipping ATHENA logic.")
             return
 
         # Check if within entry window (9:35 AM - 3:30 PM ET)
@@ -617,13 +617,13 @@ class AutonomousTraderScheduler:
         logger.info("Market is OPEN. Scanning live GEX data for directional opportunities...")
 
         try:
-            self.last_apache_check = now
+            self.last_athena_check = now
 
-            # Run the APACHE intraday cycle
-            result = self.apache_trader.run_daily_cycle()
+            # Run the ATHENA intraday cycle
+            result = self.athena_trader.run_daily_cycle()
 
             if result:
-                logger.info(f"APACHE intraday scan completed:")
+                logger.info(f"ATHENA intraday scan completed:")
 
                 # === GEX CONTEXT ===
                 gex_ctx = result.get('gex_context')
@@ -656,17 +656,17 @@ class AutonomousTraderScheduler:
                     logger.info(f"  R:R Ratio: {result.get('rr_ratio', 0):.2f}:1")
 
             else:
-                logger.info("APACHE: No result returned")
+                logger.info("ATHENA: No result returned")
 
-            self.apache_execution_count += 1
-            logger.info(f"APACHE scan #{self.apache_execution_count} completed (next scan in 30 min)")
+            self.athena_execution_count += 1
+            logger.info(f"ATHENA scan #{self.athena_execution_count} completed (next scan in 30 min)")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            error_msg = f"ERROR in APACHE trading logic: {str(e)}"
+            error_msg = f"ERROR in ATHENA trading logic: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            logger.info("APACHE will retry next interval")
+            logger.info("ATHENA will retry next interval")
             logger.info(f"=" * 80)
 
     def start(self):
@@ -682,12 +682,12 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), APACHE (GEX Directional)")
+        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), ATHENA (GEX Directional)")
         logger.info(f"Timezone: America/New_York (Eastern Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 10:05 AM ET, Mon-Fri")
         logger.info(f"ARES Schedule: Daily at 9:35 AM ET, Mon-Fri")
-        logger.info(f"APACHE Schedule: Every 30 min (9:35 AM - 3:30 PM ET), Mon-Fri")
+        logger.info(f"ATHENA Schedule: Every 30 min (9:35 AM - 3:30 PM ET), Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -775,14 +775,14 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
 
         # =================================================================
-        # APACHE JOB: GEX Directional Spreads - runs every 30 minutes during market hours
+        # ATHENA JOB: GEX Directional Spreads - runs every 30 minutes during market hours
         # Uses live Tradier GEX data to find intraday opportunities
         # =================================================================
-        if self.apache_trader:
+        if self.athena_trader:
             # Run every 30 minutes during market hours (9:35 AM - 3:30 PM ET)
             # First run at 9:35 AM, then 10:05, 10:35, etc.
             self.scheduler.add_job(
-                self.scheduled_apache_logic,
+                self.scheduled_athena_logic,
                 trigger=IntervalTrigger(
                     minutes=30,
                     start_date=datetime.now(pytz.timezone('America/New_York')).replace(
@@ -790,13 +790,13 @@ class AutonomousTraderScheduler:
                     ),
                     timezone='America/New_York'
                 ),
-                id='apache_trading',
-                name='APACHE - GEX Directional Spreads (30-min intervals)',
+                id='athena_trading',
+                name='ATHENA - GEX Directional Spreads (30-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ APACHE job scheduled (every 30 min during market hours)")
+            logger.info("✅ ATHENA job scheduled (every 30 min during market hours)")
         else:
-            logger.warning("⚠️ APACHE not available - GEX directional trading disabled")
+            logger.warning("⚠️ ATHENA not available - GEX directional trading disabled")
 
         self.scheduler.start()
         self.is_running = True
@@ -910,10 +910,10 @@ def get_atlas_trader():
     return scheduler.atlas_trader if scheduler else None
 
 
-def get_apache_trader():
-    """Get the APACHE trader instance from the scheduler"""
+def get_athena_trader():
+    """Get the ATHENA trader instance from the scheduler"""
     scheduler = get_scheduler()
-    return scheduler.apache_trader if scheduler else None
+    return scheduler.athena_trader if scheduler else None
 
 
 # ============================================================================
@@ -975,7 +975,7 @@ def run_standalone():
             # Log status periodically
             status = scheduler.get_status()
             if status['market_open']:
-                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, APACHE={scheduler.apache_execution_count}")
+                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, ATHENA={scheduler.athena_execution_count}")
             else:
                 logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
 

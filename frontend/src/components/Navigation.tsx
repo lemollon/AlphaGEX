@@ -47,7 +47,7 @@ const navItems = [
   { href: '/oracle', label: 'Oracle AI', icon: Eye, category: 'AI & Testing' },
   { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
   { href: '/ares', label: 'ARES (SPX Iron Condor)', icon: Sword, category: 'Live Trading' },
-  { href: '/apache', label: 'SAGE (Directional Spreads)', icon: Target, category: 'Live Trading' },
+  { href: '/athena', label: 'ATHENA (Directional Spreads)', icon: Target, category: 'Live Trading' },
   { href: '/trader', label: 'PHOENIX (SPY 0DTE)', icon: Bot, category: 'Beta' },
   { href: '/wheel', label: 'HERMES (Manual Wheel)', icon: RotateCcw, category: 'Beta' },
   { href: '/spx-wheel', label: 'ATLAS (SPX Wheel)', icon: Target, category: 'Beta' },

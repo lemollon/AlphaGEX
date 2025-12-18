@@ -6,7 +6,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 
-interface APACHEStatus {
+interface ATHENAStatus {
   mode: string
   capital: number
   open_positions: number
@@ -124,8 +124,8 @@ interface PerformanceData {
   }[]
 }
 
-export default function APACHEPage() {
-  const [status, setStatus] = useState<APACHEStatus | null>(null)
+export default function ATHENAPage() {
+  const [status, setStatus] = useState<ATHENAStatus | null>(null)
   const [positions, setPositions] = useState<SpreadPosition[]>([])
   const [signals, setSignals] = useState<Signal[]>([])
   const [oracleAdvice, setOracleAdvice] = useState<OracleAdvice | null>(null)
@@ -145,13 +145,13 @@ export default function APACHEPage() {
       setError(null)
 
       const [statusRes, positionsRes, signalsRes, performanceRes, adviceRes, mlSignalRes, logsRes] = await Promise.all([
-        apiClient.getAPACHEStatus().catch(() => ({ data: null })),
-        apiClient.getAPACHEPositions().catch(() => ({ data: null })),
-        apiClient.getAPACHESignals(20).catch(() => ({ data: null })),
-        apiClient.getAPACHEPerformance(30).catch(() => ({ data: null })),
-        apiClient.getAPACHEOracleAdvice().catch(() => ({ data: null })),
-        apiClient.getAPACHEMLSignal().catch(() => ({ data: null })),
-        apiClient.getAPACHELogs(undefined, 50).catch(() => ({ data: null }))
+        apiClient.getATHENAStatus().catch(() => ({ data: null })),
+        apiClient.getATHENAPositions().catch(() => ({ data: null })),
+        apiClient.getATHENASignals(20).catch(() => ({ data: null })),
+        apiClient.getATHENAPerformance(30).catch(() => ({ data: null })),
+        apiClient.getATHENAOracleAdvice().catch(() => ({ data: null })),
+        apiClient.getATHENAMLSignal().catch(() => ({ data: null })),
+        apiClient.getATHENALogs(undefined, 50).catch(() => ({ data: null }))
       ])
 
       if (statusRes.data?.data) setStatus(statusRes.data.data)
@@ -164,7 +164,7 @@ export default function APACHEPage() {
 
       setLastUpdate(new Date())
     } catch (err) {
-      setError('Failed to fetch APACHE data')
+      setError('Failed to fetch ATHENA data')
       console.error(err)
     } finally {
       setLoading(false)
@@ -174,7 +174,7 @@ export default function APACHEPage() {
   const runCycle = async () => {
     setRunningCycle(true)
     try {
-      const res = await apiClient.runAPACHECycle()
+      const res = await apiClient.runATHENACycle()
       if (res.data?.success) {
         await fetchData()
       }
@@ -214,7 +214,7 @@ export default function APACHEPage() {
             <div className="flex items-center gap-3">
               <Target className="w-8 h-8 text-orange-500" />
               <div>
-                <h1 className="text-2xl font-bold text-white">APACHE</h1>
+                <h1 className="text-2xl font-bold text-white">ATHENA</h1>
                 <p className="text-gray-400 text-sm">Directional Spread Trading Bot</p>
               </div>
             </div>
@@ -658,7 +658,7 @@ export default function APACHEPage() {
             <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
               <div className="p-4 border-b border-gray-700 flex justify-between items-center">
                 <h2 className="text-lg font-semibold text-white">Recent Activity Logs</h2>
-                <a href="/apache/logs" className="text-sm text-orange-400 hover:underline">View all logs →</a>
+                <a href="/athena/logs" className="text-sm text-orange-400 hover:underline">View all logs →</a>
               </div>
               <div className="divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
                 {logs.map((log) => (

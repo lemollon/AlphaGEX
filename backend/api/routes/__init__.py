@@ -28,7 +28,7 @@ from . import export_routes
 from . import ml_routes
 from . import spx_backtest_routes
 from . import ares_routes
-from . import apache_routes
+from . import athena_routes
 
 __all__ = [
     'vix_routes',
@@ -56,5 +56,5 @@ __all__ = [
     'ml_routes',
     'spx_backtest_routes',
     'ares_routes',
-    'apache_routes',
+    'athena_routes',
 ]

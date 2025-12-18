@@ -371,15 +371,15 @@ class GEXSignalIntegration:
             reasoning="Models not available - defaulting to STAY_OUT"
         )
 
-    def get_signal_for_apache(
+    def get_signal_for_athena(
         self,
         gex_data: Dict[str, Any],
         vix: float = 20.0
     ) -> Dict[str, Any]:
         """
-        Get signal formatted for Apache strategy integration.
+        Get signal formatted for Athena strategy integration.
 
-        Returns dict compatible with Apache's existing signal format.
+        Returns dict compatible with Athena's existing signal format.
         """
         signal = self.get_trading_signal(gex_data, vix, self._prev_gex_data)
 
@@ -464,11 +464,11 @@ def main():
     print(f"  Conviction: {signal.overall_conviction:.1%}")
     print(f"  Reasoning: {signal.reasoning}")
 
-    # Get Apache-formatted signal
-    apache_signal = integration.get_signal_for_apache(mock_gex_data, vix=18.0)
+    # Get Athena-formatted signal
+    athena_signal = integration.get_signal_for_athena(mock_gex_data, vix=18.0)
 
-    print("\nApache-Formatted Signal:")
-    for k, v in apache_signal.items():
+    print("\nAthena-Formatted Signal:")
+    for k, v in athena_signal.items():
         if isinstance(v, dict):
             print(f"  {k}:")
             for k2, v2 in v.items():

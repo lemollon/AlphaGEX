@@ -1,15 +1,15 @@
 """
-APACHE - Directional Spread Trading Bot
+ATHENA - Directional Spread Trading Bot
 =========================================
 
-Named after the Apache warrior - swift, strategic, and precise.
+Named after Athena, Greek goddess of wisdom and strategic warfare.
 
 STRATEGY: GEX-Based Directional Spreads
 - BULLISH: Bull Call Spread (buy ATM call, sell OTM call)
 - BEARISH: Bear Call Spread (sell ATM call, buy OTM call)
 
 SIGNAL FLOW:
-    KRONOS (GEX Calculator) --> ORACLE (ML Advisor) --> APACHE (Execution)
+    KRONOS (GEX Calculator) --> ORACLE (ML Advisor) --> ATHENA (Execution)
 
 The key edge is the GEX wall proximity filter:
 - Buy calls near put wall (support) for bullish
@@ -20,9 +20,9 @@ Backtest Results (2024 out-of-sample):
 - With 0.5% wall filter: 98% win rate, 18.19x profit ratio
 
 Usage:
-    from trading.apache_directional_spreads import APACHETrader
-    apache = APACHETrader(initial_capital=100_000)
-    apache.run_daily_cycle()
+    from trading.athena_directional_spreads import ATHENATrader
+    athena = ATHENATrader(initial_capital=100_000)
+    athena.run_daily_cycle()
 
 Author: AlphaGEX Quant
 Date: 2025-12
@@ -181,7 +181,7 @@ class SpreadPosition:
 
 
 @dataclass
-class APACHEConfig:
+class ATHENAConfig:
     """Configuration for APACHE trading bot"""
     # Risk parameters
     risk_per_trade_pct: float = 2.0      # 2% of capital per trade (conservative for directional)
@@ -209,7 +209,7 @@ class APACHEConfig:
     exit_by_time: str = "15:55"           # Exit all by this time (0DTE)
 
 
-class APACHETrader:
+class ATHENATrader:
     """
     APACHE - Directional Spread Trading Bot
 
@@ -220,12 +220,12 @@ class APACHETrader:
     def __init__(
         self,
         initial_capital: float = 100_000,
-        config: Optional[APACHEConfig] = None
+        config: Optional[ATHENAConfig] = None
     ):
         """Initialize APACHE trader"""
         self.initial_capital = initial_capital
         self.current_capital = initial_capital
-        self.config = config or APACHEConfig()
+        self.config = config or ATHENAConfig()
 
         # Initialize Oracle advisor
         self.oracle: Optional[OracleAdvisor] = None
@@ -474,8 +474,8 @@ class APACHETrader:
         )
 
         try:
-            # Get APACHE-specific advice from Oracle
-            advice = self.oracle.get_apache_advice(
+            # Get ATHENA-specific advice from Oracle
+            advice = self.oracle.get_athena_advice(
                 context=context,
                 use_gex_walls=self.config.use_gex_walls,
                 use_claude_validation=self.config.use_claude_validation
@@ -527,7 +527,7 @@ class APACHETrader:
 
         try:
             # Get signal from ML models
-            signal = self.gex_ml.get_signal_for_apache(gex_data, vix=vix)
+            signal = self.gex_ml.get_signal_for_athena(gex_data, vix=vix)
 
             self._log_to_db("INFO", f"ML Signal: {signal['advice']}", {
                 'confidence': signal['confidence'],
@@ -1363,12 +1363,12 @@ class APACHETrader:
 
 
 # Convenience function for running Apache
-def run_apache(capital: float = 100_000, mode: str = "paper") -> APACHETrader:
+def run_athena(capital: float = 100_000, mode: str = "paper") -> ATHENATrader:
     """Quick start Apache trading bot"""
-    config = APACHEConfig(
+    config = ATHENAConfig(
         mode=TradingMode.PAPER if mode == "paper" else TradingMode.LIVE
     )
-    trader = APACHETrader(initial_capital=capital, config=config)
+    trader = ATHENATrader(initial_capital=capital, config=config)
     return trader
 
 
@@ -1376,7 +1376,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     # Test run
-    apache = run_apache()
+    apache = run_athena()
     status = apache.get_status()
     print(f"\nAPACHE Status: {status}")
 
