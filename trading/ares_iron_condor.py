@@ -2405,21 +2405,37 @@ class ARESTrader:
             return result
 
     def _get_underlying_close_price(self, ticker: str) -> Optional[float]:
-        """Get the closing price for the underlying."""
+        """Get the closing/current price for the underlying."""
         try:
-            # Try Tradier first
+            # Try Tradier production first
             if self.tradier:
                 quote = self.tradier.get_quote(ticker)
-                if quote and 'close' in quote:
-                    return float(quote['close'])
-                if quote and 'last' in quote:
-                    return float(quote['last'])
+                if quote:
+                    if 'close' in quote and quote['close']:
+                        return float(quote['close'])
+                    if 'last' in quote and quote['last']:
+                        return float(quote['last'])
 
-            # Fallback: use last known price
-            if self.tradier:
-                quote = self.tradier.get_quote(ticker)
-                if quote and 'last' in quote:
-                    return float(quote['last'])
+            # Try Tradier sandbox as fallback
+            if self.tradier_sandbox:
+                quote = self.tradier_sandbox.get_quote(ticker)
+                if quote:
+                    if 'close' in quote and quote['close']:
+                        return float(quote['close'])
+                    if 'last' in quote and quote['last']:
+                        return float(quote['last'])
+
+            # Try unified data provider as last resort
+            try:
+                from data.unified_data_provider import get_unified_provider
+                provider = get_unified_provider()
+                if provider:
+                    price = provider.get_current_price(ticker)
+                    if price and price > 0:
+                        logger.info(f"ARES EOD: Got {ticker} price from unified provider: ${price:.2f}")
+                        return price
+            except Exception as e:
+                logger.debug(f"ARES EOD: Unified provider fallback failed: {e}")
 
             return None
         except Exception as e:
