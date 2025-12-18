@@ -466,7 +466,7 @@ export default function ARESPage() {
                   </div>
                 ) : (
                   <div className="text-center py-8 text-gray-500">
-                    No open positions - next trade at 10:15 AM ET
+                    No open positions - next trade at 9:35 AM ET
                   </div>
                 )}
               </div>

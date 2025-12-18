@@ -2010,7 +2010,7 @@ async def get_all_bots_status():
                 "description": "Aggressive Iron Condor (10% Monthly Target)",
                 "type": "autonomous",
                 "scheduled": True,
-                "schedule": "Daily at 10:15 AM ET (Mon-Fri)",
+                "schedule": "Daily at 9:35 AM ET (Mon-Fri)",
                 "capital_allocation": 200_000,
                 "capital_pct": 20,
                 "strategy": "0DTE Iron Condor at 1 SD, 10% risk per trade",
