@@ -95,31 +95,148 @@ WHAT GEXIS NEVER DOES:
 ALPHAGEX_KNOWLEDGE = """
 ALPHAGEX PLATFORM KNOWLEDGE:
 
-TRADING BOTS:
+=== SYSTEM ARCHITECTURE ===
+
+SIGNAL FLOW (How Components Connect):
+```
+KRONOS (GEX Calculator) → ORACLE (AI Advisor) → Trading Bots (ARES/APACHE/ATLAS)
+       ↓                        ↓                         ↓
+  gex_history DB          oracle_signals DB         positions DB
+       ↓                        ↓                         ↓
+   Frontend GEX Page      AI Intelligence          Trader Control Center
+```
+
+DATA FLOW:
+1. Trading Volatility API (ORAT) → KRONOS → calculates Net GEX, Flip Point, Walls
+2. KRONOS → stores to gex_history, gex_snapshots_detailed tables
+3. ORACLE reads GEX data → generates trading signals with confidence
+4. Trading bots read ORACLE signals → execute trades via Tradier API
+5. All decisions logged to autonomous_decisions table for transparency
+
+=== FILE STRUCTURE ===
+
+Backend (Python/FastAPI):
+- /backend/main.py - FastAPI app entry point
+- /backend/api/routes/ai_routes.py - GEXIS chat endpoints
+- /backend/api/routes/ai_intelligence_routes.py - 7 AI modules (1,743 lines)
+- /backend/api/routes/autonomous_routes.py - Bot control endpoints
+- /backend/api/dependencies.py - Shared instances (ClaudeIntelligence, etc.)
+
+AI Layer (/ai/):
+- ai_trade_advisor.py - SmartTradeAdvisor with learning system
+- ai_strategy_optimizer.py - Multi-strategy optimization
+- autonomous_ai_reasoning.py - LangChain + Claude reasoning
+- langchain_prompts.py - All prompt templates
+- gexis_personality.py - THIS FILE - GEXIS identity
+
+Trading Bots (/trading/):
+- ares_iron_condor.py - ARES bot (0DTE Iron Condors)
+- apache_directional_spreads.py - APACHE bot (GEX directional)
+- position_monitor.py - Live position tracking
+- decision_logger.py - Trade decision logging
+
+Database (/db/):
+- config_and_database.py - Schema definitions (40+ tables)
+- database_adapter.py - PostgreSQL connection handling
+
+Frontend (Next.js/React):
+- /frontend/src/app/trader/page.tsx - Trader Control Center
+- /frontend/src/app/ares/page.tsx - ARES dashboard
+- /frontend/src/app/apache/page.tsx - APACHE dashboard
+- /frontend/src/app/gex/page.tsx - GEX analysis multi-ticker
+- /frontend/src/app/gamma/page.tsx - Gamma intelligence
+- /frontend/src/components/FloatingChatbot.tsx - GEXIS chat widget
+
+=== API ENDPOINTS ===
+
+GEXIS Endpoints:
+- GET /api/ai/gexis/info - GEXIS system info
+- GET /api/ai/gexis/welcome - Welcome message
+- POST /api/ai/analyze - Chat with GEXIS
+- POST /api/ai/analyze-with-image - Image analysis (Claude Vision)
+- GET /api/ai/learning-insights - AI learning stats
+- GET /api/ai/track-record - Prediction accuracy
+
+Bot Control:
+- POST /api/autonomous/ares/start - Start ARES
+- POST /api/autonomous/ares/stop - Stop ARES
+- GET /api/autonomous/ares/status - ARES status
+- POST /api/autonomous/apache/cycle - Run APACHE cycle
+- GET /api/autonomous/positions - All open positions
+
+GEX Data:
+- GET /api/gex/{symbol} - GEX data for symbol
+- GET /api/gex/profile/{symbol} - Strike-by-strike GEX
+- GET /api/gamma/intelligence/{symbol} - Full gamma analysis
+
+AI Intelligence (7 Modules):
+- POST /api/ai-intelligence/pre-trade-checklist - Validate trade
+- GET /api/ai-intelligence/daily-trading-plan - Daily plan
+- GET /api/ai-intelligence/trade-explainer/{id} - Explain trade
+- GET /api/ai-intelligence/position-guidance/{id} - Position advice
+- GET /api/ai-intelligence/market-commentary - Market narration
+- GET /api/ai-intelligence/compare-strategies - Strategy comparison
+- POST /api/ai-intelligence/explain-greek - Greeks education
+
+=== DATABASE SCHEMA (Key Tables) ===
+
+Trading:
+- autonomous_positions - Open/closed positions
+- autonomous_decisions - Every bot decision with reasoning
+- autonomous_trade_log - Trade execution history
+- ares_positions - ARES Iron Condor positions
+- apache_positions - APACHE spread positions
+- apache_signals - APACHE signal history
+
+GEX Data:
+- gex_history - Historical GEX snapshots
+- gex_snapshots_detailed - Strike-by-strike gamma
+- regime_signals - Market regime history
+- gamma_strike_history - Strike-level gamma over time
+
+AI/Learning:
+- ai_predictions - Every AI prediction (for learning)
+- ai_performance - Daily accuracy tracking
+- pattern_learning - Pattern-specific win rates
+- conversations - Chat history with GEXIS
+
+Configuration:
+- autonomous_config - Bot configuration
+- strategy_parameters - Strategy settings
+
+=== TRADING BOTS DETAILED ===
 
 1. ARES (Aggressive Iron Condor)
+   - File: /trading/ares_iron_condor.py
    - Strategy: Daily 0DTE SPX Iron Condors
    - Target: 10% monthly returns via 0.5% daily compound
    - Risk per trade: 10% (aggressive Kelly sizing)
    - Spread width: $10, Strike distance: 1 SD
    - Win rate target: 68%
+   - Entry time: 10:15 AM ET
+   - Exit: Let expire or stop loss
 
 2. APACHE (Directional Spreads)
+   - File: /trading/apache_directional_spreads.py
    - Strategy: GEX-based directional spreads
-   - Signals: PRIMARY = GEX ML Signal, FALLBACK = Oracle Advice
+   - Signal sources:
+     * PRIMARY: GEX ML Signal (trained model)
+     * FALLBACK: Oracle AI Advisor
    - Trade types: BULL CALL (bullish), BEAR CALL (bearish)
    - Edge: Wall proximity filter (0.5-1% from gamma walls)
-   - Backtest results: 90-98% win rate with wall filter
+   - Backtest: 90-98% win rate with wall filter
 
 3. ATLAS (SPX Wheel)
+   - File: /trading/atlas_wheel.py (if exists) or spx-wheel page
    - Strategy: Cash-secured put selling on SPX
    - Delta target: 20-delta puts
    - DTE target: 45 days
    - Win rate: ~80% historical
    - Three edges: Volatility risk premium, Theta decay, Probability
 
-GEX ANALYSIS FEATURES:
+=== GEX ANALYSIS ===
 
+Core Concepts:
 - Net GEX: Total gamma exposure (call - put gamma)
 - Flip Point: Price where net GEX = 0 (critical transition level)
 - Call Wall: Highest call gamma strike (resistance)
@@ -127,49 +244,81 @@ GEX ANALYSIS FEATURES:
 - Positive GEX: Stable, mean-reversion, sell premium
 - Negative GEX: Volatile, momentum, buy directional
 
-MARKET MAKER STATES:
-
+Market Maker States:
 1. DEFENDING - Dampening volatility, sell premium, 72% win rate
 2. SQUEEZING - Explosive moves likely, buy directional, 70% win rate
 3. PANICKING - MMs covering shorts, buy calls aggressively, 90% win rate
 4. HUNTING - Positioning for direction, wait for confirmation, 60% win rate
 5. NEUTRAL - Balanced positioning, small plays or wait, 50% win rate
 
-AI INTELLIGENCE MODULES:
+=== AI INTELLIGENCE MODULES ===
 
-- Oracle AI Advisor: Rule-based trading recommendations with win probability
-- GEX ML Signal: ML model for direction prediction
-- ARES ML Advisor: Specialized for iron condor trades
-- Autonomous AI Reasoning: LangChain + Claude for complex decisions
-- Position Management Agent: Monitors active positions
-- Trade Journal Agent: Analyzes trading history
+1. Oracle AI Advisor
+   - Rule-based trading recommendations
+   - Outputs: TRADE_FULL, TRADE_REDUCED, NO_TRADE
+   - Win probability and confidence scores
 
-KEY FEATURES:
+2. GEX ML Signal
+   - ML model trained on market data
+   - Outputs: direction, spread type, confidence, win probability
+   - Predictions: flip gravity, magnet attraction, pin zone
 
-- Real-time GEX visualization and analysis
-- Probability forecasting (EOD and next-day)
-- Position sizing with Kelly Criterion
-- Trade journal with AI-powered insights
-- Multi-timeframe RSI analysis
-- Market psychology tracking (FOMO/Fear levels)
-- Decision logging with full transparency
-- Walk-forward backtesting
-- Volatility regime detection
+3. SmartTradeAdvisor (Learning System)
+   - File: /ai/ai_trade_advisor.py
+   - Learns from prediction outcomes
+   - Calibrates confidence based on accuracy
+   - Tables: ai_predictions, ai_performance
 
-DATA SOURCES:
+4. Autonomous AI Reasoning
+   - LangChain + Claude integration
+   - Complex trade decisions
+   - Strike selection with reasoning
 
-- Tradier API: Real-time options data, execution
-- Polygon.io: Historical price data
-- Trading Volatility API (ORAT): GEX data
-- PostgreSQL: Trade history, learning memory
+5. Position Management Agent
+   - Monitors active positions
+   - Detects regime changes from entry
+   - Generates adjustment alerts
 
-RISK MANAGEMENT:
+6. Trade Journal Agent
+   - Analyzes trading history
+   - Pattern recognition
+   - Improvement recommendations
 
-- Per-trade risk limits
+=== DATA SOURCES ===
+
+Primary:
+- Tradier API: Real-time options data, Greeks, order execution
+- Trading Volatility API (ORAT): GEX data, gamma calculations
+- Polygon.io: Historical price data, fallback options data
+
+Database:
+- PostgreSQL: All persistent data
+- Tables: 40+ tables for trades, GEX, signals, learning
+
+Environment Variables:
+- TRADIER_API_KEY - Live trading
+- TRADIER_SANDBOX_API_KEY - Paper trading
+- ANTHROPIC_API_KEY / CLAUDE_API_KEY - AI
+- TRADING_VOLATILITY_API_KEY - GEX data
+- DATABASE_URL - PostgreSQL connection
+
+=== RISK MANAGEMENT ===
+
+Per-Trade:
+- Max 25% position size
+- Max 5% account risk per trade
+- Kelly Criterion (Half Kelly recommended)
+
+Portfolio:
+- Max portfolio delta: +/- 2.0
+- Max 5 simultaneous positions
 - Daily loss limits
-- Account drawdown monitoring
-- Position correlation awareness
-- Greeks exposure tracking
+
+Exit Rules:
+- Take profit at +50% (directional)
+- Stop loss at -30% (directional)
+- Exit on GEX regime change
+- Exit 1 DTE or less
 """
 
 # =============================================================================
