@@ -906,7 +906,13 @@ async def execute_quick_command(request: dict):
                 for row in c.fetchall():
                     heartbeat_age = None
                     if row[2]:
-                        heartbeat_age = (datetime.now() - row[2]).total_seconds()
+                        # Handle timezone-aware timestamps from PostgreSQL
+                        last_heartbeat = row[2]
+                        now = datetime.now()
+                        # Make both naive for comparison if heartbeat has timezone
+                        if hasattr(last_heartbeat, 'tzinfo') and last_heartbeat.tzinfo is not None:
+                            last_heartbeat = last_heartbeat.replace(tzinfo=None)
+                        heartbeat_age = (now - last_heartbeat).total_seconds()
                     status["bots"][row[0]] = {
                         "active": row[1],
                         "mode": row[3],
@@ -1142,11 +1148,11 @@ async def get_active_alerts():
         try:
             c.execute("""
                 SELECT symbol, strike, option_type, unrealized_pnl,
-                       entry_price, confidence, bot_name
+                       entry_price, confidence, bot_name, contracts
                 FROM autonomous_positions
                 WHERE status = 'open'
-                AND (unrealized_pnl > entry_price * contracts * 100 * 0.5
-                     OR unrealized_pnl < -entry_price * contracts * 100 * 0.3)
+                AND (unrealized_pnl > entry_price * COALESCE(contracts, 1) * 100 * 0.5
+                     OR unrealized_pnl < -entry_price * COALESCE(contracts, 1) * 100 * 0.3)
             """)
             for row in c.fetchall():
                 pnl = row[3] or 0
@@ -1184,13 +1190,14 @@ async def get_active_alerts():
         except Exception:
             pass
 
-        # 3. Check for bot issues
+        # 3. Check for bot issues (stale heartbeat or NULL heartbeat for active bots)
         try:
             c.execute("""
                 SELECT bot_name, last_heartbeat
                 FROM autonomous_config
                 WHERE is_active = TRUE
-                AND last_heartbeat < NOW() - INTERVAL '10 minutes'
+                AND (last_heartbeat IS NULL
+                     OR last_heartbeat < NOW() - INTERVAL '10 minutes')
             """)
             for row in c.fetchall():
                 alerts.append({
