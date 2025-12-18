@@ -920,8 +920,10 @@ class ARESTrader:
                             error_msg = sandbox_result.get('errors', {}).get('error', 'Unknown error')
                             logger.error(f"ARES [SANDBOX]: Tradier sandbox FAILED: {error_msg}")
                             logger.error(f"ARES [SANDBOX]: Full response: {sandbox_result}")
-                            # FIX: Don't create position if Tradier sandbox fails
-                            return None
+                            # FIX: Fall back to internal paper tracking instead of failing completely
+                            logger.info(f"ARES [PAPER]: Falling back to internal paper tracking")
+                            order_id = f"PAPER-{datetime.now(self.tz).strftime('%Y%m%d%H%M%S')}"
+                            order_status = "paper_simulated"
                         else:
                             sandbox_order_info = sandbox_result.get('order', {}) or {}
                             sandbox_order_id = str(sandbox_order_info.get('id', ''))
@@ -930,23 +932,30 @@ class ARESTrader:
                             # FIX: Validate order was actually placed (check status)
                             if not sandbox_order_id:
                                 logger.error(f"ARES [SANDBOX]: No order ID returned from Tradier")
-                                return None
-
-                            # Check for rejected/error status
-                            if sandbox_status in ['rejected', 'error', 'expired', 'canceled']:
+                                # FIX: Fall back to internal paper tracking instead of failing
+                                logger.info(f"ARES [PAPER]: Falling back to internal paper tracking")
+                                order_id = f"PAPER-{datetime.now(self.tz).strftime('%Y%m%d%H%M%S')}"
+                                order_status = "paper_simulated"
+                            elif sandbox_status in ['rejected', 'error', 'expired', 'canceled']:
+                                # Check for rejected/error status
                                 logger.error(f"ARES [SANDBOX]: Order rejected - Status: {sandbox_status}")
-                                return None
-
-                            logger.info(f"ARES [SANDBOX]: Order SUCCESS - ID: {sandbox_order_id}, Status: {sandbox_status}")
-                            sandbox_success = True
-                            # FIX: Use actual Tradier order ID instead of synthetic
-                            order_id = f"SANDBOX-{sandbox_order_id}"
-                            order_status = sandbox_status
+                                # FIX: Fall back to internal paper tracking instead of failing
+                                logger.info(f"ARES [PAPER]: Falling back to internal paper tracking")
+                                order_id = f"PAPER-{datetime.now(self.tz).strftime('%Y%m%d%H%M%S')}"
+                                order_status = "paper_simulated"
+                            else:
+                                logger.info(f"ARES [SANDBOX]: Order SUCCESS - ID: {sandbox_order_id}, Status: {sandbox_status}")
+                                sandbox_success = True
+                                # FIX: Use actual Tradier order ID instead of synthetic
+                                order_id = f"SANDBOX-{sandbox_order_id}"
+                                order_status = sandbox_status
 
                     except Exception as e:
                         logger.error(f"ARES [SANDBOX]: Failed to submit to sandbox: {e}")
-                        # FIX: Don't create position if Tradier sandbox submission fails
-                        return None
+                        # FIX: Fall back to internal paper tracking instead of failing completely
+                        logger.info(f"ARES [PAPER]: Falling back to internal paper tracking")
+                        order_id = f"PAPER-{datetime.now(self.tz).strftime('%Y%m%d%H%M%S')}"
+                        order_status = "paper_simulated"
                 else:
                     # No sandbox available - create internal tracking only
                     logger.info(f"ARES [PAPER]: Tradier sandbox not available - internal tracking only")
@@ -2607,6 +2616,10 @@ class ARESTrader:
         now = datetime.now(self.tz)
         today = now.strftime('%Y-%m-%d')
 
+        # Determine paper trading type (sandbox-connected vs simulated)
+        sandbox_connected = self.tradier_sandbox is not None
+        paper_mode_type = 'sandbox' if sandbox_connected else 'simulated'
+
         return {
             'mode': self.mode.value,
             'capital': self.capital,
@@ -2619,6 +2632,8 @@ class ARESTrader:
             'in_trading_window': self.is_trading_window(),
             'high_water_mark': self.high_water_mark,
             'current_time': now.strftime('%Y-%m-%d %H:%M:%S %Z'),
+            'sandbox_connected': sandbox_connected,
+            'paper_mode_type': paper_mode_type,
             'config': {
                 'risk_per_trade': self.config.risk_per_trade_pct,
                 'spread_width': self.get_spread_width(),
