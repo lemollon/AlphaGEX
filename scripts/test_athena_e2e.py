@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-End-to-End Test for APACHE Directional Strategy
+End-to-End Test for ATHENA Directional Strategy
 
 Tests:
-1. Apache trader initialization
+1. ATHENA trader initialization
 2. ML signal generation
 3. API endpoints
 4. Database logging
@@ -12,10 +12,10 @@ Tests:
 
 Usage:
     # Test against deployed API
-    API_URL=https://alphagex-api.onrender.com python scripts/test_apache_e2e.py
+    API_URL=https://alphagex-api.onrender.com python scripts/test_athena_e2e.py
 
     # Test against local API
-    python scripts/test_apache_e2e.py
+    python scripts/test_athena_e2e.py
 """
 
 import os
@@ -59,12 +59,12 @@ def test_api_health():
     except Exception as e:
         return test_result("API Health Check", False, str(e))
 
-def test_apache_status():
-    """Test 2: Apache Status Endpoint"""
+def test_athena_status():
+    """Test 2: ATHENA Status Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/apache/status", timeout=15)
+        resp = requests.get(f"{API_URL}/api/athena/status", timeout=15)
         if resp.status_code != 200:
-            return test_result("Apache Status", False, f"Status: {resp.status_code}")
+            return test_result("ATHENA Status", False, f"Status: {resp.status_code}")
 
         data = resp.json().get('data', {})
         details = {
@@ -78,16 +78,16 @@ def test_apache_status():
 
         # Pass if we got a response with expected fields
         passed = 'mode' in data and 'capital' in data
-        return test_result("Apache Status", passed, details)
+        return test_result("ATHENA Status", passed, details)
     except Exception as e:
-        return test_result("Apache Status", False, str(e))
+        return test_result("ATHENA Status", False, str(e))
 
 def test_ml_signal():
     """Test 3: ML Signal Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/apache/ml-signal", timeout=20)
+        resp = requests.get(f"{API_URL}/api/athena/ml-signal", timeout=20)
         if resp.status_code == 503:
-            return test_result("ML Signal", False, "Apache not available (503)")
+            return test_result("ML Signal", False, "ATHENA not available (503)")
         if resp.status_code != 200:
             return test_result("ML Signal", False, f"Status: {resp.status_code}")
 
@@ -127,7 +127,7 @@ def test_ml_signal():
 def test_oracle_advice():
     """Test 4: Oracle Advice Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/apache/oracle-advice", timeout=15)
+        resp = requests.get(f"{API_URL}/api/athena/oracle-advice", timeout=15)
         if resp.status_code != 200:
             return test_result("Oracle Advice", False, f"Status: {resp.status_code}")
 
@@ -151,7 +151,7 @@ def test_oracle_advice():
 def test_signals_history():
     """Test 5: Signals History Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/apache/signals?limit=5", timeout=15)
+        resp = requests.get(f"{API_URL}/api/athena/signals?limit=5", timeout=15)
         if resp.status_code != 200:
             return test_result("Signals History", False, f"Status: {resp.status_code}")
 
@@ -174,7 +174,7 @@ def test_signals_history():
 def test_positions():
     """Test 6: Positions Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/apache/positions", timeout=15)
+        resp = requests.get(f"{API_URL}/api/athena/positions", timeout=15)
         if resp.status_code != 200:
             return test_result("Positions", False, f"Status: {resp.status_code}")
 
@@ -200,7 +200,7 @@ def test_positions():
 def test_performance():
     """Test 7: Performance Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/apache/performance?days=30", timeout=15)
+        resp = requests.get(f"{API_URL}/api/athena/performance?days=30", timeout=15)
         if resp.status_code != 200:
             return test_result("Performance", False, f"Status: {resp.status_code}")
 
@@ -221,7 +221,7 @@ def test_performance():
 def test_logs():
     """Test 8: Logs Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/apache/logs?limit=10", timeout=15)
+        resp = requests.get(f"{API_URL}/api/athena/logs?limit=10", timeout=15)
         if resp.status_code != 200:
             return test_result("Logs", False, f"Status: {resp.status_code}")
 
@@ -265,8 +265,8 @@ def test_run_cycle():
                 f"Skipped (market closed). Current time: {now.strftime('%Y-%m-%d %H:%M %Z')}"
             )
 
-        # Run the cycle (endpoint is /api/apache/run)
-        resp = requests.post(f"{API_URL}/api/apache/run", timeout=60)
+        # Run the cycle (endpoint is /api/athena/run)
+        resp = requests.post(f"{API_URL}/api/athena/run", timeout=60)
         if resp.status_code != 200:
             return test_result("Run Cycle", False, f"Status: {resp.status_code}")
 
@@ -288,7 +288,7 @@ def test_run_cycle():
 def test_diagnostics():
     """Test 10: Diagnostics Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/apache/diagnostics", timeout=20)
+        resp = requests.get(f"{API_URL}/api/athena/diagnostics", timeout=20)
         if resp.status_code != 200:
             return test_result("Diagnostics", False, f"Status: {resp.status_code}")
 
@@ -300,7 +300,7 @@ def test_diagnostics():
         env = data.get('environment', {})
 
         details = {
-            'apache_available': data.get('apache_available'),
+            'athena_available': data.get('apache_available'),
             'kronos': subsystems.get('kronos', {}).get('available'),
             'oracle': subsystems.get('oracle', {}).get('available'),
             'gex_ml': subsystems.get('gex_ml', {}).get('available'),
@@ -321,7 +321,7 @@ def test_diagnostics():
 
 def main():
     print("=" * 70)
-    print("APACHE DIRECTIONAL STRATEGY - END-TO-END TEST")
+    print("ATHENA DIRECTIONAL STRATEGY - END-TO-END TEST")
     print("=" * 70)
     print(f"API URL: {API_URL}")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -359,7 +359,7 @@ def main():
     print(f"Success Rate: {passed/total*100:.0f}%")
 
     if passed == total:
-        print("\n✅ ALL TESTS PASSED - Apache is ready for trading!")
+        print("\n✅ ALL TESTS PASSED - ATHENA is ready for trading!")
     else:
         print(f"\n⚠️  {total - passed} test(s) failed - review above for details")
 

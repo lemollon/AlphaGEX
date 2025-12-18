@@ -20,18 +20,18 @@ from database_adapter import get_connection
 router = APIRouter(prefix="/api/athena", tags=["ATHENA"])
 logger = logging.getLogger(__name__)
 
-# Try to import APACHE trader
+# Try to import ATHENA trader
 athena_trader = None
 try:
     from trading.athena_directional_spreads import ATHENATrader, TradingMode, run_athena
     ATHENA_AVAILABLE = True
 except ImportError as e:
     ATHENA_AVAILABLE = False
-    logger.warning(f"APACHE module not available: {e}")
+    logger.warning(f"ATHENA module not available: {e}")
 
 
 def get_athena_instance():
-    """Get the APACHE trader instance"""
+    """Get the ATHENA trader instance"""
     global athena_trader
     if athena_trader:
         return athena_trader
@@ -43,7 +43,7 @@ def get_athena_instance():
         if athena_trader:
             return athena_trader
     except Exception as e:
-        logger.debug(f"Could not get APACHE from scheduler: {e}")
+        logger.debug(f"Could not get ATHENA from scheduler: {e}")
 
     # Initialize a new instance if needed
     if ATHENA_AVAILABLE:
@@ -51,7 +51,7 @@ def get_athena_instance():
             athena_trader = run_athena(capital=100_000, mode="paper")
             return athena_trader
         except Exception as e:
-            logger.error(f"Failed to initialize APACHE: {e}")
+            logger.error(f"Failed to initialize ATHENA: {e}")
 
     return None
 
@@ -59,14 +59,14 @@ def get_athena_instance():
 @router.get("/status")
 async def get_athena_status():
     """
-    Get current APACHE bot status.
+    Get current ATHENA bot status.
 
     Returns mode, capital, P&L, positions, and configuration.
     """
     athena = get_athena_instance()
 
     if not athena:
-        # Return default status when APACHE not initialized
+        # Return default status when ATHENA not initialized
         return {
             "success": True,
             "data": {
@@ -103,7 +103,7 @@ async def get_athena_status():
             "data": status
         }
     except Exception as e:
-        logger.error(f"Error getting APACHE status: {e}")
+        logger.error(f"Error getting ATHENA status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -113,7 +113,7 @@ async def get_athena_positions(
     limit: int = Query(50, description="Max positions to return")
 ):
     """
-    Get APACHE positions from database.
+    Get ATHENA positions from database.
 
     Returns open and/or closed positions with P&L details.
     """
@@ -175,7 +175,7 @@ async def get_athena_positions(
         }
 
     except Exception as e:
-        logger.error(f"Error getting APACHE positions: {e}")
+        logger.error(f"Error getting ATHENA positions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -185,7 +185,7 @@ async def get_athena_signals(
     direction: Optional[str] = Query(None, description="Filter by direction: BULLISH, BEARISH")
 ):
     """
-    Get APACHE signals from Oracle.
+    Get ATHENA signals from Oracle.
 
     Returns recent signals with direction, confidence, and reasoning.
     """
@@ -239,7 +239,7 @@ async def get_athena_signals(
         }
 
     except Exception as e:
-        logger.error(f"Error getting APACHE signals: {e}")
+        logger.error(f"Error getting ATHENA signals: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -249,7 +249,7 @@ async def get_athena_logs(
     limit: int = Query(100, description="Max logs to return")
 ):
     """
-    Get APACHE logs for debugging and monitoring.
+    Get ATHENA logs for debugging and monitoring.
     """
     try:
         conn = get_connection()
@@ -290,7 +290,7 @@ async def get_athena_logs(
         }
 
     except Exception as e:
-        logger.error(f"Error getting APACHE logs: {e}")
+        logger.error(f"Error getting ATHENA logs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -299,7 +299,7 @@ async def get_athena_performance(
     days: int = Query(30, description="Number of days to include")
 ):
     """
-    Get APACHE performance metrics over time.
+    Get ATHENA performance metrics over time.
     """
     try:
         conn = get_connection()
@@ -365,14 +365,14 @@ async def get_athena_performance(
         }
 
     except Exception as e:
-        logger.error(f"Error getting APACHE performance: {e}")
+        logger.error(f"Error getting ATHENA performance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/config")
 async def get_athena_config():
     """
-    Get APACHE configuration settings.
+    Get ATHENA configuration settings.
     """
     try:
         conn = get_connection()
@@ -400,14 +400,14 @@ async def get_athena_config():
         }
 
     except Exception as e:
-        logger.error(f"Error getting APACHE config: {e}")
+        logger.error(f"Error getting ATHENA config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/config/{setting_name}")
 async def update_athena_config(setting_name: str, value: str):
     """
-    Update an APACHE configuration setting.
+    Update an ATHENA configuration setting.
     """
     try:
         conn = get_connection()
@@ -435,14 +435,14 @@ async def update_athena_config(setting_name: str, value: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating APACHE config: {e}")
+        logger.error(f"Error updating ATHENA config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/run")
 async def run_athena_cycle():
     """
-    Manually trigger an APACHE trading cycle.
+    Manually trigger an ATHENA trading cycle.
 
     Use for testing or forcing a trade check outside the scheduler.
     """
@@ -458,14 +458,14 @@ async def run_athena_cycle():
             "data": result
         }
     except Exception as e:
-        logger.error(f"Error running APACHE cycle: {e}")
+        logger.error(f"Error running ATHENA cycle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/oracle-advice")
 async def get_current_oracle_advice():
     """
-    Get current Oracle advice for APACHE without executing a trade.
+    Get current Oracle advice for ATHENA without executing a trade.
 
     Useful for monitoring what Oracle would recommend right now.
     """
