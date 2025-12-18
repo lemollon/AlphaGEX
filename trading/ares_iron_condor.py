@@ -2273,10 +2273,10 @@ class ARESTrader:
 
     def process_expired_positions(self) -> Dict:
         """
-        Process all 0DTE positions that expired today.
+        Process all 0DTE positions that have expired (today or earlier).
 
         Called at market close (4:00-4:05 PM ET) to:
-        1. Find positions expiring today that are still 'open'
+        1. Find ALL open positions with expiration <= today (catches missed days)
         2. Get closing price of underlying
         3. Determine outcome (MAX_PROFIT, PUT_BREACHED, CALL_BREACHED, DOUBLE_BREACH)
         4. Calculate realized P&L
@@ -2297,7 +2297,7 @@ class ARESTrader:
         }
 
         today = datetime.now(self.tz).strftime('%Y-%m-%d')
-        logger.info(f"ARES EOD: Processing expired positions for {today}")
+        logger.info(f"ARES EOD: Processing expired positions (expiration <= {today})")
 
         try:
             # Get closing price of underlying
@@ -2309,22 +2309,24 @@ class ARESTrader:
                 logger.error(f"ARES EOD: Could not get closing price for {ticker}")
                 return result
 
-            logger.info(f"ARES EOD: {ticker} closed at ${closing_price:.2f}")
+            logger.info(f"ARES EOD: {ticker} current price ${closing_price:.2f}")
 
-            # Find positions expiring today
+            # Find ALL positions that should have expired (expiration <= today)
             positions_to_process = []
 
-            # Check in-memory open positions
+            # Check in-memory open positions - process ANY that have expired
             for pos in self.open_positions[:]:  # Copy list to allow modification
-                if pos.expiration == today and pos.status == 'open':
+                if pos.expiration <= today and pos.status == 'open':
                     positions_to_process.append(pos)
+                    logger.info(f"ARES EOD: Found in-memory position {pos.position_id} (expired {pos.expiration})")
 
             # Also check database for any positions not in memory
-            db_positions = self._get_expiring_positions_from_db(today)
+            db_positions = self._get_all_expired_positions_from_db(today)
             for db_pos in db_positions:
                 # Avoid duplicates
                 if not any(p.position_id == db_pos.position_id for p in positions_to_process):
                     positions_to_process.append(db_pos)
+                    logger.info(f"ARES EOD: Found DB position {db_pos.position_id} (expired {db_pos.expiration})")
 
             if not positions_to_process:
                 logger.info(f"ARES EOD: No positions expiring today")
@@ -2472,6 +2474,65 @@ class ARESTrader:
 
         except Exception as e:
             logger.error(f"ARES EOD: Error loading expiring positions from DB: {e}")
+
+        return positions
+
+    def _get_all_expired_positions_from_db(self, as_of_date: str) -> List[IronCondorPosition]:
+        """
+        Get ALL open positions from database that have expired (expiration <= as_of_date).
+
+        This catches positions that may have been missed on previous days due to
+        service downtime or errors.
+        """
+        positions = []
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT
+                    position_id, open_date, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss,
+                    put_spread_order_id, call_spread_order_id,
+                    status, underlying_price_at_entry, vix_at_entry, expected_move
+                FROM ares_positions
+                WHERE expiration <= %s AND status = 'open' AND mode = %s
+                ORDER BY expiration ASC
+            ''', (as_of_date, self.mode.value))
+
+            for row in cursor.fetchall():
+                pos = IronCondorPosition(
+                    position_id=row[0],
+                    open_date=row[1],
+                    expiration=row[2],
+                    put_long_strike=row[3],
+                    put_short_strike=row[4],
+                    call_short_strike=row[5],
+                    call_long_strike=row[6],
+                    put_credit=row[7],
+                    call_credit=row[8],
+                    total_credit=row[9],
+                    contracts=row[10],
+                    spread_width=row[11],
+                    max_loss=row[12],
+                    put_spread_order_id=row[13] or "",
+                    call_spread_order_id=row[14] or "",
+                    status=row[15],
+                    underlying_price_at_entry=row[16] or 0,
+                    vix_at_entry=row[17] or 0,
+                    expected_move=row[18] or 0
+                )
+                positions.append(pos)
+                logger.info(f"ARES EOD: Found expired position {pos.position_id} from {pos.expiration}")
+
+            conn.close()
+            logger.info(f"ARES EOD: Found {len(positions)} expired positions in database")
+
+        except Exception as e:
+            logger.error(f"ARES EOD: Error loading expired positions from DB: {e}")
 
         return positions
 

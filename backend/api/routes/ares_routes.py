@@ -600,3 +600,34 @@ async def get_tradier_account_status():
     except Exception as e:
         logger.error(f"Error getting Tradier account status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/process-expired")
+async def process_expired_positions():
+    """
+    Manually trigger processing of all expired positions.
+
+    This will process any positions that have expired but weren't processed
+    due to service downtime or errors. Useful for catching up after outages.
+
+    Processes positions where expiration <= today and status = 'open'.
+    """
+    ares = get_ares_instance()
+
+    if not ares:
+        raise HTTPException(
+            status_code=503,
+            detail="ARES not initialized. Wait for scheduled startup."
+        )
+
+    try:
+        result = ares.process_expired_positions()
+
+        return {
+            "success": True,
+            "data": result,
+            "message": f"Processed {result.get('processed_count', 0)} expired positions"
+        }
+    except Exception as e:
+        logger.error(f"Error processing expired positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
