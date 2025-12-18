@@ -17,6 +17,7 @@ TRADING BOTS:
 - ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
 - ARES: Aggressive Iron Condor targeting 10% monthly (daily at 9:35 AM ET)
 - ARES EOD: Process expired 0DTE positions (daily at 4:05 PM ET)
+- APACHE: GEX Directional Spreads (every 30 min 9:35 AM - 3:30 PM ET)
 
 This partitioning provides:
 - Aggressive short-term trading via PHOENIX
@@ -42,11 +43,13 @@ CAPITAL_ALLOCATION = {
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
     APSCHEDULER_AVAILABLE = True
 except ImportError:
     APSCHEDULER_AVAILABLE = False
     BackgroundScheduler = None
     CronTrigger = None
+    IntervalTrigger = None
     print("Warning: APScheduler not installed. Autonomous trading scheduler will be disabled.")
 
 from core.autonomous_paper_trader import AutonomousPaperTrader
@@ -573,13 +576,16 @@ class AutonomousTraderScheduler:
 
     def scheduled_apache_logic(self):
         """
-        APACHE (GEX Directional Spreads) trading logic - runs daily at 9:40 AM ET
+        APACHE (GEX Directional Spreads) trading logic - runs every 30 minutes during market hours
 
         The GEX-based directional spread strategy:
-        - Uses ML probability models for signal generation
+        - Uses live Tradier GEX data for real-time signal generation
+        - ML probability models for direction prediction
         - Bull Call Spreads for bullish, Bear Call Spreads for bearish
         - 0DTE options on SPY
         - GEX wall proximity filter for high probability setups
+
+        Runs continuously 9:35 AM - 3:30 PM ET to capture intraday GEX shifts.
         """
         ny_tz = pytz.timezone('America/New_York')
         now = datetime.now(ny_tz)
@@ -595,37 +601,54 @@ class AutonomousTraderScheduler:
             logger.info("Market is CLOSED. Skipping APACHE logic.")
             return
 
-        logger.info("Market is OPEN. Running APACHE GEX directional strategy...")
+        # Check if within entry window (9:35 AM - 3:30 PM ET)
+        entry_start = now.replace(hour=9, minute=35, second=0)
+        entry_end = now.replace(hour=15, minute=30, second=0)
+
+        if now < entry_start:
+            logger.info(f"Before entry window ({entry_start.strftime('%H:%M')}). Skipping.")
+            return
+
+        if now > entry_end:
+            logger.info(f"After entry window ({entry_end.strftime('%H:%M')}). Checking exits only.")
+            # Still run to check exits, but won't open new positions
+            # The Apache trader handles this via should_trade() time checks
+
+        logger.info("Market is OPEN. Scanning live GEX data for directional opportunities...")
 
         try:
             self.last_apache_check = now
 
-            # Run the daily APACHE cycle
+            # Run the APACHE intraday cycle
             result = self.apache_trader.run_daily_cycle()
 
             if result:
-                logger.info(f"APACHE daily cycle completed:")
+                logger.info(f"APACHE intraday scan completed:")
                 logger.info(f"  Signal Source: {result.get('signal_source', 'N/A')}")
                 logger.info(f"  Trades Attempted: {result.get('trades_attempted', 0)}")
                 logger.info(f"  Trades Executed: {result.get('trades_executed', 0)}")
                 logger.info(f"  Positions Closed: {result.get('positions_closed', 0)}")
                 logger.info(f"  Daily P&L: ${result.get('daily_pnl', 0):,.2f}")
 
+                # Log R:R ratio if available
+                if result.get('rr_ratio'):
+                    logger.info(f"  R:R Ratio: {result.get('rr_ratio', 0):.2f}:1")
+
                 if result.get('errors'):
                     for error in result['errors']:
-                        logger.warning(f"    Warning: {error}")
+                        logger.info(f"    Note: {error}")
             else:
-                logger.info("APACHE: No actions taken today")
+                logger.info("APACHE: No actionable signal this interval")
 
             self.apache_execution_count += 1
-            logger.info(f"APACHE cycle #{self.apache_execution_count} completed successfully")
+            logger.info(f"APACHE scan #{self.apache_execution_count} completed (next scan in 30 min)")
             logger.info(f"=" * 80)
 
         except Exception as e:
             error_msg = f"ERROR in APACHE trading logic: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            logger.info("APACHE will continue despite error")
+            logger.info("APACHE will retry next interval")
             logger.info(f"=" * 80)
 
     def start(self):
@@ -646,7 +669,7 @@ class AutonomousTraderScheduler:
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 10:05 AM ET, Mon-Fri")
         logger.info(f"ARES Schedule: Daily at 9:35 AM ET, Mon-Fri")
-        logger.info(f"APACHE Schedule: Daily at 9:40 AM ET, Mon-Fri")
+        logger.info(f"APACHE Schedule: Every 30 min (9:35 AM - 3:30 PM ET), Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -734,22 +757,26 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
 
         # =================================================================
-        # APACHE JOB: GEX Directional Spreads - runs once daily at 9:40 AM ET
+        # APACHE JOB: GEX Directional Spreads - runs every 30 minutes during market hours
+        # Uses live Tradier GEX data to find intraday opportunities
         # =================================================================
         if self.apache_trader:
+            # Run every 30 minutes during market hours (9:35 AM - 3:30 PM ET)
+            # First run at 9:35 AM, then 10:05, 10:35, etc.
             self.scheduler.add_job(
                 self.scheduled_apache_logic,
-                trigger=CronTrigger(
-                    hour=9,        # 9:00 AM
-                    minute=40,     # 9:40 AM - after ARES entry
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=30,
+                    start_date=datetime.now(pytz.timezone('America/New_York')).replace(
+                        hour=9, minute=35, second=0, microsecond=0
+                    ),
                     timezone='America/New_York'
                 ),
                 id='apache_trading',
-                name='APACHE - GEX Directional Spreads',
+                name='APACHE - GEX Directional Spreads (30-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ APACHE job scheduled (9:40 AM ET daily)")
+            logger.info("✅ APACHE job scheduled (every 30 min during market hours)")
         else:
             logger.warning("⚠️ APACHE not available - GEX directional trading disabled")
 
@@ -930,7 +957,7 @@ def run_standalone():
             # Log status periodically
             status = scheduler.get_status()
             if status['market_open']:
-                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}")
+                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, APACHE={scheduler.apache_execution_count}")
             else:
                 logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
 
