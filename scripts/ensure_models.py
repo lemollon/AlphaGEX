@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Ensure ML models exist - train them if missing.
+Also runs database migrations for new config settings.
 
 This script is designed to run at startup to ensure the GEX ML models
 are available. If the models file doesn't exist, it will train them.
@@ -18,6 +19,36 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 MODEL_PATH = "models/gex_signal_generator.joblib"
+
+
+def ensure_config():
+    """Ensure apache_config has all required settings."""
+    try:
+        from database_adapter import get_connection
+
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Add min_rr_ratio if missing
+        c.execute("""
+            SELECT setting_value FROM apache_config
+            WHERE setting_name = 'min_rr_ratio'
+        """)
+        if not c.fetchone():
+            c.execute("""
+                INSERT INTO apache_config (setting_name, setting_value, description)
+                VALUES ('min_rr_ratio', '1.5', 'Minimum risk:reward ratio using GEX walls (1.5 = need $1.50 reward per $1 risk)')
+            """)
+            conn.commit()
+            print("[ensure_config] Added min_rr_ratio = 1.5 to apache_config")
+        else:
+            print("[ensure_config] min_rr_ratio already configured")
+
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[ensure_config] Warning: {e}")
+        return False
 
 
 def ensure_models():
@@ -85,5 +116,9 @@ def ensure_models():
 
 
 if __name__ == "__main__":
+    # Run config migrations first
+    ensure_config()
+
+    # Then ensure models exist
     success = ensure_models()
     sys.exit(0 if success else 1)
