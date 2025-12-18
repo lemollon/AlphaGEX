@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, Brain, Activity, RefreshCw, Trash2, Play, CheckCircle, XCircle, AlertCircle, Sparkles, FileText } from 'lucide-react'
+import { Eye, Brain, Activity, RefreshCw, Trash2, Play, CheckCircle, XCircle, AlertCircle, Sparkles, FileText, History, TrendingUp, BarChart3 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
@@ -33,6 +33,22 @@ interface Prediction {
   top_factors: [string, number][]
 }
 
+interface StoredPrediction {
+  id: number
+  trade_date: string
+  bot_name: string
+  advice: string
+  win_probability: number
+  confidence: number
+  suggested_risk_pct: number
+  reasoning: string
+  model_version: string
+  top_factors: any
+  actual_outcome: string | null
+  actual_pnl: number | null
+  created_at: string
+}
+
 export default function OraclePage() {
   const [status, setStatus] = useState<OracleStatus | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -41,6 +57,9 @@ export default function OraclePage() {
   const [prediction, setPrediction] = useState<Prediction | null>(null)
   const [claudeExplanation, setClaudeExplanation] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'test' | 'history' | 'decisions'>('test')
+  const [storedPredictions, setStoredPredictions] = useState<StoredPrediction[]>([])
+  const [historyDays, setHistoryDays] = useState(30)
 
   // Form state for test prediction
   const [formData, setFormData] = useState({
@@ -85,6 +104,17 @@ export default function OraclePage() {
     }
   }
 
+  const fetchPredictionHistory = useCallback(async () => {
+    try {
+      const response = await apiClient.getOraclePredictions({ days: historyDays, limit: 100 })
+      if (response.data?.success) {
+        setStoredPredictions(response.data.data?.predictions || [])
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch prediction history:', err)
+    }
+  }, [historyDays])
+
   const runAnalysis = async () => {
     setAnalyzing(true)
     setError(null)
@@ -111,7 +141,7 @@ export default function OraclePage() {
   useEffect(() => {
     const loadData = async () => {
       setLoading(true)
-      await Promise.all([fetchStatus(), fetchLogs()])
+      await Promise.all([fetchStatus(), fetchLogs(), fetchPredictionHistory()])
       setLoading(false)
     }
     loadData()
@@ -119,7 +149,7 @@ export default function OraclePage() {
     // Auto-refresh logs every 5 seconds
     const interval = setInterval(fetchLogs, 5000)
     return () => clearInterval(interval)
-  }, [fetchStatus, fetchLogs])
+  }, [fetchStatus, fetchLogs, fetchPredictionHistory])
 
   const getAdviceColor = (advice: string) => {
     switch (advice) {
@@ -214,6 +244,40 @@ export default function OraclePage() {
             </div>
           </div>
 
+          {/* Tabs */}
+          <div className="flex gap-2 mb-6">
+            <button
+              onClick={() => setActiveTab('test')}
+              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+                activeTab === 'test' ? 'bg-purple-600 text-white' : 'bg-background-card text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              <Play className="w-4 h-4" />
+              Test Prediction
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+                activeTab === 'history' ? 'bg-purple-600 text-white' : 'bg-background-card text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              <History className="w-4 h-4" />
+              Prediction History ({storedPredictions.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('decisions')}
+              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+                activeTab === 'decisions' ? 'bg-purple-600 text-white' : 'bg-background-card text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              Decision Log
+            </button>
+          </div>
+
+          {/* Test Tab */}
+          {activeTab === 'test' && (
+          <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Test Prediction Form */}
             <div className="card">
@@ -440,8 +504,10 @@ export default function OraclePage() {
               )}
             </div>
           )}
+          </>
+          )}
 
-          {/* Info Section */}
+          {/* Info Section - always visible */}
           <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="card bg-purple-500/5 border border-purple-500/20">
               <div className="flex items-start gap-3">
@@ -479,15 +545,153 @@ export default function OraclePage() {
               </div>
             </div>
           </div>
-        </div>
 
-        {/* ORACLE Decision Log */}
-        <div className="card mt-6">
-          <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-green-500" />
-            ORACLE Decision Log
-          </h3>
-          <DecisionLogViewer defaultBot="ORACLE" />
+          {/* History Tab */}
+          {activeTab === 'history' && (
+            <div className="space-y-6">
+              {/* Time Filter */}
+              <div className="flex items-center gap-4">
+                <select
+                  value={historyDays}
+                  onChange={(e) => setHistoryDays(Number(e.target.value))}
+                  className="input"
+                >
+                  <option value={7}>Last 7 Days</option>
+                  <option value={30}>Last 30 Days</option>
+                  <option value={90}>Last 90 Days</option>
+                </select>
+                <button
+                  onClick={fetchPredictionHistory}
+                  className="btn-secondary flex items-center gap-2"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Refresh
+                </button>
+              </div>
+
+              {/* Prediction History Table */}
+              <div className="card overflow-hidden">
+                <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+                  <History className="w-5 h-5 text-purple-400" />
+                  Stored Predictions
+                </h3>
+                {storedPredictions.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-background-deep">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Date</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Bot</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Advice</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Win Prob</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Confidence</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Outcome</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">P&L</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Reasoning</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {storedPredictions.map((pred) => (
+                          <tr key={pred.id} className="hover:bg-background-hover">
+                            <td className="px-4 py-3 text-sm text-text-secondary">
+                              {new Date(pred.trade_date).toLocaleDateString()}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="px-2 py-1 rounded text-xs font-medium bg-purple-500/20 text-purple-300">
+                                {pred.bot_name}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`font-semibold ${getAdviceColor(pred.advice)}`}>
+                                {pred.advice}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-text-primary">
+                              {pred.win_probability ? `${(pred.win_probability * 100).toFixed(1)}%` : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-text-primary">
+                              {pred.confidence ? `${pred.confidence.toFixed(1)}%` : '-'}
+                            </td>
+                            <td className="px-4 py-3">
+                              {pred.actual_outcome ? (
+                                <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                  pred.actual_outcome.includes('MAX_PROFIT') || pred.actual_outcome === 'WIN'
+                                    ? 'bg-green-500/20 text-green-300'
+                                    : 'bg-red-500/20 text-red-300'
+                                }`}>
+                                  {pred.actual_outcome}
+                                </span>
+                              ) : (
+                                <span className="text-text-muted text-sm">Pending</span>
+                              )}
+                            </td>
+                            <td className={`px-4 py-3 text-sm font-medium ${
+                              pred.actual_pnl != null
+                                ? pred.actual_pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                                : 'text-text-muted'
+                            }`}>
+                              {pred.actual_pnl != null ? `$${pred.actual_pnl.toFixed(2)}` : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-text-secondary max-w-xs truncate">
+                              {pred.reasoning || '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-text-muted text-center py-8">
+                    No predictions stored yet. Run predictions through the bots to see history here.
+                  </p>
+                )}
+              </div>
+
+              {/* Stats Summary */}
+              {storedPredictions.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="card">
+                    <p className="text-text-secondary text-sm mb-1">Total Predictions</p>
+                    <p className="text-2xl font-bold text-text-primary">{storedPredictions.length}</p>
+                  </div>
+                  <div className="card">
+                    <p className="text-text-secondary text-sm mb-1">With Outcomes</p>
+                    <p className="text-2xl font-bold text-text-primary">
+                      {storedPredictions.filter(p => p.actual_outcome).length}
+                    </p>
+                  </div>
+                  <div className="card">
+                    <p className="text-text-secondary text-sm mb-1">Correct Predictions</p>
+                    <p className="text-2xl font-bold text-green-400">
+                      {storedPredictions.filter(p =>
+                        p.actual_outcome && (p.actual_outcome.includes('MAX_PROFIT') || p.actual_outcome === 'WIN')
+                      ).length}
+                    </p>
+                  </div>
+                  <div className="card">
+                    <p className="text-text-secondary text-sm mb-1">Total P&L</p>
+                    <p className={`text-2xl font-bold ${
+                      storedPredictions.reduce((sum, p) => sum + (p.actual_pnl || 0), 0) >= 0
+                        ? 'text-green-400' : 'text-red-400'
+                    }`}>
+                      ${storedPredictions.reduce((sum, p) => sum + (p.actual_pnl || 0), 0).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Decisions Tab */}
+          {activeTab === 'decisions' && (
+            <div className="card">
+              <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-green-500" />
+                ORACLE Decision Log
+              </h3>
+              <DecisionLogViewer defaultBot="ORACLE" />
+            </div>
+          )}
         </div>
       </main>
     </div>

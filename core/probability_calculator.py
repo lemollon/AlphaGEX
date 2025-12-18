@@ -489,7 +489,8 @@ class ProbabilityCalculator:
                 range_low, range_high, prob_in_range, prob_above, prob_below,
                 confidence_level, net_gex, flip_point, call_wall, put_wall,
                 vix_level, implied_vol, psychology_state, fomo_level, fear_level, mm_state
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         ''', (
             kwargs.get('symbol'),
             kwargs.get('prediction_type'),
@@ -513,7 +514,8 @@ class ProbabilityCalculator:
             gex_data.get('mm_state')
         ))
 
-        prediction_id = cursor.lastrowid
+        result = cursor.fetchone()
+        prediction_id = result[0] if result else None
         conn.commit()
         conn.close()
 
@@ -552,11 +554,21 @@ class ProbabilityCalculator:
             WHERE id = ?
         ''', (actual_close_price, prediction_correct, prediction_id))
 
-        # Insert outcome
+        # Insert outcome record for tracking
         cursor.execute('''
-            INSERT INTO probability_outcomes (prediction_id, actual_close_price, prediction_correct, error_pct)
-            VALUES (?, ?, ?, ?)
-        ''', (prediction_id, actual_close_price, prediction_correct, error_pct))
+            INSERT INTO probability_outcomes (
+                prediction_id, prediction_type, predicted_probability,
+                actual_outcome, correct_prediction, outcome_timestamp, error_pct
+            )
+            VALUES (%s, %s, %s, %s, %s, NOW(), %s)
+        ''', (
+            prediction_id,
+            'RANGE',  # prediction type
+            prob_in_range,  # the probability we predicted
+            prediction_correct,  # actual outcome (was price in range?)
+            prediction_correct,  # correct_prediction matches actual_outcome for range predictions
+            error_pct
+        ))
 
         conn.commit()
         conn.close()

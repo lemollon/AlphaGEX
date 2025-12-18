@@ -1093,43 +1093,95 @@ def init_database():
         )
     ''')
 
+    # Probability Predictions (used by probability_calculator.py)
+    # Stores each prediction made by the system for later accuracy tracking
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS probability_predictions (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            symbol TEXT NOT NULL,
+            prediction_type TEXT NOT NULL,
+            target_date DATE NOT NULL,
+            current_price REAL,
+            range_low REAL,
+            range_high REAL,
+            prob_in_range REAL,
+            prob_above REAL,
+            prob_below REAL,
+            confidence_level TEXT,
+            net_gex REAL,
+            flip_point REAL,
+            call_wall REAL,
+            put_wall REAL,
+            vix_level REAL,
+            implied_vol REAL,
+            psychology_state TEXT,
+            fomo_level REAL,
+            fear_level REAL,
+            mm_state TEXT,
+            actual_close_price REAL,
+            prediction_correct BOOLEAN,
+            recorded_at TIMESTAMPTZ
+        )
+    ''')
+
     # Probability Outcomes (used by probability_routes.py)
+    # Links predictions to actual outcomes for accuracy tracking
     c.execute('''
         CREATE TABLE IF NOT EXISTS probability_outcomes (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMPTZ DEFAULT NOW(),
+            prediction_id INTEGER REFERENCES probability_predictions(id),
             prediction_type TEXT,
             predicted_probability REAL,
             actual_outcome BOOLEAN,
+            correct_prediction BOOLEAN,
+            outcome_timestamp TIMESTAMPTZ,
             confidence REAL,
             regime_type TEXT,
             gex_value REAL,
-            vix_value REAL
+            vix_value REAL,
+            error_pct REAL
         )
     ''')
 
-    # Probability Weights (used by probability_routes.py)
+    # Probability Weights (used by probability_routes.py and probability_calculator.py)
+    # Stores the configurable weights for probability calculations
     c.execute('''
         CREATE TABLE IF NOT EXISTS probability_weights (
             id SERIAL PRIMARY KEY,
-            updated_at TIMESTAMPTZ DEFAULT NOW(),
-            factor_name TEXT UNIQUE,
-            weight REAL,
-            category TEXT,
-            description TEXT
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            weight_name TEXT NOT NULL,
+            weight_value REAL NOT NULL,
+            description TEXT,
+            last_updated TIMESTAMPTZ DEFAULT NOW(),
+            calibration_count INTEGER DEFAULT 0,
+            gex_wall_strength REAL DEFAULT 0.35,
+            volatility_impact REAL DEFAULT 0.25,
+            psychology_signal REAL DEFAULT 0.20,
+            mm_positioning REAL DEFAULT 0.15,
+            historical_pattern REAL DEFAULT 0.05,
+            accuracy_score REAL,
+            active BOOLEAN DEFAULT TRUE
         )
     ''')
 
     # Calibration History (used by probability_routes.py)
+    # Tracks model weight adjustments over time
     c.execute('''
         CREATE TABLE IF NOT EXISTS calibration_history (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMPTZ DEFAULT NOW(),
-            calibration_type TEXT,
-            before_accuracy REAL,
-            after_accuracy REAL,
-            adjustments JSONB,
-            sample_size INTEGER
+            calibration_date TIMESTAMPTZ DEFAULT NOW(),
+            weight_name TEXT,
+            old_value REAL,
+            new_value REAL,
+            reason TEXT,
+            performance_delta REAL,
+            predictions_analyzed INTEGER,
+            overall_accuracy REAL,
+            high_conf_accuracy REAL,
+            adjustments_made JSONB
         )
     ''')
 

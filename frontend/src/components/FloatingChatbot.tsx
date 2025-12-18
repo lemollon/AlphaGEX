@@ -189,8 +189,8 @@ export default function FloatingChatbot() {
   useEffect(() => {
     const checkAlerts = async () => {
       try {
-        const response = await fetch('/api/ai/gexis/alerts')
-        const data = await response.json()
+        const response = await apiClient.gexisAlerts()
+        const data = response.data
         if (data.success && data.count > 0) {
           setAlertCount(data.count)
         } else {
@@ -294,12 +294,8 @@ export default function FloatingChatbot() {
   // Handle quick commands
   const handleCommand = async (command: string): Promise<string | null> => {
     try {
-      const response = await fetch('/api/ai/gexis/command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command })
-      })
-      const data = await response.json()
+      const response = await apiClient.gexisCommand(command)
+      const data = response.data
 
       if (data.success) {
         return data.response || data.briefing || 'Command executed successfully.'
@@ -358,17 +354,13 @@ export default function FloatingChatbot() {
           })
         } else {
           // Use analysis with context endpoint for conversation memory
-          response = await fetch('/api/ai/gexis/analyze-with-context', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              query: currentInput,
-              symbol: detectedSymbol,
-              session_id: sessionId,
-              market_data: {}
-            })
+          response = await apiClient.gexisAnalyzeWithContext({
+            query: currentInput,
+            symbol: detectedSymbol,
+            session_id: sessionId,
+            market_data: {}
           })
-          const data = await response.json()
+          const data = response.data
 
           if (data.success && data.data) {
             analysisText = data.data.analysis || ''
@@ -453,8 +445,8 @@ export default function FloatingChatbot() {
 
   const exportConversation = async () => {
     try {
-      const response = await fetch(`/api/ai/gexis/export/${sessionId}?format=markdown`)
-      const data = await response.json()
+      const response = await apiClient.gexisExportConversation(sessionId, 'markdown')
+      const data = response.data
 
       if (data.success && data.content) {
         // Create and download file

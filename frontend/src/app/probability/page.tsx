@@ -83,9 +83,9 @@ export default function ProbabilityDashboard() {
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2">Probability System</h1>
+            <h1 className="text-3xl font-bold text-white mb-2">PYTHIA</h1>
             <p className="text-gray-400">
-              Track prediction accuracy, probability weights, and model calibration
+              Predictive Yield Through Holistic Intelligence Analysis - Track prediction accuracy, probability weights, and model calibration
             </p>
           </div>
 
