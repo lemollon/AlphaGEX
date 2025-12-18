@@ -194,6 +194,9 @@ class APACHEConfig:
     wall_filter_pct: float = 1.0          # Only trade within 1% of relevant wall
     trailing_stop_pct: float = 0.3        # 0.3% trailing stop
 
+    # Risk/Reward filter
+    min_rr_ratio: float = 1.5             # Minimum risk:reward ratio (1.5 = need $1.50 reward per $1 risk)
+
     # Execution parameters
     ticker: str = "SPY"
     mode: TradingMode = TradingMode.PAPER
@@ -291,7 +294,8 @@ class APACHETrader:
                 FROM apache_config
                 WHERE setting_name IN (
                     'enabled', 'mode', 'wall_filter_pct', 'spread_width',
-                    'contracts_per_trade', 'max_daily_trades', 'trailing_stop_pct', 'ticker'
+                    'contracts_per_trade', 'max_daily_trades', 'trailing_stop_pct', 'ticker',
+                    'min_rr_ratio'
                 )
             """)
 
@@ -314,6 +318,8 @@ class APACHETrader:
                     self.config.trailing_stop_pct = float(value)
                 elif name == 'ticker':
                     self.config.ticker = value
+                elif name == 'min_rr_ratio':
+                    self.config.min_rr_ratio = float(value)
 
             conn.close()
             logger.info("APACHE: Loaded config from database")
@@ -551,6 +557,68 @@ class APACHETrader:
             return True
 
         return put_wall <= spot <= call_wall
+
+    def calculate_risk_reward(self, gex_data: Dict, spread_type: SpreadType) -> Tuple[float, str]:
+        """
+        Calculate risk:reward ratio using GEX walls as natural targets.
+
+        For BULLISH (Bull Call Spread):
+        - We're near put_wall (support), targeting call_wall (resistance)
+        - Reward = distance to call_wall
+        - Risk = distance from put_wall (our natural stop zone)
+        - R:R = (call_wall - spot) / (spot - put_wall)
+
+        For BEARISH (Bear Call Spread):
+        - We're near call_wall (resistance), targeting put_wall (support)
+        - Reward = distance to put_wall
+        - Risk = distance from call_wall (our natural stop zone)
+        - R:R = (spot - put_wall) / (call_wall - spot)
+
+        Returns:
+            Tuple of (rr_ratio, reasoning_string)
+        """
+        spot = gex_data.get('spot_price', 0)
+        call_wall = gex_data.get('call_wall', 0)
+        put_wall = gex_data.get('put_wall', 0)
+
+        # Validate we have the data needed
+        if not spot or not call_wall or not put_wall:
+            return 0.0, "Missing GEX wall data for R:R calculation"
+
+        if call_wall <= put_wall:
+            return 0.0, f"Invalid wall setup: call_wall ({call_wall}) <= put_wall ({put_wall})"
+
+        if spread_type == SpreadType.BULL_CALL_SPREAD:
+            # Bullish: target is call_wall, stop is put_wall area
+            reward = call_wall - spot
+            risk = spot - put_wall
+
+            if risk <= 0:
+                return float('inf'), f"Price ({spot:.2f}) at or below put_wall ({put_wall:.2f}) - infinite R:R"
+            if reward <= 0:
+                return 0.0, f"Price ({spot:.2f}) at or above call_wall ({call_wall:.2f}) - no upside"
+
+            rr_ratio = reward / risk
+            reasoning = (f"BULLISH R:R = {rr_ratio:.2f}:1 | "
+                        f"Reward: ${reward:.2f} to call_wall ({call_wall:.2f}), "
+                        f"Risk: ${risk:.2f} to put_wall ({put_wall:.2f})")
+
+        else:  # BEAR_CALL_SPREAD
+            # Bearish: target is put_wall, stop is call_wall area
+            reward = spot - put_wall
+            risk = call_wall - spot
+
+            if risk <= 0:
+                return float('inf'), f"Price ({spot:.2f}) at or above call_wall ({call_wall:.2f}) - infinite R:R"
+            if reward <= 0:
+                return 0.0, f"Price ({spot:.2f}) at or below put_wall ({put_wall:.2f}) - no downside"
+
+            rr_ratio = reward / risk
+            reasoning = (f"BEARISH R:R = {rr_ratio:.2f}:1 | "
+                        f"Reward: ${reward:.2f} to put_wall ({put_wall:.2f}), "
+                        f"Risk: ${risk:.2f} to call_wall ({call_wall:.2f})")
+
+        return rr_ratio, reasoning
 
     def should_trade(self) -> Tuple[bool, str]:
         """Check if we should trade today"""
@@ -1089,6 +1157,30 @@ class APACHETrader:
             return result
 
         result['signal_source'] = signal_source
+
+        # === R:R FILTER: Check risk/reward ratio using GEX walls ===
+        rr_ratio, rr_reasoning = self.calculate_risk_reward(gex_data, spread_type)
+        result['rr_ratio'] = rr_ratio
+        result['rr_reasoning'] = rr_reasoning
+
+        self._log_to_db("INFO", f"R:R Analysis: {rr_reasoning}")
+
+        if rr_ratio < self.config.min_rr_ratio:
+            self._log_to_db("INFO",
+                f"SKIP: R:R {rr_ratio:.2f}:1 below minimum {self.config.min_rr_ratio}:1",
+                {'rr_ratio': rr_ratio, 'min_required': self.config.min_rr_ratio, 'reasoning': rr_reasoning}
+            )
+            result['errors'].append(f"R:R {rr_ratio:.2f}:1 < {self.config.min_rr_ratio}:1 minimum")
+            # Still check exits for existing positions
+            closed = self.check_exits()
+            result['positions_closed'] = len(closed)
+            result['daily_pnl'] = sum(p.realized_pnl for p in closed)
+            return result
+
+        self._log_to_db("INFO",
+            f"R:R PASSED: {rr_ratio:.2f}:1 >= {self.config.min_rr_ratio}:1 minimum",
+            {'rr_ratio': rr_ratio, 'min_required': self.config.min_rr_ratio}
+        )
 
         # Save signal to database
         signal_id = self._save_ml_signal_to_db(ml_signal, gex_data) if ml_signal else None
