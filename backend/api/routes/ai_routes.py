@@ -641,7 +641,7 @@ async def get_gexis_welcome():
 
 All systems are operational. I have full access to AlphaGEX's trading intelligence, including:
 - Real-time GEX analysis and market maker positioning
-- ARES, APACHE, and ATLAS bot status monitoring
+- ARES, ATHENA, and ATLAS bot status monitoring
 - Trade recommendations and probability analysis
 - Your trading history and performance insights
 
@@ -695,7 +695,7 @@ async def get_daily_briefing():
             c.execute("""
                 SELECT bot_name, is_active, last_heartbeat
                 FROM autonomous_config
-                WHERE bot_name IN ('ARES', 'APACHE', 'ATLAS')
+                WHERE bot_name IN ('ARES', 'ATHENA', 'ATLAS')
             """)
             for row in c.fetchall():
                 briefing_data["bots"][row[0]] = {
@@ -771,7 +771,7 @@ MARKET DATA:
 
 BOT STATUS:
 - ARES: {'Active' if briefing_data['bots'].get('ARES', {}).get('active') else 'Inactive'}
-- APACHE: {'Active' if briefing_data['bots'].get('APACHE', {}).get('active') else 'Inactive'}
+- ATHENA: {'Active' if briefing_data['bots'].get('ATHENA', {}).get('active') else 'Inactive'}
 - ATLAS: {'Active' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Inactive'}
 
 POSITIONS:
@@ -815,7 +815,7 @@ SPY is trading at ${briefing_data['market'].get('spot_price', 'N/A')} with Net G
 
 **Bot Status**
 - ARES: {'Online' if briefing_data['bots'].get('ARES', {}).get('active') else 'Offline'}
-- APACHE: {'Online' if briefing_data['bots'].get('APACHE', {}).get('active') else 'Offline'}
+- ATHENA: {'Online' if briefing_data['bots'].get('ATHENA', {}).get('active') else 'Offline'}
 - ATLAS: {'Online' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Offline'}
 
 **Positions**
@@ -901,7 +901,7 @@ async def execute_quick_command(request: dict):
                     SELECT bot_name, is_active, last_heartbeat,
                            COALESCE(config_data->>'mode', 'unknown') as mode
                     FROM autonomous_config
-                    WHERE bot_name IN ('ARES', 'APACHE', 'ATLAS')
+                    WHERE bot_name IN ('ARES', 'ATHENA', 'ATLAS')
                 """)
                 for row in c.fetchall():
                     heartbeat_age = None
