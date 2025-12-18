@@ -45,7 +45,7 @@ const navItems = [
   { href: '/scanner', label: 'Scanner', icon: Search, category: 'Trading' },
   { href: '/zero-dte-backtest', label: 'KRONOS (0DTE Condor)', icon: Clock, category: 'AI & Testing' },
   { href: '/oracle', label: 'Oracle AI', icon: Eye, category: 'AI & Testing' },
-  { href: '/probability', label: 'Probability System', icon: Activity, category: 'AI & Testing' },
+  { href: '/probability', label: 'PYTHIA (Predictions)', icon: Activity, category: 'AI & Testing' },
   { href: '/ares', label: 'ARES (SPX Iron Condor)', icon: Sword, category: 'Live Trading' },
   { href: '/athena', label: 'ATHENA (Directional Spreads)', icon: Target, category: 'Live Trading' },
   { href: '/trader', label: 'PHOENIX (SPY 0DTE)', icon: Bot, category: 'Beta' },

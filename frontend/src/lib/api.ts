@@ -411,7 +411,7 @@ export const apiClient = {
     pattern_type: string
   }) => api.post('/api/optimizer/live-recommendations', data),
 
-  // Probability System
+  // PYTHIA - Predictive Yield Through Holistic Intelligence Analysis
   getProbabilityOutcomes: (days?: number) => api.get('/api/probability/outcomes', { params: { days: days || 30 } }),
   getProbabilityWeights: () => api.get('/api/probability/weights'),
   getCalibrationHistory: (days?: number) => api.get('/api/probability/calibration-history', { params: { days: days || 90 } }),

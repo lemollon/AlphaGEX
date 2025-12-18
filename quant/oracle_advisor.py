@@ -1733,7 +1733,7 @@ class OracleAdvisor:
         context: MarketContext,
         trade_date: str
     ) -> bool:
-        """Store prediction to database for feedback loop"""
+        """Store prediction to database for feedback loop - FULL data persistence"""
         if not DB_AVAILABLE:
             logger.warning("Database not available")
             return False
@@ -1742,14 +1742,19 @@ class OracleAdvisor:
             conn = get_connection()
             cursor = conn.cursor()
 
+            # Ensure table has all required columns (migration-safe)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS oracle_predictions (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMPTZ DEFAULT NOW(),
                     trade_date DATE NOT NULL,
                     bot_name TEXT NOT NULL,
+                    prediction_time TIMESTAMPTZ DEFAULT NOW(),
 
+                    -- Market Context
+                    spot_price REAL,
                     vix REAL,
+                    gex_net REAL,
                     gex_normalized REAL,
                     gex_regime TEXT,
                     gex_flip_point REAL,
@@ -1757,35 +1762,91 @@ class OracleAdvisor:
                     gex_put_wall REAL,
                     day_of_week INTEGER,
 
+                    -- Prediction Details
                     advice TEXT,
                     win_probability REAL,
+                    confidence REAL,
                     suggested_risk_pct REAL,
                     suggested_sd_multiplier REAL,
                     model_version TEXT,
 
+                    -- GEX-Specific (ARES)
+                    use_gex_walls BOOLEAN DEFAULT FALSE,
+                    suggested_put_strike REAL,
+                    suggested_call_strike REAL,
+
+                    -- Explanation & Transparency
+                    reasoning TEXT,
+                    top_factors JSONB,
+                    probabilities JSONB,
+
+                    -- Claude AI Analysis (full transparency)
+                    claude_analysis JSONB,
+
+                    -- Outcomes (filled after trade closes)
                     prediction_used BOOLEAN DEFAULT FALSE,
                     actual_outcome TEXT,
                     actual_pnl REAL,
+                    outcome_date DATE,
 
                     UNIQUE(trade_date, bot_name)
                 )
             """)
 
+            # Serialize top_factors as JSON
+            top_factors_json = json.dumps([
+                {"feature": f[0], "importance": f[1]}
+                for f in (prediction.top_factors or [])
+            ]) if prediction.top_factors else None
+
+            # Serialize probabilities as JSON
+            probabilities_json = json.dumps(prediction.probabilities) if prediction.probabilities else None
+
+            # Serialize Claude analysis as JSON (full transparency)
+            claude_json = None
+            if prediction.claude_analysis:
+                ca = prediction.claude_analysis
+                claude_json = json.dumps({
+                    "analysis": ca.analysis,
+                    "confidence_adjustment": ca.confidence_adjustment,
+                    "risk_factors": ca.risk_factors,
+                    "opportunities": ca.opportunities,
+                    "recommendation": ca.recommendation,
+                    "override_advice": ca.override_advice,
+                    "tokens_used": ca.tokens_used,
+                    "input_tokens": ca.input_tokens,
+                    "output_tokens": ca.output_tokens,
+                    "response_time_ms": ca.response_time_ms,
+                    "model_used": ca.model_used,
+                    # Store raw prompt/response for full transparency
+                    "raw_prompt": ca.raw_prompt[:2000] if ca.raw_prompt else None,
+                    "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
+                })
+
             cursor.execute("""
                 INSERT INTO oracle_predictions (
-                    trade_date, bot_name, vix, gex_normalized, gex_regime,
+                    trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
                     gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                    advice, win_probability, suggested_risk_pct,
-                    suggested_sd_multiplier, model_version
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    advice, win_probability, confidence, suggested_risk_pct,
+                    suggested_sd_multiplier, model_version,
+                    use_gex_walls, suggested_put_strike, suggested_call_strike,
+                    reasoning, top_factors, probabilities, claude_analysis
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (trade_date, bot_name) DO UPDATE SET
                     advice = EXCLUDED.advice,
                     win_probability = EXCLUDED.win_probability,
+                    confidence = EXCLUDED.confidence,
+                    reasoning = EXCLUDED.reasoning,
+                    top_factors = EXCLUDED.top_factors,
+                    probabilities = EXCLUDED.probabilities,
+                    claude_analysis = EXCLUDED.claude_analysis,
                     timestamp = NOW()
             """, (
                 trade_date,
                 prediction.bot_name.value,
+                context.spot_price,
                 context.vix,
+                context.gex_net,
                 context.gex_normalized,
                 context.gex_regime.value,
                 context.gex_flip_point,
@@ -1794,9 +1855,17 @@ class OracleAdvisor:
                 context.day_of_week,
                 prediction.advice.value,
                 prediction.win_probability,
+                prediction.confidence,
                 prediction.suggested_risk_pct,
                 prediction.suggested_sd_multiplier,
-                prediction.model_version
+                prediction.model_version,
+                prediction.use_gex_walls,
+                prediction.suggested_put_strike,
+                prediction.suggested_call_strike,
+                prediction.reasoning,
+                top_factors_json,
+                probabilities_json,
+                claude_json
             ))
 
             conn.commit()
@@ -1848,9 +1917,12 @@ class OracleAdvisor:
         trade_date: str,
         bot_name: BotName,
         outcome: TradeOutcome,
-        actual_pnl: float
+        actual_pnl: float,
+        spot_at_exit: float = None,
+        put_strike: float = None,
+        call_strike: float = None
     ) -> bool:
-        """Update prediction with actual outcome (real-time)"""
+        """Update prediction with actual outcome and store training data for ML feedback loop"""
         if not DB_AVAILABLE:
             return False
 
@@ -1858,17 +1930,104 @@ class OracleAdvisor:
             conn = get_connection()
             cursor = conn.cursor()
 
+            # Update the prediction with outcome
             cursor.execute("""
                 UPDATE oracle_predictions
                 SET prediction_used = TRUE,
                     actual_outcome = %s,
-                    actual_pnl = %s
+                    actual_pnl = %s,
+                    outcome_date = CURRENT_DATE
                 WHERE trade_date = %s AND bot_name = %s
             """, (outcome.value, actual_pnl, trade_date, bot_name.value))
 
+            # Also store in oracle_training_outcomes for ML feedback loop
+            # First, get the original prediction features
+            cursor.execute("""
+                SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                       gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                       win_probability, suggested_put_strike, suggested_call_strike,
+                       model_version
+                FROM oracle_predictions
+                WHERE trade_date = %s AND bot_name = %s
+            """, (trade_date, bot_name.value))
+
+            row = cursor.fetchone()
+            if row:
+                spot_at_entry, vix, gex_net, gex_norm, gex_regime, flip, call_wall, put_wall, dow, \
+                    win_prob, pred_put, pred_call, model_ver = row
+
+                is_win = outcome.value in ['MAX_PROFIT', 'WIN', 'PARTIAL_WIN']
+
+                # Build features JSON for training
+                features_json = json.dumps({
+                    'vix': vix,
+                    'gex_net': gex_net,
+                    'gex_normalized': gex_norm,
+                    'gex_regime': gex_regime,
+                    'gex_flip_point': flip,
+                    'gex_call_wall': call_wall,
+                    'gex_put_wall': put_wall,
+                    'day_of_week': dow,
+                    'predicted_win_probability': win_prob,
+                })
+
+                # Create training outcomes table if needed
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS oracle_training_outcomes (
+                        id SERIAL PRIMARY KEY,
+                        trade_date DATE NOT NULL,
+                        bot_name TEXT NOT NULL,
+                        features JSONB NOT NULL,
+                        outcome TEXT NOT NULL,
+                        is_win BOOLEAN NOT NULL,
+                        net_pnl REAL,
+                        put_strike REAL,
+                        call_strike REAL,
+                        spot_at_entry REAL,
+                        spot_at_exit REAL,
+                        used_in_model_version TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE(trade_date, bot_name)
+                    )
+                """)
+
+                # Store training outcome for ML retraining
+                cursor.execute("""
+                    INSERT INTO oracle_training_outcomes (
+                        trade_date, bot_name, features, outcome, is_win, net_pnl,
+                        put_strike, call_strike, spot_at_entry, spot_at_exit,
+                        used_in_model_version
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (trade_date, bot_name) DO UPDATE SET
+                        outcome = EXCLUDED.outcome,
+                        is_win = EXCLUDED.is_win,
+                        net_pnl = EXCLUDED.net_pnl,
+                        spot_at_exit = EXCLUDED.spot_at_exit
+                """, (
+                    trade_date,
+                    bot_name.value,
+                    features_json,
+                    outcome.value,
+                    is_win,
+                    actual_pnl,
+                    put_strike or pred_put,
+                    call_strike or pred_call,
+                    spot_at_entry,
+                    spot_at_exit,
+                    model_ver
+                ))
+
+                # Log to live log
+                self.live_log.log("OUTCOME", f"{bot_name.value}: {outcome.value} (${actual_pnl:+.2f})", {
+                    "bot": bot_name.value,
+                    "outcome": outcome.value,
+                    "pnl": actual_pnl,
+                    "is_win": is_win
+                })
+
             conn.commit()
             conn.close()
-            logger.info(f"Updated outcome for {bot_name.value}: {outcome.value}")
+            logger.info(f"Updated outcome for {bot_name.value}: {outcome.value} - training data stored")
             return True
 
         except Exception as e:
