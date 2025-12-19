@@ -117,6 +117,44 @@ interface TradierAccountStatus {
   open_positions: number
 }
 
+interface TradierFullStatus {
+  mode: string
+  account: {
+    account_number?: string
+    type?: string
+    cash?: number
+    equity?: number
+    buying_power?: number
+  }
+  positions: Array<{
+    symbol: string
+    quantity: number
+    cost_basis: number
+    date_acquired?: string
+  }>
+  orders: Array<{
+    id: string
+    symbol: string
+    side: string
+    quantity: number
+    status: string
+    created_date?: string
+  }>
+  errors: string[]
+}
+
+interface DecisionLog {
+  id: string
+  timestamp: string
+  decision_type: string
+  action: string
+  reasoning: string
+  market_context?: {
+    underlying_price?: number
+    vix?: number
+  }
+}
+
 export default function ARESPage() {
   const [status, setStatus] = useState<ARESStatus | null>(null)
   const [positions, setPositions] = useState<IronCondorPosition[]>([])
@@ -135,6 +173,8 @@ export default function ARESPage() {
   const [oracleRec, setOracleRec] = useState<OracleRecommendation | null>(null)
   const [mlStatus, setMlStatus] = useState<MLStatus | null>(null)
   const [tradierStatus, setTradierStatus] = useState<TradierAccountStatus | null>(null)
+  const [tradierFullStatus, setTradierFullStatus] = useState<TradierFullStatus | null>(null)
+  const [recentDecisions, setRecentDecisions] = useState<DecisionLog[]>([])
 
   const fetchData = async () => {
     try {
@@ -192,8 +232,27 @@ export default function ARESPage() {
         })
       }
 
-      // Check Tradier sandbox status from ARES status
-      if (statusRes.data?.data) {
+      // Fetch Tradier sandbox status and decisions
+      const [tradierRes, decisionsRes] = await Promise.all([
+        apiClient.getARESTradierStatus().catch(() => ({ data: null })),
+        apiClient.getARESDecisions(10).catch(() => ({ data: null }))
+      ])
+
+      // Update Tradier status
+      if (tradierRes.data?.data) {
+        const tradierData = tradierRes.data.data
+        setTradierFullStatus(tradierData)
+        setTradierStatus({
+          connected: tradierData.mode === 'sandbox' && tradierData.account?.account_number,
+          account_type: tradierData.mode === 'sandbox' ? 'Tradier Sandbox' : 'Simulated',
+          buying_power: tradierData.account?.buying_power || 0,
+          cash: tradierData.account?.cash || 0,
+          total_equity: tradierData.account?.equity || 0,
+          pending_orders: tradierData.orders?.filter((o: any) => o.status === 'pending').length || 0,
+          open_positions: tradierData.positions?.length || 0
+        })
+      } else if (statusRes.data?.data) {
+        // Fallback to ARES status if Tradier endpoint fails
         setTradierStatus({
           connected: statusRes.data.data.sandbox_connected || false,
           account_type: statusRes.data.data.paper_mode_type === 'sandbox' ? 'Tradier Sandbox' : 'Simulated',
@@ -203,6 +262,11 @@ export default function ARESPage() {
           pending_orders: 0,
           open_positions: statusRes.data.data.open_positions || 0
         })
+      }
+
+      // Update decisions
+      if (decisionsRes.data?.data?.decisions) {
+        setRecentDecisions(decisionsRes.data.data.decisions)
       }
 
       setLastUpdate(new Date())
@@ -406,15 +470,13 @@ export default function ARESPage() {
                 </div>
               </div>
 
-              {/* Section 2: Paper Trading (Simulated) */}
+              {/* Section 2: SPX Performance (Simulated - can't trade on Tradier) */}
               <div className="mb-8">
                 <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2 border-b border-gray-700 pb-2">
                   <Play className="w-5 h-5 text-purple-500" />
-                  Paper Trading (Simulated)
-                  <span className="text-xs text-gray-500 ml-2">Internal Simulation</span>
-                  {!tradierStatus?.connected && (
-                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-purple-900 text-purple-300">ACTIVE</span>
-                  )}
+                  SPX Performance
+                  <span className="text-xs text-gray-500 ml-2">Simulated (Real Market Data)</span>
+                  <span className="ml-auto px-2 py-0.5 rounded text-xs bg-purple-900 text-purple-300">SPX 0DTE</span>
                 </h2>
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -439,7 +501,7 @@ export default function ARESPage() {
 
                   <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-400">Simulated Capital</span>
+                      <span className="text-gray-400">Capital</span>
                       <DollarSign className="w-5 h-5 text-purple-500" />
                     </div>
                     <div className="mt-2">
@@ -451,7 +513,7 @@ export default function ARESPage() {
 
                   <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-400">Simulated P&L</span>
+                      <span className="text-gray-400">Total P&L</span>
                       {(performance?.total_pnl || 0) >= 0 ? (
                         <TrendingUp className="w-5 h-5 text-green-500" />
                       ) : (
@@ -485,18 +547,38 @@ export default function ARESPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* SPX Recent Trades Mini-Log */}
+                {closedPositions.length > 0 && (
+                  <div className="mt-4 bg-gray-800/50 rounded-lg p-3 border border-gray-700">
+                    <h4 className="text-sm font-medium text-gray-400 mb-2">Recent SPX Trades</h4>
+                    <div className="space-y-1">
+                      {closedPositions.slice(0, 5).map((pos) => (
+                        <div key={pos.position_id} className="flex items-center justify-between text-xs">
+                          <span className="text-gray-500">{pos.expiration}</span>
+                          <span className="text-gray-400 font-mono">
+                            {pos.put_short_strike}P / {pos.call_short_strike}C
+                          </span>
+                          <span className={pos.total_credit > 0 ? 'text-green-400' : 'text-red-400'}>
+                            {formatCurrency(pos.total_credit * 100 * pos.contracts)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Section 3: Tradier Paper Trading (Sandbox) */}
+              {/* Section 3: SPY Performance (Tradier Paper Trading) */}
               <div className="mb-8">
                 <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2 border-b border-gray-700 pb-2">
                   <Server className="w-5 h-5 text-blue-500" />
-                  Tradier Paper Trading (Sandbox)
-                  <span className="text-xs text-gray-500 ml-2">Real Execution on Paper Account</span>
+                  SPY Performance
+                  <span className="text-xs text-gray-500 ml-2">Tradier Paper Trading</span>
                   {tradierStatus?.connected ? (
                     <span className="ml-auto px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">CONNECTED</span>
                   ) : (
-                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-red-900 text-red-300">DISCONNECTED</span>
+                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">NOT CONNECTED</span>
                   )}
                 </h2>
 
@@ -546,12 +628,59 @@ export default function ARESPage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* SPY Tradier Positions & Orders Mini-Log */}
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Tradier Positions */}
+                    <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
+                      <h4 className="text-sm font-medium text-blue-400 mb-2">Tradier Positions</h4>
+                      {tradierFullStatus?.positions && tradierFullStatus.positions.length > 0 ? (
+                        <div className="space-y-1">
+                          {tradierFullStatus.positions.slice(0, 5).map((pos, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-xs">
+                              <span className="text-white font-mono">{pos.symbol}</span>
+                              <span className="text-gray-400">x{pos.quantity}</span>
+                              <span className="text-blue-300">{formatCurrency(pos.cost_basis)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500">No open positions</p>
+                      )}
+                    </div>
+
+                    {/* Tradier Recent Orders */}
+                    <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
+                      <h4 className="text-sm font-medium text-blue-400 mb-2">Recent Orders</h4>
+                      {tradierFullStatus?.orders && tradierFullStatus.orders.length > 0 ? (
+                        <div className="space-y-1">
+                          {tradierFullStatus.orders.slice(0, 5).map((order) => (
+                            <div key={order.id} className="flex items-center justify-between text-xs">
+                              <span className="text-white font-mono">{order.symbol}</span>
+                              <span className={order.side === 'buy' ? 'text-green-400' : 'text-red-400'}>
+                                {order.side.toUpperCase()}
+                              </span>
+                              <span className={`px-1 rounded ${
+                                order.status === 'filled' ? 'bg-green-900 text-green-300' :
+                                order.status === 'pending' ? 'bg-yellow-900 text-yellow-300' :
+                                'bg-gray-700 text-gray-300'
+                              }`}>
+                                {order.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500">No recent orders</p>
+                      )}
+                    </div>
+                  </div>
                 ) : (
                   <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700 text-center">
                     <AlertTriangle className="w-12 h-12 text-yellow-500 mx-auto mb-3" />
-                    <h4 className="text-white font-semibold mb-2">Tradier Sandbox Not Connected</h4>
+                    <h4 className="text-white font-semibold mb-2">SPY Paper Trading Not Connected</h4>
                     <p className="text-gray-400 text-sm mb-4">
-                      Paper trading is running in simulation mode. Connect Tradier sandbox for real paper execution.
+                      Connect Tradier sandbox to enable SPY paper trading with real execution.
                     </p>
                     <p className="text-xs text-gray-500">
                       Set TRADIER_ACCESS_TOKEN and enable sandbox mode to connect

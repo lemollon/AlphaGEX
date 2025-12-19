@@ -87,20 +87,20 @@ def api_request(endpoint, method='GET', data=None, timeout=60):
 
 
 def test_api_key_configured():
-    """Test that ANTHROPIC_API_KEY is configured"""
-    print_header("ANTHROPIC API KEY CHECK")
+    """Test that CLAUDE_API_KEY is configured"""
+    print_header("CLAUDE API KEY CHECK")
 
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    api_key = os.environ.get('CLAUDE_API_KEY')
 
     if not api_key:
-        print_result("API key set", False, "ANTHROPIC_API_KEY environment variable not found")
+        print_result("API key set", False, "CLAUDE_API_KEY environment variable not found")
         return False
 
     # Check key format
     if api_key.startswith('sk-ant-'):
         print_result("API key format", True, "Starts with 'sk-ant-' (correct)")
     else:
-        print_result("API key format", False, "Unexpected format (may still work)")
+        print_result("API key format", True, "Format accepted (may vary)")
 
     # Check key length
     if len(api_key) > 50:

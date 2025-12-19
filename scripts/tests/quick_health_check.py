@@ -19,7 +19,7 @@ def check_env_vars():
     print("\n📋 Environment Variables:")
     critical_vars = {
         'DATABASE_URL': os.environ.get('DATABASE_URL'),
-        'ANTHROPIC_API_KEY': os.environ.get('ANTHROPIC_API_KEY'),
+        'CLAUDE_API_KEY': os.environ.get('CLAUDE_API_KEY'),
     }
 
     all_set = True

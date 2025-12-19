@@ -329,6 +329,8 @@ export const apiClient = {
   getARESEquityCurve: (days: number = 30) => api.get('/api/ares/equity-curve', { params: { days } }),
   getARESPositions: () => api.get('/api/ares/positions'),
   getARESMarketData: () => api.get('/api/ares/market-data'),
+  getARESTradierStatus: () => api.get('/api/ares/tradier-status'),
+  getARESDecisions: (limit: number = 50) => api.get('/api/ares/decisions', { params: { limit } }),
 
   // ATHENA - Directional Spread Bot
   getATHENAStatus: () => api.get('/api/athena/status'),

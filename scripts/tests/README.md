@@ -101,7 +101,7 @@ Set these before running tests:
 ```bash
 # Required
 export DATABASE_URL="postgresql://..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+export CLAUDE_API_KEY="your-api-key..."
 
 # Optional (for API tests)
 export API_BASE_URL="http://localhost:8000"  # or your deployed URL

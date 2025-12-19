@@ -445,7 +445,7 @@ def test_environment_config():
 
     env_vars = [
         ('DATABASE_URL', True, 'Database connection'),
-        ('ANTHROPIC_API_KEY', True, 'Claude API key'),
+        ('CLAUDE_API_KEY', True, 'Claude API key'),
         ('POLYGON_API_KEY', False, 'Polygon market data'),
         ('TRADIER_ACCESS_TOKEN', False, 'Tradier trading API'),
         ('FRONTEND_URL', False, 'Frontend URL'),
