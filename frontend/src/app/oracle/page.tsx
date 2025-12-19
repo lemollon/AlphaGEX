@@ -5,6 +5,7 @@ import { Eye, Brain, Activity, RefreshCw, Trash2, Play, CheckCircle, XCircle, Al
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
+import { useOracleStatus, useOracleLogs } from '@/lib/hooks/useMarketData'
 
 interface OracleStatus {
   model_trained: boolean
@@ -50,9 +51,18 @@ interface StoredPrediction {
 }
 
 export default function OraclePage() {
-  const [status, setStatus] = useState<OracleStatus | null>(null)
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  // SWR hooks for data fetching with caching
+  const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useOracleStatus()
+  const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useOracleLogs()
+
+  // Extract data from responses
+  const status = statusRes?.oracle as OracleStatus | undefined
+  const logs = (logsRes?.logs || []) as LogEntry[]
+
+  const loading = statusLoading && !status
+  const isRefreshing = statusValidating || logsValidating
+
+  // Local state for UI and form
   const [analyzing, setAnalyzing] = useState(false)
   const [prediction, setPrediction] = useState<Prediction | null>(null)
   const [claudeExplanation, setClaudeExplanation] = useState<string | null>(null)
@@ -73,32 +83,18 @@ export default function OraclePage() {
     distance_to_put_wall: 50
   })
 
-  const fetchStatus = useCallback(async () => {
-    try {
-      const response = await apiClient.getOracleStatus()
-      if (response.data?.success) {
-        setStatus(response.data.oracle)
-      }
-    } catch (err: any) {
-      console.error('Failed to fetch Oracle status:', err)
-    }
-  }, [])
+  const fetchStatus = useCallback(() => {
+    mutateStatus()
+  }, [mutateStatus])
 
-  const fetchLogs = useCallback(async () => {
-    try {
-      const response = await apiClient.getOracleLogs()
-      if (response.data?.success) {
-        setLogs(response.data.logs || [])
-      }
-    } catch (err: any) {
-      console.error('Failed to fetch Oracle logs:', err)
-    }
-  }, [])
+  const fetchLogs = useCallback(() => {
+    mutateLogs()
+  }, [mutateLogs])
 
   const clearLogs = async () => {
     try {
       await apiClient.clearOracleLogs()
-      setLogs([])
+      mutateLogs()
     } catch (err: any) {
       console.error('Failed to clear logs:', err)
     }
@@ -138,18 +134,10 @@ export default function OraclePage() {
     }
   }
 
+  // Load prediction history on mount (SWR handles status and logs)
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true)
-      await Promise.all([fetchStatus(), fetchLogs(), fetchPredictionHistory()])
-      setLoading(false)
-    }
-    loadData()
-
-    // Auto-refresh logs every 5 seconds
-    const interval = setInterval(fetchLogs, 5000)
-    return () => clearInterval(interval)
-  }, [fetchStatus, fetchLogs, fetchPredictionHistory])
+    fetchPredictionHistory()
+  }, [fetchPredictionHistory])
 
   const getAdviceColor = (advice: string) => {
     switch (advice) {

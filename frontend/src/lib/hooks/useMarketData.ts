@@ -1,7 +1,7 @@
 'use client'
 
 import useSWR, { SWRConfiguration, preload } from 'swr'
-import { apiClient } from '@/lib/api'
+import { apiClient, api } from '@/lib/api'
 
 // =============================================================================
 // SWR FETCHERS - Wrapped API calls for SWR
@@ -53,6 +53,14 @@ const fetchers = {
     const response = await apiClient.getVIXHedgeSignal()
     return response.data
   },
+  vixSignalHistory: async () => {
+    try {
+      const response = await api.get('/api/vix/signal-history')
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
+  },
 
   // Psychology
   psychologyRegime: async (symbol: string) => {
@@ -81,6 +89,30 @@ const fetchers = {
     const response = await apiClient.getARESDecisions(limit)
     return response.data
   },
+  aresEquityCurve: async (days: number) => {
+    try {
+      const response = await api.get(`/api/ares/equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  aresTradierStatus: async () => {
+    try {
+      const response = await api.get('/api/ares/tradier-status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  aresConfig: async () => {
+    try {
+      const response = await api.get('/api/ares/config')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
 
   // ATHENA Bot
   athenaStatus: async () => {
@@ -98,6 +130,33 @@ const fetchers = {
   athenaPerformance: async (days: number) => {
     const response = await apiClient.getATHENAPerformance(days)
     return response.data
+  },
+  athenaOracleAdvice: async () => {
+    try {
+      const response = await api.get('/api/athena/oracle-advice')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  athenaMLSignal: async () => {
+    try {
+      const response = await api.get('/api/athena/ml-signal')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  athenaLogs: async (level?: string, limit?: number) => {
+    try {
+      const params = new URLSearchParams()
+      if (level) params.append('level', level)
+      params.append('limit', String(limit || 50))
+      const response = await api.get(`/api/athena/logs?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
   },
 
   // PHOENIX Trader
@@ -127,6 +186,10 @@ const fetchers = {
   },
   oracleLogs: async () => {
     const response = await apiClient.getOracleLogs()
+    return response.data
+  },
+  oraclePredictions: async (params: { days: number; limit: number }) => {
+    const response = await apiClient.getOraclePredictions(params)
     return response.data
   },
 
@@ -169,6 +232,14 @@ const fetchers = {
     const response = await apiClient.getAlerts()
     return response.data
   },
+  alertHistory: async (limit?: number) => {
+    try {
+      const response = await api.get(`/api/alerts/history?limit=${limit || 100}`)
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
+  },
 
   // Database
   databaseStats: async () => {
@@ -178,6 +249,66 @@ const fetchers = {
   tableFreshness: async () => {
     const response = await apiClient.getTableFreshness()
     return response.data
+  },
+  systemHealth: async () => {
+    try {
+      const response = await api.get('/api/health')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  systemLogs: async (limit?: number) => {
+    try {
+      const response = await api.get(`/api/logs/system?limit=${limit || 50}`)
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
+  },
+
+  // Logs Summary
+  logsSummary: async (days?: number) => {
+    try {
+      const response = await api.get(`/api/logs/summary?days=${days || 30}`)
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  mlLogs: async (limit?: number) => {
+    try {
+      const response = await api.get(`/api/logs/ml?limit=${limit || 50}`)
+      return response.data
+    } catch {
+      return { success: false, data: { logs: [] } }
+    }
+  },
+  autonomousLogs: async (limit?: number) => {
+    try {
+      const response = await api.get(`/api/logs/autonomous?limit=${limit || 50}`)
+      return response.data
+    } catch {
+      return { success: false, data: { logs: [] } }
+    }
+  },
+
+  // ML Extended
+  mlDataQuality: async () => {
+    try {
+      const response = await api.get('/api/ml/data-quality')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  mlStrategy: async () => {
+    try {
+      const response = await api.get('/api/ml/strategy')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
   },
 
   // Zero DTE Backtest
@@ -302,6 +433,14 @@ export function useVIXHedgeSignal(options?: SWRConfiguration) {
   })
 }
 
+export function useVIXSignalHistory(options?: SWRConfiguration) {
+  return useSWR('vix-signal-history', fetchers.vixSignalHistory, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
 // =============================================================================
 // PSYCHOLOGY HOOKS
 // =============================================================================
@@ -358,6 +497,30 @@ export function useARESDecisions(limit: number = 50, options?: SWRConfiguration)
   )
 }
 
+export function useARESEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `ares-equity-curve-${days}`,
+    () => fetchers.aresEquityCurve(days),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+export function useARESTradierStatus(options?: SWRConfiguration) {
+  return useSWR('ares-tradier-status', fetchers.aresTradierStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useARESConfig(options?: SWRConfiguration) {
+  return useSWR('ares-config', fetchers.aresConfig, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
 // =============================================================================
 // ATHENA BOT HOOKS
 // =============================================================================
@@ -391,6 +554,30 @@ export function useATHENAPerformance(days: number = 30, options?: SWRConfigurati
     `athena-performance-${days}`,
     () => fetchers.athenaPerformance(days),
     { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+export function useATHENAOracleAdvice(options?: SWRConfiguration) {
+  return useSWR('athena-oracle-advice', fetchers.athenaOracleAdvice, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useATHENAMLSignal(options?: SWRConfiguration) {
+  return useSWR('athena-ml-signal', fetchers.athenaMLSignal, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useATHENALogs(level?: string, limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `athena-logs-${level || 'all'}-${limit}`,
+    () => fetchers.athenaLogs(level, limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
@@ -452,6 +639,14 @@ export function useOracleLogs(options?: SWRConfiguration) {
     refreshInterval: 60 * 1000,
     ...options,
   })
+}
+
+export function useOraclePredictions(days: number = 30, limit: number = 100, options?: SWRConfiguration) {
+  return useSWR(
+    `oracle-predictions-${days}-${limit}`,
+    () => fetchers.oraclePredictions({ days, limit }),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
 }
 
 // =============================================================================
@@ -536,6 +731,14 @@ export function useAlerts(options?: SWRConfiguration) {
   })
 }
 
+export function useAlertHistory(limit: number = 100, options?: SWRConfiguration) {
+  return useSWR(
+    `alert-history-${limit}`,
+    () => fetchers.alertHistory(limit),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
 // =============================================================================
 // DATABASE HOOKS
 // =============================================================================
@@ -550,6 +753,70 @@ export function useDatabaseStats(options?: SWRConfiguration) {
 
 export function useTableFreshness(options?: SWRConfiguration) {
   return useSWR('table-freshness', fetchers.tableFreshness, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useSystemHealth(options?: SWRConfiguration) {
+  return useSWR('system-health', fetchers.systemHealth, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useSystemLogs(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `system-logs-${limit}`,
+    () => fetchers.systemLogs(limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// LOGS SUMMARY HOOKS
+// =============================================================================
+
+export function useLogsSummary(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `logs-summary-${days}`,
+    () => fetchers.logsSummary(days),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+export function useMLLogs(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `ml-logs-${limit}`,
+    () => fetchers.mlLogs(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAutonomousLogs(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `autonomous-logs-${limit}`,
+    () => fetchers.autonomousLogs(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// ML EXTENDED HOOKS
+// =============================================================================
+
+export function useMLDataQuality(options?: SWRConfiguration) {
+  return useSWR('ml-data-quality', fetchers.mlDataQuality, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useMLStrategy(options?: SWRConfiguration) {
+  return useSWR('ml-strategy', fetchers.mlStrategy, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
     ...options,

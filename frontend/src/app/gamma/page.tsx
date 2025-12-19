@@ -10,6 +10,7 @@ import { useWebSocket } from '@/hooks/useWebSocket'
 import { useDataCache } from '@/hooks/useDataCache'
 import { useRouter } from 'next/navigation'
 import { getCacheTTL } from '@/lib/cacheConfig'
+import { useVIX } from '@/lib/hooks/useMarketData'
 
 interface Strike {
   strike: number
@@ -61,41 +62,17 @@ interface GammaIntelligence {
 export default function GammaIntelligence() {
   const router = useRouter()
   const [symbol, setSymbol] = useState('SPY')
-  const [vix, setVix] = useState<number | null>(null)  // Bug #16 Fix: Start null, auto-fetch
-  const [vixLoading, setVixLoading] = useState(true)  // Bug #16 Fix: Track VIX loading state
+
+  // Use SWR for VIX data (cached across pages)
+  const { data: vixResponse, isLoading: vixLoading } = useVIX()
+  const vix = vixResponse?.data?.vix_spot || vixResponse?.vix_spot || 20
+
   const [intelligence, setIntelligence] = useState<GammaIntelligence | null>(null)
   const [loading, setLoading] = useState(true)  // Bug #1 Fix: Start with loading=true
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)  // Bug #10 Fix: Track retries
   const { data: wsData, isConnected } = useWebSocket(symbol)
-
-  // Bug #16 Fix: Auto-fetch current VIX on mount
-  useEffect(() => {
-    const fetchVix = async () => {
-      try {
-        setVixLoading(true)
-        const response = await apiClient.getVIXCurrent()
-        // API returns { success: true, data: { vix_spot: number, ... } }
-        if (response?.data?.data?.vix_spot) {
-          setVix(response.data.data.vix_spot)
-        } else if (response?.data?.vix_spot) {
-          // Fallback in case the response structure is flat
-          setVix(response.data.vix_spot)
-        } else {
-          // Fallback to default if API doesn't return VIX
-          logger.warn('VIX API returned no vix_spot, using default 20')
-          setVix(20)
-        }
-      } catch (err) {
-        logger.error('Failed to fetch VIX:', err)
-        setVix(20)  // Fallback to reasonable default
-      } finally {
-        setVixLoading(false)
-      }
-    }
-    fetchVix()
-  }, [])
 
   // Bug #11 Fix: Remove VIX from cache key (VIX changes frequently, creates too many cache entries)
   // Bug #2 Fix: Memoize cache TTL to prevent re-creation on every render
@@ -198,8 +175,8 @@ export default function GammaIntelligence() {
   fetchDataRef.current = fetchData
 
   useEffect(() => {
-    // Bug #16 Fix: Wait for VIX to be loaded before fetching
-    if (vix === null) return
+    // Wait for VIX to be loaded before fetching (SWR will provide cached value)
+    if (vixLoading) return
 
     // Create AbortController for request cancellation
     const controller = new AbortController()
@@ -212,7 +189,7 @@ export default function GammaIntelligence() {
     return () => {
       controller.abort()
     }
-  }, [symbol, vix])  // Bug #2 Fix: Removed fetchData from deps
+  }, [symbol, vix, vixLoading])  // Bug #2 Fix: Removed fetchData from deps
 
   const handleRefresh = () => {
     fetchData(true)

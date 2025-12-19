@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import {
   FileText, Download, RefreshCw, Calendar, Bot, Brain,
   Activity, Database, Eye, BarChart3, Zap, TrendingUp,
@@ -9,6 +9,7 @@ import {
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient, api } from '@/lib/api'
+import { useLogsSummary, useMLLogs, useAutonomousLogs, useOraclePredictions } from '@/lib/hooks/useMarketData'
 
 interface TableSummary {
   display_name: string
@@ -63,22 +64,26 @@ interface AutonomousLog {
 type LogCategory = 'trading' | 'ml' | 'oracle' | 'autonomous' | 'psychology' | 'wheel' | 'gex' | 'all'
 
 export default function LogsPage() {
-  const [summary, setSummary] = useState<LogsSummary | null>(null)
-  const [loading, setLoading] = useState(true)
+  // SWR hooks for data fetching with caching
+  const { data: summaryRes, error: summaryError, isLoading: summaryLoading, isValidating: summaryValidating, mutate: mutateSummary } = useLogsSummary(30)
+  const { data: mlLogsRes, isLoading: mlLoading, isValidating: mlValidating, mutate: mutateML } = useMLLogs(50)
+  const { data: oracleRes, isLoading: oracleLoading, isValidating: oracleValidating, mutate: mutateOracle } = useOraclePredictions()
+  const { data: autonomousRes, isLoading: autonomousLoading, isValidating: autonomousValidating, mutate: mutateAutonomous } = useAutonomousLogs(50)
+
+  // Extract data from responses
+  const summary = summaryRes?.data as LogsSummary | undefined
+  const mlLogs = (mlLogsRes?.data?.logs || []) as MLLog[]
+  const oraclePredictions = (oracleRes?.data?.predictions || []) as OraclePrediction[]
+  const autonomousLogs = (autonomousRes?.data?.logs || []) as AutonomousLog[]
+
+  const loading = summaryLoading && !summary
+  const isRefreshing = summaryValidating || mlValidating || oracleValidating || autonomousValidating
+
+  // UI State
   const [activeCategory, setActiveCategory] = useState<LogCategory>('trading')
   const [activeBot, setActiveBot] = useState<string>('all')
-
-  // Date range filter
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
   const [exporting, setExporting] = useState(false)
-
-  // Data for different log types
-  const [mlLogs, setMlLogs] = useState<MLLog[]>([])
-  const [oraclePredictions, setOraclePredictions] = useState<OraclePrediction[]>([])
-  const [autonomousLogs, setAutonomousLogs] = useState<AutonomousLog[]>([])
-  const [loadingLogs, setLoadingLogs] = useState(false)
-
-  // Expanded sections
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
 
   const categories = [
@@ -101,85 +106,18 @@ export default function LogsPage() {
     { id: 'ORACLE', name: 'ORACLE', color: 'bg-green-500' },
   ]
 
-  const loadSummary = useCallback(async () => {
-    setLoading(true)
-    try {
-      const response = await api.get('/api/logs/summary?days=30')
-      if (response.data?.success) {
-        setSummary(response.data.data)
-      }
-    } catch (error) {
-      console.error('Error loading summary:', error)
-      // Fallback to old endpoint
-      try {
-        const fallback = await apiClient.getDecisionSummary({ days: 30 })
-        if (fallback.data?.success) {
-          setSummary({
-            total_records_all_tables: fallback.data.data?.summary?.total_decisions || 0,
-            days_analyzed: 30,
-            tables: {},
-            generated_at: new Date().toISOString()
-          })
-        }
-      } catch (e) {
-        console.error('Fallback also failed:', e)
-      }
-    }
-    setLoading(false)
-  }, [])
+  // Refresh function
+  const loadSummary = () => {
+    mutateSummary()
+    mutateML()
+    mutateOracle()
+    mutateAutonomous()
+  }
 
-  const loadMLLogs = useCallback(async () => {
-    setLoadingLogs(true)
-    try {
-      const response = await api.get('/api/logs/ml?limit=50')
-      if (response.data?.success) {
-        setMlLogs(response.data.data.logs || [])
-      }
-    } catch (error) {
-      console.error('Error loading ML logs:', error)
-    }
-    setLoadingLogs(false)
-  }, [])
-
-  const loadOraclePredictions = useCallback(async () => {
-    setLoadingLogs(true)
-    try {
-      const response = await api.get('/api/logs/oracle?limit=50')
-      if (response.data?.success) {
-        setOraclePredictions(response.data.data.predictions || [])
-      }
-    } catch (error) {
-      console.error('Error loading Oracle predictions:', error)
-    }
-    setLoadingLogs(false)
-  }, [])
-
-  const loadAutonomousLogs = useCallback(async () => {
-    setLoadingLogs(true)
-    try {
-      const response = await api.get('/api/logs/autonomous?limit=50')
-      if (response.data?.success) {
-        setAutonomousLogs(response.data.data.logs || [])
-      }
-    } catch (error) {
-      console.error('Error loading autonomous logs:', error)
-    }
-    setLoadingLogs(false)
-  }, [])
-
-  useEffect(() => {
-    loadSummary()
-  }, [loadSummary])
-
-  useEffect(() => {
-    if (activeCategory === 'ml') {
-      loadMLLogs()
-    } else if (activeCategory === 'oracle') {
-      loadOraclePredictions()
-    } else if (activeCategory === 'autonomous') {
-      loadAutonomousLogs()
-    }
-  }, [activeCategory, loadMLLogs, loadOraclePredictions, loadAutonomousLogs])
+  // Loading states for specific tabs
+  const loadingLogs = (activeCategory === 'ml' && mlLoading) ||
+                     (activeCategory === 'oracle' && oracleLoading) ||
+                     (activeCategory === 'autonomous' && autonomousLoading)
 
   const getTableCount = (tableNames: string[]) => {
     if (!summary?.tables) return 0
@@ -262,10 +200,10 @@ export default function LogsPage() {
             </div>
             <button
               onClick={loadSummary}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300"
+              disabled={isRefreshing}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 disabled:opacity-50"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               Refresh
             </button>
           </div>

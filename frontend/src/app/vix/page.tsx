@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
 import { Activity, TrendingUp, TrendingDown, Shield, AlertTriangle, BarChart3, Clock, Zap, Target, RefreshCw } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
-import { apiClient } from '@/lib/api'
+import { useVIX, useVIXHedgeSignal, useVIXSignalHistory } from '@/lib/hooks/useMarketData'
 
 interface VIXData {
   vix_spot: number
@@ -43,51 +42,26 @@ interface SignalHistory {
 }
 
 export default function VIXDashboard() {
-  const [loading, setLoading] = useState(true)
-  const [vixData, setVixData] = useState<VIXData | null>(null)
-  const [hedgeSignal, setHedgeSignal] = useState<HedgeSignal | null>(null)
-  const [signalHistory, setSignalHistory] = useState<SignalHistory[]>([])
-  const [error, setError] = useState<string | null>(null)
+  // SWR hooks for data fetching with caching
+  const { data: vixResponse, error: vixError, isLoading: vixLoading, isValidating: vixValidating, mutate: mutateVix } = useVIX()
+  const { data: signalResponse, error: signalError, isValidating: signalValidating, mutate: mutateSignal } = useVIXHedgeSignal()
+  const { data: historyResponse, isValidating: historyValidating, mutate: mutateHistory } = useVIXSignalHistory()
 
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  // Extract data from responses
+  const vixData = vixResponse?.data as VIXData | undefined
+  const hedgeSignal = signalResponse?.data as HedgeSignal | undefined
+  const signalHistory = (historyResponse?.data || []) as SignalHistory[]
 
-  const fetchData = async (showLoading = true) => {
-    try {
-      if (showLoading) setLoading(true)
-      const [vixRes, signalRes, historyRes] = await Promise.all([
-        apiClient.getVIXCurrent().catch(() => ({ data: { success: false } })),
-        apiClient.getVIXHedgeSignal().catch(() => ({ data: { success: false } })),
-        apiClient.getVIXSignalHistory().catch(() => ({ data: { success: false, data: [] } }))
-      ])
+  const loading = vixLoading && !vixData
+  const error = vixError?.message || signalError?.message || null
+  const isRefreshing = vixValidating || signalValidating || historyValidating
 
-      if (vixRes.data.success) {
-        setVixData(vixRes.data.data)
-      }
-      if (signalRes.data.success) {
-        setHedgeSignal(signalRes.data.data)
-      }
-      if (historyRes.data.success) {
-        setSignalHistory(historyRes.data.data || [])
-      }
-      setLastUpdated(new Date())
-    } catch (err: any) {
-      setError(err.message || 'Failed to load VIX data')
-    } finally {
-      setLoading(false)
-    }
+  // Manual refresh function
+  const handleRefresh = () => {
+    mutateVix()
+    mutateSignal()
+    mutateHistory()
   }
-
-  // Initial fetch and 5-minute auto-refresh
-  useEffect(() => {
-    fetchData()
-
-    // Auto-refresh every 5 minutes (300000ms)
-    const interval = setInterval(() => {
-      fetchData(false) // Don't show loading spinner for auto-refresh
-    }, 5 * 60 * 1000)
-
-    return () => clearInterval(interval)
-  }, [])
 
   const getVolRegimeColor = (regime: string) => {
     switch (regime) {
@@ -144,18 +118,15 @@ export default function VIXDashboard() {
                 <p className="text-text-secondary mt-1">Volatility analysis and hedge signal management</p>
               </div>
               <div className="flex items-center gap-4">
-                {lastUpdated && (
-                  <div className="text-xs text-text-muted">
-                    Updated: {lastUpdated.toLocaleTimeString()}
-                    <span className="ml-2 text-success">(auto-refresh 5min)</span>
-                  </div>
-                )}
+                <div className="text-xs text-text-muted">
+                  <span className="text-success">Auto-refresh 1min • Cached across pages</span>
+                </div>
                 <button
-                  onClick={() => fetchData()}
-                  disabled={loading}
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-primary text-white hover:bg-primary/90 disabled:opacity-50"
                 >
-                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                   Refresh
                 </button>
               </div>
