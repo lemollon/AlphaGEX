@@ -33,12 +33,13 @@ def print_result(check, passed, details=""):
         print(f"           └─ {details}")
 
 
-def check_table_data(cursor, table_name, time_column=None, hours_back=24):
+def check_table_data(cursor, conn, table_name, time_column=None, hours_back=24):
     """Check if table has data and recent records."""
     try:
         # Total count
         cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
         total = cursor.fetchone()[0]
+        conn.commit()
 
         # Recent count (if time column exists)
         recent = None
@@ -49,11 +50,14 @@ def check_table_data(cursor, table_name, time_column=None, hours_back=24):
                     WHERE {time_column} > NOW() - INTERVAL '{hours_back} hours'
                 """)
                 recent = cursor.fetchone()[0]
-            except:
+                conn.commit()
+            except Exception:
+                conn.rollback()  # Reset transaction on column error
                 pass
 
         return total, recent
     except Exception as e:
+        conn.rollback()  # Reset transaction on error
         return None, None
 
 
@@ -85,13 +89,13 @@ def main():
         core_tables = [
             ("ares_positions", "open_date", "ARES positions (iron condors)"),
             ("ares_daily_performance", "trade_date", "ARES daily P&L"),
-            ("decision_logs", "timestamp", "Trading decisions"),
-            ("bot_decision_logs", "timestamp", "Bot decisions"),
+            ("decision_logs", "created_at", "Trading decisions"),
+            ("bot_decision_logs", "created_at", "Bot decisions"),
             ("wheel_cycles", "created_at", "Wheel strategy cycles"),
         ]
 
         for table, time_col, desc in core_tables:
-            total, recent = check_table_data(cursor, table, time_col, 168)  # 7 days
+            total, recent = check_table_data(cursor, conn, table, time_col, 168)  # 7 days
             if total is None:
                 print_result(f"{desc}", False, f"Table missing or error")
                 results["fail"] += 1
@@ -109,15 +113,15 @@ def main():
         print_header("2. MARKET DATA COLLECTION")
 
         market_tables = [
-            ("gex_snapshots", "timestamp", "GEX snapshots"),
-            ("gex_history", "timestamp", "GEX history"),
-            ("vix_data", "timestamp", "VIX data"),
-            ("market_data", "timestamp", "Market data"),
+            ("gex_snapshots", "created_at", "GEX snapshots"),
+            ("gex_history", "created_at", "GEX history"),
+            ("vix_data", "created_at", "VIX data"),
+            ("market_data", "created_at", "Market data"),
             ("options_chain_snapshots", "snapshot_time", "Options chain snapshots"),
         ]
 
         for table, time_col, desc in market_tables:
-            total, recent = check_table_data(cursor, table, time_col, 24)
+            total, recent = check_table_data(cursor, conn, table, time_col, 24)
             if total is None:
                 print_result(f"{desc}", False, f"Table missing")
                 results["fail"] += 1
@@ -138,11 +142,11 @@ def main():
             ("oracle_predictions", "created_at", "Oracle predictions"),
             ("probability_weights", "timestamp", "Probability weights"),
             ("ml_predictions", "created_at", "ML predictions"),
-            ("regime_classifications", "timestamp", "Regime classifications"),
+            ("regime_classifications", "created_at", "Regime classifications"),
         ]
 
         for table, time_col, desc in ai_tables:
-            total, recent = check_table_data(cursor, table, time_col, 168)
+            total, recent = check_table_data(cursor, conn, table, time_col, 168)
             if total is None:
                 print_result(f"{desc}", False, f"Table missing")
                 results["fail"] += 1
@@ -160,33 +164,45 @@ def main():
         print_header("4. ARES PIPELINE VERIFICATION")
 
         # Check ARES has position data
-        cursor.execute("""
-            SELECT COUNT(*),
-                   SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                   SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count
-            FROM ares_positions
-        """)
-        row = cursor.fetchone()
-        if row and row[0] > 0:
-            print_result("ARES positions recorded", True,
-                        f"Total: {row[0]}, Open: {row[1] or 0}, Closed: {row[2] or 0}")
-            results["pass"] += 1
-        else:
-            print_result("ARES positions recorded", False, "No positions in database")
+        try:
+            cursor.execute("""
+                SELECT COUNT(*),
+                       SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
+                       SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count
+                FROM ares_positions
+            """)
+            row = cursor.fetchone()
+            conn.commit()
+            if row and row[0] > 0:
+                print_result("ARES positions recorded", True,
+                            f"Total: {row[0]}, Open: {row[1] or 0}, Closed: {row[2] or 0}")
+                results["pass"] += 1
+            else:
+                print_result("ARES positions recorded", False, "No positions in database")
+                results["fail"] += 1
+        except Exception as e:
+            conn.rollback()
+            print_result("ARES positions recorded", False, f"Query error: {str(e)[:40]}")
             results["fail"] += 1
 
         # Check if ARES daily performance is being tracked
-        cursor.execute("""
-            SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
-            FROM ares_daily_performance
-        """)
-        row = cursor.fetchone()
-        if row and row[0] > 0:
-            print_result("ARES daily P&L tracked", True,
-                        f"{row[0]} days from {row[1]} to {row[2]}")
-            results["pass"] += 1
-        else:
-            print_result("ARES daily P&L tracked", False, "No daily performance records")
+        try:
+            cursor.execute("""
+                SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
+                FROM ares_daily_performance
+            """)
+            row = cursor.fetchone()
+            conn.commit()
+            if row and row[0] > 0:
+                print_result("ARES daily P&L tracked", True,
+                            f"{row[0]} days from {row[1]} to {row[2]}")
+                results["pass"] += 1
+            else:
+                print_result("ARES daily P&L tracked", False, "No daily performance records")
+                results["warn"] += 1
+        except Exception as e:
+            conn.rollback()
+            print_result("ARES daily P&L tracked", False, f"Table may not exist")
             results["warn"] += 1
 
         # ============================================================
@@ -269,6 +285,7 @@ def main():
                 ORDER BY last_collection DESC
             """)
             rows = cursor.fetchall()
+            conn.commit()
             if rows:
                 for source, last_time, count in rows:
                     print_result(f"Collector: {source}", True,
@@ -279,7 +296,8 @@ def main():
                            "No collection logs in 24h - collectors may be stopped")
                 results["warn"] += 1
         except Exception as e:
-            print_result("Data collection logs", False, f"Table may not exist: {str(e)[:30]}")
+            conn.rollback()
+            print_result("Data collection logs", False, f"Table may not exist")
             results["warn"] += 1
 
         # ============================================================

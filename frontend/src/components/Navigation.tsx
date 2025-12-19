@@ -38,6 +38,7 @@ import BuildVersion from './BuildVersion'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
+  { href: '/gexis-commands', label: 'GEXIS Commands', icon: MessageSquare, category: 'Main' },
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp, category: 'Analysis' },
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
   { href: '/gamma', label: 'Gamma Intelligence', icon: Zap, category: 'Analysis' },

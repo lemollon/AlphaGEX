@@ -20,6 +20,7 @@ from backend.api.dependencies import api_client, claude_ai, get_connection
 try:
     from ai.gexis_personality import (
         build_gexis_conversation_prompt,
+        build_gexis_system_prompt,
         get_gexis_welcome_message,
         get_gexis_error_message,
         USER_NAME,
@@ -30,6 +31,33 @@ except ImportError:
     GEXIS_AVAILABLE = False
     USER_NAME = "Optionist Prime"
     GEXIS_NAME = "GEXIS"
+
+# Import GEXIS agentic tools
+try:
+    from ai.gexis_tools import (
+        GEXIS_TOOLS,
+        execute_tool,
+        get_upcoming_events,
+        get_gexis_briefing,
+        get_system_status,
+        request_bot_action,
+        confirm_bot_action,
+        PENDING_CONFIRMATIONS,
+        ECONOMIC_EVENTS
+    )
+    GEXIS_TOOLS_AVAILABLE = True
+except ImportError:
+    GEXIS_TOOLS_AVAILABLE = False
+    GEXIS_TOOLS = {}
+    PENDING_CONFIRMATIONS = {}
+
+# Import comprehensive knowledge
+try:
+    from ai.gexis_knowledge import GEXIS_COMMANDS
+    GEXIS_KNOWLEDGE_AVAILABLE = True
+except ImportError:
+    GEXIS_KNOWLEDGE_AVAILABLE = False
+    GEXIS_COMMANDS = ""
 
 router = APIRouter(prefix="/api/ai", tags=["AI Copilot"])
 
@@ -63,6 +91,244 @@ def extract_symbol_from_query(query: str, default: str = 'SPY') -> str:
             return symbol
 
     return default
+
+
+def detect_slash_command(query: str) -> tuple:
+    """
+    Detect if query is a GEXIS slash command.
+
+    Returns:
+        (command_name, args) if slash command detected
+        (None, None) if no command
+    """
+    query = query.strip()
+    if not query.startswith('/'):
+        return None, None
+
+    # Parse command and arguments
+    parts = query.split(maxsplit=1)
+    command = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else None
+
+    # Map commands to tool names
+    command_map = {
+        '/help': 'help',
+        '/status': 'status',
+        '/briefing': 'briefing',
+        '/calendar': 'calendar',
+        '/gex': 'gex',
+        '/vix': 'vix',
+        '/market': 'market',
+        '/regime': 'regime',
+        '/positions': 'positions',
+        '/pnl': 'pnl',
+        '/history': 'history',
+        '/analyze': 'analyze',
+        '/risk': 'risk',
+        '/weights': 'weights',
+        '/accuracy': 'accuracy',
+        '/patterns': 'patterns',
+        # Bot control commands
+        '/start': 'start_bot',
+        '/stop': 'stop_bot',
+        '/pause': 'pause_bot',
+        '/confirm': 'confirm',
+        '/yes': 'confirm',
+        '/cancel': 'cancel',
+    }
+
+    return command_map.get(command), args
+
+
+async def execute_gexis_command(command: str, args: str = None) -> dict:
+    """
+    Execute a GEXIS slash command using agentic tools.
+
+    Returns:
+        Dictionary with command result
+    """
+    if not GEXIS_TOOLS_AVAILABLE:
+        return {"error": "GEXIS tools not available", "data": None}
+
+    try:
+        if command == 'help':
+            # Return commands reference
+            return {
+                "type": "help",
+                "data": GEXIS_COMMANDS if GEXIS_KNOWLEDGE_AVAILABLE else "Commands: /status, /briefing, /calendar, /gex, /vix, /positions, /pnl, /history, /analyze, /risk, /accuracy"
+            }
+
+        elif command == 'status':
+            result = get_system_status()
+            return {"type": "status", "data": result}
+
+        elif command == 'briefing':
+            result = get_gexis_briefing()
+            return {"type": "briefing", "data": result}
+
+        elif command == 'calendar':
+            days = 7
+            if args and args.isdigit():
+                days = int(args)
+            events = get_upcoming_events(days=days)
+            return {"type": "calendar", "data": events}
+
+        elif command == 'gex':
+            symbol = args.upper() if args else 'SPY'
+            # Use the existing API client to fetch GEX
+            if api_client:
+                gex_data = api_client.get_net_gamma(symbol)
+                return {"type": "gex", "symbol": symbol, "data": gex_data}
+            return {"type": "gex", "symbol": symbol, "data": None, "error": "API client not available"}
+
+        elif command == 'vix':
+            # Fetch VIX data
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                import os
+                use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+                tradier = TradierDataFetcher(sandbox=use_sandbox)
+                vix_quote = tradier.get_quote('VIX')
+                return {"type": "vix", "data": vix_quote}
+            except Exception as e:
+                return {"type": "vix", "data": None, "error": str(e)}
+
+        elif command == 'positions':
+            # Fetch open positions from database
+            try:
+                conn = get_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT * FROM ares_positions
+                        WHERE status = 'open'
+                        ORDER BY open_date DESC
+                        LIMIT 10
+                    """)
+                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    rows = cursor.fetchall()
+                    positions = [dict(zip(columns, row)) for row in rows] if rows else []
+                    conn.commit()
+                    return {"type": "positions", "data": positions}
+            except Exception as e:
+                return {"type": "positions", "data": [], "error": str(e)}
+
+        elif command == 'pnl':
+            # Fetch P&L summary
+            try:
+                conn = get_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                            SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
+                            COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                            COALESCE(AVG(realized_pnl), 0) as avg_pnl
+                        FROM ares_positions
+                        WHERE status IN ('closed', 'expired')
+                    """)
+                    row = cursor.fetchone()
+                    conn.commit()
+                    if row:
+                        total, wins, losses, total_pnl, avg_pnl = row
+                        win_rate = (wins / total * 100) if total > 0 else 0
+                        return {
+                            "type": "pnl",
+                            "data": {
+                                "total_trades": total,
+                                "wins": wins,
+                                "losses": losses,
+                                "win_rate": round(win_rate, 1),
+                                "total_pnl": float(total_pnl),
+                                "avg_pnl": float(avg_pnl)
+                            }
+                        }
+            except Exception as e:
+                return {"type": "pnl", "data": None, "error": str(e)}
+
+        elif command == 'history':
+            limit = 10
+            if args and args.isdigit():
+                limit = min(int(args), 50)  # Cap at 50
+            try:
+                conn = get_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    cursor.execute(f"""
+                        SELECT * FROM ares_positions
+                        ORDER BY open_date DESC
+                        LIMIT {limit}
+                    """)
+                    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                    rows = cursor.fetchall()
+                    trades = [dict(zip(columns, row)) for row in rows] if rows else []
+                    conn.commit()
+                    return {"type": "history", "data": trades}
+            except Exception as e:
+                return {"type": "history", "data": [], "error": str(e)}
+
+        elif command == 'accuracy':
+            # Fetch AI prediction accuracy
+            try:
+                conn = get_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*) as total_predictions,
+                            SUM(CASE WHEN was_correct THEN 1 ELSE 0 END) as correct,
+                            ROUND(AVG(CASE WHEN was_correct THEN 100.0 ELSE 0 END), 1) as accuracy_pct
+                        FROM oracle_training_outcomes
+                        WHERE created_at > NOW() - INTERVAL '30 days'
+                    """)
+                    row = cursor.fetchone()
+                    conn.commit()
+                    if row:
+                        return {
+                            "type": "accuracy",
+                            "data": {
+                                "total_predictions": row[0] or 0,
+                                "correct": row[1] or 0,
+                                "accuracy_pct": float(row[2] or 0),
+                                "period": "30 days"
+                            }
+                        }
+            except Exception as e:
+                return {"type": "accuracy", "data": None, "error": str(e)}
+
+        # Bot control commands
+        elif command == 'start_bot':
+            bot_name = args.lower() if args else 'ares'
+            result = request_bot_action('start', bot_name)
+            return {"type": "bot_control", "action": "start", "bot": bot_name, "data": result}
+
+        elif command == 'stop_bot':
+            bot_name = args.lower() if args else 'ares'
+            result = request_bot_action('stop', bot_name)
+            return {"type": "bot_control", "action": "stop", "bot": bot_name, "data": result}
+
+        elif command == 'pause_bot':
+            bot_name = args.lower() if args else 'ares'
+            result = request_bot_action('pause', bot_name)
+            return {"type": "bot_control", "action": "pause", "bot": bot_name, "data": result}
+
+        elif command == 'confirm':
+            result = confirm_bot_action(confirmation='yes')
+            return {"type": "confirmation", "data": result}
+
+        elif command == 'cancel':
+            # Clear any pending confirmation
+            if PENDING_CONFIRMATIONS:
+                PENDING_CONFIRMATIONS.clear()
+            return {"type": "cancellation", "data": {"message": "Action cancelled."}}
+
+        else:
+            return {"type": "unknown", "error": f"Unknown command: {command}"}
+
+    except Exception as e:
+        return {"type": "error", "error": str(e)}
 
 
 @router.post("/analyze-with-image")
@@ -209,6 +475,10 @@ async def ai_analyze_market(request: dict):
         "market_data": {...},  # Optional GEX data
         "gamma_intel": {...}   # Optional gamma intelligence
     }
+
+    Supports slash commands:
+    - /status, /briefing, /calendar, /gex, /vix
+    - /positions, /pnl, /history, /accuracy, /help
     """
     try:
         import anthropic
@@ -219,6 +489,142 @@ async def ai_analyze_market(request: dict):
 
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
+
+        # Check for slash commands first
+        command, args = detect_slash_command(query)
+        if command:
+            # Execute the command
+            command_result = await execute_gexis_command(command, args)
+
+            # Format the response in GEXIS style
+            if command_result.get('error'):
+                formatted_response = f"I apologize, {USER_NAME}. I encountered an issue executing that command: {command_result['error']}"
+            else:
+                # Format based on command type
+                cmd_type = command_result.get('type', 'unknown')
+                data = command_result.get('data')
+
+                if cmd_type == 'help':
+                    formatted_response = f"At your service, {USER_NAME}. Here are my available commands:\n\n{data}"
+
+                elif cmd_type == 'status':
+                    formatted_response = f"System status report, {USER_NAME}:\n\n{json.dumps(data, indent=2, default=str) if data else 'Unable to fetch status.'}"
+
+                elif cmd_type == 'briefing':
+                    formatted_response = f"Good day, {USER_NAME}. Here is your market briefing:\n\n{data if isinstance(data, str) else json.dumps(data, indent=2, default=str)}"
+
+                elif cmd_type == 'calendar':
+                    if data:
+                        events_text = "\n".join([f"- {e['date']}: {e['name']} ({e['impact']})" for e in data[:10]])
+                        formatted_response = f"Upcoming economic events, {USER_NAME}:\n\n{events_text}\n\nI recommend adjusting position sizing around high-impact events."
+                    else:
+                        formatted_response = f"No significant economic events in the upcoming period, {USER_NAME}. Clear skies for trading."
+
+                elif cmd_type == 'gex':
+                    symbol = command_result.get('symbol', 'SPY')
+                    if data:
+                        formatted_response = f"GEX data for {symbol}, {USER_NAME}:\n\n"
+                        formatted_response += f"- Spot Price: ${data.get('spot_price', 'N/A')}\n"
+                        formatted_response += f"- Net GEX: {data.get('net_gex', 'N/A')}\n"
+                        formatted_response += f"- Flip Point: ${data.get('flip_point', 'N/A')}\n"
+                        formatted_response += f"- Call Wall: ${data.get('call_wall', 'N/A')}\n"
+                        formatted_response += f"- Put Wall: ${data.get('put_wall', 'N/A')}"
+                    else:
+                        formatted_response = f"I'm unable to fetch GEX data for {symbol} at the moment, {USER_NAME}."
+
+                elif cmd_type == 'vix':
+                    if data:
+                        vix_value = data.get('last', data.get('price', 'N/A'))
+                        formatted_response = f"VIX data, {USER_NAME}:\n\n- Current VIX: {vix_value}\n"
+                        if float(vix_value) > 25 if vix_value != 'N/A' else False:
+                            formatted_response += "\nThe VIX is elevated. I recommend caution with 0DTE positions."
+                        elif float(vix_value) < 15 if vix_value != 'N/A' else False:
+                            formatted_response += "\nVolatility is subdued. Premium selling conditions are favorable."
+                    else:
+                        formatted_response = f"I'm unable to fetch VIX data at the moment, {USER_NAME}."
+
+                elif cmd_type == 'positions':
+                    if data:
+                        formatted_response = f"Open positions, {USER_NAME}:\n\n"
+                        for i, pos in enumerate(data[:5], 1):
+                            formatted_response += f"{i}. {pos.get('symbol', 'SPX')} - Status: {pos.get('status', 'N/A')}, Credit: ${pos.get('total_credit', 0):.2f}\n"
+                        if len(data) > 5:
+                            formatted_response += f"\n...and {len(data) - 5} more positions."
+                    else:
+                        formatted_response = f"No open positions at the moment, {USER_NAME}. ARES is standing by."
+
+                elif cmd_type == 'pnl':
+                    if data:
+                        formatted_response = f"P&L Summary, {USER_NAME}:\n\n"
+                        formatted_response += f"- Total Trades: {data.get('total_trades', 0)}\n"
+                        formatted_response += f"- Wins: {data.get('wins', 0)} | Losses: {data.get('losses', 0)}\n"
+                        formatted_response += f"- Win Rate: {data.get('win_rate', 0)}%\n"
+                        formatted_response += f"- Total P&L: ${data.get('total_pnl', 0):,.2f}\n"
+                        formatted_response += f"- Avg P&L per Trade: ${data.get('avg_pnl', 0):,.2f}"
+                    else:
+                        formatted_response = f"No P&L data available yet, {USER_NAME}. Let's start trading!"
+
+                elif cmd_type == 'history':
+                    if data:
+                        formatted_response = f"Recent trade history, {USER_NAME}:\n\n"
+                        for i, trade in enumerate(data[:10], 1):
+                            pnl = trade.get('realized_pnl', 0) or 0
+                            status = trade.get('status', 'N/A')
+                            date = str(trade.get('open_date', 'N/A'))[:10]
+                            formatted_response += f"{i}. {date} - {status} - P&L: ${pnl:,.2f}\n"
+                    else:
+                        formatted_response = f"No trade history available yet, {USER_NAME}."
+
+                elif cmd_type == 'accuracy':
+                    if data:
+                        formatted_response = f"AI Prediction Accuracy ({data.get('period', '30 days')}), {USER_NAME}:\n\n"
+                        formatted_response += f"- Total Predictions: {data.get('total_predictions', 0)}\n"
+                        formatted_response += f"- Correct: {data.get('correct', 0)}\n"
+                        formatted_response += f"- Accuracy: {data.get('accuracy_pct', 0)}%"
+                    else:
+                        formatted_response = f"No prediction accuracy data available yet, {USER_NAME}. The Oracle is still learning."
+
+                elif cmd_type == 'bot_control':
+                    action = command_result.get('action', 'unknown')
+                    bot = command_result.get('bot', 'unknown')
+                    if data and data.get('requires_confirmation'):
+                        # Confirmation required
+                        warning = f"\n\n**WARNING:** {data.get('warning')}" if data.get('warning') else ""
+                        current_status = data.get('current_status', {})
+                        status_str = f"\nCurrent status: {current_status.get('mode', 'unknown').upper()}" if current_status else ""
+                        formatted_response = f"{USER_NAME}, you've requested to **{action.upper()} {bot.upper()}**.{status_str}{warning}\n\n"
+                        formatted_response += f"{data.get('message', 'Reply /confirm or /yes to proceed, or /cancel to abort.')}"
+                    elif data and data.get('error'):
+                        formatted_response = f"I apologize, {USER_NAME}. Failed to {action} {bot}: {data.get('error')}"
+                    else:
+                        formatted_response = f"Bot control command initiated, {USER_NAME}. {json.dumps(data, indent=2, default=str) if data else ''}"
+
+                elif cmd_type == 'confirmation':
+                    if data and data.get('success'):
+                        formatted_response = f"Confirmed, {USER_NAME}. {data.get('message', 'Action executed successfully.')}"
+                    elif data and data.get('cancelled'):
+                        formatted_response = f"Understood, {USER_NAME}. {data.get('message', 'Action cancelled.')}"
+                    elif data and data.get('error'):
+                        formatted_response = f"Unable to confirm, {USER_NAME}: {data.get('error')}"
+                    else:
+                        formatted_response = f"Confirmation processed, {USER_NAME}."
+
+                elif cmd_type == 'cancellation':
+                    formatted_response = f"Action cancelled, {USER_NAME}. Standing by for your next command."
+
+                else:
+                    formatted_response = f"Command executed, {USER_NAME}. Result: {json.dumps(data, indent=2, default=str) if data else 'No data returned.'}"
+
+            return {
+                "success": True,
+                "data": {
+                    "analysis": formatted_response,
+                    "command": command,
+                    "command_result": command_result,
+                    "is_command": True
+                },
+                "timestamp": datetime.now().isoformat()
+            }
 
         # Extract symbol from query - use provided symbol only if it's not default SPY
         provided_symbol = request.get('symbol', 'SPY').upper()
@@ -617,13 +1023,25 @@ async def get_gexis_info():
 
 @router.get("/gexis/welcome")
 async def get_gexis_welcome():
-    """Get GEXIS welcome message for new chat sessions"""
+    """
+    Get GEXIS proactive welcome message for new chat sessions.
+    Includes real-time market data, position status, and economic calendar.
+    """
     try:
-        if GEXIS_AVAILABLE:
+        # Use proactive briefing if tools are available
+        if GEXIS_TOOLS_AVAILABLE:
+            briefing = get_gexis_briefing()
+            return {
+                "success": True,
+                "message": briefing,
+                "proactive": True
+            }
+        elif GEXIS_AVAILABLE:
             from ai.gexis_personality import get_gexis_welcome_message
             return {
                 "success": True,
-                "message": get_gexis_welcome_message()
+                "message": get_gexis_welcome_message(),
+                "proactive": False
             }
         else:
             from datetime import datetime
