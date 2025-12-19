@@ -75,20 +75,37 @@ def get_vix_fallback_data() -> Dict[str, Any]:
     try:
         import yfinance as yf
         vix_ticker = yf.Ticker("^VIX")
-        # Try fast_info first (faster), then history as fallback
+
+        # Method 1: Try info dict (most reliable)
         try:
-            price = vix_ticker.fast_info.get('lastPrice', 0)
+            info = vix_ticker.info
+            price = info.get('regularMarketPrice') or info.get('previousClose') or info.get('open', 0)
             if price and price > 0:
                 vix_data['vix_spot'] = float(price)
                 vix_data['vix_source'] = 'yahoo'
                 vix_data['is_estimated'] = False
-                logger.info(f"VIX from Yahoo Finance: {price}")
+                logger.info(f"VIX from Yahoo Finance (info): {price}")
                 return vix_data
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Yahoo info failed: {e}")
 
-        # Fallback: get from recent history
-        hist = vix_ticker.history(period='1d')
+        # Method 2: Try fast_info with bracket notation
+        try:
+            fast = vix_ticker.fast_info
+            price = fast.get('lastPrice') if hasattr(fast, 'get') else getattr(fast, 'last_price', None)
+            if not price:
+                price = fast.get('previousClose') if hasattr(fast, 'get') else getattr(fast, 'previous_close', None)
+            if price and price > 0:
+                vix_data['vix_spot'] = float(price)
+                vix_data['vix_source'] = 'yahoo'
+                vix_data['is_estimated'] = False
+                logger.info(f"VIX from Yahoo Finance (fast_info): {price}")
+                return vix_data
+        except Exception as e:
+            logger.debug(f"Yahoo fast_info failed: {e}")
+
+        # Method 3: Get from history (always works)
+        hist = vix_ticker.history(period='5d')
         if not hist.empty:
             price = float(hist['Close'].iloc[-1])
             if price > 0:
@@ -545,23 +562,27 @@ async def test_vix_sources():
         import yfinance as yf
         vix_ticker = yf.Ticker("^VIX")
 
-        # Test fast_info
+        # Test info dict (most reliable)
         try:
-            fast_price = vix_ticker.fast_info.get('lastPrice', 0)
-            results['sources']['yahoo_fast_info'] = {
-                'value': float(fast_price) if fast_price else None,
-                'success': fast_price is not None and fast_price > 0
+            info = vix_ticker.info
+            info_price = info.get('regularMarketPrice') or info.get('previousClose') or info.get('open', 0)
+            results['sources']['yahoo_info'] = {
+                'value': float(info_price) if info_price else None,
+                'regularMarketPrice': info.get('regularMarketPrice'),
+                'previousClose': info.get('previousClose'),
+                'success': info_price is not None and info_price > 0
             }
         except Exception as e:
-            results['sources']['yahoo_fast_info'] = {'error': str(e)}
+            results['sources']['yahoo_info'] = {'error': str(e)}
 
-        # Test history
+        # Test history (always works)
         try:
-            hist = vix_ticker.history(period='1d')
+            hist = vix_ticker.history(period='5d')
             if not hist.empty:
                 hist_price = float(hist['Close'].iloc[-1])
                 results['sources']['yahoo_history'] = {
                     'value': hist_price,
+                    'data_points': len(hist),
                     'success': hist_price > 0
                 }
             else:

@@ -158,15 +158,20 @@ class VIXHedgeManager:
                 try:
                     import yfinance as yf
                     vix_ticker = yf.Ticker("^VIX")
+
+                    # Method 1: Try info dict (most reliable)
                     try:
-                        price = vix_ticker.fast_info.get('lastPrice', 0)
+                        info = vix_ticker.info
+                        price = info.get('regularMarketPrice') or info.get('previousClose') or info.get('open', 0)
                         if price and price > 0:
                             vix_spot = float(price)
                             vix_source = 'yahoo'
                     except Exception:
                         pass
+
+                    # Method 2: Get from history
                     if not vix_spot or vix_spot <= 0:
-                        hist = vix_ticker.history(period='1d')
+                        hist = vix_ticker.history(period='5d')
                         if not hist.empty:
                             price = float(hist['Close'].iloc[-1])
                             if price > 0:
