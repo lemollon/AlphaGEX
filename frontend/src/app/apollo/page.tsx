@@ -583,7 +583,7 @@ export default function ApolloPage() {
                         onChange={e => setInputSymbol(e.target.value.toUpperCase())}
                         onKeyPress={e => e.key === 'Enter' && addSymbol(inputSymbol)}
                         placeholder="Add symbol..."
-                        className="w-32 px-3 py-1.5 bg-background border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                        className="w-32 px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-400 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                       />
                       <button
                         onClick={() => addSymbol(inputSymbol)}

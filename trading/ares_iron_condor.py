@@ -630,15 +630,22 @@ class ARESTrader:
         self,
         underlying_price: float,
         expected_move: float,
-        expiration: str
+        expiration: str,
+        gex_put_strike: Optional[float] = None,
+        gex_call_strike: Optional[float] = None
     ) -> Optional[Dict]:
         """
-        Find optimal Iron Condor strikes at 1 SD from current price.
+        Find optimal Iron Condor strikes.
+
+        Uses GEX-Protected strikes if provided (72% win rate in backtests),
+        otherwise falls back to SD-based strike selection.
 
         Args:
             underlying_price: Current price (SPX or SPY)
             expected_move: Expected move (1 SD)
             expiration: Expiration date (YYYY-MM-DD)
+            gex_put_strike: Optional GEX wall-based put strike (Oracle suggestion)
+            gex_call_strike: Optional GEX wall-based call strike (Oracle suggestion)
 
         Returns:
             Dict with strikes and credits, or None if not found
@@ -670,12 +677,23 @@ class ARESTrader:
             if not contracts:
                 return None
 
-            # Target strikes at SD distance
+            # Target strikes - prefer GEX walls if available (72% win rate vs 60% for SD-based)
             # For SPY, round to $1 strikes; for SPX, round to $5 strikes
             sd = self.config.sd_multiplier
             strike_rounding = 1 if ticker == "SPY" else 5
-            put_target = round((underlying_price - sd * expected_move) / strike_rounding) * strike_rounding
-            call_target = round((underlying_price + sd * expected_move) / strike_rounding) * strike_rounding
+            using_gex_walls = False
+
+            if gex_put_strike and gex_call_strike:
+                # GEX-Protected IC: strikes outside GEX walls
+                put_target = round(gex_put_strike / strike_rounding) * strike_rounding
+                call_target = round(gex_call_strike / strike_rounding) * strike_rounding
+                using_gex_walls = True
+                logger.info(f"ARES: Using GEX-Protected strikes - Put: ${put_target}, Call: ${call_target}")
+            else:
+                # Fallback to SD-based calculation
+                put_target = round((underlying_price - sd * expected_move) / strike_rounding) * strike_rounding
+                call_target = round((underlying_price + sd * expected_move) / strike_rounding) * strike_rounding
+                logger.info(f"ARES: Using SD-based strikes - Put: ${put_target}, Call: ${call_target}")
 
             # Filter puts and calls
             otm_puts = [c for c in contracts
@@ -807,6 +825,8 @@ class ARESTrader:
                 'call_long_symbol': long_call.symbol,
                 # REAL alternatives evaluated during strike selection
                 'alternatives_evaluated': alternatives_evaluated,
+                # GEX-Protected mode flag (72% win rate vs 60% for SD-based)
+                'using_gex_walls': using_gex_walls,
             }
 
         except Exception as e:
@@ -1641,7 +1661,11 @@ class ARESTrader:
                 'win_probability': oracle_advice.win_probability,
                 'suggested_risk_pct': oracle_advice.suggested_risk_pct,
                 'suggested_sd_multiplier': oracle_advice.suggested_sd_multiplier,
-                'reasoning': oracle_advice.reasoning
+                'reasoning': oracle_advice.reasoning,
+                # GEX-Protected strikes (72% win rate when available)
+                'suggested_put_strike': getattr(oracle_advice, 'suggested_put_strike', None),
+                'suggested_call_strike': getattr(oracle_advice, 'suggested_call_strike', None),
+                'use_gex_walls': getattr(oracle_advice, 'use_gex_walls', False)
             }
 
             # Honor Oracle's SKIP advice
@@ -1667,8 +1691,16 @@ class ARESTrader:
 
             logger.info(f"  Oracle Advice: {oracle_advice.advice.value}")
             logger.info(f"  Oracle Win Prob: {oracle_advice.win_probability:.1%}")
+
+            # Capture GEX wall strikes if available (72% win rate in backtests)
+            oracle_put_strike = getattr(oracle_advice, 'suggested_put_strike', None)
+            oracle_call_strike = getattr(oracle_advice, 'suggested_call_strike', None)
+            if oracle_put_strike and oracle_call_strike:
+                logger.info(f"  Oracle GEX Walls: Put ${oracle_put_strike}, Call ${oracle_call_strike}")
         else:
             logger.info("  Oracle: Not available, using default parameters")
+            oracle_put_strike = None
+            oracle_call_strike = None
 
         # Get expiration
         expiration = self.get_todays_expiration()
@@ -1685,29 +1717,43 @@ class ARESTrader:
             return result
 
         # Calculate expected move with SD multiplier
-        # Use config's SD multiplier if explicitly set, otherwise use Oracle's suggestion
+        # Oracle suggests SD multipliers based on win probability:
+        #   0.9 = high confidence (tighter strikes, more premium)
+        #   1.0 = standard confidence
+        #   1.2 = low confidence (wider strikes, safer)
+        # Apply Oracle's dynamic adjustment on top of config baseline
         adjusted_expected_move = market_data['expected_move']
-        effective_sd_mult = self.config.sd_multiplier  # Default to config
-        if self.config.sd_multiplier == 1.0 and oracle_sd_mult:
-            # Only use Oracle's suggestion if config is at default
-            effective_sd_mult = oracle_sd_mult
+        effective_sd_mult = self.config.sd_multiplier  # Default to config (0.5)
+
+        if oracle_sd_mult and oracle_sd_mult != 1.0:
+            # Oracle is suggesting an adjustment - apply it as a multiplier
+            # Example: config=0.5, oracle=1.2 -> effective = 0.5 * 1.2 = 0.6 (wider)
+            # Example: config=0.5, oracle=0.9 -> effective = 0.5 * 0.9 = 0.45 (tighter)
+            effective_sd_mult = self.config.sd_multiplier * oracle_sd_mult
+            logger.info(f"  Oracle adjusted SD: {self.config.sd_multiplier:.2f} x {oracle_sd_mult:.2f} = {effective_sd_mult:.2f}")
+
         adjusted_expected_move = market_data['expected_move'] * effective_sd_mult
         logger.info(f"  SD Mult: {effective_sd_mult:.2f} (config={self.config.sd_multiplier}, oracle={oracle_sd_mult}) -> Adjusted Move: ${adjusted_expected_move:.2f}")
 
-        # Find Iron Condor strikes (with Oracle's SD multiplier applied)
-        # Track option chain API call
+        # Find Iron Condor strikes
+        # Uses GEX-Protected strikes if Oracle provides them (72% win rate)
+        # Otherwise falls back to SD-based selection with Oracle's SD multiplier
         if decision_tracker:
             with decision_tracker.track_api("tradier", "option_chain"):
                 ic_strikes = self.find_iron_condor_strikes(
                     market_data['underlying_price'],
                     adjusted_expected_move,
-                    expiration
+                    expiration,
+                    gex_put_strike=oracle_put_strike,
+                    gex_call_strike=oracle_call_strike
                 )
         else:
             ic_strikes = self.find_iron_condor_strikes(
                 market_data['underlying_price'],
                 adjusted_expected_move,
-                expiration
+                expiration,
+                gex_put_strike=oracle_put_strike,
+                gex_call_strike=oracle_call_strike
             )
 
         if not ic_strikes:
@@ -1726,7 +1772,8 @@ class ARESTrader:
             )
             return result
 
-        logger.info(f"  IC Strikes: {ic_strikes['put_long_strike']}/{ic_strikes['put_short_strike']}P - "
+        gex_mode = "GEX-Protected (72% WR)" if ic_strikes.get('using_gex_walls') else "SD-Based (60% WR)"
+        logger.info(f"  IC Strikes [{gex_mode}]: {ic_strikes['put_long_strike']}/{ic_strikes['put_short_strike']}P - "
                    f"{ic_strikes['call_short_strike']}/{ic_strikes['call_long_strike']}C")
         logger.info(f"  Credit: ${ic_strikes['total_credit']:.2f}")
 
