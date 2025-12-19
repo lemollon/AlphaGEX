@@ -249,14 +249,14 @@ def test_run_cycle():
     try:
         # First check if we should run during market hours
         from datetime import datetime
-        import pytz
+        from zoneinfo import ZoneInfo
 
-        ny_tz = pytz.timezone('America/New_York')
-        now = datetime.now(ny_tz)
+        ct_tz = ZoneInfo("America/Chicago")
+        now = datetime.now(ct_tz)
 
-        # Check if market is open (9:30 AM - 4:00 PM ET, Mon-Fri)
+        # Check if market is open (8:30 AM - 3:00 PM CT, Mon-Fri)
         is_weekday = now.weekday() < 5
-        is_market_hours = now.hour >= 9 and now.hour < 16
+        is_market_hours = now.hour >= 8 and now.hour < 15
 
         if not (is_weekday and is_market_hours):
             return test_result(

@@ -3,18 +3,18 @@
 Test the current week date calculation logic
 """
 from datetime import datetime, timedelta
-import pytz
+from zoneinfo import ZoneInfo
 
 print("=" * 80)
 print("TESTING WEEK DATE CALCULATION")
 print("=" * 80)
 
-# Simulate what the function does
-current_time = datetime.now(pytz.timezone('America/New_York'))
+# Simulate what the function does (Central Time)
+current_time = datetime.now(ZoneInfo("America/Chicago"))
 current_weekday = current_time.weekday()  # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
 current_date_str = current_time.strftime('%Y-%m-%d')
 
-print(f"\nCurrent time (ET): {current_time}")
+print(f"\nCurrent time (CT): {current_time}")
 print(f"Current weekday: {current_weekday} (0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri)")
 print(f"Current date string: {current_date_str}")
 print(f"Day name: {current_time.strftime('%A')}")

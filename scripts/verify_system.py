@@ -153,11 +153,11 @@ def test_gex_history_freshness():
 
         if latest:
             timestamp, spot_price, net_gex = latest
-            now = datetime.now(ZoneInfo("America/New_York"))
+            now = datetime.now(ZoneInfo("America/Chicago"))
 
             # Handle timezone-aware vs naive datetime
             if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=ZoneInfo("America/New_York"))
+                timestamp = timestamp.replace(tzinfo=ZoneInfo("America/Chicago"))
 
             age_hours = (now - timestamp).total_seconds() / 3600
 
@@ -173,8 +173,8 @@ def test_gex_history_freshness():
             else:
                 log_warn("GEX Freshness", f"Data is {age_hours:.1f} hours old - check if data collector is running")
 
-        # Check today's records
-        today = datetime.now(ZoneInfo("America/New_York")).strftime('%Y-%m-%d')
+        # Check today's records (Central Time)
+        today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
         cursor.execute("SELECT COUNT(*) FROM gex_history WHERE DATE(timestamp) = %s", (today,))
         today_count = cursor.fetchone()[0]
 
@@ -183,10 +183,10 @@ def test_gex_history_freshness():
         if today_count > 0:
             log_pass("Today's GEX Data", f"{today_count} snapshots collected today")
         else:
-            # Check if market is open
-            now = datetime.now(ZoneInfo("America/New_York"))
+            # Check if market is open (Central Time)
+            now = datetime.now(ZoneInfo("America/Chicago"))
             is_weekday = now.weekday() < 5
-            is_market_hours = 9 <= now.hour < 16 or (now.hour == 16 and now.minute == 0)
+            is_market_hours = 8 <= now.hour < 15 or (now.hour == 15 and now.minute == 0)
 
             if is_weekday and is_market_hours:
                 log_warn("Today's GEX Data", "No data for today but market is open - data collector may not be running")

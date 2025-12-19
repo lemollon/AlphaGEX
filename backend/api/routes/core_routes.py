@@ -25,17 +25,19 @@ except ImportError as e:
     api_client = None
     UNIFIED_DATA_AVAILABLE = False
     from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
     def get_et_time():
-        return datetime.now(ZoneInfo("America/New_York"))
-    def get_local_time(tz='US/Central'):
+        """Returns Central Time (legacy name for compatibility)"""
+        return datetime.now(CENTRAL_TZ)
+    def get_local_time(tz='America/Chicago'):
         return datetime.now(ZoneInfo(tz))
     def is_market_open():
-        et = datetime.now(ZoneInfo("America/New_York"))
-        if et.weekday() >= 5:
+        ct = datetime.now(CENTRAL_TZ)
+        if ct.weekday() >= 5:
             return False
-        market_open = et.replace(hour=9, minute=30, second=0, microsecond=0)
-        market_close = et.replace(hour=16, minute=0, second=0, microsecond=0)
-        return market_open <= et <= market_close
+        market_open = ct.replace(hour=8, minute=30, second=0, microsecond=0)
+        market_close = ct.replace(hour=15, minute=0, second=0, microsecond=0)
+        return market_open <= ct <= market_close
 
 # TradingVolatilityAPI - with fallback
 TradingVolatilityAPI = None
@@ -131,8 +133,8 @@ async def comprehensive_system_health():
             cursor.execute("SELECT COUNT(*) FROM gex_history")
             total_gex = cursor.fetchone()[0]
 
-            # Check records from today
-            today = datetime.now(ZoneInfo("America/New_York")).strftime('%Y-%m-%d')
+            # Check records from today (Central Time)
+            today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
             cursor.execute("SELECT COUNT(*) FROM gex_history WHERE DATE(timestamp) = %s", (today,))
             today_gex = cursor.fetchone()[0]
 

@@ -21,7 +21,8 @@ from trading.export_service import export_service, OPENPYXL_AVAILABLE
 router = APIRouter(prefix="/api/export", tags=["Export"])
 logger = logging.getLogger(__name__)
 
-tz = ZoneInfo("America/New_York")
+# Texas Central Time - standard timezone for all AlphaGEX operations
+tz = ZoneInfo("America/Chicago")
 
 
 def _parse_date(date_str: Optional[str], default_days_ago: int = 30) -> datetime:

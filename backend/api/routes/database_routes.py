@@ -345,14 +345,14 @@ async def get_server_time():
     """Get current server time and market status"""
     from zoneinfo import ZoneInfo
 
-    now = datetime.now(ZoneInfo("America/New_York"))
-    chicago = datetime.now(ZoneInfo("America/Chicago"))
+    # Central Time is the standard - no need for two different times
+    now = datetime.now(ZoneInfo("America/Chicago"))
 
-    # Check if market is open
+    # Check if market is open (8:30 AM - 3:00 PM CT)
     market_open = (
         now.weekday() < 5 and  # Monday-Friday
-        9 <= now.hour < 16 and  # 9:30 AM - 4 PM ET (simplified)
-        not (now.hour == 9 and now.minute < 30)
+        8 <= now.hour < 15 and  # 8:30 AM - 3 PM CT
+        not (now.hour == 8 and now.minute < 30)
     )
 
     return {
@@ -486,17 +486,17 @@ async def get_system_health():
             "message": "No API key"
         }
 
-    # 4. Market Status
+    # 4. Market Status (Central Time)
     try:
-        now = datetime.now(ZoneInfo("America/New_York"))
+        now = datetime.now(ZoneInfo("America/Chicago"))
         market_open = (
             now.weekday() < 5 and
-            9 <= now.hour < 16 and
-            not (now.hour == 9 and now.minute < 30)
+            8 <= now.hour < 15 and
+            not (now.hour == 8 and now.minute < 30)
         )
         health["components"]["market"] = {
             "status": "open" if market_open else "closed",
-            "current_time_et": now.strftime("%H:%M:%S ET"),
+            "current_time_ct": now.strftime("%H:%M:%S CT"),
             "day": now.strftime("%A")
         }
     except Exception as e:
@@ -891,18 +891,18 @@ async def get_data_collection_status():
         status["api_status"]["trading_volatility"] = {"error": str(e)}
         status["diagnostics"].append(f"API IMPORT ERROR: {str(e)}")
 
-    # Check market hours
+    # Check market hours (Central Time)
     try:
-        et_tz = ZoneInfo("America/New_York")
-        now_et = datetime.now(et_tz)
+        ct_tz = ZoneInfo("America/Chicago")
+        now_ct = datetime.now(ct_tz)
         is_market_hours = (
-            now_et.weekday() < 5 and
-            ((now_et.hour == 9 and now_et.minute >= 30) or (now_et.hour > 9 and now_et.hour < 16))
+            now_ct.weekday() < 5 and
+            ((now_ct.hour == 8 and now_ct.minute >= 30) or (now_ct.hour > 8 and now_ct.hour < 15))
         )
         status["market_status"] = {
-            "current_time_et": now_et.strftime("%Y-%m-%d %H:%M:%S ET"),
+            "current_time_ct": now_ct.strftime("%Y-%m-%d %H:%M:%S CT"),
             "is_market_hours": is_market_hours,
-            "day_of_week": now_et.strftime("%A")
+            "day_of_week": now_ct.strftime("%A")
         }
         if not is_market_hours:
             status["diagnostics"].append("INFO: Market is closed - data collection only runs during market hours (9:30 AM - 4:00 PM ET)")

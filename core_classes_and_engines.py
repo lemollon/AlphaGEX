@@ -1272,16 +1272,17 @@ class TradingVolatilityAPI:
         from datetime import datetime
         import pytz
 
-        et_tz = pytz.timezone('America/New_York')
-        now_et = datetime.now(et_tz)
-        day_of_week = now_et.weekday()  # 0 = Monday, 4 = Friday, 5 = Saturday, 6 = Sunday
+        from zoneinfo import ZoneInfo
+        ct_tz = ZoneInfo("America/Chicago")
+        now_ct = datetime.now(ct_tz)
+        day_of_week = now_ct.weekday()  # 0 = Monday, 4 = Friday, 5 = Saturday, 6 = Sunday
 
-        current_hour = now_et.hour
-        current_minute = now_et.minute
+        current_hour = now_ct.hour
+        current_minute = now_ct.minute
         current_minutes = current_hour * 60 + current_minute
 
-        market_open_minutes = 9 * 60 + 30  # 9:30 AM ET
-        market_close_minutes = 16 * 60     # 4:00 PM ET (3:00 PM CT)
+        market_open_minutes = 8 * 60 + 30  # 8:30 AM CT
+        market_close_minutes = 15 * 60     # 3:00 PM CT
 
         # === FULL WEEKEND PERIOD: Friday close through Monday open ===
 
@@ -2470,8 +2471,9 @@ class TradingVolatilityAPI:
         }
 
         try:
-            # Get current time in ET (market time)
-            current_time = datetime.now(pytz.timezone('America/New_York'))
+            # Get current time in CT (Texas Central Time)
+            from zoneinfo import ZoneInfo
+            current_time = datetime.now(ZoneInfo("America/Chicago"))
             current_weekday = current_time.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
             current_hour = current_time.hour
             current_date_str = current_time.strftime('%Y-%m-%d')

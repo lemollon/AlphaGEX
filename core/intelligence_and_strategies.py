@@ -90,36 +90,43 @@ except ImportError:
     math = None
 
 # ============================================================================
-# TIME UTILITIES - ALL TIMES IN UTC/ET
+# TIME UTILITIES - ALL TIMES IN CENTRAL TIME (Texas)
 # ============================================================================
+from zoneinfo import ZoneInfo
+CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+def get_central_time():
+    """Get current time in Texas Central Time (handles CDT/CST automatically)"""
+    return datetime.now(CENTRAL_TZ)
+
 def get_et_time():
-    """Get current time in Eastern Time (handles EDT/EST automatically)"""
-    return datetime.now(pytz.timezone('US/Eastern'))
+    """Get current time in Central Time (legacy function name for compatibility)"""
+    return datetime.now(CENTRAL_TZ)
 
 def get_utc_time():
     """Get current time in UTC"""
     return datetime.now(pytz.UTC)
 
-def get_local_time(timezone_name='US/Central'):
-    """Get current time in specified timezone"""
+def get_local_time(timezone_name='America/Chicago'):
+    """Get current time in specified timezone (default: Central)"""
     try:
-        return datetime.now(pytz.timezone(timezone_name))
-    except (pytz.exceptions.UnknownTimeZoneError, Exception):
-        return get_et_time()  # Fallback to ET
+        return datetime.now(ZoneInfo(timezone_name))
+    except Exception:
+        return get_central_time()  # Fallback to Central
 
 def is_market_open():
-    """Check if US stock market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri)"""
-    et_time = get_et_time()
+    """Check if US stock market is currently open (8:30 AM - 3:00 PM CT, Mon-Fri)"""
+    ct_time = get_central_time()
 
     # Check if weekend
-    if et_time.weekday() >= 5:  # Saturday = 5, Sunday = 6
+    if ct_time.weekday() >= 5:  # Saturday = 5, Sunday = 6
         return False
 
-    # Market hours: 9:30 AM - 4:00 PM ET
-    market_open = et_time.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = et_time.replace(hour=16, minute=0, second=0, microsecond=0)
+    # Market hours: 8:30 AM - 3:00 PM CT (same as 9:30 AM - 4:00 PM ET)
+    market_open = ct_time.replace(hour=8, minute=30, second=0, microsecond=0)
+    market_close = ct_time.replace(hour=15, minute=0, second=0, microsecond=0)
 
-    return market_open <= et_time < market_close
+    return market_open <= ct_time < market_close
 
 def make_json_serializable(obj):
     """Convert objects to JSON-serializable format"""

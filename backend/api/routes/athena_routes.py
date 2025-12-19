@@ -78,7 +78,7 @@ async def get_athena_status():
                 "open_positions": 0,
                 "closed_positions": 0,
                 "traded_today": False,
-                "current_time": datetime.now(ZoneInfo("America/New_York")).strftime('%Y-%m-%d %H:%M:%S %Z'),
+                "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
                 "is_active": False,
                 "oracle_available": False,
                 "kronos_available": False,
@@ -580,7 +580,7 @@ async def get_athena_diagnostics():
     import os
 
     diagnostics = {
-        "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+        "timestamp": datetime.now(ZoneInfo("America/Chicago")).isoformat(),
         "subsystems": {},
         "data_availability": {},
         "environment": {}

@@ -76,22 +76,21 @@ if not os.getenv('TRADING_VOLATILITY_API_KEY') and not os.getenv('TV_USERNAME'):
 if not os.getenv('POLYGON_API_KEY'):
     print("⚠️  WARNING: POLYGON_API_KEY not loaded from .env")
 
-# Timezones
-ET = ZoneInfo("America/New_York")
+# Texas Central Time - standard timezone for all AlphaGEX operations
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 def is_market_hours() -> bool:
-    """Check if current time is during market hours (9:30 AM - 4:00 PM ET, Mon-Fri)"""
-    now = datetime.now(ET)
+    """Check if current time is during market hours (8:30 AM - 3:00 PM CT, Mon-Fri)"""
+    now = datetime.now(CENTRAL_TZ)
 
     # Check if weekday (0=Monday, 4=Friday)
     if now.weekday() > 4:  # Saturday=5, Sunday=6
         return False
 
-    # Market hours: 9:30 AM - 4:00 PM ET
-    market_open = dt_time(9, 30)
-    market_close = dt_time(16, 0)
+    # Market hours: 8:30 AM - 3:00 PM CT (same as 9:30 AM - 4:00 PM ET)
+    market_open = dt_time(8, 30)
+    market_close = dt_time(15, 0)
     current_time = now.time()
 
     return market_open <= current_time <= market_close
@@ -99,14 +98,14 @@ def is_market_hours() -> bool:
 
 def is_after_market_close() -> bool:
     """Check if it's after market close (for end-of-day jobs)"""
-    now = datetime.now(ET)
+    now = datetime.now(CENTRAL_TZ)
 
     if now.weekday() > 4:  # Weekend
         return False
 
-    # Run daily jobs between 4:00 PM - 4:30 PM ET
-    after_close = dt_time(16, 0)
-    end_window = dt_time(16, 30)
+    # Run daily jobs between 3:00 PM - 3:30 PM CT (same as 4:00 PM - 4:30 PM ET)
+    after_close = dt_time(15, 0)
+    end_window = dt_time(15, 30)
     current_time = now.time()
 
     return after_close <= current_time <= end_window

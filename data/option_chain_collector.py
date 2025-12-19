@@ -41,7 +41,8 @@ from data.polygon_data_fetcher import polygon_fetcher
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-ET = ZoneInfo("America/New_York")
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 def ensure_tables():
@@ -71,7 +72,7 @@ def collect_option_snapshot(
         Dict with collection statistics
     """
     ensure_tables()
-    start_time = datetime.now(ET)
+    start_time = datetime.now(CENTRAL_TZ)
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -122,7 +123,7 @@ def collect_option_snapshot(
                     continue
 
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d').date()
-                dte = (exp_date - datetime.now(ET).date()).days
+                dte = (exp_date - datetime.now(CENTRAL_TZ).date()).days
 
                 # Skip if too far out
                 if dte > max_dte or dte < 0:
@@ -225,7 +226,7 @@ def collect_option_snapshot(
 
     finally:
         # Log collection run
-        end_time = datetime.now(ET)
+        end_time = datetime.now(CENTRAL_TZ)
         duration = (end_time - start_time).total_seconds()
 
         try:

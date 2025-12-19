@@ -174,17 +174,17 @@ except Exception as e:
 print("\n[TEST 8] Data Freshness Verification...")
 print(f"  Current Time: {datetime.now().isoformat()}")
 print(f"  Day of Week: {datetime.now().strftime('%A')}")
-print(f"  Market Hours: 9:30 AM - 4:00 PM ET")
+print(f"  Market Hours: 8:30 AM - 3:00 PM CT")
 
-# Check if we're in market hours
+# Check if we're in market hours (Central Time)
 from zoneinfo import ZoneInfo
-et_now = datetime.now(ZoneInfo("America/New_York"))
-print(f"  Eastern Time: {et_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+ct_now = datetime.now(ZoneInfo("America/Chicago"))
+print(f"  Central Time: {ct_now.strftime('%Y-%m-%d %H:%M:%S CT')}")
 
-is_weekday = et_now.weekday() < 5
-market_open = et_now.replace(hour=9, minute=30, second=0, microsecond=0)
-market_close = et_now.replace(hour=16, minute=0, second=0, microsecond=0)
-is_market_hours = market_open <= et_now <= market_close
+is_weekday = ct_now.weekday() < 5
+market_open = ct_now.replace(hour=8, minute=30, second=0, microsecond=0)
+market_close = ct_now.replace(hour=15, minute=0, second=0, microsecond=0)
+is_market_hours = market_open <= ct_now <= market_close
 
 if is_weekday and is_market_hours:
     print("  ✅ Market is OPEN - data should be live")
