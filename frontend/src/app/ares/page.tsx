@@ -583,6 +583,7 @@ export default function ARESPage() {
                 </h2>
 
                 {tradierStatus?.connected ? (
+                  <>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="bg-gradient-to-br from-blue-900/20 to-gray-800 rounded-lg p-4 border border-blue-700/50">
                       <div className="flex items-center justify-between">
@@ -675,6 +676,7 @@ export default function ARESPage() {
                       )}
                     </div>
                   </div>
+                  </>
                 ) : (
                   <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700 text-center">
                     <AlertTriangle className="w-12 h-12 text-yellow-500 mx-auto mb-3" />
