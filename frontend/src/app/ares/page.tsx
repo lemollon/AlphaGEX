@@ -406,15 +406,13 @@ export default function ARESPage() {
                 </div>
               </div>
 
-              {/* Section 2: Paper Trading (Simulated) */}
+              {/* Section 2: SPX Performance (Simulated - can't trade on Tradier) */}
               <div className="mb-8">
                 <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2 border-b border-gray-700 pb-2">
                   <Play className="w-5 h-5 text-purple-500" />
-                  Paper Trading (Simulated)
-                  <span className="text-xs text-gray-500 ml-2">Internal Simulation</span>
-                  {!tradierStatus?.connected && (
-                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-purple-900 text-purple-300">ACTIVE</span>
-                  )}
+                  SPX Performance
+                  <span className="text-xs text-gray-500 ml-2">Simulated (Real Market Data)</span>
+                  <span className="ml-auto px-2 py-0.5 rounded text-xs bg-purple-900 text-purple-300">SPX 0DTE</span>
                 </h2>
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -439,7 +437,7 @@ export default function ARESPage() {
 
                   <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-400">Simulated Capital</span>
+                      <span className="text-gray-400">Capital</span>
                       <DollarSign className="w-5 h-5 text-purple-500" />
                     </div>
                     <div className="mt-2">
@@ -451,7 +449,7 @@ export default function ARESPage() {
 
                   <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-400">Simulated P&L</span>
+                      <span className="text-gray-400">Total P&L</span>
                       {(performance?.total_pnl || 0) >= 0 ? (
                         <TrendingUp className="w-5 h-5 text-green-500" />
                       ) : (
@@ -487,16 +485,16 @@ export default function ARESPage() {
                 </div>
               </div>
 
-              {/* Section 3: Tradier Paper Trading (Sandbox) */}
+              {/* Section 3: SPY Performance (Tradier Paper Trading) */}
               <div className="mb-8">
                 <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2 border-b border-gray-700 pb-2">
                   <Server className="w-5 h-5 text-blue-500" />
-                  Tradier Paper Trading (Sandbox)
-                  <span className="text-xs text-gray-500 ml-2">Real Execution on Paper Account</span>
+                  SPY Performance
+                  <span className="text-xs text-gray-500 ml-2">Tradier Paper Trading</span>
                   {tradierStatus?.connected ? (
                     <span className="ml-auto px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">CONNECTED</span>
                   ) : (
-                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-red-900 text-red-300">DISCONNECTED</span>
+                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">NOT CONNECTED</span>
                   )}
                 </h2>
 
@@ -549,9 +547,9 @@ export default function ARESPage() {
                 ) : (
                   <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700 text-center">
                     <AlertTriangle className="w-12 h-12 text-yellow-500 mx-auto mb-3" />
-                    <h4 className="text-white font-semibold mb-2">Tradier Sandbox Not Connected</h4>
+                    <h4 className="text-white font-semibold mb-2">SPY Paper Trading Not Connected</h4>
                     <p className="text-gray-400 text-sm mb-4">
-                      Paper trading is running in simulation mode. Connect Tradier sandbox for real paper execution.
+                      Connect Tradier sandbox to enable SPY paper trading with real execution.
                     </p>
                     <p className="text-xs text-gray-500">
                       Set TRADIER_ACCESS_TOKEN and enable sandbox mode to connect
