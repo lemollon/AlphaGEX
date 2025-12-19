@@ -128,9 +128,9 @@ def check_api():
 def check_claude():
     """Check Claude API availability"""
     print("\n🤖 Claude AI:")
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    api_key = os.environ.get('CLAUDE_API_KEY')
     if not api_key:
-        print("   ⚠️  ANTHROPIC_API_KEY not set")
+        print("   ⚠️  CLAUDE_API_KEY not set")
         return False
 
     # Just check key is present and formatted correctly
