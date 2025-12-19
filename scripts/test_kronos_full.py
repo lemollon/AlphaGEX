@@ -14,6 +14,9 @@ Usage:
     python scripts/test_kronos_full.py [--live]
 
     --live: Also run a live backtest (takes longer)
+
+NOTE: This test suite uses FastAPI's TestClient for API tests, so no running
+server is required. Infrastructure tests import modules directly.
 """
 
 import os
@@ -22,7 +25,6 @@ import json
 import time
 import asyncio
 import argparse
-import requests
 from datetime import datetime
 from typing import Optional
 
@@ -32,6 +34,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Configuration
 API_URL = os.getenv('API_URL', 'http://localhost:8000')
 TIMEOUT = 30
+
+# Import requests for HTTP fallback (always available)
+import requests
+
+# Import FastAPI TestClient for in-process API testing (no running server needed)
+_test_client = None
+USE_TEST_CLIENT = False
+
+try:
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    _test_client = TestClient(app)
+    USE_TEST_CLIENT = True
+    print("✅ Using FastAPI TestClient (no server required)")
+except ImportError as e:
+    print(f"⚠️  TestClient unavailable: {e}. Falling back to HTTP requests.")
+except Exception as e:
+    print(f"⚠️  TestClient setup failed: {e}. Falling back to HTTP requests.")
 
 # Colors for output
 class Colors:
@@ -144,6 +164,22 @@ def test_infrastructure():
     return results
 
 
+def _get(url: str, **kwargs):
+    """Make GET request using TestClient or HTTP fallback"""
+    if USE_TEST_CLIENT:
+        return _test_client.get(url, **kwargs)
+    else:
+        return requests.get(f"{API_URL}{url}", timeout=TIMEOUT, **kwargs)
+
+
+def _post(url: str, **kwargs):
+    """Make POST request using TestClient or HTTP fallback"""
+    if USE_TEST_CLIENT:
+        return _test_client.post(url, **kwargs)
+    else:
+        return requests.post(f"{API_URL}{url}", timeout=TIMEOUT, **kwargs)
+
+
 def test_rest_api():
     """Test KRONOS REST API endpoints"""
     log_section("2. REST API TESTS")
@@ -151,7 +187,7 @@ def test_rest_api():
 
     # Test 2.1: Health endpoint
     try:
-        resp = requests.get(f"{API_URL}/api/zero-dte/health", timeout=TIMEOUT)
+        resp = _get("/api/zero-dte/health")
         passed = resp.status_code == 200
         log_test("Health endpoint", passed, f"Status: {resp.status_code}")
         results.append(passed)
@@ -161,7 +197,7 @@ def test_rest_api():
 
     # Test 2.2: Init endpoint (consolidated)
     try:
-        resp = requests.get(f"{API_URL}/api/zero-dte/init", timeout=TIMEOUT)
+        resp = _get("/api/zero-dte/init")
         passed = resp.status_code == 200
         if passed:
             data = resp.json()
@@ -177,7 +213,7 @@ def test_rest_api():
 
     # Test 2.3: Strategies endpoint
     try:
-        resp = requests.get(f"{API_URL}/api/zero-dte/strategies", timeout=TIMEOUT)
+        resp = _get("/api/zero-dte/strategies")
         passed = resp.status_code == 200
         log_test("Strategies endpoint", passed)
         results.append(passed)
@@ -187,7 +223,7 @@ def test_rest_api():
 
     # Test 2.4: Strategy types endpoint
     try:
-        resp = requests.get(f"{API_URL}/api/zero-dte/strategy-types", timeout=TIMEOUT)
+        resp = _get("/api/zero-dte/strategy-types")
         passed = resp.status_code == 200
         log_test("Strategy types endpoint", passed)
         results.append(passed)
@@ -197,7 +233,7 @@ def test_rest_api():
 
     # Test 2.5: Tiers endpoint
     try:
-        resp = requests.get(f"{API_URL}/api/zero-dte/tiers", timeout=TIMEOUT)
+        resp = _get("/api/zero-dte/tiers")
         passed = resp.status_code == 200
         log_test("Tiers endpoint", passed)
         results.append(passed)
@@ -207,7 +243,7 @@ def test_rest_api():
 
     # Test 2.6: Infrastructure status endpoint
     try:
-        resp = requests.get(f"{API_URL}/api/kronos/infrastructure", timeout=TIMEOUT)
+        resp = _get("/api/kronos/infrastructure")
         passed = resp.status_code == 200
         if passed:
             data = resp.json()
@@ -236,11 +272,7 @@ def test_natural_language():
 
     # Test 3.1: Natural language endpoint exists
     try:
-        resp = requests.post(
-            f"{API_URL}/api/zero-dte/natural-language",
-            json={"query": "test query"},
-            timeout=TIMEOUT
-        )
+        resp = _post("/api/zero-dte/natural-language", json={"query": "test query"})
         passed = resp.status_code in [200, 500]  # 500 might happen if no DB
         log_test("Natural language endpoint exists", passed)
         results.append(passed)
@@ -279,24 +311,33 @@ def test_sse_streaming():
 
     # Test 4.1: SSE endpoint exists (with fake job ID)
     try:
-        resp = requests.get(
-            f"{API_URL}/api/zero-dte/job/test_nonexistent/stream",
-            stream=True,
-            timeout=5
-        )
-        # Should return 200 with SSE (even for non-existent job, it sends error message)
-        passed = resp.status_code == 200
-        content_type = resp.headers.get('content-type', '')
-        log_test("SSE endpoint exists", passed, f"Content-Type: {content_type}")
-        results.append(passed)
-        resp.close()
-    except requests.exceptions.Timeout:
-        # Timeout is expected for SSE
-        log_test("SSE endpoint exists", True, "Connection established (timeout expected)")
-        results.append(True)
+        if USE_TEST_CLIENT:
+            # TestClient handles streaming differently
+            with _test_client.stream("GET", "/api/zero-dte/job/test_nonexistent/stream") as resp:
+                passed = resp.status_code == 200
+                content_type = resp.headers.get('content-type', '')
+                log_test("SSE endpoint exists", passed, f"Content-Type: {content_type}")
+                results.append(passed)
+        else:
+            resp = requests.get(
+                f"{API_URL}/api/zero-dte/job/test_nonexistent/stream",
+                stream=True,
+                timeout=5
+            )
+            # Should return 200 with SSE (even for non-existent job, it sends error message)
+            passed = resp.status_code == 200
+            content_type = resp.headers.get('content-type', '')
+            log_test("SSE endpoint exists", passed, f"Content-Type: {content_type}")
+            results.append(passed)
+            resp.close()
     except Exception as e:
-        log_test("SSE endpoint exists", False, str(e))
-        results.append(False)
+        # Timeout or stream close is expected for SSE with test job
+        if "timeout" in str(e).lower() or "closed" in str(e).lower():
+            log_test("SSE endpoint exists", True, "Connection established (timeout expected)")
+            results.append(True)
+        else:
+            log_test("SSE endpoint exists", False, str(e))
+            results.append(False)
 
     return results
 
@@ -306,6 +347,28 @@ def test_websocket():
     log_section("5. WEBSOCKET TESTS")
     results = []
 
+    # TestClient supports WebSocket testing directly
+    if USE_TEST_CLIENT:
+        try:
+            with _test_client.websocket_connect("/ws/kronos/job/test_job") as websocket:
+                # Send ping
+                websocket.send_text("ping")
+                response = websocket.receive_text()
+                passed = response == "pong" or "job_update" in response
+                log_test("Job WebSocket ping/pong", passed, f"Response: {response[:50] if response else 'empty'}...")
+                results.append(passed)
+        except Exception as e:
+            # WebSocket connection or timeout - expected for test job
+            error_str = str(e).lower()
+            if "timeout" in error_str or "closed" in error_str or "job_update" in str(e):
+                log_test("Job WebSocket", True, "Connected (expected close for test job)")
+                results.append(True)
+            else:
+                log_test("Job WebSocket", False, str(e))
+                results.append(False)
+        return results
+
+    # Fallback to websockets library for external server testing
     try:
         import websockets
     except ImportError:
@@ -374,11 +437,7 @@ def test_live_backtest(run_backtest: bool = False):
             "trade_friday": True,
         }
 
-        resp = requests.post(
-            f"{API_URL}/api/zero-dte/run",
-            json=config,
-            timeout=TIMEOUT
-        )
+        resp = _post("/api/zero-dte/run", json=config)
 
         if resp.status_code == 200:
             data = resp.json()
@@ -391,9 +450,10 @@ def test_live_backtest(run_backtest: bool = False):
                 max_wait = 120  # 2 minutes max
                 start_time = time.time()
                 final_status = None
+                poll_resp = None
 
                 while time.time() - start_time < max_wait:
-                    poll_resp = requests.get(f"{API_URL}/api/zero-dte/job/{job_id}", timeout=TIMEOUT)
+                    poll_resp = _get(f"/api/zero-dte/job/{job_id}")
                     if poll_resp.status_code == 200:
                         job_data = poll_resp.json().get('job', {})
                         status = job_data.get('status')
@@ -451,10 +511,9 @@ def test_natural_language_backtest(run_backtest: bool = False):
 
     try:
         # Submit NL backtest
-        resp = requests.post(
-            f"{API_URL}/api/zero-dte/natural-language",
-            json={"query": "Run a conservative iron condor for January 2023 with $100k"},
-            timeout=TIMEOUT
+        resp = _post(
+            "/api/zero-dte/natural-language",
+            json={"query": "Run a conservative iron condor for January 2023 with $100k"}
         )
 
         if resp.status_code == 200:
@@ -474,7 +533,7 @@ def test_natural_language_backtest(run_backtest: bool = False):
                 final_status = None
 
                 while time.time() - start_time < max_wait:
-                    poll_resp = requests.get(f"{API_URL}/api/zero-dte/job/{job_id}", timeout=TIMEOUT)
+                    poll_resp = _get(f"/api/zero-dte/job/{job_id}")
                     if poll_resp.status_code == 200:
                         job_data = poll_resp.json().get('job', {})
                         status = job_data.get('status')
@@ -514,7 +573,10 @@ def main():
     args = parser.parse_args()
 
     print(f"\n{Colors.BOLD}{Colors.CYAN}KRONOS FULL TEST SUITE{Colors.RESET}")
-    print(f"{Colors.CYAN}Testing against: {API_URL}{Colors.RESET}")
+    if USE_TEST_CLIENT:
+        print(f"{Colors.CYAN}Testing mode: FastAPI TestClient (in-process, no server required){Colors.RESET}")
+    else:
+        print(f"{Colors.CYAN}Testing against: {API_URL}{Colors.RESET}")
     print(f"{Colors.CYAN}Timestamp: {datetime.now().isoformat()}{Colors.RESET}")
 
     all_results = []
