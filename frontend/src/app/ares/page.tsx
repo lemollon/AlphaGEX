@@ -630,7 +630,8 @@ export default function ARESPage() {
                     </p>
                     <div className="bg-gray-800/50 rounded-lg p-4 text-left text-sm">
                       <p className="text-gray-500 mb-2">Required environment variables:</p>
-                      <code className="text-blue-400 block">TRADIER_ACCESS_TOKEN=your_sandbox_token</code>
+                      <code className="text-blue-400 block">TRADIER_API_KEY=your_sandbox_api_key</code>
+                      <code className="text-blue-400 block">TRADIER_ACCOUNT_ID=your_account_id</code>
                       <code className="text-blue-400 block">TRADIER_SANDBOX=true</code>
                     </div>
                     {tradierStatus?.errors && tradierStatus.errors.length > 0 && (

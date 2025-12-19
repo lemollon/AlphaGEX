@@ -2174,10 +2174,15 @@ class ARESTrader:
                 balances = tradier_client.get_account_balance()
                 if balances:
                     result['account'] = {
+                        'account_number': tradier_client.account_id,
                         'total_equity': balances.get('total_equity', 0),
+                        'equity': balances.get('total_equity', 0),
                         'total_cash': balances.get('total_cash', 0),
+                        'cash': balances.get('total_cash', 0),
                         'option_buying_power': balances.get('option_buying_power', 0),
-                        'pending_orders_count': balances.get('pending_orders_count', 0)
+                        'buying_power': balances.get('option_buying_power', 0),
+                        'pending_orders_count': balances.get('pending_orders_count', 0),
+                        'type': 'sandbox' if tradier_client.sandbox else 'live'
                     }
             except Exception as e:
                 result['errors'].append(f"Failed to get balances: {e}")
