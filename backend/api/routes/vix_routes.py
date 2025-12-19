@@ -50,7 +50,22 @@ def get_vix_fallback_data() -> Dict[str, Any]:
         'position_size_multiplier': 1.0
     }
 
-    # Try unified data provider (Tradier)
+    # Try direct Tradier $VIX.X (same as ARES - this works!)
+    try:
+        from data.tradier_data_fetcher import TradierDataFetcher
+        use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+        tradier = TradierDataFetcher(sandbox=use_sandbox)
+        vix_quote = tradier.get_quote("$VIX.X")
+        if vix_quote and vix_quote.get('last'):
+            vix_data['vix_spot'] = float(vix_quote['last'])
+            vix_data['vix_source'] = 'tradier'
+            vix_data['is_estimated'] = False
+            logger.info(f"VIX from Tradier $VIX.X: {vix_data['vix_spot']}")
+            return vix_data
+    except Exception as e:
+        logger.debug(f"Tradier $VIX.X failed: {e}")
+
+    # Try unified data provider (Tradier) - backup
     try:
         from data.unified_data_provider import get_vix
         vix_value = get_vix()
@@ -532,13 +547,17 @@ async def test_vix_sources():
     except Exception as e:
         results['sources']['vix_hedge_manager'] = {'error': str(e)}
 
-    # Test 5: Tradier VIX (if available)
+    # Test 5: Tradier VIX (if available) - use same sandbox setting as ARES
     tradier_token = os.getenv('TRADIER_ACCESS_TOKEN')
     if tradier_token:
         try:
             from data.tradier_data_fetcher import TradierDataFetcher
-            tradier = TradierDataFetcher()
-            for symbol in ['VIX', '$VIX.X', 'VIXW']:
+            use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+            tradier = TradierDataFetcher(sandbox=use_sandbox)
+            results['sources']['tradier_sandbox_mode'] = use_sandbox
+
+            # Test $VIX.X first (this is what ARES uses successfully)
+            for symbol in ['$VIX.X', 'VIX', 'VIXW']:
                 try:
                     data = tradier.get_quote(symbol)
                     if data:
