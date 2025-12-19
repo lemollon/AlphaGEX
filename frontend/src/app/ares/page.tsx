@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
+import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp, Eye, Brain, Zap, Server, Play, AlertTriangle } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
@@ -80,6 +80,43 @@ interface MarketData {
   source: string
 }
 
+interface GEXData {
+  spot_price: number
+  call_wall: number
+  put_wall: number
+  zero_gamma: number
+  regime: string
+  gex_value: number
+  timestamp: string
+}
+
+interface OracleRecommendation {
+  advice: string
+  win_probability: number
+  confidence: number
+  reasoning: string
+  top_factors: [string, number][]
+}
+
+interface MLStatus {
+  model_trained: boolean
+  model_version: string
+  last_prediction?: {
+    advice: string
+    probability: number
+  }
+}
+
+interface TradierAccountStatus {
+  connected: boolean
+  account_type: string
+  buying_power: number
+  cash: number
+  total_equity: number
+  pending_orders: number
+  open_positions: number
+}
+
 export default function ARESPage() {
   const [status, setStatus] = useState<ARESStatus | null>(null)
   const [positions, setPositions] = useState<IronCondorPosition[]>([])
@@ -93,11 +130,18 @@ export default function ARESPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'logs'>('overview')
   const [showClosedPositions, setShowClosedPositions] = useState(false)
 
+  // AlphaGEX Analysis Data
+  const [gexData, setGexData] = useState<GEXData | null>(null)
+  const [oracleRec, setOracleRec] = useState<OracleRecommendation | null>(null)
+  const [mlStatus, setMlStatus] = useState<MLStatus | null>(null)
+  const [tradierStatus, setTradierStatus] = useState<TradierAccountStatus | null>(null)
+
   const fetchData = async () => {
     try {
       setLoading(true)
       setError(null)
 
+      // Fetch ARES trading data
       const [statusRes, performanceRes, equityRes, positionsRes, marketRes] = await Promise.all([
         apiClient.getARESPageStatus().catch(() => ({ data: null })),
         apiClient.getARESPerformance().catch(() => ({ data: null })),
@@ -112,6 +156,54 @@ export default function ARESPage() {
       if (positionsRes.data?.data?.open_positions) setPositions(positionsRes.data.data.open_positions)
       if (positionsRes.data?.data?.closed_positions) setClosedPositions(positionsRes.data.data.closed_positions)
       if (marketRes.data?.data) setMarketData(marketRes.data.data)
+
+      // Fetch AlphaGEX analysis data
+      const [gexRes, oracleRes, mlRes] = await Promise.all([
+        apiClient.getGEX('SPX').catch(() => ({ data: null })),
+        apiClient.getOracleStatus().catch(() => ({ data: null })),
+        apiClient.getMLStatus().catch(() => ({ data: null }))
+      ])
+
+      if (gexRes.data?.data) {
+        setGexData({
+          spot_price: gexRes.data.data.spot_price,
+          call_wall: gexRes.data.data.call_wall,
+          put_wall: gexRes.data.data.put_wall,
+          zero_gamma: gexRes.data.data.zero_gamma || gexRes.data.data.gex_flip,
+          regime: gexRes.data.data.regime || 'UNKNOWN',
+          gex_value: gexRes.data.data.net_gex || gexRes.data.data.gex_value || 0,
+          timestamp: gexRes.data.data.timestamp || new Date().toISOString()
+        })
+      }
+
+      if (oracleRes.data?.oracle) {
+        const oracle = oracleRes.data.oracle
+        // If there's a recent prediction, show it
+        if (oracleRes.data?.last_prediction) {
+          setOracleRec(oracleRes.data.last_prediction)
+        }
+      }
+
+      if (mlRes.data) {
+        setMlStatus({
+          model_trained: mlRes.data.model_trained || false,
+          model_version: mlRes.data.model_version || 'unknown',
+          last_prediction: mlRes.data.last_prediction
+        })
+      }
+
+      // Check Tradier sandbox status from ARES status
+      if (statusRes.data?.data) {
+        setTradierStatus({
+          connected: statusRes.data.data.sandbox_connected || false,
+          account_type: statusRes.data.data.paper_mode_type === 'sandbox' ? 'Tradier Sandbox' : 'Simulated',
+          buying_power: statusRes.data.data.capital || 0,
+          cash: statusRes.data.data.capital || 0,
+          total_equity: statusRes.data.data.capital + (statusRes.data.data.total_pnl || 0),
+          pending_orders: 0,
+          open_positions: statusRes.data.data.open_positions || 0
+        })
+      }
 
       setLastUpdate(new Date())
     } catch (err) {
@@ -208,74 +300,264 @@ export default function ARESPage() {
           {/* Overview Tab */}
           {activeTab === 'overview' && (
             <>
-              {/* Status Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">Status</span>
-                    {status?.in_trading_window ? (
-                      <CheckCircle className="w-5 h-5 text-green-500" />
-                    ) : (
-                      <Clock className="w-5 h-5 text-gray-500" />
-                    )}
+              {/* Section 1: AlphaGEX Analysis */}
+              <div className="mb-8">
+                <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2 border-b border-gray-700 pb-2">
+                  <Zap className="w-5 h-5 text-yellow-500" />
+                  AlphaGEX Analysis
+                  <span className="text-xs text-gray-500 ml-2">System Recommendations</span>
+                </h2>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* GEX Analysis */}
+                  <div className="bg-gradient-to-br from-yellow-900/20 to-gray-800 rounded-lg p-4 border border-yellow-700/50">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-medium text-yellow-400 flex items-center gap-2">
+                        <Activity className="w-4 h-4" />
+                        GEX Regime
+                      </h4>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        gexData?.regime === 'POSITIVE' ? 'bg-green-900 text-green-300' :
+                        gexData?.regime === 'NEGATIVE' ? 'bg-red-900 text-red-300' :
+                        'bg-gray-700 text-gray-300'
+                      }`}>
+                        {gexData?.regime || 'UNKNOWN'}
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Call Wall</span>
+                        <span className="text-green-400 font-mono">{gexData?.call_wall?.toLocaleString() || '--'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Put Wall</span>
+                        <span className="text-red-400 font-mono">{gexData?.put_wall?.toLocaleString() || '--'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Zero Gamma</span>
+                        <span className="text-purple-400 font-mono">{gexData?.zero_gamma?.toLocaleString() || '--'}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="mt-2">
-                    <span className="text-lg font-bold text-white">
-                      {status?.in_trading_window ? 'Active' : 'Waiting'}
-                    </span>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {status?.traded_today ? 'Traded today' : 'No trade today'}
+
+                  {/* ORACLE Recommendation */}
+                  <div className="bg-gradient-to-br from-purple-900/20 to-gray-800 rounded-lg p-4 border border-purple-700/50">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-medium text-purple-400 flex items-center gap-2">
+                        <Eye className="w-4 h-4" />
+                        ORACLE Advice
+                      </h4>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        oracleRec?.advice === 'TRADE_FULL' ? 'bg-green-900 text-green-300' :
+                        oracleRec?.advice === 'TRADE_REDUCED' ? 'bg-yellow-900 text-yellow-300' :
+                        oracleRec?.advice === 'SKIP' ? 'bg-red-900 text-red-300' :
+                        'bg-gray-700 text-gray-300'
+                      }`}>
+                        {oracleRec?.advice || 'NO DATA'}
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Win Probability</span>
+                        <span className="text-white">{oracleRec?.win_probability ? `${(oracleRec.win_probability * 100).toFixed(1)}%` : '--'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Confidence</span>
+                        <span className="text-white">{oracleRec?.confidence ? `${oracleRec.confidence.toFixed(1)}%` : '--'}</span>
+                      </div>
+                      {oracleRec?.reasoning && (
+                        <p className="text-xs text-gray-500 mt-2 line-clamp-2">{oracleRec.reasoning}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ML Model Status */}
+                  <div className="bg-gradient-to-br from-blue-900/20 to-gray-800 rounded-lg p-4 border border-blue-700/50">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-medium text-blue-400 flex items-center gap-2">
+                        <Brain className="w-4 h-4" />
+                        PROMETHEUS ML
+                      </h4>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        mlStatus?.model_trained ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'
+                      }`}>
+                        {mlStatus?.model_trained ? 'TRAINED' : 'NOT READY'}
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Model Version</span>
+                        <span className="text-white font-mono text-xs">{mlStatus?.model_version || '--'}</span>
+                      </div>
+                      {mlStatus?.last_prediction && (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Last Advice</span>
+                            <span className="text-white">{mlStatus.last_prediction.advice}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Probability</span>
+                            <span className="text-white">{(mlStatus.last_prediction.probability * 100).toFixed(1)}%</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Paper Trading (Simulated) */}
+              <div className="mb-8">
+                <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2 border-b border-gray-700 pb-2">
+                  <Play className="w-5 h-5 text-purple-500" />
+                  Paper Trading (Simulated)
+                  <span className="text-xs text-gray-500 ml-2">Internal Simulation</span>
+                  {!tradierStatus?.connected && (
+                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-purple-900 text-purple-300">ACTIVE</span>
+                  )}
+                </h2>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Status</span>
+                      {status?.in_trading_window ? (
+                        <CheckCircle className="w-5 h-5 text-green-500" />
+                      ) : (
+                        <Clock className="w-5 h-5 text-gray-500" />
+                      )}
+                    </div>
+                    <div className="mt-2">
+                      <span className="text-lg font-bold text-white">
+                        {status?.in_trading_window ? 'Active' : 'Waiting'}
+                      </span>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {status?.traded_today ? 'Traded today' : 'No trade today'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Simulated Capital</span>
+                      <DollarSign className="w-5 h-5 text-purple-500" />
+                    </div>
+                    <div className="mt-2">
+                      <span className="text-2xl font-bold text-white">
+                        {formatCurrency(performance?.current_capital || status?.capital || 200000)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Simulated P&L</span>
+                      {(performance?.total_pnl || 0) >= 0 ? (
+                        <TrendingUp className="w-5 h-5 text-green-500" />
+                      ) : (
+                        <TrendingDown className="w-5 h-5 text-red-500" />
+                      )}
+                    </div>
+                    <div className="mt-2">
+                      <span className={`text-2xl font-bold ${
+                        (performance?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {formatCurrency(performance?.total_pnl || 0)}
+                      </span>
+                      <span className="text-sm text-gray-500 ml-2">
+                        ({formatPercent(performance?.return_pct || 0)})
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Win Rate</span>
+                      <Target className="w-5 h-5 text-purple-500" />
+                    </div>
+                    <div className="mt-2">
+                      <span className="text-2xl font-bold text-white">
+                        {(performance?.win_rate || 0).toFixed(1)}%
+                      </span>
+                      <span className="text-sm text-gray-500 ml-2">
+                        ({performance?.closed_trades || 0} trades)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 3: Tradier Paper Trading (Sandbox) */}
+              <div className="mb-8">
+                <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2 border-b border-gray-700 pb-2">
+                  <Server className="w-5 h-5 text-blue-500" />
+                  Tradier Paper Trading (Sandbox)
+                  <span className="text-xs text-gray-500 ml-2">Real Execution on Paper Account</span>
+                  {tradierStatus?.connected ? (
+                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">CONNECTED</span>
+                  ) : (
+                    <span className="ml-auto px-2 py-0.5 rounded text-xs bg-red-900 text-red-300">DISCONNECTED</span>
+                  )}
+                </h2>
+
+                {tradierStatus?.connected ? (
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="bg-gradient-to-br from-blue-900/20 to-gray-800 rounded-lg p-4 border border-blue-700/50">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Account Type</span>
+                        <Server className="w-5 h-5 text-blue-500" />
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-lg font-bold text-blue-300">{tradierStatus.account_type}</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-blue-900/20 to-gray-800 rounded-lg p-4 border border-blue-700/50">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Buying Power</span>
+                        <DollarSign className="w-5 h-5 text-blue-500" />
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-2xl font-bold text-white">
+                          {formatCurrency(tradierStatus.buying_power)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-blue-900/20 to-gray-800 rounded-lg p-4 border border-blue-700/50">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Total Equity</span>
+                        <TrendingUp className="w-5 h-5 text-blue-500" />
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-2xl font-bold text-white">
+                          {formatCurrency(tradierStatus.total_equity)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-blue-900/20 to-gray-800 rounded-lg p-4 border border-blue-700/50">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Open Positions</span>
+                        <Activity className="w-5 h-5 text-blue-500" />
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-2xl font-bold text-white">{tradierStatus.open_positions}</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700 text-center">
+                    <AlertTriangle className="w-12 h-12 text-yellow-500 mx-auto mb-3" />
+                    <h4 className="text-white font-semibold mb-2">Tradier Sandbox Not Connected</h4>
+                    <p className="text-gray-400 text-sm mb-4">
+                      Paper trading is running in simulation mode. Connect Tradier sandbox for real paper execution.
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Set TRADIER_ACCESS_TOKEN and enable sandbox mode to connect
                     </p>
                   </div>
-                </div>
-
-                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">Capital</span>
-                    <DollarSign className="w-5 h-5 text-blue-500" />
-                  </div>
-                  <div className="mt-2">
-                    <span className="text-2xl font-bold text-white">
-                      {formatCurrency(performance?.current_capital || status?.capital || 200000)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">Total P&L</span>
-                    {(performance?.total_pnl || 0) >= 0 ? (
-                      <TrendingUp className="w-5 h-5 text-green-500" />
-                    ) : (
-                      <TrendingDown className="w-5 h-5 text-red-500" />
-                    )}
-                  </div>
-                  <div className="mt-2">
-                    <span className={`text-2xl font-bold ${
-                      (performance?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {formatCurrency(performance?.total_pnl || 0)}
-                    </span>
-                    <span className="text-sm text-gray-500 ml-2">
-                      ({formatPercent(performance?.return_pct || 0)})
-                    </span>
-                  </div>
-                </div>
-
-                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">Win Rate</span>
-                    <Target className="w-5 h-5 text-purple-500" />
-                  </div>
-                  <div className="mt-2">
-                    <span className="text-2xl font-bold text-white">
-                      {(performance?.win_rate || 0).toFixed(1)}%
-                    </span>
-                    <span className="text-sm text-gray-500 ml-2">
-                      ({performance?.closed_trades || 0} trades)
-                    </span>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Market Data & Strategy Config */}
