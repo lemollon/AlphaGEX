@@ -829,7 +829,7 @@ When the user asks for data, you can fetch it in real-time.
     # Add economic calendar context
     if include_economic_calendar and AGENTIC_TOOLS_AVAILABLE:
         try:
-            upcoming = get_upcoming_events(days=7)
+            upcoming = get_upcoming_events(days_ahead=7)
             if upcoming:
                 prompt += "\n\n=== UPCOMING ECONOMIC EVENTS (Next 7 Days) ===\n"
                 for event in upcoming[:5]:  # Top 5 events
