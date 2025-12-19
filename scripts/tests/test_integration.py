@@ -21,8 +21,17 @@ from urllib.error import URLError, HTTPError
 # Add parent directories to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-# Configuration
-API_BASE_URL = os.environ.get('API_BASE_URL', 'http://localhost:8000')
+# Configuration - Auto-detect Render URL or use environment variable
+def get_api_base_url():
+    if os.environ.get('API_BASE_URL'):
+        return os.environ.get('API_BASE_URL')
+    # Check if we're on Render
+    if os.environ.get('RENDER'):
+        service_name = os.environ.get('RENDER_SERVICE_NAME', 'alphagex-backend')
+        return f"https://{service_name}.onrender.com"
+    return 'http://localhost:8000'
+
+API_BASE_URL = get_api_base_url()
 
 
 def print_header(title):
