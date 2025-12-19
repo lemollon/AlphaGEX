@@ -144,14 +144,29 @@ class VIXHedgeManager:
         - The 'is_estimated' flag indicates when estimates are used
         """
         try:
-            # VIX spot - Try unified provider (Tradier) first
+            import os
+            # VIX spot - Try direct Tradier $VIX.X first (same as ARES - proven working!)
             vix_spot = None
             vix_source = 'default'
 
-            if UNIFIED_DATA_AVAILABLE:
-                vix_spot = get_vix()
-                if vix_spot and vix_spot > 0:
-                    vix_source = 'unified_provider'
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+                tradier = TradierDataFetcher(sandbox=use_sandbox)
+                vix_quote = tradier.get_quote("$VIX.X")
+                if vix_quote and vix_quote.get('last'):
+                    vix_spot = float(vix_quote['last'])
+                    vix_source = 'tradier'
+                    print(f"✅ VIX from Tradier $VIX.X: {vix_spot}")
+            except Exception as e:
+                print(f"⚠️ Tradier $VIX.X failed: {e}")
+
+            # Fallback: Try unified provider
+            if not vix_spot or vix_spot <= 0:
+                if UNIFIED_DATA_AVAILABLE:
+                    vix_spot = get_vix()
+                    if vix_spot and vix_spot > 0:
+                        vix_source = 'unified_provider'
 
             # Fallback to Yahoo Finance (FREE - no API key needed!)
             if not vix_spot or vix_spot <= 0:
