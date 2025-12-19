@@ -375,105 +375,161 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
-  // PERFORMANCE FIX: Use SSE for real-time progress instead of polling
+  // PERFORMANCE FIX: Use WebSocket -> SSE -> Polling cascade for real-time progress
   useEffect(() => {
     if (!currentJobId || !running) return
 
+    let websocket: WebSocket | null = null
     let eventSource: EventSource | null = null
     let fallbackInterval: NodeJS.Timeout | null = null
+    let connectionMethod = 'none'
 
-    // Try SSE first for real-time updates
-    try {
-      eventSource = new EventSource(`${API_URL}/api/zero-dte/job/${currentJobId}/stream`)
+    // Handle job update from any source
+    function handleJobUpdate(data: any) {
+      setJobStatus(prev => ({
+        ...prev,
+        job_id: data.job_id || currentJobId,
+        status: data.status,
+        progress: data.progress,
+        progress_message: data.progress_message || '',
+        result: null,
+        error: data.error || null,
+        created_at: prev?.created_at || new Date().toISOString(),
+        completed_at: data.status === 'completed' ? new Date().toISOString() : null,
+      }))
 
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-
-          // Update job status
-          setJobStatus(prev => ({
-            ...prev,
-            job_id: data.job_id || currentJobId,
-            status: data.status,
-            progress: data.progress,
-            progress_message: data.progress_message || '',
-            result: null,
-            error: data.error || null,
-            created_at: prev?.created_at || new Date().toISOString(),
-            completed_at: data.status === 'completed' ? new Date().toISOString() : null,
-          }))
-
-          if (data.status === 'completed') {
-            setRunning(false)
-            setCompletedJobId(currentJobId)
-            setCurrentJobId(null)
-            // Fetch full result after SSE indicates completion
-            fetch(`${API_URL}/api/zero-dte/job/${currentJobId}`)
-              .then(res => res.json())
-              .then(fullData => {
-                if (fullData.job?.result) {
-                  setLiveJobResult(fullData.job.result)
-                }
-              })
-            loadResults()
-            eventSource?.close()
-          } else if (data.status === 'failed') {
-            setRunning(false)
-            setCurrentJobId(null)
-            setError(data.error || 'Backtest failed')
-            eventSource?.close()
-          } else if (data.status === 'not_found') {
-            setRunning(false)
-            setCurrentJobId(null)
-            setError('Job not found - backend may have restarted.')
-            eventSource?.close()
-          }
-        } catch (parseErr) {
-          console.error('Failed to parse SSE message:', parseErr)
-        }
+      if (data.status === 'completed') {
+        setRunning(false)
+        setCompletedJobId(currentJobId)
+        setCurrentJobId(null)
+        // Fetch full result
+        fetch(`${API_URL}/api/zero-dte/job/${currentJobId}`)
+          .then(res => res.json())
+          .then(fullData => {
+            if (fullData.job?.result) {
+              setLiveJobResult(fullData.job.result)
+            }
+          })
+        loadResults()
+        cleanup()
+      } else if (data.status === 'failed') {
+        setRunning(false)
+        setCurrentJobId(null)
+        setError(data.error || 'Backtest failed')
+        cleanup()
+      } else if (data.status === 'not_found') {
+        setRunning(false)
+        setCurrentJobId(null)
+        setError('Job not found - backend may have restarted.')
+        cleanup()
       }
-
-      eventSource.onerror = (err) => {
-        console.warn('SSE error, falling back to polling:', err)
-        eventSource?.close()
-        eventSource = null
-        // Fall back to polling if SSE fails
-        startFallbackPolling()
-      }
-    } catch (sseErr) {
-      console.warn('SSE not supported, using polling:', sseErr)
-      startFallbackPolling()
     }
 
-    // Fallback polling function
+    function cleanup() {
+      websocket?.close()
+      eventSource?.close()
+      if (fallbackInterval) clearInterval(fallbackInterval)
+    }
+
+    // 1. Try WebSocket first (fastest, bidirectional)
+    function tryWebSocket() {
+      try {
+        const wsUrl = API_URL.replace('http://', 'ws://').replace('https://', 'wss://')
+        websocket = new WebSocket(`${wsUrl}/ws/kronos/job/${currentJobId}`)
+
+        websocket.onopen = () => {
+          connectionMethod = 'websocket'
+          console.log('KRONOS: Connected via WebSocket')
+        }
+
+        websocket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            if (data.type === 'job_update' || data.type === 'job_complete') {
+              handleJobUpdate(data)
+            }
+          } catch (e) {
+            console.error('WebSocket message parse error:', e)
+          }
+        }
+
+        websocket.onerror = () => {
+          console.warn('WebSocket failed, trying SSE...')
+          websocket?.close()
+          websocket = null
+          trySSE()
+        }
+
+        websocket.onclose = () => {
+          if (connectionMethod === 'websocket' && running) {
+            // Unexpected close, try SSE
+            trySSE()
+          }
+        }
+      } catch (e) {
+        console.warn('WebSocket not available, trying SSE...')
+        trySSE()
+      }
+    }
+
+    // 2. Try SSE as fallback (one-way, simpler)
+    function trySSE() {
+      if (connectionMethod !== 'none' && connectionMethod !== 'websocket') return
+
+      try {
+        eventSource = new EventSource(`${API_URL}/api/zero-dte/job/${currentJobId}/stream`)
+
+        eventSource.onopen = () => {
+          connectionMethod = 'sse'
+          console.log('KRONOS: Connected via SSE')
+        }
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            handleJobUpdate(data)
+          } catch (e) {
+            console.error('SSE message parse error:', e)
+          }
+        }
+
+        eventSource.onerror = () => {
+          console.warn('SSE failed, falling back to polling...')
+          eventSource?.close()
+          eventSource = null
+          startFallbackPolling()
+        }
+      } catch (e) {
+        console.warn('SSE not available, using polling...')
+        startFallbackPolling()
+      }
+    }
+
+    // 3. Polling as last resort
     function startFallbackPolling() {
       if (fallbackInterval) return
+      connectionMethod = 'polling'
+      console.log('KRONOS: Using polling fallback')
+
       fallbackInterval = setInterval(async () => {
         try {
           const response = await fetch(`${API_URL}/api/zero-dte/job/${currentJobId}`)
           if (!response.ok) {
             if (response.status === 404) {
-              setRunning(false)
-              setCurrentJobId(null)
-              setError('Job not found - backend may have restarted.')
+              handleJobUpdate({ status: 'not_found' })
             }
             return
           }
           const data = await response.json()
           if (data.job) {
-            setJobStatus(data.job)
+            handleJobUpdate({
+              status: data.job.status,
+              progress: data.job.progress,
+              progress_message: data.job.progress_message,
+              error: data.job.error,
+            })
             if (data.job.status === 'completed') {
-              setRunning(false)
-              setCompletedJobId(currentJobId)
-              setCurrentJobId(null)
               setLiveJobResult(data.job.result)
-              loadResults()
-              if (fallbackInterval) clearInterval(fallbackInterval)
-            } else if (data.job.status === 'failed') {
-              setRunning(false)
-              setCurrentJobId(null)
-              setError(data.job.error || 'Backtest failed')
-              if (fallbackInterval) clearInterval(fallbackInterval)
             }
           }
         } catch (err) {
@@ -482,10 +538,10 @@ export default function ZeroDTEBacktestPage() {
       }, 2000)
     }
 
-    return () => {
-      eventSource?.close()
-      if (fallbackInterval) clearInterval(fallbackInterval)
-    }
+    // Start connection cascade
+    tryWebSocket()
+
+    return cleanup
   }, [currentJobId, running])
 
   const loadStrategies = async () => {
