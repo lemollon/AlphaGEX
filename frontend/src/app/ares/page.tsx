@@ -83,6 +83,17 @@ interface MarketData {
   expected_move: number
   timestamp: string
   source: string
+  // New: separate SPX/SPY data
+  spx?: {
+    ticker: string
+    price: number
+    expected_move: number
+  }
+  spy?: {
+    ticker: string
+    price: number
+    expected_move: number
+  }
 }
 
 interface TradierStatus {
@@ -243,21 +254,39 @@ export default function ARESPage() {
 
           {/* Market Data Bar */}
           <div className="mb-6 bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-center">
-              <div>
-                <span className="text-gray-400 text-xs">SPX Price</span>
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 text-center">
+              {/* SPX Data */}
+              <div className="bg-purple-900/20 rounded-lg p-2">
+                <span className="text-purple-400 text-xs">SPX</span>
                 <p className="text-white font-mono text-lg font-bold">
-                  {marketData?.underlying_price ? `$${marketData.underlying_price.toLocaleString()}` : '--'}
+                  ${marketData?.spx?.price?.toLocaleString() || marketData?.underlying_price?.toLocaleString() || '--'}
                 </p>
               </div>
+              <div className="bg-purple-900/20 rounded-lg p-2">
+                <span className="text-purple-400 text-xs">SPX Expected Move</span>
+                <p className="text-white font-mono text-lg font-bold">
+                  ±${marketData?.spx?.expected_move?.toFixed(0) || marketData?.expected_move?.toFixed(0) || '--'}
+                </p>
+              </div>
+              {/* SPY Data */}
+              <div className="bg-blue-900/20 rounded-lg p-2">
+                <span className="text-blue-400 text-xs">SPY</span>
+                <p className="text-white font-mono text-lg font-bold">
+                  ${marketData?.spy?.price?.toFixed(2) || '--'}
+                </p>
+              </div>
+              <div className="bg-blue-900/20 rounded-lg p-2">
+                <span className="text-blue-400 text-xs">SPY Expected Move</span>
+                <p className="text-white font-mono text-lg font-bold">
+                  ±${marketData?.spy?.expected_move?.toFixed(2) || '--'}
+                </p>
+              </div>
+              {/* VIX */}
               <div>
                 <span className="text-gray-400 text-xs">VIX</span>
-                <p className="text-white font-mono text-lg font-bold">{marketData?.vix?.toFixed(2) || '--'}</p>
+                <p className="text-yellow-400 font-mono text-lg font-bold">{marketData?.vix?.toFixed(2) || '--'}</p>
               </div>
-              <div>
-                <span className="text-gray-400 text-xs">Expected Move (1σ)</span>
-                <p className="text-white font-mono text-lg font-bold">±${marketData?.expected_move?.toFixed(0) || '--'}</p>
-              </div>
+              {/* Strategy Config */}
               <div>
                 <span className="text-gray-400 text-xs">Spread Width</span>
                 <p className="text-white font-mono text-lg font-bold">${config?.spread_width || status?.config?.spread_width || 10}</p>
