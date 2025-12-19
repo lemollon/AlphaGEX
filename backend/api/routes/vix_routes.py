@@ -547,19 +547,44 @@ async def test_vix_sources():
     except Exception as e:
         results['sources']['vix_hedge_manager'] = {'error': str(e)}
 
-    # Test 5: Tradier VIX (if available) - use same sandbox setting as ARES
-    # Note: TradierDataFetcher uses TRADIER_API_KEY, not TRADIER_ACCESS_TOKEN
+    # Test 5: Tradier VIX - EXACT same code as ARES (which works!)
+    try:
+        from data.tradier_data_fetcher import TradierDataFetcher
+        import os as test_os
+        use_sandbox = test_os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+        tradier = TradierDataFetcher(sandbox=use_sandbox)
+        results['sources']['tradier_sandbox_mode'] = use_sandbox
+
+        # This is EXACTLY what ARES does and it returns VIX=15
+        vix_quote = tradier.get_quote("$VIX.X")
+        if vix_quote and vix_quote.get('last'):
+            vix = float(vix_quote['last'])
+            results['sources']['tradier_$VIX.X_ARES_style'] = {
+                'value': vix,
+                'success': True,
+                'raw_response': vix_quote
+            }
+        else:
+            results['sources']['tradier_$VIX.X_ARES_style'] = {
+                'value': None,
+                'success': False,
+                'raw_response': vix_quote,
+                'note': 'vix_quote is None or has no last price'
+            }
+    except Exception as e:
+        results['sources']['tradier_$VIX.X_ARES_style'] = {'error': str(e)}
+
+    # Also test other symbols
     tradier_api_key = os.getenv('TRADIER_API_KEY')
     if tradier_api_key:
         try:
             from data.tradier_data_fetcher import TradierDataFetcher
             use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
             tradier = TradierDataFetcher(sandbox=use_sandbox)
-            results['sources']['tradier_sandbox_mode'] = use_sandbox
             results['sources']['tradier_api_key_set'] = True
 
-            # Test $VIX.X first (this is what ARES uses successfully)
-            for symbol in ['$VIX.X', 'VIX', 'VIXW']:
+            # Test other VIX symbols
+            for symbol in ['VIX', 'VIXW']:
                 try:
                     data = tradier.get_quote(symbol)
                     if data:
@@ -569,8 +594,13 @@ async def test_vix_sources():
                             'raw_response': data,
                             'success': price > 0
                         }
-                        if price > 0:
-                            break
+                    else:
+                        results['sources'][f'tradier_{symbol}'] = {
+                            'value': None,
+                            'raw_response': None,
+                            'success': False,
+                            'note': 'get_quote returned None'
+                        }
                 except Exception as e:
                     results['sources'][f'tradier_{symbol}'] = {'error': str(e)}
         except Exception as e:
