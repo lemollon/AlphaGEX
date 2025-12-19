@@ -7,10 +7,25 @@ GEXIS is a sophisticated AI assistant that:
 - Has deep knowledge of all AlphaGEX features
 - Speaks with wit and intelligence like J.A.R.V.I.S.
 - Is loyal, helpful, and proactive
+- Has agentic capabilities to execute tools and fetch data
 """
 
 from datetime import datetime
 from typing import Optional
+
+# Import comprehensive knowledge base
+try:
+    from ai.gexis_knowledge import get_full_knowledge, DATABASE_TABLES, SYSTEM_ARCHITECTURE, TRADING_STRATEGIES, ECONOMIC_CALENDAR_KNOWLEDGE, GEXIS_COMMANDS
+    COMPREHENSIVE_KNOWLEDGE_AVAILABLE = True
+except ImportError:
+    COMPREHENSIVE_KNOWLEDGE_AVAILABLE = False
+
+# Import agentic tools
+try:
+    from ai.gexis_tools import GEXIS_TOOLS, execute_tool, get_upcoming_events, ECONOMIC_EVENTS
+    AGENTIC_TOOLS_AVAILABLE = True
+except ImportError:
+    AGENTIC_TOOLS_AVAILABLE = False
 
 # =============================================================================
 # GEXIS CORE IDENTITY
@@ -768,7 +783,8 @@ Tables involved in learning:
 
 def build_gexis_system_prompt(
     include_knowledge: bool = True,
-    additional_context: str = ""
+    additional_context: str = "",
+    include_economic_calendar: bool = True
 ) -> str:
     """
     Build the complete GEXIS system prompt
@@ -776,6 +792,7 @@ def build_gexis_system_prompt(
     Args:
         include_knowledge: Whether to include full AlphaGEX knowledge
         additional_context: Any additional context to append
+        include_economic_calendar: Whether to include upcoming events
 
     Returns:
         Complete system prompt for GEXIS
@@ -783,7 +800,43 @@ def build_gexis_system_prompt(
     prompt = GEXIS_IDENTITY
 
     if include_knowledge:
-        prompt += f"\n\n{ALPHAGEX_KNOWLEDGE}"
+        # Use comprehensive knowledge if available
+        if COMPREHENSIVE_KNOWLEDGE_AVAILABLE:
+            prompt += f"\n\n{get_full_knowledge()}"
+        else:
+            prompt += f"\n\n{ALPHAGEX_KNOWLEDGE}"
+
+    # Add agentic capabilities info
+    if AGENTIC_TOOLS_AVAILABLE:
+        prompt += f"""
+
+=== AGENTIC CAPABILITIES ===
+You have access to the following tools you can execute:
+- /status - Get full system status (bots, positions, P&L)
+- /briefing - Generate morning market briefing
+- /gex [SYMBOL] - Fetch GEX data for a symbol
+- /vix - Get current VIX data and term structure
+- /positions - List all open positions with Greeks
+- /pnl - Get P&L summary across all strategies
+- /calendar - Show upcoming economic events (7 days)
+- /analyze [SYMBOL] - Full trade opportunity analysis
+- /risk - Current portfolio risk assessment
+- /accuracy - AI prediction accuracy stats
+
+When the user asks for data, you can fetch it in real-time.
+"""
+
+    # Add economic calendar context
+    if include_economic_calendar and AGENTIC_TOOLS_AVAILABLE:
+        try:
+            upcoming = get_upcoming_events(days=7)
+            if upcoming:
+                prompt += "\n\n=== UPCOMING ECONOMIC EVENTS (Next 7 Days) ===\n"
+                for event in upcoming[:5]:  # Top 5 events
+                    prompt += f"- {event['date']}: {event['name']} ({event['impact']} impact)\n"
+                prompt += "\nAdvise {USER_NAME} about these events and their potential market impact."
+        except Exception:
+            pass
 
     # Add current time context
     prompt += f"""
@@ -1013,4 +1066,7 @@ __all__ = [
     'GEXIS_TRADE_RECOMMENDATION_PROMPT',
     'GEXIS_EDUCATIONAL_PROMPT',
     'GEXIS_BRAINSTORM_PROMPT',
+    # Agentic capabilities
+    'COMPREHENSIVE_KNOWLEDGE_AVAILABLE',
+    'AGENTIC_TOOLS_AVAILABLE',
 ]
