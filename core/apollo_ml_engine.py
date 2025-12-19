@@ -353,8 +353,14 @@ class ApolloMLEngine:
             logger.warning(f"⚠️  Polygon not available: {e}")
 
         try:
-            from backend.api.dependencies import trading_volatility_api
-            self.gex_provider = trading_volatility_api
+            # Try to get the GEX provider - first from dependencies, then create directly
+            try:
+                from backend.api.dependencies import trading_volatility_api
+                self.gex_provider = trading_volatility_api
+            except ImportError:
+                # Create directly if backend import fails
+                from core_classes_and_engines import TradingVolatilityAPI
+                self.gex_provider = TradingVolatilityAPI()
             logger.info("✅ GEX data provider initialized")
         except Exception as e:
             logger.warning(f"⚠️  GEX provider not available: {e}")
