@@ -225,7 +225,7 @@ class PolygonDataFetcher:
         Get current/latest price for a symbol
 
         Args:
-            symbol: Stock symbol (e.g., 'SPY')
+            symbol: Stock symbol (e.g., 'SPY') or index (e.g., 'I:VIX')
 
         Returns:
             Latest close price or None
@@ -236,19 +236,35 @@ class PolygonDataFetcher:
             return cached
 
         try:
-            # Get last trade
-            url = f"{self.base_url}/v2/last/trade/{symbol}"
-            params = {"apiKey": self.api_key}
+            # For indices (like I:VIX), use aggregates endpoint - indices don't have "trades"
+            if symbol.startswith('I:'):
+                # Use previous day close for indices
+                url = f"{self.base_url}/v2/aggs/ticker/{symbol}/prev"
+                params = {"apiKey": self.api_key}
 
-            response = requests.get(url, params=params, timeout=5)
+                response = requests.get(url, params=params, timeout=5)
 
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('status') in ['OK', 'DELAYED'] and data.get('results'):
-                    price = float(data['results']['p'])
-                    self.cache.set('current_price', symbol, price)
-                    print(f"✅ Current price for {symbol}: ${price:.2f}")
-                    return price
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('status') == 'OK' and data.get('results'):
+                        price = float(data['results'][0]['c'])  # Close price
+                        self.cache.set('current_price', symbol, price)
+                        print(f"✅ Current price for {symbol}: ${price:.2f}")
+                        return price
+            else:
+                # Get last trade for stocks
+                url = f"{self.base_url}/v2/last/trade/{symbol}"
+                params = {"apiKey": self.api_key}
+
+                response = requests.get(url, params=params, timeout=5)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('status') in ['OK', 'DELAYED'] and data.get('results'):
+                        price = float(data['results']['p'])
+                        self.cache.set('current_price', symbol, price)
+                        print(f"✅ Current price for {symbol}: ${price:.2f}")
+                        return price
 
             # Fallback: Get latest from daily data
             df = self.get_price_history(symbol, days=1, timeframe='day')

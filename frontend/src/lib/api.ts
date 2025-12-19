@@ -741,6 +741,29 @@ export const apiClient = {
     params,
     responseType: params.format === 'json' ? 'json' : 'blob' as const
   }),
+
+  // APOLLO - AI-Powered Live Options Scanner
+  apolloScan: (symbols: string[], includeChains: boolean = true) =>
+    api.post('/api/apollo/scan', { symbols, include_chains: includeChains }),
+  getApolloScan: (scanId: string) => api.get(`/api/apollo/scan/${scanId}`),
+  getApolloHistory: (limit: number = 20, symbol?: string) =>
+    api.get('/api/apollo/history', { params: { limit, symbol } }),
+  apolloFeedback: (data: {
+    scan_id: string
+    symbol: string
+    actual_direction: string
+    actual_magnitude: string
+    actual_return_pct: number
+    strategy_used?: string
+    strategy_pnl?: number
+    notes?: string
+  }) => api.post('/api/apollo/feedback', data),
+  getApolloPerformance: () => api.get('/api/apollo/performance'),
+  getApolloLiveQuote: (symbol: string) => api.get(`/api/apollo/live-quote/${symbol}`),
+  getApolloOptionsChain: (symbol: string, expiration?: string) =>
+    api.get(`/api/apollo/options-chain/${symbol}`, { params: { expiration } }),
+  getApolloFeatures: (symbol: string) => api.get(`/api/apollo/features/${symbol}`),
+  triggerApolloTraining: () => api.post('/api/apollo/train'),
 }
 
 // WebSocket connection

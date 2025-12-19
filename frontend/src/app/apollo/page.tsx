@@ -197,6 +197,64 @@ function ConfidenceMeter({ value, label }: { value: number, label: string }) {
   )
 }
 
+// Strategy descriptions and win rate estimates
+const strategyInfo: Record<string, { description: string, winRate: string, holdPeriod: string, bestFor: string }> = {
+  BULL_CALL_SPREAD: {
+    description: 'Limited risk bullish play. Buy lower strike call, sell higher strike call.',
+    winRate: '55-65%',
+    holdPeriod: '7-21 days',
+    bestFor: 'Moderately bullish outlook with capped risk'
+  },
+  BEAR_PUT_SPREAD: {
+    description: 'Limited risk bearish play. Buy higher strike put, sell lower strike put.',
+    winRate: '55-65%',
+    holdPeriod: '7-21 days',
+    bestFor: 'Moderately bearish outlook with capped risk'
+  },
+  IRON_CONDOR: {
+    description: 'Sell OTM call spread + OTM put spread. Profit from low volatility and range-bound price.',
+    winRate: '70-80%',
+    holdPeriod: '14-30 days',
+    bestFor: 'High positive GEX, low VIX, range-bound markets'
+  },
+  IRON_BUTTERFLY: {
+    description: 'ATM straddle sale + OTM wing protection. Maximum profit at the strike price.',
+    winRate: '65-75%',
+    holdPeriod: '7-14 days',
+    bestFor: 'Very low volatility, strong pinning action'
+  },
+  BULL_PUT_SPREAD: {
+    description: 'Credit spread. Sell higher strike put, buy lower strike put. Profit if price stays above short strike.',
+    winRate: '65-75%',
+    holdPeriod: '14-30 days',
+    bestFor: 'Bullish or neutral, want premium income'
+  },
+  BEAR_CALL_SPREAD: {
+    description: 'Credit spread. Sell lower strike call, buy higher strike call. Profit if price stays below short strike.',
+    winRate: '65-75%',
+    holdPeriod: '14-30 days',
+    bestFor: 'Bearish or neutral, want premium income'
+  },
+  LONG_CALL: {
+    description: 'Buy a call option. Unlimited upside potential with limited downside (premium paid).',
+    winRate: '40-50%',
+    holdPeriod: '3-14 days',
+    bestFor: 'Strong bullish conviction, expecting big move up'
+  },
+  LONG_PUT: {
+    description: 'Buy a put option. Large profit potential if price drops significantly.',
+    winRate: '40-50%',
+    holdPeriod: '3-14 days',
+    bestFor: 'Strong bearish conviction, expecting big move down'
+  },
+  LONG_STRADDLE: {
+    description: 'Buy ATM call + ATM put. Profit from big moves in either direction.',
+    winRate: '35-45%',
+    holdPeriod: '1-7 days',
+    bestFor: 'High expected volatility, earnings, events'
+  }
+}
+
 function StrategyCard({ strategy, expanded, onToggle }: {
   strategy: ApolloStrategy
   expanded: boolean
@@ -214,7 +272,19 @@ function StrategyCard({ strategy, expanded, onToggle }: {
     LONG_STRADDLE: 'border-yellow-500/50'
   }
 
+  const info = strategyInfo[strategy.strategy_type] || {
+    description: 'Options strategy',
+    winRate: 'N/A',
+    holdPeriod: 'Varies',
+    bestFor: 'Various market conditions'
+  }
+
   const borderColor = strategyColors[strategy.strategy_type] || 'border-gray-500/50'
+
+  // Calculate potential return
+  const potentialReturn = strategy.max_profit > 0 && strategy.max_loss > 0
+    ? ((strategy.max_profit / strategy.max_loss) * 100).toFixed(0)
+    : 'N/A'
 
   return (
     <div className={`bg-background-card border-l-4 ${borderColor} rounded-lg overflow-hidden`}>
@@ -229,6 +299,7 @@ function StrategyCard({ strategy, expanded, onToggle }: {
             <div className="text-xs text-gray-400">
               {strategy.long_strike && `Long: $${strategy.long_strike}`}
               {strategy.short_strike && ` / Short: $${strategy.short_strike}`}
+              {strategy.dte > 0 && ` • ${strategy.dte} DTE`}
             </div>
           </div>
         </div>
@@ -238,7 +309,7 @@ function StrategyCard({ strategy, expanded, onToggle }: {
               {strategy.combined_confidence.toFixed(0)}% conf
             </div>
             <div className="text-xs text-gray-400">
-              R:R {strategy.risk_reward_ratio.toFixed(2)}
+              R:R {strategy.risk_reward_ratio.toFixed(2)} • WR ~{info.winRate}
             </div>
           </div>
           {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -247,57 +318,83 @@ function StrategyCard({ strategy, expanded, onToggle }: {
 
       {expanded && (
         <div className="px-4 pb-4 space-y-4 border-t border-gray-800">
-          <div className="pt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <div className="text-xs text-gray-400">Entry Cost</div>
-              <div className="font-mono">${Math.abs(strategy.entry_cost).toFixed(2)}</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-400">Max Profit</div>
-              <div className="font-mono text-green-400">${strategy.max_profit.toFixed(2)}</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-400">Max Loss</div>
-              <div className="font-mono text-red-400">${strategy.max_loss.toFixed(2)}</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-400">Prob. Profit</div>
-              <div className="font-mono">{(strategy.probability_of_profit * 100).toFixed(0)}%</div>
+          {/* Strategy Description */}
+          <div className="pt-4 p-3 bg-primary/10 border border-primary/30 rounded-lg">
+            <div className="text-sm text-primary font-medium mb-1">What is this?</div>
+            <div className="text-sm text-gray-300">{info.description}</div>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              <span className="px-2 py-1 bg-background rounded">Win Rate: {info.winRate}</span>
+              <span className="px-2 py-1 bg-background rounded">Hold: {info.holdPeriod}</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <div className="text-xs text-gray-400">DTE</div>
-              <div className="font-mono">{strategy.dte} days</div>
+          {/* Money Making Plan */}
+          <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+            <div className="text-sm text-green-400 font-semibold mb-2 flex items-center gap-2">
+              <DollarSign className="w-4 h-4" />
+              Money Making Plan
             </div>
+            <div className="text-sm text-gray-300 space-y-1">
+              <div>• <span className="text-white">Entry:</span> {strategy.entry_trigger || 'Enter at current market prices'}</div>
+              <div>• <span className="text-white">Target:</span> {strategy.exit_target || `Take profit at 50% of max profit ($${(strategy.max_profit * 0.5).toFixed(0)})`}</div>
+              <div>• <span className="text-white">Stop:</span> {strategy.stop_loss || `Close if loss exceeds $${(strategy.max_loss * 0.5).toFixed(0)}`}</div>
+              <div>• <span className="text-white">Hold:</span> {info.holdPeriod}</div>
+            </div>
+          </div>
+
+          {/* Key Metrics */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-3 bg-background rounded-lg text-center">
+              <div className="text-xs text-gray-400">Entry Cost</div>
+              <div className="text-lg font-mono font-bold">${Math.abs(strategy.entry_cost).toFixed(0)}</div>
+            </div>
+            <div className="p-3 bg-background rounded-lg text-center">
+              <div className="text-xs text-gray-400">Max Profit</div>
+              <div className="text-lg font-mono font-bold text-green-400">${strategy.max_profit.toFixed(0)}</div>
+            </div>
+            <div className="p-3 bg-background rounded-lg text-center">
+              <div className="text-xs text-gray-400">Max Loss</div>
+              <div className="text-lg font-mono font-bold text-red-400">${strategy.max_loss.toFixed(0)}</div>
+            </div>
+            <div className="p-3 bg-background rounded-lg text-center">
+              <div className="text-xs text-gray-400">Prob. Profit</div>
+              <div className="text-lg font-mono font-bold">{(strategy.probability_of_profit * 100).toFixed(0)}%</div>
+            </div>
+          </div>
+
+          {/* Greeks */}
+          <div className="grid grid-cols-4 gap-4 text-sm">
             <div>
               <div className="text-xs text-gray-400">Delta</div>
-              <div className="font-mono">{strategy.position_delta.toFixed(2)}</div>
+              <div className={`font-mono ${strategy.position_delta > 0 ? 'text-green-400' : strategy.position_delta < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                {strategy.position_delta.toFixed(2)}
+              </div>
             </div>
             <div>
               <div className="text-xs text-gray-400">Theta</div>
-              <div className="font-mono">{strategy.position_theta.toFixed(2)}</div>
+              <div className={`font-mono ${strategy.position_theta > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {strategy.position_theta.toFixed(2)}/day
+              </div>
             </div>
             <div>
-              <div className="text-xs text-gray-400">ML Conf</div>
+              <div className="text-xs text-gray-400">ML Confidence</div>
               <div className="font-mono">{strategy.ml_confidence.toFixed(0)}%</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-400">Rule Confidence</div>
+              <div className="font-mono">{strategy.rule_confidence.toFixed(0)}%</div>
             </div>
           </div>
 
-          <div className="space-y-2 text-sm">
-            <div className="p-2 bg-background-hover rounded">
-              <span className="text-gray-400">Reasoning:</span> {strategy.reasoning}
-            </div>
-            <div className="p-2 bg-green-500/10 rounded text-green-400">
-              <span className="text-gray-400">Entry:</span> {strategy.entry_trigger}
-            </div>
-            <div className="p-2 bg-blue-500/10 rounded text-blue-400">
-              <span className="text-gray-400">Exit:</span> {strategy.exit_target}
-            </div>
-            <div className="p-2 bg-red-500/10 rounded text-red-400">
-              <span className="text-gray-400">Stop:</span> {strategy.stop_loss}
-            </div>
+          {/* Reasoning */}
+          <div className="p-3 bg-background-hover rounded-lg">
+            <div className="text-xs text-gray-400 mb-1">Why this strategy?</div>
+            <div className="text-sm">{strategy.reasoning}</div>
+          </div>
+
+          {/* Best For */}
+          <div className="text-xs text-gray-400">
+            <span className="text-primary">Best for:</span> {info.bestFor}
           </div>
         </div>
       )}
@@ -321,6 +418,8 @@ export default function ApolloPage() {
   const [expandedStrategies, setExpandedStrategies] = useState<Record<string, boolean>>({})
   const [performance, setPerformance] = useState<ModelPerformance | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [scanProgress, setScanProgress] = useState<{ current: number, total: number, symbol: string } | null>(null)
+  const [selectedResult, setSelectedResult] = useState<ApolloScanResult | null>(null)
 
   const popularSymbols = ['SPY', 'QQQ', 'IWM', 'DIA', 'TSLA', 'NVDA', 'AAPL', 'MSFT', 'AMD', 'META']
 
@@ -331,12 +430,9 @@ export default function ApolloPage() {
 
   const fetchPerformance = async () => {
     try {
-      const response = await fetch('/api/apollo/performance')
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success) {
-          setPerformance(data.data)
-        }
+      const response = await apiClient.getApolloPerformance()
+      if (response.data?.success) {
+        setPerformance(response.data.data)
       }
     } catch (e) {
       console.error('Failed to fetch performance:', e)
@@ -364,19 +460,14 @@ export default function ApolloPage() {
     setScanning(true)
     setError(null)
     setScanResults([])
+    setScanProgress({ current: 0, total: symbols.length, symbol: '' })
 
     try {
-      const response = await fetch('/api/apollo/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbols, include_chains: true })
-      })
+      // Update progress as we scan
+      setScanProgress({ current: 0, total: symbols.length, symbol: symbols[0] })
 
-      if (!response.ok) {
-        throw new Error(`Scan failed: ${response.statusText}`)
-      }
-
-      const data: ScanResponse = await response.json()
+      const response = await apiClient.apolloScan(symbols, true)
+      const data: ScanResponse = response.data
 
       if (data.success) {
         setScanResults(data.results)
@@ -397,9 +488,25 @@ export default function ApolloPage() {
       }
 
     } catch (e: any) {
-      setError(e.message || 'Scan failed')
+      // Better error extraction
+      let errorMessage = 'Scan failed'
+      if (e.response?.data?.detail) {
+        errorMessage = e.response.data.detail
+      } else if (e.response?.data?.message) {
+        errorMessage = e.response.data.message
+      } else if (e.message) {
+        errorMessage = e.message
+      }
+
+      // Network error handling
+      if (e.code === 'ECONNREFUSED' || e.message?.includes('Network Error')) {
+        errorMessage = 'Cannot connect to backend. Please ensure the API server is running.'
+      }
+
+      setError(errorMessage)
     } finally {
       setScanning(false)
+      setScanProgress(null)
     }
   }
 
@@ -526,11 +633,38 @@ export default function ApolloPage() {
             </div>
           </div>
 
+          {/* Scanning Progress */}
+          {scanning && scanProgress && (
+            <div className="bg-primary/10 border border-primary/50 rounded-xl p-4">
+              <div className="flex items-center gap-3 mb-2">
+                <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                <span className="text-primary font-medium">
+                  Scanning {scanProgress.symbol || 'symbols'}...
+                </span>
+                <span className="text-gray-400 text-sm">
+                  ({scanProgress.current}/{scanProgress.total})
+                </span>
+              </div>
+              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-500"
+                  style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
+                />
+              </div>
+              <div className="mt-2 text-xs text-gray-400">
+                Fetching live data from Tradier, analyzing GEX levels, running ML predictions...
+              </div>
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4 flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-red-400" />
-              <span className="text-red-400">{error}</span>
+              <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+              <div>
+                <span className="text-red-400 font-medium">Scan failed: </span>
+                <span className="text-red-300">{error}</span>
+              </div>
             </div>
           )}
 
@@ -650,31 +784,99 @@ export default function ApolloPage() {
                     <div className="p-6 border-b border-gray-800">
                       <div className="flex items-center gap-2 mb-4">
                         <BarChart3 className="w-5 h-5 text-primary" />
-                        <h3 className="font-semibold">Market Features</h3>
+                        <h3 className="font-semibold">Market Features & GEX Levels</h3>
+                      </div>
+
+                      {/* GEX Levels Visual */}
+                      <div className="mb-4 p-4 bg-background rounded-lg border border-gray-700">
+                        <div className="flex items-center justify-between mb-2 text-xs text-gray-400">
+                          <span>Put Wall: ${result.features.put_wall.toFixed(0)}</span>
+                          <span>Spot: ${result.features.spot_price.toFixed(2)}</span>
+                          <span>Call Wall: ${result.features.call_wall.toFixed(0)}</span>
+                        </div>
+                        <div className="relative h-4 bg-gray-700 rounded-full overflow-hidden">
+                          {/* Range indicator */}
+                          <div className="absolute inset-0 flex items-center">
+                            {/* Put wall marker */}
+                            <div className="absolute left-[10%] w-1 h-full bg-red-500" title="Put Wall" />
+                            {/* Flip point marker */}
+                            <div
+                              className="absolute w-1 h-full bg-yellow-500"
+                              style={{ left: `${Math.min(90, Math.max(10, 50 + (result.features.flip_point - result.features.spot_price) / result.features.spot_price * 500))}%` }}
+                              title="Flip Point"
+                            />
+                            {/* Current price marker */}
+                            <div className="absolute left-1/2 w-2 h-full bg-blue-500 -translate-x-1/2" title="Current Price" />
+                            {/* Call wall marker */}
+                            <div className="absolute right-[10%] w-1 h-full bg-green-500" title="Call Wall" />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-center gap-4 mt-2 text-xs">
+                          <span className="flex items-center gap-1">
+                            <span className="w-2 h-2 bg-red-500 rounded-full"></span> Put Wall
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-2 h-2 bg-yellow-500 rounded-full"></span> Flip ${result.features.flip_point.toFixed(0)}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-2 h-2 bg-blue-500 rounded-full"></span> Price
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span> Call Wall
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+                        <div className="p-3 bg-background rounded-lg">
+                          <div className="text-xs text-gray-400">Net GEX</div>
+                          <div className={`text-lg font-mono font-bold ${result.features.net_gex >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {(result.features.net_gex / 1e9).toFixed(2)}B
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {result.features.net_gex >= 0 ? '↑ Dealer Long Gamma (Stabilizing)' : '↓ Dealer Short Gamma (Volatile)'}
+                          </div>
+                        </div>
+                        <div className="p-3 bg-background rounded-lg">
+                          <div className="text-xs text-gray-400">Call Wall</div>
+                          <div className="text-lg font-mono font-bold text-green-400">${result.features.call_wall.toFixed(0)}</div>
+                          <div className="text-xs text-gray-500">
+                            {((result.features.call_wall - result.features.spot_price) / result.features.spot_price * 100).toFixed(1)}% above
+                          </div>
+                        </div>
+                        <div className="p-3 bg-background rounded-lg">
+                          <div className="text-xs text-gray-400">Put Wall</div>
+                          <div className="text-lg font-mono font-bold text-red-400">${result.features.put_wall.toFixed(0)}</div>
+                          <div className="text-xs text-gray-500">
+                            {((result.features.spot_price - result.features.put_wall) / result.features.spot_price * 100).toFixed(1)}% below
+                          </div>
+                        </div>
+                        <div className="p-3 bg-background rounded-lg">
+                          <div className="text-xs text-gray-400">Position vs Flip</div>
+                          <div className={`text-lg font-mono font-bold ${result.features.above_flip ? 'text-green-400' : 'text-red-400'}`}>
+                            {result.features.above_flip ? 'ABOVE' : 'BELOW'}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {Math.abs(result.features.distance_to_flip_pct).toFixed(2)}% from flip
+                          </div>
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-sm">
                         <div>
-                          <div className="text-xs text-gray-400">Net GEX</div>
-                          <div className={`font-mono ${result.features.net_gex >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {(result.features.net_gex / 1e9).toFixed(2)}B
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-400">Flip Point</div>
-                          <div className="font-mono">${result.features.flip_point.toFixed(2)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-400">Distance to Flip</div>
-                          <div className="font-mono">{result.features.distance_to_flip_pct.toFixed(2)}%</div>
-                        </div>
-                        <div>
                           <div className="text-xs text-gray-400">VIX</div>
-                          <div className="font-mono">{result.features.vix.toFixed(2)}</div>
+                          <div className={`font-mono font-semibold ${
+                            result.features.vix > 25 ? 'text-red-400' :
+                            result.features.vix > 20 ? 'text-yellow-400' : 'text-green-400'
+                          }`}>{result.features.vix.toFixed(2)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400">VIX %ile</div>
+                          <div className="font-mono">{result.features.vix_percentile}%</div>
                         </div>
                         <div>
                           <div className="text-xs text-gray-400">IV Rank</div>
-                          <div className="font-mono">{result.features.iv_rank.toFixed(0)}</div>
+                          <div className="font-mono">{result.features.iv_rank.toFixed(0)}%</div>
                         </div>
                         <div>
                           <div className="text-xs text-gray-400">RSI (14)</div>
@@ -684,6 +886,17 @@ export default function ApolloPage() {
                           }`}>
                             {result.features.rsi_14.toFixed(1)}
                           </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400">MACD</div>
+                          <div className={`font-mono capitalize ${
+                            result.features.macd_signal === 'bullish' ? 'text-green-400' :
+                            result.features.macd_signal === 'bearish' ? 'text-red-400' : 'text-gray-400'
+                          }`}>{result.features.macd_signal}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400">P/C Ratio</div>
+                          <div className="font-mono">{result.features.put_call_ratio.toFixed(2)}</div>
                         </div>
                       </div>
                     </div>
