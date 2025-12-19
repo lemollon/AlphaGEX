@@ -279,6 +279,17 @@ def seed_default_data(cursor):
     """Seed default data for required tables"""
     print_header("SEEDING DEFAULT DATA")
 
+    # First ensure probability_weights has the required columns
+    pw_columns = [
+        ("weight_name", "TEXT"),
+        ("weight_value", "REAL DEFAULT 1.0"),
+    ]
+    for col_name, col_type in pw_columns:
+        execute_sql(cursor, f"""
+            ALTER TABLE probability_weights
+            ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+        """, f"Add probability_weights.{col_name}")
+
     # Check if probability_weights has active config
     cursor.execute("SELECT COUNT(*) FROM probability_weights WHERE active = TRUE")
     active_count = cursor.fetchone()[0]
@@ -286,12 +297,12 @@ def seed_default_data(cursor):
     if active_count == 0:
         execute_sql(cursor, """
             INSERT INTO probability_weights (
-                weight_name, gex_wall_strength, volatility_impact,
+                weight_name, weight_value, gex_wall_strength, volatility_impact,
                 psychology_signal, mm_positioning, historical_pattern,
-                active, calibration_count, created_at
+                active, calibration_count
             ) VALUES (
-                'default_v1', 0.25, 0.20, 0.15, 0.20, 0.20,
-                TRUE, 0, NOW()
+                'default_v1', 1.0, 0.25, 0.20, 0.15, 0.20, 0.20,
+                TRUE, 0
             )
             ON CONFLICT DO NOTHING
         """, "Seed default probability weights")
