@@ -4,7 +4,7 @@ API Endpoint Testing Script
 Run in Render shell: python scripts/tests/test_api_endpoints.py
 
 Tests all major API endpoints for AlphaGEX.
-Set API_BASE_URL environment variable or defaults to http://localhost:8000
+Set API_BASE_URL environment variable or defaults to Render service URL.
 """
 
 import os
@@ -15,8 +15,17 @@ from datetime import datetime
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
-# Configuration
-API_BASE_URL = os.environ.get('API_BASE_URL', 'http://localhost:8000')
+# Configuration - Auto-detect Render URL or use environment variable
+def get_api_base_url():
+    if os.environ.get('API_BASE_URL'):
+        return os.environ.get('API_BASE_URL')
+    # Check if we're on Render
+    if os.environ.get('RENDER'):
+        service_name = os.environ.get('RENDER_SERVICE_NAME', 'alphagex-backend')
+        return f"https://{service_name}.onrender.com"
+    return 'http://localhost:8000'
+
+API_BASE_URL = get_api_base_url()
 
 
 def print_header(title):

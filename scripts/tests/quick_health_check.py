@@ -97,7 +97,14 @@ def check_api():
     from urllib.request import Request, urlopen
     from urllib.error import URLError
 
-    api_url = os.environ.get('API_BASE_URL', 'http://localhost:8000')
+    # Auto-detect Render URL
+    if os.environ.get('API_BASE_URL'):
+        api_url = os.environ.get('API_BASE_URL')
+    elif os.environ.get('RENDER'):
+        service_name = os.environ.get('RENDER_SERVICE_NAME', 'alphagex-backend')
+        api_url = f"https://{service_name}.onrender.com"
+    else:
+        api_url = 'http://localhost:8000'
 
     try:
         req = Request(f"{api_url}/health")
