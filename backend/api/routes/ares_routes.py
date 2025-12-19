@@ -378,85 +378,77 @@ async def get_ares_decisions(limit: int = 50):
 @router.get("/market-data")
 async def get_ares_market_data():
     """
-    Get current market data for ARES (SPX, VIX, expected move).
+    Get current market data for ARES (SPX, SPY, VIX, expected moves).
 
-    This data comes from Tradier Production API for real SPX prices.
+    Returns both SPX and SPY data with their respective expected moves.
+    This data comes from Tradier Production API.
     """
-    ares = get_ares_instance()
-
-    if not ares or not ares.tradier:
-        # Try to fetch directly
-        try:
-            from data.tradier_data_fetcher import TradierDataFetcher
-            import math
-
-            tradier = TradierDataFetcher(sandbox=False)
-
-            # Get SPX
-            spx_quote = tradier.get_quote("$SPX.X")
-            spx_price = None
-            if spx_quote and spx_quote.get('last'):
-                spx_price = float(spx_quote['last'])
-            else:
-                # Fallback to SPY * 10
-                spy_quote = tradier.get_quote("SPY")
-                if spy_quote and spy_quote.get('last'):
-                    spx_price = float(spy_quote['last']) * 10
-
-            # Get VIX
-            vix = 15.0
-            vix_quote = tradier.get_quote("$VIX.X")
-            if vix_quote and vix_quote.get('last'):
-                vix = float(vix_quote['last'])
-
-            # Calculate expected move
-            expected_move = 0
-            if spx_price:
-                expected_move = spx_price * (vix / 100) * math.sqrt(1/252)
-
-            return {
-                "success": True,
-                "data": {
-                    "ticker": "SPX",
-                    "underlying_price": round(spx_price, 2) if spx_price else None,
-                    "vix": round(vix, 2),
-                    "expected_move": round(expected_move, 2),
-                    "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
-                    "source": "Tradier Production API"
-                }
-            }
-        except Exception as e:
-            logger.error(f"Error fetching market data: {e}")
-            return {
-                "success": False,
-                "message": f"Could not fetch market data: {str(e)}",
-                "data": None
-            }
+    import math
 
     try:
-        market_data = ares.get_current_market_data()
+        from data.tradier_data_fetcher import TradierDataFetcher
 
-        if not market_data:
-            return {
-                "success": False,
-                "message": "Could not fetch market data",
-                "data": None
-            }
+        tradier = TradierDataFetcher(sandbox=False)
+
+        # Get VIX first (used for both)
+        vix = 15.0
+        vix_quote = tradier.get_quote("$VIX.X")
+        if vix_quote and vix_quote.get('last'):
+            vix = float(vix_quote['last'])
+
+        # Get SPX
+        spx_price = None
+        spx_quote = tradier.get_quote("$SPX.X")
+        if spx_quote and spx_quote.get('last'):
+            spx_price = float(spx_quote['last'])
+
+        # Get SPY
+        spy_price = None
+        spy_quote = tradier.get_quote("SPY")
+        if spy_quote and spy_quote.get('last'):
+            spy_price = float(spy_quote['last'])
+
+        # Fallback: estimate SPX from SPY if needed
+        if not spx_price and spy_price:
+            spx_price = spy_price * 10
+
+        # Calculate expected moves (1 SD daily move)
+        spx_expected_move = 0
+        spy_expected_move = 0
+        if spx_price:
+            spx_expected_move = spx_price * (vix / 100) * math.sqrt(1/252)
+        if spy_price:
+            spy_expected_move = spy_price * (vix / 100) * math.sqrt(1/252)
 
         return {
             "success": True,
             "data": {
-                "ticker": market_data.get('ticker', 'SPX'),
-                "underlying_price": round(market_data.get('underlying_price', 0), 2),
-                "vix": round(market_data.get('vix', 0), 2),
-                "expected_move": round(market_data.get('expected_move', 0), 2),
-                "timestamp": market_data.get('timestamp'),
-                "source": "Tradier Production API"
+                "spx": {
+                    "ticker": "SPX",
+                    "price": round(spx_price, 2) if spx_price else None,
+                    "expected_move": round(spx_expected_move, 2)
+                },
+                "spy": {
+                    "ticker": "SPY",
+                    "price": round(spy_price, 2) if spy_price else None,
+                    "expected_move": round(spy_expected_move, 2)
+                },
+                "vix": round(vix, 2),
+                "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+                "source": "Tradier Production API",
+                # Legacy fields for backward compatibility
+                "ticker": "SPX",
+                "underlying_price": round(spx_price, 2) if spx_price else None,
+                "expected_move": round(spx_expected_move, 2)
             }
         }
     except Exception as e:
-        logger.error(f"Error getting ARES market data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error fetching market data: {e}")
+        return {
+            "success": False,
+            "message": f"Could not fetch market data: {str(e)}",
+            "data": None
+        }
 
 
 @router.post("/run-cycle")
