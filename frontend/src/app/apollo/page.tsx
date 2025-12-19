@@ -583,7 +583,7 @@ export default function ApolloPage() {
                         onChange={e => setInputSymbol(e.target.value.toUpperCase())}
                         onKeyPress={e => e.key === 'Enter' && addSymbol(inputSymbol)}
                         placeholder="Add symbol..."
-                        className="w-32 px-3 py-1.5 bg-background border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-primary"
+                        className="w-32 px-3 py-1.5 bg-background border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                       />
                       <button
                         onClick={() => addSymbol(inputSymbol)}
@@ -682,6 +682,78 @@ export default function ApolloPage() {
               <div className="flex items-center gap-2">
                 <Zap className="w-4 h-4" />
                 Duration: <span className="font-mono text-white">{scanDuration}ms</span>
+              </div>
+            </div>
+          )}
+
+          {/* Welcome/Intro State - shows when no results */}
+          {!scanning && scanResults.length === 0 && !error && (
+            <div className="bg-gradient-to-br from-primary/10 via-background-card to-yellow-500/5 rounded-xl border border-primary/30 p-8">
+              <div className="text-center mb-8">
+                <Sparkles className="w-12 h-12 text-yellow-400 mx-auto mb-4" />
+                <h2 className="text-2xl font-bold mb-2">Welcome to APOLLO</h2>
+                <p className="text-gray-400 max-w-2xl mx-auto">
+                  AI-Powered Live Options Scanner that combines Machine Learning predictions,
+                  real-time Tradier data, and GEX analysis to find optimal options strategies.
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-6 mb-8">
+                <div className="bg-background/50 rounded-lg p-4 border border-gray-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Brain className="w-5 h-5 text-primary" />
+                    <h3 className="font-semibold">ML Predictions</h3>
+                  </div>
+                  <p className="text-sm text-gray-400">
+                    XGBoost models predict direction, magnitude, and timing with ensemble confidence scoring.
+                  </p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-4 border border-gray-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp className="w-5 h-5 text-green-400" />
+                    <h3 className="font-semibold">Live Market Data</h3>
+                  </div>
+                  <p className="text-sm text-gray-400">
+                    Real-time quotes, options chains, and Greeks from Tradier + VIX from Yahoo Finance.
+                  </p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-4 border border-gray-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <BarChart3 className="w-5 h-5 text-yellow-400" />
+                    <h3 className="font-semibold">GEX Analysis</h3>
+                  </div>
+                  <p className="text-sm text-gray-400">
+                    Gamma exposure levels, flip points, call/put walls to identify support and resistance.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-background/50 rounded-lg p-4 border border-gray-700 mb-6">
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <Target className="w-5 h-5 text-primary" />
+                  9 Options Strategies Analyzed
+                </h3>
+                <div className="grid grid-cols-3 md:grid-cols-5 gap-2 text-sm">
+                  <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-center">Bull Call Spread</span>
+                  <span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-center">Bear Put Spread</span>
+                  <span className="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-center">Iron Condor</span>
+                  <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-center">Iron Butterfly</span>
+                  <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded text-center">Bull Put Spread</span>
+                  <span className="px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-center">Bear Call Spread</span>
+                  <span className="px-2 py-1 bg-green-400/20 text-green-300 rounded text-center">Long Call</span>
+                  <span className="px-2 py-1 bg-red-400/20 text-red-300 rounded text-center">Long Put</span>
+                  <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-center">Long Straddle</span>
+                </div>
+              </div>
+
+              <div className="text-center">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary/20 text-primary rounded-lg mb-2">
+                  <Search className="w-4 h-4" />
+                  <span className="font-medium">Get Started</span>
+                </div>
+                <p className="text-sm text-gray-400">
+                  Add symbols above (like SPY, QQQ, TSLA) and click "Scan with APOLLO" to analyze
+                </p>
               </div>
             </div>
           )}
