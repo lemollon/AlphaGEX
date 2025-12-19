@@ -1,11 +1,19 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Play, AlertTriangle, Clock, Zap } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
-import { apiClient } from '@/lib/api'
+import {
+  useARESStatus,
+  useARESPerformance,
+  useARESEquityCurve,
+  useARESPositions,
+  useARESMarketData,
+  useARESTradierStatus,
+  useARESConfig
+} from '@/lib/hooks/useMarketData'
 
 // ==================== INTERFACES ====================
 
@@ -139,18 +147,28 @@ interface Config {
 // ==================== COMPONENT ====================
 
 export default function ARESPage() {
-  // State
-  const [status, setStatus] = useState<ARESStatus | null>(null)
-  const [positions, setPositions] = useState<IronCondorPosition[]>([])
-  const [closedPositions, setClosedPositions] = useState<IronCondorPosition[]>([])
-  const [performance, setPerformance] = useState<Performance | null>(null)
-  const [equityData, setEquityData] = useState<EquityPoint[]>([])
-  const [marketData, setMarketData] = useState<MarketData | null>(null)
-  const [tradierStatus, setTradierStatus] = useState<TradierStatus | null>(null)
-  const [config, setConfig] = useState<Config | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+  // SWR hooks for data fetching with caching
+  const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useARESStatus()
+  const { data: performanceRes, isValidating: perfValidating, mutate: mutatePerf } = useARESPerformance()
+  const { data: equityRes, isValidating: equityValidating, mutate: mutateEquity } = useARESEquityCurve(30)
+  const { data: positionsRes, isValidating: posValidating, mutate: mutatePositions } = useARESPositions()
+  const { data: marketRes, isValidating: marketValidating, mutate: mutateMarket } = useARESMarketData()
+  const { data: tradierRes, isValidating: tradierValidating, mutate: mutateTradier } = useARESTradierStatus()
+  const { data: configRes, isValidating: configValidating, mutate: mutateConfig } = useARESConfig()
+
+  // Extract data from responses
+  const status = statusRes?.data as ARESStatus | undefined
+  const performance = performanceRes?.data as Performance | undefined
+  const equityData = (equityRes?.data?.equity_curve || []) as EquityPoint[]
+  const positions = (positionsRes?.data?.open_positions || []) as IronCondorPosition[]
+  const closedPositions = (positionsRes?.data?.closed_positions || []) as IronCondorPosition[]
+  const marketData = marketRes?.data as MarketData | undefined
+  const tradierStatus = tradierRes?.data as TradierStatus | undefined
+  const config = configRes?.data as Config | undefined
+
+  const loading = statusLoading && !status
+  const error = statusError?.message || null
+  const isRefreshing = statusValidating || perfValidating || equityValidating || posValidating || marketValidating || tradierValidating || configValidating
 
   // UI State
   const [showSpxPositions, setShowSpxPositions] = useState(false)
@@ -158,45 +176,16 @@ export default function ARESPage() {
   const [showSpxLog, setShowSpxLog] = useState(false)
   const [showSpyLog, setShowSpyLog] = useState(false)
 
-  // Fetch all data
-  const fetchData = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      const [statusRes, performanceRes, equityRes, positionsRes, marketRes, tradierRes, configRes] = await Promise.all([
-        apiClient.getARESPageStatus().catch(() => ({ data: null })),
-        apiClient.getARESPerformance().catch(() => ({ data: null })),
-        apiClient.getARESEquityCurve(30).catch(() => ({ data: null })),
-        apiClient.getARESPositions().catch(() => ({ data: null })),
-        apiClient.getARESMarketData().catch(() => ({ data: null })),
-        apiClient.getARESTradierStatus().catch(() => ({ data: null })),
-        apiClient.getARESConfig ? apiClient.getARESConfig().catch(() => ({ data: null })) : Promise.resolve({ data: null })
-      ])
-
-      if (statusRes.data?.data) setStatus(statusRes.data.data)
-      if (performanceRes.data?.data) setPerformance(performanceRes.data.data)
-      if (equityRes.data?.data?.equity_curve) setEquityData(equityRes.data.data.equity_curve)
-      if (positionsRes.data?.data?.open_positions) setPositions(positionsRes.data.data.open_positions)
-      if (positionsRes.data?.data?.closed_positions) setClosedPositions(positionsRes.data.data.closed_positions)
-      if (marketRes.data?.data) setMarketData(marketRes.data.data)
-      if (tradierRes.data?.data) setTradierStatus(tradierRes.data.data)
-      if (configRes.data?.data) setConfig(configRes.data.data)
-
-      setLastUpdate(new Date())
-    } catch (err) {
-      setError('Failed to fetch ARES data')
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
+  // Manual refresh function
+  const fetchData = () => {
+    mutateStatus()
+    mutatePerf()
+    mutateEquity()
+    mutatePositions()
+    mutateMarket()
+    mutateTradier()
+    mutateConfig()
   }
-
-  useEffect(() => {
-    fetchData()
-    const interval = setInterval(fetchData, 30000)
-    return () => clearInterval(interval)
-  }, [])
 
   // Formatters
   const formatCurrency = (value: number) => {
@@ -238,9 +227,10 @@ export default function ARESPage() {
               </span>
               <button
                 onClick={fetchData}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300"
+                disabled={isRefreshing}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 disabled:opacity-50"
               >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 Refresh
               </button>
             </div>
@@ -666,7 +656,7 @@ export default function ARESPage() {
 
           {/* Footer */}
           <div className="mt-6 text-center text-sm text-gray-500">
-            Last updated: {lastUpdate.toLocaleTimeString()} | Auto-refresh every 30 seconds
+            Auto-refresh every 30 seconds • Cached across pages
           </div>
         </div>
       </main>

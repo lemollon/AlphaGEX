@@ -1,10 +1,19 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Target, TrendingUp, TrendingDown, Activity, DollarSign, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp, Play, Settings, FileText, Zap } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import {
+  useATHENAStatus,
+  useATHENAPositions,
+  useATHENASignals,
+  useATHENAPerformance,
+  useATHENAOracleAdvice,
+  useATHENAMLSignal,
+  useATHENALogs
+} from '@/lib/hooks/useMarketData'
 
 interface ATHENAStatus {
   mode: string
@@ -125,50 +134,42 @@ interface PerformanceData {
 }
 
 export default function ATHENAPage() {
-  const [status, setStatus] = useState<ATHENAStatus | null>(null)
-  const [positions, setPositions] = useState<SpreadPosition[]>([])
-  const [signals, setSignals] = useState<Signal[]>([])
-  const [oracleAdvice, setOracleAdvice] = useState<OracleAdvice | null>(null)
-  const [mlSignal, setMLSignal] = useState<MLSignal | null>(null)
-  const [performance, setPerformance] = useState<PerformanceData | null>(null)
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+  // SWR hooks for data fetching with caching
+  const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useATHENAStatus()
+  const { data: positionsRes, isValidating: posValidating, mutate: mutatePositions } = useATHENAPositions()
+  const { data: signalsRes, isValidating: signalsValidating, mutate: mutateSignals } = useATHENASignals(20)
+  const { data: performanceRes, isValidating: perfValidating, mutate: mutatePerf } = useATHENAPerformance(30)
+  const { data: adviceRes, isValidating: adviceValidating, mutate: mutateAdvice } = useATHENAOracleAdvice()
+  const { data: mlSignalRes, isValidating: mlValidating, mutate: mutateML } = useATHENAMLSignal()
+  const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useATHENALogs(undefined, 50)
+
+  // Extract data from responses
+  const status = statusRes?.data as ATHENAStatus | undefined
+  const positions = (positionsRes?.data || []) as SpreadPosition[]
+  const signals = (signalsRes?.data || []) as Signal[]
+  const performance = performanceRes?.data as PerformanceData | undefined
+  const oracleAdvice = adviceRes?.data as OracleAdvice | undefined
+  const mlSignal = mlSignalRes?.data as MLSignal | undefined
+  const logs = (logsRes?.data || []) as LogEntry[]
+
+  const loading = statusLoading && !status
+  const error = statusError?.message || null
+  const isRefreshing = statusValidating || posValidating || signalsValidating || perfValidating || adviceValidating || mlValidating || logsValidating
+
+  // UI State
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'signals' | 'logs'>('overview')
   const [showClosedPositions, setShowClosedPositions] = useState(false)
   const [runningCycle, setRunningCycle] = useState(false)
 
-  const fetchData = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      const [statusRes, positionsRes, signalsRes, performanceRes, adviceRes, mlSignalRes, logsRes] = await Promise.all([
-        apiClient.getATHENAStatus().catch(() => ({ data: null })),
-        apiClient.getATHENAPositions().catch(() => ({ data: null })),
-        apiClient.getATHENASignals(20).catch(() => ({ data: null })),
-        apiClient.getATHENAPerformance(30).catch(() => ({ data: null })),
-        apiClient.getATHENAOracleAdvice().catch(() => ({ data: null })),
-        apiClient.getATHENAMLSignal().catch(() => ({ data: null })),
-        apiClient.getATHENALogs(undefined, 50).catch(() => ({ data: null }))
-      ])
-
-      if (statusRes.data?.data) setStatus(statusRes.data.data)
-      if (positionsRes.data?.data) setPositions(positionsRes.data.data)
-      if (signalsRes.data?.data) setSignals(signalsRes.data.data)
-      if (performanceRes.data?.data) setPerformance(performanceRes.data.data)
-      if (adviceRes.data?.data) setOracleAdvice(adviceRes.data.data)
-      if (mlSignalRes.data?.data) setMLSignal(mlSignalRes.data.data)
-      if (logsRes.data?.data) setLogs(logsRes.data.data)
-
-      setLastUpdate(new Date())
-    } catch (err) {
-      setError('Failed to fetch ATHENA data')
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
+  // Manual refresh function
+  const fetchData = () => {
+    mutateStatus()
+    mutatePositions()
+    mutateSignals()
+    mutatePerf()
+    mutateAdvice()
+    mutateML()
+    mutateLogs()
   }
 
   const runCycle = async () => {
@@ -176,7 +177,7 @@ export default function ATHENAPage() {
     try {
       const res = await apiClient.runATHENACycle()
       if (res.data?.success) {
-        await fetchData()
+        fetchData()
       }
     } catch (err) {
       console.error('Failed to run cycle:', err)
@@ -184,12 +185,6 @@ export default function ATHENAPage() {
       setRunningCycle(false)
     }
   }
-
-  useEffect(() => {
-    fetchData()
-    const interval = setInterval(fetchData, 30000)
-    return () => clearInterval(interval)
-  }, [])
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -220,13 +215,14 @@ export default function ATHENAPage() {
             </div>
             <div className="flex items-center gap-3">
               <span className="text-gray-500 text-sm">
-                Last update: {lastUpdate.toLocaleTimeString()}
+                Auto-refresh 30s • Cached
               </span>
               <button
                 onClick={fetchData}
-                className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition"
+                disabled={isRefreshing}
+                className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition disabled:opacity-50"
               >
-                <RefreshCw className={`w-5 h-5 text-gray-400 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-5 h-5 text-gray-400 ${isRefreshing ? 'animate-spin' : ''}`} />
               </button>
               <button
                 onClick={runCycle}
