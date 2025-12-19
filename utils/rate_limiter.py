@@ -4,7 +4,7 @@ Prevents API overuse across all deployments
 
 AUTO-DETECTS WEEKEND VS WEEKDAY:
 - Weekend (Sat/Sun): 2 calls/minute (market closed, strict limits)
-- Weekday trading hours (9:30am-4pm ET): 2 calls/minute (realtime data)
+- Weekday trading hours (8:30am-3pm CT): 2 calls/minute (realtime data)
 - Weekday non-trading hours: 18 calls/minute (safety margin from 20/min limit)
 """
 
@@ -12,7 +12,6 @@ import time
 import threading
 from collections import deque
 from datetime import datetime, timedelta
-import pytz
 
 class RateLimiter:
     """
