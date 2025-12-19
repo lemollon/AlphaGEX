@@ -331,12 +331,9 @@ export default function ApolloPage() {
 
   const fetchPerformance = async () => {
     try {
-      const response = await fetch('/api/apollo/performance')
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success) {
-          setPerformance(data.data)
-        }
+      const response = await apiClient.getApolloPerformance()
+      if (response.data?.success) {
+        setPerformance(response.data.data)
       }
     } catch (e) {
       console.error('Failed to fetch performance:', e)
@@ -366,17 +363,8 @@ export default function ApolloPage() {
     setScanResults([])
 
     try {
-      const response = await fetch('/api/apollo/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbols, include_chains: true })
-      })
-
-      if (!response.ok) {
-        throw new Error(`Scan failed: ${response.statusText}`)
-      }
-
-      const data: ScanResponse = await response.json()
+      const response = await apiClient.apolloScan(symbols, true)
+      const data: ScanResponse = response.data
 
       if (data.success) {
         setScanResults(data.results)
