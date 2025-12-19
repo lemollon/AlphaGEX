@@ -8,12 +8,23 @@ import { apiClient } from '@/lib/api'
 // =============================================================================
 
 const fetchers = {
+  // Dashboard
   marketCommentary: async () => {
     const response = await apiClient.getMarketCommentary()
     return response.data
   },
   dailyTradingPlan: async () => {
     const response = await apiClient.getDailyTradingPlan()
+    return response.data
+  },
+
+  // GEX & Gamma
+  gex: async (symbol: string) => {
+    const response = await apiClient.getGEX(symbol)
+    return response.data
+  },
+  gexLevels: async (symbol: string) => {
+    const response = await apiClient.getGEXLevels(symbol)
     return response.data
   },
   gammaExpiration: async (symbol: string) => {
@@ -24,28 +35,164 @@ const fetchers = {
     const response = await apiClient.getGammaIntelligence(symbol)
     return response.data
   },
-  gex: async (symbol: string) => {
-    const response = await apiClient.getGEX(symbol)
+  gammaProbabilities: async (symbol: string) => {
+    const response = await apiClient.getGammaProbabilities(symbol)
     return response.data
   },
-  psychologyRegime: async (symbol: string) => {
-    const response = await apiClient.getPsychologyCurrentRegime(symbol)
+  gexHistory: async (symbol: string, days: number) => {
+    const response = await apiClient.getGEXHistory(symbol, days)
     return response.data
   },
+
+  // VIX
   vixCurrent: async () => {
     const response = await apiClient.getVIXCurrent()
     return response.data
   },
+  vixHedgeSignal: async () => {
+    const response = await apiClient.getVIXHedgeSignal()
+    return response.data
+  },
+
+  // Psychology
+  psychologyRegime: async (symbol: string) => {
+    const response = await apiClient.getPsychologyCurrentRegime(symbol)
+    return response.data
+  },
+
+  // ARES Bot
   aresStatus: async () => {
     const response = await apiClient.getARESPageStatus()
     return response.data
   },
+  aresPerformance: async () => {
+    const response = await apiClient.getARESPerformance()
+    return response.data
+  },
+  aresPositions: async () => {
+    const response = await apiClient.getARESPositions()
+    return response.data
+  },
+  aresMarketData: async () => {
+    const response = await apiClient.getARESMarketData()
+    return response.data
+  },
+  aresDecisions: async (limit: number) => {
+    const response = await apiClient.getARESDecisions(limit)
+    return response.data
+  },
+
+  // ATHENA Bot
   athenaStatus: async () => {
     const response = await apiClient.getATHENAStatus()
     return response.data
   },
+  athenaPositions: async () => {
+    const response = await apiClient.getATHENAPositions()
+    return response.data
+  },
+  athenaSignals: async (limit: number) => {
+    const response = await apiClient.getATHENASignals(limit)
+    return response.data
+  },
+  athenaPerformance: async (days: number) => {
+    const response = await apiClient.getATHENAPerformance(days)
+    return response.data
+  },
+
+  // PHOENIX Trader
   traderStatus: async () => {
     const response = await apiClient.getTraderStatus()
+    return response.data
+  },
+  traderPerformance: async () => {
+    const response = await apiClient.getTraderPerformance()
+    return response.data
+  },
+  traderPositions: async () => {
+    const response = await apiClient.getOpenPositions()
+    return response.data
+  },
+
+  // Scanner
+  scannerHistory: async (limit: number) => {
+    const response = await apiClient.getScannerHistory(limit)
+    return response.data
+  },
+
+  // Oracle
+  oracleStatus: async () => {
+    const response = await apiClient.getOracleStatus()
+    return response.data
+  },
+  oracleLogs: async () => {
+    const response = await apiClient.getOracleLogs()
+    return response.data
+  },
+
+  // ML System
+  mlStatus: async () => {
+    const response = await apiClient.getMLStatus()
+    return response.data
+  },
+  mlFeatureImportance: async () => {
+    const response = await apiClient.getMLFeatureImportance()
+    return response.data
+  },
+
+  // Decision Logs
+  decisionLogs: async (params: any) => {
+    const response = await apiClient.getDecisionLogs(params)
+    return response.data
+  },
+  decisionSummary: async (params: any) => {
+    const response = await apiClient.getDecisionSummary(params)
+    return response.data
+  },
+
+  // Wheel Bots
+  wheelCycles: async () => {
+    const response = await apiClient.getWheelCycles()
+    return response.data
+  },
+  spxStatus: async () => {
+    const response = await apiClient.getSPXStatus()
+    return response.data
+  },
+  spxPerformance: async () => {
+    const response = await apiClient.getSPXPerformance()
+    return response.data
+  },
+
+  // Alerts
+  alerts: async () => {
+    const response = await apiClient.getAlerts()
+    return response.data
+  },
+
+  // Database
+  databaseStats: async () => {
+    const response = await apiClient.getDatabaseStats()
+    return response.data
+  },
+  tableFreshness: async () => {
+    const response = await apiClient.getTableFreshness()
+    return response.data
+  },
+
+  // Zero DTE Backtest
+  zeroDTEResults: async () => {
+    const response = await apiClient.getZeroDTEResults()
+    return response.data
+  },
+  zeroDTEStrategies: async () => {
+    const response = await apiClient.getZeroDTEStrategies()
+    return response.data
+  },
+
+  // Volatility
+  volSurfaceAnalysis: async (symbol: string) => {
+    const response = await apiClient.getVolSurfaceAnalysis(symbol)
     return response.data
   },
 }
@@ -54,203 +201,426 @@ const fetchers = {
 // SWR CONFIG - Global caching settings
 // =============================================================================
 
-// Cache data for 5 minutes, revalidate in background
 export const swrConfig: SWRConfiguration = {
-  revalidateOnFocus: false,        // Don't refetch on window focus
-  revalidateOnReconnect: true,     // Refetch on reconnect
-  dedupingInterval: 60000,         // Dedupe requests within 1 minute
-  errorRetryCount: 3,              // Retry 3 times on error
-  errorRetryInterval: 5000,        // Wait 5s between retries
-  keepPreviousData: true,          // Keep showing old data while fetching new
+  revalidateOnFocus: false,
+  revalidateOnReconnect: true,
+  dedupingInterval: 60000,
+  errorRetryCount: 3,
+  errorRetryInterval: 5000,
+  keepPreviousData: true,
 }
 
 // =============================================================================
-// HOOKS - Use these in components for cached, persistent data
+// DASHBOARD HOOKS
 // =============================================================================
 
-/**
- * Market Commentary - AI-generated live analysis
- * Refreshes every 5 minutes, cached across navigation
- */
 export function useMarketCommentary(options?: SWRConfiguration) {
-  return useSWR(
-    'market-commentary',
-    fetchers.marketCommentary,
-    {
-      ...swrConfig,
-      refreshInterval: 5 * 60 * 1000, // 5 minutes
-      ...options,
-    }
-  )
+  return useSWR('market-commentary', fetchers.marketCommentary, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
 }
 
-/**
- * Daily Trading Plan - AI-generated daily plan
- * Refreshes every 30 minutes, cached across navigation
- */
 export function useDailyTradingPlan(options?: SWRConfiguration) {
-  return useSWR(
-    'daily-trading-plan',
-    fetchers.dailyTradingPlan,
-    {
-      ...swrConfig,
-      refreshInterval: 30 * 60 * 1000, // 30 minutes
-      ...options,
-    }
-  )
+  return useSWR('daily-trading-plan', fetchers.dailyTradingPlan, {
+    ...swrConfig,
+    refreshInterval: 30 * 60 * 1000,
+    ...options,
+  })
 }
 
-/**
- * Gamma Expiration (0DTE) - Weekly gamma decay data
- * Refreshes every 5 minutes, cached per symbol
- */
-export function useGammaExpiration(symbol: string = 'SPY', options?: SWRConfiguration) {
-  return useSWR(
-    symbol ? `gamma-expiration-${symbol}` : null,
-    () => fetchers.gammaExpiration(symbol),
-    {
-      ...swrConfig,
-      refreshInterval: 5 * 60 * 1000, // 5 minutes
-      ...options,
-    }
-  )
-}
+// =============================================================================
+// GEX & GAMMA HOOKS
+// =============================================================================
 
-/**
- * Gamma Intelligence - Full gamma analysis with market maker states
- * Refreshes every 2 minutes, cached per symbol
- */
-export function useGammaIntelligence(symbol: string = 'SPY', options?: SWRConfiguration) {
-  return useSWR(
-    symbol ? `gamma-intelligence-${symbol}` : null,
-    () => fetchers.gammaIntelligence(symbol),
-    {
-      ...swrConfig,
-      refreshInterval: 2 * 60 * 1000, // 2 minutes
-      ...options,
-    }
-  )
-}
-
-/**
- * GEX Data - Core gamma exposure data
- * Refreshes every 2 minutes, cached per symbol
- */
 export function useGEX(symbol: string = 'SPY', options?: SWRConfiguration) {
   return useSWR(
     symbol ? `gex-${symbol}` : null,
     () => fetchers.gex(symbol),
-    {
-      ...swrConfig,
-      refreshInterval: 2 * 60 * 1000, // 2 minutes
-      ...options,
-    }
+    { ...swrConfig, refreshInterval: 2 * 60 * 1000, ...options }
   )
 }
 
-/**
- * Psychology Regime - Current market regime analysis
- * Refreshes every minute, cached per symbol
- */
+export function useGEXLevels(symbol: string = 'SPY', options?: SWRConfiguration) {
+  return useSWR(
+    symbol ? `gex-levels-${symbol}` : null,
+    () => fetchers.gexLevels(symbol),
+    { ...swrConfig, refreshInterval: 2 * 60 * 1000, ...options }
+  )
+}
+
+export function useGammaExpiration(symbol: string = 'SPY', options?: SWRConfiguration) {
+  return useSWR(
+    symbol ? `gamma-expiration-${symbol}` : null,
+    () => fetchers.gammaExpiration(symbol),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+export function useGammaIntelligence(symbol: string = 'SPY', options?: SWRConfiguration) {
+  return useSWR(
+    symbol ? `gamma-intelligence-${symbol}` : null,
+    () => fetchers.gammaIntelligence(symbol),
+    { ...swrConfig, refreshInterval: 2 * 60 * 1000, ...options }
+  )
+}
+
+export function useGammaProbabilities(symbol: string = 'SPY', options?: SWRConfiguration) {
+  return useSWR(
+    symbol ? `gamma-probabilities-${symbol}` : null,
+    () => fetchers.gammaProbabilities(symbol),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+export function useGEXHistory(symbol: string = 'SPY', days: number = 90, options?: SWRConfiguration) {
+  return useSWR(
+    `gex-history-${symbol}-${days}`,
+    () => fetchers.gexHistory(symbol, days),
+    { ...swrConfig, refreshInterval: 10 * 60 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// VIX HOOKS
+// =============================================================================
+
+export function useVIX(options?: SWRConfiguration) {
+  return useSWR('vix-current', fetchers.vixCurrent, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useVIXHedgeSignal(options?: SWRConfiguration) {
+  return useSWR('vix-hedge-signal', fetchers.vixHedgeSignal, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// PSYCHOLOGY HOOKS
+// =============================================================================
+
 export function usePsychologyRegime(symbol: string = 'SPY', options?: SWRConfiguration) {
   return useSWR(
     symbol ? `psychology-regime-${symbol}` : null,
     () => fetchers.psychologyRegime(symbol),
-    {
-      ...swrConfig,
-      refreshInterval: 60 * 1000, // 1 minute
-      ...options,
-    }
-  )
-}
-
-/**
- * VIX Data - Current volatility index
- * Refreshes every minute
- */
-export function useVIX(options?: SWRConfiguration) {
-  return useSWR(
-    'vix-current',
-    fetchers.vixCurrent,
-    {
-      ...swrConfig,
-      refreshInterval: 60 * 1000, // 1 minute
-      ...options,
-    }
-  )
-}
-
-/**
- * ARES Bot Status
- * Refreshes every 30 seconds
- */
-export function useARESStatus(options?: SWRConfiguration) {
-  return useSWR(
-    'ares-status',
-    fetchers.aresStatus,
-    {
-      ...swrConfig,
-      refreshInterval: 30 * 1000, // 30 seconds
-      ...options,
-    }
-  )
-}
-
-/**
- * ATHENA Bot Status
- * Refreshes every 30 seconds
- */
-export function useATHENAStatus(options?: SWRConfiguration) {
-  return useSWR(
-    'athena-status',
-    fetchers.athenaStatus,
-    {
-      ...swrConfig,
-      refreshInterval: 30 * 1000, // 30 seconds
-      ...options,
-    }
-  )
-}
-
-/**
- * Trader Status (PHOENIX)
- * Refreshes every 30 seconds
- */
-export function useTraderStatus(options?: SWRConfiguration) {
-  return useSWR(
-    'trader-status',
-    fetchers.traderStatus,
-    {
-      ...swrConfig,
-      refreshInterval: 30 * 1000, // 30 seconds
-      ...options,
-    }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
 // =============================================================================
-// PREFETCH - Call these to warm the cache before navigation
+// ARES BOT HOOKS
+// =============================================================================
+
+export function useARESStatus(options?: SWRConfiguration) {
+  return useSWR('ares-status', fetchers.aresStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useARESPerformance(options?: SWRConfiguration) {
+  return useSWR('ares-performance', fetchers.aresPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useARESPositions(options?: SWRConfiguration) {
+  return useSWR('ares-positions', fetchers.aresPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useARESMarketData(options?: SWRConfiguration) {
+  return useSWR('ares-market-data', fetchers.aresMarketData, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useARESDecisions(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `ares-decisions-${limit}`,
+    () => fetchers.aresDecisions(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// ATHENA BOT HOOKS
+// =============================================================================
+
+export function useATHENAStatus(options?: SWRConfiguration) {
+  return useSWR('athena-status', fetchers.athenaStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useATHENAPositions(options?: SWRConfiguration) {
+  return useSWR('athena-positions', fetchers.athenaPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useATHENASignals(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `athena-signals-${limit}`,
+    () => fetchers.athenaSignals(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useATHENAPerformance(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `athena-performance-${days}`,
+    () => fetchers.athenaPerformance(days),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// PHOENIX TRADER HOOKS
+// =============================================================================
+
+export function useTraderStatus(options?: SWRConfiguration) {
+  return useSWR('trader-status', fetchers.traderStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useTraderPerformance(options?: SWRConfiguration) {
+  return useSWR('trader-performance', fetchers.traderPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useTraderPositions(options?: SWRConfiguration) {
+  return useSWR('trader-positions', fetchers.traderPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// SCANNER HOOKS
+// =============================================================================
+
+export function useScannerHistory(limit: number = 10, options?: SWRConfiguration) {
+  return useSWR(
+    `scanner-history-${limit}`,
+    () => fetchers.scannerHistory(limit),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// ORACLE HOOKS
+// =============================================================================
+
+export function useOracleStatus(options?: SWRConfiguration) {
+  return useSWR('oracle-status', fetchers.oracleStatus, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useOracleLogs(options?: SWRConfiguration) {
+  return useSWR('oracle-logs', fetchers.oracleLogs, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// ML SYSTEM HOOKS
+// =============================================================================
+
+export function useMLStatus(options?: SWRConfiguration) {
+  return useSWR('ml-status', fetchers.mlStatus, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useMLFeatureImportance(options?: SWRConfiguration) {
+  return useSWR('ml-feature-importance', fetchers.mlFeatureImportance, {
+    ...swrConfig,
+    refreshInterval: 10 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// DECISION LOGS HOOKS
+// =============================================================================
+
+export function useDecisionLogs(params?: any, options?: SWRConfiguration) {
+  const key = params ? `decision-logs-${JSON.stringify(params)}` : 'decision-logs'
+  return useSWR(
+    key,
+    () => fetchers.decisionLogs(params || {}),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useDecisionSummary(params?: any, options?: SWRConfiguration) {
+  const key = params ? `decision-summary-${JSON.stringify(params)}` : 'decision-summary'
+  return useSWR(
+    key,
+    () => fetchers.decisionSummary(params || {}),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// WHEEL BOTS HOOKS
+// =============================================================================
+
+export function useWheelCycles(options?: SWRConfiguration) {
+  return useSWR('wheel-cycles', fetchers.wheelCycles, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useSPXStatus(options?: SWRConfiguration) {
+  return useSWR('spx-status', fetchers.spxStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useSPXPerformance(options?: SWRConfiguration) {
+  return useSWR('spx-performance', fetchers.spxPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// ALERTS HOOKS
+// =============================================================================
+
+export function useAlerts(options?: SWRConfiguration) {
+  return useSWR('alerts', fetchers.alerts, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// DATABASE HOOKS
+// =============================================================================
+
+export function useDatabaseStats(options?: SWRConfiguration) {
+  return useSWR('database-stats', fetchers.databaseStats, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useTableFreshness(options?: SWRConfiguration) {
+  return useSWR('table-freshness', fetchers.tableFreshness, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// ZERO DTE BACKTEST HOOKS
+// =============================================================================
+
+export function useZeroDTEResults(options?: SWRConfiguration) {
+  return useSWR('zero-dte-results', fetchers.zeroDTEResults, {
+    ...swrConfig,
+    refreshInterval: 10 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useZeroDTEStrategies(options?: SWRConfiguration) {
+  return useSWR('zero-dte-strategies', fetchers.zeroDTEStrategies, {
+    ...swrConfig,
+    refreshInterval: 10 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// VOLATILITY HOOKS
+// =============================================================================
+
+export function useVolSurfaceAnalysis(symbol: string = 'SPY', options?: SWRConfiguration) {
+  return useSWR(
+    `vol-surface-${symbol}`,
+    () => fetchers.volSurfaceAnalysis(symbol),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// PREFETCH - Warm the cache on app load
 // =============================================================================
 
 export const prefetchMarketData = {
+  // Individual prefetchers
   commentary: () => preload('market-commentary', fetchers.marketCommentary),
   dailyPlan: () => preload('daily-trading-plan', fetchers.dailyTradingPlan),
+  gex: (symbol: string = 'SPY') => preload(`gex-${symbol}`, () => fetchers.gex(symbol)),
   gammaExpiration: (symbol: string = 'SPY') =>
     preload(`gamma-expiration-${symbol}`, () => fetchers.gammaExpiration(symbol)),
   gammaIntelligence: (symbol: string = 'SPY') =>
     preload(`gamma-intelligence-${symbol}`, () => fetchers.gammaIntelligence(symbol)),
-  gex: (symbol: string = 'SPY') =>
-    preload(`gex-${symbol}`, () => fetchers.gex(symbol)),
-  psychologyRegime: (symbol: string = 'SPY') =>
-    preload(`psychology-regime-${symbol}`, () => fetchers.psychologyRegime(symbol)),
   vix: () => preload('vix-current', fetchers.vixCurrent),
+  aresStatus: () => preload('ares-status', fetchers.aresStatus),
+  athenaStatus: () => preload('athena-status', fetchers.athenaStatus),
+  traderStatus: () => preload('trader-status', fetchers.traderStatus),
 
   // Prefetch all common data at once
   all: (symbol: string = 'SPY') => {
+    // Dashboard
     prefetchMarketData.commentary()
     prefetchMarketData.dailyPlan()
     prefetchMarketData.gammaExpiration(symbol)
+
+    // Core market data
     prefetchMarketData.gex(symbol)
+    prefetchMarketData.gammaIntelligence(symbol)
     prefetchMarketData.vix()
+
+    // Bot statuses
+    prefetchMarketData.aresStatus()
+    prefetchMarketData.athenaStatus()
+    prefetchMarketData.traderStatus()
   },
 }
