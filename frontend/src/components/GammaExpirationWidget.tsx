@@ -1,10 +1,8 @@
 'use client'
 
-import { logger } from '@/lib/logger'
-
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
-import { apiClient } from '@/lib/api'
+import { useGammaExpiration } from '@/lib/hooks/useMarketData'
 
 interface DirectionalPrediction {
   direction: string
@@ -53,124 +51,22 @@ interface GammaExpirationData {
   directional_prediction: DirectionalPrediction | null
 }
 
-// Cache configuration
-const CACHE_KEY_PREFIX = 'alphagex_0dte_'
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes - data is fresh
-const STALE_TTL_MS = 60 * 60 * 1000 // 1 hour - data is stale but usable
-
-interface CachedData {
-  data: GammaExpirationData
-  timestamp: number
-}
-
-function getCachedData(symbol: string): CachedData | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const cached = localStorage.getItem(`${CACHE_KEY_PREFIX}${symbol}`)
-    if (cached) {
-      return JSON.parse(cached)
-    }
-  } catch (e) {
-    // Ignore parse errors
-  }
-  return null
-}
-
-function setCachedData(symbol: string, data: GammaExpirationData): void {
-  if (typeof window === 'undefined') return
-  try {
-    const cacheEntry: CachedData = {
-      data,
-      timestamp: Date.now()
-    }
-    localStorage.setItem(`${CACHE_KEY_PREFIX}${symbol}`, JSON.stringify(cacheEntry))
-  } catch (e) {
-    // Ignore storage errors (quota exceeded, etc.)
-  }
-}
-
 export default function GammaExpirationWidget() {
   const [symbol, setSymbol] = useState('SPY')
-  const [data, setData] = useState<GammaExpirationData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false) // Background refresh indicator
-  const [error, setError] = useState<string | null>(null)
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['prediction', 'today']))
+
+  const { data: response, error, isLoading, isValidating, mutate } = useGammaExpiration(symbol)
+
+  const data = response?.data as GammaExpirationData | undefined
+  const loading = isLoading && !data
+  const refreshing = isValidating
+  const lastUpdated = data ? new Date() : null
 
   const popularSymbols = ['SPY', 'QQQ', 'IWM']
 
-  // Load cached data immediately on mount/symbol change
-  useEffect(() => {
-    const cached = getCachedData(symbol)
-    if (cached) {
-      const age = Date.now() - cached.timestamp
-      // Use cached data if it's not too old
-      if (age < STALE_TTL_MS) {
-        setData(cached.data)
-        setLastUpdated(new Date(cached.timestamp))
-        setLoading(false) // Show cached data immediately
-
-        // If data is stale (older than TTL but younger than STALE_TTL), refresh in background
-        if (age > CACHE_TTL_MS) {
-          setRefreshing(true)
-        }
-      }
-    }
-  }, [symbol])
-
-  const fetchData = useCallback(async (isBackgroundRefresh = false) => {
-    try {
-      if (!isBackgroundRefresh) {
-        // Only show loading spinner if no cached data
-        if (!data) {
-          setLoading(true)
-        }
-      }
-      setError(null)
-
-      const response = await apiClient.getGammaExpiration(symbol)
-      const expirationData = response.data.data
-
-      // Update state and cache
-      setData(expirationData)
-      setLastUpdated(new Date())
-      setCachedData(symbol, expirationData)
-    } catch (error: any) {
-      logger.error('Error fetching expiration data:', error)
-      // Only set error if we don't have cached data to show
-      if (!data) {
-        setError(error.message || 'Failed to fetch data')
-      }
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [symbol, data])
-
-  // Fetch data on mount and when symbol changes
-  useEffect(() => {
-    const cached = getCachedData(symbol)
-    const hasFreshCache = cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS
-
-    // If we have fresh cached data, don't fetch immediately
-    if (hasFreshCache) {
-      return
-    }
-
-    // If we have stale cache, fetch in background
-    if (cached && (Date.now() - cached.timestamp) < STALE_TTL_MS) {
-      fetchData(true) // Background refresh
-    } else {
-      // No cache or very old - fetch with loading spinner
-      fetchData(false)
-    }
-  }, [symbol]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // Manual refresh handler
   const handleRefresh = () => {
-    setRefreshing(true)
-    fetchData(true)
+    mutate()
   }
 
   const getRiskColor = (level: string) => {
@@ -432,9 +328,9 @@ export default function GammaExpirationWidget() {
         <div className="bg-danger/10 border border-danger/30 rounded-lg p-4 text-center">
           <AlertTriangle className="w-8 h-8 text-danger mx-auto mb-2" />
           <h3 className="text-lg font-bold text-danger mb-1">Failed to Load 0DTE Data</h3>
-          <p className="text-text-secondary text-sm mb-3">{error || 'No data available'}</p>
+          <p className="text-text-secondary text-sm mb-3">{error?.message || 'No data available'}</p>
           <button
-            onClick={() => fetchData(false)}
+            onClick={() => mutate()}
             className="px-3 py-1 bg-primary text-white text-sm rounded-lg hover:bg-primary/80"
           >
             <RefreshCw className="w-3 h-3 inline mr-1" />
