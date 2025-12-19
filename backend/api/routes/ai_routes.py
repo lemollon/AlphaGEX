@@ -170,7 +170,7 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
             days = 7
             if args and args.isdigit():
                 days = int(args)
-            events = get_upcoming_events(days=days)
+            events = get_upcoming_events(days_ahead=days)
             return {"type": "calendar", "data": events}
 
         elif command == 'gex':
