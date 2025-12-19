@@ -317,6 +317,10 @@ def fetch_vix_data() -> Dict:
 # BOT CONTROL TOOLS
 # =============================================================================
 
+# Pending confirmations for bot control (session-based)
+PENDING_CONFIRMATIONS: Dict[str, Dict] = {}
+
+
 def get_bot_status(bot_name: str = "ares") -> Dict:
     """Get status of a trading bot"""
     try:
@@ -341,6 +345,261 @@ def get_tradier_status() -> Dict:
         return {"error": f"API returned {response.status_code}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+def request_bot_action(action: str, bot_name: str = "ares", session_id: str = "default") -> Dict:
+    """
+    Request a bot control action (requires confirmation).
+
+    Actions: start, stop, pause
+    Returns a confirmation request that must be confirmed.
+    """
+    valid_actions = ["start", "stop", "pause"]
+    if action.lower() not in valid_actions:
+        return {"error": f"Invalid action. Valid actions: {', '.join(valid_actions)}"}
+
+    valid_bots = ["ares", "athena", "atlas"]
+    if bot_name.lower() not in valid_bots:
+        return {"error": f"Invalid bot. Valid bots: {', '.join(valid_bots)}"}
+
+    # Create confirmation request
+    confirmation_id = f"{session_id}_{bot_name}_{action}_{datetime.now().timestamp()}"
+    PENDING_CONFIRMATIONS[session_id] = {
+        "id": confirmation_id,
+        "action": action.lower(),
+        "bot": bot_name.lower(),
+        "requested_at": datetime.now().isoformat(),
+        "expires_at": (datetime.now() + timedelta(minutes=2)).isoformat()
+    }
+
+    # Get current bot status for context
+    current_status = get_bot_status(bot_name)
+
+    return {
+        "requires_confirmation": True,
+        "confirmation_id": confirmation_id,
+        "action": action,
+        "bot": bot_name,
+        "current_status": current_status,
+        "message": f"Confirm {action.upper()} {bot_name.upper()}? Reply 'yes' or 'confirm' to proceed.",
+        "warning": "This will affect live trading operations." if action in ["start", "stop"] else None
+    }
+
+
+def confirm_bot_action(session_id: str = "default", confirmation: str = "yes") -> Dict:
+    """
+    Confirm a pending bot control action.
+    """
+    pending = PENDING_CONFIRMATIONS.get(session_id)
+    if not pending:
+        return {"error": "No pending action to confirm. Use /start, /stop, or /pause first."}
+
+    # Check if expired
+    expires_at = datetime.fromisoformat(pending["expires_at"])
+    if datetime.now() > expires_at:
+        del PENDING_CONFIRMATIONS[session_id]
+        return {"error": "Confirmation expired. Please request the action again."}
+
+    # Check confirmation
+    if confirmation.lower() not in ["yes", "confirm", "y"]:
+        del PENDING_CONFIRMATIONS[session_id]
+        return {"cancelled": True, "message": "Action cancelled."}
+
+    # Execute the action
+    action = pending["action"]
+    bot = pending["bot"]
+
+    try:
+        api_base = os.getenv("API_URL", "https://alphagex-api.onrender.com")
+
+        if action == "start":
+            response = requests.post(f"{api_base}/api/autonomous/{bot}/start", timeout=15)
+        elif action == "stop":
+            response = requests.post(f"{api_base}/api/autonomous/{bot}/stop", timeout=15)
+        elif action == "pause":
+            # Pause for 30 minutes by default
+            response = requests.post(f"{api_base}/api/autonomous/{bot}/pause",
+                                    json={"duration_minutes": 30}, timeout=15)
+        else:
+            return {"error": f"Unknown action: {action}"}
+
+        # Clear pending confirmation
+        del PENDING_CONFIRMATIONS[session_id]
+
+        if response.status_code == 200:
+            return {
+                "success": True,
+                "action": action,
+                "bot": bot,
+                "result": response.json(),
+                "message": f"{bot.upper()} {action.upper()} command executed successfully."
+            }
+        else:
+            return {
+                "success": False,
+                "action": action,
+                "bot": bot,
+                "error": f"API returned {response.status_code}: {response.text}"
+            }
+
+    except Exception as e:
+        return {"error": f"Failed to execute {action} on {bot}: {str(e)}"}
+
+
+def get_system_status() -> Dict:
+    """Get comprehensive system status including all bots and connections."""
+    try:
+        status = {
+            "timestamp": datetime.now().isoformat(),
+            "bots": {},
+            "connections": {},
+            "market": {}
+        }
+
+        # Get ARES status
+        ares = get_bot_status("ares")
+        status["bots"]["ares"] = {
+            "mode": ares.get("mode", "unknown"),
+            "capital": ares.get("capital", 0),
+            "open_positions": ares.get("open_positions", 0),
+            "total_pnl": ares.get("total_pnl", 0),
+            "status": "active" if ares.get("mode") == "live" else "inactive"
+        }
+
+        # Get Tradier status
+        tradier = get_tradier_status()
+        status["connections"]["tradier"] = {
+            "connected": tradier.get("connected", False),
+            "account_type": tradier.get("account_type", "unknown"),
+            "buying_power": tradier.get("buying_power", 0)
+        }
+
+        # Get market data
+        market = fetch_ares_market_data()
+        if market and "error" not in market:
+            status["market"] = {
+                "spx": market.get("spx", {}).get("price", 0),
+                "spy": market.get("spy", {}).get("price", 0),
+                "vix": market.get("vix", 0),
+                "market_open": is_market_open()
+            }
+
+        # Get today's events
+        today_events = get_upcoming_events(1)
+        status["today_events"] = [e["name"] for e in today_events if e["days_until"] == 0]
+
+        return status
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def is_market_open() -> bool:
+    """Check if US stock market is currently open."""
+    now = datetime.now()
+    # Simple check - weekday and between 9:30 AM - 4:00 PM ET
+    # Note: This doesn't account for holidays
+    if now.weekday() >= 5:  # Weekend
+        return False
+    # Assuming server is in ET timezone
+    hour = now.hour
+    minute = now.minute
+    if hour < 9 or (hour == 9 and minute < 30):
+        return False
+    if hour >= 16:
+        return False
+    return True
+
+
+def get_gexis_briefing() -> str:
+    """
+    Generate a comprehensive proactive briefing for Optionist Prime.
+    Called when chat opens or /briefing command is used.
+    """
+    briefing_parts = []
+
+    # Header with time-based greeting
+    hour = datetime.now().hour
+    if 5 <= hour < 12:
+        greeting = "Good morning"
+    elif 12 <= hour < 17:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
+
+    briefing_parts.append(f"{greeting}, Optionist Prime. GEXIS online and operational.\n")
+
+    # Check for high-impact events TODAY
+    today_events = get_upcoming_events(1)
+    high_impact_today = [e for e in today_events if e["days_until"] == 0 and e["impact"] == "HIGH"]
+
+    if high_impact_today:
+        briefing_parts.append("**ALERT - HIGH IMPACT EVENT TODAY:**")
+        for event in high_impact_today:
+            event_info = ECONOMIC_EVENTS.get(event["event"], {})
+            briefing_parts.append(f"  {event['name']} at {event['time']}")
+            if event_info.get("trading_advice"):
+                briefing_parts.append(f"  Recommendation: {event_info['trading_advice']}")
+        briefing_parts.append("")
+
+    # Market Status
+    market_open = is_market_open()
+    briefing_parts.append(f"**MARKET STATUS:** {'OPEN' if market_open else 'CLOSED'}")
+
+    # Get market data
+    try:
+        market = fetch_ares_market_data()
+        if market and "error" not in market:
+            spx = market.get("spx", {})
+            spy = market.get("spy", {})
+            vix = market.get("vix", 0)
+
+            briefing_parts.append(f"\n**MARKET DATA:**")
+            if spx.get("price"):
+                briefing_parts.append(f"  SPX: ${spx['price']:,.2f} (Expected Move: ±${spx.get('expected_move', 0):.0f})")
+            if spy.get("price"):
+                briefing_parts.append(f"  SPY: ${spy['price']:.2f} (Expected Move: ±${spy.get('expected_move', 0):.2f})")
+            if vix:
+                vix_status = "ELEVATED - caution advised" if vix > 25 else "NORMAL" if vix > 15 else "LOW - premium reduced"
+                briefing_parts.append(f"  VIX: {vix:.2f} ({vix_status})")
+    except Exception:
+        pass
+
+    # Get ARES status
+    try:
+        ares = get_bot_status("ares")
+        if ares and "error" not in ares:
+            briefing_parts.append(f"\n**ARES STATUS:**")
+            briefing_parts.append(f"  Mode: {ares.get('mode', 'unknown').upper()}")
+            briefing_parts.append(f"  Open Positions: {ares.get('open_positions', 0)}")
+            pnl = ares.get('total_pnl', 0)
+            pnl_str = f"+${pnl:,.0f}" if pnl >= 0 else f"-${abs(pnl):,.0f}"
+            briefing_parts.append(f"  Total P&L: {pnl_str}")
+    except Exception:
+        pass
+
+    # Upcoming events (next 3 days)
+    try:
+        upcoming = get_upcoming_events(3)
+        if upcoming:
+            briefing_parts.append(f"\n**UPCOMING EVENTS (Next 3 Days):**")
+            for event in upcoming[:4]:
+                days = event["days_until"]
+                day_str = "TODAY" if days == 0 else "TOMORROW" if days == 1 else f"in {days} days"
+                impact_marker = "!!" if event["impact"] == "HIGH" else "!" if event["impact"] == "MEDIUM" else ""
+                briefing_parts.append(f"  {impact_marker}{event['name']} - {event['date']} ({day_str})")
+    except Exception:
+        pass
+
+    # Trading recommendation
+    if high_impact_today:
+        briefing_parts.append(f"\n**GEXIS RECOMMENDATION:** Consider reducing position size or waiting until after the event settles.")
+    elif market_open:
+        briefing_parts.append(f"\n**GEXIS RECOMMENDATION:** Systems nominal. Ready for your trading decisions, Prime.")
+    else:
+        briefing_parts.append(f"\n**GEXIS RECOMMENDATION:** Market closed. Good time to review strategies and prepare for next session.")
+
+    return "\n".join(briefing_parts)
 
 
 # =============================================================================
@@ -503,6 +762,21 @@ GEXIS_TOOLS = {
     "tradier_status": {
         "function": get_tradier_status,
         "description": "Get Tradier connection status",
+        "category": "bot"
+    },
+    "request_bot_action": {
+        "function": request_bot_action,
+        "description": "Request bot control action (start/stop/pause) - requires confirmation",
+        "category": "bot"
+    },
+    "confirm_bot_action": {
+        "function": confirm_bot_action,
+        "description": "Confirm a pending bot control action",
+        "category": "bot"
+    },
+    "system_status": {
+        "function": get_system_status,
+        "description": "Get comprehensive system status",
         "category": "bot"
     },
 

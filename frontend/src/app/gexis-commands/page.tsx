@@ -49,10 +49,11 @@ const commands: Command[] = [
   { command: '/backtest', description: 'Recent backtest performance', category: 'Analysis' },
 
   // Bot Control Commands
-  { command: '/start ares', description: 'Start ARES bot (requires confirmation)', category: 'Bot Control' },
-  { command: '/stop ares', description: 'Stop ARES bot (requires confirmation)', category: 'Bot Control' },
-  { command: '/cycle athena', description: 'Run one ATHENA trading cycle', category: 'Bot Control' },
-  { command: '/calibrate', description: 'Recalibrate probability weights', category: 'Bot Control' },
+  { command: '/start [BOT]', description: 'Start a bot (ares/athena/atlas) - requires confirmation', example: '/start ares', category: 'Bot Control' },
+  { command: '/stop [BOT]', description: 'Stop a bot (ares/athena/atlas) - requires confirmation', example: '/stop ares', category: 'Bot Control' },
+  { command: '/pause [BOT]', description: 'Pause bot for 30 min - requires confirmation', example: '/pause ares', category: 'Bot Control' },
+  { command: '/confirm', description: 'Confirm pending bot action', category: 'Bot Control' },
+  { command: '/cancel', description: 'Cancel pending bot action', category: 'Bot Control' },
 
   // Learning Commands
   { command: '/accuracy', description: 'AI prediction accuracy stats', category: 'Learning' },

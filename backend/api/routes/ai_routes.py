@@ -40,12 +40,16 @@ try:
         get_upcoming_events,
         get_gexis_briefing,
         get_system_status,
+        request_bot_action,
+        confirm_bot_action,
+        PENDING_CONFIRMATIONS,
         ECONOMIC_EVENTS
     )
     GEXIS_TOOLS_AVAILABLE = True
 except ImportError:
     GEXIS_TOOLS_AVAILABLE = False
     GEXIS_TOOLS = {}
+    PENDING_CONFIRMATIONS = {}
 
 # Import comprehensive knowledge
 try:
@@ -124,6 +128,13 @@ def detect_slash_command(query: str) -> tuple:
         '/weights': 'weights',
         '/accuracy': 'accuracy',
         '/patterns': 'patterns',
+        # Bot control commands
+        '/start': 'start_bot',
+        '/stop': 'stop_bot',
+        '/pause': 'pause_bot',
+        '/confirm': 'confirm',
+        '/yes': 'confirm',
+        '/cancel': 'cancel',
     }
 
     return command_map.get(command), args
@@ -286,6 +297,32 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
                         }
             except Exception as e:
                 return {"type": "accuracy", "data": None, "error": str(e)}
+
+        # Bot control commands
+        elif command == 'start_bot':
+            bot_name = args.lower() if args else 'ares'
+            result = request_bot_action('start', bot_name)
+            return {"type": "bot_control", "action": "start", "bot": bot_name, "data": result}
+
+        elif command == 'stop_bot':
+            bot_name = args.lower() if args else 'ares'
+            result = request_bot_action('stop', bot_name)
+            return {"type": "bot_control", "action": "stop", "bot": bot_name, "data": result}
+
+        elif command == 'pause_bot':
+            bot_name = args.lower() if args else 'ares'
+            result = request_bot_action('pause', bot_name)
+            return {"type": "bot_control", "action": "pause", "bot": bot_name, "data": result}
+
+        elif command == 'confirm':
+            result = confirm_bot_action(confirmation='yes')
+            return {"type": "confirmation", "data": result}
+
+        elif command == 'cancel':
+            # Clear any pending confirmation
+            if PENDING_CONFIRMATIONS:
+                PENDING_CONFIRMATIONS.clear()
+            return {"type": "cancellation", "data": {"message": "Action cancelled."}}
 
         else:
             return {"type": "unknown", "error": f"Unknown command: {command}"}
@@ -546,6 +583,34 @@ async def ai_analyze_market(request: dict):
                         formatted_response += f"- Accuracy: {data.get('accuracy_pct', 0)}%"
                     else:
                         formatted_response = f"No prediction accuracy data available yet, {USER_NAME}. The Oracle is still learning."
+
+                elif cmd_type == 'bot_control':
+                    action = command_result.get('action', 'unknown')
+                    bot = command_result.get('bot', 'unknown')
+                    if data and data.get('requires_confirmation'):
+                        # Confirmation required
+                        warning = f"\n\n**WARNING:** {data.get('warning')}" if data.get('warning') else ""
+                        current_status = data.get('current_status', {})
+                        status_str = f"\nCurrent status: {current_status.get('mode', 'unknown').upper()}" if current_status else ""
+                        formatted_response = f"{USER_NAME}, you've requested to **{action.upper()} {bot.upper()}**.{status_str}{warning}\n\n"
+                        formatted_response += f"{data.get('message', 'Reply /confirm or /yes to proceed, or /cancel to abort.')}"
+                    elif data and data.get('error'):
+                        formatted_response = f"I apologize, {USER_NAME}. Failed to {action} {bot}: {data.get('error')}"
+                    else:
+                        formatted_response = f"Bot control command initiated, {USER_NAME}. {json.dumps(data, indent=2, default=str) if data else ''}"
+
+                elif cmd_type == 'confirmation':
+                    if data and data.get('success'):
+                        formatted_response = f"Confirmed, {USER_NAME}. {data.get('message', 'Action executed successfully.')}"
+                    elif data and data.get('cancelled'):
+                        formatted_response = f"Understood, {USER_NAME}. {data.get('message', 'Action cancelled.')}"
+                    elif data and data.get('error'):
+                        formatted_response = f"Unable to confirm, {USER_NAME}: {data.get('error')}"
+                    else:
+                        formatted_response = f"Confirmation processed, {USER_NAME}."
+
+                elif cmd_type == 'cancellation':
+                    formatted_response = f"Action cancelled, {USER_NAME}. Standing by for your next command."
 
                 else:
                     formatted_response = f"Command executed, {USER_NAME}. Result: {json.dumps(data, indent=2, default=str) if data else 'No data returned.'}"
@@ -958,13 +1023,25 @@ async def get_gexis_info():
 
 @router.get("/gexis/welcome")
 async def get_gexis_welcome():
-    """Get GEXIS welcome message for new chat sessions"""
+    """
+    Get GEXIS proactive welcome message for new chat sessions.
+    Includes real-time market data, position status, and economic calendar.
+    """
     try:
-        if GEXIS_AVAILABLE:
+        # Use proactive briefing if tools are available
+        if GEXIS_TOOLS_AVAILABLE:
+            briefing = get_gexis_briefing()
+            return {
+                "success": True,
+                "message": briefing,
+                "proactive": True
+            }
+        elif GEXIS_AVAILABLE:
             from ai.gexis_personality import get_gexis_welcome_message
             return {
                 "success": True,
-                "message": get_gexis_welcome_message()
+                "message": get_gexis_welcome_message(),
+                "proactive": False
             }
         else:
             from datetime import datetime
