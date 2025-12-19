@@ -1521,7 +1521,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                     return vix_price
 
             # Fallback to Polygon
-            vix_price = polygon_fetcher.get_current_price('^VIX')
+            vix_price = polygon_fetcher.get_current_price('I:VIX')
             if vix_price and vix_price > 0:
                 print(f"✅ VIX fetched from Polygon: {vix_price:.2f}")
                 return vix_price

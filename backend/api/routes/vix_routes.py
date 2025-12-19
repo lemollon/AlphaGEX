@@ -78,7 +78,7 @@ def get_vix_fallback_data() -> Dict[str, Any]:
             to_date = datetime.now().strftime('%Y-%m-%d')
             from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
-            url = f"https://api.polygon.io/v2/aggs/ticker/VIX/range/1/day/{from_date}/{to_date}"
+            url = f"https://api.polygon.io/v2/aggs/ticker/I:VIX/range/1/day/{from_date}/{to_date}"
             params = {"apiKey": polygon_key, "sort": "desc", "limit": 1}
 
             response = requests.get(url, params=params, timeout=10)
@@ -359,7 +359,7 @@ async def get_vix_debug():
 
         try:
             from data.polygon_data_fetcher import polygon_fetcher
-            raw_sources['polygon'] = polygon_fetcher.get_current_price('^VIX')
+            raw_sources['polygon'] = polygon_fetcher.get_current_price('I:VIX')
         except Exception as e:
             raw_sources['polygon'] = f"Error: {e}"
 

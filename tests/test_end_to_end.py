@@ -571,7 +571,7 @@ def test_data_source_fallback():
         # Test VIX retrieval (often a fallback scenario)
         vix_quote = provider.get_quote('$VIX.X')  # Tradier format
         if not vix_quote:
-            vix_quote = provider.get_quote('^VIX')  # Try Polygon format
+            vix_quote = provider.get_quote('I:VIX')  # Try Polygon format
 
         if vix_quote:
             print(f"\nVIX quote: ${vix_quote.price:.2f} from {vix_quote.source}")

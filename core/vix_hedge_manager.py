@@ -155,7 +155,7 @@ class VIXHedgeManager:
 
             # Fallback to Polygon
             if (not vix_spot or vix_spot <= 0) and POLYGON_AVAILABLE and polygon_fetcher:
-                vix_spot = polygon_fetcher.get_current_price('^VIX')
+                vix_spot = polygon_fetcher.get_current_price('I:VIX')
                 if vix_spot and vix_spot > 0:
                     vix_source = 'polygon'
 
@@ -168,7 +168,7 @@ class VIXHedgeManager:
             vvix_source = 'none'
             if POLYGON_AVAILABLE and polygon_fetcher:
                 try:
-                    vvix = polygon_fetcher.get_current_price('^VVIX')
+                    vvix = polygon_fetcher.get_current_price('I:VVIX')
                     if vvix and vvix > 0:
                         vvix_source = 'polygon'
                 except Exception:
@@ -273,7 +273,7 @@ class VIXHedgeManager:
             data = None
             if POLYGON_AVAILABLE and polygon_fetcher:
                 data = polygon_fetcher.get_price_history(
-                    '^VIX',
+                    'I:VIX',
                     days=self.lookback_days,
                     timeframe='day'
                 )

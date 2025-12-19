@@ -3055,6 +3055,85 @@ def init_database():
         )
     ''')
 
+    # =========================================================================
+    # APOLLO ML SCANNER TABLES
+    # =========================================================================
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS apollo_scans (
+            id SERIAL PRIMARY KEY,
+            scan_id VARCHAR(50) UNIQUE NOT NULL,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            symbols TEXT NOT NULL,
+            results JSONB,
+            market_regime VARCHAR(50),
+            vix_at_scan REAL,
+            scan_duration_ms INTEGER
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS apollo_predictions (
+            id SERIAL PRIMARY KEY,
+            prediction_id VARCHAR(50) UNIQUE NOT NULL,
+            scan_id VARCHAR(50),
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            symbol VARCHAR(20) NOT NULL,
+            direction_pred VARCHAR(20),
+            direction_confidence REAL,
+            magnitude_pred VARCHAR(20),
+            magnitude_confidence REAL,
+            timing_pred VARCHAR(20),
+            timing_confidence REAL,
+            ensemble_confidence REAL,
+            features JSONB,
+            strategies JSONB,
+            model_version VARCHAR(20),
+            is_ml_prediction BOOLEAN DEFAULT FALSE
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS apollo_outcomes (
+            id SERIAL PRIMARY KEY,
+            outcome_id VARCHAR(50) UNIQUE NOT NULL,
+            prediction_id VARCHAR(50),
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            symbol VARCHAR(20) NOT NULL,
+            predicted_direction VARCHAR(20),
+            actual_direction VARCHAR(20),
+            predicted_magnitude VARCHAR(20),
+            actual_magnitude VARCHAR(20),
+            actual_return_pct REAL,
+            direction_correct BOOLEAN,
+            magnitude_correct BOOLEAN,
+            strategy_used VARCHAR(50),
+            strategy_pnl REAL,
+            notes TEXT
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS apollo_model_performance (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            model_version VARCHAR(20),
+            direction_accuracy_7d REAL,
+            direction_accuracy_30d REAL,
+            magnitude_accuracy_7d REAL,
+            magnitude_accuracy_30d REAL,
+            total_predictions INTEGER,
+            total_outcomes INTEGER,
+            sharpe_ratio REAL,
+            win_rate REAL
+        )
+    ''')
+
+    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_scans_timestamp ON apollo_scans(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_symbol ON apollo_predictions(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_scan ON apollo_predictions(scan_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_outcomes_symbol ON apollo_outcomes(symbol)")
+
     # ----- Indexes for consolidated tables -----
     safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_history_symbol_date ON gamma_history(symbol, date)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_history_timestamp_main ON gamma_history(timestamp)")
