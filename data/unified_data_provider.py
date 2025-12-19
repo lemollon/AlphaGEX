@@ -483,7 +483,7 @@ class UnifiedDataProvider:
     # ==================== VIX ====================
 
     def get_vix(self) -> float:
-        """Get current VIX value from Tradier or Polygon"""
+        """Get current VIX value from Tradier, Yahoo Finance, or Polygon"""
         # Try multiple VIX symbol formats for Tradier
         if self._tradier:
             vix_symbols = ['VIX', '$VIX.X', 'VIXW', '$VIX']
@@ -498,7 +498,31 @@ class UnifiedDataProvider:
                 except Exception as e:
                     continue
 
-        # Fallback to Polygon
+        # Try Yahoo Finance (FREE - no API key needed!)
+        try:
+            import yfinance as yf
+            vix_ticker = yf.Ticker("^VIX")
+            # Try fast_info first (faster)
+            try:
+                price = vix_ticker.fast_info.get('lastPrice', 0)
+                if price and price > 0:
+                    logger.info(f"VIX from Yahoo Finance: {price}")
+                    return float(price)
+            except Exception:
+                pass
+            # Fallback: get from recent history
+            hist = vix_ticker.history(period='1d')
+            if not hist.empty:
+                price = float(hist['Close'].iloc[-1])
+                if price > 0:
+                    logger.info(f"VIX from Yahoo Finance (history): {price}")
+                    return price
+        except ImportError:
+            logger.debug("yfinance not installed")
+        except Exception as e:
+            logger.debug(f"Yahoo Finance VIX fetch failed: {e}")
+
+        # Fallback to Polygon (requires API key)
         if self._polygon:
             try:
                 price = self._polygon.get_current_price('I:VIX')
