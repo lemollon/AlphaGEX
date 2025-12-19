@@ -31,7 +31,8 @@ import {
   RotateCcw,
   Sword,
   Eye,
-  FileText
+  FileText,
+  Sun
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -41,7 +42,7 @@ const navItems = [
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp, category: 'Analysis' },
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
   { href: '/gamma', label: 'Gamma Intelligence', icon: Zap, category: 'Analysis' },
-  { href: '/scanner', label: 'Scanner', icon: Search, category: 'Trading' },
+  { href: '/apollo', label: 'APOLLO (ML Scanner)', icon: Sun, category: 'Trading' },
   { href: '/zero-dte-backtest', label: 'KRONOS (0DTE Condor)', icon: Clock, category: 'AI & Testing' },
   { href: '/oracle', label: 'ORACLE (AI Advisor)', icon: Eye, category: 'AI & Testing' },
   { href: '/ml', label: 'PROMETHEUS (ML System)', icon: Brain, category: 'AI & Testing' },

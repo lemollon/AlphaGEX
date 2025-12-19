@@ -57,6 +57,7 @@ from backend.api.routes import (
     ares_routes,  # ARES Aggressive Iron Condor bot endpoints
     athena_routes,  # ATHENA Directional Spread bot endpoints
     logs_routes,  # Comprehensive logs API for ALL 22 logging tables
+    apollo_routes,  # APOLLO ML-powered scanner
 )
 
 # ============================================================================
@@ -278,6 +279,7 @@ app.include_router(zero_dte_backtest_routes.router)
 app.include_router(ares_routes.router)
 app.include_router(athena_routes.router)
 app.include_router(logs_routes.router)
+app.include_router(apollo_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares")
 
 # Initialize existing AlphaGEX components (singleton pattern)
