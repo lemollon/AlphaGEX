@@ -524,7 +524,7 @@ class ApolloMLEngine:
         result = {'vix': 18.0, 'percentile': 50.0, 'vvix': None}
 
         try:
-            # Try unified data provider first
+            # Try unified data provider first (includes Yahoo Finance fallback)
             from data.unified_data_provider import get_vix
             vix = get_vix()
             if vix and vix > 0:
@@ -532,13 +532,25 @@ class ApolloMLEngine:
         except:
             pass
 
-        # Get from Polygon if available
+        # Direct Yahoo Finance fallback (FREE - no API key!)
+        if result['vix'] == 18.0:
+            try:
+                import yfinance as yf
+                vix_ticker = yf.Ticker("^VIX")
+                try:
+                    price = vix_ticker.fast_info.get('lastPrice', 0)
+                    if price and price > 0:
+                        result['vix'] = float(price)
+                except:
+                    hist = vix_ticker.history(period='1d')
+                    if not hist.empty:
+                        result['vix'] = float(hist['Close'].iloc[-1])
+            except:
+                pass
+
+        # Get VVIX from Polygon if available
         if self.polygon:
             try:
-                vix = self.polygon.get_current_price('I:VIX')
-                if vix and vix > 0:
-                    result['vix'] = vix
-
                 vvix = self.polygon.get_current_price('I:VVIX')
                 if vvix and vvix > 0:
                     result['vvix'] = vvix

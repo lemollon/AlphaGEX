@@ -153,7 +153,29 @@ class VIXHedgeManager:
                 if vix_spot and vix_spot > 0:
                     vix_source = 'unified_provider'
 
-            # Fallback to Polygon
+            # Fallback to Yahoo Finance (FREE - no API key needed!)
+            if not vix_spot or vix_spot <= 0:
+                try:
+                    import yfinance as yf
+                    vix_ticker = yf.Ticker("^VIX")
+                    try:
+                        price = vix_ticker.fast_info.get('lastPrice', 0)
+                        if price and price > 0:
+                            vix_spot = float(price)
+                            vix_source = 'yahoo'
+                    except Exception:
+                        pass
+                    if not vix_spot or vix_spot <= 0:
+                        hist = vix_ticker.history(period='1d')
+                        if not hist.empty:
+                            price = float(hist['Close'].iloc[-1])
+                            if price > 0:
+                                vix_spot = price
+                                vix_source = 'yahoo'
+                except Exception:
+                    pass
+
+            # Fallback to Polygon (requires API key)
             if (not vix_spot or vix_spot <= 0) and POLYGON_AVAILABLE and polygon_fetcher:
                 vix_spot = polygon_fetcher.get_current_price('I:VIX')
                 if vix_spot and vix_spot > 0:

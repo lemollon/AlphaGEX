@@ -32,7 +32,7 @@ def get_last_trading_day():
 def get_vix_fallback_data() -> Dict[str, Any]:
     """
     Fallback VIX data when vix_hedge_manager is unavailable.
-    Tries Tradier first, then Polygon, then returns estimated data.
+    Priority: Tradier -> Yahoo Finance (FREE) -> Polygon -> default.
     ALWAYS returns valid data - never throws.
     """
     vix_data = {
@@ -71,7 +71,38 @@ def get_vix_fallback_data() -> Dict[str, Any]:
     except Exception as e:
         logger.debug(f"Tradier VIX fallback failed: {e}")
 
-    # Try Polygon
+    # Try Yahoo Finance (FREE - no API key needed!)
+    try:
+        import yfinance as yf
+        vix_ticker = yf.Ticker("^VIX")
+        # Try fast_info first (faster), then history as fallback
+        try:
+            price = vix_ticker.fast_info.get('lastPrice', 0)
+            if price and price > 0:
+                vix_data['vix_spot'] = float(price)
+                vix_data['vix_source'] = 'yahoo'
+                vix_data['is_estimated'] = False
+                logger.info(f"VIX from Yahoo Finance: {price}")
+                return vix_data
+        except Exception:
+            pass
+
+        # Fallback: get from recent history
+        hist = vix_ticker.history(period='1d')
+        if not hist.empty:
+            price = float(hist['Close'].iloc[-1])
+            if price > 0:
+                vix_data['vix_spot'] = price
+                vix_data['vix_source'] = 'yahoo'
+                vix_data['is_estimated'] = False
+                logger.info(f"VIX from Yahoo Finance (history): {price}")
+                return vix_data
+    except ImportError:
+        logger.debug("yfinance not installed")
+    except Exception as e:
+        logger.debug(f"Yahoo Finance VIX fallback failed: {e}")
+
+    # Try Polygon (requires API key)
     polygon_key = os.getenv('POLYGON_API_KEY')
     if polygon_key:
         try:
@@ -385,3 +416,170 @@ async def get_vix_debug():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/test-sources")
+async def test_vix_sources():
+    """
+    Detailed VIX source testing - shows exactly what each source returns.
+    Use this to debug VIX data issues.
+    """
+    results = {
+        "polygon_api_key_set": bool(os.getenv('POLYGON_API_KEY')),
+        "polygon_key_prefix": os.getenv('POLYGON_API_KEY', '')[:8] + '...' if os.getenv('POLYGON_API_KEY') else None,
+        "tradier_token_set": bool(os.getenv('TRADIER_ACCESS_TOKEN')),
+        "sources": {},
+        "timestamp": datetime.now().isoformat()
+    }
+
+    # Test 1: Direct Polygon API call for I:VIX
+    polygon_key = os.getenv('POLYGON_API_KEY')
+    if polygon_key:
+        try:
+            to_date = datetime.now().strftime('%Y-%m-%d')
+            from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+            # Test the prev endpoint (what we use for indices)
+            url = f"https://api.polygon.io/v2/aggs/ticker/I:VIX/prev"
+            params = {"apiKey": polygon_key}
+
+            response = requests.get(url, params=params, timeout=10)
+            results['sources']['polygon_prev_endpoint'] = {
+                'url': url.replace(polygon_key, 'API_KEY'),
+                'status_code': response.status_code,
+                'response': response.json() if response.status_code == 200 else response.text[:500]
+            }
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'OK' and data.get('results'):
+                    results['sources']['polygon_prev_endpoint']['extracted_vix'] = float(data['results'][0]['c'])
+        except Exception as e:
+            results['sources']['polygon_prev_endpoint'] = {'error': str(e)}
+
+        # Also test the range endpoint (alternative)
+        try:
+            url = f"https://api.polygon.io/v2/aggs/ticker/I:VIX/range/1/day/{from_date}/{to_date}"
+            params = {"apiKey": polygon_key, "sort": "desc", "limit": 1}
+
+            response = requests.get(url, params=params, timeout=10)
+            results['sources']['polygon_range_endpoint'] = {
+                'url': url.replace(polygon_key, 'API_KEY'),
+                'status_code': response.status_code,
+                'response': response.json() if response.status_code == 200 else response.text[:500]
+            }
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'OK' and data.get('results'):
+                    results['sources']['polygon_range_endpoint']['extracted_vix'] = float(data['results'][0]['c'])
+        except Exception as e:
+            results['sources']['polygon_range_endpoint'] = {'error': str(e)}
+    else:
+        results['sources']['polygon_prev_endpoint'] = {'error': 'POLYGON_API_KEY not set'}
+        results['sources']['polygon_range_endpoint'] = {'error': 'POLYGON_API_KEY not set'}
+
+    # Test 2: polygon_fetcher.get_current_price
+    try:
+        from data.polygon_data_fetcher import polygon_fetcher
+        vix_via_fetcher = polygon_fetcher.get_current_price('I:VIX')
+        results['sources']['polygon_fetcher_get_current_price'] = {
+            'value': vix_via_fetcher,
+            'success': vix_via_fetcher is not None and vix_via_fetcher > 0
+        }
+    except Exception as e:
+        results['sources']['polygon_fetcher_get_current_price'] = {'error': str(e)}
+
+    # Test 3: unified_data_provider.get_vix
+    try:
+        from data.unified_data_provider import get_vix as unified_get_vix
+        vix_unified = unified_get_vix()
+        results['sources']['unified_provider_get_vix'] = {
+            'value': vix_unified,
+            'success': vix_unified is not None and vix_unified > 0
+        }
+    except Exception as e:
+        results['sources']['unified_provider_get_vix'] = {'error': str(e)}
+
+    # Test 4: vix_hedge_manager.get_vix_data
+    try:
+        from core.vix_hedge_manager import get_vix_hedge_manager
+        manager = get_vix_hedge_manager()
+        vix_data = manager.get_vix_data()
+        results['sources']['vix_hedge_manager'] = {
+            'vix_spot': vix_data.get('vix_spot'),
+            'vix_source': vix_data.get('vix_source'),
+            'is_estimated': vix_data.get('is_estimated', True),
+            'success': vix_data.get('vix_spot', 0) > 0 and vix_data.get('vix_source') != 'default'
+        }
+    except Exception as e:
+        results['sources']['vix_hedge_manager'] = {'error': str(e)}
+
+    # Test 5: Tradier VIX (if available)
+    tradier_token = os.getenv('TRADIER_ACCESS_TOKEN')
+    if tradier_token:
+        try:
+            from data.tradier_data_fetcher import TradierDataFetcher
+            tradier = TradierDataFetcher()
+            for symbol in ['VIX', '$VIX.X', 'VIXW']:
+                try:
+                    data = tradier.get_quote(symbol)
+                    if data:
+                        price = float(data.get('last', 0) or data.get('close', 0) or 0)
+                        results['sources'][f'tradier_{symbol}'] = {
+                            'value': price,
+                            'raw_response': data,
+                            'success': price > 0
+                        }
+                        if price > 0:
+                            break
+                except Exception as e:
+                    results['sources'][f'tradier_{symbol}'] = {'error': str(e)}
+        except Exception as e:
+            results['sources']['tradier'] = {'error': str(e)}
+    else:
+        results['sources']['tradier'] = {'error': 'TRADIER_ACCESS_TOKEN not set'}
+
+    # Test 6: Yahoo Finance (FREE - no API key needed!)
+    try:
+        import yfinance as yf
+        vix_ticker = yf.Ticker("^VIX")
+
+        # Test fast_info
+        try:
+            fast_price = vix_ticker.fast_info.get('lastPrice', 0)
+            results['sources']['yahoo_fast_info'] = {
+                'value': float(fast_price) if fast_price else None,
+                'success': fast_price is not None and fast_price > 0
+            }
+        except Exception as e:
+            results['sources']['yahoo_fast_info'] = {'error': str(e)}
+
+        # Test history
+        try:
+            hist = vix_ticker.history(period='1d')
+            if not hist.empty:
+                hist_price = float(hist['Close'].iloc[-1])
+                results['sources']['yahoo_history'] = {
+                    'value': hist_price,
+                    'success': hist_price > 0
+                }
+            else:
+                results['sources']['yahoo_history'] = {'error': 'Empty history'}
+        except Exception as e:
+            results['sources']['yahoo_history'] = {'error': str(e)}
+
+    except ImportError:
+        results['sources']['yahoo'] = {'error': 'yfinance not installed'}
+    except Exception as e:
+        results['sources']['yahoo'] = {'error': str(e)}
+
+    # Summary
+    successful_sources = [k for k, v in results['sources'].items() if isinstance(v, dict) and v.get('success')]
+    results['summary'] = {
+        'working_sources': successful_sources,
+        'total_sources_tested': len(results['sources']),
+        'any_source_working': len(successful_sources) > 0
+    }
+
+    return results
