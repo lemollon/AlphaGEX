@@ -459,7 +459,7 @@ async def test_vix_sources():
     results = {
         "polygon_api_key_set": bool(os.getenv('POLYGON_API_KEY')),
         "polygon_key_prefix": os.getenv('POLYGON_API_KEY', '')[:8] + '...' if os.getenv('POLYGON_API_KEY') else None,
-        "tradier_token_set": bool(os.getenv('TRADIER_ACCESS_TOKEN')),
+        "tradier_api_key_set": bool(os.getenv('TRADIER_API_KEY')),
         "sources": {},
         "timestamp": datetime.now().isoformat()
     }
@@ -548,13 +548,15 @@ async def test_vix_sources():
         results['sources']['vix_hedge_manager'] = {'error': str(e)}
 
     # Test 5: Tradier VIX (if available) - use same sandbox setting as ARES
-    tradier_token = os.getenv('TRADIER_ACCESS_TOKEN')
-    if tradier_token:
+    # Note: TradierDataFetcher uses TRADIER_API_KEY, not TRADIER_ACCESS_TOKEN
+    tradier_api_key = os.getenv('TRADIER_API_KEY')
+    if tradier_api_key:
         try:
             from data.tradier_data_fetcher import TradierDataFetcher
             use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
             tradier = TradierDataFetcher(sandbox=use_sandbox)
             results['sources']['tradier_sandbox_mode'] = use_sandbox
+            results['sources']['tradier_api_key_set'] = True
 
             # Test $VIX.X first (this is what ARES uses successfully)
             for symbol in ['$VIX.X', 'VIX', 'VIXW']:
@@ -574,7 +576,7 @@ async def test_vix_sources():
         except Exception as e:
             results['sources']['tradier'] = {'error': str(e)}
     else:
-        results['sources']['tradier'] = {'error': 'TRADIER_ACCESS_TOKEN not set'}
+        results['sources']['tradier'] = {'error': 'TRADIER_API_KEY not set'}
 
     # Test 6: Yahoo Finance (FREE - no API key needed!)
     try:
