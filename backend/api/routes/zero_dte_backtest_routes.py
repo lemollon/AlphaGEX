@@ -2540,3 +2540,491 @@ async def export_all_results():
     except Exception as e:
         logger.error(f"Failed to export all results: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# PERFORMANCE OPTIMIZATION ENDPOINTS
+# ============================================================================
+
+@router.get("/init")
+async def get_kronos_init():
+    """
+    Consolidated init endpoint - returns ALL startup data in a single request.
+
+    This replaces 8+ separate API calls on page load:
+    - strategies
+    - strategy_types
+    - tiers
+    - presets
+    - saved_strategies
+    - oracle_status
+    - health
+    - results (recent)
+
+    PERFORMANCE BENEFIT: Single request vs 8+ separate requests
+    """
+    try:
+        init_data = {
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        # Health status
+        orat_db_url = os.getenv('ORAT_DATABASE_URL')
+        database_url = os.getenv('DATABASE_URL')
+        has_db = bool(orat_db_url or database_url)
+
+        init_data["health"] = {
+            "status": "ok" if has_db else "degraded",
+            "backend": "running",
+            "database": "configured" if has_db else "not_configured",
+        }
+
+        # Strategies (static data)
+        init_data["strategies"] = [
+            {
+                "id": "hybrid_fixed",
+                "name": "Hybrid Fixed (Recommended)",
+                "description": "Automatically scales DTE based on account size. Uses correct SD calculations for each tier.",
+                "features": ["Auto-scaling tiers", "Correct SD for each DTE", "Day trades only", "Realistic transaction costs"],
+                "recommended_settings": {"risk_per_trade_pct": 5.0, "sd_multiplier": 1.0, "spread_width": 10.0}
+            },
+            {
+                "id": "aggressive",
+                "name": "Aggressive (High Risk)",
+                "description": "10% risk per trade with daily Iron Condors. For small accounts seeking maximum growth.",
+                "features": ["10% risk per trade", "Daily Iron Condors", "Maximum compounding"],
+                "recommended_settings": {"risk_per_trade_pct": 10.0, "sd_multiplier": 1.0, "spread_width": 10.0}
+            },
+            {
+                "id": "realistic",
+                "name": "Realistic (Conservative)",
+                "description": "Includes full transaction costs and position limits.",
+                "features": ["$0.65/leg commission", "100 contract max", "Honest returns"],
+                "recommended_settings": {"risk_per_trade_pct": 10.0, "sd_multiplier": 1.0, "spread_width": 10.0}
+            }
+        ]
+
+        # Strategy types (static data)
+        init_data["strategy_types"] = [
+            {"id": "iron_condor", "name": "Iron Condor", "legs": 4, "direction": "neutral", "credit": True},
+            {"id": "bull_put", "name": "Bull Put Spread", "legs": 2, "direction": "bullish", "credit": True},
+            {"id": "bear_call", "name": "Bear Call Spread", "legs": 2, "direction": "bearish", "credit": True},
+            {"id": "iron_butterfly", "name": "Iron Butterfly", "legs": 4, "direction": "neutral", "credit": True},
+            {"id": "gex_protected_iron_condor", "name": "GEX-Protected Iron Condor", "legs": 4, "direction": "neutral", "credit": True,
+             "note": "Uses GEX walls for strike protection, falls back to SD when unavailable"},
+            {"id": "bull_call", "name": "Bull Call Spread", "legs": 2, "direction": "bullish", "credit": False},
+            {"id": "bear_put", "name": "Bear Put Spread", "legs": 2, "direction": "bearish", "credit": False},
+            {"id": "apache_directional", "name": "APACHE GEX Directional", "legs": 2, "direction": "adaptive", "credit": False,
+             "note": "Bull Call near put wall, Bear Put near call wall. Debit spreads only."},
+        ]
+
+        # Tiers (static data)
+        init_data["tiers"] = [
+            {"name": "TIER_1_0DTE", "equity_range": "$0 - $2M", "options_dte": "0-1 DTE", "sd_days": 1, "max_contracts": 100, "trades_per_week": 5},
+            {"name": "TIER_2_WEEKLY", "equity_range": "$2M - $5M", "options_dte": "5-7 DTE", "sd_days": 7, "max_contracts": 300, "trades_per_week": 5},
+            {"name": "TIER_3_MONTHLY", "equity_range": "$5M - $15M", "options_dte": "21-35 DTE", "sd_days": 30, "max_contracts": 500, "trades_per_week": 3},
+            {"name": "TIER_4_LARGE", "equity_range": "$15M+", "options_dte": "30-45 DTE", "sd_days": 30, "max_contracts": 1000, "trades_per_week": 2},
+        ]
+
+        # Presets (static data)
+        init_data["presets"] = STRATEGY_PRESETS
+
+        # Saved strategies from database
+        saved_strategies = []
+        try:
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cursor.execute("""
+                SELECT * FROM zero_dte_saved_strategies
+                ORDER BY CASE WHEN is_preset THEN 0 ELSE 1 END, created_at DESC
+                LIMIT 50
+            """)
+            for row in cursor.fetchall():
+                saved_strategies.append({
+                    'id': row['id'],
+                    'name': row['name'],
+                    'description': row.get('description', ''),
+                    'config': row.get('config', {}),
+                    'tags': row.get('tags', []),
+                    'is_preset': row.get('is_preset', False)
+                })
+            conn.close()
+        except Exception as e:
+            logger.debug(f"No saved strategies table: {e}")
+        init_data["saved_strategies"] = saved_strategies
+
+        # Recent results (limit to 5 for init)
+        recent_results = []
+        try:
+            conn = get_connection()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cursor.execute("""
+                SELECT id, job_id, created_at, strategy, ticker, start_date, end_date,
+                       initial_capital, final_equity, total_return_pct, win_rate, total_trades
+                FROM zero_dte_backtest_results
+                ORDER BY created_at DESC LIMIT 5
+            """)
+            for row in cursor.fetchall():
+                recent_results.append({
+                    'id': row['id'],
+                    'job_id': row['job_id'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'strategy': row['strategy'],
+                    'ticker': row['ticker'],
+                    'total_return_pct': float(row['total_return_pct'] or 0),
+                    'win_rate': float(row['win_rate'] or 0),
+                    'total_trades': row['total_trades'],
+                })
+            conn.close()
+        except Exception as e:
+            logger.debug(f"No results table: {e}")
+        init_data["recent_results"] = recent_results
+
+        # Oracle status
+        oracle_status = {"claude_available": False, "model_version": "v3.0"}
+        try:
+            from ai.oracle_advisor import OracleAdvisor
+            advisor = OracleAdvisor()
+            oracle_status = {
+                "claude_available": advisor.client is not None,
+                "claude_model": advisor.model if advisor.client else None,
+                "model_version": "v3.0"
+            }
+        except Exception as e:
+            logger.debug(f"Oracle not available: {e}")
+        init_data["oracle"] = oracle_status
+
+        # Active jobs
+        active_jobs = [
+            {"job_id": jid, "status": j["status"], "progress": j["progress"]}
+            for jid, j in _jobs.items()
+            if j.get("status") in ("pending", "running")
+        ]
+        init_data["active_jobs"] = active_jobs
+
+        return init_data
+
+    except Exception as e:
+        logger.error(f"Init failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/job/{job_id}/stream")
+async def stream_job_progress(job_id: str):
+    """
+    Server-Sent Events (SSE) endpoint for real-time job progress.
+
+    PERFORMANCE BENEFIT: No polling - instant updates pushed to client.
+
+    Usage:
+        const eventSource = new EventSource('/api/zero-dte/job/{job_id}/stream');
+        eventSource.onmessage = (e) => { const data = JSON.parse(e.data); ... };
+    """
+    import asyncio
+
+    async def event_generator():
+        """Generate SSE events for job progress"""
+        last_progress = -1
+        retry_count = 0
+        max_retries = 600  # 10 minutes max (checking every second)
+
+        while retry_count < max_retries:
+            if job_id not in _jobs:
+                yield f"data: {json.dumps({'error': 'Job not found', 'status': 'not_found'})}\n\n"
+                break
+
+            job = _jobs[job_id]
+            current_progress = job.get('progress', 0)
+
+            # Only send update if progress changed or status changed
+            if current_progress != last_progress or job['status'] in ('completed', 'failed'):
+                event_data = {
+                    'job_id': job_id,
+                    'status': job['status'],
+                    'progress': current_progress,
+                    'progress_message': job.get('progress_message', ''),
+                }
+
+                if job['status'] == 'completed':
+                    # Include summary on completion
+                    result = job.get('result', {})
+                    event_data['summary'] = result.get('summary', {})
+                    event_data['trades'] = result.get('trades', {})
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                    break
+
+                elif job['status'] == 'failed':
+                    event_data['error'] = job.get('error', 'Unknown error')
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                    break
+
+                else:
+                    yield f"data: {json.dumps(event_data)}\n\n"
+
+                last_progress = current_progress
+
+            await asyncio.sleep(0.5)  # Check every 500ms
+            retry_count += 1
+
+        # Final message if timeout
+        if retry_count >= max_retries:
+            yield f"data: {json.dumps({'error': 'Timeout', 'status': 'timeout'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+
+
+# ============================================================================
+# NATURAL LANGUAGE BACKTESTING WITH CLAUDE
+# ============================================================================
+
+class NaturalLanguageBacktestRequest(BaseModel):
+    """Request for natural language backtesting"""
+    query: str = Field(..., description="Natural language description of backtest to run")
+    context: Optional[Dict[str, Any]] = Field(default=None, description="Additional context")
+
+
+@router.post("/natural-language")
+async def natural_language_backtest(
+    request: NaturalLanguageBacktestRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Run a backtest using natural language description.
+
+    Uses Claude to parse the request and generate appropriate configuration.
+
+    Examples:
+        - "Run an iron condor backtest for 2023 with 1.5 SD multiplier"
+        - "Test the GEX-protected strategy from January 2022 to June 2023 with $500k starting capital"
+        - "Backtest aggressive iron condors during high VIX periods (VIX > 20) in 2024"
+        - "Compare conservative vs aggressive iron condors for last year"
+
+    Returns:
+        - parsed_config: The configuration parsed from natural language
+        - job_id: Job ID to track progress
+    """
+    try:
+        # Try to use Claude to parse the natural language
+        parsed_config = None
+        parsing_method = "claude"
+
+        try:
+            from ai.oracle_advisor import OracleAdvisor
+            advisor = OracleAdvisor()
+
+            if advisor.client:
+                # Use Claude to parse natural language
+                parse_prompt = f"""Parse this natural language backtest request into a JSON configuration.
+
+User Request: "{request.query}"
+
+Available parameters:
+- start_date: YYYY-MM-DD format (default: 2022-01-01)
+- end_date: YYYY-MM-DD format (default: today)
+- initial_capital: number (default: 1000000)
+- strategy_type: iron_condor, bull_put, bear_call, iron_butterfly, gex_protected_iron_condor, bull_call, bear_put, apache_directional
+- strike_selection: sd, fixed, delta (default: sd)
+- sd_multiplier: number 0.5-3.0 (default: 1.0)
+- fixed_strike_distance: number 20-100 (for strike_selection=fixed)
+- target_delta: number 0.05-0.50 (for strike_selection=delta)
+- risk_per_trade_pct: number 1-15 (default: 5.0)
+- spread_width: number 5-20 (default: 10)
+- min_vix: number or null (filter: only trade when VIX >= this)
+- max_vix: number or null (filter: only trade when VIX <= this)
+- stop_loss_pct: number or null (exit if loss exceeds % of max loss)
+- profit_target_pct: number or null (exit if profit reaches % of credit)
+- trade_monday through trade_friday: boolean (which days to trade)
+
+Return ONLY valid JSON, no markdown or explanation. Example:
+{{"start_date": "2023-01-01", "end_date": "2023-12-31", "strategy_type": "iron_condor", "sd_multiplier": 1.5}}
+"""
+                response = advisor.client.messages.create(
+                    model=advisor.model,
+                    max_tokens=500,
+                    messages=[{"role": "user", "content": parse_prompt}]
+                )
+
+                response_text = response.content[0].text.strip()
+                # Extract JSON from response
+                if response_text.startswith('{'):
+                    parsed_config = json.loads(response_text)
+                else:
+                    # Try to find JSON in response
+                    import re
+                    json_match = re.search(r'\{[^{}]+\}', response_text)
+                    if json_match:
+                        parsed_config = json.loads(json_match.group())
+
+        except Exception as claude_error:
+            logger.warning(f"Claude parsing failed, using fallback: {claude_error}")
+            parsing_method = "fallback"
+
+        # Fallback: Simple keyword parsing
+        if not parsed_config:
+            parsing_method = "keyword"
+            parsed_config = _parse_natural_language_fallback(request.query)
+
+        # Build full config with defaults
+        full_config = {
+            "start_date": parsed_config.get("start_date", "2022-01-01"),
+            "end_date": parsed_config.get("end_date", datetime.now().strftime("%Y-%m-%d")),
+            "initial_capital": parsed_config.get("initial_capital", 1000000),
+            "spread_width": parsed_config.get("spread_width", 10.0),
+            "sd_multiplier": parsed_config.get("sd_multiplier", 1.0),
+            "risk_per_trade_pct": parsed_config.get("risk_per_trade_pct", 5.0),
+            "ticker": parsed_config.get("ticker", "SPX"),
+            "strategy": "hybrid_fixed",
+            "strategy_type": parsed_config.get("strategy_type", "iron_condor"),
+            "strike_selection": parsed_config.get("strike_selection", "sd"),
+            "fixed_strike_distance": parsed_config.get("fixed_strike_distance", 50),
+            "target_delta": parsed_config.get("target_delta", 0.16),
+            "min_vix": parsed_config.get("min_vix"),
+            "max_vix": parsed_config.get("max_vix"),
+            "stop_loss_pct": parsed_config.get("stop_loss_pct"),
+            "profit_target_pct": parsed_config.get("profit_target_pct"),
+            "trade_monday": parsed_config.get("trade_monday", True),
+            "trade_tuesday": parsed_config.get("trade_tuesday", True),
+            "trade_wednesday": parsed_config.get("trade_wednesday", True),
+            "trade_thursday": parsed_config.get("trade_thursday", True),
+            "trade_friday": parsed_config.get("trade_friday", True),
+            "max_contracts_override": parsed_config.get("max_contracts_override"),
+            "commission_per_leg": parsed_config.get("commission_per_leg"),
+            "slippage_per_spread": parsed_config.get("slippage_per_spread"),
+            "hold_days": parsed_config.get("hold_days", 1),
+            "wall_proximity_pct": parsed_config.get("wall_proximity_pct", 1.0),
+        }
+
+        # Create job
+        import uuid
+        job_id = f"nlp_{uuid.uuid4().hex[:8]}"
+
+        _jobs[job_id] = {
+            'job_id': job_id,
+            'status': 'pending',
+            'progress': 0,
+            'progress_message': 'Parsed natural language request, starting backtest...',
+            'result': None,
+            'error': None,
+            'created_at': datetime.now().isoformat(),
+            'completed_at': None,
+            'config': full_config,
+            'original_query': request.query,
+            'parsing_method': parsing_method,
+        }
+
+        # Run backtest in background
+        config_obj = ZeroDTEBacktestConfig(**full_config)
+        background_tasks.add_task(run_hybrid_fixed_backtest, config_obj, job_id)
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "parsing_method": parsing_method,
+            "original_query": request.query,
+            "parsed_config": parsed_config,
+            "full_config": full_config,
+            "message": f"Backtest started using {parsing_method} parsing"
+        }
+
+    except Exception as e:
+        logger.error(f"Natural language backtest failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+def _parse_natural_language_fallback(query: str) -> Dict[str, Any]:
+    """
+    Simple keyword-based parsing as fallback when Claude is unavailable.
+    """
+    import re
+
+    config = {}
+    query_lower = query.lower()
+
+    # Parse dates
+    date_patterns = [
+        r'from\s+(\d{4}-\d{2}-\d{2})',
+        r'since\s+(\d{4}-\d{2}-\d{2})',
+        r'starting\s+(\d{4}-\d{2}-\d{2})',
+    ]
+    for pattern in date_patterns:
+        match = re.search(pattern, query_lower)
+        if match:
+            config["start_date"] = match.group(1)
+            break
+
+    # End date
+    end_patterns = [
+        r'to\s+(\d{4}-\d{2}-\d{2})',
+        r'until\s+(\d{4}-\d{2}-\d{2})',
+        r'ending\s+(\d{4}-\d{2}-\d{2})',
+    ]
+    for pattern in end_patterns:
+        match = re.search(pattern, query_lower)
+        if match:
+            config["end_date"] = match.group(1)
+            break
+
+    # Year shortcuts
+    year_match = re.search(r'\b(202[0-5])\b', query_lower)
+    if year_match and "start_date" not in config:
+        year = year_match.group(1)
+        config["start_date"] = f"{year}-01-01"
+        config["end_date"] = f"{year}-12-31"
+
+    # Parse capital
+    capital_match = re.search(r'\$?([\d,]+)\s*(?:k|K|thousand)?', query)
+    if capital_match:
+        amount = float(capital_match.group(1).replace(',', ''))
+        if 'k' in query_lower or 'thousand' in query_lower:
+            amount *= 1000
+        if amount > 100:  # Likely a capital amount
+            config["initial_capital"] = amount
+
+    # Parse SD multiplier
+    sd_match = re.search(r'(\d+\.?\d*)\s*(?:sd|SD|standard deviation)', query)
+    if sd_match:
+        config["sd_multiplier"] = float(sd_match.group(1))
+
+    # Parse strategy type
+    if 'gex' in query_lower and 'protected' in query_lower:
+        config["strategy_type"] = "gex_protected_iron_condor"
+    elif 'iron condor' in query_lower or 'ic' in query_lower:
+        config["strategy_type"] = "iron_condor"
+    elif 'bull put' in query_lower:
+        config["strategy_type"] = "bull_put"
+    elif 'bear call' in query_lower:
+        config["strategy_type"] = "bear_call"
+    elif 'butterfly' in query_lower:
+        config["strategy_type"] = "iron_butterfly"
+    elif 'apache' in query_lower or 'directional' in query_lower:
+        config["strategy_type"] = "apache_directional"
+
+    # Parse VIX filters
+    vix_high_match = re.search(r'vix\s*[>≥]\s*(\d+)', query_lower)
+    if vix_high_match:
+        config["min_vix"] = float(vix_high_match.group(1))
+
+    vix_low_match = re.search(r'vix\s*[<≤]\s*(\d+)', query_lower)
+    if vix_low_match:
+        config["max_vix"] = float(vix_low_match.group(1))
+
+    # Parse risk keywords
+    if 'aggressive' in query_lower:
+        config["risk_per_trade_pct"] = 8.0
+        config["sd_multiplier"] = config.get("sd_multiplier", 0.8)
+    elif 'conservative' in query_lower:
+        config["risk_per_trade_pct"] = 3.0
+        config["sd_multiplier"] = config.get("sd_multiplier", 1.5)
+
+    return config

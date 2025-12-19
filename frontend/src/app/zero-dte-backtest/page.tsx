@@ -183,6 +183,11 @@ export default function ZeroDTEBacktestPage() {
   const [oracleLogs, setOracleLogs] = useState<any[]>([])
   const [showOracleLogs, setShowOracleLogs] = useState(false)
 
+  // Natural Language Backtest state
+  const [nlQuery, setNlQuery] = useState('')
+  const [nlParsedConfig, setNlParsedConfig] = useState<any>(null)
+  const [showNlInput, setShowNlInput] = useState(false)
+
   // Check backend health on mount
   const checkBackendHealth = async () => {
     try {
@@ -233,16 +238,56 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
-  // Load strategies and tiers on mount
+  // PERFORMANCE FIX: Single consolidated init call instead of 8+ separate calls
+  const loadKronosInit = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/init`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          // Set all data from single response
+          if (data.health?.status === 'ok') {
+            setBackendStatus('connected')
+          } else if (data.health?.status === 'degraded') {
+            setBackendStatus('connected')
+          }
+          if (data.strategies) setStrategies(data.strategies)
+          if (data.strategy_types) setStrategyTypes(data.strategy_types)
+          if (data.tiers) setTiers(data.tiers)
+          if (data.presets) setPresets(data.presets)
+          if (data.saved_strategies) setSavedStrategies(data.saved_strategies)
+          if (data.oracle) setOracleStatus(data.oracle)
+          // Load full results separately (init only returns summary)
+          loadResults()
+          return
+        }
+      }
+      // Fallback to individual calls if init fails
+      console.warn('Init endpoint failed, falling back to individual calls')
+      checkBackendHealth()
+      loadStrategies()
+      loadStrategyTypes()
+      loadTiers()
+      loadResults()
+      loadPresets()
+      loadSavedStrategies()
+      loadOracleStatus()
+    } catch (err) {
+      console.error('Init failed, using fallback:', err)
+      checkBackendHealth()
+      loadStrategies()
+      loadStrategyTypes()
+      loadTiers()
+      loadResults()
+      loadPresets()
+      loadSavedStrategies()
+      loadOracleStatus()
+    }
+  }
+
+  // Load all data on mount using consolidated endpoint
   useEffect(() => {
-    checkBackendHealth()
-    loadStrategies()
-    loadStrategyTypes()
-    loadTiers()
-    loadResults()
-    loadPresets()
-    loadSavedStrategies()
-    loadOracleStatus()
+    loadKronosInit()
   }, [])
 
   // Auto-refresh Oracle logs when panel is open
@@ -330,52 +375,173 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
-  // Poll job status
+  // PERFORMANCE FIX: Use WebSocket -> SSE -> Polling cascade for real-time progress
   useEffect(() => {
     if (!currentJobId || !running) return
 
-    const interval = setInterval(async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/zero-dte/job/${currentJobId}`)
+    let websocket: WebSocket | null = null
+    let eventSource: EventSource | null = null
+    let fallbackInterval: NodeJS.Timeout | null = null
+    let connectionMethod = 'none'
 
-        // Handle HTTP errors
-        if (!response.ok) {
-          console.error(`Job poll failed: HTTP ${response.status}`)
-          if (response.status === 404) {
-            setRunning(false)
-            setCurrentJobId(null)
-            setError('Job not found - backend may have restarted. Please try again.')
-          }
-          return
-        }
+    // Handle job update from any source
+    function handleJobUpdate(data: any) {
+      setJobStatus(prev => ({
+        ...prev,
+        job_id: data.job_id || currentJobId,
+        status: data.status,
+        progress: data.progress,
+        progress_message: data.progress_message || '',
+        result: null,
+        error: data.error || null,
+        created_at: prev?.created_at || new Date().toISOString(),
+        completed_at: data.status === 'completed' ? new Date().toISOString() : null,
+      }))
 
-        const data = await response.json()
-
-        if (data.job) {
-          setJobStatus(data.job)
-
-          if (data.job.status === 'completed') {
-            setRunning(false)
-            setCompletedJobId(currentJobId)  // Save for export buttons
-            setCurrentJobId(null)
-            setLiveJobResult(data.job.result)
-            loadResults()
-          } else if (data.job.status === 'failed') {
-            setRunning(false)
-            setCurrentJobId(null)
-            setError(data.job.error || 'Backtest failed')
-          }
-        }
-      } catch (err) {
-        console.error('Failed to poll job status:', err)
-        // Network error - show user-friendly message
-        setError('Lost connection to backend - check if server is running at ' + API_URL)
+      if (data.status === 'completed') {
+        setRunning(false)
+        setCompletedJobId(currentJobId)
+        setCurrentJobId(null)
+        // Fetch full result
+        fetch(`${API_URL}/api/zero-dte/job/${currentJobId}`)
+          .then(res => res.json())
+          .then(fullData => {
+            if (fullData.job?.result) {
+              setLiveJobResult(fullData.job.result)
+            }
+          })
+        loadResults()
+        cleanup()
+      } else if (data.status === 'failed') {
         setRunning(false)
         setCurrentJobId(null)
+        setError(data.error || 'Backtest failed')
+        cleanup()
+      } else if (data.status === 'not_found') {
+        setRunning(false)
+        setCurrentJobId(null)
+        setError('Job not found - backend may have restarted.')
+        cleanup()
       }
-    }, 2000)
+    }
 
-    return () => clearInterval(interval)
+    function cleanup() {
+      websocket?.close()
+      eventSource?.close()
+      if (fallbackInterval) clearInterval(fallbackInterval)
+    }
+
+    // 1. Try WebSocket first (fastest, bidirectional)
+    function tryWebSocket() {
+      try {
+        const wsUrl = API_URL.replace('http://', 'ws://').replace('https://', 'wss://')
+        websocket = new WebSocket(`${wsUrl}/ws/kronos/job/${currentJobId}`)
+
+        websocket.onopen = () => {
+          connectionMethod = 'websocket'
+          console.log('KRONOS: Connected via WebSocket')
+        }
+
+        websocket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            if (data.type === 'job_update' || data.type === 'job_complete') {
+              handleJobUpdate(data)
+            }
+          } catch (e) {
+            console.error('WebSocket message parse error:', e)
+          }
+        }
+
+        websocket.onerror = () => {
+          console.warn('WebSocket failed, trying SSE...')
+          websocket?.close()
+          websocket = null
+          trySSE()
+        }
+
+        websocket.onclose = () => {
+          if (connectionMethod === 'websocket' && running) {
+            // Unexpected close, try SSE
+            trySSE()
+          }
+        }
+      } catch (e) {
+        console.warn('WebSocket not available, trying SSE...')
+        trySSE()
+      }
+    }
+
+    // 2. Try SSE as fallback (one-way, simpler)
+    function trySSE() {
+      if (connectionMethod !== 'none' && connectionMethod !== 'websocket') return
+
+      try {
+        eventSource = new EventSource(`${API_URL}/api/zero-dte/job/${currentJobId}/stream`)
+
+        eventSource.onopen = () => {
+          connectionMethod = 'sse'
+          console.log('KRONOS: Connected via SSE')
+        }
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            handleJobUpdate(data)
+          } catch (e) {
+            console.error('SSE message parse error:', e)
+          }
+        }
+
+        eventSource.onerror = () => {
+          console.warn('SSE failed, falling back to polling...')
+          eventSource?.close()
+          eventSource = null
+          startFallbackPolling()
+        }
+      } catch (e) {
+        console.warn('SSE not available, using polling...')
+        startFallbackPolling()
+      }
+    }
+
+    // 3. Polling as last resort
+    function startFallbackPolling() {
+      if (fallbackInterval) return
+      connectionMethod = 'polling'
+      console.log('KRONOS: Using polling fallback')
+
+      fallbackInterval = setInterval(async () => {
+        try {
+          const response = await fetch(`${API_URL}/api/zero-dte/job/${currentJobId}`)
+          if (!response.ok) {
+            if (response.status === 404) {
+              handleJobUpdate({ status: 'not_found' })
+            }
+            return
+          }
+          const data = await response.json()
+          if (data.job) {
+            handleJobUpdate({
+              status: data.job.status,
+              progress: data.job.progress,
+              progress_message: data.job.progress_message,
+              error: data.job.error,
+            })
+            if (data.job.status === 'completed') {
+              setLiveJobResult(data.job.result)
+            }
+          }
+        } catch (err) {
+          console.error('Polling failed:', err)
+        }
+      }, 2000)
+    }
+
+    // Start connection cascade
+    tryWebSocket()
+
+    return cleanup
   }, [currentJobId, running])
 
   const loadStrategies = async () => {
@@ -497,6 +663,66 @@ export default function ZeroDTEBacktestPage() {
       }
     } catch (err: any) {
       // Network error or backend not running
+      setError(`Cannot connect to backend at ${API_URL}. Is the server running?`)
+      setRunning(false)
+    }
+  }
+
+  // Natural Language Backtest with Claude
+  const runNaturalLanguageBacktest = async () => {
+    if (!nlQuery.trim() || running) return
+
+    setRunning(true)
+    setError(null)
+    setJobStatus(null)
+    setLiveJobResult(null)
+    setCompletedJobId(null)
+    setNlParsedConfig(null)
+
+    try {
+      const response = await fetch(`${API_URL}/api/zero-dte/natural-language`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: nlQuery })
+      })
+
+      if (!response.ok) {
+        let errorMessage = `Server error: HTTP ${response.status}`
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.detail || errorData.error || errorMessage
+        } catch {
+          errorMessage = `Server error: ${response.status} ${response.statusText}`
+        }
+        setError(errorMessage)
+        setRunning(false)
+        return
+      }
+
+      const data = await response.json()
+
+      if (data.success && data.job_id) {
+        setNlParsedConfig({
+          parsing_method: data.parsing_method,
+          parsed: data.parsed_config,
+          full: data.full_config
+        })
+        setCurrentJobId(data.job_id)
+        setJobStatus({
+          job_id: data.job_id,
+          status: 'pending',
+          progress: 0,
+          progress_message: `Parsed using ${data.parsing_method}: starting backtest...`,
+          result: null,
+          error: null,
+          created_at: new Date().toISOString(),
+          completed_at: null
+        })
+      } else {
+        setError(data.error || 'Failed to parse natural language request')
+        setRunning(false)
+      }
+    } catch (err: any) {
       setError(`Cannot connect to backend at ${API_URL}. Is the server running?`)
       setRunning(false)
     }
@@ -1149,8 +1375,55 @@ export default function ZeroDTEBacktestPage() {
               </div>
             )}
 
+            {/* Natural Language Backtest Input */}
+            <div className="mt-6 pt-4 border-t border-gray-800">
+              <button
+                onClick={() => setShowNlInput(!showNlInput)}
+                className="text-sm text-purple-400 hover:text-purple-300 flex items-center gap-2 mb-3"
+              >
+                <Activity className="w-4 h-4" />
+                {showNlInput ? 'Hide' : 'Show'} Natural Language Backtest (Claude AI)
+                {showNlInput ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+
+              {showNlInput && (
+                <div className="bg-purple-900/20 border border-purple-800 rounded-lg p-4 mb-4">
+                  <h4 className="text-sm font-bold text-purple-300 mb-2">Describe your backtest in plain English:</h4>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      value={nlQuery}
+                      onChange={(e) => setNlQuery(e.target.value)}
+                      placeholder="e.g., Run aggressive iron condors for 2023 with VIX > 20"
+                      className="flex-1 bg-gray-900 border border-purple-700 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                      onKeyDown={(e) => e.key === 'Enter' && runNaturalLanguageBacktest()}
+                    />
+                    <button
+                      onClick={runNaturalLanguageBacktest}
+                      disabled={!nlQuery.trim() || running || backendStatus !== 'connected'}
+                      className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm"
+                    >
+                      <Zap className="w-4 h-4" />
+                      Run with AI
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Examples: "Test GEX-protected IC from Jan 2022 to Dec 2023" | "Backtest conservative strategy in high VIX (VIX &gt; 25)" | "Run 1.5 SD iron condor for 2024"
+                  </p>
+                  {nlParsedConfig && (
+                    <div className="mt-3 p-2 bg-black/30 rounded text-xs">
+                      <span className="text-purple-400">Parsed ({nlParsedConfig.parsing_method}):</span>
+                      <span className="text-gray-300 ml-2">
+                        {Object.entries(nlParsedConfig.parsed || {}).map(([k, v]) => `${k}=${v}`).join(', ') || 'defaults used'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Run Button */}
-            <div className="mt-6 flex items-center gap-4">
+            <div className="mt-4 flex items-center gap-4">
               <button
                 onClick={runBacktest}
                 disabled={running || backendStatus !== 'connected'}
@@ -1390,6 +1663,63 @@ export default function ZeroDTEBacktestPage() {
                       <p className="text-xs text-gray-500 mt-4">
                         GEX walls provide support/resistance levels for strike selection. When GEX data is unavailable, the strategy falls back to SD-based strike selection.
                       </p>
+                    </div>
+                  )}
+
+                  {/* Exit Type Stats (for intraday exit strategies) */}
+                  {liveJobResult?.intraday_exit_stats && Object.keys(liveJobResult.intraday_exit_stats).length > 0 && (
+                    <div className="bg-gray-900 border border-amber-800 rounded-lg p-6">
+                      <h3 className="font-bold mb-4 flex items-center gap-2 text-amber-400">
+                        <Clock className="w-5 h-5" />
+                        Exit Type Breakdown
+                      </h3>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                        {liveJobResult.intraday_exit_stats.held_to_close !== undefined && liveJobResult.intraday_exit_stats.held_to_close > 0 && (
+                          <div className="bg-gray-800 rounded-lg p-4">
+                            <div className="text-sm text-gray-400 mb-1">Held to Close</div>
+                            <div className="text-xl font-bold text-gray-300">
+                              {liveJobResult.intraday_exit_stats.held_to_close}
+                            </div>
+                            <div className="text-xs text-gray-500">EOD settlement</div>
+                          </div>
+                        )}
+                        {liveJobResult.intraday_exit_stats.take_profit_exits !== undefined && liveJobResult.intraday_exit_stats.take_profit_exits > 0 && (
+                          <div className="bg-gray-800 rounded-lg p-4">
+                            <div className="text-sm text-gray-400 mb-1">Take Profit</div>
+                            <div className="text-xl font-bold text-green-400">
+                              {liveJobResult.intraday_exit_stats.take_profit_exits}
+                            </div>
+                            <div className="text-xs text-gray-500">Hit profit target</div>
+                          </div>
+                        )}
+                        {liveJobResult.intraday_exit_stats.stop_loss_exits !== undefined && liveJobResult.intraday_exit_stats.stop_loss_exits > 0 && (
+                          <div className="bg-gray-800 rounded-lg p-4">
+                            <div className="text-sm text-gray-400 mb-1">Stop Loss</div>
+                            <div className="text-xl font-bold text-red-400">
+                              {liveJobResult.intraday_exit_stats.stop_loss_exits}
+                            </div>
+                            <div className="text-xs text-gray-500">Hit stop loss</div>
+                          </div>
+                        )}
+                        {liveJobResult.intraday_exit_stats.wall_break_exits !== undefined && liveJobResult.intraday_exit_stats.wall_break_exits > 0 && (
+                          <div className="bg-gray-800 rounded-lg p-4">
+                            <div className="text-sm text-gray-400 mb-1">Wall Break</div>
+                            <div className="text-xl font-bold text-purple-400">
+                              {liveJobResult.intraday_exit_stats.wall_break_exits}
+                            </div>
+                            <div className="text-xs text-gray-500">GEX wall breached</div>
+                          </div>
+                        )}
+                        {liveJobResult.intraday_exit_stats.time_based_exits !== undefined && liveJobResult.intraday_exit_stats.time_based_exits > 0 && (
+                          <div className="bg-gray-800 rounded-lg p-4">
+                            <div className="text-sm text-gray-400 mb-1">Time Exits</div>
+                            <div className="text-xl font-bold text-blue-400">
+                              {liveJobResult.intraday_exit_stats.time_based_exits}
+                            </div>
+                            <div className="text-xs text-gray-500">Time-based exit</div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 

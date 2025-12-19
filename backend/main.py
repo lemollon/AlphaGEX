@@ -853,6 +853,228 @@ async def websocket_positions(websocket: WebSocket):
         if str(e):
             print(f"Positions WebSocket error: {e}")
 
+
+# ============================================================================
+# KRONOS WebSocket - Real-Time Backtest Progress and GEX Updates
+# ============================================================================
+
+class KronosConnectionManager:
+    """Manage KRONOS WebSocket connections for backtest progress and GEX data"""
+
+    def __init__(self):
+        self.active_connections: dict[str, list[WebSocket]] = {}  # job_id -> connections
+        self.gex_subscribers: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket, job_id: str = None):
+        await websocket.accept()
+        if job_id:
+            if job_id not in self.active_connections:
+                self.active_connections[job_id] = []
+            self.active_connections[job_id].append(websocket)
+        else:
+            self.gex_subscribers.append(websocket)
+
+    def disconnect(self, websocket: WebSocket, job_id: str = None):
+        if job_id and job_id in self.active_connections:
+            if websocket in self.active_connections[job_id]:
+                self.active_connections[job_id].remove(websocket)
+        if websocket in self.gex_subscribers:
+            self.gex_subscribers.remove(websocket)
+
+    async def broadcast_job_update(self, job_id: str, data: dict):
+        """Send job update to all subscribers of a specific job"""
+        if job_id in self.active_connections:
+            dead_connections = []
+            for connection in self.active_connections[job_id]:
+                try:
+                    await connection.send_json(data)
+                except Exception:
+                    dead_connections.append(connection)
+            # Clean up dead connections
+            for conn in dead_connections:
+                self.active_connections[job_id].remove(conn)
+
+    async def broadcast_gex_update(self, data: dict):
+        """Send GEX update to all GEX subscribers"""
+        dead_connections = []
+        for connection in self.gex_subscribers:
+            try:
+                await connection.send_json(data)
+            except Exception:
+                dead_connections.append(connection)
+        # Clean up dead connections
+        for conn in dead_connections:
+            self.gex_subscribers.remove(conn)
+
+
+kronos_manager = KronosConnectionManager()
+
+
+@app.websocket("/ws/kronos/job/{job_id}")
+async def websocket_kronos_job(websocket: WebSocket, job_id: str):
+    """
+    WebSocket endpoint for real-time KRONOS backtest progress updates.
+
+    Clients subscribe to a specific job_id to receive progress updates.
+    Much faster than SSE or polling for high-frequency updates.
+    """
+    await kronos_manager.connect(websocket, job_id)
+
+    try:
+        # Import job store
+        try:
+            from backend.services.kronos_infrastructure import job_store
+        except ImportError:
+            job_store = None
+
+        while True:
+            # Wait for client messages or send updates
+            try:
+                # Check for ping/pong or disconnect
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=0.5)
+                if message == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                pass
+
+            # Get job status and send update
+            if job_store:
+                job = job_store.get(job_id)
+                if job:
+                    await websocket.send_json({
+                        "type": "job_update",
+                        "job_id": job_id,
+                        "status": job.status,
+                        "progress": job.progress,
+                        "progress_message": job.progress_message,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                    if job.status in ("completed", "failed"):
+                        # Send final result and close
+                        await websocket.send_json({
+                            "type": "job_complete",
+                            "job_id": job_id,
+                            "status": job.status,
+                            "result": job.result if job.status == "completed" else None,
+                            "error": job.error if job.status == "failed" else None
+                        })
+                        break
+            else:
+                # Fallback: check in-memory jobs from routes
+                from backend.api.routes import zero_dte_backtest_routes
+                if hasattr(zero_dte_backtest_routes, '_jobs') and job_id in zero_dte_backtest_routes._jobs:
+                    job_data = zero_dte_backtest_routes._jobs[job_id]
+                    await websocket.send_json({
+                        "type": "job_update",
+                        "job_id": job_id,
+                        "status": job_data.get("status"),
+                        "progress": job_data.get("progress", 0),
+                        "progress_message": job_data.get("progress_message", ""),
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                    if job_data.get("status") in ("completed", "failed"):
+                        await websocket.send_json({
+                            "type": "job_complete",
+                            "job_id": job_id,
+                            "status": job_data.get("status"),
+                            "result": job_data.get("result") if job_data.get("status") == "completed" else None,
+                            "error": job_data.get("error") if job_data.get("status") == "failed" else None
+                        })
+                        break
+
+            await asyncio.sleep(0.5)  # Update frequency
+
+    except WebSocketDisconnect:
+        kronos_manager.disconnect(websocket, job_id)
+    except Exception as e:
+        kronos_manager.disconnect(websocket, job_id)
+        if str(e):
+            print(f"KRONOS WebSocket error: {e}")
+
+
+@app.websocket("/ws/kronos/gex")
+async def websocket_kronos_gex(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time GEX data updates.
+
+    Clients receive live GEX calculations as they're computed.
+    Useful for the KRONOS dashboard to show current market gamma exposure.
+    """
+    await kronos_manager.connect(websocket, None)
+
+    try:
+        while True:
+            # Wait for client messages
+            try:
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                if message == "ping":
+                    await websocket.send_text("pong")
+                elif message == "get_gex":
+                    # Fetch and send current GEX data
+                    try:
+                        from quant.kronos_gex_calculator import KronosGEXCalculator
+                        calculator = KronosGEXCalculator()
+                        gex_data = calculator.calculate_gex_for_date(datetime.now().strftime('%Y-%m-%d'))
+                        if gex_data:
+                            await websocket.send_json({
+                                "type": "gex_data",
+                                "data": {
+                                    "net_gex": gex_data.net_gex,
+                                    "call_wall": gex_data.call_wall,
+                                    "put_wall": gex_data.put_wall,
+                                    "flip_point": gex_data.flip_point,
+                                    "regime": gex_data.regime,
+                                    "normalized": gex_data.normalized_gex,
+                                },
+                                "timestamp": datetime.now().isoformat()
+                            })
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": f"Failed to fetch GEX: {str(e)}"
+                        })
+            except asyncio.TimeoutError:
+                # Send heartbeat
+                await websocket.send_json({"type": "heartbeat", "timestamp": datetime.now().isoformat()})
+
+    except WebSocketDisconnect:
+        kronos_manager.disconnect(websocket, None)
+    except Exception as e:
+        kronos_manager.disconnect(websocket, None)
+        if str(e):
+            print(f"KRONOS GEX WebSocket error: {e}")
+
+
+@app.get("/api/kronos/infrastructure")
+async def get_kronos_infrastructure_status():
+    """Get status of KRONOS infrastructure components"""
+    try:
+        from backend.services.kronos_infrastructure import get_infrastructure_status
+        return {
+            "success": True,
+            "infrastructure": get_infrastructure_status(),
+            "websocket_connections": {
+                "job_subscriptions": {k: len(v) for k, v in kronos_manager.active_connections.items()},
+                "gex_subscribers": len(kronos_manager.gex_subscribers)
+            }
+        }
+    except ImportError:
+        return {
+            "success": True,
+            "infrastructure": {
+                "job_store": {"type": "memory", "note": "kronos_infrastructure not loaded"},
+                "connection_pool": {"available": False},
+                "orat_cache": {"hits": 0, "misses": 0},
+            },
+            "websocket_connections": {
+                "job_subscriptions": {k: len(v) for k, v in kronos_manager.active_connections.items()},
+                "gex_subscribers": len(kronos_manager.gex_subscribers)
+            }
+        }
+
+
 # ============================================================================
 # Error Handlers
 # ============================================================================
