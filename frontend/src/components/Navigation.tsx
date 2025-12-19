@@ -38,7 +38,6 @@ import BuildVersion from './BuildVersion'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
-  { href: '/gexis-commands', label: 'GEXIS Commands', icon: MessageSquare, category: 'Main' },
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp, category: 'Analysis' },
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
   { href: '/gamma', label: 'Gamma Intelligence', icon: Zap, category: 'Analysis' },
@@ -55,6 +54,7 @@ const navItems = [
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Automation' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Automation' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Automation' },
+  { href: '/gexis-commands', label: 'GEXIS Commands', icon: MessageSquare, category: 'System' },
   { href: '/settings/system', label: 'System Settings', icon: Settings, category: 'System' },
   { href: '/settings/notifications', label: 'Notification Settings', icon: Bell, category: 'System' },
   { href: '/database', label: 'Database Admin', icon: Database, category: 'System' },

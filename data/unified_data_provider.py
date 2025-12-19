@@ -501,7 +501,7 @@ class UnifiedDataProvider:
         # Fallback to Polygon
         if self._polygon:
             try:
-                price = self._polygon.get_current_price('^VIX')
+                price = self._polygon.get_current_price('I:VIX')
                 if price and price > 0:
                     logger.info(f"VIX from Polygon: {price}")
                     return price

@@ -1065,7 +1065,7 @@ class SPXWheelTrader:
 
     def _get_vix(self) -> float:
         """Get current VIX"""
-        for symbol in ['^VIX', 'VIX', '$VIX.X']:
+        for symbol in ['I:VIX', '$VIX.X']:
             vix = polygon_fetcher.get_current_price(symbol)
             if vix and vix > 0:
                 return vix

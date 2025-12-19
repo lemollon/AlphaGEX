@@ -528,7 +528,7 @@ def test_regime_classification():
                 print(f"      Flip Point: ${gex_data.get('flip_point', 0):.2f}")
 
                 # Get VIX
-                vix_quote = provider.get_quote('$VIX.X') or provider.get_quote('^VIX')
+                vix_quote = provider.get_quote('$VIX.X') or provider.get_quote('I:VIX')
                 vix = vix_quote.price if vix_quote else 18
 
                 print(f"      VIX: {vix:.2f}")

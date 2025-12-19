@@ -169,7 +169,7 @@ class GEXDataTracker:
             # 6. Get VIX
             try:
                 from data.polygon_data_fetcher import polygon_fetcher
-                vix = polygon_fetcher.get_current_price('^VIX') or 17.0
+                vix = polygon_fetcher.get_current_price('I:VIX') or 17.0
             except (ImportError, Exception):
                 vix = 17.0  # Default VIX when unavailable
 

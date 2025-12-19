@@ -325,7 +325,7 @@ def run_market_data():
             vix = 17.0  # Default
             try:
                 from data.polygon_data_fetcher import polygon_fetcher
-                vix_data = polygon_fetcher.get_current_price('^VIX')
+                vix_data = polygon_fetcher.get_current_price('I:VIX')
                 if vix_data:
                     vix = vix_data
             except:
@@ -460,7 +460,7 @@ def run_vix_term_structure():
             vix = 17.0
             try:
                 from data.polygon_data_fetcher import polygon_fetcher
-                vix = polygon_fetcher.get_current_price('^VIX') or 17.0
+                vix = polygon_fetcher.get_current_price('I:VIX') or 17.0
             except:
                 pass
 
