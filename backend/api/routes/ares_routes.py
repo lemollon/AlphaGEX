@@ -381,14 +381,17 @@ async def get_ares_market_data():
     Get current market data for ARES (SPX, SPY, VIX, expected moves).
 
     Returns both SPX and SPY data with their respective expected moves.
-    This data comes from Tradier Production API.
+    Uses TRADIER_SANDBOX env var to determine sandbox vs production.
     """
     import math
+    import os
 
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
 
-        tradier = TradierDataFetcher(sandbox=False)
+        # Respect TRADIER_SANDBOX env var (defaults to True for safety)
+        use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+        tradier = TradierDataFetcher(sandbox=use_sandbox)
 
         # Get VIX first (used for both)
         vix = 15.0
