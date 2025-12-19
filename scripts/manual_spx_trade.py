@@ -72,8 +72,8 @@ def main():
     expected_move = spx_price * vix / math.sqrt(252) / 100
     logger.info(f"Expected Move (1 SD): ${expected_move:.2f}")
 
-    # Get 0DTE expiration
-    tz = ZoneInfo('America/New_York')
+    # Get 0DTE expiration (Central Time)
+    tz = ZoneInfo('America/Chicago')
     today = datetime.now(tz).strftime('%Y-%m-%d')
 
     expirations = tradier.get_option_expirations('SPXW')

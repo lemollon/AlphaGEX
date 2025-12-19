@@ -102,7 +102,7 @@ def get_market_data(tradier, ticker):
 
 def get_expiration(tradier, ticker):
     """Get next valid expiration (0-1 DTE)"""
-    tz = ZoneInfo('America/New_York')
+    tz = ZoneInfo('America/Chicago')
     today = datetime.now(tz).date()
 
     # Get available expirations
