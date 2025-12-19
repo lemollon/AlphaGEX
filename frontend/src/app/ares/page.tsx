@@ -117,6 +117,44 @@ interface TradierAccountStatus {
   open_positions: number
 }
 
+interface TradierFullStatus {
+  mode: string
+  account: {
+    account_number?: string
+    type?: string
+    cash?: number
+    equity?: number
+    buying_power?: number
+  }
+  positions: Array<{
+    symbol: string
+    quantity: number
+    cost_basis: number
+    date_acquired?: string
+  }>
+  orders: Array<{
+    id: string
+    symbol: string
+    side: string
+    quantity: number
+    status: string
+    created_date?: string
+  }>
+  errors: string[]
+}
+
+interface DecisionLog {
+  id: string
+  timestamp: string
+  decision_type: string
+  action: string
+  reasoning: string
+  market_context?: {
+    underlying_price?: number
+    vix?: number
+  }
+}
+
 export default function ARESPage() {
   const [status, setStatus] = useState<ARESStatus | null>(null)
   const [positions, setPositions] = useState<IronCondorPosition[]>([])
@@ -135,6 +173,8 @@ export default function ARESPage() {
   const [oracleRec, setOracleRec] = useState<OracleRecommendation | null>(null)
   const [mlStatus, setMlStatus] = useState<MLStatus | null>(null)
   const [tradierStatus, setTradierStatus] = useState<TradierAccountStatus | null>(null)
+  const [tradierFullStatus, setTradierFullStatus] = useState<TradierFullStatus | null>(null)
+  const [recentDecisions, setRecentDecisions] = useState<DecisionLog[]>([])
 
   const fetchData = async () => {
     try {
@@ -192,8 +232,27 @@ export default function ARESPage() {
         })
       }
 
-      // Check Tradier sandbox status from ARES status
-      if (statusRes.data?.data) {
+      // Fetch Tradier sandbox status and decisions
+      const [tradierRes, decisionsRes] = await Promise.all([
+        apiClient.getARESTradierStatus().catch(() => ({ data: null })),
+        apiClient.getARESDecisions(10).catch(() => ({ data: null }))
+      ])
+
+      // Update Tradier status
+      if (tradierRes.data?.data) {
+        const tradierData = tradierRes.data.data
+        setTradierFullStatus(tradierData)
+        setTradierStatus({
+          connected: tradierData.mode === 'sandbox' && tradierData.account?.account_number,
+          account_type: tradierData.mode === 'sandbox' ? 'Tradier Sandbox' : 'Simulated',
+          buying_power: tradierData.account?.buying_power || 0,
+          cash: tradierData.account?.cash || 0,
+          total_equity: tradierData.account?.equity || 0,
+          pending_orders: tradierData.orders?.filter((o: any) => o.status === 'pending').length || 0,
+          open_positions: tradierData.positions?.length || 0
+        })
+      } else if (statusRes.data?.data) {
+        // Fallback to ARES status if Tradier endpoint fails
         setTradierStatus({
           connected: statusRes.data.data.sandbox_connected || false,
           account_type: statusRes.data.data.paper_mode_type === 'sandbox' ? 'Tradier Sandbox' : 'Simulated',
@@ -203,6 +262,11 @@ export default function ARESPage() {
           pending_orders: 0,
           open_positions: statusRes.data.data.open_positions || 0
         })
+      }
+
+      // Update decisions
+      if (decisionsRes.data?.data?.decisions) {
+        setRecentDecisions(decisionsRes.data.data.decisions)
       }
 
       setLastUpdate(new Date())
@@ -483,6 +547,26 @@ export default function ARESPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* SPX Recent Trades Mini-Log */}
+                {closedPositions.length > 0 && (
+                  <div className="mt-4 bg-gray-800/50 rounded-lg p-3 border border-gray-700">
+                    <h4 className="text-sm font-medium text-gray-400 mb-2">Recent SPX Trades</h4>
+                    <div className="space-y-1">
+                      {closedPositions.slice(0, 5).map((pos) => (
+                        <div key={pos.position_id} className="flex items-center justify-between text-xs">
+                          <span className="text-gray-500">{pos.expiration}</span>
+                          <span className="text-gray-400 font-mono">
+                            {pos.put_short_strike}P / {pos.call_short_strike}C
+                          </span>
+                          <span className={pos.total_credit > 0 ? 'text-green-400' : 'text-red-400'}>
+                            {formatCurrency(pos.total_credit * 100 * pos.contracts)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Section 3: SPY Performance (Tradier Paper Trading) */}
@@ -542,6 +626,53 @@ export default function ARESPage() {
                       <div className="mt-2">
                         <span className="text-2xl font-bold text-white">{tradierStatus.open_positions}</span>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* SPY Tradier Positions & Orders Mini-Log */}
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Tradier Positions */}
+                    <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
+                      <h4 className="text-sm font-medium text-blue-400 mb-2">Tradier Positions</h4>
+                      {tradierFullStatus?.positions && tradierFullStatus.positions.length > 0 ? (
+                        <div className="space-y-1">
+                          {tradierFullStatus.positions.slice(0, 5).map((pos, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-xs">
+                              <span className="text-white font-mono">{pos.symbol}</span>
+                              <span className="text-gray-400">x{pos.quantity}</span>
+                              <span className="text-blue-300">{formatCurrency(pos.cost_basis)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500">No open positions</p>
+                      )}
+                    </div>
+
+                    {/* Tradier Recent Orders */}
+                    <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
+                      <h4 className="text-sm font-medium text-blue-400 mb-2">Recent Orders</h4>
+                      {tradierFullStatus?.orders && tradierFullStatus.orders.length > 0 ? (
+                        <div className="space-y-1">
+                          {tradierFullStatus.orders.slice(0, 5).map((order) => (
+                            <div key={order.id} className="flex items-center justify-between text-xs">
+                              <span className="text-white font-mono">{order.symbol}</span>
+                              <span className={order.side === 'buy' ? 'text-green-400' : 'text-red-400'}>
+                                {order.side.toUpperCase()}
+                              </span>
+                              <span className={`px-1 rounded ${
+                                order.status === 'filled' ? 'bg-green-900 text-green-300' :
+                                order.status === 'pending' ? 'bg-yellow-900 text-yellow-300' :
+                                'bg-gray-700 text-gray-300'
+                              }`}>
+                                {order.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500">No recent orders</p>
+                      )}
                     </div>
                   </div>
                 ) : (
