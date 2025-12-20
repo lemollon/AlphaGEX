@@ -33,7 +33,9 @@ import {
   Eye,
   FileText,
   Sun,
-  BookOpen
+  BookOpen,
+  Pin,
+  PinOff
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -66,12 +68,31 @@ const navItems = [
 
 export default function Navigation() {
   const pathname = usePathname()
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [isPinned, setIsPinned] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [spyPrice, setSpyPrice] = useState<number | null>(null)
   const [vixPrice, setVixPrice] = useState<number | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
   const [apiConnected, setApiConnected] = useState(true)
+
+  // Load pinned state from localStorage
+  useEffect(() => {
+    const savedPinned = localStorage.getItem('sidebarPinned')
+    if (savedPinned !== null) {
+      setIsPinned(savedPinned === 'true')
+    }
+  }, [])
+
+  // Save pinned state to localStorage
+  const togglePin = () => {
+    const newPinned = !isPinned
+    setIsPinned(newPinned)
+    localStorage.setItem('sidebarPinned', String(newPinned))
+  }
+
+  // Sidebar is expanded when pinned OR hovered (on desktop)
+  const isExpanded = isPinned || isHovered
 
   // Fetch SPY/VIX prices and market status with 5-minute auto-refresh
   useEffect(() => {
@@ -125,14 +146,15 @@ export default function Navigation() {
       {/* Top Bar */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-background-card border-b border-gray-800 h-16">
         <div className="flex items-center justify-between h-full px-4">
-          {/* Left: Menu Toggle + Logo */}
+          {/* Left: Menu Toggle (mobile) + Logo */}
           <div className="flex items-center space-x-4">
+            {/* Mobile menu button */}
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover transition-colors"
-              aria-label="Toggle sidebar"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="lg:hidden p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover transition-colors"
+              aria-label="Toggle mobile menu"
             >
-              <Menu className="w-6 h-6" />
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
 
             <Link href="/" className="flex items-center space-x-2">
@@ -170,15 +192,121 @@ export default function Navigation() {
         </div>
       </nav>
 
-      {/* Left Sidebar */}
+      {/* Desktop Sidebar - Hover to Expand */}
       <aside
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
         className={`
-          fixed top-16 left-0 bottom-0 z-40 bg-background-card border-r border-gray-800
-          transition-all duration-300 ease-in-out overflow-y-auto
-          ${sidebarOpen ? 'w-64' : 'w-0'}
+          hidden lg:block fixed top-16 left-0 bottom-0 z-40
+          bg-background-card border-r border-gray-800
+          transition-all duration-300 ease-in-out overflow-hidden
+          ${isExpanded ? 'w-64' : 'w-16'}
         `}
       >
-        <div className={`${sidebarOpen ? 'opacity-100' : 'opacity-0'} transition-opacity duration-300 p-4 space-y-6`}>
+        <div className="h-full flex flex-col">
+          {/* Navigation Items */}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden py-4">
+            {Object.entries(groupedItems).map(([category, items]) => (
+              <div key={category} className="mb-4">
+                {/* Category Label - only show when expanded */}
+                <div className={`
+                  px-4 mb-2 transition-opacity duration-200
+                  ${isExpanded ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}
+                `}>
+                  <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
+                    {category}
+                  </h3>
+                </div>
+
+                <div className="space-y-1 px-2">
+                  {items.map((item) => {
+                    const Icon = item.icon
+                    const isActive = pathname === item.href
+
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        title={!isExpanded ? item.label : undefined}
+                        className={`
+                          flex items-center rounded-lg font-medium transition-all text-sm
+                          ${isExpanded ? 'px-3 py-2.5 space-x-3' : 'px-3 py-2.5 justify-center'}
+                          ${isActive
+                            ? 'bg-primary text-white shadow-lg'
+                            : 'text-text-secondary hover:text-text-primary hover:bg-background-hover'
+                          }
+                        `}
+                      >
+                        <Icon className="w-5 h-5 flex-shrink-0" />
+                        <span className={`
+                          truncate whitespace-nowrap transition-all duration-200
+                          ${isExpanded ? 'opacity-100 w-auto' : 'opacity-0 w-0 overflow-hidden'}
+                        `}>
+                          {item.label}
+                        </span>
+                      </Link>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Bottom Section: Pin Button + Build Version */}
+          <div className="border-t border-gray-800 p-2">
+            {/* Pin/Unpin Button */}
+            <button
+              onClick={togglePin}
+              title={isPinned ? 'Unpin sidebar' : 'Pin sidebar open'}
+              className={`
+                w-full flex items-center rounded-lg text-text-secondary
+                hover:text-text-primary hover:bg-background-hover transition-all
+                ${isExpanded ? 'px-3 py-2 space-x-3' : 'px-3 py-2 justify-center'}
+              `}
+            >
+              {isPinned ? (
+                <PinOff className="w-5 h-5 flex-shrink-0" />
+              ) : (
+                <Pin className="w-5 h-5 flex-shrink-0" />
+              )}
+              <span className={`
+                text-sm whitespace-nowrap transition-all duration-200
+                ${isExpanded ? 'opacity-100 w-auto' : 'opacity-0 w-0 overflow-hidden'}
+              `}>
+                {isPinned ? 'Unpin Sidebar' : 'Pin Sidebar'}
+              </span>
+            </button>
+
+            {/* Build Version - only show when expanded */}
+            <div className={`
+              transition-all duration-200 overflow-hidden
+              ${isExpanded ? 'opacity-100 max-h-20' : 'opacity-0 max-h-0'}
+            `}>
+              <BuildVersion />
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Mobile Sidebar Overlay */}
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Mobile Sidebar */}
+      <aside
+        className={`
+          lg:hidden fixed top-16 left-0 bottom-0 z-50
+          bg-background-card border-r border-gray-800
+          transition-transform duration-300 ease-in-out
+          w-64 overflow-y-auto
+          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
+        `}
+      >
+        <div className="p-4 space-y-6">
           {Object.entries(groupedItems).map(([category, items]) => (
             <div key={category}>
               <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 px-3">
@@ -193,6 +321,7 @@ export default function Navigation() {
                     <Link
                       key={item.href}
                       href={item.href}
+                      onClick={() => setMobileMenuOpen(false)}
                       className={`
                         flex items-center space-x-3 px-3 py-2.5 rounded-lg font-medium transition-all text-sm
                         ${isActive
@@ -210,38 +339,10 @@ export default function Navigation() {
             </div>
           ))}
 
-          {/* Collapse Button */}
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-background-hover transition-all"
-          >
-            <ChevronLeft className="w-4 h-4" />
-            <span className="text-sm">Collapse</span>
-          </button>
-
-          {/* Build Version - helps verify deployments */}
+          {/* Build Version */}
           <BuildVersion />
         </div>
       </aside>
-
-      {/* Sidebar Overlay for Mobile */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* Expand Button (when sidebar is closed) */}
-      {!sidebarOpen && (
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="fixed top-20 left-2 z-40 p-2 rounded-lg bg-background-card border border-gray-800 text-text-secondary hover:text-text-primary hover:bg-background-hover transition-all shadow-lg"
-          aria-label="Open sidebar"
-        >
-          <ChevronRight className="w-5 h-5" />
-        </button>
-      )}
     </>
   )
 }

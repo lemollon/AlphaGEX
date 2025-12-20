@@ -666,8 +666,16 @@ async def get_daily_manna(force_refresh: bool = False):
 
 
 def get_daily_greeting() -> str:
-    """Get a contextual greeting based on time of day."""
-    hour = datetime.now().hour
+    """Get a contextual greeting based on time of day in Central Time (Texas)."""
+    try:
+        from zoneinfo import ZoneInfo
+        central = ZoneInfo("America/Chicago")
+        hour = datetime.now(central).hour
+    except ImportError:
+        # Fallback for older Python versions
+        import pytz
+        central = pytz.timezone("America/Chicago")
+        hour = datetime.now(central).hour
 
     if hour < 5:
         return "Night owl or early bird? Either way, God's mercies are new every morning."

@@ -187,7 +187,7 @@ export default function LogsPage() {
   return (
     <div className="min-h-screen bg-gray-900">
       <Navigation />
-      <main className="lg:pl-64 pt-16 lg:pt-0">
+      <main className="lg:pl-16 pt-16">
         <div className="p-6">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
