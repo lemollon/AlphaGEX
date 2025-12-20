@@ -589,10 +589,10 @@ async def ai_analyze_market(request: dict):
                     bot = command_result.get('bot', 'unknown')
                     if data and data.get('requires_confirmation'):
                         # Confirmation required
-                        warning = f"\n\n**WARNING:** {data.get('warning')}" if data.get('warning') else ""
+                        warning = f"\n\nWARNING: {data.get('warning')}" if data.get('warning') else ""
                         current_status = data.get('current_status', {})
                         status_str = f"\nCurrent status: {current_status.get('mode', 'unknown').upper()}" if current_status else ""
-                        formatted_response = f"{USER_NAME}, you've requested to **{action.upper()} {bot.upper()}**.{status_str}{warning}\n\n"
+                        formatted_response = f"{USER_NAME}, you've requested to {action.upper()} {bot.upper()}.{status_str}{warning}\n\n"
                         formatted_response += f"{data.get('message', 'Reply /confirm or /yes to proceed, or /cancel to abort.')}"
                     elif data and data.get('error'):
                         formatted_response = f"I apologize, {USER_NAME}. Failed to {action} {bot}: {data.get('error')}"
@@ -1228,18 +1228,18 @@ No emojis. Format with clear sections."""
             # Fallback briefing without AI
             briefing_text = f"""{greeting}, {USER_NAME}. Here's your {time_context} briefing.
 
-**Market Overview**
+Market Overview:
 SPY is trading at ${briefing_data['market'].get('spot_price', 'N/A')} with Net GEX at {briefing_data['market'].get('net_gex', 'N/A')}.
 
-**Bot Status**
+Bot Status:
 - ARES: {'Online' if briefing_data['bots'].get('ARES', {}).get('active') else 'Offline'}
 - ATHENA: {'Online' if briefing_data['bots'].get('ATHENA', {}).get('active') else 'Offline'}
 - ATLAS: {'Online' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Offline'}
 
-**Positions**
+Positions:
 You have {briefing_data['positions'].get('open_count', 0)} open positions with ${briefing_data['positions'].get('total_unrealized_pnl', 0):.2f} unrealized P&L.
 
-**Performance (7 Days)**
+Performance (7 Days):
 {briefing_data['performance'].get('trades_7d', 0)} trades with {briefing_data['performance'].get('win_rate_7d', 0)}% win rate.
 
 Shall I elaborate on any specific area, {USER_NAME}?"""
@@ -1298,7 +1298,7 @@ async def execute_quick_command(request: dict):
         if command == "/help":
             help_text = f"Available commands, {USER_NAME}:\n\n"
             for cmd, desc in QUICK_COMMANDS.items():
-                help_text += f"**{cmd}** - {desc}\n"
+                help_text += f"{cmd} - {desc}\n"
             help_text += f"\nYou can also ask me anything in natural language."
             return {
                 "success": True,
@@ -1343,8 +1343,8 @@ async def execute_quick_command(request: dict):
 
             # Format response
             status_text = f"System Status Report, {USER_NAME}:\n\n"
-            status_text += f"**System:** {status['system'].upper()}\n\n"
-            status_text += "**Trading Bots:**\n"
+            status_text += f"System: {status['system'].upper()}\n\n"
+            status_text += "Trading Bots:\n"
             for bot, info in status["bots"].items():
                 state = "ACTIVE" if info.get("active") else "INACTIVE"
                 health = "Healthy" if info.get("healthy", True) else "Check Required"
@@ -1369,19 +1369,19 @@ async def execute_quick_command(request: dict):
 
             if gex_data and not gex_data.get('error'):
                 gex_text = f"GEX Analysis for {symbol}, {USER_NAME}:\n\n"
-                gex_text += f"**Spot Price:** ${gex_data.get('spot_price', 'N/A')}\n"
-                gex_text += f"**Net GEX:** {gex_data.get('net_gex', 'N/A')}\n"
-                gex_text += f"**Flip Point:** ${gex_data.get('flip_point', 'N/A')}\n"
-                gex_text += f"**Call Wall:** ${gex_data.get('call_wall', 'N/A')}\n"
-                gex_text += f"**Put Wall:** ${gex_data.get('put_wall', 'N/A')}\n"
+                gex_text += f"Spot Price: ${gex_data.get('spot_price', 'N/A')}\n"
+                gex_text += f"Net GEX: {gex_data.get('net_gex', 'N/A')}\n"
+                gex_text += f"Flip Point: ${gex_data.get('flip_point', 'N/A')}\n"
+                gex_text += f"Call Wall: ${gex_data.get('call_wall', 'N/A')}\n"
+                gex_text += f"Put Wall: ${gex_data.get('put_wall', 'N/A')}\n"
 
                 # Add interpretation
                 net_gex = gex_data.get('net_gex', 0)
                 if net_gex and isinstance(net_gex, (int, float)):
                     if net_gex > 0:
-                        gex_text += f"\n_Positive GEX suggests stable, mean-reverting price action._"
+                        gex_text += f"\nPositive GEX suggests stable, mean-reverting price action."
                     else:
-                        gex_text += f"\n_Negative GEX suggests elevated volatility potential._"
+                        gex_text += f"\nNegative GEX suggests elevated volatility potential."
 
                 return {
                     "success": True,
@@ -1436,9 +1436,9 @@ async def execute_quick_command(request: dict):
                     pnl = p.get('pnl', 0) or 0
                     total_pnl += pnl
                     pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
-                    pos_text += f"- **{p['symbol']}** {p['strike']} {p['type']} x{p['contracts']} | P&L: {pnl_str} | {p['bot']}\n"
+                    pos_text += f"- {p['symbol']} {p['strike']} {p['type']} x{p['contracts']} | P&L: {pnl_str} | {p['bot']}\n"
 
-                pos_text += f"\n**Total Unrealized:** {'$' + str(round(total_pnl, 2)) if total_pnl >= 0 else '-$' + str(abs(round(total_pnl, 2)))}"
+                pos_text += f"\nTotal Unrealized: {'$' + str(round(total_pnl, 2)) if total_pnl >= 0 else '-$' + str(abs(round(total_pnl, 2)))}"
             else:
                 pos_text = f"No open positions at this time, {USER_NAME}."
 
@@ -1507,11 +1507,11 @@ async def execute_quick_command(request: dict):
                 return f"+${val:.2f}" if val >= 0 else f"-${abs(val):.2f}"
 
             pnl_text = f"P&L Summary, {USER_NAME}:\n\n"
-            pnl_text += f"**Today:** {format_pnl(pnl_data['today'])}\n"
-            pnl_text += f"**This Week:** {format_pnl(pnl_data['week'])}\n"
-            pnl_text += f"**This Month:** {format_pnl(pnl_data['month'])}\n"
-            pnl_text += f"**All Time:** {format_pnl(pnl_data['total'])}\n"
-            pnl_text += f"\n**Unrealized:** {format_pnl(pnl_data.get('unrealized', 0))}"
+            pnl_text += f"Today: {format_pnl(pnl_data['today'])}\n"
+            pnl_text += f"This Week: {format_pnl(pnl_data['week'])}\n"
+            pnl_text += f"This Month: {format_pnl(pnl_data['month'])}\n"
+            pnl_text += f"All Time: {format_pnl(pnl_data['total'])}\n"
+            pnl_text += f"\nUnrealized: {format_pnl(pnl_data.get('unrealized', 0))}"
 
             return {
                 "success": True,
@@ -1938,16 +1938,16 @@ Put Wall: ${gex_data.get('put_wall', 'N/A')}
             ) else "caution"
 
             response_text = f"Trade Validation for {USER_NAME}:\n\n"
-            response_text += f"**Trade:** {strategy} {direction} on {symbol}\n"
-            response_text += f"**GEX Alignment:** {validation['gex_alignment'].upper()}\n\n"
+            response_text += f"Trade: {strategy} {direction} on {symbol}\n"
+            response_text += f"GEX Alignment: {validation['gex_alignment'].upper()}\n\n"
 
             if validation["warnings"]:
-                response_text += "**Warnings:**\n"
+                response_text += "Warnings:\n"
                 for w in validation["warnings"]:
                     response_text += f"- {w}\n"
 
             if validation["suggestions"]:
-                response_text += "\n**Suggestions:**\n"
+                response_text += "\nSuggestions:\n"
                 for s in validation["suggestions"]:
                     response_text += f"- {s}\n"
 

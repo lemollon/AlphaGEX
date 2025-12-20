@@ -534,7 +534,7 @@ def get_gexis_briefing() -> str:
     high_impact_today = [e for e in today_events if e["days_until"] == 0 and e["impact"] == "HIGH"]
 
     if high_impact_today:
-        briefing_parts.append("**ALERT - HIGH IMPACT EVENT TODAY:**")
+        briefing_parts.append("ALERT - HIGH IMPACT EVENT TODAY:")
         for event in high_impact_today:
             event_info = ECONOMIC_EVENTS.get(event["event"], {})
             briefing_parts.append(f"  {event['name']} at {event['time']}")
@@ -544,7 +544,7 @@ def get_gexis_briefing() -> str:
 
     # Market Status
     market_open = is_market_open()
-    briefing_parts.append(f"**MARKET STATUS:** {'OPEN' if market_open else 'CLOSED'}")
+    briefing_parts.append(f"MARKET STATUS: {'OPEN' if market_open else 'CLOSED'}")
 
     # Get market data
     try:
@@ -554,7 +554,7 @@ def get_gexis_briefing() -> str:
             spy = market.get("spy", {})
             vix = market.get("vix", 0)
 
-            briefing_parts.append(f"\n**MARKET DATA:**")
+            briefing_parts.append(f"\nMARKET DATA:")
             if spx.get("price"):
                 briefing_parts.append(f"  SPX: ${spx['price']:,.2f} (Expected Move: ±${spx.get('expected_move', 0):.0f})")
             if spy.get("price"):
@@ -569,7 +569,7 @@ def get_gexis_briefing() -> str:
     try:
         ares = get_bot_status("ares")
         if ares and "error" not in ares:
-            briefing_parts.append(f"\n**ARES STATUS:**")
+            briefing_parts.append(f"\nARES STATUS:")
             briefing_parts.append(f"  Mode: {ares.get('mode', 'unknown').upper()}")
             briefing_parts.append(f"  Open Positions: {ares.get('open_positions', 0)}")
             pnl = ares.get('total_pnl', 0)
@@ -582,7 +582,7 @@ def get_gexis_briefing() -> str:
     try:
         upcoming = get_upcoming_events(3)
         if upcoming:
-            briefing_parts.append(f"\n**UPCOMING EVENTS (Next 3 Days):**")
+            briefing_parts.append(f"\nUPCOMING EVENTS (Next 3 Days):")
             for event in upcoming[:4]:
                 days = event["days_until"]
                 day_str = "TODAY" if days == 0 else "TOMORROW" if days == 1 else f"in {days} days"
@@ -593,11 +593,11 @@ def get_gexis_briefing() -> str:
 
     # Trading recommendation
     if high_impact_today:
-        briefing_parts.append(f"\n**GEXIS RECOMMENDATION:** Consider reducing position size or waiting until after the event settles.")
+        briefing_parts.append(f"\nGEXIS RECOMMENDATION: Consider reducing position size or waiting until after the event settles.")
     elif market_open:
-        briefing_parts.append(f"\n**GEXIS RECOMMENDATION:** Systems nominal. Ready for your trading decisions, Prime.")
+        briefing_parts.append(f"\nGEXIS RECOMMENDATION: Systems nominal. Ready for your trading decisions, Prime.")
     else:
-        briefing_parts.append(f"\n**GEXIS RECOMMENDATION:** Market closed. Good time to review strategies and prepare for next session.")
+        briefing_parts.append(f"\nGEXIS RECOMMENDATION: Market closed. Good time to review strategies and prepare for next session.")
 
     return "\n".join(briefing_parts)
 
