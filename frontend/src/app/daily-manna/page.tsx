@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger'
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { useDailyManna, useDailyMannaComments } from '@/lib/hooks/useMarketData'
 import {
   BookOpen,
   Sun,
@@ -70,9 +71,16 @@ interface Comment {
 }
 
 export default function DailyMannaPage() {
-  const [data, setData] = useState<DailyMannaData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // SWR hooks for data fetching with caching
+  const { data: mannaResponse, error: mannaError, isLoading, mutate: refreshManna } = useDailyManna()
+  const { data: commentsResponse, mutate: refreshComments } = useDailyMannaComments()
+
+  // Extract data from SWR responses
+  const data = mannaResponse?.success ? mannaResponse.data : null
+  const comments = commentsResponse?.success ? (commentsResponse.data?.comments || []) : []
+  const error = mannaError ? 'Unable to connect to the server. Please try again.' :
+                (!mannaResponse?.success && mannaResponse ? 'Failed to load Daily Manna content' : null)
+
   const [refreshing, setRefreshing] = useState(false)
   const [expandedSections, setExpandedSections] = useState({
     news: true,
@@ -85,7 +93,6 @@ export default function DailyMannaPage() {
   })
 
   // Comments state
-  const [comments, setComments] = useState<Comment[]>([])
   const [newComment, setNewComment] = useState('')
   const [userName, setUserName] = useState('')
   const [submittingComment, setSubmittingComment] = useState(false)
@@ -96,46 +103,24 @@ export default function DailyMannaPage() {
   const [reflectionSaved, setReflectionSaved] = useState(false)
 
   useEffect(() => {
-    fetchDailyManna()
-    fetchComments()
     // Load saved user name from localStorage
     const savedName = localStorage.getItem('dailyMannaUserName')
     if (savedName) setUserName(savedName)
   }, [])
 
-  const fetchDailyManna = async (forceRefresh = false) => {
+  const handleRefresh = async () => {
+    setRefreshing(true)
     try {
-      if (forceRefresh) {
-        setRefreshing(true)
-      } else {
-        setLoading(true)
-      }
-      setError(null)
-
-      const response = await apiClient.getDailyManna(forceRefresh)
-
+      // Force refresh by making a direct API call with force_refresh=true
+      const response = await apiClient.getDailyManna(true)
       if (response.data.success) {
-        setData(response.data.data)
-      } else {
-        setError('Failed to load Daily Manna content')
+        // Update the SWR cache with the new data
+        refreshManna(response.data, false)
       }
     } catch (err) {
-      logger.error('Error fetching Daily Manna:', err)
-      setError('Unable to connect to the server. Please try again.')
+      logger.error('Error refreshing Daily Manna:', err)
     } finally {
-      setLoading(false)
       setRefreshing(false)
-    }
-  }
-
-  const fetchComments = async () => {
-    try {
-      const response = await apiClient.getDailyMannaComments()
-      if (response.data.success) {
-        setComments(response.data.data.comments || [])
-      }
-    } catch (err) {
-      logger.error('Error fetching comments:', err)
     }
   }
 
@@ -157,7 +142,7 @@ export default function DailyMannaPage() {
 
       if (response.data.success) {
         setNewComment('')
-        fetchComments()
+        refreshComments() // Use SWR mutate instead of manual fetch
       }
     } catch (err) {
       logger.error('Error submitting comment:', err)
@@ -169,7 +154,7 @@ export default function DailyMannaPage() {
   const handleLikeComment = async (commentId: number) => {
     try {
       await apiClient.likeDailyMannaComment(commentId)
-      fetchComments()
+      refreshComments() // Use SWR mutate instead of manual fetch
     } catch (err) {
       logger.error('Error liking comment:', err)
     }
@@ -253,7 +238,7 @@ export default function DailyMannaPage() {
     }
   }
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen">
         <Navigation />
@@ -303,7 +288,7 @@ export default function DailyMannaPage() {
             {/* Action Buttons */}
             <div className="flex items-center justify-center gap-2 mt-4 print:hidden">
               <button
-                onClick={() => fetchDailyManna(true)}
+                onClick={handleRefresh}
                 disabled={refreshing}
                 className="btn-secondary inline-flex items-center space-x-2"
               >
@@ -385,7 +370,7 @@ export default function DailyMannaPage() {
 
                 {expandedSections.scriptures && (
                   <div className="space-y-4">
-                    {data.scriptures?.map((scripture, index) => (
+                    {data.scriptures?.map((scripture: Scripture, index: number) => (
                       <div
                         key={index}
                         className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-4"
@@ -429,7 +414,7 @@ export default function DailyMannaPage() {
                       </div>
                     )}
                     <div className="space-y-3">
-                      {data.news?.map((item, index) => (
+                      {data.news?.map((item: NewsItem, index: number) => (
                         <div
                           key={index}
                           className="bg-background-hover rounded-lg p-4 hover:bg-background-deep transition-colors"
@@ -539,7 +524,7 @@ export default function DailyMannaPage() {
 
                 {expandedSections.reflection && (
                   <div className="space-y-3">
-                    {data.devotional?.reflection_questions?.map((question, index) => (
+                    {data.devotional?.reflection_questions?.map((question: string, index: number) => (
                       <div
                         key={index}
                         className="flex items-start space-x-3 p-3 bg-success/5 border border-success/20 rounded-lg"
@@ -648,7 +633,7 @@ export default function DailyMannaPage() {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {comments.map((comment) => (
+                        {comments.map((comment: Comment) => (
                           <div
                             key={comment.id}
                             className="bg-background-hover rounded-lg p-4"
