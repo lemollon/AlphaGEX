@@ -323,7 +323,7 @@ export default function PsychologyTrapDetection() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <main className="pt-16 transition-all duration-300">
+      <main className="pt-24 transition-all duration-300">
         <div className="container mx-auto px-4 py-8 space-y-6">
           {/* Header */}
         <div className="flex items-center justify-between">

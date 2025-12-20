@@ -182,7 +182,7 @@ export default function GammaExpirationTracker() {
     return (
       <div className="min-h-screen">
         <Navigation />
-        <main className="pt-16 transition-all duration-300">
+        <main className="pt-24 transition-all duration-300">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="bg-danger/10 border border-danger/30 rounded-lg p-6 text-center">
               <AlertTriangle className="w-12 h-12 text-danger mx-auto mb-4" />
@@ -205,7 +205,7 @@ export default function GammaExpirationTracker() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-16 transition-all duration-300">
+      <main className="pt-24 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
           {/* Header */}

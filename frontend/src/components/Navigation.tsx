@@ -39,6 +39,7 @@ import {
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
+import { DoveButton, DedicationModal, StewardshipBanner, StewardshipTagline } from './StewardshipBanner'
 
 const navItems = [
   { href: '/daily-manna', label: 'Daily Manna', icon: BookOpen, category: 'Main' },
@@ -75,6 +76,7 @@ export default function Navigation() {
   const [vixPrice, setVixPrice] = useState<number | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
   const [apiConnected, setApiConnected] = useState(true)
+  const [dedicationModalOpen, setDedicationModalOpen] = useState(false)
 
   // Load pinned state from localStorage
   useEffect(() => {
@@ -157,10 +159,17 @@ export default function Navigation() {
               {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
 
-            <Link href="/" className="flex items-center space-x-2">
-              <Activity className="w-8 h-8 text-primary" />
-              <span className="text-xl font-bold text-text-primary">AlphaGEX</span>
-            </Link>
+            <div className="flex items-center space-x-3">
+              <Link href="/" className="flex items-center space-x-2">
+                <Activity className="w-8 h-8 text-primary" />
+                <div className="flex flex-col">
+                  <span className="text-xl font-bold text-text-primary leading-tight">AlphaGEX</span>
+                  <StewardshipTagline />
+                </div>
+              </Link>
+              <div className="hidden sm:block border-l border-gray-700 h-8 mx-1" />
+              <DoveButton onClick={() => setDedicationModalOpen(true)} />
+            </div>
           </div>
 
           {/* Right: Market Status */}
@@ -191,6 +200,17 @@ export default function Navigation() {
           </div>
         </div>
       </nav>
+
+      {/* Stewardship Scripture Banner */}
+      <div className="fixed top-16 left-0 right-0 z-40">
+        <StewardshipBanner />
+      </div>
+
+      {/* Dedication Modal */}
+      <DedicationModal
+        isOpen={dedicationModalOpen}
+        onClose={() => setDedicationModalOpen(false)}
+      />
 
       {/* Desktop Sidebar - Hover to Expand */}
       <aside

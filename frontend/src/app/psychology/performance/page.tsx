@@ -125,7 +125,7 @@ export default function PsychologyPerformance() {
     return (
       <div className="min-h-screen bg-gray-950 text-white">
         <Navigation />
-        <main className="pt-16">
+        <main className="pt-24">
           <div className="container mx-auto px-4 py-8">
             <div className="flex items-center justify-center py-20">
               <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent" />
@@ -140,7 +140,7 @@ export default function PsychologyPerformance() {
     return (
       <div className="min-h-screen bg-gray-950 text-white">
         <Navigation />
-        <main className="pt-16">
+        <main className="pt-24">
           <div className="container mx-auto px-4 py-8">
             <div className="bg-red-500/10 border border-red-500 rounded-lg p-6 text-red-400">
               {error}
@@ -155,7 +155,7 @@ export default function PsychologyPerformance() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <main className="pt-16">
+      <main className="pt-24">
         <div className="container mx-auto px-4 py-8 space-y-6">
 
           {/* Header */}
