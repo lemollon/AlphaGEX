@@ -34,9 +34,10 @@ _response_cache: Dict[str, Dict[str, Any]] = {}
 _cache_lock = threading.Lock()
 
 # Cache TTL configuration (in seconds)
+# Reduced from original values to provide fresher market data
 CACHE_TTL = {
-    'daily_trading_plan': 30 * 60,    # 30 minutes - matches frontend refresh
-    'market_commentary': 5 * 60,       # 5 minutes - matches frontend refresh
+    'daily_trading_plan': 5 * 60,     # 5 minutes - fresh data for trading decisions
+    'market_commentary': 2 * 60,       # 2 minutes - near real-time commentary
 }
 
 
@@ -66,6 +67,99 @@ def set_cached_response(cache_key: str, response: Dict[str, Any]) -> None:
             'cached_at': datetime.now()
         }
         logger.debug(f"[CACHE SET] {cache_key} - stored for {CACHE_TTL.get(cache_key, 300)}s")
+
+
+def get_gex_context(market_data: Dict[str, Any], gex: Dict[str, Any]) -> str:
+    """
+    Generate actionable GEX context based on current market positioning.
+    Returns interpretation of GEX levels relative to spot price.
+    """
+    spot = float(market_data.get('spot_price') or 0)
+    net_gex = float(market_data.get('net_gex') or 0)
+    call_wall = float(gex.get('call_wall') or 0)
+    put_wall = float(gex.get('put_wall') or 0)
+    flip_point = float(gex.get('flip_point') or 0)
+
+    if spot == 0:
+        return "GEX data unavailable"
+
+    # Calculate distances
+    dist_to_call = ((call_wall - spot) / spot * 100) if call_wall > 0 else 0
+    dist_to_put = ((spot - put_wall) / spot * 100) if put_wall > 0 else 0
+    dist_to_flip = ((spot - flip_point) / spot * 100) if flip_point > 0 else 0
+
+    # Determine GEX regime
+    gex_billions = net_gex / 1e9
+    if gex_billions > 2:
+        gex_regime = "STRONGLY POSITIVE (dealers short gamma - will buy dips, sell rips = MEAN REVERSION)"
+    elif gex_billions > 0:
+        gex_regime = "POSITIVE (dealers will dampen moves = RANGE-BOUND, SELL PREMIUM)"
+    elif gex_billions > -2:
+        gex_regime = "NEGATIVE (dealers long gamma - will amplify moves = TRENDING)"
+    else:
+        gex_regime = "STRONGLY NEGATIVE (dealers will chase moves = HIGH VOLATILITY, DIRECTIONAL PLAYS)"
+
+    # Position relative to flip point
+    if spot > flip_point and flip_point > 0:
+        flip_position = f"ABOVE flip point by {dist_to_flip:.1f}% - bullish dealer hedging"
+    elif flip_point > 0:
+        flip_position = f"BELOW flip point by {abs(dist_to_flip):.1f}% - bearish dealer hedging"
+    else:
+        flip_position = "Flip point data unavailable"
+
+    # Key level proximity
+    if dist_to_call < 0.5 and call_wall > 0:
+        proximity = f"NEAR CALL WALL ({dist_to_call:.2f}% away) - expect resistance, potential reversal"
+    elif dist_to_put < 0.5 and put_wall > 0:
+        proximity = f"NEAR PUT WALL ({dist_to_put:.2f}% away) - expect support, potential bounce"
+    elif call_wall > 0 and put_wall > 0:
+        proximity = f"MID-RANGE: {dist_to_put:.1f}% above put wall, {dist_to_call:.1f}% below call wall"
+    else:
+        proximity = "Wall data unavailable"
+
+    return f"""GEX INTERPRETATION:
+• Regime: {gex_regime}
+• Position: {flip_position}
+• Proximity: {proximity}
+• Call Wall Distance: {dist_to_call:.1f}% (${call_wall:.0f})
+• Put Wall Distance: {dist_to_put:.1f}% (${put_wall:.0f})
+
+TRADING IMPLICATIONS:
+{_get_trading_implications(gex_billions, dist_to_call, dist_to_put, spot > flip_point)}"""
+
+
+def _get_trading_implications(gex_b: float, dist_call: float, dist_put: float, above_flip: bool) -> str:
+    """Generate specific trading implications based on GEX positioning."""
+    implications = []
+
+    # GEX-based strategy
+    if gex_b > 2:
+        implications.append("• SELL PREMIUM: High positive GEX = low volatility expected, iron condors/credit spreads favored")
+        implications.append("• FADE MOVES: Mean reversion likely, sell rallies and buy dips")
+    elif gex_b > 0:
+        implications.append("• RANGE TRADING: Positive GEX dampens moves, trade between walls")
+        implications.append("• THETA PLAYS: Reduced volatility benefits time decay strategies")
+    elif gex_b > -2:
+        implications.append("• DIRECTIONAL BIAS: Negative GEX amplifies trends, go with momentum")
+        implications.append("• TIGHTER STOPS: Moves can accelerate, manage risk carefully")
+    else:
+        implications.append("• HIGH CONVICTION ONLY: Extreme negative GEX = violent moves possible")
+        implications.append("• REDUCE SIZE: Volatility expansion likely, wider stops needed")
+
+    # Wall proximity
+    if dist_call < 1.0:
+        implications.append(f"• RESISTANCE AHEAD: {dist_call:.1f}% to call wall, expect selling pressure")
+    if dist_put < 1.0:
+        implications.append(f"• SUPPORT NEARBY: {dist_put:.1f}% to put wall, expect buying support")
+
+    # Flip point positioning
+    if above_flip:
+        implications.append("• BULLISH STRUCTURE: Above flip point, dealers hedge by buying")
+    else:
+        implications.append("• BEARISH STRUCTURE: Below flip point, dealers hedge by selling")
+
+    return "\n".join(implications)
+
 
 try:
     from ai.autonomous_ai_reasoning import AutonomousAIReasoning
@@ -814,71 +908,81 @@ async def generate_daily_trading_plan():
 
         conn.close()
 
+        # Generate GEX context for better AI understanding
+        gex_context = get_gex_context(market_data, gex)
+
         # Generate daily plan using Claude
         today = datetime.now().strftime("%B %d, %Y")
-        prompt = f"""You are a professional day trader creating a daily action plan. Generate a comprehensive trading plan for today with SPECIFIC opportunities, price levels, and timing.
+        current_time = datetime.now().strftime("%I:%M %p CT")
+        prompt = f"""You are an expert options trader specializing in GEX-based strategies. Generate a precise, actionable daily trading plan based on current dealer positioning.
 
-TODAY: {today}
+TODAY: {today} | TIME: {current_time}
 
-CURRENT MARKET STATUS:
-• SPY: ${market_data.get('spot_price') or 0}
-• VIX: {market_data.get('vix') or 0}
-• Net GEX: ${(market_data.get('net_gex') or 0)/1e9:.2f}B
-• Market Regime: {psychology.get('regime_type', 'UNKNOWN')}
-• Confidence: {psychology.get('confidence') or 0}%
-• Call Wall: ${gex.get('call_wall') or 0}
-• Put Wall: ${gex.get('put_wall') or 0}
-• Flip Point: ${gex.get('flip_point') or 0}
+═══════════════════════════════════════════════════════════════
+LIVE MARKET DATA
+═══════════════════════════════════════════════════════════════
+SPY SPOT: ${market_data.get('spot_price') or 0}
+VIX: {market_data.get('vix') or 0}
+Net GEX: ${(market_data.get('net_gex') or 0)/1e9:.2f}B
 
-ACCOUNT STATUS:
-• Balance: ${account_value:.2f}
-• Win Rate (7d): {performance.get('win_rate') or 0:.1f}%
-• Recent Trades: {performance.get('total_trades') or 0}
+{gex_context}
 
-TOP PERFORMING PATTERNS (30d):
-{chr(10).join([f"• {p.get('pattern_type', 'N/A')}: {(p.get('win_rate') or 0)*100:.0f}% win rate, ${float(p.get('avg_pnl') or 0):.2f} avg P&L" for p in top_patterns])}
+═══════════════════════════════════════════════════════════════
+PSYCHOLOGY & REGIME
+═══════════════════════════════════════════════════════════════
+Market Regime: {psychology.get('regime_type', 'UNKNOWN')}
+Confidence: {psychology.get('confidence') or 0}%
+Psychology Trap: {psychology.get('psychology_trap', 'NONE')}
 
-Create a detailed daily trading plan with:
+═══════════════════════════════════════════════════════════════
+ACCOUNT & PERFORMANCE
+═══════════════════════════════════════════════════════════════
+Balance: ${account_value:.2f}
+7-Day Win Rate: {performance.get('win_rate') or 0:.1f}%
+Recent Trades: {performance.get('total_trades') or 0}
 
-1. TOP 3 OPPORTUNITIES TODAY (ranked by probability)
-   For each:
-   • Entry: Exact strike and price
-   • Target: Price and % profit
-   • Stop: Price and % loss
-   • Size: Number of contracts and $ risk
-   • Win Probability: %
-   • WHEN: Exact conditions to enter
+Top Patterns (30d):
+{chr(10).join([f"• {p.get('pattern_type', 'N/A')}: {(p.get('win_rate') or 0)*100:.0f}% win, ${float(p.get('avg_pnl') or 0):.2f} avg" for p in top_patterns]) or '• No pattern data available'}
 
-2. KEY PRICE LEVELS TO WATCH
-   • Breakout level (liberation/resistance)
-   • Support/resistance levels
-   • Stop loss levels
-   • Profit target levels
+═══════════════════════════════════════════════════════════════
+GENERATE YOUR DAILY PLAN
+═══════════════════════════════════════════════════════════════
 
-3. PSYCHOLOGY TRAPS TO AVOID TODAY
-   • Specific traps based on current market
-   • Max trades if win rate drops
-   • Wait times after losses
+Based on the GEX positioning above, provide:
 
-4. RISK ALLOCATION
-   • Primary trade: $$ and % of account
-   • Backup trade: $$ if primary fails
-   • Reserve cash: %
+1. TODAY'S STRATEGY (based on GEX regime)
+   State the ONE primary strategy for today based on dealer positioning.
+   Example: "SELL PREMIUM - positive GEX favors theta decay" or "DIRECTIONAL CALLS - negative GEX amplifies upside"
 
-5. TIME-BASED ACTIONS (CT timezone)
-   • 8:30 AM - Market open prep
-   • 9:00 AM - First 30min range
-   • 10:00-12:00 - Primary entry window
-   • 2:00 PM - Theta protection deadline
-   • 3:00 PM - No new entries
+2. PRIMARY TRADE SETUP
+   • Direction: CALLS/PUTS/NEUTRAL
+   • Strike: Based on wall distances
+   • Entry trigger: Specific price level
+   • Target: Based on nearest wall
+   • Stop: Below/above flip point
+   • Size: Based on account (max 5% risk)
+   • Why: Connect to GEX data
 
-6. MARKET CONTEXT
-   • Today's regime and what it means
-   • VIX implications
-   • Fed/macro events
-   • Expected volatility
+3. BACKUP TRADE (if primary fails)
+   • Alternative setup with entry conditions
 
-Be extremely specific with prices, times, and percentages. Make this ACTIONABLE."""
+4. CRITICAL LEVELS TODAY
+   • RESISTANCE: Call wall at ${gex.get('call_wall') or 0}
+   • SUPPORT: Put wall at ${gex.get('put_wall') or 0}
+   • PIVOT: Flip point at ${gex.get('flip_point') or 0}
+   • NO-TRADE ZONE: Define price range to avoid
+
+5. TIME WINDOWS (CT)
+   • Best entry window based on GEX
+   • Avoid times (e.g., first 15 min, power hour)
+   • Hard stop time for new positions
+
+6. RISK RULES FOR TODAY
+   • Max loss per trade: $
+   • Max daily loss: $
+   • Position sizing based on VIX
+
+Keep it concise and actionable. Every recommendation must connect back to the GEX data provided."""
 
         plan = llm.invoke(prompt)
 
@@ -1192,54 +1296,60 @@ async def get_market_commentary():
         conn.close()
         logger.debug(" market-commentary: Data collection complete, generating AI response...")
 
-        # Use current data (no previous for change calculation since we're using live data)
-        vix_change = 0
-        price_change = 0
+        # Generate GEX context for better AI understanding
+        gex_context = get_gex_context(current_market, gex)
+
+        # Calculate key metrics for commentary
+        spot = float(current_market.get('spot_price') or 0)
+        call_wall = float(gex.get('call_wall') or 0)
+        put_wall = float(gex.get('put_wall') or 0)
+        flip_point = float(gex.get('flip_point') or 0)
+
+        dist_to_call = ((call_wall - spot) / spot * 100) if spot > 0 and call_wall > 0 else 0
+        dist_to_put = ((spot - put_wall) / spot * 100) if spot > 0 and put_wall > 0 else 0
+        above_flip = spot > flip_point if flip_point > 0 else True
 
         # Generate commentary
-        prompt = f"""You are a live market commentator speaking directly to a trader. Provide real-time narration of what's happening NOW and what they should do IMMEDIATELY. Speak in first person to the trader.
+        current_time = datetime.now().strftime('%I:%M %p CT')
+        prompt = f"""You are a GEX-focused market analyst providing real-time trading intelligence. Speak directly to the trader with actionable insights based on dealer positioning.
 
-CURRENT MARKET (LIVE):
-• SPY: ${current_market.get('spot_price') or 0} ({price_change:+.2f} from previous)
-• VIX: {current_market.get('vix') or 0} ({vix_change:+.2f})
-• Net GEX: ${(current_market.get('net_gex') or 0)/1e9:.2f}B
-• Call Wall: ${gex.get('call_wall') or 0}
-• Put Wall: ${gex.get('put_wall') or 0}
-• Flip Point: ${gex.get('flip_point') or 0}
+TIME: {current_time}
 
-PSYCHOLOGY STATUS:
-• Regime: {psychology.get('regime_type') or 'UNKNOWN'}
-• Confidence: {psychology.get('confidence') or 0}%
-• Trap Detected: {psychology.get('psychology_trap') or 'NONE'}
+═══════════════════════════════════════════════════════════════
+CURRENT POSITIONING
+═══════════════════════════════════════════════════════════════
+SPY: ${spot:.2f}
+VIX: {current_market.get('vix') or 0}
+Net GEX: ${(current_market.get('net_gex') or 0)/1e9:.2f}B
 
-YOUR POSITIONS:
-• Open positions: {open_positions}
-{f"• Last trade: {recent_trade.get('symbol') or 'N/A'} ${recent_trade.get('strike') or 0} {recent_trade.get('option_type') or 'N/A'} @ {recent_trade.get('timestamp') or 'N/A'}" if recent_trade else ""}
+DEALER LEVELS:
+• Call Wall: ${call_wall:.0f} ({dist_to_call:.1f}% above spot)
+• Put Wall: ${put_wall:.0f} ({dist_to_put:.1f}% below spot)
+• Flip Point: ${flip_point:.0f} ({'ABOVE' if above_flip else 'BELOW'} current price)
 
-TIME: {datetime.now().strftime('%I:%M %p CT')}
+{gex_context}
 
-Provide a conversational, urgent market commentary with:
+REGIME: {psychology.get('regime_type') or 'UNKNOWN'} ({psychology.get('confidence') or 0}% confidence)
+TRAP WARNING: {psychology.get('psychology_trap') or 'NONE'}
 
-1. WHAT'S HAPPENING NOW (2-3 sentences)
-   • Describe current price action
-   • Explain what market makers are doing
-   • Interpret VIX movement
+POSITIONS: {open_positions} open
+{f"Last: {recent_trade.get('symbol')} ${recent_trade.get('strike')} {recent_trade.get('option_type')}" if recent_trade else ""}
 
-2. IMMEDIATE ACTION (specific)
-   • If X happens in next Y minutes, do Z
-   • Exact price levels to watch
-   • What trade to prepare
+═══════════════════════════════════════════════════════════════
+PROVIDE COMMENTARY
+═══════════════════════════════════════════════════════════════
 
-3. WATCH THIS (critical alert)
-   • What could invalidate the setup
-   • What price level triggers action
+Give a brief, punchy market update (100-150 words) covering:
 
-4. TIMING (when to act)
-   • Optimal entry window
-   • Don't wait past this time
-   • Re-evaluate conditions
+1. DEALER FLOW: What are market makers doing right now based on GEX? Are they buying or selling to hedge?
 
-Speak directly to the trader in an urgent, clear voice. Be specific with prices and times. Keep it under 150 words but make every word count."""
+2. KEY LEVEL: What's the most important price level RIGHT NOW? (nearest wall, flip point, or breakout level)
+
+3. ACTION CALL: ONE specific thing to do or watch in the next 30 minutes. Be precise with the price trigger.
+
+4. RISK: What invalidates this setup? At what price should the trader step aside?
+
+Write in short, punchy sentences. No fluff. Every word must add value. Reference specific prices from the data above."""
 
         commentary = llm.invoke(prompt)
 
