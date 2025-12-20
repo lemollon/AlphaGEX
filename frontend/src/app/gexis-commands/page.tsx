@@ -16,6 +16,7 @@ import {
   Check,
   Search
 } from 'lucide-react'
+import Navigation from '@/components/Navigation'
 
 interface Command {
   command: string
@@ -116,8 +117,9 @@ export default function GexisCommandsPage() {
   }, {} as Record<string, Command[]>)
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-background">
+      <Navigation />
+      <div className="p-6 pt-20 lg:pt-6 max-w-6xl mx-auto lg:pl-64">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center space-x-3 mb-2">
