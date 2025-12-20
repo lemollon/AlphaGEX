@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, Brain, Activity, RefreshCw, Trash2, Play, CheckCircle, XCircle, AlertCircle, Sparkles, FileText, History, TrendingUp, BarChart3 } from 'lucide-react'
+import { Eye, Brain, Activity, RefreshCw, Trash2, Play, CheckCircle, XCircle, AlertCircle, Sparkles, FileText, History, TrendingUp, BarChart3, Download, CloudDownload, Zap } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
@@ -50,6 +50,53 @@ interface StoredPrediction {
   created_at: string
 }
 
+interface OracleFormData {
+  spot_price: number
+  vix: number
+  gex_regime: string
+  day_of_week: number
+  vix_1d_change: number
+  normalized_gex: number
+  distance_to_call_wall: number
+  distance_to_put_wall: number
+  bot_name: string
+}
+
+// Helper function to format timestamp in Texas Central Time
+function formatTexasCentralTime(isoTimestamp: string): string {
+  try {
+    const date = new Date(isoTimestamp)
+    return date.toLocaleTimeString('en-US', {
+      timeZone: 'America/Chicago',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    })
+  } catch {
+    return isoTimestamp
+  }
+}
+
+// Helper function to format full date in Texas Central Time
+function formatTexasCentralDateTime(isoTimestamp: string): string {
+  try {
+    const date = new Date(isoTimestamp)
+    return date.toLocaleString('en-US', {
+      timeZone: 'America/Chicago',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    })
+  } catch {
+    return isoTimestamp
+  }
+}
+
 export default function OraclePage() {
   // SWR hooks for data fetching with caching
   const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useOracleStatus()
@@ -70,18 +117,111 @@ export default function OraclePage() {
   const [activeTab, setActiveTab] = useState<'test' | 'history' | 'decisions'>('test')
   const [storedPredictions, setStoredPredictions] = useState<StoredPrediction[]>([])
   const [historyDays, setHistoryDays] = useState(30)
+  const [loadingLiveData, setLoadingLiveData] = useState(false)
 
-  // Form state for test prediction
+  // Form state for test prediction - default empty to encourage loading live data
   const [formData, setFormData] = useState({
-    spot_price: 5900,
-    vix: 18,
-    gex_regime: 'POSITIVE',
+    spot_price: 0,
+    vix: 0,
+    gex_regime: 'NEUTRAL',
     day_of_week: new Date().getDay(),
     vix_1d_change: 0,
-    normalized_gex: 0.5,
-    distance_to_call_wall: 50,
-    distance_to_put_wall: 50
+    normalized_gex: 0,
+    distance_to_call_wall: 0,
+    distance_to_put_wall: 0,
+    bot_name: 'ARES'
   })
+
+  // Load live market data into form
+  const loadLiveMarketData = async () => {
+    setLoadingLiveData(true)
+    try {
+      // Fetch GEX and VIX data in parallel
+      const [gexRes, vixRes] = await Promise.all([
+        apiClient.getGEX('SPY'),
+        apiClient.getVIXCurrent()
+      ])
+
+      const gexData = gexRes.data?.data || gexRes.data
+      const vixData = vixRes.data?.data || vixRes.data
+
+      // Determine GEX regime based on net_gex
+      let gexRegime = 'NEUTRAL'
+      if (gexData?.net_gex > 0) {
+        gexRegime = 'POSITIVE'
+      } else if (gexData?.net_gex < 0) {
+        gexRegime = 'NEGATIVE'
+      }
+
+      // Calculate normalized GEX (simplified - between -1 and 1)
+      const normalizedGex = gexData?.net_gex
+        ? Math.max(-1, Math.min(1, gexData.net_gex / 5000000000)) // Normalize to billions
+        : 0
+
+      // Calculate distance to walls if available
+      const spotPrice = gexData?.spot_price || 0
+      const callWall = gexData?.call_wall || gexData?.levels?.call_wall || 0
+      const putWall = gexData?.put_wall || gexData?.levels?.put_wall || 0
+
+      const distanceToCallWall = callWall && spotPrice
+        ? ((callWall - spotPrice) / spotPrice) * 100
+        : 0
+      const distanceToPutWall = putWall && spotPrice
+        ? ((spotPrice - putWall) / spotPrice) * 100
+        : 0
+
+      setFormData((prev: OracleFormData) => ({
+        ...prev,
+        spot_price: Math.round(spotPrice * 100) / 100 || 0,
+        vix: vixData?.vix || vixData?.current_vix || 0,
+        gex_regime: gexRegime,
+        day_of_week: new Date().getDay(),
+        vix_1d_change: vixData?.change_1d || 0,
+        normalized_gex: Math.round(normalizedGex * 100) / 100,
+        distance_to_call_wall: Math.round(distanceToCallWall * 10) / 10,
+        distance_to_put_wall: Math.round(distanceToPutWall * 10) / 10
+      }))
+    } catch (err) {
+      console.error('Failed to load live market data:', err)
+      setError('Failed to load live market data. Please enter values manually.')
+    } finally {
+      setLoadingLiveData(false)
+    }
+  }
+
+  // Export logs to JSON
+  const exportLogsJSON = () => {
+    const exportData = logs.map(log => ({
+      ...log,
+      timestamp_ct: formatTexasCentralDateTime(log.timestamp)
+    }))
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `oracle_logs_${new Date().toISOString().split('T')[0]}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // Export logs to CSV
+  const exportLogsCSV = () => {
+    const headers = ['Timestamp (CT)', 'Type', 'Message', 'Data']
+    const rows = logs.map(log => [
+      formatTexasCentralDateTime(log.timestamp),
+      log.type,
+      log.message,
+      log.data ? JSON.stringify(log.data) : ''
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `oracle_logs_${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const fetchStatus = useCallback(() => {
     mutateStatus()
@@ -205,6 +345,11 @@ export default function OraclePage() {
                 {status?.model_trained ? 'Trained' : 'Not Trained'}
               </p>
               <p className="text-text-muted text-xs mt-1">v{status?.model_version || '0.0.0'}</p>
+              {!status?.model_trained && (
+                <p className="text-yellow-400/70 text-xs mt-2">
+                  Train from KRONOS backtests
+                </p>
+              )}
             </div>
 
             {/* High Confidence Threshold */}
@@ -269,10 +414,36 @@ export default function OraclePage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Test Prediction Form */}
             <div className="card">
-              <h2 className="text-xl font-semibold text-text-primary mb-4 flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-purple-400" />
-                Test Oracle Prediction
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-text-primary flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-purple-400" />
+                  Test Oracle Prediction
+                </h2>
+                <button
+                  onClick={loadLiveMarketData}
+                  disabled={loadingLiveData}
+                  className="btn-secondary text-sm flex items-center gap-2"
+                  title="Load current market data from GEX and VIX APIs"
+                >
+                  {loadingLiveData ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-4 h-4" />
+                      Load Live Data
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {formData.spot_price === 0 && (
+                <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-400 text-sm">
+                  Click "Load Live Data" to populate form with current market data, or enter values manually.
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div>
@@ -343,9 +514,52 @@ export default function OraclePage() {
                 </div>
               </div>
 
+              {/* Bot Selector */}
+              <div className="mb-6">
+                <label className="block text-text-secondary text-sm mb-2">Select Bot Strategy</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, bot_name: 'ARES' })}
+                    className={`p-3 rounded-lg border transition-colors ${
+                      formData.bot_name === 'ARES'
+                        ? 'border-red-500 bg-red-500/20 text-red-400'
+                        : 'border-border bg-background-hover text-text-secondary hover:border-red-500/50'
+                    }`}
+                  >
+                    <div className="font-semibold">ARES</div>
+                    <div className="text-xs opacity-70">Iron Condor</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, bot_name: 'ATLAS' })}
+                    className={`p-3 rounded-lg border transition-colors ${
+                      formData.bot_name === 'ATLAS'
+                        ? 'border-blue-500 bg-blue-500/20 text-blue-400'
+                        : 'border-border bg-background-hover text-text-secondary hover:border-blue-500/50'
+                    }`}
+                  >
+                    <div className="font-semibold">ATLAS</div>
+                    <div className="text-xs opacity-70">Wheel Strategy</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, bot_name: 'PHOENIX' })}
+                    className={`p-3 rounded-lg border transition-colors ${
+                      formData.bot_name === 'PHOENIX'
+                        ? 'border-orange-500 bg-orange-500/20 text-orange-400'
+                        : 'border-border bg-background-hover text-text-secondary hover:border-orange-500/50'
+                    }`}
+                  >
+                    <div className="font-semibold">PHOENIX</div>
+                    <div className="text-xs opacity-70">Directional Calls</div>
+                  </button>
+                </div>
+              </div>
+
               <button
                 onClick={runAnalysis}
-                disabled={analyzing || !status?.claude_available}
+                disabled={analyzing || !status?.claude_available || formData.spot_price === 0}
                 className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {analyzing ? (
@@ -377,6 +591,22 @@ export default function OraclePage() {
                 </h2>
                 <div className="flex gap-2">
                   <button
+                    onClick={exportLogsJSON}
+                    className="p-2 rounded-lg bg-background-hover hover:bg-background-deep transition-colors"
+                    title="Export logs as JSON"
+                    disabled={logs.length === 0}
+                  >
+                    <Download className="w-4 h-4 text-text-secondary" />
+                  </button>
+                  <button
+                    onClick={exportLogsCSV}
+                    className="p-2 rounded-lg bg-background-hover hover:bg-background-deep transition-colors"
+                    title="Export logs as CSV"
+                    disabled={logs.length === 0}
+                  >
+                    <FileText className="w-4 h-4 text-text-secondary" />
+                  </button>
+                  <button
                     onClick={fetchLogs}
                     className="p-2 rounded-lg bg-background-hover hover:bg-background-deep transition-colors"
                     title="Refresh logs"
@@ -393,14 +623,18 @@ export default function OraclePage() {
                 </div>
               </div>
 
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-text-muted text-xs">Timestamps in Texas Central Time (CT)</span>
+                <span className="text-text-muted text-xs">{logs.length} entries</span>
+              </div>
               <div className="h-80 overflow-y-auto space-y-2 bg-background-deep rounded-lg p-3">
                 {logs.length === 0 ? (
-                  <p className="text-text-muted text-sm text-center py-4">No logs yet</p>
+                  <p className="text-text-muted text-sm text-center py-4">No logs yet. Run an analysis to see Oracle activity.</p>
                 ) : (
                   logs.slice().reverse().map((log, idx) => (
                     <div key={idx} className="flex items-start gap-2 text-xs">
-                      <span className="text-text-muted whitespace-nowrap">
-                        {new Date(log.timestamp).toLocaleTimeString()}
+                      <span className="text-text-muted whitespace-nowrap" title="Texas Central Time">
+                        {formatTexasCentralTime(log.timestamp)}
                       </span>
                       <span className={`px-2 py-0.5 rounded text-xs font-medium ${getLogTypeColor(log.type)}`}>
                         {log.type}

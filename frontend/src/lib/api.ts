@@ -619,8 +619,12 @@ export const apiClient = {
     day_of_week?: number
     vix_1d_change?: number
     normalized_gex?: number
+    gex_normalized?: number
+    gex_call_wall?: number
+    gex_put_wall?: number
     distance_to_call_wall?: number
     distance_to_put_wall?: number
+    bot_name?: string
   }) => api.post('/api/zero-dte/oracle/analyze', data),
   oracleExplain: (data: {
     prediction: any
