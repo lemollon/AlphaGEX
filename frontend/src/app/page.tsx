@@ -19,10 +19,10 @@ export default function Dashboard() {
           </div>
 
           {/* Main Content - Two Column Layout */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
 
             {/* Left Column - Intelligence Feed (2/3 width on xl) */}
-            <div className="xl:col-span-2">
+            <div className="xl:col-span-2 xl:sticky xl:top-20 xl:self-start xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto xl:pr-2 scrollbar-thin">
               <IntelligenceDashboard />
             </div>
 
