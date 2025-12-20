@@ -216,7 +216,11 @@ export default function OraclePage() {
     setLoadingInteractions(true)
     try {
       const botParam = selectedBot === 'ALL' ? undefined : selectedBot
-      const response = await apiClient.get(`/api/zero-dte/oracle/bot-interactions?days=${interactionDays}&limit=200${botParam ? `&bot_name=${botParam}` : ''}`)
+      const response = await apiClient.getOracleBotInteractions({
+        days: interactionDays,
+        limit: 200,
+        bot_name: botParam
+      })
       if (response.data?.success) {
         setBotInteractions(response.data.interactions || [])
       }
@@ -231,7 +235,7 @@ export default function OraclePage() {
   const fetchTrainingStatus = useCallback(async () => {
     setLoadingTraining(true)
     try {
-      const response = await apiClient.get('/api/zero-dte/oracle/training-status')
+      const response = await apiClient.getOracleTrainingStatus()
       if (response.data?.success) {
         setTrainingStatus(response.data)
       }
@@ -245,7 +249,7 @@ export default function OraclePage() {
   // Fetch performance data
   const fetchPerformance = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/zero-dte/oracle/performance?days=90')
+      const response = await apiClient.getOraclePerformance(90)
       if (response.data?.success) {
         setPerformance(response.data)
       }
@@ -259,7 +263,7 @@ export default function OraclePage() {
     setTriggeringTraining(true)
     setTrainingResult(null)
     try {
-      const response = await apiClient.post(`/api/zero-dte/oracle/trigger-training?force=${force}`)
+      const response = await apiClient.triggerOracleTraining(force)
       setTrainingResult(response.data)
       if (response.data?.success) {
         fetchTrainingStatus()
