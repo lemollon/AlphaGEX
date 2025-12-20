@@ -765,6 +765,14 @@ export const apiClient = {
     api.get(`/api/apollo/options-chain/${symbol}`, { params: { expiration } }),
   getApolloFeatures: (symbol: string) => api.get(`/api/apollo/features/${symbol}`),
   triggerApolloTraining: () => api.post('/api/apollo/train'),
+
+  // Daily Manna - Economic news with faith-based devotionals
+  getDailyManna: (forceRefresh: boolean = false) =>
+    api.get('/api/daily-manna/today', { params: { force_refresh: forceRefresh } }),
+  getDailyMannaNews: () => api.get('/api/daily-manna/news'),
+  getDailyMannaScriptures: () => api.get('/api/daily-manna/scriptures'),
+  getDailyMannaDevotional: (forceRefresh: boolean = false) =>
+    api.get('/api/daily-manna/devotional', { params: { force_refresh: forceRefresh } }),
 }
 
 // WebSocket connection
