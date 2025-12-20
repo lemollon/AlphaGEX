@@ -48,10 +48,9 @@ def main():
     # ========================================
     print_header("1. DATABASE CONNECTION")
     try:
-        import psycopg2
-        from backend.config import Config
+        from database_adapter import get_connection
 
-        conn = psycopg2.connect(Config.TIMESCALE_URL)
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT version()")
         version = cursor.fetchone()[0]
@@ -142,7 +141,7 @@ def main():
     # ========================================
     print_header("5. TRAINING DATA SOURCES")
     try:
-        conn = psycopg2.connect(Config.TIMESCALE_URL)
+        conn = get_connection()
         cursor = conn.cursor()
 
         # Check each source
@@ -327,7 +326,7 @@ def main():
     # ========================================
     print_header("10. DATABASE MODEL PERSISTENCE (CRITICAL)")
     try:
-        conn = psycopg2.connect(Config.TIMESCALE_URL)
+        conn = get_connection()
         cursor = conn.cursor()
 
         # Check table exists

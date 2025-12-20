@@ -33,6 +33,12 @@ def print_result(test_name, passed, details=""):
     if details:
         print(f"       {details}")
 
+# Global connection helper
+def get_db_connection():
+    """Get database connection using database_adapter"""
+    from database_adapter import get_connection
+    return get_connection()
+
 def main():
     print_header("ORACLE DATABASE PERSISTENCE TESTS")
 
@@ -43,10 +49,7 @@ def main():
     # ========================================
     print_header("TEST 1: Database Connection")
     try:
-        import psycopg2
-        from backend.config import Config
-
-        conn = psycopg2.connect(Config.TIMESCALE_URL)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
         result = cursor.fetchone()
@@ -62,7 +65,7 @@ def main():
     # ========================================
     print_header("TEST 2: oracle_trained_models Table")
     try:
-        conn = psycopg2.connect(Config.TIMESCALE_URL)
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         # Check if table exists
@@ -115,7 +118,7 @@ def main():
     # ========================================
     print_header("TEST 3: Existing Trained Models")
     try:
-        conn = psycopg2.connect(Config.TIMESCALE_URL)
+        conn = get_db_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
@@ -145,18 +148,18 @@ def main():
     # ========================================
     print_header("TEST 4: Oracle Advisor Instantiation")
     try:
-        from quant.oracle_advisor import OracleAdvisor
+        from quant.oracle_advisor import OracleAdvisor, get_training_status, auto_train
 
         oracle = OracleAdvisor()
         print_result("OracleAdvisor import", True)
 
-        # Check if model was loaded from database
-        status = oracle.get_training_status()
+        # Check if model was loaded from database (use module function)
+        status = get_training_status()
         print(f"\n  Training Status:")
         print(f"    - Model Trained: {status.get('model_trained', False)}")
         print(f"    - Model Source: {status.get('model_source', 'none')}")
         print(f"    - DB Persistence: {status.get('db_persistence', False)}")
-        print(f"    - Has GEX Features: {status.get('has_gex_features', False)}")
+        print(f"    - Has GEX Features: {oracle._has_gex_features}")
 
         if status.get('training_metrics'):
             print(f"    - Accuracy: {status['training_metrics'].get('accuracy', 'N/A')}")
@@ -175,27 +178,48 @@ def main():
     # ========================================
     print_header("TEST 5: Training Data Availability")
     try:
-        conn = psycopg2.connect(Config.TIMESCALE_URL)
+        conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Check live outcomes
-        cursor.execute("SELECT COUNT(*) FROM oracle_live_outcomes")
-        live_count = cursor.fetchone()[0]
+        # Check live outcomes (table may not exist)
+        live_count = 0
+        try:
+            cursor.execute("SELECT COUNT(*) FROM oracle_live_outcomes")
+            live_count = cursor.fetchone()[0]
+        except:
+            pass
         print(f"  Live outcomes: {live_count}")
 
         # Check backtest results
-        cursor.execute("SELECT COUNT(*) FROM backtest_results")
-        backtest_count = cursor.fetchone()[0]
+        backtest_count = 0
+        try:
+            cursor.execute("SELECT COUNT(*) FROM backtest_results")
+            backtest_count = cursor.fetchone()[0]
+        except:
+            pass
         print(f"  Backtest results: {backtest_count}")
 
         # Check KRONOS memory
-        cursor.execute("SELECT COUNT(*) FROM kronos_memory")
-        kronos_count = cursor.fetchone()[0]
+        kronos_count = 0
+        try:
+            cursor.execute("SELECT COUNT(*) FROM kronos_memory")
+            kronos_count = cursor.fetchone()[0]
+        except:
+            pass
         print(f"  KRONOS memory: {kronos_count}")
+
+        # Check zero_dte_backtest_results (main source)
+        zero_dte_count = 0
+        try:
+            cursor.execute("SELECT COUNT(*) FROM zero_dte_backtest_results")
+            zero_dte_count = cursor.fetchone()[0]
+        except:
+            pass
+        print(f"  Zero-DTE backtest results: {zero_dte_count}")
 
         conn.close()
 
-        total = live_count + backtest_count + kronos_count
+        total = live_count + backtest_count + kronos_count + zero_dte_count
         print_result("Training data available", total > 0, f"Total potential samples: {total}")
 
     except Exception as e:
@@ -207,26 +231,27 @@ def main():
     # ========================================
     print_header("TEST 6: Training Test")
     try:
-        oracle = OracleAdvisor()
-        status = oracle.get_training_status()
+        from quant.oracle_advisor import OracleAdvisor, get_training_status, auto_train
+
+        status = get_training_status()
 
         if not status.get('db_persistence'):
             print("  No model in database. Triggering training...")
-            result = oracle.auto_train(force=True)
+            result = auto_train(force=True)
 
             if result.get('success'):
                 print(f"  ✅ Training completed!")
                 print(f"    - Samples used: {result.get('samples_used', 'N/A')}")
-                print(f"    - Source: {result.get('source', 'N/A')}")
-                print(f"    - Accuracy: {result.get('accuracy', 'N/A')}")
+                print(f"    - Source: {result.get('method', 'N/A')}")
+                print(f"    - Accuracy: {result.get('training_metrics', {}).get('accuracy', 'N/A')}")
 
                 # Verify it was saved to database
-                new_status = oracle.get_training_status()
+                new_status = get_training_status()
                 db_saved = new_status.get('db_persistence', False)
                 print_result("Model saved to database", db_saved,
                             "Model persisted successfully!" if db_saved else "WARNING: Model NOT saved!")
             else:
-                print_result("Training", False, result.get('message', 'Training failed'))
+                print_result("Training", False, result.get('reason', 'Training failed'))
         else:
             print_result("Model already in database", True, "Skipping training test")
 
@@ -239,11 +264,13 @@ def main():
     # ========================================
     print_header("TEST 7: Persistence Verification")
     try:
+        from quant.oracle_advisor import OracleAdvisor, get_training_status
+
         # Create a NEW OracleAdvisor instance to simulate restart
         print("  Creating new OracleAdvisor instance (simulating restart)...")
         oracle_new = OracleAdvisor()
 
-        status = oracle_new.get_training_status()
+        status = get_training_status()
 
         if status.get('model_trained') and status.get('model_source') == 'database':
             print_result("PERSISTENCE VERIFICATION", True,
