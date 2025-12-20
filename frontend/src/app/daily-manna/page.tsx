@@ -24,10 +24,7 @@ import {
   Send,
   ThumbsUp,
   CheckCircle,
-  Flame,
-  Star,
-  PenLine,
-  Calendar
+  PenLine
 } from 'lucide-react'
 
 interface Scripture {
@@ -72,13 +69,6 @@ interface Comment {
   likes: number
 }
 
-interface PrayerStats {
-  prayed_today: boolean
-  current_streak: number
-  longest_streak: number
-  total_days: number
-}
-
 export default function DailyMannaPage() {
   const [data, setData] = useState<DailyMannaData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -105,14 +95,9 @@ export default function DailyMannaPage() {
   const [savingReflection, setSavingReflection] = useState(false)
   const [reflectionSaved, setReflectionSaved] = useState(false)
 
-  // Prayer tracker state
-  const [prayerStats, setPrayerStats] = useState<PrayerStats | null>(null)
-  const [markingPrayer, setMarkingPrayer] = useState(false)
-
   useEffect(() => {
     fetchDailyManna()
     fetchComments()
-    fetchPrayerStats()
     // Load saved user name from localStorage
     const savedName = localStorage.getItem('dailyMannaUserName')
     if (savedName) setUserName(savedName)
@@ -151,17 +136,6 @@ export default function DailyMannaPage() {
       }
     } catch (err) {
       logger.error('Error fetching comments:', err)
-    }
-  }
-
-  const fetchPrayerStats = async () => {
-    try {
-      const response = await apiClient.getPrayerStats()
-      if (response.data.success) {
-        setPrayerStats(response.data.data)
-      }
-    } catch (err) {
-      logger.error('Error fetching prayer stats:', err)
     }
   }
 
@@ -218,20 +192,6 @@ export default function DailyMannaPage() {
       logger.error('Error saving reflection:', err)
     } finally {
       setSavingReflection(false)
-    }
-  }
-
-  const handleMarkPrayed = async () => {
-    setMarkingPrayer(true)
-    try {
-      const response = await apiClient.markPrayedToday()
-      if (response.data.success) {
-        setPrayerStats(response.data.data)
-      }
-    } catch (err) {
-      logger.error('Error marking prayer:', err)
-    } finally {
-      setMarkingPrayer(false)
     }
   }
 
@@ -373,45 +333,6 @@ export default function DailyMannaPage() {
               </a>
             </div>
           </div>
-
-          {/* Prayer Tracker */}
-          {prayerStats && (
-            <div className="card mb-6 bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 print:hidden">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <div className="flex items-center space-x-2">
-                    <Flame className={`w-6 h-6 ${prayerStats.current_streak > 0 ? 'text-orange-500' : 'text-gray-500'}`} />
-                    <span className="font-semibold text-text-primary">
-                      {prayerStats.current_streak} day streak
-                    </span>
-                  </div>
-                  <div className="text-sm text-text-secondary">
-                    Best: {prayerStats.longest_streak} days • Total: {prayerStats.total_days} days
-                  </div>
-                </div>
-                <button
-                  onClick={handleMarkPrayed}
-                  disabled={prayerStats.prayed_today || markingPrayer}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                    prayerStats.prayed_today
-                      ? 'bg-success/20 text-success cursor-default'
-                      : 'bg-amber-500 text-white hover:bg-amber-600'
-                  }`}
-                >
-                  {prayerStats.prayed_today ? (
-                    <span className="flex items-center space-x-2">
-                      <CheckCircle className="w-4 h-4" />
-                      <span>Prayed Today</span>
-                    </span>
-                  ) : markingPrayer ? (
-                    'Logging...'
-                  ) : (
-                    'I Prayed Today'
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
 
           {error && (
             <div className="bg-danger/10 border border-danger/30 rounded-lg p-4 mb-6 print:hidden">
