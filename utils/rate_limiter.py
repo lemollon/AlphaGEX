@@ -4,7 +4,7 @@ Prevents API overuse across all deployments
 
 AUTO-DETECTS WEEKEND VS WEEKDAY:
 - Weekend (Sat/Sun): 2 calls/minute (market closed, strict limits)
-- Weekday trading hours (9:30am-4pm ET): 2 calls/minute (realtime data)
+- Weekday trading hours (8:30am-3pm CT): 2 calls/minute (realtime data)
 - Weekday non-trading hours: 18 calls/minute (safety margin from 20/min limit)
 """
 
@@ -12,7 +12,6 @@ import time
 import threading
 from collections import deque
 from datetime import datetime, timedelta
-import pytz
 
 class RateLimiter:
     """
@@ -47,8 +46,9 @@ class RateLimiter:
         self.total_blocked = 0
         self.total_delayed = 0
 
-        # Trading hours timezone
-        self.et_tz = pytz.timezone('America/New_York')
+        # Trading hours timezone (Central Time)
+        from zoneinfo import ZoneInfo
+        self.ct_tz = ZoneInfo("America/Chicago")
 
     def _get_current_limit(self) -> int:
         """
@@ -66,20 +66,20 @@ class RateLimiter:
         if not self.dynamic_limits:
             return self.static_max_calls_per_minute or 15
 
-        # Get current time in Eastern Time
-        now_et = datetime.now(self.et_tz)
-        day_of_week = now_et.weekday()  # 0 = Monday, 6 = Sunday
-        current_hour = now_et.hour
-        current_minute = now_et.minute
+        # Get current time in Central Time
+        now_ct = datetime.now(self.ct_tz)
+        day_of_week = now_ct.weekday()  # 0 = Monday, 6 = Sunday
+        current_hour = now_ct.hour
+        current_minute = now_ct.minute
 
         # Weekend (Saturday=5, Sunday=6): Strict 2 calls/minute limit
         if day_of_week >= 5:
             return 2
 
-        # Weekday: Check if within trading hours (9:30 AM - 4:00 PM ET)
+        # Weekday: Check if within trading hours (8:30 AM - 3:00 PM CT)
         # Trading hours use realtime data endpoint (2 calls/minute limit)
-        market_open_minutes = 9 * 60 + 30  # 9:30 AM
-        market_close_minutes = 16 * 60     # 4:00 PM
+        market_open_minutes = 8 * 60 + 30  # 8:30 AM CT
+        market_close_minutes = 15 * 60     # 3:00 PM CT
         current_minutes = current_hour * 60 + current_minute
 
         if market_open_minutes <= current_minutes < market_close_minutes:
@@ -169,9 +169,9 @@ class RateLimiter:
 
                 # Get current limit and show day context
                 current_limit = self.max_calls_per_minute
-                now_et = datetime.now(self.et_tz)
-                day_name = now_et.strftime("%A")
-                is_weekend = now_et.weekday() >= 5
+                now_ct = datetime.now(self.ct_tz)
+                day_name = now_ct.strftime("%A")
+                is_weekend = now_ct.weekday() >= 5
 
                 if is_weekend:
                     context = f"{day_name} (WEEKEND - 2/min limit)"

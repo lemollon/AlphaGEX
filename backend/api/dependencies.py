@@ -59,19 +59,21 @@ try:
     from core.intelligence_and_strategies import ClaudeIntelligence, get_et_time, get_local_time, is_market_open, MultiStrategyOptimizer
 except ImportError as e:
     print(f"⚠️ Dependencies: intelligence_and_strategies import failed: {e}")
-    # Provide fallback functions
+    # Provide fallback functions - ALL TIMES IN CENTRAL
     from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
     def get_et_time():
-        return datetime.now(ZoneInfo("America/New_York"))
-    def get_local_time(tz='US/Central'):
+        """Returns Central Time (legacy name for compatibility)"""
+        return datetime.now(CENTRAL_TZ)
+    def get_local_time(tz='America/Chicago'):
         return datetime.now(ZoneInfo(tz))
     def is_market_open():
-        et = datetime.now(ZoneInfo("America/New_York"))
-        if et.weekday() >= 5:
+        ct = datetime.now(CENTRAL_TZ)
+        if ct.weekday() >= 5:
             return False
-        market_open = et.replace(hour=9, minute=30, second=0, microsecond=0)
-        market_close = et.replace(hour=16, minute=0, second=0, microsecond=0)
-        return market_open <= et <= market_close
+        market_open = ct.replace(hour=8, minute=30, second=0, microsecond=0)
+        market_close = ct.replace(hour=15, minute=0, second=0, microsecond=0)
+        return market_open <= ct <= market_close
 
 # Database configuration
 STRATEGIES = {}

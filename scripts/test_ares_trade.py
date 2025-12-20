@@ -29,7 +29,7 @@ def main():
     print("=" * 60)
     print(f"Mode: {args.mode.upper()}")
     print(f"Dry Run: {args.dry_run}")
-    print(f"Time: {datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"Time: {datetime.now(ZoneInfo('America/Chicago')).strftime('%Y-%m-%d %H:%M:%S CT')}")
     print("=" * 60)
 
     try:

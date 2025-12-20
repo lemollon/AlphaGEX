@@ -152,7 +152,8 @@ class WheelStrategyManager:
     """
 
     def __init__(self):
-        self.tz = ZoneInfo("America/New_York")
+        # Texas Central Time - standard timezone for all AlphaGEX operations
+        self.tz = ZoneInfo("America/Chicago")
         self._db_initialized = False
 
     def _ensure_db_initialized(self):

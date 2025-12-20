@@ -66,7 +66,8 @@ class DecisionBridge:
 
     def __init__(self):
         self.logger = DecisionLogger()
-        self.tz = ZoneInfo("America/New_York")
+        # Texas Central Time - standard timezone for all AlphaGEX operations
+        self.tz = ZoneInfo("America/Chicago")
 
     def log_trade_execution(
         self,

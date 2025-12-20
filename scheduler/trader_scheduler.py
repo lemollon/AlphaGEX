@@ -56,7 +56,10 @@ from core.autonomous_paper_trader import AutonomousPaperTrader
 from core_classes_and_engines import TradingVolatilityAPI
 from database_adapter import get_connection
 from datetime import datetime
-import pytz
+from zoneinfo import ZoneInfo
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 import logging
 import traceback
 from pathlib import Path
@@ -311,17 +314,16 @@ class AutonomousTraderScheduler:
             logger.error(f"Error clearing auto-restart: {str(e)}")
 
     def is_market_open(self) -> bool:
-        """Check if US market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri)"""
-        ny_tz = pytz.timezone('America/New_York')
-        now = datetime.now(ny_tz)
+        """Check if US market is currently open (8:30 AM - 3:00 PM CT, Mon-Fri)"""
+        now = datetime.now(CENTRAL_TZ)
 
         # Check if weekend
         if now.weekday() >= 5:  # Saturday=5, Sunday=6
             return False
 
-        # Market hours: 9:30 AM - 4:00 PM ET
-        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        # Market hours: 8:30 AM - 3:00 PM CT (same as 9:30 AM - 4:00 PM ET)
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
 
         return market_open <= now < market_close
 
@@ -330,8 +332,7 @@ class AutonomousTraderScheduler:
         Main trading logic executed every hour during market hours
         This is what APScheduler calls on schedule
         """
-        ny_tz = pytz.timezone('America/New_York')
-        now = datetime.now(ny_tz)
+        now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
         logger.info(f"Scheduler triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -398,7 +399,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_atlas_logic(self):
         """
-        ATLAS (SPX Wheel) trading logic - runs daily at 10:00 AM ET
+        ATLAS (SPX Wheel) trading logic - runs daily at 9:05 AM CT
 
         The wheel strategy operates on a weekly basis:
         - Sells cash-secured puts on SPX
@@ -406,8 +407,7 @@ class AutonomousTraderScheduler:
         - Rolls when needed
         - Tracks performance vs backtest
         """
-        ny_tz = pytz.timezone('America/New_York')
-        now = datetime.now(ny_tz)
+        now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
         logger.info(f"ATLAS (SPX Wheel) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -464,7 +464,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_ares_logic(self):
         """
-        ARES (Aggressive Iron Condor) trading logic - runs daily at 9:35 AM ET
+        ARES (Aggressive Iron Condor) trading logic - runs daily at 8:35 AM CT
 
         The aggressive Iron Condor strategy:
         - Targets 10% monthly returns
@@ -472,8 +472,7 @@ class AutonomousTraderScheduler:
         - 1 SD strikes, 10% risk per trade
         - No stop loss - let theta work
         """
-        ny_tz = pytz.timezone('America/New_York')
-        now = datetime.now(ny_tz)
+        now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
         logger.info(f"ARES (Aggressive IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -521,7 +520,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_ares_eod_logic(self):
         """
-        ARES End-of-Day processing - runs daily at 4:05 PM ET
+        ARES End-of-Day processing - runs daily at 3:05 PM CT
 
         Processes expired 0DTE Iron Condor positions:
         - Calculates realized P&L based on closing price
@@ -529,8 +528,7 @@ class AutonomousTraderScheduler:
         - Feeds Oracle for ML training feedback loop
         - Updates daily performance metrics
         """
-        ny_tz = pytz.timezone('America/New_York')
-        now = datetime.now(ny_tz)
+        now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
         logger.info(f"ARES EOD (End-of-Day) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -585,10 +583,9 @@ class AutonomousTraderScheduler:
         - 0DTE options on SPY
         - GEX wall proximity filter for high probability setups
 
-        Runs continuously 9:35 AM - 3:30 PM ET to capture intraday GEX shifts.
+        Runs continuously 8:35 AM - 2:30 PM CT to capture intraday GEX shifts.
         """
-        ny_tz = pytz.timezone('America/New_York')
-        now = datetime.now(ny_tz)
+        now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
         logger.info(f"ATHENA (GEX Directional) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -601,9 +598,9 @@ class AutonomousTraderScheduler:
             logger.info("Market is CLOSED. Skipping ATHENA logic.")
             return
 
-        # Check if within entry window (9:35 AM - 3:30 PM ET)
-        entry_start = now.replace(hour=9, minute=35, second=0)
-        entry_end = now.replace(hour=15, minute=30, second=0)
+        # Check if within entry window (8:35 AM - 2:30 PM CT)
+        entry_start = now.replace(hour=8, minute=35, second=0)
+        entry_end = now.replace(hour=14, minute=30, second=0)
 
         if now < entry_start:
             logger.info(f"Before entry window ({entry_start.strftime('%H:%M')}). Skipping.")
@@ -683,16 +680,16 @@ class AutonomousTraderScheduler:
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
         logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), ATHENA (GEX Directional)")
-        logger.info(f"Timezone: America/New_York (Eastern Time)")
+        logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
-        logger.info(f"ATLAS Schedule: Daily at 10:05 AM ET, Mon-Fri")
-        logger.info(f"ARES Schedule: Daily at 9:35 AM ET, Mon-Fri")
-        logger.info(f"ATHENA Schedule: Every 30 min (9:35 AM - 3:30 PM ET), Mon-Fri")
+        logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
+        logger.info(f"ARES Schedule: Daily at 8:35 AM CT, Mon-Fri")
+        logger.info(f"ATHENA Schedule: Every 30 min (8:35 AM - 2:30 PM CT), Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
-        # Create scheduler with NY timezone
-        self.scheduler = BackgroundScheduler(timezone='America/New_York')
+        # Create scheduler with Central Texas timezone
+        self.scheduler = BackgroundScheduler(timezone='America/Chicago')
 
         # =================================================================
         # PHOENIX JOB: DISABLED - Handled by AutonomousTrader (every 5 min)
@@ -718,59 +715,59 @@ class AutonomousTraderScheduler:
         logger.info("⚠️ PHOENIX job DISABLED here - handled by AutonomousTrader (every 5 min)")
 
         # =================================================================
-        # ATLAS JOB: SPX Wheel - runs once daily at 10:05 AM ET
+        # ATLAS JOB: SPX Wheel - runs once daily at 9:05 AM CT
         # =================================================================
         if self.atlas_trader:
             self.scheduler.add_job(
                 self.scheduled_atlas_logic,
                 trigger=CronTrigger(
-                    hour=10,       # 10:00 AM - after market settles
-                    minute=5,      # 10:05 AM to avoid conflict with PHOENIX
+                    hour=9,        # 9:00 AM CT - after market settles
+                    minute=5,      # 9:05 AM CT to avoid conflict with PHOENIX
                     day_of_week='mon-fri',
-                    timezone='America/New_York'
+                    timezone='America/Chicago'
                 ),
                 id='atlas_trading',
                 name='ATLAS - SPX Wheel Trading',
                 replace_existing=True
             )
-            logger.info("✅ ATLAS job scheduled (10:05 AM ET daily)")
+            logger.info("✅ ATLAS job scheduled (9:05 AM CT daily)")
         else:
             logger.warning("⚠️ ATLAS not available - wheel trading disabled")
 
         # =================================================================
-        # ARES JOB: Aggressive Iron Condor - runs once daily at 9:35 AM ET
+        # ARES JOB: Aggressive Iron Condor - runs once daily at 8:35 AM CT
         # =================================================================
         if self.ares_trader:
             self.scheduler.add_job(
                 self.scheduled_ares_logic,
                 trigger=CronTrigger(
-                    hour=9,        # 9:00 AM
-                    minute=35,     # 9:35 AM - 5 min after market open for max premium
+                    hour=8,        # 8:00 AM CT
+                    minute=35,     # 8:35 AM CT - 5 min after market open for max premium
                     day_of_week='mon-fri',
-                    timezone='America/New_York'
+                    timezone='America/Chicago'
                 ),
                 id='ares_trading',
                 name='ARES - Aggressive Iron Condor',
                 replace_existing=True
             )
-            logger.info("✅ ARES job scheduled (9:35 AM ET daily)")
+            logger.info("✅ ARES job scheduled (8:35 AM CT daily)")
 
             # =================================================================
-            # ARES EOD JOB: Process expired positions - runs at 4:05 PM ET
+            # ARES EOD JOB: Process expired positions - runs at 3:05 PM CT
             # =================================================================
             self.scheduler.add_job(
                 self.scheduled_ares_eod_logic,
                 trigger=CronTrigger(
-                    hour=16,       # 4:00 PM - after market close
-                    minute=5,      # 4:05 PM to ensure market data is final
+                    hour=15,       # 3:00 PM CT - after market close
+                    minute=5,      # 3:05 PM CT to ensure market data is final
                     day_of_week='mon-fri',
-                    timezone='America/New_York'
+                    timezone='America/Chicago'
                 ),
                 id='ares_eod',
                 name='ARES - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ ARES EOD job scheduled (4:05 PM ET daily)")
+            logger.info("✅ ARES EOD job scheduled (3:05 PM CT daily)")
         else:
             logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
 
@@ -779,16 +776,16 @@ class AutonomousTraderScheduler:
         # Uses live Tradier GEX data to find intraday opportunities
         # =================================================================
         if self.athena_trader:
-            # Run every 30 minutes during market hours (9:35 AM - 3:30 PM ET)
-            # First run at 9:35 AM, then 10:05, 10:35, etc.
+            # Run every 30 minutes during market hours (8:35 AM - 2:30 PM CT)
+            # First run at 8:35 AM CT, then 9:05, 9:35, etc.
             self.scheduler.add_job(
                 self.scheduled_athena_logic,
                 trigger=IntervalTrigger(
                     minutes=30,
-                    start_date=datetime.now(pytz.timezone('America/New_York')).replace(
-                        hour=9, minute=35, second=0, microsecond=0
+                    start_date=datetime.now(CENTRAL_TZ).replace(
+                        hour=8, minute=35, second=0, microsecond=0
                     ),
-                    timezone='America/New_York'
+                    timezone='America/Chicago'
                 ),
                 id='athena_trading',
                 name='ATHENA - GEX Directional Spreads (30-min intervals)',
@@ -845,13 +842,12 @@ class AutonomousTraderScheduler:
 
     def get_status(self) -> dict:
         """Get current scheduler status for monitoring dashboard"""
-        ny_tz = pytz.timezone('America/New_York')
-        now = datetime.now(ny_tz)
+        now = datetime.now(CENTRAL_TZ)
 
         status = {
             'is_running': self.is_running,
             'market_open': self.is_market_open(),
-            'current_time_et': now.strftime('%Y-%m-%d %H:%M:%S %Z'),
+            'current_time_ct': now.strftime('%Y-%m-%d %H:%M:%S %Z'),
             'last_trade_check': self.last_trade_check.strftime('%Y-%m-%d %H:%M:%S') if self.last_trade_check else 'Never',
             'last_position_check': self.last_position_check.strftime('%Y-%m-%d %H:%M:%S') if self.last_position_check else 'Never',
             'execution_count': self.execution_count,

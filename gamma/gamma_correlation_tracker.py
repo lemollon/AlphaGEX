@@ -4,10 +4,13 @@ Enables backtesting and threshold refinement
 """
 
 from datetime import datetime, timedelta
-import pytz
+from zoneinfo import ZoneInfo
 from typing import Dict, Optional
 import pandas as pd
 from database_adapter import get_connection
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 class GammaCorrelationTracker:
     """Track correlation between gamma decay and actual market moves"""
@@ -40,8 +43,8 @@ class GammaCorrelationTracker:
         daily = gamma_intel['daily_impact']
         weekly = gamma_intel['weekly_evolution']
 
-        timestamp = datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d')
-        day_of_week = datetime.now(pytz.timezone('America/New_York')).strftime('%A')
+        timestamp = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+        day_of_week = datetime.now(CENTRAL_TZ).strftime('%A')
 
         conn = get_connection()
         cursor = conn.cursor()

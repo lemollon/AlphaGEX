@@ -788,8 +788,8 @@ class TradingPlanGenerator:
         put_wall = market_data.get('put_wall', 0)
 
         # Get Central Time properly
-        import pytz
-        central = pytz.timezone('US/Central')
+        from zoneinfo import ZoneInfo
+        central = ZoneInfo("America/Chicago")
         now = datetime.now(central)
         day = now.strftime('%A')
 
@@ -1089,8 +1089,8 @@ class TradingPlanGenerator:
         call_wall = market_data.get('call_wall', 0)
         put_wall = market_data.get('put_wall', 0)
 
-        import pytz
-        central = pytz.timezone('US/Central')
+        from zoneinfo import ZoneInfo
+        central = ZoneInfo("America/Chicago")
         today = datetime.now(central)
 
         # Calculate actual strikes for trades
@@ -1358,8 +1358,8 @@ class TradingPlanGenerator:
     def generate_monthly_plan(self, symbol: str, market_data: Dict) -> Dict:
         """Generate monthly plan with SPECIFIC TRADES for each week"""
 
-        import pytz
-        central = pytz.timezone('US/Central')
+        from zoneinfo import ZoneInfo
+        central = ZoneInfo("America/Chicago")
         today = datetime.now(central)
 
         # Find first Monday of current month

@@ -196,7 +196,8 @@ class ARESTrader:
         self.capital = initial_capital
         self.config = config or ARESConfig()
 
-        self.tz = ZoneInfo("America/New_York")
+        # Texas Central Time - standard timezone for all AlphaGEX operations
+        self.tz = ZoneInfo("America/Chicago")
 
         # Initialize Tradier clients
         # When TRADIER_SANDBOX=true: Use sandbox for BOTH market data AND orders

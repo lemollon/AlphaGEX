@@ -68,7 +68,7 @@ async def get_ares_status():
                 "traded_today": False,
                 "in_trading_window": False,
                 "high_water_mark": 200000,
-                "current_time": datetime.now(ZoneInfo("America/New_York")).strftime('%Y-%m-%d %H:%M:%S %Z'),
+                "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
                 "is_active": False,
                 "config": {
                     "risk_per_trade": 10.0,
@@ -183,7 +183,7 @@ async def get_ares_equity_curve(days: int = 30):
             "success": True,
             "data": {
                 "equity_curve": [{
-                    "date": datetime.now(ZoneInfo("America/New_York")).strftime('%Y-%m-%d'),
+                    "date": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d'),
                     "equity": 200000,
                     "pnl": 0,
                     "daily_pnl": 0,
@@ -229,7 +229,7 @@ async def get_ares_equity_curve(days: int = 30):
         # Add current date if no trades yet
         if not equity_curve:
             equity_curve.append({
-                "date": datetime.now(ZoneInfo("America/New_York")).strftime('%Y-%m-%d'),
+                "date": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d'),
                 "equity": starting_capital,
                 "pnl": 0,
                 "daily_pnl": 0,
@@ -437,7 +437,7 @@ async def get_ares_market_data():
                     "expected_move": round(spy_expected_move, 2)
                 },
                 "vix": round(vix, 2),
-                "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+                "timestamp": datetime.now(ZoneInfo("America/Chicago")).isoformat(),
                 "source": "Tradier Production API",
                 # Legacy fields for backward compatibility
                 "ticker": "SPX",

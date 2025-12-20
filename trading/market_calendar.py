@@ -18,10 +18,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import json
 import logging
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logger = logging.getLogger(__name__)
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # Major market-moving earnings that affect SPX
 # These are companies with large SPX weight (top 25)
@@ -70,9 +74,14 @@ class MarketCalendar:
         self.polygon_base_url = "https://api.polygon.io"
 
     def is_market_open(self, dt: datetime = None) -> bool:
-        """Check if market is open at given datetime"""
+        """Check if market is open at given datetime (8:30 AM - 3:00 PM CT)"""
         if dt is None:
-            dt = datetime.now()
+            dt = datetime.now(CENTRAL_TZ)
+        elif dt.tzinfo is None:
+            # Assume naive datetime is Central Time
+            dt = dt.replace(tzinfo=CENTRAL_TZ)
+        else:
+            dt = dt.astimezone(CENTRAL_TZ)
 
         # Check if weekend
         if dt.weekday() >= 5:  # Saturday = 5, Sunday = 6
@@ -83,14 +92,13 @@ class MarketCalendar:
         if date_str in self.holidays:
             return False
 
-        # Check market hours (9:30 AM - 4:00 PM ET)
-        # Note: This is simplified - should use pytz for proper timezone handling
+        # Check market hours (8:30 AM - 3:00 PM CT = 9:30 AM - 4:00 PM ET)
         hour = dt.hour
         minute = dt.minute
 
-        if hour < 9 or hour >= 16:
+        if hour < 8 or hour >= 15:
             return False
-        if hour == 9 and minute < 30:
+        if hour == 8 and minute < 30:
             return False
 
         return True
@@ -98,7 +106,7 @@ class MarketCalendar:
     def is_trading_day(self, date: datetime = None) -> bool:
         """Check if given date is a trading day"""
         if date is None:
-            date = datetime.now()
+            date = datetime.now(CENTRAL_TZ)
 
         # Check if weekend
         if date.weekday() >= 5:
@@ -111,7 +119,7 @@ class MarketCalendar:
     def get_next_trading_day(self, from_date: datetime = None) -> datetime:
         """Get next trading day from given date"""
         if from_date is None:
-            from_date = datetime.now()
+            from_date = datetime.now(CENTRAL_TZ)
 
         next_day = from_date + timedelta(days=1)
         while not self.is_trading_day(next_day):

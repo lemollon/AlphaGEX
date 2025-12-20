@@ -314,7 +314,8 @@ class DecisionLogger:
     """
 
     def __init__(self):
-        self.tz = ZoneInfo("America/New_York")
+        # Texas Central Time - standard timezone for all AlphaGEX operations
+        self.tz = ZoneInfo("America/Chicago")
         self.decisions: List[TradeDecision] = []
         self._decision_counter = 0
         self._db_initialized = False
