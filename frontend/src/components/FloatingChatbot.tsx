@@ -91,7 +91,7 @@ function getGexisWelcomeMessage(): string {
 
 All systems are operational. I have full access to AlphaGEX's trading intelligence, including real-time GEX analysis, bot status monitoring, trade recommendations, and your trading history.
 
-**Quick Commands:**
+Quick Commands:
 Type /help for available commands, or ask me anything naturally.
 
 How may I assist you today?`
