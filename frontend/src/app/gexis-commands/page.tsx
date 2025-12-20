@@ -119,7 +119,7 @@ export default function GexisCommandsPage() {
   return (
     <div className="min-h-screen bg-background">
       <Navigation />
-      <div className="p-6 pt-20 lg:pt-6 max-w-6xl mx-auto lg:pl-16">
+      <div className="p-6 pt-20 max-w-6xl mx-auto lg:pl-16">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center space-x-3 mb-2">

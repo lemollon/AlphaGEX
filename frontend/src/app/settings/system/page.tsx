@@ -194,7 +194,7 @@ export default function SystemSettings() {
     <div className="min-h-screen bg-black text-white">
       <Navigation />
 
-      <div className="p-8 pt-20 lg:pt-8 max-w-6xl mx-auto">
+      <div className="p-8 pt-20 max-w-6xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl font-bold mb-2">System Settings</h1>
           <p className="text-gray-400">Manage autonomous trader and system configuration</p>
