@@ -2382,6 +2382,370 @@ async def oracle_analyze_patterns(job_id: Optional[str] = None):
         }
 
 
+@router.get("/oracle/training-status")
+async def get_oracle_training_status():
+    """
+    Get comprehensive Oracle training status.
+
+    Returns information about:
+    - Model training status and version
+    - Pending outcomes count
+    - Training metrics if available
+    - Whether retraining is needed
+    """
+    try:
+        from quant.oracle_advisor import get_training_status
+
+        status = get_training_status()
+
+        return {
+            "success": True,
+            **status
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get training status: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/oracle/trigger-training")
+async def trigger_oracle_training(force: bool = False):
+    """
+    Manually trigger Oracle model training.
+
+    Args:
+        force: If True, train even if threshold not met
+
+    Returns:
+        Training result with metrics
+    """
+    try:
+        from quant.oracle_advisor import auto_train
+
+        result = auto_train(force=force)
+
+        return {
+            "success": result.get('success', False),
+            **result
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to trigger training: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/oracle/predictions")
+async def get_oracle_predictions_full(
+    days: int = 30,
+    limit: int = 100,
+    bot_name: Optional[str] = None,
+    include_claude: bool = True
+):
+    """
+    Get full Oracle predictions with Claude analysis data.
+
+    Args:
+        days: Number of days to look back (default: 30)
+        limit: Maximum number of predictions (default: 100)
+        bot_name: Filter by bot (ARES, ATLAS, PHOENIX, ATHENA)
+        include_claude: Include Claude analysis data (default: True)
+
+    Returns comprehensive prediction data including:
+    - Market context at prediction time
+    - ML model prediction details
+    - Claude AI analysis and reasoning
+    - Actual outcomes if available
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        query = """
+            SELECT
+                id, trade_date, bot_name, prediction_time,
+                spot_price, vix, gex_net, gex_normalized, gex_regime,
+                gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                advice, win_probability, confidence,
+                suggested_risk_pct, suggested_sd_multiplier,
+                use_gex_walls, suggested_put_strike, suggested_call_strike,
+                reasoning, top_factors, model_version,
+                claude_analysis,
+                prediction_used, actual_outcome, actual_pnl, outcome_date
+            FROM oracle_predictions
+            WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
+        """
+        params = [days]
+
+        if bot_name:
+            query += " AND bot_name = %s"
+            params.append(bot_name.upper())
+
+        query += " ORDER BY trade_date DESC, prediction_time DESC LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+
+        predictions = []
+        for row in rows:
+            pred = dict(row)
+
+            # Parse JSONB fields
+            if pred.get('top_factors') and isinstance(pred['top_factors'], str):
+                import json
+                pred['top_factors'] = json.loads(pred['top_factors'])
+
+            # Include or exclude Claude analysis
+            if include_claude and pred.get('claude_analysis'):
+                if isinstance(pred['claude_analysis'], str):
+                    import json
+                    pred['claude_analysis'] = json.loads(pred['claude_analysis'])
+            elif not include_claude:
+                pred.pop('claude_analysis', None)
+
+            predictions.append(pred)
+
+        return {
+            "success": True,
+            "predictions": predictions,
+            "count": len(predictions),
+            "days": days
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get predictions: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e),
+            "predictions": []
+        }
+
+
+@router.get("/oracle/bot-interactions")
+async def get_oracle_bot_interactions(
+    days: int = 7,
+    limit: int = 200,
+    bot_name: Optional[str] = None
+):
+    """
+    Get all bot interactions with Oracle.
+
+    Shows every time a bot (ARES, ATLAS, PHOENIX, ATHENA) consulted Oracle
+    with full context and reasoning.
+
+    Args:
+        days: Number of days to look back
+        limit: Maximum interactions to return
+        bot_name: Filter by specific bot
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get from both oracle_predictions and bot_decision_logs
+        query = """
+            SELECT
+                'prediction' as source,
+                op.id,
+                op.trade_date,
+                op.bot_name,
+                op.prediction_time as timestamp,
+                op.advice as action,
+                op.win_probability,
+                op.confidence,
+                op.reasoning,
+                op.spot_price,
+                op.vix,
+                op.gex_regime,
+                op.claude_analysis,
+                op.actual_outcome,
+                op.actual_pnl
+            FROM oracle_predictions op
+            WHERE op.trade_date >= CURRENT_DATE - INTERVAL '%s days'
+        """
+        params = [days]
+
+        if bot_name:
+            query += " AND op.bot_name = %s"
+            params.append(bot_name.upper())
+
+        query += " ORDER BY op.prediction_time DESC LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(query, params)
+        interactions = [dict(row) for row in cursor.fetchall()]
+
+        # Also get from bot_decision_logs for ORACLE entries
+        try:
+            cursor.execute("""
+                SELECT
+                    'decision_log' as source,
+                    id,
+                    timestamp,
+                    bot_name,
+                    decision_type,
+                    action,
+                    symbol,
+                    entry_reasoning,
+                    market_context,
+                    claude_context,
+                    passed_all_checks,
+                    blocked_reason
+                FROM bot_decision_logs
+                WHERE bot_name = 'ORACLE'
+                AND timestamp >= NOW() - INTERVAL '%s days'
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """, (days, limit))
+            decision_logs = [dict(row) for row in cursor.fetchall()]
+            interactions.extend(decision_logs)
+        except Exception as e:
+            logger.warning(f"Could not fetch bot_decision_logs: {e}")
+
+        conn.close()
+
+        # Sort by timestamp
+        interactions.sort(key=lambda x: x.get('timestamp') or x.get('trade_date') or '', reverse=True)
+
+        return {
+            "success": True,
+            "interactions": interactions[:limit],
+            "count": len(interactions[:limit]),
+            "days": days
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get bot interactions: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e),
+            "interactions": []
+        }
+
+
+@router.get("/oracle/performance")
+async def get_oracle_performance(days: int = 90):
+    """
+    Get Oracle prediction performance metrics.
+
+    Returns:
+    - Accuracy by bot
+    - Win rate predictions vs actuals
+    - Calibration metrics
+    - Performance over time
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get predictions with outcomes
+        cursor.execute("""
+            SELECT
+                bot_name,
+                advice,
+                win_probability,
+                confidence,
+                actual_outcome,
+                actual_pnl,
+                trade_date
+            FROM oracle_predictions
+            WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
+            AND actual_outcome IS NOT NULL
+            ORDER BY trade_date
+        """, (days,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            return {
+                "success": True,
+                "message": "No predictions with outcomes yet",
+                "total_predictions": 0,
+                "performance": {}
+            }
+
+        # Calculate metrics
+        total = len(rows)
+        wins = sum(1 for r in rows if r['actual_outcome'] in ['MAX_PROFIT', 'WIN', 'PARTIAL_WIN'])
+        losses = total - wins
+
+        # Group by bot
+        by_bot = {}
+        for row in rows:
+            bot = row['bot_name']
+            if bot not in by_bot:
+                by_bot[bot] = {'total': 0, 'wins': 0, 'pnl': 0, 'predictions': []}
+            by_bot[bot]['total'] += 1
+            by_bot[bot]['pnl'] += row['actual_pnl'] or 0
+            if row['actual_outcome'] in ['MAX_PROFIT', 'WIN', 'PARTIAL_WIN']:
+                by_bot[bot]['wins'] += 1
+            by_bot[bot]['predictions'].append({
+                'predicted_prob': row['win_probability'],
+                'actual_win': 1 if row['actual_outcome'] in ['MAX_PROFIT', 'WIN', 'PARTIAL_WIN'] else 0
+            })
+
+        # Calculate accuracy per bot
+        for bot in by_bot:
+            by_bot[bot]['win_rate'] = by_bot[bot]['wins'] / by_bot[bot]['total'] if by_bot[bot]['total'] > 0 else 0
+            by_bot[bot]['avg_predicted_prob'] = sum(p['predicted_prob'] for p in by_bot[bot]['predictions']) / len(by_bot[bot]['predictions'])
+            del by_bot[bot]['predictions']
+
+        # Calculate calibration (predicted vs actual win rate)
+        all_predicted_probs = [r['win_probability'] for r in rows]
+        avg_predicted = sum(all_predicted_probs) / len(all_predicted_probs) if all_predicted_probs else 0
+        actual_win_rate = wins / total if total > 0 else 0
+
+        total_pnl = sum(r['actual_pnl'] or 0 for r in rows)
+
+        return {
+            "success": True,
+            "total_predictions": total,
+            "days": days,
+            "overall": {
+                "wins": wins,
+                "losses": losses,
+                "win_rate": actual_win_rate,
+                "avg_predicted_win_prob": avg_predicted,
+                "calibration_error": abs(avg_predicted - actual_win_rate),
+                "total_pnl": total_pnl
+            },
+            "by_bot": by_bot
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get Oracle performance: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @router.get("/export/result/{result_id}")
 async def export_result_by_id(result_id: int):
     """Export a specific backtest result by database ID"""

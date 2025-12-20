@@ -619,8 +619,12 @@ export const apiClient = {
     day_of_week?: number
     vix_1d_change?: number
     normalized_gex?: number
+    gex_normalized?: number
+    gex_call_wall?: number
+    gex_put_wall?: number
     distance_to_call_wall?: number
     distance_to_put_wall?: number
+    bot_name?: string
   }) => api.post('/api/zero-dte/oracle/analyze', data),
   oracleExplain: (data: {
     prediction: any
@@ -630,6 +634,28 @@ export const apiClient = {
     backtest_trades: any[]
     focus_area?: string
   }) => api.post('/api/zero-dte/oracle/analyze-patterns', data),
+
+  // Oracle Training & Bot Interactions
+  getOracleTrainingStatus: () => api.get('/api/zero-dte/oracle/training-status'),
+  triggerOracleTraining: (force: boolean = false) =>
+    api.post(`/api/zero-dte/oracle/trigger-training?force=${force}`),
+  getOracleBotInteractions: (params?: { days?: number, limit?: number, bot_name?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.days) queryParams.append('days', String(params.days))
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
+    return api.get(`/api/zero-dte/oracle/bot-interactions?${queryParams.toString()}`)
+  },
+  getOraclePerformance: (days: number = 90) =>
+    api.get(`/api/zero-dte/oracle/performance?days=${days}`),
+  getOraclePredictionsFull: (params?: { days?: number, limit?: number, bot_name?: string, include_claude?: boolean }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.days) queryParams.append('days', String(params.days))
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
+    if (params?.include_claude !== undefined) queryParams.append('include_claude', String(params.include_claude))
+    return api.get(`/api/zero-dte/oracle/predictions?${queryParams.toString()}`)
+  },
 
   // Export Routes
   exportData: async (type: 'trades' | 'pnl-attribution' | 'decision-logs' | 'wheel-cycles' | 'full-audit', params?: {
