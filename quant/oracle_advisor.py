@@ -2443,6 +2443,15 @@ def auto_train(
             oracle.live_log.log("AUTO_TRAIN_SUCCESS", f"Trained from live outcomes - v{metrics.model_version}", result)
             return result
 
+    # Try training from database backtest results
+    metrics = train_from_database_backtests()
+    if metrics:
+        result["training_metrics"] = metrics.__dict__
+        result["success"] = True
+        result["method"] = "database_backtests"
+        oracle.live_log.log("AUTO_TRAIN_SUCCESS", f"Trained from DB backtests - v{metrics.model_version}", result)
+        return result
+
     # Fallback to KRONOS backtest data
     try:
         from backtest.autonomous_backtest_engine import get_backtester
@@ -2463,6 +2472,105 @@ def auto_train(
     result["reason"] = "Insufficient data for training"
     oracle.live_log.log("AUTO_TRAIN_FAIL", result["reason"], result)
     return result
+
+
+def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMetrics]:
+    """
+    Train Oracle from backtest results stored in database.
+
+    This pulls data from zero_dte_backtest_results and backtest_results tables.
+    More robust than KRONOS in-memory data as it persists across restarts.
+    """
+    if not DB_AVAILABLE:
+        logger.warning("Database not available for training")
+        return None
+
+    oracle = get_oracle()
+    oracle.live_log.log("TRAIN_DB_START", "Training from database backtest results", {})
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Try zero_dte_backtest_results first (more detailed)
+        cursor.execute("""
+            SELECT
+                created_at, ticker, strategy, initial_capital, final_equity,
+                win_rate, total_trades, max_drawdown_pct, sharpe_ratio,
+                trade_log
+            FROM zero_dte_backtest_results
+            WHERE trade_log IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 50
+        """)
+        rows = cursor.fetchall()
+
+        if not rows:
+            # Fall back to backtest_results table
+            cursor.execute("""
+                SELECT
+                    run_date, trades_data, total_trades, win_rate,
+                    total_pnl, max_drawdown
+                FROM backtest_results
+                WHERE trades_data IS NOT NULL
+                ORDER BY run_date DESC
+                LIMIT 50
+            """)
+            rows = cursor.fetchall()
+
+        conn.close()
+
+        if not rows:
+            oracle.live_log.log("TRAIN_DB_SKIP", "No backtest data in database", {})
+            logger.info("No backtest data found in database")
+            return None
+
+        # Extract trades from results
+        all_trades = []
+        for row in rows:
+            try:
+                # Handle different table structures
+                if len(row) >= 10:  # zero_dte_backtest_results
+                    trade_log = row[9]
+                else:  # backtest_results
+                    trade_log = row[1]
+
+                if isinstance(trade_log, str):
+                    import json
+                    trades = json.loads(trade_log)
+                else:
+                    trades = trade_log
+
+                if isinstance(trades, list):
+                    all_trades.extend(trades)
+                elif isinstance(trades, dict) and 'trades' in trades:
+                    all_trades.extend(trades['trades'])
+            except Exception as e:
+                logger.warning(f"Failed to parse trade log: {e}")
+                continue
+
+        if len(all_trades) < min_samples:
+            oracle.live_log.log("TRAIN_DB_SKIP", f"Insufficient trades: {len(all_trades)} < {min_samples}", {})
+            logger.info(f"Insufficient trades from database: {len(all_trades)} < {min_samples}")
+            return None
+
+        # Format as KRONOS backtest results
+        backtest_results = {'all_trades': all_trades}
+        metrics = oracle.train_from_kronos(backtest_results, min_samples=min_samples)
+
+        oracle.live_log.log("TRAIN_DB_DONE", f"Trained from {len(all_trades)} database trades", {
+            "accuracy": metrics.accuracy,
+            "total_samples": metrics.total_samples
+        })
+
+        return metrics
+
+    except Exception as e:
+        oracle.live_log.log("TRAIN_DB_ERROR", f"Database training failed: {e}", {})
+        logger.error(f"Failed to train from database: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 if __name__ == "__main__":
