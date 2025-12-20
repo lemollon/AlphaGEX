@@ -359,6 +359,7 @@ export const apiClient = {
   getDailyTradingPlan: () => api.get('/api/ai-intelligence/daily-trading-plan'),
   getPositionGuidance: (tradeId: string) => api.get(`/api/ai-intelligence/position-guidance/${tradeId}`),
   getMarketCommentary: () => api.get('/api/ai-intelligence/market-commentary'),
+  getIntelligenceFeed: () => api.get('/api/ai-intelligence/intelligence-feed'),
   compareAvailableStrategies: () => api.get('/api/ai-intelligence/compare-strategies'),
   explainGreek: (data: {
     greek: string,

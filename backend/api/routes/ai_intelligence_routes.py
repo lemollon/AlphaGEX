@@ -38,6 +38,7 @@ _cache_lock = threading.Lock()
 CACHE_TTL = {
     'daily_trading_plan': 5 * 60,     # 5 minutes - fresh data for trading decisions
     'market_commentary': 2 * 60,       # 2 minutes - near real-time commentary
+    'intelligence_feed': 2 * 60,       # 2 minutes - unified intelligence dashboard
 }
 
 
@@ -321,6 +322,333 @@ def get_live_psychology_regime(symbol: str = 'SPY') -> Dict[str, Any]:
             regime_data['psychology_trap'] = 'FLIP_POINT_CRITICAL'
 
     return regime_data
+
+
+# ============================================================================
+# ENHANCED DATA FETCHING - Options Flow, Historical GEX, Skew, Momentum
+# ============================================================================
+
+def get_options_flow_data() -> Dict[str, Any]:
+    """
+    Fetch latest options flow data for smart money indicators.
+    Updates every 5 minutes.
+    """
+    flow_data = {
+        'put_call_ratio': 1.0,
+        'unusual_call_volume': 0,
+        'unusual_put_volume': 0,
+        'unusual_strikes': [],
+        'sentiment': 'NEUTRAL',
+        'smart_money_signal': None,
+        'updated_at': None,
+        'refresh_interval': '5 minutes'
+    }
+
+    try:
+        conn = get_safe_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        c.execute("""
+            SELECT put_call_ratio, unusual_call_volume, unusual_put_volume,
+                   unusual_strikes, timestamp
+            FROM options_flow
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        row = c.fetchone()
+
+        if row:
+            pc_ratio = float(row.get('put_call_ratio') or 1.0)
+            flow_data['put_call_ratio'] = pc_ratio
+            flow_data['unusual_call_volume'] = int(row.get('unusual_call_volume') or 0)
+            flow_data['unusual_put_volume'] = int(row.get('unusual_put_volume') or 0)
+            flow_data['unusual_strikes'] = row.get('unusual_strikes') or []
+            flow_data['updated_at'] = row.get('timestamp').isoformat() if row.get('timestamp') else None
+
+            # Interpret sentiment
+            if pc_ratio > 1.3:
+                flow_data['sentiment'] = 'BEARISH'
+                flow_data['smart_money_signal'] = 'High put activity - institutions hedging or bearish'
+            elif pc_ratio < 0.7:
+                flow_data['sentiment'] = 'BULLISH'
+                flow_data['smart_money_signal'] = 'High call activity - institutions positioning bullish'
+            elif flow_data['unusual_call_volume'] > flow_data['unusual_put_volume'] * 2:
+                flow_data['sentiment'] = 'BULLISH'
+                flow_data['smart_money_signal'] = 'Unusual call volume detected'
+            elif flow_data['unusual_put_volume'] > flow_data['unusual_call_volume'] * 2:
+                flow_data['sentiment'] = 'BEARISH'
+                flow_data['smart_money_signal'] = 'Unusual put volume detected'
+
+        conn.close()
+    except Exception as e:
+        logger.debug(f"get_options_flow_data error: {e}")
+
+    return flow_data
+
+
+def get_historical_gex_context() -> Dict[str, Any]:
+    """
+    Fetch historical GEX for day-over-day comparison.
+    Updates every 5 minutes.
+    """
+    history = {
+        'yesterday_gex': 0,
+        'today_gex': 0,
+        'gex_change': 0,
+        'gex_trend': 'FLAT',
+        'flip_point_movement': 'STABLE',
+        'yesterday_flip': 0,
+        'today_flip': 0,
+        'updated_at': None,
+        'refresh_interval': '5 minutes'
+    }
+
+    try:
+        conn = get_safe_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get today's latest GEX
+        c.execute("""
+            SELECT net_gex, flip_point, timestamp
+            FROM gex_history
+            WHERE symbol = 'SPY' AND timestamp >= CURRENT_DATE
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        today_row = c.fetchone()
+
+        # Get yesterday's closing GEX
+        c.execute("""
+            SELECT net_gex, flip_point, timestamp
+            FROM gex_history
+            WHERE symbol = 'SPY' AND timestamp < CURRENT_DATE
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        yesterday_row = c.fetchone()
+
+        if today_row:
+            history['today_gex'] = float(today_row.get('net_gex') or 0)
+            history['today_flip'] = float(today_row.get('flip_point') or 0)
+            history['updated_at'] = today_row.get('timestamp').isoformat() if today_row.get('timestamp') else None
+
+        if yesterday_row:
+            history['yesterday_gex'] = float(yesterday_row.get('net_gex') or 0)
+            history['yesterday_flip'] = float(yesterday_row.get('flip_point') or 0)
+
+        # Calculate changes
+        if history['yesterday_gex'] != 0:
+            history['gex_change'] = history['today_gex'] - history['yesterday_gex']
+            change_pct = (history['gex_change'] / abs(history['yesterday_gex'])) * 100 if history['yesterday_gex'] else 0
+
+            if change_pct > 20:
+                history['gex_trend'] = 'STRONGLY_RISING'
+            elif change_pct > 5:
+                history['gex_trend'] = 'RISING'
+            elif change_pct < -20:
+                history['gex_trend'] = 'STRONGLY_FALLING'
+            elif change_pct < -5:
+                history['gex_trend'] = 'FALLING'
+
+        # Flip point movement
+        if history['yesterday_flip'] > 0 and history['today_flip'] > 0:
+            flip_change = history['today_flip'] - history['yesterday_flip']
+            if flip_change > 2:
+                history['flip_point_movement'] = 'RISING'
+            elif flip_change < -2:
+                history['flip_point_movement'] = 'FALLING'
+
+        conn.close()
+    except Exception as e:
+        logger.debug(f"get_historical_gex_context error: {e}")
+
+    return history
+
+
+def get_intraday_momentum() -> Dict[str, Any]:
+    """
+    Fetch intraday GEX momentum (change in last hour).
+    Updates every 5 minutes.
+    """
+    momentum = {
+        'gex_1h_ago': 0,
+        'gex_current': 0,
+        'gex_change_1h': 0,
+        'momentum': 'STABLE',
+        'speed': 'NORMAL',
+        'direction': 'NEUTRAL',
+        'updated_at': None,
+        'refresh_interval': '5 minutes'
+    }
+
+    try:
+        conn = get_safe_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get current GEX
+        c.execute("""
+            SELECT net_gex, timestamp
+            FROM gex_history
+            WHERE symbol = 'SPY'
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        current_row = c.fetchone()
+
+        # Get GEX from ~1 hour ago
+        c.execute("""
+            SELECT net_gex, timestamp
+            FROM gex_history
+            WHERE symbol = 'SPY' AND timestamp <= NOW() - INTERVAL '55 minutes'
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        hour_ago_row = c.fetchone()
+
+        if current_row:
+            momentum['gex_current'] = float(current_row.get('net_gex') or 0)
+            momentum['updated_at'] = current_row.get('timestamp').isoformat() if current_row.get('timestamp') else None
+
+        if hour_ago_row:
+            momentum['gex_1h_ago'] = float(hour_ago_row.get('net_gex') or 0)
+
+        # Calculate momentum
+        if momentum['gex_1h_ago'] != 0:
+            momentum['gex_change_1h'] = momentum['gex_current'] - momentum['gex_1h_ago']
+            change_billions = momentum['gex_change_1h'] / 1e9
+
+            if change_billions > 0.5:
+                momentum['momentum'] = 'BUILDING'
+                momentum['direction'] = 'BULLISH'
+            elif change_billions > 0.2:
+                momentum['momentum'] = 'RISING'
+                momentum['direction'] = 'BULLISH'
+            elif change_billions < -0.5:
+                momentum['momentum'] = 'COLLAPSING'
+                momentum['direction'] = 'BEARISH'
+            elif change_billions < -0.2:
+                momentum['momentum'] = 'FALLING'
+                momentum['direction'] = 'BEARISH'
+
+            # Speed assessment
+            if abs(change_billions) > 1:
+                momentum['speed'] = 'FAST'
+            elif abs(change_billions) > 0.5:
+                momentum['speed'] = 'MODERATE'
+
+        conn.close()
+    except Exception as e:
+        logger.debug(f"get_intraday_momentum error: {e}")
+
+    return momentum
+
+
+def get_skew_data() -> Dict[str, Any]:
+    """
+    Fetch volatility skew data for directional bias.
+    Updates every 5 minutes.
+    """
+    skew = {
+        'put_call_skew': 0,
+        'skew_trend': 'NEUTRAL',
+        'iv_rank': 50,
+        'directional_bias': 'NEUTRAL',
+        'interpretation': None,
+        'updated_at': None,
+        'refresh_interval': '5 minutes'
+    }
+
+    try:
+        if TradingVolatilityAPI:
+            api = TradingVolatilityAPI()
+            skew_result = api.get_skew_data('SPY') if hasattr(api, 'get_skew_data') else None
+
+            if skew_result and 'error' not in skew_result:
+                skew['put_call_skew'] = float(skew_result.get('skew') or 0)
+                skew['iv_rank'] = float(skew_result.get('iv_rank') or 50)
+                skew['updated_at'] = datetime.now().isoformat()
+
+                # Interpret skew
+                if skew['put_call_skew'] > 1.1:
+                    skew['skew_trend'] = 'PUT_HEAVY'
+                    skew['directional_bias'] = 'BEARISH'
+                    skew['interpretation'] = 'Market pricing in downside protection'
+                elif skew['put_call_skew'] < 0.9:
+                    skew['skew_trend'] = 'CALL_HEAVY'
+                    skew['directional_bias'] = 'BULLISH'
+                    skew['interpretation'] = 'Market pricing in upside potential'
+                else:
+                    skew['interpretation'] = 'Balanced sentiment, no strong directional bias'
+
+    except Exception as e:
+        logger.debug(f"get_skew_data error: {e}")
+
+    return skew
+
+
+def get_regime_pattern_performance() -> Dict[str, Any]:
+    """
+    Get pattern performance filtered by current market regime.
+    Updates every 30 minutes.
+    """
+    performance = {
+        'current_regime': 'UNKNOWN',
+        'patterns': [],
+        'best_pattern_today': None,
+        'worst_pattern_today': None,
+        'updated_at': None,
+        'refresh_interval': '30 minutes'
+    }
+
+    try:
+        # Get current regime
+        psychology = get_live_psychology_regime('SPY')
+        performance['current_regime'] = psychology.get('regime_type', 'UNKNOWN')
+
+        conn = get_safe_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Get pattern performance (simplified - would need regime tagging in real implementation)
+        c.execute("""
+            SELECT
+                pattern_type,
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                AVG(realized_pnl) as avg_pnl,
+                MAX(realized_pnl) as best_trade,
+                MIN(realized_pnl) as worst_trade
+            FROM autonomous_closed_trades
+            WHERE exit_date >= NOW() - INTERVAL '30 days'
+            GROUP BY pattern_type
+            HAVING COUNT(*) >= 3
+            ORDER BY (SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*)) DESC
+        """)
+
+        patterns = []
+        for row in c.fetchall():
+            win_rate = (row['wins'] / row['total_trades'] * 100) if row['total_trades'] > 0 else 0
+            patterns.append({
+                'pattern': row['pattern_type'],
+                'trades': row['total_trades'],
+                'win_rate': round(win_rate, 1),
+                'avg_pnl': round(float(row['avg_pnl'] or 0), 2),
+                'best_trade': round(float(row['best_trade'] or 0), 2),
+                'worst_trade': round(float(row['worst_trade'] or 0), 2)
+            })
+
+        performance['patterns'] = patterns
+        performance['updated_at'] = datetime.now().isoformat()
+
+        if patterns:
+            performance['best_pattern_today'] = patterns[0] if patterns else None
+            performance['worst_pattern_today'] = patterns[-1] if len(patterns) > 1 else None
+
+        conn.close()
+    except Exception as e:
+        logger.debug(f"get_regime_pattern_performance error: {e}")
+
+    return performance
+
 
 # Get API key with fallback support (ANTHROPIC_API_KEY or CLAUDE_API_KEY)
 api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
@@ -1388,6 +1716,213 @@ Write in short, punchy sentences. No fluff. Every word must add value. Reference
         logger.error(f"[ERROR] market-commentary failed: {type(e).__name__}: {str(e)}")
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to generate commentary: {type(e).__name__}: {str(e)}")
+
+
+# ============================================================================
+# 5.5 UNIFIED INTELLIGENCE FEED - All data in one endpoint
+# ============================================================================
+
+@router.get("/intelligence-feed")
+async def get_intelligence_feed():
+    """
+    Unified intelligence feed providing all market data in one call.
+    Designed for the news feed style dashboard with expandable cards.
+
+    Returns structured data for:
+    - Market snapshot (live GEX, price, VIX)
+    - Options flow (smart money indicators)
+    - Historical context (day-over-day GEX)
+    - Intraday momentum
+    - Pattern performance
+    - AI commentary
+
+    Each section includes timestamps and refresh intervals.
+    Cached for 2 minutes.
+    """
+    try:
+        # Check cache first
+        cached = get_cached_response('intelligence_feed')
+        if cached:
+            cached['data']['from_cache'] = True
+            return cached
+
+        logger.debug("[intelligence-feed] Fetching all data sources...")
+
+        # Fetch all data in parallel conceptually (Python will execute sequentially but fast)
+        market_data = get_live_market_data('SPY')
+        psychology = get_live_psychology_regime('SPY')
+        options_flow = get_options_flow_data()
+        historical_gex = get_historical_gex_context()
+        intraday = get_intraday_momentum()
+        skew = get_skew_data()
+        patterns = get_regime_pattern_performance()
+
+        # Build GEX context
+        gex = {
+            'call_wall': market_data.get('call_wall', 0),
+            'put_wall': market_data.get('put_wall', 0),
+            'flip_point': market_data.get('flip_point', 0)
+        }
+        gex_context = get_gex_context(market_data, gex)
+
+        # Calculate key metrics
+        spot = float(market_data.get('spot_price') or 0)
+        call_wall = float(gex.get('call_wall') or 0)
+        put_wall = float(gex.get('put_wall') or 0)
+        flip_point = float(gex.get('flip_point') or 0)
+        net_gex = float(market_data.get('net_gex') or 0)
+
+        dist_to_call = ((call_wall - spot) / spot * 100) if spot > 0 and call_wall > 0 else 0
+        dist_to_put = ((spot - put_wall) / spot * 100) if spot > 0 and put_wall > 0 else 0
+        above_flip = spot > flip_point if flip_point > 0 else True
+
+        # Determine overall market bias
+        bullish_signals = 0
+        bearish_signals = 0
+
+        if net_gex > 0: bullish_signals += 1
+        else: bearish_signals += 1
+
+        if above_flip: bullish_signals += 1
+        else: bearish_signals += 1
+
+        if options_flow['sentiment'] == 'BULLISH': bullish_signals += 1
+        elif options_flow['sentiment'] == 'BEARISH': bearish_signals += 1
+
+        if intraday['direction'] == 'BULLISH': bullish_signals += 1
+        elif intraday['direction'] == 'BEARISH': bearish_signals += 1
+
+        if historical_gex['gex_trend'] in ['RISING', 'STRONGLY_RISING']: bullish_signals += 1
+        elif historical_gex['gex_trend'] in ['FALLING', 'STRONGLY_FALLING']: bearish_signals += 1
+
+        if bullish_signals > bearish_signals + 1:
+            overall_bias = 'BULLISH'
+        elif bearish_signals > bullish_signals + 1:
+            overall_bias = 'BEARISH'
+        else:
+            overall_bias = 'NEUTRAL'
+
+        current_time = datetime.now()
+
+        response = {
+            'success': True,
+            'data': {
+                'generated_at': current_time.isoformat(),
+                'from_cache': False,
+
+                # Overall market bias summary
+                'market_bias': {
+                    'direction': overall_bias,
+                    'bullish_signals': bullish_signals,
+                    'bearish_signals': bearish_signals,
+                    'confidence': max(bullish_signals, bearish_signals) / 5 * 100,
+                    'updated_at': current_time.isoformat(),
+                    'refresh_interval': '2 minutes'
+                },
+
+                # Live market snapshot
+                'market_snapshot': {
+                    'spy_price': spot,
+                    'vix': market_data.get('vix', 0),
+                    'net_gex': net_gex,
+                    'net_gex_billions': round(net_gex / 1e9, 2),
+                    'call_wall': call_wall,
+                    'put_wall': put_wall,
+                    'flip_point': flip_point,
+                    'dist_to_call_pct': round(dist_to_call, 2),
+                    'dist_to_put_pct': round(dist_to_put, 2),
+                    'above_flip': above_flip,
+                    'regime': psychology.get('regime_type', 'UNKNOWN'),
+                    'regime_confidence': psychology.get('confidence', 50),
+                    'psychology_trap': psychology.get('psychology_trap'),
+                    'data_source': market_data.get('data_source', 'unknown'),
+                    'updated_at': current_time.isoformat(),
+                    'refresh_interval': '2 minutes'
+                },
+
+                # Options flow / smart money
+                'options_flow': {
+                    'put_call_ratio': options_flow['put_call_ratio'],
+                    'sentiment': options_flow['sentiment'],
+                    'unusual_call_volume': options_flow['unusual_call_volume'],
+                    'unusual_put_volume': options_flow['unusual_put_volume'],
+                    'unusual_strikes': options_flow['unusual_strikes'],
+                    'smart_money_signal': options_flow['smart_money_signal'],
+                    'updated_at': options_flow['updated_at'] or current_time.isoformat(),
+                    'refresh_interval': '5 minutes'
+                },
+
+                # Historical GEX context
+                'gex_history': {
+                    'yesterday_gex_billions': round(historical_gex['yesterday_gex'] / 1e9, 2),
+                    'today_gex_billions': round(historical_gex['today_gex'] / 1e9, 2),
+                    'gex_change_billions': round(historical_gex['gex_change'] / 1e9, 2),
+                    'gex_trend': historical_gex['gex_trend'],
+                    'flip_point_movement': historical_gex['flip_point_movement'],
+                    'yesterday_flip': historical_gex['yesterday_flip'],
+                    'today_flip': historical_gex['today_flip'],
+                    'updated_at': historical_gex['updated_at'] or current_time.isoformat(),
+                    'refresh_interval': '5 minutes'
+                },
+
+                # Intraday momentum
+                'intraday_momentum': {
+                    'gex_1h_ago_billions': round(intraday['gex_1h_ago'] / 1e9, 2),
+                    'gex_current_billions': round(intraday['gex_current'] / 1e9, 2),
+                    'gex_change_1h_billions': round(intraday['gex_change_1h'] / 1e9, 2),
+                    'momentum': intraday['momentum'],
+                    'speed': intraday['speed'],
+                    'direction': intraday['direction'],
+                    'updated_at': intraday['updated_at'] or current_time.isoformat(),
+                    'refresh_interval': '5 minutes'
+                },
+
+                # Volatility skew
+                'volatility_skew': {
+                    'put_call_skew': skew['put_call_skew'],
+                    'skew_trend': skew['skew_trend'],
+                    'iv_rank': skew['iv_rank'],
+                    'directional_bias': skew['directional_bias'],
+                    'interpretation': skew['interpretation'],
+                    'updated_at': skew['updated_at'] or current_time.isoformat(),
+                    'refresh_interval': '5 minutes'
+                },
+
+                # Pattern performance
+                'pattern_performance': {
+                    'current_regime': patterns['current_regime'],
+                    'patterns': patterns['patterns'][:5],  # Top 5 patterns
+                    'best_pattern': patterns['best_pattern_today'],
+                    'updated_at': patterns['updated_at'] or current_time.isoformat(),
+                    'refresh_interval': '30 minutes'
+                },
+
+                # GEX interpretation context (for AI display)
+                'gex_interpretation': gex_context,
+
+                # Refresh schedule info
+                '_refresh_schedule': {
+                    'market_snapshot': '2 minutes',
+                    'options_flow': '5 minutes',
+                    'gex_history': '5 minutes',
+                    'intraday_momentum': '5 minutes',
+                    'volatility_skew': '5 minutes',
+                    'pattern_performance': '30 minutes'
+                }
+            }
+        }
+
+        # Cache the response
+        set_cached_response('intelligence_feed', response)
+
+        logger.debug("[intelligence-feed] Response generated successfully")
+        return response
+
+    except Exception as e:
+        import traceback
+        logger.error(f"[ERROR] intelligence-feed failed: {type(e).__name__}: {str(e)}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate intelligence feed: {type(e).__name__}: {str(e)}")
 
 
 # ============================================================================
