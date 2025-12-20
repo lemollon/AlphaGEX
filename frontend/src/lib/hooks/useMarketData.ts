@@ -306,12 +306,20 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
-  mlStrategy: async () => {
+  mlStrategyExplanation: async () => {
     try {
-      const response = await api.get('/api/ml/strategy')
+      const response = await api.get('/api/ml/strategy-explanation')
       return response.data
     } catch {
       return { success: false, data: null }
+    }
+  },
+  mlDecisionLogs: async (limit: number = 50) => {
+    try {
+      const response = await api.get(`/api/ml/logs?limit=${limit}`)
+      return response.data
+    } catch {
+      return { success: false, data: { logs: [] } }
     }
   },
 
@@ -861,12 +869,20 @@ export function useMLDataQuality(options?: SWRConfiguration) {
   })
 }
 
-export function useMLStrategy(options?: SWRConfiguration) {
-  return useSWR('ml-strategy', fetchers.mlStrategy, {
+export function useMLStrategyExplanation(options?: SWRConfiguration) {
+  return useSWR('ml-strategy-explanation', fetchers.mlStrategyExplanation, {
     ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
+    refreshInterval: 30 * 60 * 1000, // Static content - cache for 30 minutes
     ...options,
   })
+}
+
+export function useMLDecisionLogs(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `ml-decision-logs-${limit}`,
+    () => fetchers.mlDecisionLogs(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
 }
 
 // =============================================================================

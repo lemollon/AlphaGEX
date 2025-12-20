@@ -1,117 +1,64 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
-import { Brain, TrendingUp, AlertTriangle, CheckCircle, XCircle, RefreshCw, Database, Zap, Target, BarChart3 } from 'lucide-react'
-
-interface MLStatus {
-  ml_library_available: boolean
-  model_trained: boolean
-  training_data_available: number
-  can_train: boolean
-  should_trust_predictions: boolean
-  honest_assessment: string
-  training_metrics?: {
-    accuracy: number
-    auc_roc: number
-    precision: number
-    recall: number
-  }
-  what_ml_can_do: string[]
-  what_ml_cannot_do: string[]
-}
-
-interface FeatureImportance {
-  name: string
-  importance: number
-  meaning: string
-}
-
-interface DataQuality {
-  total_trades: number
-  wins: number
-  losses: number
-  win_rate: number
-  total_pnl: number
-  avg_pnl: number
-  quality: string
-  can_train: boolean
-  recommendation: string
-}
-
-interface MLLog {
-  id: number
-  timestamp: string
-  action: string
-  symbol: string
-  details: any
-  ml_score: number | null
-  recommendation: string
-  reasoning: string
-  trade_id: string
-  backtest_id: string
-}
+import {
+  useMLStatus,
+  useMLDataQuality,
+  useMLFeatureImportance,
+  useMLStrategyExplanation,
+  useMLDecisionLogs
+} from '@/lib/hooks/useMarketData'
+import { Brain, AlertTriangle, CheckCircle, XCircle, RefreshCw, Database, Zap, Target, BarChart3 } from 'lucide-react'
 
 export default function MLSystemPage() {
-  const [status, setStatus] = useState<MLStatus | null>(null)
-  const [features, setFeatures] = useState<FeatureImportance[]>([])
-  const [dataQuality, setDataQuality] = useState<DataQuality | null>(null)
-  const [logs, setLogs] = useState<MLLog[]>([])
-  const [loading, setLoading] = useState(true)
   const [training, setTraining] = useState(false)
   const [activeTab, setActiveTab] = useState<'overview' | 'features' | 'logs' | 'strategy'>('overview')
-  const [strategyExplanation, setStrategyExplanation] = useState<any>(null)
 
-  const fetchData = async () => {
-    setLoading(true)
-    try {
-      const [statusRes, featuresRes, qualityRes, logsRes, strategyRes] = await Promise.all([
-        apiClient.getMLStatus(),
-        apiClient.getMLFeatureImportance(),
-        apiClient.getMLDataQuality(),
-        apiClient.getMLLogs(50),
-        apiClient.getMLStrategyExplanation()
-      ])
+  // SWR hooks with automatic caching and deduplication
+  const { data: statusData, isLoading: statusLoading, mutate: mutateStatus } = useMLStatus()
+  const { data: qualityData, mutate: mutateQuality } = useMLDataQuality()
 
-      if (statusRes.data?.success !== false) {
-        setStatus(statusRes.data?.data || statusRes.data)
-      }
-      if (featuresRes.data?.success !== false) {
-        setFeatures(featuresRes.data?.data?.features || [])
-      }
-      if (qualityRes.data?.success !== false) {
-        setDataQuality(qualityRes.data?.data || null)
-      }
-      if (logsRes.data?.success !== false) {
-        setLogs(logsRes.data?.data?.logs || [])
-      }
-      if (strategyRes.data?.success !== false) {
-        setStrategyExplanation(strategyRes.data?.data || null)
-      }
-    } catch (e) {
-      console.error('Failed to fetch ML data:', e)
-    }
-    setLoading(false)
-  }
+  // Only fetch tab data when the tab is active (conditional fetching)
+  const { data: featuresData, isLoading: featuresLoading } = useMLFeatureImportance(
+    activeTab === 'features' ? undefined : { revalidateOnMount: false }
+  )
+  const { data: strategyData, isLoading: strategyLoading } = useMLStrategyExplanation(
+    activeTab === 'strategy' ? undefined : { revalidateOnMount: false }
+  )
+  const { data: logsData, isLoading: logsLoading, mutate: mutateLogs } = useMLDecisionLogs(50,
+    activeTab === 'logs' ? undefined : { revalidateOnMount: false }
+  )
 
-  useEffect(() => {
-    fetchData()
-    const interval = setInterval(fetchData, 30000) // Refresh every 30s
-    return () => clearInterval(interval)
-  }, [])
+  // Extract data from responses
+  const status = statusData?.data || statusData
+  const dataQuality = qualityData?.data || null
+  const features = featuresData?.data?.features || []
+  const strategyExplanation = strategyData?.data || null
+  const logs = logsData?.data?.logs || []
+
+  const loading = statusLoading
 
   const handleTrain = async () => {
     setTraining(true)
     try {
       const res = await apiClient.trainML(30)
       if (res.data?.success) {
-        await fetchData()
+        // Revalidate the data after training
+        mutateStatus()
+        mutateQuality()
       }
     } catch (e) {
       console.error('Training failed:', e)
     }
     setTraining(false)
+  }
+
+  const handleRefresh = () => {
+    mutateStatus()
+    mutateQuality()
+    if (activeTab === 'logs') mutateLogs()
   }
 
   const getQualityColor = (quality: string) => {
@@ -142,7 +89,7 @@ export default function MLSystemPage() {
               </p>
             </div>
             <button
-              onClick={fetchData}
+              onClick={handleRefresh}
               className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400"
             >
               <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
@@ -297,7 +244,7 @@ export default function MLSystemPage() {
                     <div className="bg-gray-800 rounded-lg p-6 border border-green-900">
                       <h3 className="text-lg font-semibold text-green-400 mb-4">What ML CAN Do</h3>
                       <ul className="space-y-2">
-                        {status?.what_ml_can_do?.map((item, i) => (
+                        {status?.what_ml_can_do?.map((item: string, i: number) => (
                           <li key={i} className="flex items-start gap-2 text-gray-300">
                             <CheckCircle className="w-4 h-4 text-green-400 mt-1 flex-shrink-0" />
                             {item}
@@ -308,7 +255,7 @@ export default function MLSystemPage() {
                     <div className="bg-gray-800 rounded-lg p-6 border border-red-900">
                       <h3 className="text-lg font-semibold text-red-400 mb-4">What ML CANNOT Do</h3>
                       <ul className="space-y-2">
-                        {status?.what_ml_cannot_do?.map((item, i) => (
+                        {status?.what_ml_cannot_do?.map((item: string, i: number) => (
                           <li key={i} className="flex items-start gap-2 text-gray-300">
                             <XCircle className="w-4 h-4 text-red-400 mt-1 flex-shrink-0" />
                             {item}
@@ -324,9 +271,13 @@ export default function MLSystemPage() {
               {activeTab === 'features' && (
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                   <h3 className="text-lg font-semibold text-white mb-6">Feature Importance</h3>
-                  {features.length > 0 ? (
+                  {featuresLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                    </div>
+                  ) : features.length > 0 ? (
                     <div className="space-y-4">
-                      {features.map((feature, i) => (
+                      {features.map((feature: any, i: number) => (
                         <div key={i} className="space-y-2">
                           <div className="flex justify-between items-center">
                             <span className="text-white font-medium">{feature.name}</span>
@@ -349,56 +300,64 @@ export default function MLSystemPage() {
               )}
 
               {/* Strategy Tab */}
-              {activeTab === 'strategy' && strategyExplanation && (
+              {activeTab === 'strategy' && (
                 <div className="space-y-6">
-                  <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                    <h3 className="text-xl font-semibold text-white mb-2">{strategyExplanation.strategy}</h3>
+                  {strategyLoading ? (
+                    <div className="flex items-center justify-center py-20">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                    </div>
+                  ) : strategyExplanation ? (
+                    <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                      <h3 className="text-xl font-semibold text-white mb-2">{strategyExplanation.strategy}</h3>
 
-                    {/* Why It Works */}
-                    <div className="mt-6">
-                      <h4 className="text-lg font-medium text-green-400 mb-4">Why It Works</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {Object.entries(strategyExplanation.why_it_works || {}).map(([key, value]: [string, any]) => (
-                          <div key={key} className="bg-gray-900 rounded-lg p-4">
-                            <h5 className="text-white font-medium mb-2">{key.replace(/_/g, ' ')}</h5>
-                            <p className="text-gray-400 text-sm">{value.explanation}</p>
-                            <p className="text-green-400 text-sm mt-2">{value.you_benefit}</p>
-                          </div>
-                        ))}
+                      {/* Why It Works */}
+                      <div className="mt-6">
+                        <h4 className="text-lg font-medium text-green-400 mb-4">Why It Works</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {Object.entries(strategyExplanation.why_it_works || {}).map(([key, value]: [string, any]) => (
+                            <div key={key} className="bg-gray-900 rounded-lg p-4">
+                              <h5 className="text-white font-medium mb-2">{key.replace(/_/g, ' ')}</h5>
+                              <p className="text-gray-400 text-sm">{value.explanation}</p>
+                              <p className="text-green-400 text-sm mt-2">{value.you_benefit}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Why It Can Fail */}
+                      <div className="mt-6">
+                        <h4 className="text-lg font-medium text-red-400 mb-4">Why It Can Fail</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {Object.entries(strategyExplanation.why_it_can_fail || {}).map(([key, value]: [string, any]) => (
+                            <div key={key} className="bg-gray-900 rounded-lg p-4 border border-red-900/30">
+                              <h5 className="text-white font-medium mb-2">{key.replace(/_/g, ' ')}</h5>
+                              <p className="text-gray-400 text-sm">{value.explanation}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Realistic Expectations */}
+                      <div className="mt-6">
+                        <h4 className="text-lg font-medium text-blue-400 mb-4">Realistic Expectations</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          {Object.entries(strategyExplanation.realistic_expectations || {}).map(([key, value]) => (
+                            <div key={key} className="bg-gray-900 rounded-lg p-4 text-center">
+                              <p className="text-gray-400 text-sm">{key.replace(/_/g, ' ')}</p>
+                              <p className="text-white font-bold mt-1">{String(value)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Bottom Line */}
+                      <div className="mt-6 bg-purple-900/30 rounded-lg p-4 border border-purple-700">
+                        <p className="text-gray-200">{strategyExplanation.bottom_line}</p>
                       </div>
                     </div>
-
-                    {/* Why It Can Fail */}
-                    <div className="mt-6">
-                      <h4 className="text-lg font-medium text-red-400 mb-4">Why It Can Fail</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {Object.entries(strategyExplanation.why_it_can_fail || {}).map(([key, value]: [string, any]) => (
-                          <div key={key} className="bg-gray-900 rounded-lg p-4 border border-red-900/30">
-                            <h5 className="text-white font-medium mb-2">{key.replace(/_/g, ' ')}</h5>
-                            <p className="text-gray-400 text-sm">{value.explanation}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Realistic Expectations */}
-                    <div className="mt-6">
-                      <h4 className="text-lg font-medium text-blue-400 mb-4">Realistic Expectations</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        {Object.entries(strategyExplanation.realistic_expectations || {}).map(([key, value]) => (
-                          <div key={key} className="bg-gray-900 rounded-lg p-4 text-center">
-                            <p className="text-gray-400 text-sm">{key.replace(/_/g, ' ')}</p>
-                            <p className="text-white font-bold mt-1">{String(value)}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Bottom Line */}
-                    <div className="mt-6 bg-purple-900/30 rounded-lg p-4 border border-purple-700">
-                      <p className="text-gray-200">{strategyExplanation.bottom_line}</p>
-                    </div>
-                  </div>
+                  ) : (
+                    <p className="text-gray-400">Strategy explanation not available</p>
+                  )}
                 </div>
               )}
 
@@ -410,7 +369,11 @@ export default function MLSystemPage() {
                     <p className="text-sm text-gray-400">Recent ML actions and predictions</p>
                   </div>
                   <div className="max-h-[600px] overflow-y-auto">
-                    {logs.length > 0 ? (
+                    {logsLoading ? (
+                      <div className="flex items-center justify-center py-8">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                      </div>
+                    ) : logs.length > 0 ? (
                       <table className="w-full">
                         <thead className="bg-gray-900 sticky top-0">
                           <tr>
@@ -422,7 +385,7 @@ export default function MLSystemPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-700">
-                          {logs.map((log) => (
+                          {logs.map((log: any) => (
                             <tr key={log.id} className="hover:bg-gray-700/50">
                               <td className="px-4 py-3 text-sm text-gray-400">
                                 {new Date(log.timestamp).toLocaleString()}
