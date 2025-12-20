@@ -32,6 +32,8 @@ interface NewsItem {
   category: string
   timestamp: string
   impact: string
+  source?: string
+  url?: string
 }
 
 interface Devotional {
@@ -49,6 +51,7 @@ interface DailyMannaData {
   date: string
   timestamp: string
   greeting: string
+  news_sources?: string[]
 }
 
 export default function DailyMannaPage() {
@@ -235,7 +238,7 @@ export default function DailyMannaPage() {
                 )}
               </div>
 
-              {/* Market Context / Economic News */}
+              {/* Today's Financial Headlines */}
               <div className="card">
                 <button
                   onClick={() => toggleSection('news')}
@@ -243,35 +246,61 @@ export default function DailyMannaPage() {
                 >
                   <h2 className="text-xl font-semibold flex items-center space-x-2">
                     <TrendingUp className="w-6 h-6 text-primary" />
-                    <span>Today&apos;s Market Context</span>
+                    <span>Today&apos;s Financial Headlines</span>
                   </h2>
                   {expandedSections.news ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                 </button>
 
                 {expandedSections.news && (
-                  <div className="space-y-3">
-                    {data.news?.map((item, index) => (
-                      <div
-                        key={index}
-                        className="bg-background-hover rounded-lg p-4 hover:bg-background-deep transition-colors"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <span className="text-xs px-2 py-0.5 bg-primary/20 text-primary rounded">
-                                {item.category}
-                              </span>
-                              <span className={`text-xs ${getImpactColor(item.impact)}`}>
-                                {item.impact.toUpperCase()} IMPACT
-                              </span>
+                  <>
+                    {/* News Sources */}
+                    {data.news_sources && data.news_sources.length > 0 && (
+                      <div className="mb-4 text-xs text-text-muted">
+                        Sources: {data.news_sources.join(' • ')}
+                      </div>
+                    )}
+                    <div className="space-y-3">
+                      {data.news?.map((item, index) => (
+                        <div
+                          key={index}
+                          className="bg-background-hover rounded-lg p-4 hover:bg-background-deep transition-colors"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center flex-wrap gap-2 mb-2">
+                                <span className="text-xs px-2 py-0.5 bg-primary/20 text-primary rounded">
+                                  {item.category}
+                                </span>
+                                {item.source && (
+                                  <span className="text-xs px-2 py-0.5 bg-gray-700 text-text-secondary rounded">
+                                    {item.source}
+                                  </span>
+                                )}
+                                <span className={`text-xs ${getImpactColor(item.impact)}`}>
+                                  {item.impact?.toUpperCase()} IMPACT
+                                </span>
+                              </div>
+                              {item.url ? (
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-medium text-text-primary hover:text-primary transition-colors block mb-1"
+                                >
+                                  {item.headline}
+                                </a>
+                              ) : (
+                                <h3 className="font-medium text-text-primary mb-1">{item.headline}</h3>
+                              )}
+                              {item.summary && (
+                                <p className="text-sm text-text-secondary">{item.summary}</p>
+                              )}
                             </div>
-                            <h3 className="font-medium text-text-primary mb-1">{item.headline}</h3>
-                            <p className="text-sm text-text-secondary">{item.summary}</p>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
 

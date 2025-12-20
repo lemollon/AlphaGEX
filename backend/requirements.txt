@@ -35,6 +35,7 @@ pytz==2023.3
 
 # Utilities
 pyyaml==6.0.1
+feedparser==6.0.10  # RSS feed parsing for Daily Manna news
 
 # Existing AlphaGEX Dependencies (from current project)
 pandas==2.1.4
