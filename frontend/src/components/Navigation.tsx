@@ -32,12 +32,14 @@ import {
   Sword,
   Eye,
   FileText,
-  Sun
+  Sun,
+  BookOpen
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
 
 const navItems = [
+  { href: '/daily-manna', label: 'Daily Manna', icon: BookOpen, category: 'Main' },
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp, category: 'Analysis' },
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },

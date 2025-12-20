@@ -3,6 +3,7 @@
 import Navigation from '@/components/Navigation'
 import IntelligenceDashboard from '@/components/IntelligenceDashboard'
 import GammaExpirationWidget from '@/components/GammaExpirationWidget'
+import DailyMannaWidget from '@/components/DailyMannaWidget'
 
 export default function Dashboard() {
   return (
@@ -11,6 +12,11 @@ export default function Dashboard() {
 
       <main className="pt-16 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+          {/* Daily Manna Widget - Faith meets Finance */}
+          <div className="mb-6">
+            <DailyMannaWidget />
+          </div>
 
           {/* Header */}
           <div className="mb-6">

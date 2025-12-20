@@ -58,6 +58,7 @@ from backend.api.routes import (
     athena_routes,  # ATHENA Directional Spread bot endpoints
     logs_routes,  # Comprehensive logs API for ALL 22 logging tables
     apollo_routes,  # APOLLO ML-powered scanner
+    daily_manna_routes,  # Daily Manna - Economic news with faith-based devotionals
 )
 
 # ============================================================================
@@ -282,7 +283,8 @@ app.include_router(ares_routes.router)
 app.include_router(athena_routes.router)
 app.include_router(logs_routes.router)
 app.include_router(apollo_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares")
+app.include_router(daily_manna_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()

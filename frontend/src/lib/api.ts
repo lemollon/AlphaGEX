@@ -765,6 +765,54 @@ export const apiClient = {
     api.get(`/api/apollo/options-chain/${symbol}`, { params: { expiration } }),
   getApolloFeatures: (symbol: string) => api.get(`/api/apollo/features/${symbol}`),
   triggerApolloTraining: () => api.post('/api/apollo/train'),
+
+  // Daily Manna - Economic news with faith-based devotionals
+  getDailyManna: (forceRefresh: boolean = false) =>
+    api.get('/api/daily-manna/today', { params: { force_refresh: forceRefresh } }),
+  getDailyMannaNews: () => api.get('/api/daily-manna/news'),
+  getDailyMannaScriptures: () => api.get('/api/daily-manna/scriptures'),
+  getDailyMannaDevotional: (forceRefresh: boolean = false) =>
+    api.get('/api/daily-manna/devotional', { params: { force_refresh: forceRefresh } }),
+  getDailyMannaWidget: () => api.get('/api/daily-manna/widget'),
+
+  // Daily Manna Archive
+  getDailyMannaArchive: (limit: number = 30) =>
+    api.get('/api/daily-manna/archive', { params: { limit } }),
+  getArchivedDevotional: (date: string) =>
+    api.get(`/api/daily-manna/archive/${date}`),
+
+  // Daily Manna Comments
+  getDailyMannaComments: (date?: string, limit: number = 50) =>
+    api.get('/api/daily-manna/comments', { params: { date, limit } }),
+  addDailyMannaComment: (data: { user_name: string; comment: string; date?: string }) =>
+    api.post('/api/daily-manna/comments', data),
+  likeDailyMannaComment: (commentId: number) =>
+    api.post(`/api/daily-manna/comments/${commentId}/like`),
+
+  // Daily Manna Reflections
+  getDailyMannaReflections: (userId: string = 'default_user', limit: number = 100) =>
+    api.get('/api/daily-manna/reflections', { params: { user_id: userId, limit } }),
+  getReflectionForDate: (date: string, userId: string = 'default_user') =>
+    api.get(`/api/daily-manna/reflections/${date}`, { params: { user_id: userId } }),
+  saveDailyMannaReflection: (data: {
+    reflection: string
+    date?: string
+    user_id?: string
+    favorite?: boolean
+    prayer_answered?: boolean
+  }) => api.post('/api/daily-manna/reflections', data),
+  updateDailyMannaReflection: (reflectionId: string, data: {
+    reflection?: string
+    favorite?: boolean
+    prayer_answered?: boolean
+    user_id?: string
+  }) => api.put(`/api/daily-manna/reflections/${reflectionId}`, data),
+
+  // Daily Manna Prayer Tracker
+  markPrayedToday: (userId: string = 'default_user') =>
+    api.post('/api/daily-manna/prayer/today', { user_id: userId }),
+  getPrayerStats: (userId: string = 'default_user') =>
+    api.get('/api/daily-manna/prayer/stats', { params: { user_id: userId } }),
 }
 
 // WebSocket connection
