@@ -865,7 +865,15 @@ class OracleAdvisor:
     # =========================================================================
 
     def _load_model(self) -> bool:
-        """Load pre-trained model if available"""
+        """
+        Load pre-trained model - tries DATABASE first (for Render persistence),
+        then falls back to local file.
+        """
+        # Try database first (persists across Render deploys)
+        if self._load_model_from_db():
+            return True
+
+        # Fall back to local file
         model_file = os.path.join(self.MODEL_PATH, 'oracle_model.pkl')
 
         # Try new name first, then fall back to old name
@@ -883,15 +891,78 @@ class OracleAdvisor:
                     self.model_version = saved.get('version', '1.0.0')
                     self._has_gex_features = saved.get('has_gex_features', False)
                     self.is_trained = True
-                    logger.info(f"Loaded Oracle model v{self.model_version}")
+                    logger.info(f"Loaded Oracle model v{self.model_version} from local file")
                     return True
             except Exception as e:
-                logger.warning(f"Failed to load model: {e}")
+                logger.warning(f"Failed to load model from file: {e}")
+
+        return False
+
+    def _load_model_from_db(self) -> bool:
+        """Load trained model from database (persists across Render deploys)"""
+        if not DB_AVAILABLE:
+            return False
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Check if table exists
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'oracle_trained_models'
+                )
+            """)
+            if not cursor.fetchone()[0]:
+                conn.close()
+                return False
+
+            # Get the most recent active model
+            cursor.execute("""
+                SELECT model_version, model_data, training_metrics, has_gex_features
+                FROM oracle_trained_models
+                WHERE is_active = TRUE
+                ORDER BY created_at DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                model_version, model_data, metrics_json, has_gex = row
+
+                # Deserialize model data
+                saved = pickle.loads(model_data)
+                self.model = saved.get('model')
+                self.calibrated_model = saved.get('calibrated_model')
+                self.scaler = saved.get('scaler')
+                self.model_version = model_version
+                self._has_gex_features = has_gex or False
+                self.is_trained = True
+
+                # Restore training metrics
+                if metrics_json:
+                    if isinstance(metrics_json, str):
+                        metrics_dict = json.loads(metrics_json)
+                    else:
+                        metrics_dict = metrics_json
+                    self.training_metrics = TrainingMetrics(**metrics_dict)
+
+                logger.info(f"Loaded Oracle model v{self.model_version} from DATABASE (persistent)")
+                return True
+
+        except Exception as e:
+            logger.warning(f"Failed to load model from database: {e}")
 
         return False
 
     def _save_model(self):
-        """Save trained model to disk"""
+        """Save trained model to BOTH database (for Render) and local file (backup)"""
+        # Save to database first (critical for Render persistence)
+        db_saved = self._save_model_to_db()
+
+        # Also save to local file as backup
         model_file = os.path.join(self.MODEL_PATH, 'oracle_model.pkl')
 
         try:
@@ -907,7 +978,73 @@ class OracleAdvisor:
                 }, f)
             logger.info(f"Saved Oracle model to {model_file}")
         except Exception as e:
-            logger.error(f"Failed to save model: {e}")
+            logger.error(f"Failed to save model to file: {e}")
+
+        if db_saved:
+            self.live_log.log("MODEL_SAVED", f"Model v{self.model_version} saved to database", {
+                "version": self.model_version,
+                "persistent": True
+            })
+
+    def _save_model_to_db(self) -> bool:
+        """Save trained model to database for persistence across Render deploys"""
+        if not DB_AVAILABLE:
+            logger.warning("Database not available - model will not persist across restarts")
+            return False
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Create table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS oracle_trained_models (
+                    id SERIAL PRIMARY KEY,
+                    model_version VARCHAR(20) NOT NULL,
+                    model_data BYTEA NOT NULL,
+                    training_metrics JSONB,
+                    has_gex_features BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_active BOOLEAN DEFAULT TRUE
+                )
+            """)
+
+            # Deactivate previous models
+            cursor.execute("UPDATE oracle_trained_models SET is_active = FALSE")
+
+            # Serialize model data
+            model_data = pickle.dumps({
+                'model': self.model,
+                'calibrated_model': self.calibrated_model,
+                'scaler': self.scaler,
+            })
+
+            # Serialize training metrics
+            metrics_json = json.dumps(self.training_metrics.__dict__) if self.training_metrics else None
+
+            # Insert new model
+            cursor.execute("""
+                INSERT INTO oracle_trained_models
+                (model_version, model_data, training_metrics, has_gex_features, is_active)
+                VALUES (%s, %s, %s, %s, TRUE)
+            """, (
+                self.model_version,
+                model_data,
+                metrics_json,
+                self._has_gex_features
+            ))
+
+            conn.commit()
+            conn.close()
+
+            logger.info(f"Saved Oracle model v{self.model_version} to DATABASE (persists across deploys)")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save model to database: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     # =========================================================================
     # BOT-SPECIFIC ADVICE
@@ -2146,6 +2283,8 @@ def get_training_status() -> Dict[str, Any]:
     # Get last training date from database
     last_trained = None
     total_outcomes = 0
+    model_source = "none"
+    db_model_exists = False
 
     if DB_AVAILABLE:
         try:
@@ -2165,9 +2304,35 @@ def get_training_status() -> Dict[str, Any]:
             if row and row[0]:
                 last_trained = row[0].isoformat()
 
+            # Check if model exists in database
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'oracle_trained_models'
+                )
+            """)
+            if cursor.fetchone()[0]:
+                cursor.execute("""
+                    SELECT model_version, created_at FROM oracle_trained_models
+                    WHERE is_active = TRUE
+                    ORDER BY created_at DESC LIMIT 1
+                """)
+                db_row = cursor.fetchone()
+                if db_row:
+                    db_model_exists = True
+                    model_source = "database"
+                    if not last_trained:
+                        last_trained = db_row[1].isoformat() if db_row[1] else None
+
             conn.close()
         except Exception as e:
             logger.warning(f"Failed to get training status: {e}")
+
+    # Determine model source
+    if oracle.is_trained and not db_model_exists:
+        model_source = "local_file"
+    elif not oracle.is_trained:
+        model_source = "none"
 
     return {
         "model_trained": oracle.is_trained,
@@ -2178,7 +2343,10 @@ def get_training_status() -> Dict[str, Any]:
         "threshold_for_retrain": 100,
         "needs_training": pending_count >= 100 or not oracle.is_trained,
         "training_metrics": oracle.training_metrics.__dict__ if oracle.training_metrics else None,
-        "claude_available": oracle.claude_available
+        "claude_available": oracle.claude_available,
+        "model_source": model_source,
+        "db_persistence": db_model_exists,
+        "persistence_status": "Model saved in database - survives restarts" if db_model_exists else "Model NOT in database - will be lost on restart"
     }
 
 
