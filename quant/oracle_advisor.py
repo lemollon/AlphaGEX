@@ -1930,6 +1930,23 @@ class OracleAdvisor:
                 )
             """)
 
+            # Migration: Add missing columns to existing tables
+            migration_columns = [
+                ("claude_analysis", "JSONB"),
+                ("prediction_used", "BOOLEAN DEFAULT FALSE"),
+                ("actual_outcome", "TEXT"),
+                ("actual_pnl", "REAL"),
+                ("outcome_date", "DATE"),
+                ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
+            ]
+            for col_name, col_type in migration_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+                except Exception:
+                    pass  # Column already exists or other error
+
+            conn.commit()
+
             # Serialize top_factors as JSON
             top_factors_json = json.dumps([
                 {"feature": f[0], "importance": f[1]}
@@ -2122,7 +2139,6 @@ class OracleAdvisor:
                         call_strike REAL,
                         spot_at_entry REAL,
                         spot_at_exit REAL,
-                        used_in_model_version TEXT,
                         created_at TIMESTAMPTZ DEFAULT NOW(),
                         UNIQUE(trade_date, bot_name)
                     )
@@ -2132,9 +2148,8 @@ class OracleAdvisor:
                 cursor.execute("""
                     INSERT INTO oracle_training_outcomes (
                         trade_date, bot_name, features, outcome, is_win, net_pnl,
-                        put_strike, call_strike, spot_at_entry, spot_at_exit,
-                        used_in_model_version
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        put_strike, call_strike, spot_at_entry, spot_at_exit
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (trade_date, bot_name) DO UPDATE SET
                         outcome = EXCLUDED.outcome,
                         is_win = EXCLUDED.is_win,
@@ -2150,8 +2165,7 @@ class OracleAdvisor:
                     put_strike or pred_put,
                     call_strike or pred_call,
                     spot_at_entry,
-                    spot_at_exit,
-                    model_ver
+                    spot_at_exit
                 ))
 
                 # Log to live log
