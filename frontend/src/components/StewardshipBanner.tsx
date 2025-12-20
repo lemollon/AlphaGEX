@@ -3,26 +3,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Heart, Sparkles } from 'lucide-react'
 
-// Dove icon component (custom SVG since lucide doesn't have a dove)
-const DoveIcon = ({ className }: { className?: string }) => (
+// Cross icon component
+const CrossIcon = ({ className }: { className?: string }) => (
   <svg
     className={className}
     viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
+    fill="currentColor"
   >
-    <path d="M12 3c-1.5 0-3 .5-4 1.5C6 6 5 8 5 10c0 1 .2 2 .5 3" />
-    <path d="M5.5 13c-1.5.5-3 1.5-3.5 3 0 0 2 1 4 1 1 0 2-.2 3-.5" />
-    <path d="M9 16.5c0 1.5.5 3 1.5 4 .5.5 1.5 1 2.5 1s2-.5 2.5-1c1-1 1.5-2.5 1.5-4" />
-    <path d="M17 16.5c1-.3 2-.5 3-.5 2 0 4-1 4-1-.5-1.5-2-2.5-3.5-3" />
-    <path d="M20.5 13c.3-1 .5-2 .5-3 0-2-1-4-3-5.5-1-1-2.5-1.5-4-1.5" />
-    <circle cx="12" cy="10" r="3" />
-    <path d="M12 7v-2" />
-    <path d="M10 9l-1.5-1.5" />
-    <path d="M14 9l1.5-1.5" />
+    <path d="M10 2h4v6h6v4h-6v10h-4V12H4V8h6V2z" />
   </svg>
 )
 
@@ -100,7 +88,7 @@ export function DedicationModal({ isOpen, onClose }: DedicationModalProps) {
 
           <div className="relative">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/30">
-              <DoveIcon className="w-9 h-9 text-white" />
+              <CrossIcon className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-2xl font-bold text-amber-400">
               Dedicated to God's Glory
@@ -269,12 +257,12 @@ export function StewardshipBanner() {
   )
 }
 
-// Interactive Dove Button for Navigation
-interface DoveButtonProps {
+// Interactive Cross Button for Navigation
+interface CrossButtonProps {
   onClick: () => void
 }
 
-export function DoveButton({ onClick }: DoveButtonProps) {
+export function CrossButton({ onClick }: CrossButtonProps) {
   const [isHovered, setIsHovered] = useState(false)
 
   return (
@@ -290,8 +278,8 @@ export function DoveButton({ onClick }: DoveButtonProps) {
         isHovered ? 'opacity-100' : 'opacity-0'
       }`} />
 
-      {/* Dove icon */}
-      <DoveIcon className={`w-5 h-5 relative z-10 transition-all duration-300 ${
+      {/* Cross icon */}
+      <CrossIcon className={`w-5 h-5 relative z-10 transition-all duration-300 ${
         isHovered
           ? 'text-amber-400 scale-110'
           : 'text-amber-500/70'
