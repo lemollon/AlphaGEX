@@ -28,12 +28,12 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
 
             {/* Left Column - Intelligence Feed (2/3 width on xl) */}
-            <div className="xl:col-span-2 xl:sticky xl:top-20 xl:self-start xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto xl:pr-2 scrollbar-thin">
+            <div className="xl:col-span-2">
               <IntelligenceDashboard />
             </div>
 
-            {/* Right Column - Gamma Expiration Widget (1/3 width on xl) */}
-            <div className="xl:col-span-1">
+            {/* Right Column - Gamma Expiration Widget (1/3 width on xl, sticky on desktop) */}
+            <div className="xl:col-span-1 xl:sticky xl:top-20 xl:self-start">
               <GammaExpirationWidget />
             </div>
 
