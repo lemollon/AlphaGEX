@@ -2106,6 +2106,365 @@ def analyze_kronos_patterns(backtest_results: Dict[str, Any]) -> Dict[str, Any]:
     return oracle.analyze_patterns(backtest_results)
 
 
+# =============================================================================
+# AUTO-TRAINING SYSTEM
+# =============================================================================
+
+def get_pending_outcomes_count() -> int:
+    """Get count of outcomes not yet used in model training"""
+    if not DB_AVAILABLE:
+        return 0
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get the current model version
+        oracle = get_oracle()
+        current_version = oracle.model_version or "0.0.0"
+
+        # Count outcomes not yet used in training
+        cursor.execute("""
+            SELECT COUNT(*) FROM oracle_training_outcomes
+            WHERE used_in_model_version IS NULL
+               OR used_in_model_version != %s
+        """, (current_version,))
+
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        logger.warning(f"Failed to get pending outcomes count: {e}")
+        return 0
+
+
+def get_training_status() -> Dict[str, Any]:
+    """Get comprehensive training status for API"""
+    oracle = get_oracle()
+    pending_count = get_pending_outcomes_count()
+
+    # Get last training date from database
+    last_trained = None
+    total_outcomes = 0
+
+    if DB_AVAILABLE:
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get total outcomes
+            cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
+            total_outcomes = cursor.fetchone()[0]
+
+            # Try to get last training date from metadata or model save time
+            cursor.execute("""
+                SELECT MAX(created_at) FROM oracle_training_outcomes
+                WHERE used_in_model_version = %s
+            """, (oracle.model_version,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                last_trained = row[0].isoformat()
+
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to get training status: {e}")
+
+    return {
+        "model_trained": oracle.is_trained,
+        "model_version": oracle.model_version,
+        "pending_outcomes": pending_count,
+        "total_outcomes": total_outcomes,
+        "last_trained": last_trained,
+        "threshold_for_retrain": 100,
+        "needs_training": pending_count >= 100 or not oracle.is_trained,
+        "training_metrics": oracle.training_metrics.__dict__ if oracle.training_metrics else None,
+        "claude_available": oracle.claude_available
+    }
+
+
+def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics]:
+    """
+    Train Oracle model from live trading outcomes stored in database.
+
+    This enables continuous learning from actual trading results.
+    """
+    if not DB_AVAILABLE:
+        logger.error("Database not available for training")
+        return None
+
+    oracle = get_oracle()
+    oracle.live_log.log("TRAIN_START", "Auto-training from live outcomes", {"min_samples": min_samples})
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get all outcomes from database
+        cursor.execute("""
+            SELECT trade_date, bot_name, features, outcome, is_win, net_pnl
+            FROM oracle_training_outcomes
+            ORDER BY trade_date
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+
+        if len(rows) < min_samples:
+            oracle.live_log.log("TRAIN_SKIP", f"Insufficient live data: {len(rows)} < {min_samples}", {})
+            logger.info(f"Insufficient live outcomes for training: {len(rows)} < {min_samples}")
+            return None
+
+        # Convert to training format
+        records = []
+        for row in rows:
+            trade_date, bot_name, features_json, outcome, is_win, net_pnl = row
+
+            if isinstance(features_json, str):
+                features = json.loads(features_json)
+            else:
+                features = features_json or {}
+
+            record = {
+                'trade_date': trade_date,
+                'is_win': 1 if is_win else 0,
+                'vix': features.get('vix', 20),
+                'day_of_week': features.get('day_of_week', 2),
+                'price_change_1d': features.get('price_change_1d', 0),
+                'vix_change_1d': features.get('vix_change_1d', 0),
+                'gex_normalized': features.get('gex_normalized', 0),
+                'gex_regime_positive': 1 if features.get('gex_regime') == 'POSITIVE' else 0,
+                'gex_distance_to_flip_pct': features.get('gex_distance_to_flip_pct', 0),
+                'gex_between_walls': 1 if features.get('gex_between_walls') else 0,
+            }
+            records.append(record)
+
+        df = pd.DataFrame(records)
+
+        # Calculate rolling metrics
+        if len(df) > 1:
+            df['vix_percentile_30d'] = df['vix'].rolling(30, min_periods=1).apply(
+                lambda x: (x.rank().iloc[-1] / len(x)) * 100 if len(x) > 0 else 50
+            ).fillna(50)
+        else:
+            df['vix_percentile_30d'] = 50
+
+        # Check if we have GEX features
+        has_gex = df['gex_normalized'].abs().sum() > 0
+        oracle._has_gex_features = has_gex
+
+        feature_cols = oracle.FEATURE_COLS if has_gex else oracle.FEATURE_COLS_V1
+
+        # Ensure all required columns exist
+        for col in feature_cols:
+            if col not in df.columns:
+                df[col] = 0
+
+        X = df[feature_cols].values
+        y = df['is_win'].values.astype(int)
+
+        # Train model
+        oracle.scaler = StandardScaler()
+        X_scaled = oracle.scaler.fit_transform(X)
+
+        tscv = TimeSeriesSplit(n_splits=5)
+
+        oracle.model = GradientBoostingClassifier(
+            n_estimators=150,
+            max_depth=4,
+            learning_rate=0.1,
+            min_samples_split=20,
+            min_samples_leaf=10,
+            subsample=0.8,
+            random_state=42
+        )
+
+        accuracies, precisions, recalls, f1s, aucs = [], [], [], [], []
+
+        for train_idx, test_idx in tscv.split(X_scaled):
+            X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+
+            oracle.model.fit(X_train, y_train)
+            y_pred = oracle.model.predict(X_test)
+            y_proba = oracle.model.predict_proba(X_test)[:, 1]
+
+            accuracies.append(accuracy_score(y_test, y_pred))
+            precisions.append(precision_score(y_test, y_pred, zero_division=0))
+            recalls.append(recall_score(y_test, y_pred, zero_division=0))
+            f1s.append(f1_score(y_test, y_pred, zero_division=0))
+            try:
+                aucs.append(roc_auc_score(y_test, y_proba))
+            except ValueError:
+                aucs.append(0.5)
+
+        # Final fit on all data
+        oracle.model.fit(X_scaled, y)
+
+        # Calibrate probabilities
+        oracle.calibrated_model = CalibratedClassifierCV(oracle.model, method='isotonic', cv=3)
+        oracle.calibrated_model.fit(X_scaled, y)
+
+        y_proba_full = oracle.calibrated_model.predict_proba(X_scaled)[:, 1]
+        brier = brier_score_loss(y, y_proba_full)
+
+        feature_importances = dict(zip(feature_cols, oracle.model.feature_importances_))
+
+        # Increment version for live training
+        version_parts = oracle.model_version.split('.') if oracle.model_version else ['1', '0', '0']
+        new_minor = int(version_parts[1]) + 1 if len(version_parts) > 1 else 1
+        new_version = f"{version_parts[0]}.{new_minor}.0"
+
+        oracle.training_metrics = TrainingMetrics(
+            accuracy=np.mean(accuracies),
+            precision=np.mean(precisions),
+            recall=np.mean(recalls),
+            f1_score=np.mean(f1s),
+            auc_roc=np.mean(aucs),
+            brier_score=brier,
+            win_rate_predicted=y_proba_full.mean(),
+            win_rate_actual=y.mean(),
+            total_samples=len(df),
+            train_samples=int(len(df) * 0.8),
+            test_samples=int(len(df) * 0.2),
+            positive_samples=int(y.sum()),
+            negative_samples=int(len(y) - y.sum()),
+            feature_importances=feature_importances,
+            training_date=datetime.now().isoformat(),
+            model_version=new_version
+        )
+
+        oracle.is_trained = True
+        oracle.model_version = new_version
+        oracle._save_model()
+
+        # Mark outcomes as used
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE oracle_training_outcomes
+                SET used_in_model_version = %s
+                WHERE used_in_model_version IS NULL OR used_in_model_version != %s
+            """, (new_version, new_version))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to mark outcomes as used: {e}")
+
+        oracle.live_log.log("TRAIN_DONE", f"Auto-trained v{new_version} - Accuracy: {oracle.training_metrics.accuracy:.1%}", {
+            "accuracy": oracle.training_metrics.accuracy,
+            "auc_roc": oracle.training_metrics.auc_roc,
+            "total_samples": oracle.training_metrics.total_samples,
+            "model_version": new_version
+        })
+
+        logger.info(f"Oracle auto-trained successfully from {len(df)} live outcomes - v{new_version}")
+        return oracle.training_metrics
+
+    except Exception as e:
+        oracle.live_log.log("TRAIN_ERROR", f"Auto-training failed: {e}", {})
+        logger.error(f"Failed to train from live outcomes: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def auto_train(
+    threshold_outcomes: int = 100,
+    force: bool = False
+) -> Dict[str, Any]:
+    """
+    Automatic Oracle training trigger.
+
+    Called by scheduler on:
+    1. Weekly schedule (Sunday midnight CT)
+    2. When threshold outcomes is reached (100+ new outcomes)
+
+    Training strategy:
+    1. If KRONOS backtest data available and no live outcomes -> Train from KRONOS
+    2. If live outcomes available -> Train from live data (more accurate)
+    3. If both available -> Train from live, use KRONOS as fallback
+
+    Args:
+        threshold_outcomes: Minimum new outcomes before retraining
+        force: Force training even if threshold not met
+
+    Returns:
+        Dict with training status and results
+    """
+    oracle = get_oracle()
+    oracle.live_log.log("AUTO_TRAIN_CHECK", "Checking if training needed", {
+        "threshold": threshold_outcomes,
+        "force": force
+    })
+
+    pending_count = get_pending_outcomes_count()
+
+    result = {
+        "triggered": False,
+        "reason": "",
+        "pending_outcomes": pending_count,
+        "threshold": threshold_outcomes,
+        "model_was_trained": oracle.is_trained,
+        "training_metrics": None,
+        "success": False
+    }
+
+    # Decide if training is needed
+    needs_training = False
+    reason = ""
+
+    if force:
+        needs_training = True
+        reason = "Forced training requested"
+    elif not oracle.is_trained:
+        needs_training = True
+        reason = "Model not trained - initial training"
+    elif pending_count >= threshold_outcomes:
+        needs_training = True
+        reason = f"Threshold reached: {pending_count} >= {threshold_outcomes} new outcomes"
+
+    if not needs_training:
+        result["reason"] = f"No training needed - only {pending_count}/{threshold_outcomes} new outcomes"
+        oracle.live_log.log("AUTO_TRAIN_SKIP", result["reason"], result)
+        return result
+
+    result["triggered"] = True
+    result["reason"] = reason
+
+    oracle.live_log.log("AUTO_TRAIN_START", reason, {"pending_outcomes": pending_count})
+
+    # Try training from live outcomes first (more accurate)
+    if pending_count >= 50:  # Need at least 50 for live training
+        metrics = train_from_live_outcomes(min_samples=50)
+        if metrics:
+            result["training_metrics"] = metrics.__dict__
+            result["success"] = True
+            result["method"] = "live_outcomes"
+            oracle.live_log.log("AUTO_TRAIN_SUCCESS", f"Trained from live outcomes - v{metrics.model_version}", result)
+            return result
+
+    # Fallback to KRONOS backtest data
+    try:
+        from backtest.autonomous_backtest_engine import get_backtester
+
+        backtester = get_backtester()
+        backtest_results = backtester.get_latest_results()
+
+        if backtest_results and backtest_results.get('trades'):
+            metrics = oracle.train_from_kronos(backtest_results)
+            result["training_metrics"] = metrics.__dict__
+            result["success"] = True
+            result["method"] = "kronos_backtest"
+            oracle.live_log.log("AUTO_TRAIN_SUCCESS", f"Trained from KRONOS - v{metrics.model_version}", result)
+            return result
+    except Exception as e:
+        logger.warning(f"Could not train from KRONOS: {e}")
+
+    result["reason"] = "Insufficient data for training"
+    oracle.live_log.log("AUTO_TRAIN_FAIL", result["reason"], result)
+    return result
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("ORACLE - Multi-Strategy ML Advisor with Claude AI")

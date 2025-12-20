@@ -17,6 +17,11 @@ from core_classes_and_engines import TradingVolatilityAPI
 # Backtest refresh interval (in days)
 BACKTEST_REFRESH_INTERVAL_DAYS = 7
 
+# Oracle auto-training settings
+ORACLE_TRAINING_DAY = 6  # Sunday (0=Monday, 6=Sunday)
+ORACLE_TRAINING_HOUR = 0  # Midnight CT
+ORACLE_OUTCOME_THRESHOLD = 100  # Train when this many new outcomes available
+
 # Market hours in Central Time (Texas)
 MARKET_OPEN_CT = dt_time(8, 30)   # 8:30 AM CT = 9:30 AM ET
 MARKET_CLOSE_CT = dt_time(15, 0)  # 3:00 PM CT = 4:00 PM ET
@@ -161,6 +166,82 @@ def check_and_refresh_backtests():
         print(f"⚠️ Backtest refresh failed: {e}")
         traceback.print_exc()
         return False
+
+
+def check_and_train_oracle(force: bool = False):
+    """
+    Check if Oracle ML model needs training and train if necessary.
+
+    Training triggers:
+    1. Weekly on Sunday midnight CT
+    2. When 100+ new trading outcomes are available
+    3. When force=True
+
+    Returns:
+        dict: Training result with status and metrics
+    """
+    ct_now = get_central_time()
+
+    try:
+        from quant.oracle_advisor import auto_train, get_pending_outcomes_count, get_oracle
+
+        oracle = get_oracle()
+        pending_count = get_pending_outcomes_count()
+
+        print(f"\n🔮 Oracle Training Check ({ct_now.strftime('%Y-%m-%d %I:%M %p CT')})")
+        print(f"   Model trained: {oracle.is_trained}")
+        print(f"   Model version: {oracle.model_version}")
+        print(f"   Pending outcomes: {pending_count}")
+        print(f"   Threshold: {ORACLE_OUTCOME_THRESHOLD}")
+
+        # Check if it's weekly training time (Sunday midnight CT)
+        is_weekly_train_time = (
+            ct_now.weekday() == ORACLE_TRAINING_DAY and
+            ct_now.hour == ORACLE_TRAINING_HOUR
+        )
+
+        # Check if threshold is reached
+        threshold_reached = pending_count >= ORACLE_OUTCOME_THRESHOLD
+
+        # Check if model needs initial training
+        needs_initial = not oracle.is_trained
+
+        if force or is_weekly_train_time or threshold_reached or needs_initial:
+            reason = "Forced" if force else (
+                "Weekly schedule" if is_weekly_train_time else (
+                    f"Threshold ({pending_count} >= {ORACLE_OUTCOME_THRESHOLD})" if threshold_reached else
+                    "Initial training"
+                )
+            )
+            print(f"   🎯 Training triggered: {reason}")
+
+            result = auto_train(
+                threshold_outcomes=ORACLE_OUTCOME_THRESHOLD,
+                force=force or needs_initial
+            )
+
+            if result.get('success'):
+                metrics = result.get('training_metrics', {})
+                print(f"   ✅ Training complete!")
+                print(f"      Method: {result.get('method', 'unknown')}")
+                print(f"      Accuracy: {metrics.get('accuracy', 0):.1%}")
+                print(f"      AUC-ROC: {metrics.get('auc_roc', 0):.3f}")
+                print(f"      Samples: {metrics.get('total_samples', 0)}")
+            else:
+                print(f"   ⚠️ Training not completed: {result.get('reason', 'Unknown')}")
+
+            return result
+        else:
+            print(f"   ℹ️ No training needed at this time")
+            return {"success": True, "triggered": False, "reason": "No training needed"}
+
+    except ImportError as e:
+        print(f"⚠️ Oracle module not available: {e}")
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        print(f"❌ Oracle training check failed: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
 
 
 def run_autonomous_trader_cycle(symbol: str = 'SPY'):
@@ -349,17 +430,24 @@ def run_continuous_scheduler(check_interval_minutes: int = 5, symbols: list = No
 
     cycle_count = 0
     last_backtest_check_date = None
+    last_oracle_check_hour = None
 
     while True:
         try:
             ct_now = get_central_time()
             current_date = ct_now.date()
+            current_hour = ct_now.hour
 
             # Check backtests once per day before market opens
             if last_backtest_check_date != current_date:
                 print(f"\n📊 Daily backtest check ({current_date})...")
                 check_and_refresh_backtests()
                 last_backtest_check_date = current_date
+
+            # Check Oracle training once per hour (or at midnight on Sundays)
+            if last_oracle_check_hour != current_hour:
+                check_and_train_oracle(force=False)
+                last_oracle_check_hour = current_hour
 
             # Check if market is open
             if is_market_hours():
