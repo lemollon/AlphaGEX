@@ -815,7 +815,7 @@ export default function ZeroDTEBacktestPage() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <main className="pt-16">
+      <main className="pt-24">
         <div className="container mx-auto px-4 py-8 space-y-6">
 
           {/* Header */}

@@ -125,7 +125,7 @@ export default function StrategyComparisonPage() {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
       <Navigation />
 
-      <main className="pt-16 transition-all duration-300">
+      <main className="pt-24 transition-all duration-300">
         <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="mb-8">

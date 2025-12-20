@@ -242,7 +242,7 @@ export default function DailyMannaPage() {
     return (
       <div className="min-h-screen">
         <Navigation />
-        <main className="pt-16 transition-all duration-300">
+        <main className="pt-24 transition-all duration-300">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
               <div className="relative">
@@ -269,7 +269,7 @@ export default function DailyMannaPage() {
     <div className="min-h-screen print:bg-white">
       <Navigation />
 
-      <main className="pt-16 transition-all duration-300">
+      <main className="pt-24 transition-all duration-300">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header */}
           <div className="text-center mb-8 print:mb-4">

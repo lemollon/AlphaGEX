@@ -202,7 +202,7 @@ export default function ATHENAPage() {
   return (
     <div className="min-h-screen bg-gray-900">
       <Navigation />
-      <main className="lg:pl-16 pt-16">
+      <main className="lg:pl-16 pt-24">
         <div className="p-6">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
