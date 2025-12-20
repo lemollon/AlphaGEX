@@ -26,6 +26,9 @@ interface TrainingStatus {
   needs_training: boolean
   training_metrics: any
   claude_available: boolean
+  model_source: 'database' | 'local_file' | 'none'
+  db_persistence: boolean
+  persistence_status: string
 }
 
 interface LogEntry {
