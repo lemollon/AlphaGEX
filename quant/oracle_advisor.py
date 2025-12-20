@@ -2248,7 +2248,7 @@ def analyze_kronos_patterns(backtest_results: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 def get_pending_outcomes_count() -> int:
-    """Get count of outcomes not yet used in model training"""
+    """Get count of outcomes available for training"""
     if not DB_AVAILABLE:
         return 0
 
@@ -2256,18 +2256,14 @@ def get_pending_outcomes_count() -> int:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get the current model version
-        oracle = get_oracle()
-        current_version = oracle.model_version or "0.0.0"
+        # Count all outcomes (simplified - used_in_model_version column may not exist)
+        try:
+            cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
+            count = cursor.fetchone()[0]
+        except Exception:
+            # Table might not exist yet
+            count = 0
 
-        # Count outcomes not yet used in training
-        cursor.execute("""
-            SELECT COUNT(*) FROM oracle_training_outcomes
-            WHERE used_in_model_version IS NULL
-               OR used_in_model_version != %s
-        """, (current_version,))
-
-        count = cursor.fetchone()[0]
         conn.close()
         return count
     except Exception as e:
@@ -2291,18 +2287,24 @@ def get_training_status() -> Dict[str, Any]:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get total outcomes
-            cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
-            total_outcomes = cursor.fetchone()[0]
+            # Get total outcomes (table might not exist)
+            try:
+                cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
+                total_outcomes = cursor.fetchone()[0]
+            except Exception:
+                total_outcomes = 0
 
-            # Try to get last training date from metadata or model save time
-            cursor.execute("""
-                SELECT MAX(created_at) FROM oracle_training_outcomes
-                WHERE used_in_model_version = %s
-            """, (oracle.model_version,))
-            row = cursor.fetchone()
-            if row and row[0]:
-                last_trained = row[0].isoformat()
+            # Try to get last training date from model save time
+            try:
+                cursor.execute("""
+                    SELECT MAX(created_at) FROM oracle_trained_models
+                    WHERE is_active = TRUE
+                """)
+                row = cursor.fetchone()
+                if row and row[0]:
+                    last_trained = row[0].isoformat()
+            except Exception:
+                pass
 
             # Check if model exists in database
             cursor.execute("""
@@ -2504,19 +2506,8 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
         oracle.model_version = new_version
         oracle._save_model()
 
-        # Mark outcomes as used
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE oracle_training_outcomes
-                SET used_in_model_version = %s
-                WHERE used_in_model_version IS NULL OR used_in_model_version != %s
-            """, (new_version, new_version))
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.warning(f"Failed to mark outcomes as used: {e}")
+        # Note: used_in_model_version column tracking removed for simplicity
+        # Training outcomes are tracked by the oracle_trained_models table
 
         oracle.live_log.log("TRAIN_DONE", f"Auto-trained v{new_version} - Accuracy: {oracle.training_metrics.accuracy:.1%}", {
             "accuracy": oracle.training_metrics.accuracy,
@@ -2664,7 +2655,7 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
         cursor.execute("""
             SELECT
                 created_at, ticker, strategy, initial_capital, final_equity,
-                win_rate, total_trades, max_drawdown_pct, sharpe_ratio,
+                win_rate, total_trades, max_drawdown_pct,
                 trade_log
             FROM zero_dte_backtest_results
             WHERE trade_log IS NOT NULL
@@ -2698,8 +2689,8 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
         for row in rows:
             try:
                 # Handle different table structures
-                if len(row) >= 10:  # zero_dte_backtest_results
-                    trade_log = row[9]
+                if len(row) >= 9:  # zero_dte_backtest_results
+                    trade_log = row[8]  # trade_log is the 9th column (index 8)
                 else:  # backtest_results
                     trade_log = row[1]
 

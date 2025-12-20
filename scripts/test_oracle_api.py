@@ -9,10 +9,10 @@ Usage:
     python scripts/test_oracle_api.py --base-url https://your-app.onrender.com
 
 Tests:
-- GET /api/zero-dte-backtest/oracle/training-status
-- POST /api/zero-dte-backtest/oracle/trigger-training
-- GET /api/zero-dte-backtest/oracle/bot-interactions
-- GET /api/zero-dte-backtest/oracle/performance
+- GET /api/zero-dte/oracle/training-status
+- POST /api/zero-dte/oracle/trigger-training
+- GET /api/zero-dte/oracle/bot-interactions
+- GET /api/zero-dte/oracle/performance
 """
 
 import os
@@ -81,7 +81,7 @@ def main():
     # ========================================
     print_header("1. GET /oracle/training-status")
 
-    success, status, body = test_endpoint(base_url, "GET", "/api/zero-dte-backtest/oracle/training-status")
+    success, status, body = test_endpoint(base_url, "GET", "/api/zero-dte/oracle/training-status")
 
     if success and body.get('success'):
         print_result("Training status endpoint", True)
@@ -103,7 +103,7 @@ def main():
 
     success, status, body = test_endpoint(
         base_url, "GET",
-        "/api/zero-dte-backtest/oracle/bot-interactions?days=30&limit=10"
+        "/api/zero-dte/oracle/bot-interactions?days=30&limit=10"
     )
 
     if success and body.get('success'):
@@ -128,7 +128,7 @@ def main():
 
     success, status, body = test_endpoint(
         base_url, "GET",
-        "/api/zero-dte-backtest/oracle/performance?days=90"
+        "/api/zero-dte/oracle/performance?days=90"
     )
 
     if success and body.get('success'):
