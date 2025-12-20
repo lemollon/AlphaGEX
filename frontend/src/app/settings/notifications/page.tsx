@@ -77,7 +77,7 @@ export default function NotificationSettings() {
     <div className="flex h-screen bg-gray-900">
       <Navigation />
 
-      <div className="flex-1 overflow-auto p-8 pt-20 lg:pt-8">
+      <div className="flex-1 overflow-auto p-8 pt-20">
         <div className="max-w-4xl mx-auto">
           {/* Header */}
           <div className="mb-8">
