@@ -2283,6 +2283,8 @@ def get_training_status() -> Dict[str, Any]:
     # Get last training date from database
     last_trained = None
     total_outcomes = 0
+    model_source = "none"
+    db_model_exists = False
 
     if DB_AVAILABLE:
         try:
@@ -2302,9 +2304,35 @@ def get_training_status() -> Dict[str, Any]:
             if row and row[0]:
                 last_trained = row[0].isoformat()
 
+            # Check if model exists in database
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'oracle_trained_models'
+                )
+            """)
+            if cursor.fetchone()[0]:
+                cursor.execute("""
+                    SELECT model_version, created_at FROM oracle_trained_models
+                    WHERE is_active = TRUE
+                    ORDER BY created_at DESC LIMIT 1
+                """)
+                db_row = cursor.fetchone()
+                if db_row:
+                    db_model_exists = True
+                    model_source = "database"
+                    if not last_trained:
+                        last_trained = db_row[1].isoformat() if db_row[1] else None
+
             conn.close()
         except Exception as e:
             logger.warning(f"Failed to get training status: {e}")
+
+    # Determine model source
+    if oracle.is_trained and not db_model_exists:
+        model_source = "local_file"
+    elif not oracle.is_trained:
+        model_source = "none"
 
     return {
         "model_trained": oracle.is_trained,
@@ -2315,7 +2343,10 @@ def get_training_status() -> Dict[str, Any]:
         "threshold_for_retrain": 100,
         "needs_training": pending_count >= 100 or not oracle.is_trained,
         "training_metrics": oracle.training_metrics.__dict__ if oracle.training_metrics else None,
-        "claude_available": oracle.claude_available
+        "claude_available": oracle.claude_available,
+        "model_source": model_source,
+        "db_persistence": db_model_exists,
+        "persistence_status": "Model saved in database - survives restarts" if db_model_exists else "Model NOT in database - will be lost on restart"
     }
 
 

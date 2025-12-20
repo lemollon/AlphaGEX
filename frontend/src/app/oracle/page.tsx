@@ -815,6 +815,22 @@ export default function OraclePage() {
                         <span className="text-text-secondary">Total Outcomes</span>
                         <span className="text-text-primary font-medium">{trainingStatus.total_outcomes}</span>
                       </div>
+                      <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
+                        <span className="text-text-secondary">Model Source</span>
+                        <span className={`font-bold ${trainingStatus.db_persistence ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {trainingStatus.model_source === 'database' ? 'Database' :
+                           trainingStatus.model_source === 'local_file' ? 'Local File' : 'None'}
+                        </span>
+                      </div>
+                      {trainingStatus.db_persistence ? (
+                        <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400 text-sm">
+                          Model saved in database - survives restarts
+                        </div>
+                      ) : trainingStatus.model_trained ? (
+                        <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+                          WARNING: Model NOT in database - will be lost on restart! Re-train to save.
+                        </div>
+                      ) : null}
                       {trainingStatus.needs_training && (
                         <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-400 text-sm">
                           Model needs retraining - threshold reached or model not trained
