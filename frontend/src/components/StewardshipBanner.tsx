@@ -3,14 +3,21 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Heart, Sparkles } from 'lucide-react'
 
-// Cross icon component
+// Latin Cross icon component with proper proportions
 const CrossIcon = ({ className }: { className?: string }) => (
   <svg
     className={className}
     viewBox="0 0 24 24"
     fill="currentColor"
   >
-    <path d="M10 2h4v6h6v4h-6v10h-4V12H4V8h6V2z" />
+    {/* Main cross shape - Latin cross with crossbar at 1/3 height */}
+    <path d="M10.5 1h3v5h5.5v3h-5.5v14h-3V9H5V6h5.5V1z" />
+    {/* Subtle inner highlight for depth */}
+    <path
+      d="M11.5 2h1v4h4.5v1h-4.5v13h-1V7H6V6h5.5V2z"
+      fill="currentColor"
+      opacity="0.3"
+    />
   </svg>
 )
 
