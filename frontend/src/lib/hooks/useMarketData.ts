@@ -17,6 +17,10 @@ const fetchers = {
     const response = await apiClient.getDailyTradingPlan()
     return response.data
   },
+  intelligenceFeed: async () => {
+    const response = await apiClient.getIntelligenceFeed()
+    return response.data
+  },
 
   // GEX & Gamma
   gex: async (symbol: string) => {
@@ -357,6 +361,14 @@ export function useDailyTradingPlan(options?: SWRConfiguration) {
   return useSWR('daily-trading-plan', fetchers.dailyTradingPlan, {
     ...swrConfig,
     refreshInterval: 30 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useIntelligenceFeed(options?: SWRConfiguration) {
+  return useSWR('intelligence-feed', fetchers.intelligenceFeed, {
+    ...swrConfig,
+    refreshInterval: 2 * 60 * 1000, // 2 minutes - matches backend cache
     ...options,
   })
 }
