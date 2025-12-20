@@ -330,6 +330,40 @@ const fetchers = {
     const response = await apiClient.getVolSurfaceAnalysis(symbol)
     return response.data
   },
+
+  // Daily Manna - Economic news with faith-based devotionals
+  dailyManna: async (forceRefresh: boolean = false) => {
+    try {
+      const response = await apiClient.getDailyManna(forceRefresh)
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  dailyMannaWidget: async () => {
+    try {
+      const response = await apiClient.getDailyMannaWidget()
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  dailyMannaComments: async (date?: string) => {
+    try {
+      const response = await apiClient.getDailyMannaComments(date)
+      return response.data
+    } catch {
+      return { success: false, data: { comments: [] } }
+    }
+  },
+  dailyMannaArchive: async (limit: number = 30) => {
+    try {
+      const response = await apiClient.getDailyMannaArchive(limit)
+      return response.data
+    } catch {
+      return { success: false, data: { archive: [] } }
+    }
+  },
 }
 
 // =============================================================================
@@ -868,6 +902,54 @@ export function useVolSurfaceAnalysis(symbol: string = 'SPY', options?: SWRConfi
 }
 
 // =============================================================================
+// DAILY MANNA HOOKS - Economic news with faith-based devotionals
+// =============================================================================
+
+export function useDailyManna(forceRefresh: boolean = false, options?: SWRConfiguration) {
+  return useSWR(
+    'daily-manna',
+    () => fetchers.dailyManna(forceRefresh),
+    {
+      ...swrConfig,
+      refreshInterval: 30 * 60 * 1000, // 30 minutes - content is cached per day
+      ...options,
+    }
+  )
+}
+
+export function useDailyMannaWidget(options?: SWRConfiguration) {
+  return useSWR('daily-manna-widget', fetchers.dailyMannaWidget, {
+    ...swrConfig,
+    refreshInterval: 10 * 60 * 1000, // 10 minutes
+    ...options,
+  })
+}
+
+export function useDailyMannaComments(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    date ? `daily-manna-comments-${date}` : 'daily-manna-comments',
+    () => fetchers.dailyMannaComments(date),
+    {
+      ...swrConfig,
+      refreshInterval: 60 * 1000, // 1 minute for live comments
+      ...options,
+    }
+  )
+}
+
+export function useDailyMannaArchive(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `daily-manna-archive-${limit}`,
+    () => fetchers.dailyMannaArchive(limit),
+    {
+      ...swrConfig,
+      refreshInterval: 10 * 60 * 1000, // 10 minutes
+      ...options,
+    }
+  )
+}
+
+// =============================================================================
 // PREFETCH - Warm the cache on app load
 // =============================================================================
 
@@ -884,6 +966,8 @@ export const prefetchMarketData = {
   aresStatus: () => preload('ares-status', fetchers.aresStatus),
   athenaStatus: () => preload('athena-status', fetchers.athenaStatus),
   traderStatus: () => preload('trader-status', fetchers.traderStatus),
+  dailyManna: () => preload('daily-manna', () => fetchers.dailyManna()),
+  dailyMannaWidget: () => preload('daily-manna-widget', fetchers.dailyMannaWidget),
 
   // Prefetch all common data at once
   all: (symbol: string = 'SPY') => {

@@ -1,8 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { apiClient } from '@/lib/api'
+import { useDailyMannaWidget } from '@/lib/hooks/useMarketData'
 import { BookOpen, Sparkles, ArrowRight } from 'lucide-react'
 
 interface WidgetData {
@@ -14,27 +13,13 @@ interface WidgetData {
 }
 
 export default function DailyMannaWidget() {
-  const [data, setData] = useState<WidgetData | null>(null)
-  const [loading, setLoading] = useState(true)
+  // SWR hook for fast cached loading
+  const { data: response, isLoading } = useDailyMannaWidget()
 
-  useEffect(() => {
-    fetchWidget()
-  }, [])
+  // Extract data from response
+  const data = response?.success ? response.data : null
 
-  const fetchWidget = async () => {
-    try {
-      const response = await apiClient.getDailyMannaWidget()
-      if (response.data.success) {
-        setData(response.data.data)
-      }
-    } catch (err) {
-      // Silently fail - widget is optional
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="card bg-gradient-to-r from-amber-500/10 to-orange-500/5 border-amber-500/30 animate-pulse">
         <div className="flex items-center justify-between">
