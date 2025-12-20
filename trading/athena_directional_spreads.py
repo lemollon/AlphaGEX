@@ -724,7 +724,15 @@ class ATHENATrader:
         today = datetime.now().strftime("%Y-%m-%d")
 
         # Calculate strikes
-        atm_strike = round(spot_price)
+        # Use Oracle's suggested strike if available, otherwise calculate from spot
+        # (Similar to ARES fix for GEX-Protected strikes)
+        suggested_strike = getattr(advice, 'suggested_call_strike', None)
+        if suggested_strike and suggested_strike > 0:
+            atm_strike = round(suggested_strike)
+            self._log_to_db("INFO", f"Using Oracle suggested strike: ${atm_strike}")
+        else:
+            atm_strike = round(spot_price)
+
         if spread_type == SpreadType.BULL_CALL_SPREAD:
             long_strike = atm_strike
             short_strike = atm_strike + self.config.spread_width
@@ -733,9 +741,19 @@ class ATHENATrader:
             long_strike = atm_strike + self.config.spread_width
 
         # Position sizing
+        # Use Oracle's suggested risk percentage if available (similar to ARES SD multiplier fix)
+        suggested_risk = getattr(advice, 'suggested_risk_pct', None)
+        if suggested_risk and suggested_risk > 0:
+            # Oracle suggests a risk percentage based on win probability
+            # Apply it as an adjustment to config baseline
+            effective_risk_pct = min(self.config.risk_per_trade_pct, suggested_risk)
+            self._log_to_db("INFO", f"Using Oracle suggested risk: {effective_risk_pct:.1f}% (Oracle: {suggested_risk:.1f}%, Config: {self.config.risk_per_trade_pct:.1f}%)")
+        else:
+            effective_risk_pct = self.config.risk_per_trade_pct
+
         spread_width = abs(short_strike - long_strike)
         max_loss = spread_width * 100 * self.config.default_contracts
-        max_risk = self.current_capital * (self.config.risk_per_trade_pct / 100)
+        max_risk = self.current_capital * (effective_risk_pct / 100)
 
         contracts = min(
             self.config.default_contracts,
@@ -1160,24 +1178,33 @@ class ATHENATrader:
                 return result
 
         # === FALLBACK: Use Oracle if ML unavailable ===
+        oracle_advice = None  # Track Oracle advice separately for proper usage
         if not spread_type and ORACLE_AVAILABLE:
             signal_source = "Oracle"
-            advice = self.get_oracle_advice()
+            oracle_advice = self.get_oracle_advice()
 
-            if advice:
+            if oracle_advice:
                 result['trades_attempted'] = 1
 
-                if advice.advice == TradingAdvice.SKIP_TODAY:
-                    self._log_to_db("INFO", f"Oracle says SKIP: {advice.reasoning}")
+                if oracle_advice.advice == TradingAdvice.SKIP_TODAY:
+                    self._log_to_db("INFO", f"Oracle says SKIP: {oracle_advice.reasoning}")
                     result['signal_source'] = 'Oracle'
-                    result['decision_reason'] = f"NO TRADE: Oracle says SKIP - {advice.reasoning}"
+                    result['decision_reason'] = f"NO TRADE: Oracle says SKIP - {oracle_advice.reasoning}"
                     return result
 
                 # Determine spread type from Oracle reasoning
-                if "BULL_CALL_SPREAD" in advice.reasoning:
+                if "BULL_CALL_SPREAD" in oracle_advice.reasoning:
                     spread_type = SpreadType.BULL_CALL_SPREAD
-                elif "BEAR_CALL_SPREAD" in advice.reasoning:
+                elif "BEAR_CALL_SPREAD" in oracle_advice.reasoning:
                     spread_type = SpreadType.BEAR_CALL_SPREAD
+
+                # Log Oracle-specific info (similar to ARES fix)
+                self._log_to_db("INFO", f"Oracle Advice: {oracle_advice.advice.value}", {
+                    'win_probability': oracle_advice.win_probability,
+                    'confidence': oracle_advice.confidence,
+                    'suggested_risk_pct': oracle_advice.suggested_risk_pct,
+                    'suggested_call_strike': getattr(oracle_advice, 'suggested_call_strike', None),
+                })
 
         # No actionable signal
         if not spread_type:
@@ -1216,15 +1243,46 @@ class ATHENATrader:
         # Save signal to database
         signal_id = self._save_ml_signal_to_db(ml_signal, gex_data) if ml_signal else None
 
-        # Create a mock advice object for execution (to maintain compatibility)
+        # Create advice object for execution
+        # CRITICAL: Use actual Oracle advice when Oracle is the signal source (fixes bug where
+        # Oracle advice was being ignored - similar to ARES fix for SD multiplier/GEX walls)
         class MockAdvice:
-            def __init__(self, ml_sig):
-                self.confidence = ml_sig['confidence'] if ml_sig else 0.5
-                self.win_probability = ml_sig['win_probability'] if ml_sig else 0.5
-                self.reasoning = ml_sig['reasoning'] if ml_sig else "Oracle signal"
-                self.claude_analysis = None
+            def __init__(self, ml_sig, oracle_adv=None):
+                if oracle_adv is not None:
+                    # Use actual Oracle advice - don't ignore it!
+                    self.confidence = oracle_adv.confidence
+                    self.win_probability = oracle_adv.win_probability
+                    self.reasoning = oracle_adv.reasoning
+                    self.claude_analysis = getattr(oracle_adv, 'claude_analysis', None)
+                    # Preserve Oracle's suggested values for position sizing
+                    self.suggested_risk_pct = getattr(oracle_adv, 'suggested_risk_pct', None)
+                    self.suggested_call_strike = getattr(oracle_adv, 'suggested_call_strike', None)
+                elif ml_sig:
+                    self.confidence = ml_sig['confidence']
+                    self.win_probability = ml_sig['win_probability']
+                    self.reasoning = ml_sig['reasoning']
+                    self.claude_analysis = None
+                    self.suggested_risk_pct = None
+                    self.suggested_call_strike = None
+                else:
+                    # Should not happen - but fallback to defaults
+                    self.confidence = 0.5
+                    self.win_probability = 0.5
+                    self.reasoning = "Unknown signal source"
+                    self.claude_analysis = None
+                    self.suggested_risk_pct = None
+                    self.suggested_call_strike = None
 
-        advice_obj = MockAdvice(ml_signal)
+        # Use Oracle advice if Oracle was the signal source, otherwise use ML signal
+        advice_obj = MockAdvice(ml_signal, oracle_advice if signal_source == "Oracle" else None)
+
+        # Log which advice source is being used
+        self._log_to_db("INFO", f"Using {signal_source} advice for execution", {
+            'confidence': advice_obj.confidence,
+            'win_probability': advice_obj.win_probability,
+            'suggested_risk_pct': getattr(advice_obj, 'suggested_risk_pct', None),
+            'suggested_call_strike': getattr(advice_obj, 'suggested_call_strike', None)
+        })
 
         # Execute spread
         position = self.execute_spread(
