@@ -1930,6 +1930,23 @@ class OracleAdvisor:
                 )
             """)
 
+            # Migration: Add missing columns to existing tables
+            migration_columns = [
+                ("claude_analysis", "JSONB"),
+                ("prediction_used", "BOOLEAN DEFAULT FALSE"),
+                ("actual_outcome", "TEXT"),
+                ("actual_pnl", "REAL"),
+                ("outcome_date", "DATE"),
+                ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
+            ]
+            for col_name, col_type in migration_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+                except Exception:
+                    pass  # Column already exists or other error
+
+            conn.commit()
+
             # Serialize top_factors as JSON
             top_factors_json = json.dumps([
                 {"feature": f[0], "importance": f[1]}
@@ -2122,7 +2139,6 @@ class OracleAdvisor:
                         call_strike REAL,
                         spot_at_entry REAL,
                         spot_at_exit REAL,
-                        used_in_model_version TEXT,
                         created_at TIMESTAMPTZ DEFAULT NOW(),
                         UNIQUE(trade_date, bot_name)
                     )
@@ -2132,9 +2148,8 @@ class OracleAdvisor:
                 cursor.execute("""
                     INSERT INTO oracle_training_outcomes (
                         trade_date, bot_name, features, outcome, is_win, net_pnl,
-                        put_strike, call_strike, spot_at_entry, spot_at_exit,
-                        used_in_model_version
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        put_strike, call_strike, spot_at_entry, spot_at_exit
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (trade_date, bot_name) DO UPDATE SET
                         outcome = EXCLUDED.outcome,
                         is_win = EXCLUDED.is_win,
@@ -2150,8 +2165,7 @@ class OracleAdvisor:
                     put_strike or pred_put,
                     call_strike or pred_call,
                     spot_at_entry,
-                    spot_at_exit,
-                    model_ver
+                    spot_at_exit
                 ))
 
                 # Log to live log
@@ -2283,6 +2297,7 @@ def get_training_status() -> Dict[str, Any]:
     db_model_exists = False
 
     if DB_AVAILABLE:
+        conn = None
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -2292,6 +2307,7 @@ def get_training_status() -> Dict[str, Any]:
                 cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
                 total_outcomes = cursor.fetchone()[0]
             except Exception:
+                conn.rollback()  # Reset transaction state
                 total_outcomes = 0
 
             # Try to get last training date from model save time
@@ -2304,31 +2320,39 @@ def get_training_status() -> Dict[str, Any]:
                 if row and row[0]:
                     last_trained = row[0].isoformat()
             except Exception:
-                pass
+                conn.rollback()  # Reset transaction state
 
             # Check if model exists in database
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables
-                    WHERE table_name = 'oracle_trained_models'
-                )
-            """)
-            if cursor.fetchone()[0]:
+            try:
                 cursor.execute("""
-                    SELECT model_version, created_at FROM oracle_trained_models
-                    WHERE is_active = TRUE
-                    ORDER BY created_at DESC LIMIT 1
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'oracle_trained_models'
+                    )
                 """)
-                db_row = cursor.fetchone()
-                if db_row:
-                    db_model_exists = True
-                    model_source = "database"
-                    if not last_trained:
-                        last_trained = db_row[1].isoformat() if db_row[1] else None
+                if cursor.fetchone()[0]:
+                    cursor.execute("""
+                        SELECT model_version, created_at FROM oracle_trained_models
+                        WHERE is_active = TRUE
+                        ORDER BY created_at DESC LIMIT 1
+                    """)
+                    db_row = cursor.fetchone()
+                    if db_row:
+                        db_model_exists = True
+                        model_source = "database"
+                        if not last_trained:
+                            last_trained = db_row[1].isoformat() if db_row[1] else None
+            except Exception:
+                conn.rollback()
 
-            conn.close()
         except Exception as e:
             logger.warning(f"Failed to get training status: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     # Determine model source
     if oracle.is_trained and not db_model_exists:
@@ -2637,7 +2661,7 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
     """
     Train Oracle from backtest results stored in database.
 
-    This pulls data from zero_dte_backtest_results and backtest_results tables.
+    This pulls data from zero_dte_backtest_trades table directly.
     More robust than KRONOS in-memory data as it persists across restarts.
     """
     if not DB_AVAILABLE:
@@ -2651,67 +2675,67 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Try zero_dte_backtest_results first (more detailed)
-        cursor.execute("""
-            SELECT
-                created_at, ticker, strategy, initial_capital, final_equity,
-                win_rate, total_trades, max_drawdown_pct,
-                trade_log
-            FROM zero_dte_backtest_results
-            WHERE trade_log IS NOT NULL
-            ORDER BY created_at DESC
-            LIMIT 50
-        """)
-        rows = cursor.fetchall()
+        rows = []
 
-        if not rows:
-            # Fall back to backtest_results table
+        # Try to query from zero_dte_backtest_trades table
+        try:
             cursor.execute("""
                 SELECT
-                    run_date, trades_data, total_trades, win_rate,
-                    total_pnl, max_drawdown
-                FROM backtest_results
-                WHERE trades_data IS NOT NULL
-                ORDER BY run_date DESC
-                LIMIT 50
+                    trade_date,
+                    underlying_price_entry,
+                    vix_entry,
+                    iv_used,
+                    outcome,
+                    net_pnl,
+                    return_pct,
+                    gex_net,
+                    gex_regime,
+                    put_short_strike,
+                    call_short_strike
+                FROM zero_dte_backtest_trades
+                WHERE outcome IS NOT NULL
+                ORDER BY trade_date DESC
+                LIMIT 1000
             """)
             rows = cursor.fetchall()
+        except Exception as e:
+            logger.warning(f"Could not query zero_dte_backtest_trades: {e}")
+            # Rollback the failed transaction
+            conn.rollback()
 
         conn.close()
 
-        if not rows:
-            oracle.live_log.log("TRAIN_DB_SKIP", "No backtest data in database", {})
-            logger.info("No backtest data found in database")
+        if not rows or len(rows) < min_samples:
+            oracle.live_log.log("TRAIN_DB_SKIP", f"Insufficient trades: {len(rows) if rows else 0} < {min_samples}", {})
+            logger.info(f"Insufficient trades from database: {len(rows) if rows else 0} < {min_samples}")
             return None
 
-        # Extract trades from results
+        # Convert to trade dictionaries for train_from_kronos
         all_trades = []
         for row in rows:
-            try:
-                # Handle different table structures
-                if len(row) >= 9:  # zero_dte_backtest_results
-                    trade_log = row[8]  # trade_log is the 9th column (index 8)
-                else:  # backtest_results
-                    trade_log = row[1]
+            trade_date, spy_price, vix, iv, outcome, pnl, ret_pct, gex_net, gex_regime, put_strike, call_strike = row
 
-                if isinstance(trade_log, str):
-                    import json
-                    trades = json.loads(trade_log)
-                else:
-                    trades = trade_log
+            # Map outcome to win/loss
+            is_win = outcome in ('MAX_PROFIT', 'PARTIAL_PROFIT')
 
-                if isinstance(trades, list):
-                    all_trades.extend(trades)
-                elif isinstance(trades, dict) and 'trades' in trades:
-                    all_trades.extend(trades['trades'])
-            except Exception as e:
-                logger.warning(f"Failed to parse trade log: {e}")
-                continue
+            # Format trade to match extract_features_from_kronos expectations
+            trade = {
+                'trade_date': str(trade_date) if trade_date else '',
+                'open_price': float(spy_price) if spy_price else 590.0,
+                'close_price': float(spy_price) if spy_price else 590.0,  # Approximate
+                'vix': float(vix) if vix else 15.0,
+                'expected_move_1d': float(spy_price) * 0.01 if spy_price else 5.0,  # ~1% move
+                'outcome': outcome or 'MAX_PROFIT',
+                'net_pnl': float(pnl) if pnl else 0,
+                # GEX fields
+                'gex_normalized': float(gex_net) / 1e9 if gex_net else 0,  # Normalize to billions
+                'gex_regime': gex_regime or 'NEUTRAL',
+                'gex_distance_to_flip_pct': 0,  # Not available
+                'gex_between_walls': True,  # Default
+            }
+            all_trades.append(trade)
 
-        if len(all_trades) < min_samples:
-            oracle.live_log.log("TRAIN_DB_SKIP", f"Insufficient trades: {len(all_trades)} < {min_samples}", {})
-            logger.info(f"Insufficient trades from database: {len(all_trades)} < {min_samples}")
-            return None
+        oracle.live_log.log("TRAIN_DB_DATA", f"Loaded {len(all_trades)} trades from database", {})
 
         # Format as KRONOS backtest results
         backtest_results = {'all_trades': all_trades}
