@@ -17,7 +17,17 @@ import {
   ChevronUp,
   Sparkles,
   Quote,
-  MessageCircle
+  MessageCircle,
+  Share2,
+  Printer,
+  Archive,
+  Send,
+  ThumbsUp,
+  CheckCircle,
+  Flame,
+  Star,
+  PenLine,
+  Calendar
 } from 'lucide-react'
 
 interface Scripture {
@@ -54,6 +64,21 @@ interface DailyMannaData {
   news_sources?: string[]
 }
 
+interface Comment {
+  id: number
+  user_name: string
+  comment: string
+  created_at: string
+  likes: number
+}
+
+interface PrayerStats {
+  prayed_today: boolean
+  current_streak: number
+  longest_streak: number
+  total_days: number
+}
+
 export default function DailyMannaPage() {
   const [data, setData] = useState<DailyMannaData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -64,11 +89,33 @@ export default function DailyMannaPage() {
     scriptures: true,
     study: true,
     prayer: true,
-    reflection: true
+    reflection: true,
+    comments: false,
+    myNotes: false
   })
+
+  // Comments state
+  const [comments, setComments] = useState<Comment[]>([])
+  const [newComment, setNewComment] = useState('')
+  const [userName, setUserName] = useState('')
+  const [submittingComment, setSubmittingComment] = useState(false)
+
+  // Personal reflection state
+  const [myReflection, setMyReflection] = useState('')
+  const [savingReflection, setSavingReflection] = useState(false)
+  const [reflectionSaved, setReflectionSaved] = useState(false)
+
+  // Prayer tracker state
+  const [prayerStats, setPrayerStats] = useState<PrayerStats | null>(null)
+  const [markingPrayer, setMarkingPrayer] = useState(false)
 
   useEffect(() => {
     fetchDailyManna()
+    fetchComments()
+    fetchPrayerStats()
+    // Load saved user name from localStorage
+    const savedName = localStorage.getItem('dailyMannaUserName')
+    if (savedName) setUserName(savedName)
   }, [])
 
   const fetchDailyManna = async (forceRefresh = false) => {
@@ -96,6 +143,127 @@ export default function DailyMannaPage() {
     }
   }
 
+  const fetchComments = async () => {
+    try {
+      const response = await apiClient.getDailyMannaComments()
+      if (response.data.success) {
+        setComments(response.data.data.comments || [])
+      }
+    } catch (err) {
+      logger.error('Error fetching comments:', err)
+    }
+  }
+
+  const fetchPrayerStats = async () => {
+    try {
+      const response = await apiClient.getPrayerStats()
+      if (response.data.success) {
+        setPrayerStats(response.data.data)
+      }
+    } catch (err) {
+      logger.error('Error fetching prayer stats:', err)
+    }
+  }
+
+  const handleSubmitComment = async () => {
+    if (!newComment.trim()) return
+
+    setSubmittingComment(true)
+    try {
+      const name = userName.trim() || 'Anonymous'
+      // Save user name for next time
+      if (userName.trim()) {
+        localStorage.setItem('dailyMannaUserName', userName.trim())
+      }
+
+      const response = await apiClient.addDailyMannaComment({
+        user_name: name,
+        comment: newComment.trim()
+      })
+
+      if (response.data.success) {
+        setNewComment('')
+        fetchComments()
+      }
+    } catch (err) {
+      logger.error('Error submitting comment:', err)
+    } finally {
+      setSubmittingComment(false)
+    }
+  }
+
+  const handleLikeComment = async (commentId: number) => {
+    try {
+      await apiClient.likeDailyMannaComment(commentId)
+      fetchComments()
+    } catch (err) {
+      logger.error('Error liking comment:', err)
+    }
+  }
+
+  const handleSaveReflection = async () => {
+    if (!myReflection.trim()) return
+
+    setSavingReflection(true)
+    try {
+      const response = await apiClient.saveDailyMannaReflection({
+        reflection: myReflection.trim()
+      })
+
+      if (response.data.success) {
+        setReflectionSaved(true)
+        setTimeout(() => setReflectionSaved(false), 3000)
+      }
+    } catch (err) {
+      logger.error('Error saving reflection:', err)
+    } finally {
+      setSavingReflection(false)
+    }
+  }
+
+  const handleMarkPrayed = async () => {
+    setMarkingPrayer(true)
+    try {
+      const response = await apiClient.markPrayedToday()
+      if (response.data.success) {
+        setPrayerStats(response.data.data)
+      }
+    } catch (err) {
+      logger.error('Error marking prayer:', err)
+    } finally {
+      setMarkingPrayer(false)
+    }
+  }
+
+  const handleShare = async () => {
+    if (!data) return
+
+    const shareText = `Daily Manna - ${data.date}\n\n` +
+      `Theme: ${data.devotional?.theme}\n\n` +
+      `"${data.devotional?.key_insight}"\n\n` +
+      `Scripture: ${data.scriptures?.[0]?.reference}\n` +
+      `"${data.scriptures?.[0]?.text}"`
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Daily Manna Devotional',
+          text: shareText
+        })
+      } catch (err) {
+        // User cancelled or error
+      }
+    } else {
+      // Fallback: copy to clipboard
+      navigator.clipboard.writeText(shareText)
+      alert('Devotional copied to clipboard!')
+    }
+  }
+
+  const handlePrint = () => {
+    window.print()
+  }
+
   const toggleSection = (section: keyof typeof expandedSections) => {
     setExpandedSections(prev => ({
       ...prev,
@@ -109,6 +277,19 @@ export default function DailyMannaPage() {
       case 'medium': return 'text-warning'
       case 'low': return 'text-success'
       default: return 'text-text-secondary'
+    }
+  }
+
+  const formatTime = (timestamp: string) => {
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      }).format(new Date(timestamp))
+    } catch {
+      return timestamp
     }
   }
 
@@ -140,36 +321,100 @@ export default function DailyMannaPage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen print:bg-white">
       <Navigation />
 
       <main className="pt-16 transition-all duration-300">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header */}
-          <div className="text-center mb-8">
+          <div className="text-center mb-8 print:mb-4">
             <div className="flex items-center justify-center space-x-3 mb-4">
               <Sun className="w-10 h-10 text-amber-400" />
-              <h1 className="text-3xl font-bold text-text-primary">Daily Manna</h1>
+              <h1 className="text-3xl font-bold text-text-primary print:text-black">Daily Manna</h1>
               <BookOpen className="w-10 h-10 text-amber-400" />
             </div>
-            <p className="text-lg text-text-secondary mb-2">
+            <p className="text-lg text-text-secondary mb-2 print:text-gray-600">
               {data?.date || 'Loading...'}
             </p>
-            <p className="text-text-muted italic">
+            <p className="text-text-muted italic print:text-gray-500">
               {data?.greeting || 'Where faith meets finance'}
             </p>
-            <button
-              onClick={() => fetchDailyManna(true)}
-              disabled={refreshing}
-              className="mt-4 btn-secondary inline-flex items-center space-x-2"
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-              <span>{refreshing ? 'Refreshing...' : 'Refresh Content'}</span>
-            </button>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-center gap-2 mt-4 print:hidden">
+              <button
+                onClick={() => fetchDailyManna(true)}
+                disabled={refreshing}
+                className="btn-secondary inline-flex items-center space-x-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
+              </button>
+              <button
+                onClick={handleShare}
+                className="btn-secondary inline-flex items-center space-x-2"
+              >
+                <Share2 className="w-4 h-4" />
+                <span>Share</span>
+              </button>
+              <button
+                onClick={handlePrint}
+                className="btn-secondary inline-flex items-center space-x-2"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print</span>
+              </button>
+              <a
+                href="/daily-manna/archive"
+                className="btn-secondary inline-flex items-center space-x-2"
+              >
+                <Archive className="w-4 h-4" />
+                <span>Archive</span>
+              </a>
+            </div>
           </div>
 
+          {/* Prayer Tracker */}
+          {prayerStats && (
+            <div className="card mb-6 bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-amber-500/30 print:hidden">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-2">
+                    <Flame className={`w-6 h-6 ${prayerStats.current_streak > 0 ? 'text-orange-500' : 'text-gray-500'}`} />
+                    <span className="font-semibold text-text-primary">
+                      {prayerStats.current_streak} day streak
+                    </span>
+                  </div>
+                  <div className="text-sm text-text-secondary">
+                    Best: {prayerStats.longest_streak} days • Total: {prayerStats.total_days} days
+                  </div>
+                </div>
+                <button
+                  onClick={handleMarkPrayed}
+                  disabled={prayerStats.prayed_today || markingPrayer}
+                  className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                    prayerStats.prayed_today
+                      ? 'bg-success/20 text-success cursor-default'
+                      : 'bg-amber-500 text-white hover:bg-amber-600'
+                  }`}
+                >
+                  {prayerStats.prayed_today ? (
+                    <span className="flex items-center space-x-2">
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Prayed Today</span>
+                    </span>
+                  ) : markingPrayer ? (
+                    'Logging...'
+                  ) : (
+                    'I Prayed Today'
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
           {error && (
-            <div className="bg-danger/10 border border-danger/30 rounded-lg p-4 mb-6">
+            <div className="bg-danger/10 border border-danger/30 rounded-lg p-4 mb-6 print:hidden">
               <div className="flex items-center space-x-2 text-danger">
                 <AlertCircle className="w-5 h-5" />
                 <span>{error}</span>
@@ -206,13 +451,15 @@ export default function DailyMannaPage() {
               <div className="card">
                 <button
                   onClick={() => toggleSection('scriptures')}
-                  className="w-full flex items-center justify-between mb-4"
+                  className="w-full flex items-center justify-between mb-4 print:pointer-events-none"
                 >
                   <h2 className="text-xl font-semibold flex items-center space-x-2">
                     <BookOpen className="w-6 h-6 text-amber-400" />
                     <span>Today&apos;s Scriptures</span>
                   </h2>
-                  {expandedSections.scriptures ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  <span className="print:hidden">
+                    {expandedSections.scriptures ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </span>
                 </button>
 
                 {expandedSections.scriptures && (
@@ -228,7 +475,7 @@ export default function DailyMannaPage() {
                           </div>
                           <div>
                             <p className="font-semibold text-amber-400 mb-1">{scripture.reference}</p>
-                            <p className="text-text-primary italic">&ldquo;{scripture.text}&rdquo;</p>
+                            <p className="text-text-primary italic print:text-black">&ldquo;{scripture.text}&rdquo;</p>
                             <p className="text-xs text-text-muted mt-2">Theme: {scripture.theme}</p>
                           </div>
                         </div>
@@ -239,21 +486,22 @@ export default function DailyMannaPage() {
               </div>
 
               {/* Today's Financial Headlines */}
-              <div className="card">
+              <div className="card print:break-before-page">
                 <button
                   onClick={() => toggleSection('news')}
-                  className="w-full flex items-center justify-between mb-4"
+                  className="w-full flex items-center justify-between mb-4 print:pointer-events-none"
                 >
                   <h2 className="text-xl font-semibold flex items-center space-x-2">
                     <TrendingUp className="w-6 h-6 text-primary" />
                     <span>Today&apos;s Financial Headlines</span>
                   </h2>
-                  {expandedSections.news ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  <span className="print:hidden">
+                    {expandedSections.news ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </span>
                 </button>
 
                 {expandedSections.news && (
                   <>
-                    {/* News Sources */}
                     {data.news_sources && data.news_sources.length > 0 && (
                       <div className="mb-4 text-xs text-text-muted">
                         Sources: {data.news_sources.join(' • ')}
@@ -285,15 +533,15 @@ export default function DailyMannaPage() {
                                   href={item.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="font-medium text-text-primary hover:text-primary transition-colors block mb-1"
+                                  className="font-medium text-text-primary hover:text-primary transition-colors block mb-1 print:text-black"
                                 >
                                   {item.headline}
                                 </a>
                               ) : (
-                                <h3 className="font-medium text-text-primary mb-1">{item.headline}</h3>
+                                <h3 className="font-medium text-text-primary mb-1 print:text-black">{item.headline}</h3>
                               )}
                               {item.summary && (
-                                <p className="text-sm text-text-secondary">{item.summary}</p>
+                                <p className="text-sm text-text-secondary print:text-gray-600">{item.summary}</p>
                               )}
                             </div>
                           </div>
@@ -308,18 +556,20 @@ export default function DailyMannaPage() {
               <div className="card">
                 <button
                   onClick={() => toggleSection('study')}
-                  className="w-full flex items-center justify-between mb-4"
+                  className="w-full flex items-center justify-between mb-4 print:pointer-events-none"
                 >
                   <h2 className="text-xl font-semibold flex items-center space-x-2">
                     <Sparkles className="w-6 h-6 text-amber-400" />
                     <span>Today&apos;s Bible Study</span>
                   </h2>
-                  {expandedSections.study ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  <span className="print:hidden">
+                    {expandedSections.study ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </span>
                 </button>
 
                 {expandedSections.study && (
-                  <div className="prose prose-invert max-w-none">
-                    <div className="text-text-primary whitespace-pre-wrap leading-relaxed">
+                  <div className="prose prose-invert max-w-none print:prose-gray">
+                    <div className="text-text-primary whitespace-pre-wrap leading-relaxed print:text-black">
                       {data.devotional?.bible_study}
                     </div>
                   </div>
@@ -327,21 +577,23 @@ export default function DailyMannaPage() {
               </div>
 
               {/* Morning Prayer */}
-              <div className="card bg-gradient-to-br from-purple-900/20 to-indigo-900/20 border-purple-500/30">
+              <div className="card bg-gradient-to-br from-purple-900/20 to-indigo-900/20 border-purple-500/30 print:bg-gray-100">
                 <button
                   onClick={() => toggleSection('prayer')}
-                  className="w-full flex items-center justify-between mb-4"
+                  className="w-full flex items-center justify-between mb-4 print:pointer-events-none"
                 >
                   <h2 className="text-xl font-semibold flex items-center space-x-2">
                     <Heart className="w-6 h-6 text-purple-400" />
                     <span>Morning Prayer</span>
                   </h2>
-                  {expandedSections.prayer ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  <span className="print:hidden">
+                    {expandedSections.prayer ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </span>
                 </button>
 
                 {expandedSections.prayer && (
-                  <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-6">
-                    <p className="text-text-primary italic leading-relaxed text-center">
+                  <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-6 print:bg-gray-50">
+                    <p className="text-text-primary italic leading-relaxed text-center print:text-black">
                       {data.devotional?.morning_prayer}
                     </p>
                     <p className="text-purple-400 text-center mt-4 font-semibold">Amen.</p>
@@ -353,13 +605,15 @@ export default function DailyMannaPage() {
               <div className="card">
                 <button
                   onClick={() => toggleSection('reflection')}
-                  className="w-full flex items-center justify-between mb-4"
+                  className="w-full flex items-center justify-between mb-4 print:pointer-events-none"
                 >
                   <h2 className="text-xl font-semibold flex items-center space-x-2">
                     <MessageCircle className="w-6 h-6 text-success" />
                     <span>Reflection Questions</span>
                   </h2>
-                  {expandedSections.reflection ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  <span className="print:hidden">
+                    {expandedSections.reflection ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </span>
                 </button>
 
                 {expandedSections.reflection && (
@@ -372,20 +626,145 @@ export default function DailyMannaPage() {
                         <div className="w-6 h-6 rounded-full bg-success/20 flex items-center justify-center flex-shrink-0">
                           <span className="text-success font-bold text-sm">{index + 1}</span>
                         </div>
-                        <p className="text-text-primary">{question}</p>
+                        <p className="text-text-primary print:text-black">{question}</p>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
 
+              {/* Personal Notes Section */}
+              <div className="card print:hidden">
+                <button
+                  onClick={() => toggleSection('myNotes')}
+                  className="w-full flex items-center justify-between mb-4"
+                >
+                  <h2 className="text-xl font-semibold flex items-center space-x-2">
+                    <PenLine className="w-6 h-6 text-blue-400" />
+                    <span>My Reflection</span>
+                    {reflectionSaved && (
+                      <span className="text-sm text-success flex items-center">
+                        <CheckCircle className="w-4 h-4 mr-1" /> Saved
+                      </span>
+                    )}
+                  </h2>
+                  {expandedSections.myNotes ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+
+                {expandedSections.myNotes && (
+                  <div className="space-y-4">
+                    <textarea
+                      value={myReflection}
+                      onChange={(e) => setMyReflection(e.target.value)}
+                      placeholder="Write your personal thoughts and reflections on today's devotional..."
+                      className="w-full h-32 px-4 py-3 bg-background-deep border border-gray-700 rounded-lg text-text-primary resize-none focus:outline-none focus:border-blue-500"
+                    />
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs text-text-muted">
+                        Your reflections are saved and can be reviewed later
+                      </p>
+                      <button
+                        onClick={handleSaveReflection}
+                        disabled={savingReflection || !myReflection.trim()}
+                        className="btn-primary disabled:opacity-50"
+                      >
+                        {savingReflection ? 'Saving...' : 'Save Reflection'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Community Comments Section */}
+              <div className="card print:hidden">
+                <button
+                  onClick={() => toggleSection('comments')}
+                  className="w-full flex items-center justify-between mb-4"
+                >
+                  <h2 className="text-xl font-semibold flex items-center space-x-2">
+                    <MessageCircle className="w-6 h-6 text-cyan-400" />
+                    <span>Community Discussion</span>
+                    <span className="text-sm text-text-muted">({comments.length})</span>
+                  </h2>
+                  {expandedSections.comments ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+
+                {expandedSections.comments && (
+                  <div className="space-y-4">
+                    {/* Add Comment Form */}
+                    <div className="bg-background-hover rounded-lg p-4">
+                      <div className="flex gap-3 mb-3">
+                        <input
+                          type="text"
+                          value={userName}
+                          onChange={(e) => setUserName(e.target.value)}
+                          placeholder="Your name"
+                          className="flex-shrink-0 w-32 px-3 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-primary text-sm focus:outline-none focus:border-cyan-500"
+                        />
+                        <input
+                          type="text"
+                          value={newComment}
+                          onChange={(e) => setNewComment(e.target.value)}
+                          placeholder="Share your thoughts on today's devotional..."
+                          className="flex-1 px-3 py-2 bg-background-deep border border-gray-700 rounded-lg text-text-primary text-sm focus:outline-none focus:border-cyan-500"
+                          onKeyPress={(e) => e.key === 'Enter' && handleSubmitComment()}
+                        />
+                        <button
+                          onClick={handleSubmitComment}
+                          disabled={submittingComment || !newComment.trim()}
+                          className="px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 disabled:opacity-50 transition-colors"
+                        >
+                          <Send className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Comments List */}
+                    {comments.length === 0 ? (
+                      <div className="text-center py-8 text-text-muted">
+                        <MessageCircle className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                        <p>Be the first to share your thoughts!</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {comments.map((comment) => (
+                          <div
+                            key={comment.id}
+                            className="bg-background-hover rounded-lg p-4"
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center space-x-2 mb-1">
+                                  <span className="font-medium text-cyan-400">{comment.user_name}</span>
+                                  <span className="text-xs text-text-muted">
+                                    {formatTime(comment.created_at)}
+                                  </span>
+                                </div>
+                                <p className="text-text-primary text-sm">{comment.comment}</p>
+                              </div>
+                              <button
+                                onClick={() => handleLikeComment(comment.id)}
+                                className="flex items-center space-x-1 text-text-muted hover:text-pink-400 transition-colors"
+                              >
+                                <ThumbsUp className="w-4 h-4" />
+                                {comment.likes > 0 && <span className="text-xs">{comment.likes}</span>}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Footer */}
-              <div className="text-center py-6 border-t border-gray-800">
-                <p className="text-text-muted text-sm">
+              <div className="text-center py-6 border-t border-gray-800 print:border-gray-300">
+                <p className="text-text-muted text-sm print:text-gray-500">
                   <Clock className="w-4 h-4 inline mr-1" />
                   Generated at {new Date(data.timestamp).toLocaleTimeString()}
                 </p>
-                <p className="text-text-secondary mt-2 italic">
+                <p className="text-text-secondary mt-2 italic print:text-gray-600">
                   &ldquo;The Lord is my shepherd; I shall not want.&rdquo; - Psalm 23:1
                 </p>
               </div>

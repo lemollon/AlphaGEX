@@ -8,9 +8,9 @@ Bible studies and morning prayers that connect current events to scripture.
 import os
 import json
 import hashlib
-import feedparser
+import re
 import requests
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 from xml.etree import ElementTree
 
@@ -170,39 +170,91 @@ def get_daily_scriptures() -> List[Dict[str, str]]:
 
 
 def fetch_rss_news(feed_url: str, source_name: str, max_items: int = 5) -> List[Dict[str, Any]]:
-    """Fetch news from an RSS feed."""
+    """Fetch news from an RSS feed using requests and XML parsing."""
     news_items = []
     try:
-        feed = feedparser.parse(feed_url)
-        for entry in feed.entries[:max_items]:
-            # Get publication date
-            pub_date = None
-            if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                pub_date = datetime(*entry.published_parsed[:6]).isoformat()
-            elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                pub_date = datetime(*entry.updated_parsed[:6]).isoformat()
-            else:
-                pub_date = datetime.now().isoformat()
+        response = requests.get(feed_url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; AlphaGEX/1.0)'
+        })
+        response.raise_for_status()
 
-            # Clean up summary
+        # Parse XML
+        root = ElementTree.fromstring(response.content)
+
+        # Handle different RSS formats (RSS 2.0 and Atom)
+        # RSS 2.0: channel/item
+        items = root.findall('.//item')
+
+        # If no items, try Atom format: entry
+        if not items:
+            # Try with namespace for Atom
+            namespaces = {'atom': 'http://www.w3.org/2005/Atom'}
+            items = root.findall('.//atom:entry', namespaces)
+            if not items:
+                items = root.findall('.//entry')
+
+        for item in items[:max_items]:
+            # Get title
+            title_elem = item.find('title')
+            if title_elem is None:
+                title_elem = item.find('{http://www.w3.org/2005/Atom}title')
+            title = title_elem.text if title_elem is not None else "No title"
+
+            # Get link
+            link_elem = item.find('link')
+            if link_elem is None:
+                link_elem = item.find('{http://www.w3.org/2005/Atom}link')
+            if link_elem is not None:
+                link = link_elem.get('href') or link_elem.text
+            else:
+                link = None
+
+            # Get description/summary
+            desc_elem = item.find('description')
+            if desc_elem is None:
+                desc_elem = item.find('summary')
+            if desc_elem is None:
+                desc_elem = item.find('{http://www.w3.org/2005/Atom}summary')
+
             summary = ""
-            if hasattr(entry, 'summary'):
-                summary = entry.summary
+            if desc_elem is not None and desc_elem.text:
+                summary = desc_elem.text
                 # Remove HTML tags
-                import re
                 summary = re.sub(r'<[^>]+>', '', summary)
+                # Remove extra whitespace
+                summary = ' '.join(summary.split())
                 # Truncate if too long
                 if len(summary) > 300:
                     summary = summary[:297] + "..."
 
+            # Get publication date
+            pub_date_elem = item.find('pubDate')
+            if pub_date_elem is None:
+                pub_date_elem = item.find('published')
+            if pub_date_elem is None:
+                pub_date_elem = item.find('{http://www.w3.org/2005/Atom}published')
+
+            pub_date = datetime.now().isoformat()
+            if pub_date_elem is not None and pub_date_elem.text:
+                try:
+                    from email.utils import parsedate_to_datetime
+                    pub_date = parsedate_to_datetime(pub_date_elem.text).isoformat()
+                except:
+                    pub_date = datetime.now().isoformat()
+
             news_items.append({
-                "headline": entry.title,
+                "headline": title.strip() if title else "No title",
                 "summary": summary,
                 "source": source_name,
-                "url": entry.link if hasattr(entry, 'link') else None,
+                "url": link,
                 "timestamp": pub_date,
                 "category": "Financial News"
             })
+
+    except requests.exceptions.RequestException as e:
+        print(f"Network error fetching RSS from {source_name}: {e}")
+    except ElementTree.ParseError as e:
+        print(f"XML parse error from {source_name}: {e}")
     except Exception as e:
         print(f"Error fetching RSS from {source_name}: {e}")
 
@@ -627,3 +679,454 @@ def get_daily_greeting() -> str:
         return "Good evening! Process today's market events with eternal perspective."
     else:
         return "Rest well tonight. Tomorrow's news will bring new opportunities to trust God."
+
+
+# ============================================================================
+# ARCHIVE, COMMENTS, REFLECTIONS & PRAYER TRACKER
+# ============================================================================
+
+# In-memory storage (replace with database in production)
+_devotional_archive: Dict[str, Dict[str, Any]] = {}  # date -> devotional
+_comments: List[Dict[str, Any]] = []  # Community comments
+_reflections: Dict[str, List[Dict[str, Any]]] = {}  # user_id -> list of reflections
+_prayer_tracker: Dict[str, Dict[str, Any]] = {}  # user_id -> prayer data
+
+
+def save_to_archive(content: Dict[str, Any]) -> None:
+    """Save devotional to archive."""
+    date_key = datetime.now().strftime("%Y-%m-%d")
+    _devotional_archive[date_key] = {
+        **content,
+        "archived_at": datetime.now().isoformat()
+    }
+
+
+@router.get("/archive")
+async def get_devotional_archive(limit: int = 30):
+    """
+    Get archived devotionals from past days.
+
+    Returns a list of past devotionals for review.
+    """
+    try:
+        # Sort by date descending
+        sorted_dates = sorted(_devotional_archive.keys(), reverse=True)[:limit]
+
+        archive_list = []
+        for date_key in sorted_dates:
+            devotional = _devotional_archive.get(date_key, {})
+            archive_list.append({
+                "date": date_key,
+                "theme": devotional.get("devotional", {}).get("theme", "Unknown"),
+                "key_insight": devotional.get("devotional", {}).get("key_insight", ""),
+                "scriptures": [s.get("reference") for s in devotional.get("scriptures", [])],
+                "news_count": len(devotional.get("news", [])),
+                "archived_at": devotional.get("archived_at")
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "archive": archive_list,
+                "total": len(_devotional_archive)
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/archive/{date}")
+async def get_archived_devotional(date: str):
+    """
+    Get a specific archived devotional by date.
+
+    Date format: YYYY-MM-DD
+    """
+    try:
+        if date not in _devotional_archive:
+            raise HTTPException(status_code=404, detail=f"No devotional found for {date}")
+
+        return {
+            "success": True,
+            "data": _devotional_archive[date]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# COMMUNITY COMMENTS
+# ============================================================================
+
+@router.post("/comments")
+async def add_comment(request: dict):
+    """
+    Add a comment to today's devotional.
+
+    Request body:
+    {
+        "user_name": "John",
+        "user_id": "user123",  # Optional, for tracking
+        "comment": "This really spoke to me today...",
+        "date": "2024-12-20"  # Optional, defaults to today
+    }
+    """
+    try:
+        user_name = request.get("user_name", "Anonymous")
+        user_id = request.get("user_id", "anonymous")
+        comment_text = request.get("comment", "").strip()
+        date = request.get("date", datetime.now().strftime("%Y-%m-%d"))
+
+        if not comment_text:
+            raise HTTPException(status_code=400, detail="Comment cannot be empty")
+
+        if len(comment_text) > 2000:
+            raise HTTPException(status_code=400, detail="Comment too long (max 2000 characters)")
+
+        comment = {
+            "id": len(_comments) + 1,
+            "user_name": user_name[:50],
+            "user_id": user_id,
+            "comment": comment_text,
+            "date": date,
+            "created_at": datetime.now().isoformat(),
+            "likes": 0
+        }
+
+        _comments.append(comment)
+
+        return {
+            "success": True,
+            "data": comment,
+            "message": "Comment added successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/comments")
+async def get_comments(date: str = None, limit: int = 50):
+    """
+    Get comments for a devotional.
+
+    If date is not specified, returns comments for today.
+    """
+    try:
+        target_date = date or datetime.now().strftime("%Y-%m-%d")
+
+        # Filter comments for the specified date
+        date_comments = [c for c in _comments if c.get("date") == target_date]
+
+        # Sort by created_at descending
+        date_comments.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+        return {
+            "success": True,
+            "data": {
+                "comments": date_comments[:limit],
+                "total": len(date_comments),
+                "date": target_date
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/comments/{comment_id}/like")
+async def like_comment(comment_id: int):
+    """Like a comment."""
+    try:
+        for comment in _comments:
+            if comment.get("id") == comment_id:
+                comment["likes"] = comment.get("likes", 0) + 1
+                return {
+                    "success": True,
+                    "data": {"likes": comment["likes"]}
+                }
+
+        raise HTTPException(status_code=404, detail="Comment not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# PERSONAL REFLECTIONS/NOTES
+# ============================================================================
+
+@router.post("/reflections")
+async def save_reflection(request: dict):
+    """
+    Save a personal reflection/note for a devotional.
+
+    Request body:
+    {
+        "user_id": "user123",
+        "date": "2024-12-20",  # Optional, defaults to today
+        "reflection": "My thoughts on today's devotional...",
+        "prayer_answered": false,  # Optional
+        "favorite": false  # Optional - mark as favorite
+    }
+    """
+    try:
+        user_id = request.get("user_id", "default_user")
+        date = request.get("date", datetime.now().strftime("%Y-%m-%d"))
+        reflection_text = request.get("reflection", "").strip()
+        prayer_answered = request.get("prayer_answered", False)
+        favorite = request.get("favorite", False)
+
+        if not reflection_text:
+            raise HTTPException(status_code=400, detail="Reflection cannot be empty")
+
+        reflection = {
+            "id": f"{user_id}_{date}_{datetime.now().timestamp()}",
+            "user_id": user_id,
+            "date": date,
+            "reflection": reflection_text,
+            "prayer_answered": prayer_answered,
+            "favorite": favorite,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+
+        # Initialize user's reflections list if needed
+        if user_id not in _reflections:
+            _reflections[user_id] = []
+
+        _reflections[user_id].append(reflection)
+
+        return {
+            "success": True,
+            "data": reflection,
+            "message": "Reflection saved successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reflections")
+async def get_reflections(user_id: str = "default_user", limit: int = 100):
+    """
+    Get all reflections for a user.
+    """
+    try:
+        user_reflections = _reflections.get(user_id, [])
+
+        # Sort by date descending
+        user_reflections.sort(key=lambda x: x.get("date", ""), reverse=True)
+
+        return {
+            "success": True,
+            "data": {
+                "reflections": user_reflections[:limit],
+                "total": len(user_reflections),
+                "favorites": len([r for r in user_reflections if r.get("favorite")])
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reflections/{date}")
+async def get_reflection_for_date(date: str, user_id: str = "default_user"):
+    """
+    Get reflection for a specific date.
+    """
+    try:
+        user_reflections = _reflections.get(user_id, [])
+        date_reflections = [r for r in user_reflections if r.get("date") == date]
+
+        return {
+            "success": True,
+            "data": {
+                "reflections": date_reflections,
+                "date": date
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/reflections/{reflection_id}")
+async def update_reflection(reflection_id: str, request: dict):
+    """
+    Update an existing reflection.
+    """
+    try:
+        user_id = request.get("user_id", "default_user")
+        user_reflections = _reflections.get(user_id, [])
+
+        for reflection in user_reflections:
+            if reflection.get("id") == reflection_id:
+                if "reflection" in request:
+                    reflection["reflection"] = request["reflection"]
+                if "prayer_answered" in request:
+                    reflection["prayer_answered"] = request["prayer_answered"]
+                if "favorite" in request:
+                    reflection["favorite"] = request["favorite"]
+                reflection["updated_at"] = datetime.now().isoformat()
+
+                return {
+                    "success": True,
+                    "data": reflection,
+                    "message": "Reflection updated"
+                }
+
+        raise HTTPException(status_code=404, detail="Reflection not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# PRAYER TRACKER
+# ============================================================================
+
+@router.post("/prayer/today")
+async def mark_prayed_today(request: dict):
+    """
+    Mark that user prayed today.
+
+    Request body:
+    {
+        "user_id": "user123"
+    }
+    """
+    try:
+        user_id = request.get("user_id", "default_user")
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        if user_id not in _prayer_tracker:
+            _prayer_tracker[user_id] = {
+                "days_prayed": [],
+                "current_streak": 0,
+                "longest_streak": 0,
+                "total_days": 0
+            }
+
+        tracker = _prayer_tracker[user_id]
+
+        # Check if already prayed today
+        if today not in tracker["days_prayed"]:
+            tracker["days_prayed"].append(today)
+            tracker["total_days"] += 1
+
+            # Calculate streak
+            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            if yesterday in tracker["days_prayed"]:
+                tracker["current_streak"] += 1
+            else:
+                tracker["current_streak"] = 1
+
+            # Update longest streak
+            if tracker["current_streak"] > tracker["longest_streak"]:
+                tracker["longest_streak"] = tracker["current_streak"]
+
+        return {
+            "success": True,
+            "data": {
+                "prayed_today": True,
+                "current_streak": tracker["current_streak"],
+                "longest_streak": tracker["longest_streak"],
+                "total_days": tracker["total_days"]
+            },
+            "message": f"Prayer logged! You're on a {tracker['current_streak']}-day streak!"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/prayer/stats")
+async def get_prayer_stats(user_id: str = "default_user"):
+    """
+    Get prayer statistics for a user.
+    """
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        if user_id not in _prayer_tracker:
+            return {
+                "success": True,
+                "data": {
+                    "prayed_today": False,
+                    "current_streak": 0,
+                    "longest_streak": 0,
+                    "total_days": 0,
+                    "recent_days": []
+                }
+            }
+
+        tracker = _prayer_tracker[user_id]
+
+        # Get last 7 days
+        recent_days = []
+        for i in range(7):
+            day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            recent_days.append({
+                "date": day,
+                "prayed": day in tracker["days_prayed"]
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "prayed_today": today in tracker["days_prayed"],
+                "current_streak": tracker["current_streak"],
+                "longest_streak": tracker["longest_streak"],
+                "total_days": tracker["total_days"],
+                "recent_days": recent_days
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# SUMMARY WIDGET (for Dashboard)
+# ============================================================================
+
+@router.get("/widget")
+async def get_daily_manna_widget():
+    """
+    Get a summary for the Dashboard widget.
+
+    Returns minimal data for displaying in a small card on the dashboard.
+    """
+    try:
+        cached = get_cached_content()
+
+        if cached:
+            devotional = cached.get("devotional", {})
+            return {
+                "success": True,
+                "data": {
+                    "date": cached.get("date"),
+                    "theme": devotional.get("theme", "Daily Wisdom"),
+                    "key_insight": devotional.get("key_insight", "Seek first His kingdom."),
+                    "scripture": cached.get("scriptures", [{}])[0].get("reference", ""),
+                    "has_content": True
+                }
+            }
+        else:
+            # Return placeholder if no content generated yet
+            scriptures = get_daily_scriptures()
+            return {
+                "success": True,
+                "data": {
+                    "date": datetime.now().strftime("%A, %B %d, %Y"),
+                    "theme": "Fresh Manna Awaits",
+                    "key_insight": "Click to receive today's devotional",
+                    "scripture": scriptures[0]["reference"] if scriptures else "",
+                    "has_content": False
+                }
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
