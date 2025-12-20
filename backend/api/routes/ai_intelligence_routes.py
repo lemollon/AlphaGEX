@@ -650,6 +650,308 @@ def get_regime_pattern_performance() -> Dict[str, Any]:
     return performance
 
 
+def get_strike_clustering() -> Dict[str, Any]:
+    """
+    Analyze open interest concentration at strikes to identify
+    institutional positioning and magnetic price levels.
+    Updates every 5 minutes.
+    """
+    clustering = {
+        'top_call_strikes': [],
+        'top_put_strikes': [],
+        'max_pain': 0,
+        'highest_oi_strike': 0,
+        'institutional_bias': 'NEUTRAL',
+        'magnetic_levels': [],
+        'interpretation': None,
+        'updated_at': None,
+        'refresh_interval': '5 minutes'
+    }
+
+    try:
+        conn = get_safe_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Try to get strike-level data from gamma analysis or options flow
+        c.execute("""
+            SELECT strike, call_oi, put_oi, call_volume, put_volume, timestamp
+            FROM strike_analysis
+            WHERE symbol = 'SPY' AND timestamp >= NOW() - INTERVAL '1 day'
+            ORDER BY (call_oi + put_oi) DESC
+            LIMIT 10
+        """)
+        rows = c.fetchall()
+
+        if rows:
+            call_strikes = []
+            put_strikes = []
+            total_call_oi = 0
+            total_put_oi = 0
+
+            for row in rows:
+                strike = float(row.get('strike') or 0)
+                call_oi = int(row.get('call_oi') or 0)
+                put_oi = int(row.get('put_oi') or 0)
+
+                total_call_oi += call_oi
+                total_put_oi += put_oi
+
+                if call_oi > 10000:
+                    call_strikes.append({'strike': strike, 'oi': call_oi})
+                if put_oi > 10000:
+                    put_strikes.append({'strike': strike, 'oi': put_oi})
+
+            clustering['top_call_strikes'] = sorted(call_strikes, key=lambda x: x['oi'], reverse=True)[:5]
+            clustering['top_put_strikes'] = sorted(put_strikes, key=lambda x: x['oi'], reverse=True)[:5]
+            clustering['updated_at'] = rows[0].get('timestamp').isoformat() if rows[0].get('timestamp') else None
+
+            # Determine institutional bias
+            if total_call_oi > total_put_oi * 1.3:
+                clustering['institutional_bias'] = 'BULLISH'
+                clustering['interpretation'] = 'Heavy call accumulation suggests institutional bullish positioning'
+            elif total_put_oi > total_call_oi * 1.3:
+                clustering['institutional_bias'] = 'BEARISH'
+                clustering['interpretation'] = 'Heavy put accumulation suggests institutional hedging/bearish positioning'
+            else:
+                clustering['interpretation'] = 'Balanced positioning, no strong institutional directional bias'
+
+            # Identify magnetic levels (highest combined OI)
+            if rows:
+                clustering['highest_oi_strike'] = float(rows[0].get('strike') or 0)
+                clustering['magnetic_levels'] = [float(r.get('strike') or 0) for r in rows[:3]]
+
+        conn.close()
+    except Exception as e:
+        logger.debug(f"get_strike_clustering error: {e}")
+        # Fallback - use call/put walls as magnetic levels
+        market_data = get_live_market_data('SPY')
+        if market_data.get('call_wall'):
+            clustering['magnetic_levels'] = [
+                market_data.get('put_wall', 0),
+                market_data.get('flip_point', 0),
+                market_data.get('call_wall', 0)
+            ]
+            clustering['interpretation'] = 'Using GEX walls as magnetic levels (strike data unavailable)'
+            clustering['updated_at'] = datetime.now().isoformat()
+
+    return clustering
+
+
+def get_vix_term_structure() -> Dict[str, Any]:
+    """
+    Analyze VIX term structure for contango/backwardation signals.
+    Updates every 5 minutes.
+    """
+    structure = {
+        'vix_spot': 0,
+        'vix_1m': 0,
+        'vix_3m': 0,
+        'term_structure': 'UNKNOWN',
+        'contango_pct': 0,
+        'signal': 'NEUTRAL',
+        'interpretation': None,
+        'updated_at': None,
+        'refresh_interval': '5 minutes'
+    }
+
+    try:
+        # Get current VIX
+        market_data = get_live_market_data('SPY')
+        vix_spot = float(market_data.get('vix') or 0)
+        structure['vix_spot'] = vix_spot
+
+        # Try to get VIX futures from database or API
+        conn = get_safe_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        c.execute("""
+            SELECT vix_1m, vix_3m, timestamp
+            FROM vix_term_structure
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        row = c.fetchone()
+
+        if row:
+            structure['vix_1m'] = float(row.get('vix_1m') or 0)
+            structure['vix_3m'] = float(row.get('vix_3m') or 0)
+            structure['updated_at'] = row.get('timestamp').isoformat() if row.get('timestamp') else None
+        else:
+            # Estimate from spot VIX
+            structure['vix_1m'] = vix_spot * 1.05  # Typical contango estimate
+            structure['vix_3m'] = vix_spot * 1.10
+            structure['updated_at'] = datetime.now().isoformat()
+
+        conn.close()
+
+        # Calculate term structure
+        if structure['vix_spot'] > 0 and structure['vix_1m'] > 0:
+            contango_pct = ((structure['vix_1m'] - structure['vix_spot']) / structure['vix_spot']) * 100
+            structure['contango_pct'] = round(contango_pct, 2)
+
+            if contango_pct > 5:
+                structure['term_structure'] = 'STEEP_CONTANGO'
+                structure['signal'] = 'BULLISH'
+                structure['interpretation'] = 'Steep contango suggests market expects calm ahead - bullish for equities'
+            elif contango_pct > 0:
+                structure['term_structure'] = 'CONTANGO'
+                structure['signal'] = 'NEUTRAL_BULLISH'
+                structure['interpretation'] = 'Normal contango - typical market conditions'
+            elif contango_pct > -5:
+                structure['term_structure'] = 'FLAT'
+                structure['signal'] = 'NEUTRAL'
+                structure['interpretation'] = 'Flat term structure - market uncertainty'
+            else:
+                structure['term_structure'] = 'BACKWARDATION'
+                structure['signal'] = 'BEARISH'
+                structure['interpretation'] = 'Backwardation signals fear - expect volatility expansion'
+
+    except Exception as e:
+        logger.debug(f"get_vix_term_structure error: {e}")
+        structure['interpretation'] = 'VIX term structure data unavailable'
+        structure['updated_at'] = datetime.now().isoformat()
+
+    return structure
+
+
+def get_trading_windows() -> Dict[str, Any]:
+    """
+    Provide time-of-day context for optimal trading windows.
+    Updates every minute.
+    """
+    now = datetime.now()
+    ct_hour = now.hour  # Assuming server is in CT
+    ct_minute = now.minute
+    current_minutes = ct_hour * 60 + ct_minute
+
+    windows = {
+        'current_time': now.strftime('%I:%M %p CT'),
+        'market_status': 'CLOSED',
+        'current_window': None,
+        'minutes_until_next': 0,
+        'next_window': None,
+        'recommendation': None,
+        'avoid_trading': False,
+        'updated_at': now.isoformat(),
+        'refresh_interval': '1 minute'
+    }
+
+    # Market hours (CT): Pre-market 7:00, Open 8:30, Close 3:00, After 5:00
+    market_open = 8 * 60 + 30   # 8:30 AM CT
+    market_close = 15 * 60      # 3:00 PM CT
+    power_hour = 14 * 60        # 2:00 PM CT
+
+    # Define trading windows
+    trading_windows = [
+        {'name': 'PRE_MARKET', 'start': 7*60, 'end': 8*60+30, 'quality': 'LOW', 'note': 'Low liquidity, wide spreads'},
+        {'name': 'OPENING_VOLATILITY', 'start': 8*60+30, 'end': 9*60, 'quality': 'RISKY', 'note': 'High volatility, wait for direction'},
+        {'name': 'MORNING_SESSION', 'start': 9*60, 'end': 11*60, 'quality': 'HIGH', 'note': 'Best liquidity, trends establish'},
+        {'name': 'LUNCH_CHOP', 'start': 11*60, 'end': 13*60, 'quality': 'LOW', 'note': 'Low volume, choppy action - avoid'},
+        {'name': 'AFTERNOON_SESSION', 'start': 13*60, 'end': 14*60, 'quality': 'MEDIUM', 'note': 'Volume returns, prepare for power hour'},
+        {'name': 'POWER_HOUR', 'start': 14*60, 'end': 15*60, 'quality': 'HIGH', 'note': 'High volume, strong moves - last chance'},
+        {'name': 'AFTER_HOURS', 'start': 15*60, 'end': 17*60, 'quality': 'LOW', 'note': 'Market closed, limited trading'},
+    ]
+
+    # Determine market status
+    if current_minutes < market_open:
+        windows['market_status'] = 'PRE_MARKET'
+    elif current_minutes < market_close:
+        windows['market_status'] = 'OPEN'
+    else:
+        windows['market_status'] = 'CLOSED'
+
+    # Find current window
+    for window in trading_windows:
+        if window['start'] <= current_minutes < window['end']:
+            windows['current_window'] = window['name']
+            windows['recommendation'] = window['note']
+            if window['quality'] == 'LOW' or window['name'] == 'LUNCH_CHOP':
+                windows['avoid_trading'] = True
+            break
+
+    # Find next window
+    for window in trading_windows:
+        if window['start'] > current_minutes:
+            windows['next_window'] = window['name']
+            windows['minutes_until_next'] = window['start'] - current_minutes
+            break
+
+    # Special recommendations based on time
+    if windows['current_window'] == 'OPENING_VOLATILITY':
+        windows['recommendation'] = 'Wait 15-30 min for direction to establish before entering'
+    elif windows['current_window'] == 'POWER_HOUR':
+        windows['recommendation'] = 'Last hour - close positions before 2:45 PM CT for 0DTE'
+    elif current_minutes >= market_close:
+        windows['recommendation'] = 'Market closed - plan for tomorrow'
+
+    return windows
+
+
+def get_key_events() -> Dict[str, Any]:
+    """
+    Check for key market events (Fed, earnings, economic data).
+    Updates every 30 minutes.
+    """
+    events = {
+        'today_events': [],
+        'this_week_events': [],
+        'high_impact_today': False,
+        'fed_day': False,
+        'triple_witching': False,
+        'interpretation': None,
+        'updated_at': datetime.now().isoformat(),
+        'refresh_interval': '30 minutes'
+    }
+
+    try:
+        conn = get_safe_connection()
+        c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Check for events in economic calendar table
+        c.execute("""
+            SELECT event_name, event_time, impact, description
+            FROM economic_calendar
+            WHERE event_date = CURRENT_DATE
+            ORDER BY event_time
+        """)
+        today_events = c.fetchall()
+
+        if today_events:
+            events['today_events'] = [dict(e) for e in today_events]
+            high_impact = [e for e in today_events if e.get('impact') == 'HIGH']
+            if high_impact:
+                events['high_impact_today'] = True
+                events['interpretation'] = f"High-impact event today: {high_impact[0].get('event_name')} - expect volatility"
+
+        # Check for Fed days
+        c.execute("""
+            SELECT event_name FROM economic_calendar
+            WHERE event_date = CURRENT_DATE
+            AND (event_name ILIKE '%FOMC%' OR event_name ILIKE '%Fed%' OR event_name ILIKE '%Powell%')
+        """)
+        if c.fetchone():
+            events['fed_day'] = True
+            events['interpretation'] = 'Fed day - expect low volume before announcement, volatility after'
+
+        conn.close()
+
+        # Check for options expiration (monthly = 3rd Friday)
+        today = datetime.now()
+        if today.weekday() == 4:  # Friday
+            day = today.day
+            # Third Friday is between 15-21
+            if 15 <= day <= 21:
+                events['triple_witching'] = True
+                if not events['interpretation']:
+                    events['interpretation'] = 'Monthly options expiration - expect pinning action near max pain'
+
+    except Exception as e:
+        logger.debug(f"get_key_events error: {e}")
+        events['interpretation'] = 'Event calendar unavailable'
+
+    return events
+
+
 # Get API key with fallback support (ANTHROPIC_API_KEY or CLAUDE_API_KEY)
 api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
 
@@ -1756,6 +2058,10 @@ async def get_intelligence_feed():
         intraday = get_intraday_momentum()
         skew = get_skew_data()
         patterns = get_regime_pattern_performance()
+        strike_clustering = get_strike_clustering()
+        vix_structure = get_vix_term_structure()
+        trading_windows = get_trading_windows()
+        key_events = get_key_events()
 
         # Build GEX context
         gex = {
@@ -1897,6 +2203,54 @@ async def get_intelligence_feed():
                     'refresh_interval': '30 minutes'
                 },
 
+                # Strike clustering / OI concentration
+                'strike_clustering': {
+                    'institutional_bias': strike_clustering['institutional_bias'],
+                    'magnetic_levels': strike_clustering['magnetic_levels'],
+                    'highest_oi_strike': strike_clustering['highest_oi_strike'],
+                    'top_call_strikes': strike_clustering['top_call_strikes'][:3],
+                    'top_put_strikes': strike_clustering['top_put_strikes'][:3],
+                    'interpretation': strike_clustering['interpretation'],
+                    'updated_at': strike_clustering['updated_at'] or current_time.isoformat(),
+                    'refresh_interval': '5 minutes'
+                },
+
+                # VIX term structure
+                'vix_term_structure': {
+                    'vix_spot': vix_structure['vix_spot'],
+                    'vix_1m': vix_structure['vix_1m'],
+                    'term_structure': vix_structure['term_structure'],
+                    'contango_pct': vix_structure['contango_pct'],
+                    'signal': vix_structure['signal'],
+                    'interpretation': vix_structure['interpretation'],
+                    'updated_at': vix_structure['updated_at'] or current_time.isoformat(),
+                    'refresh_interval': '5 minutes'
+                },
+
+                # Trading windows
+                'trading_windows': {
+                    'current_time': trading_windows['current_time'],
+                    'market_status': trading_windows['market_status'],
+                    'current_window': trading_windows['current_window'],
+                    'next_window': trading_windows['next_window'],
+                    'minutes_until_next': trading_windows['minutes_until_next'],
+                    'recommendation': trading_windows['recommendation'],
+                    'avoid_trading': trading_windows['avoid_trading'],
+                    'updated_at': trading_windows['updated_at'],
+                    'refresh_interval': '1 minute'
+                },
+
+                # Key events
+                'key_events': {
+                    'high_impact_today': key_events['high_impact_today'],
+                    'fed_day': key_events['fed_day'],
+                    'triple_witching': key_events['triple_witching'],
+                    'today_events': key_events['today_events'][:3],
+                    'interpretation': key_events['interpretation'],
+                    'updated_at': key_events['updated_at'],
+                    'refresh_interval': '30 minutes'
+                },
+
                 # GEX interpretation context (for AI display)
                 'gex_interpretation': gex_context,
 
@@ -1907,7 +2261,11 @@ async def get_intelligence_feed():
                     'gex_history': '5 minutes',
                     'intraday_momentum': '5 minutes',
                     'volatility_skew': '5 minutes',
-                    'pattern_performance': '30 minutes'
+                    'pattern_performance': '30 minutes',
+                    'strike_clustering': '5 minutes',
+                    'vix_term_structure': '5 minutes',
+                    'trading_windows': '1 minute',
+                    'key_events': '30 minutes'
                 }
             }
         }

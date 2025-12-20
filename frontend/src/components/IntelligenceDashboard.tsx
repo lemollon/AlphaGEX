@@ -17,7 +17,13 @@ import {
   DollarSign,
   ArrowUpRight,
   ArrowDownRight,
-  Gauge
+  Gauge,
+  Timer,
+  Layers,
+  Calendar,
+  Thermometer,
+  MapPin,
+  AlertCircle
 } from 'lucide-react'
 import { useIntelligenceFeed, useDailyTradingPlan, useMarketCommentary } from '@/lib/hooks/useMarketData'
 
@@ -503,6 +509,182 @@ export default function IntelligenceDashboard() {
                 </div>
               </div>
             ))}
+          </div>
+        </IntelCard>
+      )}
+
+      {/* Trading Windows */}
+      {feed?.trading_windows && (
+        <IntelCard
+          title="Trading Windows"
+          icon={Timer}
+          color={feed.trading_windows.avoid_trading ? 'danger' : feed.trading_windows.market_status === 'OPEN' ? 'success' : 'primary'}
+          refreshInterval="every 1 min"
+          updatedAt={feed.trading_windows.updated_at}
+          expanded={expandedSections.has('windows')}
+          onToggle={() => toggleSection('windows')}
+          badge={
+            <span className={`text-xs font-medium px-2 py-0.5 rounded ${feed.trading_windows.market_status === 'OPEN' ? 'bg-success/20 text-success' : 'bg-text-muted/20 text-text-muted'}`}>
+              {feed.trading_windows.market_status}
+            </span>
+          }
+          summary={
+            <span className="text-xs text-text-muted">
+              {feed.trading_windows.current_window?.replace(/_/g, ' ')}
+            </span>
+          }
+        >
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 bg-background-hover rounded-lg">
+                <div className="text-xs text-text-muted mb-1">Current Window</div>
+                <div className="text-sm font-bold text-text-primary">
+                  {feed.trading_windows.current_window?.replace(/_/g, ' ') || 'N/A'}
+                </div>
+              </div>
+              <div className="p-3 bg-background-hover rounded-lg">
+                <div className="text-xs text-text-muted mb-1">Next Window</div>
+                <div className="text-sm font-medium text-text-secondary">
+                  {feed.trading_windows.next_window?.replace(/_/g, ' ') || 'N/A'}
+                  {feed.trading_windows.minutes_until_next > 0 && (
+                    <span className="text-xs text-text-muted ml-1">
+                      ({feed.trading_windows.minutes_until_next}m)
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {feed.trading_windows.recommendation && (
+              <div className={`p-3 rounded-lg ${feed.trading_windows.avoid_trading ? 'bg-danger/10 border border-danger/20' : 'bg-primary/10 border border-primary/20'}`}>
+                <div className="flex items-start gap-2">
+                  {feed.trading_windows.avoid_trading ? (
+                    <AlertTriangle className="w-4 h-4 text-danger flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <Zap className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+                  )}
+                  <span className={`text-sm ${feed.trading_windows.avoid_trading ? 'text-danger' : 'text-text-primary'}`}>
+                    {feed.trading_windows.recommendation}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </IntelCard>
+      )}
+
+      {/* VIX Term Structure */}
+      {feed?.vix_term_structure && (
+        <IntelCard
+          title="VIX Term Structure"
+          icon={Thermometer}
+          color={feed.vix_term_structure.signal === 'BULLISH' ? 'success' : feed.vix_term_structure.signal === 'BEARISH' ? 'danger' : 'primary'}
+          refreshInterval="every 5 min"
+          updatedAt={feed.vix_term_structure.updated_at}
+          expanded={expandedSections.has('vix')}
+          onToggle={() => toggleSection('vix')}
+          badge={<SentimentBadge sentiment={feed.vix_term_structure.signal === 'NEUTRAL_BULLISH' ? 'BULLISH' : feed.vix_term_structure.signal} />}
+          summary={
+            <span className="text-xs text-text-muted">
+              {feed.vix_term_structure.term_structure?.replace(/_/g, ' ')}
+            </span>
+          }
+        >
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="p-3 bg-background-hover rounded-lg text-center">
+                <div className="text-xs text-text-muted mb-1">VIX Spot</div>
+                <div className="text-lg font-bold text-warning">{feed.vix_term_structure.vix_spot?.toFixed(2)}</div>
+              </div>
+              <div className="p-3 bg-background-hover rounded-lg text-center">
+                <div className="text-xs text-text-muted mb-1">VIX 1M</div>
+                <div className="text-lg font-bold text-text-primary">{feed.vix_term_structure.vix_1m?.toFixed(2)}</div>
+              </div>
+              <div className="p-3 bg-background-hover rounded-lg text-center">
+                <div className="text-xs text-text-muted mb-1">Contango</div>
+                <div className={`text-lg font-bold ${feed.vix_term_structure.contango_pct >= 0 ? 'text-success' : 'text-danger'}`}>
+                  {feed.vix_term_structure.contango_pct >= 0 ? '+' : ''}{feed.vix_term_structure.contango_pct}%
+                </div>
+              </div>
+            </div>
+            {feed.vix_term_structure.interpretation && (
+              <div className="p-2 bg-background-hover rounded-lg">
+                <span className="text-sm text-text-secondary">{feed.vix_term_structure.interpretation}</span>
+              </div>
+            )}
+          </div>
+        </IntelCard>
+      )}
+
+      {/* Strike Clustering */}
+      {feed?.strike_clustering && (
+        <IntelCard
+          title="Strike Clustering"
+          icon={Layers}
+          color={feed.strike_clustering.institutional_bias === 'BULLISH' ? 'success' : feed.strike_clustering.institutional_bias === 'BEARISH' ? 'danger' : 'primary'}
+          refreshInterval="every 5 min"
+          updatedAt={feed.strike_clustering.updated_at}
+          expanded={expandedSections.has('strikes')}
+          onToggle={() => toggleSection('strikes')}
+          badge={<SentimentBadge sentiment={feed.strike_clustering.institutional_bias} />}
+        >
+          <div className="space-y-3">
+            {feed.strike_clustering.magnetic_levels?.length > 0 && (
+              <div>
+                <div className="text-xs text-text-muted mb-2">Magnetic Price Levels (High OI)</div>
+                <div className="flex flex-wrap gap-2">
+                  {feed.strike_clustering.magnetic_levels.map((level: number, idx: number) => (
+                    <span key={idx} className="px-3 py-1 bg-primary/10 border border-primary/20 rounded-full text-sm font-medium text-primary">
+                      ${level?.toFixed(0)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {feed.strike_clustering.interpretation && (
+              <div className="p-2 bg-background-hover rounded-lg">
+                <span className="text-sm text-text-secondary">{feed.strike_clustering.interpretation}</span>
+              </div>
+            )}
+          </div>
+        </IntelCard>
+      )}
+
+      {/* Key Events */}
+      {feed?.key_events && (feed.key_events.high_impact_today || feed.key_events.fed_day || feed.key_events.triple_witching) && (
+        <IntelCard
+          title="Key Events"
+          icon={Calendar}
+          color="warning"
+          refreshInterval="every 30 min"
+          updatedAt={feed.key_events.updated_at}
+          expanded={expandedSections.has('events')}
+          onToggle={() => toggleSection('events')}
+          badge={
+            feed.key_events.fed_day ? (
+              <span className="text-xs font-medium px-2 py-0.5 rounded bg-danger/20 text-danger">FED DAY</span>
+            ) : feed.key_events.high_impact_today ? (
+              <span className="text-xs font-medium px-2 py-0.5 rounded bg-warning/20 text-warning">HIGH IMPACT</span>
+            ) : null
+          }
+        >
+          <div className="space-y-2">
+            {feed.key_events.fed_day && (
+              <div className="flex items-center gap-2 p-2 bg-danger/10 border border-danger/20 rounded-lg">
+                <AlertCircle className="w-4 h-4 text-danger" />
+                <span className="text-sm text-danger font-medium">FOMC / Fed Event Today</span>
+              </div>
+            )}
+            {feed.key_events.triple_witching && (
+              <div className="flex items-center gap-2 p-2 bg-warning/10 border border-warning/20 rounded-lg">
+                <AlertTriangle className="w-4 h-4 text-warning" />
+                <span className="text-sm text-warning font-medium">Monthly Options Expiration</span>
+              </div>
+            )}
+            {feed.key_events.interpretation && (
+              <div className="p-2 bg-background-hover rounded-lg">
+                <span className="text-sm text-text-secondary">{feed.key_events.interpretation}</span>
+              </div>
+            )}
           </div>
         </IntelCard>
       )}
