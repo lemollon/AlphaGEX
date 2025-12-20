@@ -422,20 +422,20 @@ export default function GammaExpirationWidget() {
 
           {expandedSections.has('prediction') && (
             <div className="mt-4 pt-4 border-t border-border">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm mb-4">
-                <div>
-                  <span className="text-primary font-bold">Current Price:</span>
-                  <span className="ml-2 text-text-primary font-bold">${data.spot_price.toFixed(2)}</span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm mb-4">
+                <div className="flex flex-col">
+                  <span className="text-primary font-bold text-xs">Current Price:</span>
+                  <span className="text-text-primary font-bold text-lg">${data.spot_price.toFixed(2)}</span>
                 </div>
-                <div>
-                  <span className="text-primary font-bold">Expected Range:</span>
-                  <span className="ml-2 text-text-primary">{data.directional_prediction.expected_range}</span>
-                  <span className="ml-1 text-text-muted">({data.directional_prediction.range_width_pct})</span>
+                <div className="flex flex-col">
+                  <span className="text-primary font-bold text-xs">Expected Range:</span>
+                  <span className="text-text-primary">{data.directional_prediction.expected_range}</span>
+                  <span className="text-text-muted text-xs">({data.directional_prediction.range_width_pct})</span>
                 </div>
-                <div>
-                  <span className="text-primary font-bold">Flip Point:</span>
-                  <span className="ml-2 text-text-primary">${data.flip_point.toFixed(2)}</span>
-                  <span className="ml-1 text-text-muted">({data.directional_prediction.spot_vs_flip_pct > 0 ? '+' : ''}{data.directional_prediction.spot_vs_flip_pct.toFixed(1)}% from spot)</span>
+                <div className="flex flex-col">
+                  <span className="text-primary font-bold text-xs">Flip Point:</span>
+                  <span className="text-text-primary">${data.flip_point.toFixed(2)}</span>
+                  <span className="text-text-muted text-xs">({data.directional_prediction.spot_vs_flip_pct > 0 ? '+' : ''}{data.directional_prediction.spot_vs_flip_pct.toFixed(1)}% from spot)</span>
                 </div>
               </div>
 
