@@ -114,16 +114,9 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         quote = tradier.get_quote('SPY')
         spot_price = quote.get('last', 0) or quote.get('close', 0)
 
-        # Get VIX - use $VIX.X for Tradier (correct symbol format)
-        vix_quote = tradier.get_quote('$VIX.X')
-        vix = vix_quote.get('last', 0) if vix_quote else 0
-        if not vix or vix <= 0:
-            # Fallback to unified data provider
-            try:
-                from data.unified_data_provider import get_vix
-                vix = get_vix() or 18.0
-            except Exception:
-                vix = 18.0
+        # Get VIX - use reliable vix_fetcher (NO FAKE FALLBACKS)
+        from data.vix_fetcher import get_vix_price
+        vix = get_vix_price()
 
         # Get expiration (default to 0DTE)
         engine = get_engine()
@@ -185,36 +178,29 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
 
 
 async def get_real_prices() -> tuple:
-    """Fetch real SPY and VIX prices from API"""
+    """Fetch real SPY and VIX prices - NO FAKE FALLBACKS"""
     cache_key = "real_prices"
     cached = get_cached(cache_key, PRICE_CACHE_TTL)
     if cached:
         return cached
 
-    try:
-        # Try to get real prices from our GEX endpoint
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            spy_resp = await client.get("http://localhost:8000/api/gex/SPY")
-            if spy_resp.status_code == 200:
-                spy_data = spy_resp.json()
-                spot = spy_data.get('data', {}).get('spot_price', 600.0)
-            else:
-                spot = 600.0  # Reasonable fallback
+    # Get VIX directly using reliable vix_fetcher
+    from data.vix_fetcher import get_vix_price
 
-            vix_resp = await client.get("http://localhost:8000/api/vix/current")
-            if vix_resp.status_code == 200:
-                vix_data = vix_resp.json()
-                vix = vix_data.get('data', {}).get('vix_spot', 18.0)
-            else:
-                vix = 18.0  # Reasonable fallback
+    # Get SPY from Tradier
+    from data.tradier_data_fetcher import TradierDataFetcher
+    tradier = TradierDataFetcher()
+    spy_quote = tradier.get_quote('SPY')
 
-        result = (spot, vix)
-        set_cached(cache_key, result)
-        return result
+    if not spy_quote or not spy_quote.get('last'):
+        raise ValueError("Failed to get SPY price from Tradier")
 
-    except Exception as e:
-        logger.warning(f"Failed to fetch real prices: {e}")
-        return (600.0, 18.0)  # Fallback values
+    spot = float(spy_quote['last'])
+    vix = get_vix_price()  # Raises VIXFetchError on failure
+
+    result = (spot, vix)
+    set_cached(cache_key, result)
+    return result
 
 
 def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:

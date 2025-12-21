@@ -526,17 +526,25 @@ def fetch_vvix_from_polygon() -> Optional[float]:
 
 def get_vix_fallback_data() -> Dict[str, Any]:
     """
-    Fallback VIX data when vix_hedge_manager is unavailable.
-    Priority: Tradier -> Unified Provider -> Yahoo Finance -> Polygon -> default.
-    ALWAYS returns valid data - never throws.
+    Get VIX data when vix_hedge_manager is unavailable.
+    Uses reliable vix_fetcher - NO FAKE 18.0 FALLBACKS.
+    Raises exception if VIX cannot be fetched.
     """
     start_time = time.time()
 
-    # Initialize with default values
+    # Use the reliable vix_fetcher
+    from data.vix_fetcher import get_vix_with_source, VIXFetchError
+
+    try:
+        vix_spot, vix_source = get_vix_with_source()
+    except VIXFetchError as e:
+        log_with_context('error', "VIX fetch failed from all sources", error=str(e))
+        raise  # Don't hide the error with fake data
+
     vix_data = {
-        'vix_spot': VIXConfig.DEFAULT_VIX,
-        'vix_source': 'default',
-        'is_estimated': True,
+        'vix_spot': vix_spot,
+        'vix_source': vix_source,
+        'is_estimated': False,
         'vix_m1': 0,
         'vix_m2': 0,
         'term_structure_m1_pct': 0,
@@ -548,30 +556,8 @@ def get_vix_fallback_data() -> Dict[str, Any]:
         'position_size_multiplier': 1.0
     }
 
-    # Try sources in priority order - Tradier and Yahoo only (no Polygon for VIX)
-    # Tradier $VIX.X is proven reliable, Yahoo ^VIX is free and works well
-    sources = [
-        ('tradier', fetch_vix_from_tradier),
-        ('yahoo', fetch_vix_from_yahoo),
-        ('unified_provider', fetch_vix_from_unified_provider),
-    ]
-
-    for source_name, fetch_func in sources:
-        try:
-            result = fetch_func()
-            if result and result.get('vix_spot', 0) > 0:
-                vix_data.update(result)
-                log_with_context('info', f"VIX fetched successfully",
-                               source=source_name, value=result['vix_spot'])
-                break
-        except Exception as e:
-            log_with_context('warning', f"VIX source failed",
-                           source=source_name, error=str(e))
-
-    # Log if using default
-    if vix_data['vix_source'] == 'default':
-        log_with_context('warning', "All VIX sources failed, using default value",
-                        default_value=VIXConfig.DEFAULT_VIX)
+    log_with_context('info', f"VIX fetched successfully",
+                    source=vix_source, value=vix_spot)
 
     # Try to get VVIX
     vvix = fetch_vvix_from_polygon()

@@ -167,63 +167,15 @@ class VIXHedgeManager:
         - The 'is_estimated' flag indicates when estimates are used
         """
         try:
-            import os
-            # VIX spot - Try direct Tradier $VIX.X first (same as ARES - proven working!)
-            vix_spot = None
-            vix_source = 'default'
+            # Use reliable vix_fetcher - NO FAKE FALLBACKS
+            from data.vix_fetcher import get_vix_with_source, VIXFetchError
 
             try:
-                from data.tradier_data_fetcher import TradierDataFetcher
-                # Let TradierDataFetcher handle sandbox/production mode based on env
-                # This ensures correct API key is used for the mode
-                tradier = TradierDataFetcher()  # Respects TRADIER_SANDBOX env var
-                vix_quote = tradier.get_quote("$VIX.X")
-                if vix_quote and vix_quote.get('last'):
-                    vix_spot = float(vix_quote['last'])
-                    vix_source = 'tradier_sandbox' if tradier.sandbox else 'tradier_production'
-                    logger.info(f"VIX from Tradier $VIX.X ({vix_source}): {vix_spot}")
-            except Exception as e:
-                logger.warning(f"Tradier $VIX.X failed: {e}")
-
-            # Fallback: Try unified provider
-            if not vix_spot or vix_spot <= 0:
-                if UNIFIED_DATA_AVAILABLE:
-                    vix_spot = get_vix()
-                    if vix_spot and vix_spot > 0:
-                        vix_source = 'unified_provider'
-
-            # Fallback to Yahoo Finance (FREE - no API key needed!)
-            if not vix_spot or vix_spot <= 0:
-                try:
-                    import yfinance as yf
-                    vix_ticker = yf.Ticker("^VIX")
-
-                    # Method 1: Try info dict (most reliable)
-                    try:
-                        info = vix_ticker.info
-                        price = info.get('regularMarketPrice') or info.get('previousClose') or info.get('open', 0)
-                        if price and price > 0:
-                            vix_spot = float(price)
-                            vix_source = 'yahoo'
-                    except Exception:
-                        pass
-
-                    # Method 2: Get from history
-                    if not vix_spot or vix_spot <= 0:
-                        hist = vix_ticker.history(period='5d')
-                        if not hist.empty:
-                            price = float(hist['Close'].iloc[-1])
-                            if price > 0:
-                                vix_spot = price
-                                vix_source = 'yahoo'
-                except Exception:
-                    pass
-
-            # No Polygon fallback - Tradier and Yahoo are sufficient for VIX
-
-            if not vix_spot or vix_spot <= 0:
-                vix_spot = 18.0  # Reasonable default
-                vix_source = 'default'
+                vix_spot, vix_source = get_vix_with_source()
+                logger.info(f"VIX from {vix_source}: {vix_spot}")
+            except VIXFetchError as e:
+                logger.error(f"VIX fetch failed: {e}")
+                raise  # Don't hide with fake data
 
             # Try to get VVIX (volatility of VIX) for timing signals
             vvix = None
@@ -315,14 +267,8 @@ class VIXHedgeManager:
 
         except Exception as e:
             logger.error(f"Error getting VIX data: {e}")
-            return {
-                'vix_spot': 18.0,
-                'vix_source': 'default',
-                'is_estimated': True,
-                'vix_stress_level': 'unknown',
-                'position_size_multiplier': 0.5,  # Conservative on error
-                'error': str(e)
-            }
+            # Re-raise - don't hide the error with fake data
+            raise
 
     def calculate_iv_percentile(self, vix_current: float) -> float:
         """
