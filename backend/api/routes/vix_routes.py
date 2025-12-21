@@ -543,21 +543,10 @@ def fetch_vvix_from_polygon() -> Optional[float]:
 
 
 def get_vix_fallback_data() -> Dict[str, Any]:
-    """
-    Get VIX data when vix_hedge_manager is unavailable.
-    Uses reliable vix_fetcher - NO FAKE 18.0 FALLBACKS.
-    Raises exception if VIX cannot be fetched.
-    """
-    start_time = time.time()
+    """Get VIX data."""
+    from data.vix_fetcher import get_vix_with_source
 
-    # Use the reliable vix_fetcher
-    from data.vix_fetcher import get_vix_with_source, VIXFetchError
-
-    try:
-        vix_spot, vix_source = get_vix_with_source()
-    except VIXFetchError as e:
-        log_with_context('error', "VIX fetch failed from all sources", error=str(e))
-        raise  # Don't hide the error with fake data
+    vix_spot, vix_source = get_vix_with_source()
 
     vix_data = {
         'vix_spot': vix_spot,
