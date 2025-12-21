@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Play, AlertTriangle, Clock, Zap, Brain, Shield, Crosshair, TrendingUp as TrendUp, FileText } from 'lucide-react'
+import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Play, AlertTriangle, Clock, Zap, Brain, Shield, Crosshair, TrendingUp as TrendUp, FileText, ListChecks } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import Navigation from '@/components/Navigation'
 import {
@@ -164,46 +164,106 @@ interface DecisionLog {
   spot_price?: number
   vix?: number
   actual_pnl?: number
-  full_decision?: {
-    legs?: Array<{
-      leg_id: number
-      action: string
-      option_type: string
-      strike: number
-      expiration: string
-      entry_price: number
-      exit_price: number
-      contracts: number
-      premium_per_contract: number
-      delta: number
-      gamma: number
-      theta: number
-      iv: number
-      realized_pnl: number
-    }>
-    underlying_price_at_entry?: number
-    underlying_price_at_exit?: number
-    position_size_contracts?: number
-    position_size_dollars?: number
-    oracle_advice?: {
-      should_trade: boolean
-      confidence: number
-      regime: string
-      suggested_sd: number
-      risk_level: string
+  underlying_price_at_entry?: number
+  underlying_price_at_exit?: number
+  outcome_notes?: string
+  // Trade legs with Greeks
+  legs?: Array<{
+    leg_id: number
+    action: string
+    option_type: string
+    strike: number
+    expiration: string
+    entry_price: number
+    exit_price: number
+    contracts: number
+    premium_per_contract: number
+    delta: number
+    gamma: number
+    theta: number
+    iv: number
+    realized_pnl: number
+  }>
+  // Oracle AI advice
+  oracle_advice?: {
+    advice: string
+    win_probability: number
+    confidence: number
+    suggested_risk_pct: number
+    suggested_sd_multiplier: number
+    use_gex_walls: boolean
+    suggested_put_strike?: number
+    suggested_call_strike?: number
+    top_factors: Array<[string, number]>
+    reasoning: string
+    model_version: string
+    claude_analysis?: {
+      analysis: string
+      confidence_adjustment: number
+      risk_factors: string[]
+      opportunities: string[]
+      recommendation: string
     }
-    gex_context?: {
-      call_wall?: number
-      put_wall?: number
-      gamma_exposure?: number
-      regime?: string
-    }
-    risk_checks?: Array<{
-      check: string
-      passed: boolean
-      value?: string
-    }>
   }
+  // GEX context
+  gex_context?: {
+    net_gex: number
+    gex_normalized: number
+    call_wall: number
+    put_wall: number
+    flip_point: number
+    distance_to_flip_pct: number
+    regime: string
+    between_walls: boolean
+  }
+  // Market context
+  market_context?: {
+    spot_price: number
+    vix: number
+    vix_percentile: number
+    expected_move: number
+    trend: string
+    day_of_week: number
+    days_to_opex: number
+  }
+  // Backtest statistics
+  backtest_stats?: {
+    strategy_name: string
+    win_rate: number
+    expectancy: number
+    avg_win: number
+    avg_loss: number
+    sharpe_ratio: number
+    max_drawdown: number
+    total_trades: number
+    uses_real_data: boolean
+    backtest_period: string
+  }
+  // Position sizing
+  position_sizing?: {
+    contracts: number
+    position_dollars: number
+    max_risk_dollars: number
+    sizing_method: string
+    target_profit_pct: number
+    stop_loss_pct: number
+    probability_of_profit: number
+  }
+  // Alternatives considered
+  alternatives?: {
+    primary_reason: string
+    supporting_factors: string[]
+    risk_factors: string[]
+    alternatives_considered: string[]
+    why_not_alternatives: string[]
+  }
+  // Risk checks
+  risk_checks?: Array<{
+    check: string
+    passed: boolean
+    value?: string
+  }>
+  passed_risk_checks?: boolean
 }
 
 // ==================== COMPONENT ====================
@@ -1010,159 +1070,299 @@ export default function ARESPage() {
                         </div>
                       </div>
 
-                      {/* Expanded Details */}
+                      {/* Expanded Details - Full Audit Trail */}
                       {isExpanded && (
                         <div className="px-3 pb-3 space-y-3 border-t border-gray-700/50 pt-3">
-                          {/* WHY */}
-                          <div>
+                          {/* WHY Section */}
+                          <div className="bg-yellow-900/10 border-l-2 border-yellow-500 pl-3 py-2">
                             <span className="text-yellow-400 text-xs font-bold">WHY:</span>
                             <p className="text-sm text-gray-300 mt-1">{decision.why || 'Not specified'}</p>
+                            {decision.alternatives?.supporting_factors && decision.alternatives.supporting_factors.length > 0 && (
+                              <div className="mt-2">
+                                <span className="text-xs text-gray-500">Supporting Factors:</span>
+                                <ul className="list-disc list-inside text-xs text-gray-400 mt-1">
+                                  {decision.alternatives.supporting_factors.map((f, i) => (
+                                    <li key={i}>{f}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
                           </div>
 
-                          {/* HOW */}
-                          <div>
-                            <span className="text-blue-400 text-xs font-bold">HOW:</span>
-                            <p className="text-sm text-gray-300 mt-1">{decision.how || 'Not specified'}</p>
-                          </div>
+                          {/* HOW Section */}
+                          {decision.how && (
+                            <div className="bg-blue-900/10 border-l-2 border-blue-500 pl-3 py-2">
+                              <span className="text-blue-400 text-xs font-bold">HOW:</span>
+                              <p className="text-sm text-gray-300 mt-1">{decision.how}</p>
+                            </div>
+                          )}
 
-                          {/* Market Context */}
-                          {(decision.spot_price || decision.vix || decision.strike) && (
+                          {/* Market Context & GEX - Side by Side */}
+                          <div className="grid grid-cols-2 gap-3">
+                            {/* Market Context */}
                             <div className="bg-gray-800/50 rounded p-2">
-                              <span className="text-cyan-400 text-xs font-bold">MARKET CONTEXT:</span>
-                              <div className="grid grid-cols-4 gap-2 mt-2 text-xs">
-                                {decision.spot_price && (
+                              <span className="text-cyan-400 text-xs font-bold">MARKET AT DECISION:</span>
+                              <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                                <div>
+                                  <span className="text-gray-500">{decision.symbol}:</span>
+                                  <span className="text-white ml-1">${(decision.market_context?.spot_price || decision.underlying_price_at_entry || 0).toLocaleString()}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">VIX:</span>
+                                  <span className="text-yellow-400 ml-1">{(decision.market_context?.vix || decision.vix || 0).toFixed(1)}</span>
+                                </div>
+                                {decision.market_context?.expected_move && (
                                   <div>
-                                    <span className="text-gray-500">Spot:</span>
-                                    <span className="text-white ml-1">${decision.spot_price.toLocaleString()}</span>
+                                    <span className="text-gray-500">Exp Move:</span>
+                                    <span className="text-white ml-1">{decision.market_context.expected_move.toFixed(2)}%</span>
                                   </div>
                                 )}
-                                {decision.vix && (
+                                {decision.market_context?.trend && (
                                   <div>
-                                    <span className="text-gray-500">VIX:</span>
-                                    <span className="text-yellow-400 ml-1">{decision.vix.toFixed(1)}</span>
-                                  </div>
-                                )}
-                                {decision.strike && (
-                                  <div>
-                                    <span className="text-gray-500">Strike:</span>
-                                    <span className="text-white ml-1">${decision.strike}</span>
-                                  </div>
-                                )}
-                                {decision.expiration && (
-                                  <div>
-                                    <span className="text-gray-500">Exp:</span>
-                                    <span className="text-white ml-1">{decision.expiration}</span>
+                                    <span className="text-gray-500">Trend:</span>
+                                    <span className="text-white ml-1">{decision.market_context.trend}</span>
                                   </div>
                                 )}
                               </div>
                             </div>
-                          )}
 
-                          {/* Oracle AI Advice */}
-                          {decision.full_decision?.oracle_advice && (
-                            <div className="bg-green-900/20 border border-green-700/30 rounded p-2">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Brain className="w-4 h-4 text-green-400" />
-                                <span className="text-green-400 text-xs font-bold">ORACLE AI ADVICE:</span>
+                            {/* GEX Context */}
+                            <div className="bg-purple-900/20 border border-purple-700/30 rounded p-2">
+                              <div className="flex items-center gap-1 mb-2">
+                                <Crosshair className="w-3 h-3 text-purple-400" />
+                                <span className="text-purple-400 text-xs font-bold">GEX LEVELS:</span>
                               </div>
-                              <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div className="grid grid-cols-2 gap-2 text-xs">
                                 <div>
-                                  <span className="text-gray-500">Should Trade:</span>
-                                  <span className={`ml-1 ${decision.full_decision.oracle_advice.should_trade ? 'text-green-400' : 'text-red-400'}`}>
-                                    {decision.full_decision.oracle_advice.should_trade ? 'YES' : 'NO'}
-                                  </span>
+                                  <span className="text-gray-500">Put Wall:</span>
+                                  <span className="text-green-400 ml-1">${decision.gex_context?.put_wall || '-'}</span>
                                 </div>
                                 <div>
-                                  <span className="text-gray-500">Confidence:</span>
-                                  <span className="text-white ml-1">{(decision.full_decision.oracle_advice.confidence * 100).toFixed(0)}%</span>
+                                  <span className="text-gray-500">Call Wall:</span>
+                                  <span className="text-red-400 ml-1">${decision.gex_context?.call_wall || '-'}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Flip:</span>
+                                  <span className="text-white ml-1">${decision.gex_context?.flip_point || '-'}</span>
                                 </div>
                                 <div>
                                   <span className="text-gray-500">Regime:</span>
-                                  <span className="text-white ml-1">{decision.full_decision.oracle_advice.regime}</span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Suggested SD:</span>
-                                  <span className="text-white ml-1">{decision.full_decision.oracle_advice.suggested_sd}</span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Risk Level:</span>
-                                  <span className={`ml-1 ${
-                                    decision.full_decision.oracle_advice.risk_level === 'low' ? 'text-green-400' :
-                                    decision.full_decision.oracle_advice.risk_level === 'medium' ? 'text-yellow-400' : 'text-red-400'
-                                  }`}>
-                                    {decision.full_decision.oracle_advice.risk_level?.toUpperCase()}
+                                  <span className={`ml-1 ${decision.gex_context?.regime === 'POSITIVE' ? 'text-green-400' : decision.gex_context?.regime === 'NEGATIVE' ? 'text-red-400' : 'text-gray-400'}`}>
+                                    {decision.gex_context?.regime || '-'}
                                   </span>
                                 </div>
+                                {decision.gex_context?.net_gex && (
+                                  <div className="col-span-2">
+                                    <span className="text-gray-500">Net GEX:</span>
+                                    <span className="text-white ml-1">{(decision.gex_context.net_gex / 1e9).toFixed(2)}B</span>
+                                    {decision.gex_context.between_walls !== undefined && (
+                                      <span className={`ml-2 text-xs ${decision.gex_context.between_walls ? 'text-green-400' : 'text-red-400'}`}>
+                                        {decision.gex_context.between_walls ? '(In Pin Zone)' : '(Outside Walls)'}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
+                            </div>
+                          </div>
+
+                          {/* Oracle AI Advice - Enhanced */}
+                          {decision.oracle_advice && (
+                            <div className="bg-green-900/20 border border-green-700/30 rounded p-2">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <Brain className="w-4 h-4 text-green-400" />
+                                  <span className="text-green-400 text-xs font-bold">ORACLE AI PREDICTION:</span>
+                                </div>
+                                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                  decision.oracle_advice.advice === 'TRADE_FULL' ? 'bg-green-900/50 text-green-400' :
+                                  decision.oracle_advice.advice === 'TRADE_REDUCED' ? 'bg-yellow-900/50 text-yellow-400' :
+                                  'bg-red-900/50 text-red-400'
+                                }`}>
+                                  {decision.oracle_advice.advice?.replace(/_/g, ' ')}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-4 gap-2 text-xs mb-2">
+                                <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                  <span className="text-gray-500 block">Win Prob</span>
+                                  <span className="text-green-400 font-bold">{((decision.oracle_advice.win_probability || 0) * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                  <span className="text-gray-500 block">Confidence</span>
+                                  <span className="text-white font-bold">{((decision.oracle_advice.confidence || 0) * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                  <span className="text-gray-500 block">Risk %</span>
+                                  <span className="text-yellow-400 font-bold">{(decision.oracle_advice.suggested_risk_pct || 0).toFixed(1)}%</span>
+                                </div>
+                                <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                  <span className="text-gray-500 block">SD Mult</span>
+                                  <span className="text-white font-bold">{(decision.oracle_advice.suggested_sd_multiplier || 0).toFixed(2)}</span>
+                                </div>
+                              </div>
+                              {decision.oracle_advice.use_gex_walls && (
+                                <div className="text-xs text-purple-400 mb-1">
+                                  Using GEX Walls (72% historical win rate)
+                                </div>
+                              )}
+                              {decision.oracle_advice.top_factors && decision.oracle_advice.top_factors.length > 0 && (
+                                <div className="mt-2">
+                                  <span className="text-xs text-gray-500">Top Factors:</span>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {decision.oracle_advice.top_factors.slice(0, 5).map(([factor, weight], i) => (
+                                      <span key={i} className="px-1.5 py-0.5 bg-gray-800 rounded text-xs text-gray-300">
+                                        {factor}: <span className="text-green-400">{(weight * 100).toFixed(0)}%</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {decision.oracle_advice.reasoning && (
+                                <p className="text-xs text-gray-400 mt-2 italic">{decision.oracle_advice.reasoning}</p>
+                              )}
+                              {decision.oracle_advice.claude_analysis && (
+                                <div className="mt-2 pt-2 border-t border-green-700/30">
+                                  <span className="text-xs text-green-300 font-medium">Claude AI Analysis:</span>
+                                  <p className="text-xs text-gray-400 mt-1">{decision.oracle_advice.claude_analysis.analysis}</p>
+                                  {decision.oracle_advice.claude_analysis.risk_factors?.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {decision.oracle_advice.claude_analysis.risk_factors.map((rf, i) => (
+                                        <span key={i} className="px-1.5 py-0.5 bg-red-900/30 rounded text-xs text-red-400">{rf}</span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )}
 
-                          {/* GEX Context */}
-                          {decision.full_decision?.gex_context && (
-                            <div className="bg-purple-900/20 border border-purple-700/30 rounded p-2">
+                          {/* Backtest Statistics */}
+                          {decision.backtest_stats && decision.backtest_stats.total_trades > 0 && (
+                            <div className="bg-blue-900/20 border border-blue-700/30 rounded p-2">
                               <div className="flex items-center gap-2 mb-2">
-                                <Crosshair className="w-4 h-4 text-purple-400" />
-                                <span className="text-purple-400 text-xs font-bold">GEX CONTEXT:</span>
+                                <BarChart3 className="w-4 h-4 text-blue-400" />
+                                <span className="text-blue-400 text-xs font-bold">BACKTEST BACKING:</span>
+                                {decision.backtest_stats.uses_real_data && (
+                                  <span className="px-1.5 py-0.5 bg-green-900/50 rounded text-xs text-green-400">Real Data</span>
+                                )}
                               </div>
                               <div className="grid grid-cols-4 gap-2 text-xs">
-                                {decision.full_decision.gex_context.call_wall && (
+                                <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                  <span className="text-gray-500 block">Win Rate</span>
+                                  <span className="text-green-400 font-bold">{(decision.backtest_stats.win_rate || 0).toFixed(1)}%</span>
+                                </div>
+                                <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                  <span className="text-gray-500 block">Expectancy</span>
+                                  <span className="text-white font-bold">${(decision.backtest_stats.expectancy || 0).toFixed(0)}</span>
+                                </div>
+                                <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                  <span className="text-gray-500 block">Sharpe</span>
+                                  <span className="text-white font-bold">{(decision.backtest_stats.sharpe_ratio || 0).toFixed(2)}</span>
+                                </div>
+                                <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                  <span className="text-gray-500 block">Trades</span>
+                                  <span className="text-white font-bold">{decision.backtest_stats.total_trades}</span>
+                                </div>
+                              </div>
+                              {decision.backtest_stats.backtest_period && (
+                                <p className="text-xs text-gray-500 mt-1">Period: {decision.backtest_stats.backtest_period}</p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Position Sizing */}
+                          {decision.position_sizing && (decision.position_sizing.contracts > 0 || decision.position_sizing.position_dollars > 0) && (
+                            <div className="bg-gray-800/50 rounded p-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <DollarSign className="w-4 h-4 text-yellow-400" />
+                                <span className="text-yellow-400 text-xs font-bold">POSITION SIZING:</span>
+                              </div>
+                              <div className="grid grid-cols-4 gap-2 text-xs">
+                                <div>
+                                  <span className="text-gray-500">Contracts:</span>
+                                  <span className="text-white ml-1 font-bold">{decision.position_sizing.contracts}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Premium:</span>
+                                  <span className="text-green-400 ml-1">${(decision.position_sizing.position_dollars || 0).toLocaleString()}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Max Risk:</span>
+                                  <span className="text-red-400 ml-1">${(decision.position_sizing.max_risk_dollars || 0).toLocaleString()}</span>
+                                </div>
+                                {decision.position_sizing.probability_of_profit > 0 && (
                                   <div>
-                                    <span className="text-gray-500">Call Wall:</span>
-                                    <span className="text-red-400 ml-1">${decision.full_decision.gex_context.call_wall}</span>
-                                  </div>
-                                )}
-                                {decision.full_decision.gex_context.put_wall && (
-                                  <div>
-                                    <span className="text-gray-500">Put Wall:</span>
-                                    <span className="text-green-400 ml-1">${decision.full_decision.gex_context.put_wall}</span>
-                                  </div>
-                                )}
-                                {decision.full_decision.gex_context.gamma_exposure && (
-                                  <div>
-                                    <span className="text-gray-500">GEX:</span>
-                                    <span className="text-white ml-1">{(decision.full_decision.gex_context.gamma_exposure / 1e9).toFixed(1)}B</span>
-                                  </div>
-                                )}
-                                {decision.full_decision.gex_context.regime && (
-                                  <div>
-                                    <span className="text-gray-500">Regime:</span>
-                                    <span className="text-white ml-1">{decision.full_decision.gex_context.regime}</span>
+                                    <span className="text-gray-500">POP:</span>
+                                    <span className="text-white ml-1">{(decision.position_sizing.probability_of_profit * 100).toFixed(0)}%</span>
                                   </div>
                                 )}
                               </div>
                             </div>
                           )}
 
-                          {/* Trade Legs */}
-                          {decision.full_decision?.legs && decision.full_decision.legs.length > 0 && (
+                          {/* Trade Legs with Greeks */}
+                          {decision.legs && decision.legs.length > 0 && (
                             <div className="bg-gray-800/50 rounded p-2">
                               <div className="flex items-center gap-2 mb-2">
                                 <Target className="w-4 h-4 text-orange-400" />
-                                <span className="text-orange-400 text-xs font-bold">TRADE LEGS ({decision.full_decision.legs.length}):</span>
+                                <span className="text-orange-400 text-xs font-bold">TRADE LEGS ({decision.legs.length}):</span>
                               </div>
-                              <div className="space-y-2">
-                                {decision.full_decision.legs.map((leg, idx) => (
-                                  <div key={idx} className="bg-gray-900/50 rounded p-2 text-xs">
-                                    <div className="flex justify-between items-center mb-1">
-                                      <span className="font-medium text-white">
-                                        Leg {leg.leg_id}: {leg.action} {leg.option_type?.toUpperCase()}
-                                      </span>
-                                      {leg.realized_pnl !== 0 && (
-                                        <span className={leg.realized_pnl > 0 ? 'text-green-400' : 'text-red-400'}>
-                                          P&L: ${leg.realized_pnl?.toFixed(2)}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="grid grid-cols-4 gap-2 text-gray-400">
-                                      <div>Strike: <span className="text-white">${leg.strike}</span></div>
-                                      <div>Entry: <span className="text-white">${leg.entry_price?.toFixed(2)}</span></div>
-                                      <div>Exit: <span className="text-white">${leg.exit_price?.toFixed(2) || '-'}</span></div>
-                                      <div>Contracts: <span className="text-white">{leg.contracts}</span></div>
-                                      <div>Delta: <span className="text-white">{leg.delta?.toFixed(2)}</span></div>
-                                      <div>Theta: <span className="text-white">${leg.theta?.toFixed(2)}</span></div>
-                                      <div>IV: <span className="text-white">{(leg.iv * 100)?.toFixed(1)}%</span></div>
-                                      <div>Exp: <span className="text-white">{leg.expiration}</span></div>
-                                    </div>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-gray-500 border-b border-gray-700">
+                                      <th className="text-left py-1 px-1">Leg</th>
+                                      <th className="text-left py-1 px-1">Type</th>
+                                      <th className="text-right py-1 px-1">Strike</th>
+                                      <th className="text-right py-1 px-1">Entry</th>
+                                      <th className="text-right py-1 px-1">Exit</th>
+                                      <th className="text-right py-1 px-1">Delta</th>
+                                      <th className="text-right py-1 px-1">Theta</th>
+                                      <th className="text-right py-1 px-1">IV</th>
+                                      <th className="text-right py-1 px-1">P&L</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {decision.legs.map((leg, idx) => (
+                                      <tr key={idx} className="border-b border-gray-700/50">
+                                        <td className="py-1 px-1 text-gray-400">{leg.leg_id}</td>
+                                        <td className="py-1 px-1">
+                                          <span className={leg.action === 'SELL' ? 'text-red-400' : 'text-green-400'}>
+                                            {leg.action} {leg.option_type?.toUpperCase()}
+                                          </span>
+                                        </td>
+                                        <td className="py-1 px-1 text-right text-white">${leg.strike}</td>
+                                        <td className="py-1 px-1 text-right text-white">${leg.entry_price?.toFixed(2) || '-'}</td>
+                                        <td className="py-1 px-1 text-right text-white">${leg.exit_price?.toFixed(2) || '-'}</td>
+                                        <td className="py-1 px-1 text-right text-gray-300">{leg.delta?.toFixed(3) || '-'}</td>
+                                        <td className="py-1 px-1 text-right text-green-400">${leg.theta?.toFixed(2) || '-'}</td>
+                                        <td className="py-1 px-1 text-right text-gray-300">{leg.iv ? (leg.iv * 100).toFixed(1) + '%' : '-'}</td>
+                                        <td className={`py-1 px-1 text-right font-medium ${(leg.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                          {leg.realized_pnl ? '$' + leg.realized_pnl.toFixed(2) : '-'}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Alternatives Considered */}
+                          {decision.alternatives?.alternatives_considered && decision.alternatives.alternatives_considered.length > 0 && (
+                            <div className="bg-gray-800/50 rounded p-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <ListChecks className="w-4 h-4 text-gray-400" />
+                                <span className="text-gray-400 text-xs font-bold">ALTERNATIVES CONSIDERED:</span>
+                              </div>
+                              <div className="space-y-1">
+                                {decision.alternatives.alternatives_considered.map((alt, idx) => (
+                                  <div key={idx} className="flex items-start gap-2 text-xs">
+                                    <span className="text-red-400">✗</span>
+                                    <span className="text-gray-400">{alt}</span>
+                                    {decision.alternatives?.why_not_alternatives?.[idx] && (
+                                      <span className="text-gray-500 italic">- {decision.alternatives.why_not_alternatives[idx]}</span>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1170,53 +1370,53 @@ export default function ARESPage() {
                           )}
 
                           {/* Risk Checks */}
-                          {decision.full_decision?.risk_checks && decision.full_decision.risk_checks.length > 0 && (
+                          {decision.risk_checks && decision.risk_checks.length > 0 && (
                             <div className="bg-gray-800/50 rounded p-2">
                               <div className="flex items-center gap-2 mb-2">
                                 <Shield className="w-4 h-4 text-blue-400" />
                                 <span className="text-blue-400 text-xs font-bold">RISK CHECKS:</span>
+                                <span className={`ml-auto px-1.5 py-0.5 rounded text-xs ${decision.passed_risk_checks !== false ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+                                  {decision.passed_risk_checks !== false ? 'ALL PASSED' : 'FAILED'}
+                                </span>
                               </div>
-                              <div className="flex flex-wrap gap-2">
-                                {decision.full_decision.risk_checks.map((check, idx) => (
+                              <div className="flex flex-wrap gap-1">
+                                {decision.risk_checks.map((check, idx) => (
                                   <span
                                     key={idx}
                                     className={`px-2 py-0.5 rounded text-xs ${
-                                      check.passed
-                                        ? 'bg-green-900/50 text-green-400'
-                                        : 'bg-red-900/50 text-red-400'
+                                      check.passed ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'
                                     }`}
                                   >
                                     {check.passed ? '✓' : '✗'} {check.check}
-                                    {check.value && <span className="ml-1 opacity-75">({check.value})</span>}
                                   </span>
                                 ))}
                               </div>
                             </div>
                           )}
 
-                          {/* Position Size */}
-                          {(decision.full_decision?.position_size_contracts || decision.full_decision?.position_size_dollars) && (
-                            <div className="flex gap-4 text-xs">
-                              {decision.full_decision.position_size_contracts && (
-                                <div>
-                                  <span className="text-gray-500">Contracts:</span>
-                                  <span className="text-white ml-1">{decision.full_decision.position_size_contracts}</span>
-                                </div>
+                          {/* Outcome / Exit Context */}
+                          {(decision.outcome || decision.outcome_notes || (decision.underlying_price_at_exit && decision.underlying_price_at_exit > 0)) && (
+                            <div className="bg-gray-900/50 rounded p-2 border-t-2 border-gray-600">
+                              <span className="text-green-400 text-xs font-bold">OUTCOME:</span>
+                              <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                                {decision.underlying_price_at_exit && decision.underlying_price_at_exit > 0 && (
+                                  <div>
+                                    <span className="text-gray-500">Exit Price:</span>
+                                    <span className="text-white ml-1">${decision.underlying_price_at_exit.toLocaleString()}</span>
+                                  </div>
+                                )}
+                                {decision.actual_pnl !== undefined && (
+                                  <div>
+                                    <span className="text-gray-500">P&L:</span>
+                                    <span className={`ml-1 font-bold ${decision.actual_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {decision.actual_pnl >= 0 ? '+' : ''}{formatCurrency(decision.actual_pnl)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              {(decision.outcome || decision.outcome_notes) && (
+                                <p className="text-sm text-gray-300 mt-2">{decision.outcome || decision.outcome_notes}</p>
                               )}
-                              {decision.full_decision.position_size_dollars && (
-                                <div>
-                                  <span className="text-gray-500">Position Size:</span>
-                                  <span className="text-white ml-1">${decision.full_decision.position_size_dollars.toLocaleString()}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Outcome */}
-                          {decision.outcome && (
-                            <div className="pt-2 border-t border-gray-700/50">
-                              <span className="text-green-400 text-xs font-bold">OUTCOME: </span>
-                              <span className="text-sm text-gray-300">{decision.outcome}</span>
                             </div>
                           )}
                         </div>
