@@ -234,6 +234,67 @@ export default function ARESPage() {
   const error = statusError?.message || null
   const isRefreshing = statusValidating || perfValidating || equityValidating || posValidating || marketValidating || tradierValidating || configValidating || decisionsValidating
 
+  // Helper to determine if position is SPX or SPY
+  const isSPX = (pos: IronCondorPosition) => pos.ticker === 'SPX' || (!pos.ticker && (pos.spread_width || 10) > 5)
+  const isSPY = (pos: IronCondorPosition) => pos.ticker === 'SPY' || (!pos.ticker && (pos.spread_width || 10) <= 5)
+
+  // Filter positions by ticker
+  const spxOpenPositions = positions.filter(isSPX)
+  const spyOpenPositions = positions.filter(isSPY)
+  const spxClosedPositions = closedPositions.filter(isSPX)
+  const spyClosedPositions = closedPositions.filter(isSPY)
+
+  // Helper to calculate max drawdown from closed positions
+  const calcMaxDrawdown = (closedPositions: IronCondorPosition[]) => {
+    if (closedPositions.length === 0) return 0
+    let peak = 0
+    let maxDrawdown = 0
+    let cumulative = 0
+    closedPositions.forEach(p => {
+      cumulative += p.realized_pnl || 0
+      if (cumulative > peak) peak = cumulative
+      const drawdown = peak - cumulative
+      if (drawdown > maxDrawdown) maxDrawdown = drawdown
+    })
+    return maxDrawdown
+  }
+
+  // Calculate SPX stats
+  const spxStats = {
+    capital: 200000, // Starting capital allocated to SPX
+    totalPnl: spxClosedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0),
+    totalTrades: spxClosedPositions.length,
+    winningTrades: spxClosedPositions.filter(p => (p.realized_pnl || 0) > 0).length,
+    losingTrades: spxClosedPositions.filter(p => (p.realized_pnl || 0) <= 0).length,
+    winRate: spxClosedPositions.length > 0
+      ? (spxClosedPositions.filter(p => (p.realized_pnl || 0) > 0).length / spxClosedPositions.length) * 100
+      : 0,
+    bestTrade: spxClosedPositions.length > 0 ? Math.max(...spxClosedPositions.map(p => p.realized_pnl || 0)) : 0,
+    worstTrade: spxClosedPositions.length > 0 ? Math.min(...spxClosedPositions.map(p => p.realized_pnl || 0)) : 0,
+    maxDrawdown: calcMaxDrawdown(spxClosedPositions),
+    avgTrade: spxClosedPositions.length > 0
+      ? spxClosedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0) / spxClosedPositions.length
+      : 0,
+  }
+
+  // Calculate SPY stats
+  const spyStats = {
+    capital: tradierStatus?.account?.equity || 102000, // From Tradier or default
+    totalPnl: spyClosedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0),
+    totalTrades: spyClosedPositions.length,
+    winningTrades: spyClosedPositions.filter(p => (p.realized_pnl || 0) > 0).length,
+    losingTrades: spyClosedPositions.filter(p => (p.realized_pnl || 0) <= 0).length,
+    winRate: spyClosedPositions.length > 0
+      ? (spyClosedPositions.filter(p => (p.realized_pnl || 0) > 0).length / spyClosedPositions.length) * 100
+      : 0,
+    bestTrade: spyClosedPositions.length > 0 ? Math.max(...spyClosedPositions.map(p => p.realized_pnl || 0)) : 0,
+    worstTrade: spyClosedPositions.length > 0 ? Math.min(...spyClosedPositions.map(p => p.realized_pnl || 0)) : 0,
+    maxDrawdown: calcMaxDrawdown(spyClosedPositions),
+    avgTrade: spyClosedPositions.length > 0
+      ? spyClosedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0) / spyClosedPositions.length
+      : 0,
+  }
+
   // UI State
   const [showSpxPositions, setShowSpxPositions] = useState(false)
   const [showSpyPositions, setShowSpyPositions] = useState(false)
@@ -421,51 +482,55 @@ export default function ARESPage() {
                   <div className="bg-gray-800/60 rounded-lg p-3 text-center">
                     <span className="text-gray-400 text-xs">Capital</span>
                     <p className="text-white font-bold text-lg">
-                      {formatCurrency(performance?.current_capital || 200000)}
+                      {formatCurrency(spxStats.capital + spxStats.totalPnl)}
                     </p>
                   </div>
                   <div className="bg-gray-800/60 rounded-lg p-3 text-center">
                     <span className="text-gray-400 text-xs">Total P&L</span>
-                    <p className={`font-bold text-lg ${(performance?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {formatCurrency(performance?.total_pnl || 0)}
+                    <p className={`font-bold text-lg ${spxStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {formatCurrency(spxStats.totalPnl)}
                     </p>
                     <span className="text-xs text-gray-500">
-                      ({formatPercent(performance?.return_pct || 0)})
+                      ({formatPercent((spxStats.totalPnl / spxStats.capital) * 100)})
                     </span>
                   </div>
                   <div className="bg-gray-800/60 rounded-lg p-3 text-center">
                     <span className="text-gray-400 text-xs">Win Rate</span>
                     <p className="text-white font-bold text-lg">
-                      {(performance?.win_rate || 0).toFixed(1)}%
+                      {spxStats.winRate.toFixed(1)}%
                     </p>
                     <span className="text-xs text-gray-500">
-                      {performance?.winning_trades || 0}W / {performance?.losing_trades || 0}L
+                      {spxStats.winningTrades}W / {spxStats.losingTrades}L
                     </span>
                   </div>
                   <div className="bg-gray-800/60 rounded-lg p-3 text-center">
                     <span className="text-gray-400 text-xs">Trades</span>
                     <p className="text-white font-bold text-lg">
-                      {performance?.closed_trades || 0}
+                      {spxStats.totalTrades}
                     </p>
                     <span className="text-xs text-gray-500">
-                      {performance?.open_positions || 0} open
+                      {spxOpenPositions.length} open
                     </span>
                   </div>
                 </div>
 
                 {/* Additional Metrics */}
-                <div className="px-4 pb-4 grid grid-cols-3 gap-3">
+                <div className="px-4 pb-4 grid grid-cols-4 gap-3">
                   <div className="bg-gray-800/40 rounded p-2 text-center">
                     <span className="text-gray-500 text-xs">Best Trade</span>
-                    <p className="text-green-400 font-medium">{formatCurrency(performance?.best_trade || 0)}</p>
+                    <p className="text-green-400 font-medium">{formatCurrency(spxStats.bestTrade)}</p>
                   </div>
                   <div className="bg-gray-800/40 rounded p-2 text-center">
                     <span className="text-gray-500 text-xs">Worst Trade</span>
-                    <p className="text-red-400 font-medium">{formatCurrency(performance?.worst_trade || 0)}</p>
+                    <p className="text-red-400 font-medium">{formatCurrency(spxStats.worstTrade)}</p>
                   </div>
                   <div className="bg-gray-800/40 rounded p-2 text-center">
                     <span className="text-gray-500 text-xs">Max Drawdown</span>
-                    <p className="text-yellow-400 font-medium">-{(performance?.max_drawdown_pct || 0).toFixed(1)}%</p>
+                    <p className="text-orange-400 font-medium">{formatCurrency(spxStats.maxDrawdown)}</p>
+                  </div>
+                  <div className="bg-gray-800/40 rounded p-2 text-center">
+                    <span className="text-gray-500 text-xs">Avg Trade</span>
+                    <p className="text-yellow-400 font-medium">{formatCurrency(spxStats.avgTrade)}</p>
                   </div>
                 </div>
 
@@ -610,50 +675,60 @@ export default function ARESPage() {
 
                 {tradierConnected ? (
                   <>
-                    {/* Stats Grid */}
+                    {/* Stats Grid - Matches SPX layout */}
                     <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div className="bg-gray-800/60 rounded-lg p-3 text-center">
-                        <span className="text-gray-400 text-xs">Buying Power</span>
+                        <span className="text-gray-400 text-xs">Capital</span>
                         <p className="text-white font-bold text-lg">
-                          {formatCurrency(tradierStatus?.account?.buying_power || 0)}
+                          {formatCurrency(spyStats.capital + spyStats.totalPnl)}
                         </p>
                       </div>
                       <div className="bg-gray-800/60 rounded-lg p-3 text-center">
-                        <span className="text-gray-400 text-xs">Total Equity</span>
-                        <p className="text-white font-bold text-lg">
-                          {formatCurrency(tradierStatus?.account?.equity || 0)}
-                        </p>
-                      </div>
-                      <div className="bg-gray-800/60 rounded-lg p-3 text-center">
-                        <span className="text-gray-400 text-xs">Cash</span>
-                        <p className="text-white font-bold text-lg">
-                          {formatCurrency(tradierStatus?.account?.cash || 0)}
-                        </p>
-                      </div>
-                      <div className="bg-gray-800/60 rounded-lg p-3 text-center">
-                        <span className="text-gray-400 text-xs">Positions</span>
-                        <p className="text-white font-bold text-lg">
-                          {tradierStatus?.positions?.length || 0}
+                        <span className="text-gray-400 text-xs">Total P&L</span>
+                        <p className={`font-bold text-lg ${spyStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {formatCurrency(spyStats.totalPnl)}
                         </p>
                         <span className="text-xs text-gray-500">
-                          {tradierStatus?.orders?.filter(o => o.status === 'pending').length || 0} pending
+                          ({formatPercent((spyStats.totalPnl / spyStats.capital) * 100)})
+                        </span>
+                      </div>
+                      <div className="bg-gray-800/60 rounded-lg p-3 text-center">
+                        <span className="text-gray-400 text-xs">Win Rate</span>
+                        <p className="text-white font-bold text-lg">
+                          {spyStats.winRate.toFixed(1)}%
+                        </p>
+                        <span className="text-xs text-gray-500">
+                          {spyStats.winningTrades}W / {spyStats.losingTrades}L
+                        </span>
+                      </div>
+                      <div className="bg-gray-800/60 rounded-lg p-3 text-center">
+                        <span className="text-gray-400 text-xs">Trades</span>
+                        <p className="text-white font-bold text-lg">
+                          {spyStats.totalTrades}
+                        </p>
+                        <span className="text-xs text-gray-500">
+                          {spyOpenPositions.length} open
                         </span>
                       </div>
                     </div>
 
-                    {/* P&L Placeholder (Tradier doesn't provide historical P&L) */}
-                    <div className="px-4 pb-4 grid grid-cols-3 gap-3">
+                    {/* Additional Metrics - Matches SPX layout */}
+                    <div className="px-4 pb-4 grid grid-cols-4 gap-3">
                       <div className="bg-gray-800/40 rounded p-2 text-center">
-                        <span className="text-gray-500 text-xs">Day P&L</span>
-                        <p className="text-gray-400 font-medium">--</p>
+                        <span className="text-gray-500 text-xs">Best Trade</span>
+                        <p className="text-green-400 font-medium">{formatCurrency(spyStats.bestTrade)}</p>
                       </div>
                       <div className="bg-gray-800/40 rounded p-2 text-center">
-                        <span className="text-gray-500 text-xs">Account Type</span>
-                        <p className="text-blue-400 font-medium">{tradierStatus?.account?.type || 'Sandbox'}</p>
+                        <span className="text-gray-500 text-xs">Worst Trade</span>
+                        <p className="text-red-400 font-medium">{formatCurrency(spyStats.worstTrade)}</p>
                       </div>
                       <div className="bg-gray-800/40 rounded p-2 text-center">
-                        <span className="text-gray-500 text-xs">Mode</span>
-                        <p className="text-blue-400 font-medium">{tradierStatus?.mode || 'Paper'}</p>
+                        <span className="text-gray-500 text-xs">Max Drawdown</span>
+                        <p className="text-orange-400 font-medium">{formatCurrency(spyStats.maxDrawdown)}</p>
+                      </div>
+                      <div className="bg-gray-800/40 rounded p-2 text-center">
+                        <span className="text-gray-500 text-xs">Avg Trade</span>
+                        <p className="text-yellow-400 font-medium">{formatCurrency(spyStats.avgTrade)}</p>
                       </div>
                     </div>
 
