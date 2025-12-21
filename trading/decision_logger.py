@@ -254,6 +254,9 @@ class TradeDecision:
     # Backtest backing
     backtest_reference: Optional[BacktestReference] = None
 
+    # Oracle AI advice (from OracleAdvisor)
+    oracle_advice: Optional[Dict] = None  # Full oracle prediction with win_prob, confidence, factors
+
     # Reasoning
     reasoning: DecisionReasoning = None
 

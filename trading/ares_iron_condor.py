@@ -1125,6 +1125,50 @@ class ARESTrader:
                 f"6) Execute via Tradier API (PAPER/LIVE mode)."
             )
 
+            # Fetch GEX data for market context
+            gex_net = 0
+            gex_call_wall = 0
+            gex_put_wall = 0
+            gex_flip = 0
+            gex_regime = ""
+            if market_data:
+                try:
+                    from database_adapter import get_connection
+                    conn = get_connection()
+                    if conn:
+                        c = conn.cursor()
+                        c.execute("""
+                            SELECT net_gex, call_wall, put_wall, gex_flip_point
+                            FROM gex_data
+                            WHERE symbol = 'SPY'
+                            ORDER BY timestamp DESC
+                            LIMIT 1
+                        """)
+                        row = c.fetchone()
+                        if row:
+                            gex_net = row[0] or 0
+                            gex_call_wall = row[1] or 0
+                            gex_put_wall = row[2] or 0
+                            gex_flip = row[3] or 0
+                            gex_regime = "POSITIVE" if gex_net > 0 else "NEGATIVE" if gex_net < 0 else "NEUTRAL"
+                        conn.close()
+                except Exception as e:
+                    logger.debug(f"Could not fetch GEX for skip logging: {e}")
+
+            # Build oracle_advice dict for storage
+            oracle_advice_dict = None
+            if oracle_advice:
+                oracle_advice_dict = {
+                    'advice': oracle_advice.advice.value if hasattr(oracle_advice.advice, 'value') else str(oracle_advice.advice),
+                    'win_probability': oracle_advice.win_probability,
+                    'confidence': getattr(oracle_advice, 'confidence', oracle_advice.win_probability),
+                    'suggested_risk_pct': oracle_advice.suggested_risk_pct,
+                    'suggested_sd_multiplier': oracle_advice.suggested_sd_multiplier,
+                    'use_gex_walls': getattr(oracle_advice, 'use_gex_walls', False),
+                    'top_factors': getattr(oracle_advice, 'top_factors', []),
+                    'reasoning': oracle_advice.reasoning or '',
+                }
+
             decision = TradeDecision(
                 decision_id=f"ARES-SKIP-{today}-{now.strftime('%H%M%S')}",
                 timestamp=now.isoformat(),
@@ -1136,12 +1180,18 @@ class ARESTrader:
                 action="SKIP",
                 symbol=self.get_trading_ticker(),
                 strategy="aggressive_iron_condor",
-                market_context=MarketContext(
+                market_context=LoggerMarketContext(
                     timestamp=now.isoformat(),
                     spot_price=market_data.get('underlying_price', 0) if market_data else 0,
                     spot_source=DataSource.TRADIER_LIVE,
-                    vix=market_data.get('vix', 0) if market_data else 0
+                    vix=market_data.get('vix', 0) if market_data else 0,
+                    net_gex=gex_net,
+                    gex_regime=gex_regime,
+                    flip_point=gex_flip,
+                    call_wall=gex_call_wall,
+                    put_wall=gex_put_wall,
                 ) if market_data else None,
+                oracle_advice=oracle_advice_dict,
                 reasoning=DecisionReasoning(
                     primary_reason=reason,
                     supporting_factors=supporting_factors,
@@ -1327,39 +1377,98 @@ class ARESTrader:
                 f"Execution: {'Tradier Sandbox (PAPER)' if self.mode == TradingMode.PAPER else 'Tradier Production (LIVE)'}."
             )
 
+            # Fetch GEX data for market context
+            gex_net = 0
+            gex_call_wall = 0
+            gex_put_wall = 0
+            gex_flip = 0
+            gex_regime = ""
+            try:
+                from database_adapter import get_connection
+                conn = get_connection()
+                if conn:
+                    c = conn.cursor()
+                    c.execute("""
+                        SELECT net_gex, call_wall, put_wall, gex_flip_point
+                        FROM gex_data
+                        WHERE symbol = 'SPY'
+                        ORDER BY timestamp DESC
+                        LIMIT 1
+                    """)
+                    row = c.fetchone()
+                    if row:
+                        gex_net = row[0] or 0
+                        gex_call_wall = row[1] or 0
+                        gex_put_wall = row[2] or 0
+                        gex_flip = row[3] or 0
+                        gex_regime = "POSITIVE" if gex_net > 0 else "NEGATIVE" if gex_net < 0 else "NEUTRAL"
+                    conn.close()
+            except Exception as e:
+                logger.debug(f"Could not fetch GEX for logging: {e}")
+
+            # Build oracle_advice dict for storage
+            oracle_advice_dict = None
+            if oracle_advice:
+                oracle_advice_dict = {
+                    'advice': oracle_advice.advice.value if hasattr(oracle_advice.advice, 'value') else str(oracle_advice.advice),
+                    'win_probability': oracle_advice.win_probability,
+                    'confidence': getattr(oracle_advice, 'confidence', oracle_advice.win_probability),
+                    'suggested_risk_pct': oracle_advice.suggested_risk_pct,
+                    'suggested_sd_multiplier': oracle_advice.suggested_sd_multiplier,
+                    'use_gex_walls': getattr(oracle_advice, 'use_gex_walls', False),
+                    'suggested_put_strike': getattr(oracle_advice, 'suggested_put_strike', None),
+                    'suggested_call_strike': getattr(oracle_advice, 'suggested_call_strike', None),
+                    'top_factors': getattr(oracle_advice, 'top_factors', []),
+                    'reasoning': oracle_advice.reasoning or '',
+                    'model_version': getattr(oracle_advice, 'model_version', ''),
+                }
+                # Include Claude analysis if available
+                if hasattr(oracle_advice, 'claude_analysis') and oracle_advice.claude_analysis:
+                    claude = oracle_advice.claude_analysis
+                    oracle_advice_dict['claude_analysis'] = {
+                        'analysis': getattr(claude, 'analysis', getattr(claude, 'raw_response', '')),
+                        'confidence_adjustment': getattr(claude, 'confidence_adjustment', 0),
+                        'risk_factors': getattr(claude, 'risk_factors', []),
+                        'opportunities': getattr(claude, 'opportunities', []),
+                        'recommendation': getattr(claude, 'recommendation', ''),
+                    }
+
             decision = TradeDecision(
                 decision_id=position.position_id,
                 timestamp=datetime.now(self.tz).isoformat(),
                 decision_type=DecisionType.ENTRY_SIGNAL,
                 bot_name=BotName.ARES,
                 what=f"SELL Iron Condor {position.contracts}x {position.put_short_strike}P/{position.call_short_strike}C @ ${position.total_credit:.2f}",
-                why=f"1 SD Iron Condor for daily premium collection. VIX: {market_data['vix']:.1f}",
+                why=why_desc,
+                how=how_desc,
                 action="SELL",
                 symbol=self.config.ticker,
                 strategy="aggressive_iron_condor",
                 legs=legs,
                 underlying_price_at_entry=market_data['underlying_price'],
-                market_context=MarketContext(
+                market_context=LoggerMarketContext(
                     timestamp=datetime.now(self.tz).isoformat(),
                     spot_price=market_data['underlying_price'],
                     spot_source=DataSource.TRADIER_LIVE,
-                    vix=market_data['vix']
+                    vix=market_data['vix'],
+                    net_gex=gex_net,
+                    gex_regime=gex_regime,
+                    flip_point=gex_flip,
+                    call_wall=gex_call_wall,
+                    put_wall=gex_put_wall,
                 ),
+                oracle_advice=oracle_advice_dict,
                 reasoning=DecisionReasoning(
                     primary_reason="Daily aggressive Iron Condor for 10% monthly target",
-                    supporting_factors=[
-                        f"VIX at {market_data['vix']:.1f}",
-                        f"1 SD expected move: ${market_data['expected_move']:.0f}",
-                        f"Credit received: ${position.total_credit:.2f}",
-                    ],
-                    risk_factors=[
-                        f"Max loss: ${position.max_loss * 100 * position.contracts:,.0f}",
-                        "No stop loss - letting theta work"
-                    ]
+                    supporting_factors=supporting_factors,
+                    risk_factors=risk_factors,
+                    alternatives_considered=alternatives_considered,
+                    why_not_alternatives=why_not_alternatives,
                 ),
                 position_size_dollars=position.total_credit * 100 * position.contracts,
                 position_size_contracts=position.contracts,
-                max_risk_dollars=position.max_loss * 100 * position.contracts
+                max_risk_dollars=position.max_loss * 100 * position.contracts,
+                probability_of_profit=oracle_advice.win_probability if oracle_advice else 0.68,
             )
 
             self.decision_logger.log_decision(decision)
@@ -2777,11 +2886,45 @@ class ARESTrader:
 
         try:
             from trading.decision_logger import (
-                TradeDecision, DecisionType, BotName, MarketContext,
+                TradeDecision, DecisionType, BotName,
+                MarketContext as LoggerMktCtx,
                 DecisionReasoning, TradeLeg, DataSource
             )
 
             now = datetime.now(self.tz)
+
+            # Fetch GEX data for market context
+            gex_net = 0
+            gex_call_wall = 0
+            gex_put_wall = 0
+            gex_flip = 0
+            gex_regime = ""
+            try:
+                from database_adapter import get_connection
+                conn = get_connection()
+                if conn:
+                    c = conn.cursor()
+                    c.execute("""
+                        SELECT net_gex, call_wall, put_wall, gex_flip_point
+                        FROM gex_data
+                        WHERE symbol = 'SPY'
+                        ORDER BY timestamp DESC
+                        LIMIT 1
+                    """)
+                    row = c.fetchone()
+                    if row:
+                        gex_net = row[0] or 0
+                        gex_call_wall = row[1] or 0
+                        gex_put_wall = row[2] or 0
+                        gex_flip = row[3] or 0
+                        gex_regime = "POSITIVE" if gex_net > 0 else "NEGATIVE" if gex_net < 0 else "NEUTRAL"
+                    conn.close()
+            except Exception as e:
+                logger.debug(f"Could not fetch GEX for expiration logging: {e}")
+
+            # Calculate distance to strikes for outcome analysis
+            put_distance = closing_price - position.put_short_strike
+            call_distance = position.call_short_strike - closing_price
 
             # Create expiration decision
             decision = TradeDecision(
@@ -2791,39 +2934,56 @@ class ARESTrader:
                 bot_name=BotName.ARES,
                 what=f"EXPIRED Iron Condor {position.contracts}x {position.put_short_strike}/{position.call_short_strike} - {outcome}",
                 why=f"0DTE expiration. {self.get_trading_ticker()} closed at ${closing_price:.2f}. " +
-                    f"Put short: ${position.put_short_strike}, Call short: ${position.call_short_strike}. " +
-                    f"P&L: ${position.realized_pnl:.2f}",
+                    f"Put short: ${position.put_short_strike} (${put_distance:+.2f}), " +
+                    f"Call short: ${position.call_short_strike} (${call_distance:+.2f}). " +
+                    f"P&L: ${position.realized_pnl:+.2f}",
+                how=f"Settlement calculation: Credit received ${position.total_credit:.2f} x {position.contracts} contracts. " +
+                    f"Max risk was ${position.max_loss:.2f}/spread. " +
+                    f"Entry underlying: ${position.underlying_price_at_entry:.2f}, Exit: ${closing_price:.2f}.",
                 action="EXPIRED",
                 symbol=self.get_trading_ticker(),
                 strategy="ARES_IRON_CONDOR",
+                underlying_price_at_entry=position.underlying_price_at_entry,
                 underlying_price_at_exit=closing_price,
                 actual_pnl=position.realized_pnl,
                 legs=[
                     TradeLeg(leg_id=1, action="EXPIRED", option_type="put", strike=position.put_long_strike,
-                            expiration=position.expiration, realized_pnl=0),
+                            expiration=position.expiration, contracts=position.contracts, realized_pnl=0),
                     TradeLeg(leg_id=2, action="EXPIRED", option_type="put", strike=position.put_short_strike,
-                            expiration=position.expiration, entry_price=position.put_credit, realized_pnl=0),
+                            expiration=position.expiration, entry_price=position.put_credit, contracts=position.contracts, realized_pnl=0),
                     TradeLeg(leg_id=3, action="EXPIRED", option_type="call", strike=position.call_short_strike,
-                            expiration=position.expiration, entry_price=position.call_credit, realized_pnl=0),
+                            expiration=position.expiration, entry_price=position.call_credit, contracts=position.contracts, realized_pnl=0),
                     TradeLeg(leg_id=4, action="EXPIRED", option_type="call", strike=position.call_long_strike,
-                            expiration=position.expiration, realized_pnl=0),
+                            expiration=position.expiration, contracts=position.contracts, realized_pnl=0),
                 ],
-                market_context=MarketContext(
+                market_context=LoggerMktCtx(
                     timestamp=now.isoformat(),
                     spot_price=closing_price,
-                    spot_source=DataSource.TRADIER_LIVE
+                    spot_source=DataSource.TRADIER_LIVE,
+                    vix=position.vix_at_entry,
+                    net_gex=gex_net,
+                    gex_regime=gex_regime,
+                    flip_point=gex_flip,
+                    call_wall=gex_call_wall,
+                    put_wall=gex_put_wall,
                 ),
                 reasoning=DecisionReasoning(
                     primary_reason=f"0DTE expiration - {outcome}",
                     supporting_factors=[
                         f"Closing price: ${closing_price:.2f}",
-                        f"Put short strike: ${position.put_short_strike}",
-                        f"Call short strike: ${position.call_short_strike}",
-                        f"Credit received: ${position.total_credit:.2f}"
+                        f"Put short strike: ${position.put_short_strike} (distance: ${put_distance:+.2f})",
+                        f"Call short strike: ${position.call_short_strike} (distance: ${call_distance:+.2f})",
+                        f"Credit received: ${position.total_credit:.2f}/spread",
+                        f"Total premium collected: ${position.total_credit * 100 * position.contracts:.2f}",
+                        f"VIX at entry: {position.vix_at_entry:.1f}",
                     ],
-                    risk_factors=[]
+                    risk_factors=[
+                        f"Spread width: ${position.spread_width:.0f}",
+                        f"Max loss was: ${position.max_loss * 100 * position.contracts:,.2f}",
+                    ]
                 ),
                 position_size_contracts=position.contracts,
+                position_size_dollars=position.total_credit * 100 * position.contracts,
                 max_risk_dollars=position.max_loss * 100 * position.contracts,
                 outcome_notes=outcome
             )
