@@ -1014,9 +1014,9 @@ export default function ARESPage() {
               </p>
             </div>
 
-            <div className="p-4 space-y-3 max-h-[600px] overflow-y-auto">
+            <div className="p-4 space-y-3 max-h-[800px] overflow-y-auto">
               {decisions.length > 0 ? (
-                decisions.slice(0, 20).map((decision) => {
+                decisions.map((decision) => {
                   const badge = getDecisionTypeBadge(decision.decision_type)
                   const isExpanded = expandedDecision === decision.id
 
