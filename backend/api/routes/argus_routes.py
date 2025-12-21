@@ -300,8 +300,8 @@ async def get_gamma_data(
             extra_strikes=5
         )
 
-        # Get expected move change data
-        em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'])
+        # Get expected move change data (pass spot_price to normalize for overnight gaps)
+        em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'], snapshot.spot_price)
 
         # Build response
         return {
@@ -336,32 +336,36 @@ async def get_gamma_data(
 _em_cache: Dict[str, float] = {}
 
 
-async def get_expected_move_change(current_em: float, current_vix: float) -> dict:
+async def get_expected_move_change(current_em: float, current_vix: float, spot_price: float = None) -> dict:
     """
     Calculate expected move change from prior day.
 
+    IMPORTANT: We compare EM as % of spot (not absolute $) to account for overnight gaps.
+    This is essentially comparing implied volatility levels.
+
     Returns interpretation:
-    - DOWN: Bearish (IV contracting, less fear)
-    - UP: Bullish (IV expanding upward)
+    - DOWN: Bearish (IV contracting)
+    - UP: Bullish (IV expanding)
     - FLAT: Range-bound day expected
-    - WIDEN: Big move coming (volatility expansion both ways)
+    - WIDEN: Big move coming (volatility expansion)
     """
     today = date.today().strftime('%Y-%m-%d')
     prior_key = f"em_prior_{today}"
-    open_key = f"em_open_{today}"
 
-    # Try to get prior day's close expected move from database
+    # Try to get prior day's close expected move AND spot from database
     prior_em = None
+    prior_spot = None
     open_em = None
+    open_spot = None
 
     try:
         conn = get_connection()
         if conn:
             cursor = conn.cursor()
 
-            # Get yesterday's final expected move
+            # Get yesterday's final expected move AND spot price
             cursor.execute("""
-                SELECT expected_move
+                SELECT expected_move, spot_price
                 FROM argus_snapshots
                 WHERE DATE(snapshot_time) < CURRENT_DATE
                 ORDER BY snapshot_time DESC
@@ -370,10 +374,11 @@ async def get_expected_move_change(current_em: float, current_vix: float) -> dic
             row = cursor.fetchone()
             if row:
                 prior_em = float(row[0])
+                prior_spot = float(row[1]) if row[1] else None
 
-            # Get today's opening expected move (first reading after 9:30 AM ET)
+            # Get today's opening expected move (first reading of the day)
             cursor.execute("""
-                SELECT expected_move
+                SELECT expected_move, spot_price
                 FROM argus_snapshots
                 WHERE DATE(snapshot_time) = CURRENT_DATE
                 ORDER BY snapshot_time ASC
@@ -382,37 +387,41 @@ async def get_expected_move_change(current_em: float, current_vix: float) -> dic
             row = cursor.fetchone()
             if row:
                 open_em = float(row[0])
+                open_spot = float(row[1]) if row[1] else None
 
             cursor.close()
             conn.close()
     except Exception as e:
         logger.warning(f"Could not fetch prior expected move: {e}")
 
-    # Use cached values if DB not available
+    # Use cached/current values if DB not available
     if prior_em is None:
         prior_em = _em_cache.get(prior_key, current_em)
     if open_em is None:
-        open_em = _em_cache.get(open_key, current_em)
+        open_em = current_em
 
     # Store current as potential prior for next calculation
     if prior_key not in _em_cache:
         _em_cache[prior_key] = current_em
-    if open_key not in _em_cache:
-        _em_cache[open_key] = current_em
 
-    # Calculate changes
+    # Calculate EM as % of spot (this normalizes for overnight gaps)
+    # EM% = (Expected Move / Spot) * 100
+    current_em_pct = (current_em / spot_price * 100) if spot_price and spot_price > 0 else 0
+    prior_em_pct = (prior_em / prior_spot * 100) if prior_em and prior_spot and prior_spot > 0 else current_em_pct
+    open_em_pct = (open_em / open_spot * 100) if open_em and open_spot and open_spot > 0 else current_em_pct
+
+    # Calculate change in EM% (not absolute $ change)
+    # This compares IV levels, not affected by spot price gaps
+    pct_change_prior = ((current_em_pct - prior_em_pct) / prior_em_pct * 100) if prior_em_pct and prior_em_pct != 0 else 0
+
+    # Also calculate absolute $ change for display
     change_from_prior = current_em - prior_em if prior_em else 0
-    change_from_open = current_em - open_em if open_em else 0
-    pct_change_prior = (change_from_prior / prior_em * 100) if prior_em and prior_em != 0 else 0
-    pct_change_open = (change_from_open / open_em * 100) if open_em and open_em != 0 else 0
 
-    # Determine signal type and interpretation
-    # Use PRIOR DAY comparison as primary signal (per user's trading experience)
     # Thresholds for classification
-    FLAT_THRESHOLD = 2.0  # Less than 2% change = flat
-    WIDEN_THRESHOLD = 10.0  # More than 10% expansion = widening
+    FLAT_THRESHOLD = 3.0  # Less than 3% IV change = flat
+    WIDEN_THRESHOLD = 12.0  # More than 12% IV expansion = widening
 
-    # Use prior day comparison for signal
+    # Use IV-normalized comparison for signal
     pct_change = pct_change_prior
 
     if abs(pct_change) < FLAT_THRESHOLD:
@@ -434,12 +443,12 @@ async def get_expected_move_change(current_em: float, current_vix: float) -> dic
 
     return {
         "current": round(current_em, 2),
+        "current_pct": round(current_em_pct, 3),  # EM as % of spot
         "prior_day": round(prior_em, 2) if prior_em else None,
+        "prior_day_pct": round(prior_em_pct, 3) if prior_em_pct else None,
         "at_open": round(open_em, 2) if open_em else None,
-        "change_from_prior": round(change_from_prior, 2),
-        "change_from_open": round(change_from_open, 2),
-        "pct_change_prior": round(pct_change_prior, 1),
-        "pct_change_open": round(pct_change_open, 1),
+        "change_dollars": round(change_from_prior, 2),
+        "pct_change_prior": round(pct_change_prior, 1),  # % change in IV
         "signal": signal,
         "sentiment": sentiment,
         "interpretation": interpretation
