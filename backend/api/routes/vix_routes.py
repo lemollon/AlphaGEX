@@ -542,12 +542,12 @@ def get_vix_fallback_data() -> Dict[str, Any]:
         'position_size_multiplier': 1.0
     }
 
-    # Try sources in priority order
+    # Try sources in priority order - Tradier and Yahoo only (no Polygon for VIX)
+    # Tradier $VIX.X is proven reliable, Yahoo ^VIX is free and works well
     sources = [
         ('tradier', fetch_vix_from_tradier),
-        ('unified_provider', fetch_vix_from_unified_provider),
         ('yahoo', fetch_vix_from_yahoo),
-        ('polygon', fetch_vix_from_polygon),
+        ('unified_provider', fetch_vix_from_unified_provider),
     ]
 
     for source_name, fetch_func in sources:

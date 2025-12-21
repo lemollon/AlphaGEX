@@ -218,11 +218,7 @@ class VIXHedgeManager:
                 except Exception:
                     pass
 
-            # Fallback to Polygon (requires API key)
-            if (not vix_spot or vix_spot <= 0) and POLYGON_AVAILABLE and polygon_fetcher:
-                vix_spot = polygon_fetcher.get_current_price('I:VIX')
-                if vix_spot and vix_spot > 0:
-                    vix_source = 'polygon'
+            # No Polygon fallback - Tradier and Yahoo are sufficient for VIX
 
             if not vix_spot or vix_spot <= 0:
                 vix_spot = 18.0  # Reasonable default

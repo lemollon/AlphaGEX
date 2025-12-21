@@ -16,7 +16,8 @@ class VIXConfig:
     """VIX-related configuration"""
 
     # Default VIX value (used only if fetch completely fails AND no historical data)
-    DEFAULT_VIX = 20.0
+    # Use 18.0 - consistent across entire app (historical average)
+    DEFAULT_VIX = 18.0
 
     # Historical VIX averages for better fallback
     HISTORICAL_AVERAGE_VIX = 16.5  # Long-term average (~2000-2024)

@@ -1284,15 +1284,17 @@ def fetch_vix_data() -> Dict:
     Returns:
         Dict with current VIX value and metadata
     """
-    # Try to get VIX price
-    price = polygon_fetcher.get_current_price('VIX')
+    # Try to get VIX price - MUST use 'I:VIX' for index symbols in Polygon
+    price = polygon_fetcher.get_current_price('I:VIX')
     if price is None:
-        price = polygon_fetcher.get_current_price('VIXY')  # Fallback ETF
+        # Fallback to VIX ETF (not the index, but better than nothing)
+        price = polygon_fetcher.get_current_price('VIXY')
 
     if price is None:
-        # Return default
+        # Return default - use 18.0 (historical average) for consistency across app
+        logger.warning("VIX fetch failed from Polygon - using fallback 18.0")
         return {
-            'current': 20.0,
+            'current': 18.0,
             'source': 'default',
             'timestamp': datetime.now().isoformat()
         }
@@ -1490,7 +1492,7 @@ def calculate_iv_rank(symbol: str, current_iv: float, lookback_days: int = 252) 
         # For options-based IV, we'd need historical IV data
         # As a proxy, we can use VIX for SPX/SPY since VIX is SPX implied vol
         if symbol.upper() in ['SPY', 'SPX', 'ES']:
-            df = polygon_fetcher.get_price_history('VIX', days=lookback_days, timeframe='day')
+            df = polygon_fetcher.get_price_history('I:VIX', days=lookback_days, timeframe='day')
 
             if df is not None and len(df) > 20:
                 # Get min/max VIX over lookback period
@@ -1541,9 +1543,9 @@ def get_vix_term_structure() -> float:
         VIX - VIX3M spread
     """
     try:
-        # Get VIX (30-day) and VIX3M (90-day)
-        vix = polygon_fetcher.get_current_price('VIX')
-        vix3m = polygon_fetcher.get_current_price('VIX3M')
+        # Get VIX (30-day) and VIX3M (90-day) - MUST use 'I:' prefix for indices
+        vix = polygon_fetcher.get_current_price('I:VIX')
+        vix3m = polygon_fetcher.get_current_price('I:VIX3M')
 
         if vix and vix3m:
             spread = vix - vix3m
