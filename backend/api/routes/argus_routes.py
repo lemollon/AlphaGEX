@@ -293,6 +293,9 @@ async def get_gamma_data(
             extra_strikes=5
         )
 
+        # Get expected move change data (pass spot_price to normalize for overnight gaps)
+        em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'], snapshot.spot_price)
+
         # Build response
         return {
             "success": True,
@@ -302,6 +305,7 @@ async def get_gamma_data(
                 "snapshot_time": snapshot.snapshot_time.isoformat(),
                 "spot_price": snapshot.spot_price,
                 "expected_move": snapshot.expected_move,
+                "expected_move_change": em_change,
                 "vix": snapshot.vix,
                 "total_net_gamma": snapshot.total_net_gamma,
                 "gamma_regime": snapshot.gamma_regime,
@@ -319,6 +323,129 @@ async def get_gamma_data(
     except Exception as e:
         logger.error(f"Error getting gamma data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Cache for prior day expected move
+_em_cache: Dict[str, float] = {}
+
+
+async def get_expected_move_change(current_em: float, current_vix: float, spot_price: float = None) -> dict:
+    """
+    Calculate expected move change from prior day.
+
+    IMPORTANT: We compare EM as % of spot (not absolute $) to account for overnight gaps.
+    This is essentially comparing implied volatility levels.
+
+    Returns interpretation:
+    - DOWN: Bearish (IV contracting)
+    - UP: Bullish (IV expanding)
+    - FLAT: Range-bound day expected
+    - WIDEN: Big move coming (volatility expansion)
+    """
+    today = date.today().strftime('%Y-%m-%d')
+    prior_key = f"em_prior_{today}"
+
+    # Try to get prior day's close expected move AND spot from database
+    prior_em = None
+    prior_spot = None
+    open_em = None
+    open_spot = None
+
+    try:
+        conn = get_connection()
+        if conn:
+            cursor = conn.cursor()
+
+            # Get yesterday's final expected move AND spot price
+            cursor.execute("""
+                SELECT expected_move, spot_price
+                FROM argus_snapshots
+                WHERE DATE(snapshot_time) < CURRENT_DATE
+                ORDER BY snapshot_time DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                prior_em = float(row[0])
+                prior_spot = float(row[1]) if row[1] else None
+
+            # Get today's opening expected move (first reading of the day)
+            cursor.execute("""
+                SELECT expected_move, spot_price
+                FROM argus_snapshots
+                WHERE DATE(snapshot_time) = CURRENT_DATE
+                ORDER BY snapshot_time ASC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                open_em = float(row[0])
+                open_spot = float(row[1]) if row[1] else None
+
+            cursor.close()
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Could not fetch prior expected move: {e}")
+
+    # Use cached/current values if DB not available
+    if prior_em is None:
+        prior_em = _em_cache.get(prior_key, current_em)
+    if open_em is None:
+        open_em = current_em
+
+    # Store current as potential prior for next calculation
+    if prior_key not in _em_cache:
+        _em_cache[prior_key] = current_em
+
+    # Calculate EM as % of spot (this normalizes for overnight gaps)
+    # EM% = (Expected Move / Spot) * 100
+    current_em_pct = (current_em / spot_price * 100) if spot_price and spot_price > 0 else 0
+    prior_em_pct = (prior_em / prior_spot * 100) if prior_em and prior_spot and prior_spot > 0 else current_em_pct
+    open_em_pct = (open_em / open_spot * 100) if open_em and open_spot and open_spot > 0 else current_em_pct
+
+    # Calculate change in EM% (not absolute $ change)
+    # This compares IV levels, not affected by spot price gaps
+    pct_change_prior = ((current_em_pct - prior_em_pct) / prior_em_pct * 100) if prior_em_pct and prior_em_pct != 0 else 0
+
+    # Also calculate absolute $ change for display
+    change_from_prior = current_em - prior_em if prior_em else 0
+
+    # Thresholds for classification
+    FLAT_THRESHOLD = 3.0  # Less than 3% IV change = flat
+    WIDEN_THRESHOLD = 12.0  # More than 12% IV expansion = widening
+
+    # Use IV-normalized comparison for signal
+    pct_change = pct_change_prior
+
+    if abs(pct_change) < FLAT_THRESHOLD:
+        signal = "FLAT"
+        interpretation = "Expected move unchanged from prior day - anticipate range-bound price action"
+        sentiment = "NEUTRAL"
+    elif pct_change > WIDEN_THRESHOLD:
+        signal = "WIDEN"
+        interpretation = f"Expected move widened +{pct_change:.1f}% from prior day - big move likely coming, prepare for breakout"
+        sentiment = "VOLATILE"
+    elif pct_change > 0:
+        signal = "UP"
+        interpretation = f"Expected move UP +{pct_change:.1f}% from prior day - bullish signal"
+        sentiment = "BULLISH"
+    else:
+        signal = "DOWN"
+        interpretation = f"Expected move DOWN {pct_change:.1f}% from prior day - bearish signal"
+        sentiment = "BEARISH"
+
+    return {
+        "current": round(current_em, 2),
+        "current_pct": round(current_em_pct, 3),  # EM as % of spot
+        "prior_day": round(prior_em, 2) if prior_em else None,
+        "prior_day_pct": round(prior_em_pct, 3) if prior_em_pct else None,
+        "at_open": round(open_em, 2) if open_em else None,
+        "change_dollars": round(change_from_prior, 2),
+        "pct_change_prior": round(pct_change_prior, 1),  # % change in IV
+        "signal": signal,
+        "sentiment": sentiment,
+        "interpretation": interpretation
+    }
 
 
 @router.get("/history")
@@ -1009,6 +1136,170 @@ async def get_available_replay_dates():
                 "message": "No historical data available yet"
             }
         }
+
+
+@router.get("/context")
+async def get_market_context():
+    """
+    Get additional market context from regime analysis.
+
+    Returns:
+    - IV Rank & Percentile
+    - Gamma wall proximity
+    - Psychology trap alerts
+    - VIX context with spike detection
+    - Multi-timeframe RSI alignment
+    - Monthly magnets
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return {
+                "success": True,
+                "data": get_default_context(),
+                "message": "Database not connected"
+            }
+
+        cursor = conn.cursor()
+
+        # Get latest regime signal with full context
+        cursor.execute("""
+            SELECT
+                timestamp,
+                spy_price,
+                -- Gamma Walls
+                nearest_call_wall,
+                call_wall_distance_pct,
+                call_wall_strength,
+                nearest_put_wall,
+                put_wall_distance_pct,
+                put_wall_strength,
+                net_gamma_regime,
+                -- Psychology Traps
+                psychology_trap,
+                liberation_setup_detected,
+                liberation_target_strike,
+                false_floor_detected,
+                false_floor_strike,
+                path_of_least_resistance,
+                polr_confidence,
+                -- VIX
+                vix_current,
+                vix_spike_detected,
+                volatility_regime,
+                -- RSI
+                rsi_5m,
+                rsi_15m,
+                rsi_1h,
+                rsi_4h,
+                rsi_1d,
+                rsi_aligned_overbought,
+                rsi_aligned_oversold,
+                -- Monthly Magnets
+                monthly_magnet_above,
+                monthly_magnet_below,
+                -- Regime
+                primary_regime_type,
+                confidence_score,
+                trade_direction,
+                risk_level
+            FROM regime_signals
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row:
+            return {
+                "success": True,
+                "data": get_default_context(),
+                "message": "No regime data available"
+            }
+
+        return {
+            "success": True,
+            "data": {
+                "timestamp": row[0].isoformat() if row[0] else None,
+                "spy_price": float(row[1]) if row[1] else None,
+                "gamma_walls": {
+                    "call_wall": float(row[2]) if row[2] else None,
+                    "call_wall_distance": float(row[3]) if row[3] else None,
+                    "call_wall_strength": row[4],
+                    "put_wall": float(row[5]) if row[5] else None,
+                    "put_wall_distance": float(row[6]) if row[6] else None,
+                    "put_wall_strength": row[7],
+                    "net_gamma_regime": row[8]
+                },
+                "psychology_traps": {
+                    "active_trap": row[9],
+                    "liberation_setup": row[10] or False,
+                    "liberation_target": float(row[11]) if row[11] else None,
+                    "false_floor": row[12] or False,
+                    "false_floor_strike": float(row[13]) if row[13] else None,
+                    "polr": row[14],
+                    "polr_confidence": float(row[15]) if row[15] else None
+                },
+                "vix_context": {
+                    "current": float(row[16]) if row[16] else None,
+                    "spike_detected": row[17] or False,
+                    "volatility_regime": row[18]
+                },
+                "rsi_alignment": {
+                    "rsi_5m": float(row[19]) if row[19] else None,
+                    "rsi_15m": float(row[20]) if row[20] else None,
+                    "rsi_1h": float(row[21]) if row[21] else None,
+                    "rsi_4h": float(row[22]) if row[22] else None,
+                    "rsi_1d": float(row[23]) if row[23] else None,
+                    "aligned_overbought": row[24] or False,
+                    "aligned_oversold": row[25] or False
+                },
+                "monthly_magnets": {
+                    "above": float(row[26]) if row[26] else None,
+                    "below": float(row[27]) if row[27] else None
+                },
+                "regime": {
+                    "type": row[28],
+                    "confidence": float(row[29]) if row[29] else None,
+                    "direction": row[30],
+                    "risk_level": row[31]
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting market context: {e}")
+        return {
+            "success": True,
+            "data": get_default_context(),
+            "message": f"Error: {str(e)}"
+        }
+
+
+def get_default_context() -> dict:
+    """Return default context when data unavailable"""
+    return {
+        "gamma_walls": {
+            "call_wall": None,
+            "call_wall_distance": None,
+            "put_wall": None,
+            "put_wall_distance": None
+        },
+        "psychology_traps": {
+            "active_trap": None,
+            "liberation_setup": False,
+            "false_floor": False
+        },
+        "vix_context": {
+            "current": None,
+            "spike_detected": False
+        },
+        "rsi_alignment": {},
+        "monthly_magnets": {},
+        "regime": {}
+    }
 
 
 @router.get("/expirations")
