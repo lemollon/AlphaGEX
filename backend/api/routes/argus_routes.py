@@ -196,7 +196,7 @@ async def get_real_prices() -> tuple:
         raise ValueError("Failed to get SPY price from Tradier")
 
     spot = float(spy_quote['last'])
-    vix = get_vix_price()  # Raises VIXFetchError on failure
+    vix = get_vix_price()
 
     result = (spot, vix)
     set_cached(cache_key, result)
