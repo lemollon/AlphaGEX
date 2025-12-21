@@ -407,25 +407,29 @@ async def get_expected_move_change(current_em: float, current_vix: float) -> dic
     pct_change_open = (change_from_open / open_em * 100) if open_em and open_em != 0 else 0
 
     # Determine signal type and interpretation
+    # Use PRIOR DAY comparison as primary signal (per user's trading experience)
     # Thresholds for classification
     FLAT_THRESHOLD = 2.0  # Less than 2% change = flat
     WIDEN_THRESHOLD = 10.0  # More than 10% expansion = widening
 
-    if abs(pct_change_open) < FLAT_THRESHOLD:
+    # Use prior day comparison for signal
+    pct_change = pct_change_prior
+
+    if abs(pct_change) < FLAT_THRESHOLD:
         signal = "FLAT"
-        interpretation = "Expected move unchanged - anticipate range-bound price action today"
+        interpretation = "Expected move unchanged from prior day - anticipate range-bound price action"
         sentiment = "NEUTRAL"
-    elif pct_change_open > WIDEN_THRESHOLD:
+    elif pct_change > WIDEN_THRESHOLD:
         signal = "WIDEN"
-        interpretation = f"Expected move widened {pct_change_open:.1f}% - big move likely coming, prepare for breakout"
+        interpretation = f"Expected move widened +{pct_change:.1f}% from prior day - big move likely coming, prepare for breakout"
         sentiment = "VOLATILE"
-    elif pct_change_open > 0:
+    elif pct_change > 0:
         signal = "UP"
-        interpretation = f"Expected move expanded +{pct_change_open:.1f}% - bullish signal, upside momentum building"
+        interpretation = f"Expected move UP +{pct_change:.1f}% from prior day - bullish signal"
         sentiment = "BULLISH"
     else:
         signal = "DOWN"
-        interpretation = f"Expected move contracted {pct_change_open:.1f}% - bearish signal, downside pressure likely"
+        interpretation = f"Expected move DOWN {pct_change:.1f}% from prior day - bearish signal"
         sentiment = "BEARISH"
 
     return {

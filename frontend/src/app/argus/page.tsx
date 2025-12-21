@@ -444,7 +444,7 @@ export default function ArgusPage() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs text-gray-400 uppercase tracking-wide">Expected Move Since Open</span>
+                    <span className="text-xs text-gray-400 uppercase tracking-wide">Expected Move vs Prior Day</span>
                     <span className={`px-2 py-0.5 rounded text-xs font-bold ${
                       gammaData.expected_move_change.sentiment === 'BULLISH'
                         ? 'bg-emerald-500 text-white'
@@ -472,9 +472,9 @@ export default function ArgusPage() {
               </div>
               <div className="flex items-center gap-6 lg:gap-8">
                 <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">At Open</div>
+                  <div className="text-xs text-gray-500 mb-1">Prior Day</div>
                   <div className="text-lg font-bold text-gray-400">
-                    ±${gammaData.expected_move_change.at_open?.toFixed(2) || '-'}
+                    ±${gammaData.expected_move_change.prior_day?.toFixed(2) || '-'}
                   </div>
                 </div>
                 <div className="text-center">
@@ -486,13 +486,13 @@ export default function ArgusPage() {
                 <div className="text-center">
                   <div className="text-xs text-gray-500 mb-1">Change</div>
                   <div className={`text-lg font-bold ${
-                    gammaData.expected_move_change.pct_change_open > 0
+                    gammaData.expected_move_change.pct_change_prior > 0
                       ? 'text-emerald-400'
-                      : gammaData.expected_move_change.pct_change_open < 0
+                      : gammaData.expected_move_change.pct_change_prior < 0
                       ? 'text-rose-400'
                       : 'text-gray-400'
                   }`}>
-                    {gammaData.expected_move_change.pct_change_open > 0 ? '+' : ''}{gammaData.expected_move_change.pct_change_open.toFixed(1)}%
+                    {gammaData.expected_move_change.pct_change_prior > 0 ? '+' : ''}{gammaData.expected_move_change.pct_change_prior.toFixed(1)}%
                   </div>
                 </div>
               </div>
