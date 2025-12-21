@@ -32,7 +32,9 @@ import {
   Lock,
   Unlock,
   Layers,
-  Compass
+  Compass,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -331,6 +333,69 @@ export default function ArgusPage() {
     return insight
   }
 
+  // Export to Excel
+  const exportToExcel = () => {
+    if (!gammaData) return
+
+    // Create CSV content
+    const headers = ['Strike', 'Net Gamma', 'Probability %', '1m ROC', '5m ROC', 'Is Pin', 'Is Magnet', 'Is Danger', 'Danger Type']
+    const rows = gammaData.strikes.map(s => [
+      s.strike,
+      s.net_gamma,
+      s.probability.toFixed(2),
+      s.roc_1min.toFixed(2),
+      s.roc_5min.toFixed(2),
+      s.is_pin ? 'Yes' : 'No',
+      s.is_magnet ? 'Yes' : 'No',
+      s.is_danger ? 'Yes' : 'No',
+      s.danger_type || ''
+    ])
+
+    // Add summary section
+    const summary = [
+      [],
+      ['=== ARGUS Summary ==='],
+      ['Export Time', new Date().toLocaleString()],
+      ['Symbol', gammaData.symbol],
+      ['Spot Price', gammaData.spot_price],
+      ['Expected Move', `±${gammaData.expected_move.toFixed(2)}`],
+      ['VIX', gammaData.vix.toFixed(2)],
+      ['Gamma Regime', gammaData.gamma_regime],
+      ['Likely Pin', gammaData.likely_pin],
+      ['Pin Probability', `${gammaData.pin_probability.toFixed(1)}%`],
+      [],
+      ['=== Top Magnets ==='],
+      ...gammaData.magnets.map((m, i) => [`Magnet #${i + 1}`, `$${m.strike}`, `${m.probability.toFixed(1)}%`]),
+      [],
+      ['=== Expected Move Change ==='],
+      ['Signal', gammaData.expected_move_change?.signal || 'N/A'],
+      ['Sentiment', gammaData.expected_move_change?.sentiment || 'N/A'],
+      ['Prior Day EM', gammaData.expected_move_change?.prior_day ? `±$${gammaData.expected_move_change.prior_day.toFixed(2)}` : 'N/A'],
+      ['Current EM', `±$${gammaData.expected_move_change?.current.toFixed(2) || 'N/A'}`],
+      ['Change %', `${gammaData.expected_move_change?.pct_change_prior.toFixed(1) || 0}%`],
+      [],
+      ['=== Danger Zones ==='],
+      ...gammaData.danger_zones.map(d => [d.danger_type, `$${d.strike}`, `ROC: ${d.roc_5min.toFixed(1)}%`]),
+      [],
+      ['=== Alerts ==='],
+      ...alerts.map(a => [a.priority, a.message, new Date(a.triggered_at).toLocaleTimeString()]),
+      [],
+      ['=== Strike Data ==='],
+      headers
+    ]
+
+    const csvContent = [...summary.map(row => row.join(',')), ...rows.map(row => row.join(','))].join('\n')
+
+    // Create download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const filename = `ARGUS_${gammaData.symbol}_${new Date().toISOString().split('T')[0]}.csv`
+    link.href = URL.createObjectURL(blob)
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
+
   // Loading
   if (loading && !gammaData) {
     return (
@@ -408,8 +473,18 @@ export default function ArgusPage() {
               <button
                 onClick={() => fetchGammaData(activeDay)}
                 className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg"
+                title="Refresh data"
               >
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+              <button
+                onClick={exportToExcel}
+                disabled={!gammaData}
+                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded-lg text-sm text-white"
+                title="Export to CSV"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                Export
               </button>
             </div>
           </div>
@@ -495,6 +570,100 @@ export default function ArgusPage() {
                     {gammaData.expected_move_change.pct_change_prior > 0 ? '+' : ''}{gammaData.expected_move_change.pct_change_prior.toFixed(1)}%
                   </div>
                 </div>
+              </div>
+            </div>
+
+            {/* Historical Edge Stats - Based on Backtest */}
+            <div className="mt-4 pt-4 border-t border-gray-700/50">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 className="w-4 h-4 text-gray-500" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Historical Edge (2022-2025 Backtest)</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {gammaData.expected_move_change.signal === 'DOWN' && (
+                  <>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
+                      <div className="text-lg font-bold text-rose-400">51.0%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
+                      <div className="text-lg font-bold text-rose-400">-0.26%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
+                      <div className="text-lg font-bold text-gray-300">5.2%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Edge</div>
+                      <div className="text-sm font-medium text-rose-400">Bearish bias confirmed</div>
+                    </div>
+                  </>
+                )}
+                {gammaData.expected_move_change.signal === 'UP' && (
+                  <>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
+                      <div className="text-lg font-bold text-emerald-400">53.3%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
+                      <div className="text-lg font-bold text-emerald-400">+0.02%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
+                      <div className="text-lg font-bold text-gray-300">19.7%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Edge</div>
+                      <div className="text-sm font-medium text-emerald-400">Slight bullish bias</div>
+                    </div>
+                  </>
+                )}
+                {gammaData.expected_move_change.signal === 'FLAT' && (
+                  <>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
+                      <div className="text-lg font-bold text-gray-400">51.7%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
+                      <div className="text-lg font-bold text-gray-400">+0.04%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
+                      <div className="text-lg font-bold text-gray-300">74.2%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Edge</div>
+                      <div className="text-sm font-medium text-gray-400">Range-bound expected</div>
+                    </div>
+                  </>
+                )}
+                {gammaData.expected_move_change.signal === 'WIDEN' && (
+                  <>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
+                      <div className="text-lg font-bold text-orange-400">88.9%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Avg Abs Move</div>
+                      <div className="text-lg font-bold text-orange-400">±1.53%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
+                      <div className="text-lg font-bold text-gray-300">0.9%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Edge</div>
+                      <div className="text-sm font-medium text-orange-400">BIG MOVE LIKELY!</div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
+                <Info className="w-3 h-3" />
+                <span>Based on 990 trading days. DOWN vs UP directional edge: +0.27%</span>
               </div>
             </div>
           </div>
@@ -583,7 +752,7 @@ export default function ArgusPage() {
                   <BarChart3 className="w-5 h-5 text-blue-400" />
                   Net Gamma by Strike
                 </h3>
-                <div className="flex items-center gap-4 text-xs">
+                <div className="flex items-center gap-3 text-xs flex-wrap">
                   <div className="flex items-center gap-1.5">
                     <div className="w-3 h-3 rounded bg-purple-500"></div>
                     <span className="text-gray-400">Pin</span>
@@ -599,6 +768,14 @@ export default function ArgusPage() {
                   <div className="flex items-center gap-1.5">
                     <div className="w-3 h-3 rounded bg-rose-500"></div>
                     <span className="text-gray-400">-γ</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-4 h-0 border-t-2 border-blue-400"></div>
+                    <span className="text-gray-400">EM</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-4 h-0 border-t border-dashed border-gray-500"></div>
+                    <span className="text-gray-400">EM'</span>
                   </div>
                 </div>
               </div>
@@ -645,6 +822,66 @@ export default function ArgusPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Prior Day Expected Move Range - Dotted Lines */}
+                {gammaData && gammaData.strikes.length > 1 && gammaData.expected_move_change?.prior_day && (() => {
+                  const minStrike = gammaData.strikes[0].strike
+                  const maxStrike = gammaData.strikes[gammaData.strikes.length - 1].strike
+                  const range = maxStrike - minStrike
+                  const priorEM = gammaData.expected_move_change.prior_day
+                  const lowerPrior = ((gammaData.spot_price - priorEM - minStrike) / range) * 100
+                  const upperPrior = ((gammaData.spot_price + priorEM - minStrike) / range) * 100
+                  return (
+                    <>
+                      {lowerPrior >= 0 && lowerPrior <= 100 && (
+                        <div
+                          className="absolute bottom-0 top-0 border-l border-dashed border-gray-500/50 z-5"
+                          style={{ left: `${lowerPrior}%` }}
+                        >
+                          <div className="absolute bottom-1 -left-3 text-[8px] text-gray-500">-EM'</div>
+                        </div>
+                      )}
+                      {upperPrior >= 0 && upperPrior <= 100 && (
+                        <div
+                          className="absolute bottom-0 top-0 border-l border-dashed border-gray-500/50 z-5"
+                          style={{ left: `${upperPrior}%` }}
+                        >
+                          <div className="absolute bottom-1 -left-3 text-[8px] text-gray-500">+EM'</div>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
+
+                {/* Current Expected Move Range - Solid Lines */}
+                {gammaData && gammaData.strikes.length > 1 && gammaData.expected_move && (() => {
+                  const minStrike = gammaData.strikes[0].strike
+                  const maxStrike = gammaData.strikes[gammaData.strikes.length - 1].strike
+                  const range = maxStrike - minStrike
+                  const currentEM = gammaData.expected_move
+                  const lowerCurrent = ((gammaData.spot_price - currentEM - minStrike) / range) * 100
+                  const upperCurrent = ((gammaData.spot_price + currentEM - minStrike) / range) * 100
+                  return (
+                    <>
+                      {lowerCurrent >= 0 && lowerCurrent <= 100 && (
+                        <div
+                          className="absolute bottom-0 top-0 border-l-2 border-blue-400/70 z-5"
+                          style={{ left: `${lowerCurrent}%` }}
+                        >
+                          <div className="absolute bottom-1 -left-3 text-[8px] text-blue-400 font-medium">-EM</div>
+                        </div>
+                      )}
+                      {upperCurrent >= 0 && upperCurrent <= 100 && (
+                        <div
+                          className="absolute bottom-0 top-0 border-l-2 border-blue-400/70 z-5"
+                          style={{ left: `${upperCurrent}%` }}
+                        >
+                          <div className="absolute bottom-1 -left-3 text-[8px] text-blue-400 font-medium">+EM</div>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
 
               {/* Strike Labels */}
@@ -736,95 +973,101 @@ export default function ArgusPage() {
                 </table>
               </div>
             </div>
-          </div>
 
-          {/* Right Column - Alerts & Info */}
-          <div className="space-y-6">
-
-            {/* Live Alerts */}
-            <div className="bg-gray-800/50 rounded-xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-white flex items-center gap-2">
-                  <Bell className="w-5 h-5 text-yellow-400" />
-                  Live Alerts
-                </h3>
-                {alerts.length > 0 && (
-                  <span className="px-2 py-0.5 bg-rose-500 text-white text-xs rounded-full font-bold">
-                    {alerts.length}
-                  </span>
-                )}
-              </div>
-              <div className="space-y-3 max-h-64 overflow-y-auto">
-                {alerts.length > 0 ? (
-                  alerts.slice(0, 8).map((alert, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-3 rounded-lg border-l-4 ${
-                        alert.priority === 'HIGH'
-                          ? 'bg-rose-500/10 border-rose-500'
-                          : alert.priority === 'MEDIUM'
-                          ? 'bg-yellow-500/10 border-yellow-500'
-                          : 'bg-gray-700/30 border-gray-600'
-                      }`}
-                    >
-                      <div className="text-sm text-white">{alert.message}</div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {new Date(alert.triggered_at).toLocaleTimeString()}
+            {/* Alerts & Danger Zones Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Live Alerts */}
+              <div className="bg-gray-800/50 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Bell className="w-5 h-5 text-yellow-400" />
+                    Live Alerts
+                  </h3>
+                  {alerts.length > 0 && (
+                    <span className="px-2 py-0.5 bg-rose-500 text-white text-xs rounded-full font-bold">
+                      {alerts.length}
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-3 max-h-48 overflow-y-auto">
+                  {alerts.length > 0 ? (
+                    alerts.slice(0, 6).map((alert, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-lg border-l-4 ${
+                          alert.priority === 'HIGH'
+                            ? 'bg-rose-500/10 border-rose-500'
+                            : alert.priority === 'MEDIUM'
+                            ? 'bg-yellow-500/10 border-yellow-500'
+                            : 'bg-gray-700/30 border-gray-600'
+                        }`}
+                      >
+                        <div className="text-sm text-white">{alert.message}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {new Date(alert.triggered_at).toLocaleTimeString()}
+                        </div>
                       </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-6 text-gray-500">
+                      <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No active alerts</p>
                     </div>
-                  ))
-                ) : (
-                  <div className="text-center py-6 text-gray-500">
-                    <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">No active alerts</p>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Danger Zones Summary */}
-            {(buildingZones.length > 0 || collapsingZones.length > 0) && (
+              {/* Danger Zones Summary */}
               <div className="bg-gray-800/50 rounded-xl p-5">
                 <h3 className="font-bold text-white flex items-center gap-2 mb-4">
                   <AlertTriangle className="w-5 h-5 text-orange-400" />
                   Danger Zones
                 </h3>
-
-                {buildingZones.length > 0 && (
-                  <div className="mb-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Flame className="w-4 h-4 text-orange-400" />
-                      <span className="text-sm text-orange-400 font-medium">Building (+ROC)</span>
-                    </div>
-                    <p className="text-xs text-gray-400 mb-2">Gamma increasing rapidly - potential support/resistance forming</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {buildingZones.slice(0, 5).map(dz => (
-                        <span key={dz.strike} className="px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-xs">
-                          ${dz.strike} (+{dz.roc_5min.toFixed(0)}%)
-                        </span>
-                      ))}
-                    </div>
+                {(buildingZones.length > 0 || collapsingZones.length > 0) ? (
+                  <div className="space-y-4">
+                    {buildingZones.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Flame className="w-4 h-4 text-orange-400" />
+                          <span className="text-sm text-orange-400 font-medium">Building (+ROC)</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {buildingZones.slice(0, 4).map(dz => (
+                            <span key={dz.strike} className="px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-xs">
+                              ${dz.strike} (+{dz.roc_5min.toFixed(0)}%)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {collapsingZones.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <TrendingDown className="w-4 h-4 text-rose-400" />
+                          <span className="text-sm text-rose-400 font-medium">Collapsing (-ROC)</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {collapsingZones.slice(0, 4).map(dz => (
+                            <span key={dz.strike} className="px-2 py-1 bg-rose-500/20 text-rose-400 rounded text-xs">
+                              ${dz.strike} ({dz.roc_5min.toFixed(0)}%)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-
-                {collapsingZones.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <TrendingDown className="w-4 h-4 text-rose-400" />
-                      <span className="text-sm text-rose-400 font-medium">Collapsing (-ROC)</span>
-                    </div>
-                    <p className="text-xs text-gray-400 mb-2">Gamma decreasing - support/resistance weakening</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {collapsingZones.slice(0, 5).map(dz => (
-                        <span key={dz.strike} className="px-2 py-1 bg-rose-500/20 text-rose-400 rounded text-xs">
-                          ${dz.strike} ({dz.roc_5min.toFixed(0)}%)
-                        </span>
-                      ))}
-                    </div>
+                ) : (
+                  <div className="text-center py-6 text-gray-500">
+                    <Shield className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No danger zones detected</p>
                   </div>
                 )}
               </div>
-            )}
+            </div>
+          </div>
+
+          {/* Right Column - Key Levels & Context */}
+          <div className="space-y-6">
 
             {/* Key Levels */}
             <div className="bg-gray-800/50 rounded-xl p-5">
