@@ -1,62 +1,62 @@
 """
-VIX Price Fetcher
-=================
-
-Get VIX spot price. Tradier first, Yahoo backup. That's it.
+VIX Price Fetcher - Copy of ARES approach (which works)
 """
 
+import os
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 def get_vix_price() -> float:
-    """Get VIX spot price from Tradier or Yahoo."""
+    """Get VIX spot price - same way ARES does it."""
 
-    # Try Tradier
+    # Exactly how ARES does it (ares_routes.py line 393-400)
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
-        tradier = TradierDataFetcher()
-        quote = tradier.get_quote('$VIX.X')
-        if quote and quote.get('last'):
-            return float(quote['last'])
-    except:
-        pass
+        use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+        tradier = TradierDataFetcher(sandbox=use_sandbox)
 
-    # Try Yahoo
+        vix_quote = tradier.get_quote("$VIX.X")
+        if vix_quote and vix_quote.get('last'):
+            return float(vix_quote['last'])
+    except Exception as e:
+        logger.error(f"Tradier VIX failed: {e}")
+
+    # Yahoo backup
     try:
         import yfinance as yf
         vix = yf.Ticker("^VIX")
         hist = vix.history(period='1d')
         if not hist.empty:
             return float(hist['Close'].iloc[-1])
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Yahoo VIX failed: {e}")
 
-    raise Exception("Could not get VIX price")
+    raise Exception("Could not get VIX price from Tradier or Yahoo")
 
 
 def get_vix_with_source() -> tuple:
     """Get VIX with source name."""
 
-    # Try Tradier
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
-        tradier = TradierDataFetcher()
-        quote = tradier.get_quote('$VIX.X')
-        if quote and quote.get('last'):
-            return float(quote['last']), 'tradier'
-    except:
-        pass
+        use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+        tradier = TradierDataFetcher(sandbox=use_sandbox)
 
-    # Try Yahoo
+        vix_quote = tradier.get_quote("$VIX.X")
+        if vix_quote and vix_quote.get('last'):
+            return float(vix_quote['last']), 'tradier'
+    except Exception as e:
+        logger.error(f"Tradier VIX failed: {e}")
+
     try:
         import yfinance as yf
         vix = yf.Ticker("^VIX")
         hist = vix.history(period='1d')
         if not hist.empty:
             return float(hist['Close'].iloc[-1]), 'yahoo'
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Yahoo VIX failed: {e}")
 
-    raise Exception("Could not get VIX price")
+    raise Exception("Could not get VIX price from Tradier or Yahoo")
