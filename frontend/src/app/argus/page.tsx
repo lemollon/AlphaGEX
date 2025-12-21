@@ -86,12 +86,26 @@ interface Commentary {
   pin_probability: number
 }
 
+interface ExpectedMoveChange {
+  current: number
+  prior_day: number | null
+  at_open: number | null
+  change_from_prior: number
+  change_from_open: number
+  pct_change_prior: number
+  pct_change_open: number
+  signal: 'UP' | 'DOWN' | 'FLAT' | 'WIDEN'
+  sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'VOLATILE'
+  interpretation: string
+}
+
 interface GammaData {
   symbol: string
   expiration_date: string
   snapshot_time: string
   spot_price: number
   expected_move: number
+  expected_move_change: ExpectedMoveChange
   vix: number
   total_net_gamma: number
   gamma_regime: string
@@ -401,8 +415,93 @@ export default function ArgusPage() {
           </div>
         </div>
 
+        {/* Expected Move Change Banner - TOP PRIORITY */}
+        {gammaData?.expected_move_change && (
+          <div className={`rounded-xl p-5 mb-6 border-2 ${
+            gammaData.expected_move_change.sentiment === 'BULLISH'
+              ? 'bg-emerald-500/10 border-emerald-500/50'
+              : gammaData.expected_move_change.sentiment === 'BEARISH'
+              ? 'bg-rose-500/10 border-rose-500/50'
+              : gammaData.expected_move_change.sentiment === 'VOLATILE'
+              ? 'bg-orange-500/10 border-orange-500/50'
+              : 'bg-gray-800/50 border-gray-600/50'
+          }`}>
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
+                  gammaData.expected_move_change.sentiment === 'BULLISH'
+                    ? 'bg-emerald-500/20'
+                    : gammaData.expected_move_change.sentiment === 'BEARISH'
+                    ? 'bg-rose-500/20'
+                    : gammaData.expected_move_change.sentiment === 'VOLATILE'
+                    ? 'bg-orange-500/20'
+                    : 'bg-gray-700/50'
+                }`}>
+                  {gammaData.expected_move_change.signal === 'UP' && <TrendingUp className="w-7 h-7 text-emerald-400" />}
+                  {gammaData.expected_move_change.signal === 'DOWN' && <TrendingDown className="w-7 h-7 text-rose-400" />}
+                  {gammaData.expected_move_change.signal === 'FLAT' && <Minus className="w-7 h-7 text-gray-400" />}
+                  {gammaData.expected_move_change.signal === 'WIDEN' && <Zap className="w-7 h-7 text-orange-400" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs text-gray-400 uppercase tracking-wide">Expected Move Since Open</span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                      gammaData.expected_move_change.sentiment === 'BULLISH'
+                        ? 'bg-emerald-500 text-white'
+                        : gammaData.expected_move_change.sentiment === 'BEARISH'
+                        ? 'bg-rose-500 text-white'
+                        : gammaData.expected_move_change.sentiment === 'VOLATILE'
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-gray-600 text-white'
+                    }`}>
+                      {gammaData.expected_move_change.signal}
+                    </span>
+                  </div>
+                  <p className={`text-lg font-semibold ${
+                    gammaData.expected_move_change.sentiment === 'BULLISH'
+                      ? 'text-emerald-400'
+                      : gammaData.expected_move_change.sentiment === 'BEARISH'
+                      ? 'text-rose-400'
+                      : gammaData.expected_move_change.sentiment === 'VOLATILE'
+                      ? 'text-orange-400'
+                      : 'text-gray-300'
+                  }`}>
+                    {gammaData.expected_move_change.interpretation}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-6 lg:gap-8">
+                <div className="text-center">
+                  <div className="text-xs text-gray-500 mb-1">At Open</div>
+                  <div className="text-lg font-bold text-gray-400">
+                    ±${gammaData.expected_move_change.at_open?.toFixed(2) || '-'}
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-gray-500 mb-1">Current</div>
+                  <div className="text-lg font-bold text-white">
+                    ±${gammaData.expected_move_change.current.toFixed(2)}
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-gray-500 mb-1">Change</div>
+                  <div className={`text-lg font-bold ${
+                    gammaData.expected_move_change.pct_change_open > 0
+                      ? 'text-emerald-400'
+                      : gammaData.expected_move_change.pct_change_open < 0
+                      ? 'text-rose-400'
+                      : 'text-gray-400'
+                  }`}>
+                    {gammaData.expected_move_change.pct_change_open > 0 ? '+' : ''}{gammaData.expected_move_change.pct_change_open.toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Key Metrics Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">SPY Spot</div>
             <div className="text-xl font-bold text-white">${gammaData?.spot_price.toFixed(2)}</div>
@@ -415,6 +514,15 @@ export default function ArgusPage() {
             <div className="text-gray-500 text-xs mb-1">VIX</div>
             <div className={`text-xl font-bold ${(gammaData?.vix || 0) > 20 ? 'text-orange-400' : 'text-emerald-400'}`}>
               {gammaData?.vix.toFixed(1)}
+            </div>
+          </div>
+          <div className="bg-gray-800/50 rounded-xl p-4">
+            <div className="text-gray-500 text-xs mb-1">Net GEX</div>
+            <div className={`text-xl font-bold ${
+              (gammaData?.total_net_gamma || 0) > 0 ? 'text-emerald-400' : 'text-rose-400'
+            }`}>
+              {(gammaData?.total_net_gamma || 0) > 0 ? '+' : ''}{formatGamma(gammaData?.total_net_gamma || 0)}
+              <span className="text-xs ml-1">{(gammaData?.total_net_gamma || 0) > 0 ? '(+γ)' : '(-γ)'}</span>
             </div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
@@ -852,14 +960,6 @@ export default function ArgusPage() {
                       <p className="text-xs text-gray-400">
                         Put wall may not hold. Strike: ${marketContext.psychology_traps.false_floor_strike || 'TBD'}
                       </p>
-                    </div>
-                  )}
-                  {marketContext.psychology_traps.polr && (
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-xs text-gray-400">Path of Least Resistance:</span>
-                      <span className={`font-bold text-sm ${marketContext.psychology_traps.polr === 'UP' ? 'text-emerald-400' : marketContext.psychology_traps.polr === 'DOWN' ? 'text-rose-400' : 'text-gray-400'}`}>
-                        {marketContext.psychology_traps.polr} ({(marketContext.psychology_traps.polr_confidence || 0).toFixed(0)}%)
-                      </span>
                     </div>
                   )}
                 </div>

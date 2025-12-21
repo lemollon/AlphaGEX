@@ -300,6 +300,9 @@ async def get_gamma_data(
             extra_strikes=5
         )
 
+        # Get expected move change data
+        em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'])
+
         # Build response
         return {
             "success": True,
@@ -309,6 +312,7 @@ async def get_gamma_data(
                 "snapshot_time": snapshot.snapshot_time.isoformat(),
                 "spot_price": snapshot.spot_price,
                 "expected_move": snapshot.expected_move,
+                "expected_move_change": em_change,
                 "vix": snapshot.vix,
                 "total_net_gamma": snapshot.total_net_gamma,
                 "gamma_regime": snapshot.gamma_regime,
@@ -326,6 +330,116 @@ async def get_gamma_data(
     except Exception as e:
         logger.error(f"Error getting gamma data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Cache for prior day expected move
+_em_cache: Dict[str, float] = {}
+
+
+async def get_expected_move_change(current_em: float, current_vix: float) -> dict:
+    """
+    Calculate expected move change from prior day.
+
+    Returns interpretation:
+    - DOWN: Bearish (IV contracting, less fear)
+    - UP: Bullish (IV expanding upward)
+    - FLAT: Range-bound day expected
+    - WIDEN: Big move coming (volatility expansion both ways)
+    """
+    today = date.today().strftime('%Y-%m-%d')
+    prior_key = f"em_prior_{today}"
+    open_key = f"em_open_{today}"
+
+    # Try to get prior day's close expected move from database
+    prior_em = None
+    open_em = None
+
+    try:
+        conn = get_connection()
+        if conn:
+            cursor = conn.cursor()
+
+            # Get yesterday's final expected move
+            cursor.execute("""
+                SELECT expected_move
+                FROM argus_snapshots
+                WHERE DATE(snapshot_time) < CURRENT_DATE
+                ORDER BY snapshot_time DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                prior_em = float(row[0])
+
+            # Get today's opening expected move (first reading after 9:30 AM ET)
+            cursor.execute("""
+                SELECT expected_move
+                FROM argus_snapshots
+                WHERE DATE(snapshot_time) = CURRENT_DATE
+                ORDER BY snapshot_time ASC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                open_em = float(row[0])
+
+            cursor.close()
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Could not fetch prior expected move: {e}")
+
+    # Use cached values if DB not available
+    if prior_em is None:
+        prior_em = _em_cache.get(prior_key, current_em)
+    if open_em is None:
+        open_em = _em_cache.get(open_key, current_em)
+
+    # Store current as potential prior for next calculation
+    if prior_key not in _em_cache:
+        _em_cache[prior_key] = current_em
+    if open_key not in _em_cache:
+        _em_cache[open_key] = current_em
+
+    # Calculate changes
+    change_from_prior = current_em - prior_em if prior_em else 0
+    change_from_open = current_em - open_em if open_em else 0
+    pct_change_prior = (change_from_prior / prior_em * 100) if prior_em and prior_em != 0 else 0
+    pct_change_open = (change_from_open / open_em * 100) if open_em and open_em != 0 else 0
+
+    # Determine signal type and interpretation
+    # Thresholds for classification
+    FLAT_THRESHOLD = 2.0  # Less than 2% change = flat
+    WIDEN_THRESHOLD = 10.0  # More than 10% expansion = widening
+
+    if abs(pct_change_open) < FLAT_THRESHOLD:
+        signal = "FLAT"
+        interpretation = "Expected move unchanged - anticipate range-bound price action today"
+        sentiment = "NEUTRAL"
+    elif pct_change_open > WIDEN_THRESHOLD:
+        signal = "WIDEN"
+        interpretation = f"Expected move widened {pct_change_open:.1f}% - big move likely coming, prepare for breakout"
+        sentiment = "VOLATILE"
+    elif pct_change_open > 0:
+        signal = "UP"
+        interpretation = f"Expected move expanded +{pct_change_open:.1f}% - bullish signal, upside momentum building"
+        sentiment = "BULLISH"
+    else:
+        signal = "DOWN"
+        interpretation = f"Expected move contracted {pct_change_open:.1f}% - bearish signal, downside pressure likely"
+        sentiment = "BEARISH"
+
+    return {
+        "current": round(current_em, 2),
+        "prior_day": round(prior_em, 2) if prior_em else None,
+        "at_open": round(open_em, 2) if open_em else None,
+        "change_from_prior": round(change_from_prior, 2),
+        "change_from_open": round(change_from_open, 2),
+        "pct_change_prior": round(pct_change_prior, 1),
+        "pct_change_open": round(pct_change_open, 1),
+        "signal": signal,
+        "sentiment": sentiment,
+        "interpretation": interpretation
+    }
 
 
 @router.get("/history")
