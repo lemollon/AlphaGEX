@@ -10,16 +10,39 @@ ARGUS - Named after the "all-seeing" giant with 100 eyes from Greek mythology.
 
 import logging
 from datetime import datetime, date, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from zoneinfo import ZoneInfo
 import json
+import time
+import httpx
 
 from database_adapter import get_connection
 
 router = APIRouter(prefix="/api/argus", tags=["ARGUS"])
 logger = logging.getLogger(__name__)
+
+# ==================== CACHING ====================
+# Simple in-memory cache with TTL
+_cache: Dict[str, Any] = {}
+_cache_times: Dict[str, float] = {}
+CACHE_TTL_SECONDS = 30  # 30 second cache for gamma data
+PRICE_CACHE_TTL = 15    # 15 second cache for prices
+
+
+def get_cached(key: str, ttl: int = CACHE_TTL_SECONDS) -> Any:
+    """Get cached value if not expired"""
+    if key in _cache and key in _cache_times:
+        if time.time() - _cache_times[key] < ttl:
+            return _cache[key]
+    return None
+
+
+def set_cached(key: str, value: Any):
+    """Set cache value with current time"""
+    _cache[key] = value
+    _cache_times[key] = time.time()
 
 # Try to import ARGUS engine
 ARGUS_AVAILABLE = False
@@ -67,14 +90,24 @@ def get_tradier() -> Optional[TradierDataFetcher]:
 
 async def fetch_gamma_data(expiration: str = None) -> dict:
     """
-    Fetch gamma data from Tradier API.
+    Fetch gamma data from Tradier API with caching.
 
     Returns processed options chain with gamma data.
     """
+    # Check cache first
+    cache_key = f"gamma_data_{expiration or 'today'}"
+    cached = get_cached(cache_key, CACHE_TTL_SECONDS)
+    if cached:
+        logger.debug(f"ARGUS: Returning cached gamma data for {expiration or 'today'}")
+        return cached
+
     tradier = get_tradier()
     if not tradier:
-        # Return mock data for development
-        return get_mock_gamma_data()
+        # Get real prices for mock data
+        spot, vix = await get_real_prices()
+        result = get_mock_gamma_data(spot, vix)
+        set_cached(cache_key, result)
+        return result
 
     try:
         # Get SPY quote
@@ -125,37 +158,82 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
             if s['strike'] not in unique_strikes:
                 unique_strikes[s['strike']] = s
 
-        return {
+        result = {
             'spot_price': spot_price,
             'vix': vix,
             'expiration': expiration,
             'strikes': list(unique_strikes.values())
         }
 
+        # Cache the result
+        set_cached(cache_key, result)
+        return result
+
     except Exception as e:
         logger.error(f"Error fetching gamma data: {e}")
-        return get_mock_gamma_data()
+        spot, vix = await get_real_prices()
+        result = get_mock_gamma_data(spot, vix)
+        set_cached(cache_key, result)
+        return result
 
 
-def get_mock_gamma_data() -> dict:
+async def get_real_prices() -> tuple:
+    """Fetch real SPY and VIX prices from API"""
+    cache_key = "real_prices"
+    cached = get_cached(cache_key, PRICE_CACHE_TTL)
+    if cached:
+        return cached
+
+    try:
+        # Try to get real prices from our GEX endpoint
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            spy_resp = await client.get("http://localhost:8000/api/gex/SPY")
+            if spy_resp.status_code == 200:
+                spy_data = spy_resp.json()
+                spot = spy_data.get('data', {}).get('spot_price', 600.0)
+            else:
+                spot = 600.0  # Reasonable fallback
+
+            vix_resp = await client.get("http://localhost:8000/api/vix/current")
+            if vix_resp.status_code == 200:
+                vix_data = vix_resp.json()
+                vix = vix_data.get('data', {}).get('vix_spot', 18.0)
+            else:
+                vix = 18.0  # Reasonable fallback
+
+        result = (spot, vix)
+        set_cached(cache_key, result)
+        return result
+
+    except Exception as e:
+        logger.warning(f"Failed to fetch real prices: {e}")
+        return (600.0, 18.0)  # Fallback values
+
+
+def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
     """Return mock gamma data for development/testing"""
-    spot = 594.50
+    import random
+
+    if spot is None:
+        spot = 600.0
+    if vix is None:
+        vix = 18.0
+
     strikes = []
+    base_strike = round(spot)
 
-    for i in range(-10, 11):
-        strike = round(spot) + i
-        # Simulate gamma distribution (higher near ATM)
+    for i in range(-5, 6):  # Fewer strikes, more realistic
+        strike = base_strike + i
         distance = abs(i)
-        base_gamma = max(0, 0.05 - distance * 0.004)
 
-        # Add some randomness
-        import random
+        # Simulate gamma distribution (higher near ATM)
+        base_gamma = max(0, 0.05 - distance * 0.008)
         call_gamma = base_gamma * (1 + random.uniform(-0.2, 0.2))
         put_gamma = base_gamma * (1 + random.uniform(-0.2, 0.2))
 
-        # Simulate OI
-        call_oi = int(max(100, 5000 - distance * 400))
-        put_oi = int(max(100, 5000 - distance * 400))
+        # Simulate OI - realistic values
+        call_oi = int(max(500, 15000 - distance * 2000))
+        put_oi = int(max(500, 15000 - distance * 2000))
 
         strikes.append({
             'strike': strike,
@@ -163,16 +241,16 @@ def get_mock_gamma_data() -> dict:
             'put_gamma': put_gamma,
             'call_oi': call_oi,
             'put_oi': put_oi,
-            'call_price': max(0.05, (spot - strike) + 2 if i < 0 else 0.5 - i * 0.1),
-            'put_price': max(0.05, (strike - spot) + 2 if i > 0 else 0.5 + i * 0.1),
-            'call_iv': 0.18 + abs(i) * 0.005,
-            'put_iv': 0.20 + abs(i) * 0.005,
-            'volume': int(max(50, 2000 - distance * 150))
+            'call_price': max(0.05, (spot - strike) + 2 if i < 0 else max(0.05, 2.0 - i * 0.4)),
+            'put_price': max(0.05, (strike - spot) + 2 if i > 0 else max(0.05, 2.0 + i * 0.4)),
+            'call_iv': 0.15 + abs(i) * 0.01,
+            'put_iv': 0.17 + abs(i) * 0.01,
+            'volume': int(max(100, 5000 - distance * 800))
         })
 
     return {
         'spot_price': spot,
-        'vix': 18.5,
+        'vix': vix,
         'expiration': date.today().strftime('%Y-%m-%d'),
         'strikes': strikes
     }
