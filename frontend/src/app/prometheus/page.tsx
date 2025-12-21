@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
-import { apiClient } from '@/lib/api'
+import { api } from '@/lib/api'
 import useSWR from 'swr'
 import {
   Brain,
@@ -33,7 +33,7 @@ import {
 } from 'lucide-react'
 
 // API fetcher for SWR
-const fetcher = (url: string) => apiClient.get(url).then(res => res.data)
+const fetcher = (url: string) => api.get(url).then(res => res.data)
 
 interface MLStatus {
   ml_library_available: boolean
@@ -139,7 +139,7 @@ export default function PrometheusPage() {
   const handleTrain = async () => {
     setTraining(true)
     try {
-      await apiClient.post('/api/prometheus/train', { min_samples: 30, calibrate: true })
+      await api.post('/api/prometheus/train', { min_samples: 30, calibrate: true })
       mutateStatus()
       mutateFeatures()
     } catch (e) {
