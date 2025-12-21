@@ -757,6 +757,146 @@ def export_decisions_json(
             # Convert datetime to string
             if record.get('timestamp'):
                 record['timestamp'] = record['timestamp'].isoformat() if hasattr(record['timestamp'], 'isoformat') else str(record['timestamp'])
+
+            # Extract what/why/how from full_decision JSON
+            full_dec = record.get('full_decision') or {}
+            if isinstance(full_dec, dict):
+                # Core decision info
+                record['what'] = full_dec.get('what', '')
+                record['why'] = full_dec.get('why', '')
+                record['how'] = full_dec.get('how', '')
+                record['bot_name'] = full_dec.get('bot_name', 'ARES')
+
+                # Trade legs with complete data (strikes, prices, Greeks)
+                record['legs'] = full_dec.get('legs', [])
+
+                # =========================================================
+                # ORACLE AI ADVICE - Full prediction data
+                # =========================================================
+                oracle = full_dec.get('oracle_advice') or full_dec.get('oracle_prediction') or {}
+                if oracle:
+                    record['oracle_advice'] = {
+                        'advice': oracle.get('advice', ''),
+                        'win_probability': oracle.get('win_probability', 0),
+                        'confidence': oracle.get('confidence', 0),
+                        'suggested_risk_pct': oracle.get('suggested_risk_pct', 0),
+                        'suggested_sd_multiplier': oracle.get('suggested_sd_multiplier', 0),
+                        'use_gex_walls': oracle.get('use_gex_walls', False),
+                        'suggested_put_strike': oracle.get('suggested_put_strike'),
+                        'suggested_call_strike': oracle.get('suggested_call_strike'),
+                        'top_factors': oracle.get('top_factors', []),
+                        'reasoning': oracle.get('reasoning', ''),
+                        'model_version': oracle.get('model_version', ''),
+                    }
+                    # Claude AI analysis if available
+                    claude = oracle.get('claude_analysis', {})
+                    if claude:
+                        record['oracle_advice']['claude_analysis'] = {
+                            'analysis': claude.get('analysis', ''),
+                            'confidence_adjustment': claude.get('confidence_adjustment', 0),
+                            'risk_factors': claude.get('risk_factors', []),
+                            'opportunities': claude.get('opportunities', []),
+                            'recommendation': claude.get('recommendation', ''),
+                        }
+
+                # =========================================================
+                # GEX CONTEXT - Walls, flip point, regime
+                # =========================================================
+                market_ctx = full_dec.get('market_context', {})
+                if market_ctx:
+                    record['gex_context'] = {
+                        'net_gex': market_ctx.get('net_gex', 0),
+                        'gex_normalized': market_ctx.get('gex_normalized', 0),
+                        'call_wall': market_ctx.get('call_wall', 0),
+                        'put_wall': market_ctx.get('put_wall', 0),
+                        'flip_point': market_ctx.get('flip_point', 0),
+                        'distance_to_flip_pct': market_ctx.get('gex_distance_to_flip_pct', 0),
+                        'regime': market_ctx.get('gex_regime', market_ctx.get('regime', '')),
+                        'between_walls': market_ctx.get('gex_between_walls', True),
+                    }
+                    # Market conditions
+                    record['market_context'] = {
+                        'spot_price': market_ctx.get('spot_price', 0),
+                        'vix': market_ctx.get('vix', 0),
+                        'vix_percentile': market_ctx.get('vix_percentile_30d', 0),
+                        'expected_move': market_ctx.get('expected_move_pct', 0),
+                        'trend': market_ctx.get('trend', ''),
+                        'day_of_week': market_ctx.get('day_of_week', 0),
+                        'days_to_opex': market_ctx.get('days_to_opex', 0),
+                    }
+
+                # =========================================================
+                # BACKTEST REFERENCE - Historical performance backing
+                # =========================================================
+                backtest = full_dec.get('backtest_reference', {})
+                if backtest:
+                    record['backtest_stats'] = {
+                        'strategy_name': backtest.get('strategy_name', ''),
+                        'win_rate': backtest.get('win_rate', 0),
+                        'expectancy': backtest.get('expectancy', 0),
+                        'avg_win': backtest.get('avg_win', 0),
+                        'avg_loss': backtest.get('avg_loss', 0),
+                        'sharpe_ratio': backtest.get('sharpe_ratio', 0),
+                        'max_drawdown': backtest.get('max_drawdown', 0),
+                        'total_trades': backtest.get('total_trades', 0),
+                        'uses_real_data': backtest.get('uses_real_data', True),
+                        'backtest_period': backtest.get('date_range', backtest.get('backtest_period', '')),
+                    }
+
+                # =========================================================
+                # POSITION SIZING - Full calculation breakdown
+                # =========================================================
+                record['position_sizing'] = {
+                    'contracts': full_dec.get('position_size_contracts', 0),
+                    'position_dollars': full_dec.get('position_size_dollars', 0),
+                    'max_risk_dollars': full_dec.get('max_risk_dollars', 0),
+                    'sizing_method': full_dec.get('position_size_method', ''),
+                    'target_profit_pct': full_dec.get('target_profit_pct', 0),
+                    'stop_loss_pct': full_dec.get('stop_loss_pct', 0),
+                    'probability_of_profit': full_dec.get('probability_of_profit', 0),
+                }
+
+                # =========================================================
+                # ALTERNATIVES EVALUATED - What else was considered
+                # =========================================================
+                reasoning = full_dec.get('reasoning', {})
+                if reasoning and isinstance(reasoning, dict):
+                    record['alternatives'] = {
+                        'primary_reason': reasoning.get('primary_reason', ''),
+                        'supporting_factors': reasoning.get('supporting_factors', []),
+                        'risk_factors': reasoning.get('risk_factors', []),
+                        'alternatives_considered': reasoning.get('alternatives_considered', []),
+                        'why_not_alternatives': reasoning.get('why_not_alternatives', []),
+                    }
+
+                # =========================================================
+                # RISK CHECKS - What passed/failed
+                # =========================================================
+                record['risk_checks'] = []
+                risk_details = full_dec.get('risk_check_details', [])
+                if isinstance(risk_details, list):
+                    for check in risk_details:
+                        if isinstance(check, str):
+                            record['risk_checks'].append({
+                                'check': check,
+                                'passed': not check.upper().startswith('FAILED'),
+                            })
+                        elif isinstance(check, dict):
+                            record['risk_checks'].append(check)
+                record['passed_risk_checks'] = full_dec.get('passed_risk_checks', True)
+
+                # =========================================================
+                # UNDERLYING PRICES & OUTCOME
+                # =========================================================
+                record['underlying_price_at_entry'] = full_dec.get('underlying_price_at_entry', 0)
+                record['underlying_price_at_exit'] = full_dec.get('underlying_price_at_exit', 0)
+                record['actual_pnl'] = full_dec.get('actual_pnl', record.get('actual_pnl', 0))
+                record['outcome_notes'] = full_dec.get('outcome_notes', '')
+
+                # Legacy fields for backwards compatibility
+                record['position_size_contracts'] = full_dec.get('position_size_contracts', 0)
+                record['position_size_dollars'] = full_dec.get('position_size_dollars', 0)
+
             results.append(record)
 
         cursor.close()
