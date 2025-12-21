@@ -332,8 +332,45 @@ export function CrossButton({ onClick }: CrossButtonProps) {
 // Tagline Component for under logo
 export function StewardshipTagline() {
   return (
-    <span className="text-[10px] text-amber-500/60 tracking-wide hidden md:block">
-      Dedicated to God · Steward Your Blessings
+    <span className="text-[10px] text-amber-400 tracking-widest uppercase font-semibold hidden md:block">
+      Soli Deo Gloria
     </span>
+  )
+}
+
+// Mission Statement Component - displays to the right of the cross
+const missionStatements = [
+  "Every profit is a gift — steward it for His Kingdom",
+  "Blessed to be a blessing · Luke 12:48",
+  "Use your gains for God's purposes",
+  "From Him, through Him, to Him · Romans 11:36",
+  "Faithful with little, trusted with much",
+]
+
+export function StewardshipMission() {
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [isFading, setIsFading] = useState(false)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIsFading(true)
+      setTimeout(() => {
+        setCurrentIndex((prev) => (prev + 1) % missionStatements.length)
+        setIsFading(false)
+      }, 400)
+    }, 8000)
+
+    return () => clearInterval(interval)
+  }, [])
+
+  return (
+    <div className="hidden lg:flex items-center space-x-3 pl-4 border-l border-amber-500/20">
+      <Sparkles className="w-4 h-4 text-amber-500/70 flex-shrink-0" />
+      <div className={`transition-opacity duration-400 ${isFading ? 'opacity-0' : 'opacity-100'}`}>
+        <span className="text-xs text-amber-400/80 italic">
+          {missionStatements[currentIndex]}
+        </span>
+      </div>
+    </div>
   )
 }

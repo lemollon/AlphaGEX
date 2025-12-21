@@ -40,7 +40,7 @@ import {
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
-import { CrossButton, DedicationModal, StewardshipBanner, StewardshipTagline } from './StewardshipBanner'
+import { CrossButton, DedicationModal, StewardshipBanner, StewardshipTagline, StewardshipMission } from './StewardshipBanner'
 
 const navItems = [
   { href: '/daily-manna', label: 'Daily Manna', icon: BookOpen, category: 'Main' },
@@ -171,6 +171,7 @@ export default function Navigation() {
               </Link>
               <div className="hidden sm:block border-l border-gray-700 h-8 mx-1" />
               <CrossButton onClick={() => setDedicationModalOpen(true)} />
+              <StewardshipMission />
             </div>
           </div>
 
