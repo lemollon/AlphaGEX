@@ -49,6 +49,8 @@ try:
     PROMETHEUS_AVAILABLE = True
 except ImportError as e:
     PROMETHEUS_AVAILABLE = False
+    ML_AVAILABLE = False
+    DB_AVAILABLE = False
     print(f"Warning: Prometheus ML not available: {e}")
 
 
