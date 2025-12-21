@@ -30,6 +30,7 @@ from . import spx_backtest_routes
 from . import ares_routes
 from . import athena_routes
 from . import daily_manna_routes
+from . import prometheus_routes
 
 __all__ = [
     'vix_routes',
@@ -59,4 +60,5 @@ __all__ = [
     'ares_routes',
     'athena_routes',
     'daily_manna_routes',
+    'prometheus_routes',
 ]
