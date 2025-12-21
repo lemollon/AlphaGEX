@@ -56,3 +56,4 @@ data/prices/
 # Don't ignore frontend app/logs page
 !frontend/src/app/logs/
 quant/.models/
+models/*.pkl
