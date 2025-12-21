@@ -20,6 +20,8 @@ STRATEGIES MONITORED:
 OUTPUT: Signal generator, NOT autonomous executor
 """
 
+import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -28,6 +30,9 @@ from zoneinfo import ZoneInfo
 from database_adapter import get_connection
 import numpy as np
 import pandas as pd
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
@@ -101,8 +106,7 @@ class VIXHedgeManager:
             self._db_available = True
             self._tables_initialized = True
         except Exception as e:
-            print(f"⚠️ VIX Hedge Manager: Database not available ({type(e).__name__}), running without persistence")
-            self._db_available = False
+            logger.warning(f"VIX Hedge Manager: Database not available ({type(e).__name__}), running without persistence")
 
         # VIX thresholds
         self.vol_thresholds = {
@@ -117,7 +121,7 @@ class VIXHedgeManager:
         self.iv_rv_spread_threshold = 5.0  # Points difference for signal
         self.term_structure_threshold = 3.0  # Contango/backwardation threshold
 
-        print("✅ VIX Hedge Manager initialized (SIGNAL GENERATOR ONLY)")
+        logger.info("VIX Hedge Manager initialized (SIGNAL GENERATOR ONLY)")
 
     def _ensure_tables(self):
         """
@@ -125,8 +129,27 @@ class VIXHedgeManager:
         NOTE: Tables are now defined in db/config_and_database.py (single source of truth).
         Tables expected: vix_hedge_signals, vix_hedge_positions
         """
-        # Tables created by main schema - just verify connection works
-        pass
+        # Verify connection works and required tables exist
+        conn = get_connection()
+        try:
+            c = conn.cursor()
+            # Check if vix_hedge_signals table exists
+            c.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'vix_hedge_signals'
+                )
+            """)
+            signals_exists = c.fetchone()[0]
+
+            if not signals_exists:
+                logger.warning("VIX hedge_signals table not found - signals will not be persisted")
+
+            conn.close()
+            logger.debug("VIX hedge tables verification complete")
+        except Exception as e:
+            conn.close()
+            raise e
 
     def get_vix_data(self) -> Dict:
         """
@@ -157,9 +180,9 @@ class VIXHedgeManager:
                 if vix_quote and vix_quote.get('last'):
                     vix_spot = float(vix_quote['last'])
                     vix_source = 'tradier'
-                    print(f"✅ VIX from Tradier $VIX.X: {vix_spot}")
+                    logger.info(f"VIX from Tradier $VIX.X: {vix_spot}")
             except Exception as e:
-                print(f"⚠️ Tradier $VIX.X failed: {e}")
+                logger.warning(f"Tradier $VIX.X failed: {e}")
 
             # Fallback: Try unified provider
             if not vix_spot or vix_spot <= 0:
@@ -294,7 +317,7 @@ class VIXHedgeManager:
             }
 
         except Exception as e:
-            print(f"Error getting VIX data: {e}")
+            logger.error(f"Error getting VIX data: {e}")
             return {
                 'vix_spot': 18.0,
                 'vix_source': 'default',
@@ -334,7 +357,7 @@ class VIXHedgeManager:
             return percentile
 
         except Exception as e:
-            print(f"Error calculating IV percentile: {e}")
+            logger.warning(f"Error calculating IV percentile: {e}")
             # Estimate based on typical VIX range
             if vix_current < 12:
                 return 5
@@ -380,7 +403,7 @@ class VIXHedgeManager:
             return rv
 
         except Exception as e:
-            print(f"Error calculating realized vol: {e}")
+            logger.warning(f"Error calculating realized vol: {e}")
             return 18.0
 
     def get_vol_regime(self, vix: float) -> VolRegime:
@@ -625,8 +648,9 @@ class VIXHedgeManager:
 
             conn.commit()
             conn.close()
+            logger.debug(f"VIX hedge signal saved: {signal.signal_type.value}")
         except Exception as e:
-            print(f"Error saving signal: {e}")
+            logger.error(f"Error saving signal: {e}")
 
     def get_signal_history(self, days: int = 30) -> pd.DataFrame:
         """Get historical signals"""
@@ -643,7 +667,7 @@ class VIXHedgeManager:
             conn.close()
             return df
         except Exception as e:
-            print(f"Error getting signal history: {e}")
+            logger.warning(f"Error getting signal history: {e}")
             return pd.DataFrame()
 
     def print_signal_report(self, signal: HedgeSignal):
@@ -678,14 +702,18 @@ class VIXHedgeManager:
         print("=" * 70 + "\n")
 
 
-# Singleton instance
+# Singleton instance with thread-safe initialization
 _vix_hedge_manager = None
+_vix_hedge_manager_lock = threading.Lock()
 
 def get_vix_hedge_manager() -> VIXHedgeManager:
-    """Get singleton VIX hedge manager"""
+    """Get singleton VIX hedge manager (thread-safe)"""
     global _vix_hedge_manager
     if _vix_hedge_manager is None:
-        _vix_hedge_manager = VIXHedgeManager()
+        with _vix_hedge_manager_lock:
+            # Double-check locking pattern
+            if _vix_hedge_manager is None:
+                _vix_hedge_manager = VIXHedgeManager()
     return _vix_hedge_manager
 
 

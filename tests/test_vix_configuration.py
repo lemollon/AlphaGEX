@@ -4,6 +4,8 @@ VIX Configuration Tests
 
 Tests for VIX thresholds, stress factors, and fallback logic.
 Validates consistency between config and trading modules.
+
+Note: Uses VIXConfig from vix_routes as single source of truth for thresholds.
 """
 
 import pytest
@@ -12,91 +14,105 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Import unified VIX configuration
+try:
+    from backend.api.routes.vix_routes import VIXConfig, get_stress_level, calculate_fallback_iv_percentile
+    VIX_ROUTES_AVAILABLE = True
+except ImportError:
+    VIX_ROUTES_AVAILABLE = False
+    # Fallback defaults for tests
+    class VIXConfig:
+        THRESHOLD_LOW = 15.0
+        THRESHOLD_ELEVATED = 20.0
+        THRESHOLD_HIGH = 25.0
+        THRESHOLD_EXTREME = 30.0
+        MULTIPLIER_NORMAL = 1.0
+        MULTIPLIER_ELEVATED = 0.75
+        MULTIPLIER_HIGH = 0.50
+        MULTIPLIER_EXTREME = 0.25
+        DEFAULT_VIX = 18.0
+
+    def get_stress_level(vix):
+        if vix >= VIXConfig.THRESHOLD_EXTREME:
+            return ('extreme', VIXConfig.MULTIPLIER_EXTREME)
+        elif vix >= VIXConfig.THRESHOLD_HIGH:
+            return ('high', VIXConfig.MULTIPLIER_HIGH)
+        elif vix >= VIXConfig.THRESHOLD_ELEVATED:
+            return ('elevated', VIXConfig.MULTIPLIER_ELEVATED)
+        else:
+            return ('normal', VIXConfig.MULTIPLIER_NORMAL)
+
 
 class TestVIXThresholds:
-    """Test VIX threshold configurations"""
+    """Test VIX threshold configurations using unified VIXConfig"""
 
     def test_config_thresholds_ascending(self):
         """VIX thresholds should be in ascending order"""
-        try:
-            from config import VIXConfig
-            thresholds = [
-                VIXConfig.LOW_VIX_THRESHOLD,
-                VIXConfig.ELEVATED_VIX_THRESHOLD,
-                VIXConfig.HIGH_VIX_THRESHOLD,
-                VIXConfig.EXTREME_VIX_THRESHOLD
-            ]
-        except ImportError:
-            # Use default values
-            thresholds = [15.0, 20.0, 30.0, 40.0]
+        thresholds = [
+            VIXConfig.THRESHOLD_LOW,
+            VIXConfig.THRESHOLD_ELEVATED,
+            VIXConfig.THRESHOLD_HIGH,
+            VIXConfig.THRESHOLD_EXTREME
+        ]
 
         for i in range(len(thresholds) - 1):
             assert thresholds[i] < thresholds[i + 1], \
                 f"Threshold {thresholds[i]} should be < {thresholds[i + 1]}"
 
     def test_unified_config_thresholds(self):
-        """unified_config VIX thresholds should be reasonable"""
-        try:
-            from unified_config import VIXConfiguration
-            assert VIXConfiguration.LOW < VIXConfiguration.ELEVATED
-            assert VIXConfiguration.ELEVATED < VIXConfiguration.HIGH
-            assert VIXConfiguration.HIGH < VIXConfiguration.EXTREME
-        except ImportError:
-            # Default values
-            assert 15.0 < 20.0 < 30.0 < 40.0
+        """VIXConfig thresholds should be reasonable"""
+        assert VIXConfig.THRESHOLD_LOW < VIXConfig.THRESHOLD_ELEVATED
+        assert VIXConfig.THRESHOLD_ELEVATED < VIXConfig.THRESHOLD_HIGH
+        assert VIXConfig.THRESHOLD_HIGH < VIXConfig.THRESHOLD_EXTREME
 
     def test_default_vix_reasonable(self):
         """Default VIX fallback should be reasonable (15-25)"""
-        try:
-            from config import VIXConfig
-            default = VIXConfig.DEFAULT_VIX
-        except ImportError:
-            default = 20.0
+        assert 15.0 <= VIXConfig.DEFAULT_VIX <= 25.0
 
-        assert 15.0 <= default <= 25.0
+    def test_thresholds_historically_accurate(self):
+        """Thresholds should match historical VIX behavior"""
+        # Low threshold should be near historical average (~17)
+        assert 12 <= VIXConfig.THRESHOLD_LOW <= 18
+
+        # Elevated should be 20-25 (above average but not panic)
+        assert 18 <= VIXConfig.THRESHOLD_ELEVATED <= 25
+
+        # High should be 25-35 (significant stress)
+        assert 22 <= VIXConfig.THRESHOLD_HIGH <= 35
+
+        # Extreme should be 30+ (crisis levels)
+        assert VIXConfig.THRESHOLD_EXTREME >= 28
 
 
 class TestVIXStressMultipliers:
-    """Test VIX stress multipliers for position sizing"""
+    """Test VIX stress multipliers for position sizing using VIXConfig"""
 
     def test_stress_multipliers_defined(self):
-        """All stress levels should have multipliers"""
-        try:
-            from unified_config import VIXConfiguration
-            multipliers = VIXConfiguration.STRESS_MULTIPLIERS
-        except ImportError:
-            multipliers = {
-                'low': 1.2,
-                'normal': 1.0,
-                'elevated': 0.75,
-                'high': 0.50,
-                'extreme': 0.25
-            }
-
-        required_levels = ['low', 'normal', 'elevated', 'high', 'extreme']
-        for level in required_levels:
-            assert level in multipliers
+        """All stress level multipliers should be defined"""
+        assert hasattr(VIXConfig, 'MULTIPLIER_NORMAL')
+        assert hasattr(VIXConfig, 'MULTIPLIER_ELEVATED')
+        assert hasattr(VIXConfig, 'MULTIPLIER_HIGH')
+        assert hasattr(VIXConfig, 'MULTIPLIER_EXTREME')
 
     def test_stress_multipliers_descending(self):
         """Higher stress = lower multiplier"""
-        multipliers = {
-            'low': 1.2,
-            'normal': 1.0,
-            'elevated': 0.75,
-            'high': 0.50,
-            'extreme': 0.25
-        }
-
-        levels = ['low', 'normal', 'elevated', 'high', 'extreme']
-        for i in range(len(levels) - 1):
-            current = multipliers[levels[i]]
-            next_level = multipliers[levels[i + 1]]
-            assert current >= next_level
+        assert VIXConfig.MULTIPLIER_NORMAL >= VIXConfig.MULTIPLIER_ELEVATED
+        assert VIXConfig.MULTIPLIER_ELEVATED >= VIXConfig.MULTIPLIER_HIGH
+        assert VIXConfig.MULTIPLIER_HIGH >= VIXConfig.MULTIPLIER_EXTREME
 
     def test_extreme_multiplier_minimum(self):
         """Extreme stress should still allow some trading (>0)"""
-        extreme_multiplier = 0.25
-        assert extreme_multiplier > 0
+        assert VIXConfig.MULTIPLIER_EXTREME > 0
+
+    def test_normal_multiplier_is_baseline(self):
+        """Normal multiplier should be 1.0 (100%)"""
+        assert VIXConfig.MULTIPLIER_NORMAL == 1.0
+
+    def test_multipliers_are_valid_percentages(self):
+        """All multipliers should be between 0 and 1"""
+        for mult in [VIXConfig.MULTIPLIER_NORMAL, VIXConfig.MULTIPLIER_ELEVATED,
+                     VIXConfig.MULTIPLIER_HIGH, VIXConfig.MULTIPLIER_EXTREME]:
+            assert 0 < mult <= 1.0
 
 
 class TestVIXFallbackLogic:
@@ -141,82 +157,34 @@ class TestVIXFallbackLogic:
 
 
 class TestVIXStressLevel:
-    """Test VIX to stress level mapping"""
-
-    def test_classify_low_vix(self):
-        """VIX < 15 should be 'low' stress"""
-        def get_stress_level(vix):
-            if vix < 15:
-                return 'low'
-            elif vix < 20:
-                return 'normal'
-            elif vix < 30:
-                return 'elevated'
-            elif vix < 40:
-                return 'high'
-            return 'extreme'
-
-        assert get_stress_level(12.0) == 'low'
+    """Test VIX to stress level mapping using unified get_stress_level function"""
 
     def test_classify_normal_vix(self):
-        """VIX 15-20 should be 'normal' stress"""
-        def get_stress_level(vix):
-            if vix < 15:
-                return 'low'
-            elif vix < 20:
-                return 'normal'
-            elif vix < 30:
-                return 'elevated'
-            elif vix < 40:
-                return 'high'
-            return 'extreme'
-
-        assert get_stress_level(18.0) == 'normal'
+        """VIX below elevated threshold should be 'normal' stress"""
+        level, _ = get_stress_level(18.0)
+        assert level == 'normal'
 
     def test_classify_elevated_vix(self):
-        """VIX 20-30 should be 'elevated' stress"""
-        def get_stress_level(vix):
-            if vix < 15:
-                return 'low'
-            elif vix < 20:
-                return 'normal'
-            elif vix < 30:
-                return 'elevated'
-            elif vix < 40:
-                return 'high'
-            return 'extreme'
-
-        assert get_stress_level(25.0) == 'elevated'
+        """VIX at elevated threshold should be 'elevated' stress"""
+        level, _ = get_stress_level(22.0)
+        assert level == 'elevated'
 
     def test_classify_high_vix(self):
-        """VIX 30-40 should be 'high' stress"""
-        def get_stress_level(vix):
-            if vix < 15:
-                return 'low'
-            elif vix < 20:
-                return 'normal'
-            elif vix < 30:
-                return 'elevated'
-            elif vix < 40:
-                return 'high'
-            return 'extreme'
-
-        assert get_stress_level(35.0) == 'high'
+        """VIX at high threshold should be 'high' stress"""
+        level, _ = get_stress_level(27.0)
+        assert level == 'high'
 
     def test_classify_extreme_vix(self):
-        """VIX > 40 should be 'extreme' stress"""
-        def get_stress_level(vix):
-            if vix < 15:
-                return 'low'
-            elif vix < 20:
-                return 'normal'
-            elif vix < 30:
-                return 'elevated'
-            elif vix < 40:
-                return 'high'
-            return 'extreme'
+        """VIX at extreme threshold should be 'extreme' stress"""
+        level, _ = get_stress_level(35.0)
+        assert level == 'extreme'
 
-        assert get_stress_level(50.0) == 'extreme'
+    def test_stress_level_returns_multiplier(self):
+        """get_stress_level should return both level and multiplier"""
+        level, multiplier = get_stress_level(25.0)
+        assert isinstance(level, str)
+        assert isinstance(multiplier, float)
+        assert 0 < multiplier <= 1.0
 
 
 class TestTraderVIXThresholds:
@@ -274,44 +242,37 @@ class TestTraderVIXThresholds:
 
 
 class TestVIXPositionMultiplier:
-    """Test getting position multiplier from VIX"""
+    """Test getting position multiplier from VIX using unified get_stress_level"""
 
-    def test_get_position_multiplier(self):
-        """Position multiplier should match stress level"""
-        multipliers = {
-            'low': 1.2,
-            'normal': 1.0,
-            'elevated': 0.75,
-            'high': 0.50,
-            'extreme': 0.25
-        }
+    def test_get_position_multiplier_normal(self):
+        """Normal VIX should return 1.0 multiplier"""
+        _, multiplier = get_stress_level(18.0)
+        assert multiplier == VIXConfig.MULTIPLIER_NORMAL
 
-        def get_stress_level(vix):
-            if vix < 15:
-                return 'low'
-            elif vix < 20:
-                return 'normal'
-            elif vix < 30:
-                return 'elevated'
-            elif vix < 40:
-                return 'high'
-            return 'extreme'
+    def test_get_position_multiplier_elevated(self):
+        """Elevated VIX should return 0.75 multiplier"""
+        _, multiplier = get_stress_level(22.0)
+        assert multiplier == VIXConfig.MULTIPLIER_ELEVATED
 
-        def get_position_multiplier(vix):
-            level = get_stress_level(vix)
-            return multipliers.get(level, 1.0)
+    def test_get_position_multiplier_high(self):
+        """High VIX should return 0.50 multiplier"""
+        _, multiplier = get_stress_level(27.0)
+        assert multiplier == VIXConfig.MULTIPLIER_HIGH
 
-        test_cases = [
-            (12.0, 1.2),   # low
-            (18.0, 1.0),   # normal
-            (25.0, 0.75),  # elevated
-            (35.0, 0.50),  # high
-            (50.0, 0.25),  # extreme
-        ]
+    def test_get_position_multiplier_extreme(self):
+        """Extreme VIX should return 0.25 multiplier"""
+        _, multiplier = get_stress_level(35.0)
+        assert multiplier == VIXConfig.MULTIPLIER_EXTREME
 
-        for vix, expected in test_cases:
-            actual = get_position_multiplier(vix)
-            assert actual == expected, f"VIX {vix}: expected {expected}, got {actual}"
+    def test_multipliers_decrease_with_stress(self):
+        """Multipliers should decrease as VIX increases"""
+        vix_levels = [15, 22, 27, 35]
+        multipliers = [get_stress_level(vix)[1] for vix in vix_levels]
+
+        # Each multiplier should be <= the previous
+        for i in range(1, len(multipliers)):
+            assert multipliers[i] <= multipliers[i-1], \
+                f"Multiplier at VIX {vix_levels[i]} should be <= multiplier at VIX {vix_levels[i-1]}"
 
 
 class TestVIXHistoricalContext:
