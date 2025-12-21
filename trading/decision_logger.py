@@ -757,6 +757,57 @@ def export_decisions_json(
             # Convert datetime to string
             if record.get('timestamp'):
                 record['timestamp'] = record['timestamp'].isoformat() if hasattr(record['timestamp'], 'isoformat') else str(record['timestamp'])
+
+            # Extract what/why/how from full_decision JSON
+            full_dec = record.get('full_decision') or {}
+            if isinstance(full_dec, dict):
+                # Core decision info
+                record['what'] = full_dec.get('what', '')
+                record['why'] = full_dec.get('why', '')
+                record['how'] = full_dec.get('how', '')
+                record['bot_name'] = full_dec.get('bot_name', 'ARES')
+
+                # Trade legs with complete data
+                record['legs'] = full_dec.get('legs', [])
+
+                # Oracle AI advice if available
+                record['oracle_advice'] = full_dec.get('oracle_advice')
+
+                # GEX context
+                market_ctx = full_dec.get('market_context', {})
+                if market_ctx:
+                    record['gex_context'] = {
+                        'call_wall': market_ctx.get('call_wall', 0),
+                        'put_wall': market_ctx.get('put_wall', 0),
+                        'gamma_exposure': market_ctx.get('net_gex', 0),
+                        'regime': market_ctx.get('gex_regime', ''),
+                        'flip_point': market_ctx.get('flip_point', 0),
+                    }
+
+                # Risk checks
+                record['risk_checks'] = full_dec.get('risk_check_details', [])
+                if isinstance(record['risk_checks'], list) and len(record['risk_checks']) > 0:
+                    # Convert to structured format if just strings
+                    if isinstance(record['risk_checks'][0], str):
+                        record['risk_checks'] = [
+                            {'check': check, 'passed': not check.startswith('FAILED')}
+                            for check in record['risk_checks']
+                        ]
+
+                # Position sizing
+                record['position_size_contracts'] = full_dec.get('position_size_contracts', 0)
+                record['position_size_dollars'] = full_dec.get('position_size_dollars', 0)
+
+                # Underlying prices
+                record['underlying_price_at_entry'] = full_dec.get('underlying_price_at_entry', 0)
+                record['underlying_price_at_exit'] = full_dec.get('underlying_price_at_exit', 0)
+
+                # Reasoning details
+                reasoning = full_dec.get('reasoning', {})
+                if reasoning and isinstance(reasoning, dict):
+                    record['alternatives_considered'] = reasoning.get('alternatives_considered', [])
+                    record['why_not_alternatives'] = reasoning.get('why_not_alternatives', [])
+
             results.append(record)
 
         cursor.close()

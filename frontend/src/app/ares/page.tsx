@@ -295,6 +295,42 @@ export default function ARESPage() {
       : 0,
   }
 
+  // Build equity curve from closed positions for a specific ticker
+  const buildEquityCurve = (positions: IronCondorPosition[], startingCapital: number) => {
+    if (positions.length === 0) return []
+
+    // Sort by close date
+    const sorted = [...positions].sort((a, b) =>
+      (a.close_date || a.expiration || '').localeCompare(b.close_date || b.expiration || '')
+    )
+
+    // Group by date
+    const byDate: Record<string, number> = {}
+    sorted.forEach(p => {
+      const date = p.close_date || p.expiration || ''
+      if (date) {
+        byDate[date] = (byDate[date] || 0) + (p.realized_pnl || 0)
+      }
+    })
+
+    // Build curve
+    let cumPnl = 0
+    const dates = Object.keys(byDate).sort()
+    return dates.map(date => {
+      cumPnl += byDate[date]
+      return {
+        date,
+        equity: startingCapital + cumPnl,
+        daily_pnl: byDate[date],
+        pnl: cumPnl
+      }
+    })
+  }
+
+  // Separate equity curves for SPX and SPY
+  const spxEquityData = buildEquityCurve(spxClosedPositions, spxStats.capital)
+  const spyEquityData = buildEquityCurve(spyClosedPositions, spyStats.capital)
+
   // UI State
   const [showSpxPositions, setShowSpxPositions] = useState(false)
   const [showSpyPositions, setShowSpyPositions] = useState(false)
@@ -534,21 +570,21 @@ export default function ARESPage() {
                   </div>
                 </div>
 
-                {/* Equity Curve */}
+                {/* Equity Curve - SPX Only */}
                 <div className="px-4 pb-4">
                   <h4 className="text-sm font-medium text-purple-300 mb-2 flex items-center gap-2">
                     <BarChart3 className="w-4 h-4" />
-                    Equity Curve (30 Days)
-                    {performance && (
-                      <span className={`text-xs ml-auto ${(performance.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {(performance.total_pnl || 0) >= 0 ? '+' : ''}{formatCurrency(performance.total_pnl || 0)}
+                    SPX Equity Curve
+                    {spxStats.totalPnl !== 0 && (
+                      <span className={`text-xs ml-auto ${spxStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {spxStats.totalPnl >= 0 ? '+' : ''}{formatCurrency(spxStats.totalPnl)}
                       </span>
                     )}
                   </h4>
                   <div className="h-40 bg-gray-800/40 rounded-lg p-2">
-                    {equityData.length > 0 ? (
+                    {spxEquityData.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={equityData}>
+                        <AreaChart data={spxEquityData}>
                           <defs>
                             <linearGradient id="spxEquity" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="5%" stopColor="#A855F7" stopOpacity={0.4} />
@@ -732,21 +768,21 @@ export default function ARESPage() {
                       </div>
                     </div>
 
-                    {/* Equity Curve - From our own tracking */}
+                    {/* Equity Curve - SPY Only */}
                     <div className="px-4 pb-4">
                       <h4 className="text-sm font-medium text-blue-300 mb-2 flex items-center gap-2">
                         <BarChart3 className="w-4 h-4" />
-                        Equity Curve (Tracked Locally)
-                        {tradierStatus?.account?.equity && (
-                          <span className="text-xs ml-auto text-blue-400">
-                            Current: {formatCurrency(tradierStatus.account.equity)}
+                        SPY Equity Curve
+                        {spyStats.totalPnl !== 0 && (
+                          <span className={`text-xs ml-auto ${spyStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {spyStats.totalPnl >= 0 ? '+' : ''}{formatCurrency(spyStats.totalPnl)}
                           </span>
                         )}
                       </h4>
                       <div className="h-40 bg-gray-800/40 rounded-lg p-2">
-                        {equityData.length > 0 ? (
+                        {spyEquityData.length > 0 ? (
                           <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={equityData}>
+                            <AreaChart data={spyEquityData}>
                               <defs>
                                 <linearGradient id="spyEquity" x1="0" y1="0" x2="0" y2="1">
                                   <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4} />
