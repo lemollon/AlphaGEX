@@ -308,11 +308,13 @@ export default function ArgusPage() {
     }
   }
 
-  // Calculate bar height (normalized to max gamma)
-  const getBarHeight = (gamma: number, maxGamma: number): number => {
-    if (maxGamma === 0) return 10
-    const height = (Math.abs(gamma) / maxGamma) * 100
-    return Math.max(10, Math.min(100, height))
+  // Calculate bar height in pixels (normalized to max gamma)
+  const getBarHeightPx = (gamma: number, maxGamma: number): number => {
+    const maxHeightPx = 180 // Max bar height in pixels
+    const minHeightPx = 20  // Min bar height for visibility
+    if (maxGamma === 0) return minHeightPx
+    const height = (Math.abs(gamma) / maxGamma) * maxHeightPx
+    return Math.max(minHeightPx, Math.min(maxHeightPx, height))
   }
 
   // Loading state
@@ -475,101 +477,129 @@ export default function ArgusPage() {
 
               {/* Bar Chart */}
               <div className="overflow-x-auto">
-                <div className="min-w-[600px] flex items-end justify-center gap-1 h-64 pb-8 relative">
-                  {gammaData?.strikes.map((strike) => (
-                    <div
-                      key={strike.strike}
-                      className="flex flex-col items-center group relative"
-                      style={{ width: `${100 / (gammaData?.strikes.length || 1)}%`, maxWidth: '60px' }}
-                    >
-                      {/* Probability Label */}
-                      <div className="text-xs text-gray-400 mb-1">
-                        {strike.probability.toFixed(0)}%
-                      </div>
-
-                      {/* Bar */}
+                <div className="min-w-[600px] relative">
+                  {/* Chart Area */}
+                  <div className="flex items-end justify-around gap-2 h-72 px-4 pb-12 pt-8 border-b border-gray-700">
+                    {gammaData?.strikes.map((strike) => (
                       <div
-                        className={`w-full rounded-t transition-all ${getBarColor(strike)} relative`}
-                        style={{ height: `${getBarHeight(strike.net_gamma, maxGamma)}%` }}
+                        key={strike.strike}
+                        className="flex flex-col items-center group relative flex-1 max-w-16"
                       >
-                        {/* Magnet/Pin Badge */}
-                        {strike.is_pin && (
-                          <div className="absolute -top-6 left-1/2 -translate-x-1/2">
-                            <Target className="w-4 h-4 text-purple-400" />
-                          </div>
-                        )}
-                        {strike.is_magnet && strike.magnet_rank && (
-                          <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-xs font-bold text-yellow-400">
-                            #{strike.magnet_rank}
-                          </div>
-                        )}
-                        {strike.gamma_flipped && (
-                          <div className="absolute top-1 left-1/2 -translate-x-1/2">
-                            <Zap className="w-3 h-3 text-pink-400" />
-                          </div>
-                        )}
-                        {strike.is_danger && (
-                          <div className="absolute top-1 right-0">
-                            <AlertTriangle className="w-3 h-3 text-orange-400" />
-                          </div>
-                        )}
+                        {/* Probability Label above bar */}
+                        <div className="text-xs text-gray-400 mb-2 font-medium">
+                          {strike.probability.toFixed(0)}%
+                        </div>
 
-                        {/* Tooltip */}
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10">
-                          <div className="bg-gray-900 border border-gray-700 rounded-lg p-2 text-xs whitespace-nowrap">
-                            <div className="font-bold text-white">${strike.strike}</div>
-                            <div className="text-gray-400">
-                              Gamma: {formatGamma(strike.net_gamma)}
+                        {/* Bar Container */}
+                        <div className="relative flex flex-col items-center justify-end flex-1 w-full">
+                          {/* Magnet/Pin Badge above bar */}
+                          {strike.is_pin && (
+                            <div className="absolute -top-1 left-1/2 -translate-x-1/2 z-10">
+                              <Target className="w-5 h-5 text-purple-400" />
                             </div>
-                            <div className="text-gray-400">
-                              Prob: {strike.probability.toFixed(1)}%
+                          )}
+                          {strike.is_magnet && strike.magnet_rank && !strike.is_pin && (
+                            <div className="absolute -top-1 left-1/2 -translate-x-1/2 text-xs font-bold text-yellow-400 bg-gray-900/80 px-1 rounded z-10">
+                              #{strike.magnet_rank}
                             </div>
-                            <div className={getROCColor(strike.roc_1min)}>
-                              1m: {strike.roc_1min > 0 ? '+' : ''}{strike.roc_1min.toFixed(1)}%
+                          )}
+
+                          {/* The Bar */}
+                          <div
+                            className={`w-8 rounded-t-md transition-all duration-300 ${getBarColor(strike)} relative cursor-pointer hover:opacity-80`}
+                            style={{ height: `${getBarHeightPx(strike.net_gamma, maxGamma)}px` }}
+                          >
+                            {/* Gamma Value on bar */}
+                            <div className="absolute inset-x-0 top-1 text-center">
+                              <span className="text-[10px] font-bold text-white/90 drop-shadow">
+                                {formatGamma(strike.net_gamma)}
+                              </span>
                             </div>
-                            <div className={getROCColor(strike.roc_5min)}>
-                              5m: {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
-                            </div>
-                            {strike.is_danger && strike.danger_type && (
-                              <div className="mt-1">{getDangerBadge(strike.danger_type)}</div>
+
+                            {/* Flip indicator */}
+                            {strike.gamma_flipped && (
+                              <div className="absolute -right-1 -top-1">
+                                <Zap className="w-3 h-3 text-pink-400" />
+                              </div>
                             )}
+
+                            {/* Danger indicator */}
+                            {strike.is_danger && (
+                              <div className="absolute -left-1 -top-1">
+                                <AlertTriangle className="w-3 h-3 text-orange-400" />
+                              </div>
+                            )}
+
+                            {/* Tooltip on hover */}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20">
+                              <div className="bg-gray-900 border border-gray-600 rounded-lg p-3 text-xs whitespace-nowrap shadow-xl">
+                                <div className="font-bold text-white text-sm mb-1">${strike.strike}</div>
+                                <div className="text-gray-300">
+                                  Net Gamma: <span className="text-blue-400 font-mono">{formatGamma(strike.net_gamma)}</span>
+                                </div>
+                                <div className="text-gray-300">
+                                  Probability: <span className="text-green-400">{strike.probability.toFixed(1)}%</span>
+                                </div>
+                                <div className="border-t border-gray-700 my-1 pt-1">
+                                  <div className={getROCColor(strike.roc_1min)}>
+                                    1min ROC: {strike.roc_1min > 0 ? '+' : ''}{strike.roc_1min.toFixed(1)}%
+                                  </div>
+                                  <div className={getROCColor(strike.roc_5min)}>
+                                    5min ROC: {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
+                                  </div>
+                                </div>
+                                {strike.is_danger && strike.danger_type && (
+                                  <div className="mt-1 pt-1 border-t border-gray-700">{getDangerBadge(strike.danger_type)}</div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
+                    ))}
 
-                      {/* Strike Label */}
-                      <div className={`text-xs mt-1 ${
-                        strike.is_pin
-                          ? 'text-purple-400 font-bold'
-                          : strike.is_magnet
-                          ? 'text-yellow-400 font-bold'
-                          : 'text-gray-400'
-                      }`}>
-                        {strike.strike}
+                    {/* Spot Price Line */}
+                    {gammaData && gammaData.strikes.length > 0 && (
+                      <div
+                        className="absolute bottom-12 top-8 border-l-2 border-dashed border-green-500 z-10"
+                        style={{
+                          left: `calc(${((gammaData.spot_price - gammaData.strikes[0].strike) /
+                            (gammaData.strikes[gammaData.strikes.length - 1].strike -
+                              gammaData.strikes[0].strike)) * 100}% + 1rem)`
+                        }}
+                      >
+                        <div className="absolute -top-6 -left-8 text-xs text-green-400 font-bold whitespace-nowrap bg-gray-900/90 px-2 py-0.5 rounded">
+                          SPOT ${gammaData.spot_price.toFixed(2)}
+                        </div>
                       </div>
+                    )}
+                  </div>
 
-                      {/* ROC Indicator */}
-                      <div className="flex items-center gap-0.5">
-                        <ROCArrow roc={strike.roc_1min} />
+                  {/* Strike Labels Row */}
+                  <div className="flex justify-around gap-2 px-4 pt-2">
+                    {gammaData?.strikes.map((strike) => (
+                      <div
+                        key={`label-${strike.strike}`}
+                        className="flex flex-col items-center flex-1 max-w-16"
+                      >
+                        <div className={`text-sm font-mono ${
+                          strike.is_pin
+                            ? 'text-purple-400 font-bold'
+                            : strike.is_magnet
+                            ? 'text-yellow-400 font-bold'
+                            : 'text-gray-400'
+                        }`}>
+                          {strike.strike}
+                        </div>
+                        <div className="flex items-center gap-0.5 mt-0.5">
+                          <ROCArrow roc={strike.roc_1min} />
+                          <span className={`text-[10px] ${getROCColor(strike.roc_1min)}`}>
+                            {strike.roc_1min > 0 ? '+' : ''}{strike.roc_1min.toFixed(0)}%
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-
-                  {/* Spot Price Line */}
-                  {gammaData && (
-                    <div
-                      className="absolute bottom-8 h-full border-l-2 border-dashed border-green-500/50"
-                      style={{
-                        left: `${((gammaData.spot_price - (gammaData.strikes[0]?.strike || 0)) /
-                          ((gammaData.strikes[gammaData.strikes.length - 1]?.strike || 1) -
-                            (gammaData.strikes[0]?.strike || 0))) * 100}%`
-                      }}
-                    >
-                      <div className="absolute -top-2 left-1 text-xs text-green-400 whitespace-nowrap">
-                        SPOT ${gammaData.spot_price.toFixed(2)}
-                      </div>
-                    </div>
-                  )}
+                    ))}
+                  </div>
                 </div>
               </div>
 
