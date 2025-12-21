@@ -3,14 +3,21 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Heart, Sparkles } from 'lucide-react'
 
-// Cross icon component
+// Latin Cross icon component with proper proportions
 const CrossIcon = ({ className }: { className?: string }) => (
   <svg
     className={className}
     viewBox="0 0 24 24"
     fill="currentColor"
   >
-    <path d="M10 2h4v6h6v4h-6v10h-4V12H4V8h6V2z" />
+    {/* Main cross shape - Latin cross with crossbar at 1/3 height */}
+    <path d="M10.5 1h3v5h5.5v3h-5.5v14h-3V9H5V6h5.5V1z" />
+    {/* Subtle inner highlight for depth */}
+    <path
+      d="M11.5 2h1v4h4.5v1h-4.5v13h-1V7H6V6h5.5V2z"
+      fill="currentColor"
+      opacity="0.3"
+    />
   </svg>
 )
 
@@ -87,9 +94,33 @@ export function DedicationModal({ isOpen, onClose }: DedicationModalProps) {
           </button>
 
           <div className="relative">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/30">
-              <CrossIcon className="w-8 h-8 text-white" />
+            {/* Cross with rays and glow */}
+            <div className="relative w-24 h-24 mx-auto mb-4">
+              {/* Outer glow */}
+              <div className="absolute inset-0 rounded-full bg-amber-400/20 blur-xl animate-pulse" />
+
+              {/* Rays of light */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                {[...Array(8)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="absolute w-1 h-12 bg-gradient-to-t from-amber-400/40 to-transparent origin-bottom"
+                    style={{
+                      transform: `rotate(${i * 45}deg) translateY(-20px)`,
+                    }}
+                  />
+                ))}
+              </div>
+
+              {/* Inner glow ring */}
+              <div className="absolute inset-2 rounded-full bg-amber-500/10 blur-md" />
+
+              {/* Main cross circle */}
+              <div className="absolute inset-3 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/50">
+                <CrossIcon className="w-9 h-9 text-white drop-shadow-lg" />
+              </div>
             </div>
+
             <h2 className="text-2xl font-bold text-amber-400">
               Dedicated to God's Glory
             </h2>
