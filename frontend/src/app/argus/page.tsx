@@ -32,7 +32,9 @@ import {
   Lock,
   Unlock,
   Layers,
-  Compass
+  Compass,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -331,6 +333,69 @@ export default function ArgusPage() {
     return insight
   }
 
+  // Export to Excel
+  const exportToExcel = () => {
+    if (!gammaData) return
+
+    // Create CSV content
+    const headers = ['Strike', 'Net Gamma', 'Probability %', '1m ROC', '5m ROC', 'Is Pin', 'Is Magnet', 'Is Danger', 'Danger Type']
+    const rows = gammaData.strikes.map(s => [
+      s.strike,
+      s.net_gamma,
+      s.probability.toFixed(2),
+      s.roc_1min.toFixed(2),
+      s.roc_5min.toFixed(2),
+      s.is_pin ? 'Yes' : 'No',
+      s.is_magnet ? 'Yes' : 'No',
+      s.is_danger ? 'Yes' : 'No',
+      s.danger_type || ''
+    ])
+
+    // Add summary section
+    const summary = [
+      [],
+      ['=== ARGUS Summary ==='],
+      ['Export Time', new Date().toLocaleString()],
+      ['Symbol', gammaData.symbol],
+      ['Spot Price', gammaData.spot_price],
+      ['Expected Move', `±${gammaData.expected_move.toFixed(2)}`],
+      ['VIX', gammaData.vix.toFixed(2)],
+      ['Gamma Regime', gammaData.gamma_regime],
+      ['Likely Pin', gammaData.likely_pin],
+      ['Pin Probability', `${gammaData.pin_probability.toFixed(1)}%`],
+      [],
+      ['=== Top Magnets ==='],
+      ...gammaData.magnets.map((m, i) => [`Magnet #${i + 1}`, `$${m.strike}`, `${m.probability.toFixed(1)}%`]),
+      [],
+      ['=== Expected Move Change ==='],
+      ['Signal', gammaData.expected_move_change?.signal || 'N/A'],
+      ['Sentiment', gammaData.expected_move_change?.sentiment || 'N/A'],
+      ['Prior Day EM', gammaData.expected_move_change?.prior_day ? `±$${gammaData.expected_move_change.prior_day.toFixed(2)}` : 'N/A'],
+      ['Current EM', `±$${gammaData.expected_move_change?.current.toFixed(2) || 'N/A'}`],
+      ['Change %', `${gammaData.expected_move_change?.pct_change_prior.toFixed(1) || 0}%`],
+      [],
+      ['=== Danger Zones ==='],
+      ...gammaData.danger_zones.map(d => [d.danger_type, `$${d.strike}`, `ROC: ${d.roc_5min.toFixed(1)}%`]),
+      [],
+      ['=== Alerts ==='],
+      ...alerts.map(a => [a.priority, a.message, new Date(a.triggered_at).toLocaleTimeString()]),
+      [],
+      ['=== Strike Data ==='],
+      headers
+    ]
+
+    const csvContent = [...summary.map(row => row.join(',')), ...rows.map(row => row.join(','))].join('\n')
+
+    // Create download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const filename = `ARGUS_${gammaData.symbol}_${new Date().toISOString().split('T')[0]}.csv`
+    link.href = URL.createObjectURL(blob)
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
+
   // Loading
   if (loading && !gammaData) {
     return (
@@ -408,8 +473,18 @@ export default function ArgusPage() {
               <button
                 onClick={() => fetchGammaData(activeDay)}
                 className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg"
+                title="Refresh data"
               >
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+              <button
+                onClick={exportToExcel}
+                disabled={!gammaData}
+                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded-lg text-sm text-white"
+                title="Export to CSV"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                Export
               </button>
             </div>
           </div>
@@ -830,95 +905,101 @@ export default function ArgusPage() {
                 </table>
               </div>
             </div>
-          </div>
 
-          {/* Right Column - Alerts & Info */}
-          <div className="space-y-6">
-
-            {/* Live Alerts */}
-            <div className="bg-gray-800/50 rounded-xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-white flex items-center gap-2">
-                  <Bell className="w-5 h-5 text-yellow-400" />
-                  Live Alerts
-                </h3>
-                {alerts.length > 0 && (
-                  <span className="px-2 py-0.5 bg-rose-500 text-white text-xs rounded-full font-bold">
-                    {alerts.length}
-                  </span>
-                )}
-              </div>
-              <div className="space-y-3 max-h-64 overflow-y-auto">
-                {alerts.length > 0 ? (
-                  alerts.slice(0, 8).map((alert, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-3 rounded-lg border-l-4 ${
-                        alert.priority === 'HIGH'
-                          ? 'bg-rose-500/10 border-rose-500'
-                          : alert.priority === 'MEDIUM'
-                          ? 'bg-yellow-500/10 border-yellow-500'
-                          : 'bg-gray-700/30 border-gray-600'
-                      }`}
-                    >
-                      <div className="text-sm text-white">{alert.message}</div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {new Date(alert.triggered_at).toLocaleTimeString()}
+            {/* Alerts & Danger Zones Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Live Alerts */}
+              <div className="bg-gray-800/50 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Bell className="w-5 h-5 text-yellow-400" />
+                    Live Alerts
+                  </h3>
+                  {alerts.length > 0 && (
+                    <span className="px-2 py-0.5 bg-rose-500 text-white text-xs rounded-full font-bold">
+                      {alerts.length}
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-3 max-h-48 overflow-y-auto">
+                  {alerts.length > 0 ? (
+                    alerts.slice(0, 6).map((alert, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-lg border-l-4 ${
+                          alert.priority === 'HIGH'
+                            ? 'bg-rose-500/10 border-rose-500'
+                            : alert.priority === 'MEDIUM'
+                            ? 'bg-yellow-500/10 border-yellow-500'
+                            : 'bg-gray-700/30 border-gray-600'
+                        }`}
+                      >
+                        <div className="text-sm text-white">{alert.message}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {new Date(alert.triggered_at).toLocaleTimeString()}
+                        </div>
                       </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-6 text-gray-500">
+                      <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No active alerts</p>
                     </div>
-                  ))
-                ) : (
-                  <div className="text-center py-6 text-gray-500">
-                    <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">No active alerts</p>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Danger Zones Summary */}
-            {(buildingZones.length > 0 || collapsingZones.length > 0) && (
+              {/* Danger Zones Summary */}
               <div className="bg-gray-800/50 rounded-xl p-5">
                 <h3 className="font-bold text-white flex items-center gap-2 mb-4">
                   <AlertTriangle className="w-5 h-5 text-orange-400" />
                   Danger Zones
                 </h3>
-
-                {buildingZones.length > 0 && (
-                  <div className="mb-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Flame className="w-4 h-4 text-orange-400" />
-                      <span className="text-sm text-orange-400 font-medium">Building (+ROC)</span>
-                    </div>
-                    <p className="text-xs text-gray-400 mb-2">Gamma increasing rapidly - potential support/resistance forming</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {buildingZones.slice(0, 5).map(dz => (
-                        <span key={dz.strike} className="px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-xs">
-                          ${dz.strike} (+{dz.roc_5min.toFixed(0)}%)
-                        </span>
-                      ))}
-                    </div>
+                {(buildingZones.length > 0 || collapsingZones.length > 0) ? (
+                  <div className="space-y-4">
+                    {buildingZones.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Flame className="w-4 h-4 text-orange-400" />
+                          <span className="text-sm text-orange-400 font-medium">Building (+ROC)</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {buildingZones.slice(0, 4).map(dz => (
+                            <span key={dz.strike} className="px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-xs">
+                              ${dz.strike} (+{dz.roc_5min.toFixed(0)}%)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {collapsingZones.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <TrendingDown className="w-4 h-4 text-rose-400" />
+                          <span className="text-sm text-rose-400 font-medium">Collapsing (-ROC)</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {collapsingZones.slice(0, 4).map(dz => (
+                            <span key={dz.strike} className="px-2 py-1 bg-rose-500/20 text-rose-400 rounded text-xs">
+                              ${dz.strike} ({dz.roc_5min.toFixed(0)}%)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-
-                {collapsingZones.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <TrendingDown className="w-4 h-4 text-rose-400" />
-                      <span className="text-sm text-rose-400 font-medium">Collapsing (-ROC)</span>
-                    </div>
-                    <p className="text-xs text-gray-400 mb-2">Gamma decreasing - support/resistance weakening</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {collapsingZones.slice(0, 5).map(dz => (
-                        <span key={dz.strike} className="px-2 py-1 bg-rose-500/20 text-rose-400 rounded text-xs">
-                          ${dz.strike} ({dz.roc_5min.toFixed(0)}%)
-                        </span>
-                      ))}
-                    </div>
+                ) : (
+                  <div className="text-center py-6 text-gray-500">
+                    <Shield className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No danger zones detected</p>
                   </div>
                 )}
               </div>
-            )}
+            </div>
+          </div>
+
+          {/* Right Column - Key Levels & Context */}
+          <div className="space-y-6">
 
             {/* Key Levels */}
             <div className="bg-gray-800/50 rounded-xl p-5">
