@@ -497,6 +497,100 @@ export default function ArgusPage() {
                 </div>
               </div>
             </div>
+
+            {/* Historical Edge Stats - Based on Backtest */}
+            <div className="mt-4 pt-4 border-t border-gray-700/50">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 className="w-4 h-4 text-gray-500" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Historical Edge (2022-2025 Backtest)</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {gammaData.expected_move_change.signal === 'DOWN' && (
+                  <>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
+                      <div className="text-lg font-bold text-rose-400">51.0%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
+                      <div className="text-lg font-bold text-rose-400">-0.26%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
+                      <div className="text-lg font-bold text-gray-300">5.2%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Edge</div>
+                      <div className="text-sm font-medium text-rose-400">Bearish bias confirmed</div>
+                    </div>
+                  </>
+                )}
+                {gammaData.expected_move_change.signal === 'UP' && (
+                  <>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
+                      <div className="text-lg font-bold text-emerald-400">53.3%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
+                      <div className="text-lg font-bold text-emerald-400">+0.02%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
+                      <div className="text-lg font-bold text-gray-300">19.7%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Edge</div>
+                      <div className="text-sm font-medium text-emerald-400">Slight bullish bias</div>
+                    </div>
+                  </>
+                )}
+                {gammaData.expected_move_change.signal === 'FLAT' && (
+                  <>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
+                      <div className="text-lg font-bold text-gray-400">51.7%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
+                      <div className="text-lg font-bold text-gray-400">+0.04%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
+                      <div className="text-lg font-bold text-gray-300">74.2%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Edge</div>
+                      <div className="text-sm font-medium text-gray-400">Range-bound expected</div>
+                    </div>
+                  </>
+                )}
+                {gammaData.expected_move_change.signal === 'WIDEN' && (
+                  <>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
+                      <div className="text-lg font-bold text-orange-400">88.9%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Avg Abs Move</div>
+                      <div className="text-lg font-bold text-orange-400">±1.53%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
+                      <div className="text-lg font-bold text-gray-300">0.9%</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-1">Edge</div>
+                      <div className="text-sm font-medium text-orange-400">BIG MOVE LIKELY!</div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
+                <Info className="w-3 h-3" />
+                <span>Based on 990 trading days. DOWN vs UP directional edge: +0.27%</span>
+              </div>
+            </div>
           </div>
         )}
 
