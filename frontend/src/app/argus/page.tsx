@@ -1104,6 +1104,58 @@ export default function ArgusPage() {
               </div>
             </div>
 
+            {/* Live Commentary / ARGUS Log */}
+            <div className="bg-gray-800/50 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-cyan-400" />
+                  ARGUS Live Log
+                </h3>
+                {commentary.length > 0 && (
+                  <span className="text-xs text-gray-500">
+                    {commentary.length} entries
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto font-mono text-xs">
+                {commentary.length > 0 ? (
+                  commentary.slice(0, 20).map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="p-3 bg-gray-900/50 rounded-lg border-l-2 border-cyan-500/50"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <p className="text-gray-300 leading-relaxed">{entry.text}</p>
+                          <div className="flex flex-wrap gap-3 mt-2 text-[10px]">
+                            <span className="text-gray-500">
+                              SPY: <span className="text-white">${entry.spot_price.toFixed(2)}</span>
+                            </span>
+                            <span className="text-gray-500">
+                              Magnet: <span className="text-yellow-400">${entry.top_magnet}</span>
+                            </span>
+                            <span className="text-gray-500">
+                              Pin: <span className="text-purple-400">${entry.likely_pin}</span>
+                              <span className="text-gray-600 ml-1">({entry.pin_probability.toFixed(0)}%)</span>
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-gray-600 whitespace-nowrap">
+                          {new Date(entry.timestamp).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <Activity className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No log entries yet</p>
+                    <p className="text-xs text-gray-600 mt-1">Commentary will appear as market events occur</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Alerts & Danger Zones Row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Live Alerts */}
