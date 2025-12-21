@@ -399,16 +399,21 @@ def calculate_term_structure(vix_spot: float) -> Dict[str, Any]:
 # ============================================================================
 
 def fetch_vix_from_tradier() -> Optional[Dict[str, Any]]:
-    """Fetch VIX from Tradier API with retry"""
+    """Fetch VIX from Tradier API with retry.
+
+    NOTE: Always use PRODUCTION mode for VIX quotes - sandbox may not support
+    index quotes like $VIX.X. This is read-only (no trading) so it's safe.
+    """
     def _fetch():
         from data.tradier_data_fetcher import TradierDataFetcher
-        use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
-        tradier = TradierDataFetcher(sandbox=use_sandbox)
+        # Force PRODUCTION for VIX quotes - sandbox doesn't support all index quotes
+        # VIX is read-only (no trading), so production is safe and more reliable
+        tradier = TradierDataFetcher(sandbox=False)
         vix_quote = tradier.get_quote("$VIX.X")
         if vix_quote and vix_quote.get('last'):
             return {
                 'vix_spot': float(vix_quote['last']),
-                'vix_source': 'tradier',
+                'vix_source': 'tradier_production',
                 'is_estimated': False
             }
         return None

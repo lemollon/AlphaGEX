@@ -484,17 +484,18 @@ class UnifiedDataProvider:
 
     def get_vix(self) -> float:
         """Get current VIX value from Tradier or Yahoo Finance (no Polygon)"""
-        # Try Tradier first - $VIX.X is the proven working format
-        if self._tradier:
-            try:
-                data = self._tradier.get_quote('$VIX.X')
-                if data:
-                    price = float(data.get('last', 0) or data.get('close', 0) or 0)
-                    if price > 0:
-                        logger.info(f"VIX from Tradier ($VIX.X): {price}")
-                        return price
-            except Exception as e:
-                logger.debug(f"Tradier VIX fetch failed: {e}")
+        # Try Tradier PRODUCTION first - sandbox doesn't support all index quotes
+        # VIX is read-only (no trading), so production is safe and more reliable
+        try:
+            tradier_prod = TradierDataFetcher(sandbox=False)
+            data = tradier_prod.get_quote('$VIX.X')
+            if data:
+                price = float(data.get('last', 0) or data.get('close', 0) or 0)
+                if price > 0:
+                    logger.info(f"VIX from Tradier production ($VIX.X): {price}")
+                    return price
+        except Exception as e:
+            logger.debug(f"Tradier VIX fetch failed: {e}")
 
         # Try Yahoo Finance (FREE - no API key needed!)
         try:

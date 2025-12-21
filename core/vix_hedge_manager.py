@@ -174,13 +174,14 @@ class VIXHedgeManager:
 
             try:
                 from data.tradier_data_fetcher import TradierDataFetcher
-                use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
-                tradier = TradierDataFetcher(sandbox=use_sandbox)
+                # Force PRODUCTION for VIX quotes - sandbox doesn't support all index quotes
+                # VIX is read-only (no trading), so production is safe and more reliable
+                tradier = TradierDataFetcher(sandbox=False)
                 vix_quote = tradier.get_quote("$VIX.X")
                 if vix_quote and vix_quote.get('last'):
                     vix_spot = float(vix_quote['last'])
-                    vix_source = 'tradier'
-                    logger.info(f"VIX from Tradier $VIX.X: {vix_spot}")
+                    vix_source = 'tradier_production'
+                    logger.info(f"VIX from Tradier $VIX.X (production): {vix_spot}")
             except Exception as e:
                 logger.warning(f"Tradier $VIX.X failed: {e}")
 
