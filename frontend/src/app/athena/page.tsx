@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Target, TrendingUp, TrendingDown, Activity, DollarSign, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp, Play, Settings, FileText, Zap } from 'lucide-react'
+import { Target, TrendingUp, TrendingDown, Activity, DollarSign, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp, Play, Settings, FileText, Zap, Brain, Crosshair, ScrollText } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -12,7 +12,8 @@ import {
   useATHENAPerformance,
   useATHENAOracleAdvice,
   useATHENAMLSignal,
-  useATHENALogs
+  useATHENALogs,
+  useATHENADecisions
 } from '@/lib/hooks/useMarketData'
 
 interface ATHENAStatus {
@@ -133,6 +134,69 @@ interface PerformanceData {
   }[]
 }
 
+interface DecisionLog {
+  decision_id: string
+  bot_name: string
+  symbol: string
+  decision_type: string
+  action: string
+  what: string
+  why: string
+  how: string
+  timestamp: string
+  actual_pnl?: number
+  // Trade legs
+  legs?: Array<{
+    leg_id: number
+    action: string
+    option_type: string
+    strike: number
+    expiration: string
+    entry_price: number
+    exit_price: number
+    contracts: number
+  }>
+  // Oracle/ML advice
+  oracle_advice?: {
+    advice: string
+    win_probability: number
+    confidence: number
+    suggested_risk_pct: number
+    reasoning: string
+    claude_analysis?: {
+      analysis: string
+      risk_factors: string[]
+    }
+  }
+  // GEX context
+  gex_context?: {
+    net_gex: number
+    call_wall: number
+    put_wall: number
+    flip_point: number
+    regime: string
+    between_walls: boolean
+  }
+  // Market context
+  market_context?: {
+    spot_price: number
+    vix: number
+  }
+  // Position sizing
+  position_sizing?: {
+    contracts: number
+    position_dollars: number
+    max_risk_dollars: number
+    probability_of_profit: number
+  }
+  // Alternatives
+  alternatives?: {
+    primary_reason: string
+    supporting_factors: string[]
+    risk_factors: string[]
+  }
+}
+
 export default function ATHENAPage() {
   // SWR hooks for data fetching with caching
   const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useATHENAStatus()
@@ -142,6 +206,7 @@ export default function ATHENAPage() {
   const { data: adviceRes, isValidating: adviceValidating, mutate: mutateAdvice } = useATHENAOracleAdvice()
   const { data: mlSignalRes, isValidating: mlValidating, mutate: mutateML } = useATHENAMLSignal()
   const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useATHENALogs(undefined, 50)
+  const { data: decisionsRes, isValidating: decisionsValidating, mutate: mutateDecisions } = useATHENADecisions(100)
 
   // Extract data from responses
   const status = statusRes?.data as ATHENAStatus | undefined
@@ -151,15 +216,17 @@ export default function ATHENAPage() {
   const oracleAdvice = adviceRes?.data as OracleAdvice | undefined
   const mlSignal = mlSignalRes?.data as MLSignal | undefined
   const logs = (logsRes?.data || []) as LogEntry[]
+  const decisions = (decisionsRes?.data || []) as DecisionLog[]
 
   const loading = statusLoading && !status
   const error = statusError?.message || null
-  const isRefreshing = statusValidating || posValidating || signalsValidating || perfValidating || adviceValidating || mlValidating || logsValidating
+  const isRefreshing = statusValidating || posValidating || signalsValidating || perfValidating || adviceValidating || mlValidating || logsValidating || decisionsValidating
 
   // UI State
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'signals' | 'logs'>('overview')
   const [showClosedPositions, setShowClosedPositions] = useState(false)
   const [runningCycle, setRunningCycle] = useState(false)
+  const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
 
   // Manual refresh function
   const fetchData = () => {
@@ -170,6 +237,27 @@ export default function ATHENAPage() {
     mutateAdvice()
     mutateML()
     mutateLogs()
+    mutateDecisions()
+  }
+
+  // Helper functions for decision display
+  const getDecisionTypeBadge = (type: string) => {
+    switch (type) {
+      case 'ENTRY_SIGNAL': return { bg: 'bg-green-900/50', text: 'text-green-400' }
+      case 'EXIT_SIGNAL': return { bg: 'bg-red-900/50', text: 'text-red-400' }
+      case 'NO_TRADE': return { bg: 'bg-gray-700', text: 'text-gray-400' }
+      default: return { bg: 'bg-gray-700', text: 'text-gray-400' }
+    }
+  }
+
+  const getActionColor = (action: string) => {
+    switch (action?.toUpperCase()) {
+      case 'BUY': return 'text-green-400'
+      case 'SELL': return 'text-red-400'
+      case 'CLOSE': return 'text-yellow-400'
+      case 'SKIP': return 'text-gray-400'
+      default: return 'text-gray-400'
+    }
   }
 
   const runCycle = async () => {
@@ -498,6 +586,266 @@ export default function ATHENAPage() {
                   </div>
                 </div>
               )}
+
+              {/* Decision Log Panel */}
+              <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <ScrollText className="w-5 h-5 text-orange-400" />
+                      <h2 className="text-lg font-semibold text-white">Decision Log</h2>
+                      <span className="text-sm text-gray-400">
+                        {decisions.length} decisions
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Full audit trail: What, Why, How for every trading decision
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-3 max-h-[800px] overflow-y-auto">
+                  {decisions.length > 0 ? (
+                    decisions.map((decision) => {
+                      const badge = getDecisionTypeBadge(decision.decision_type)
+                      const isExpanded = expandedDecision === decision.decision_id
+
+                      return (
+                        <div
+                          key={decision.decision_id}
+                          className={`bg-gray-900/50 rounded-lg border transition-all ${
+                            isExpanded ? 'border-orange-500/50' : 'border-gray-700 hover:border-gray-600'
+                          }`}
+                        >
+                          {/* Decision Header */}
+                          <div
+                            className="p-3 cursor-pointer"
+                            onClick={() => setExpandedDecision(isExpanded ? null : decision.decision_id)}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>
+                                    {decision.decision_type?.replace(/_/g, ' ')}
+                                  </span>
+                                  <span className={`text-sm font-medium ${getActionColor(decision.action)}`}>
+                                    {decision.action}
+                                  </span>
+                                  {decision.symbol && (
+                                    <span className="text-xs text-gray-400 font-mono">{decision.symbol}</span>
+                                  )}
+                                  {decision.actual_pnl !== undefined && decision.actual_pnl !== 0 && (
+                                    <span className={`text-xs font-bold ${decision.actual_pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {decision.actual_pnl > 0 ? '+' : ''}{formatCurrency(decision.actual_pnl)}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-white truncate">
+                                  <span className="text-gray-500">WHAT: </span>
+                                  {decision.what}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-500 whitespace-nowrap">
+                                  {new Date(decision.timestamp).toLocaleString('en-US', {
+                                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                                  })}
+                                </span>
+                                {isExpanded ? (
+                                  <ChevronUp className="w-4 h-4 text-gray-400" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 text-gray-400" />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Expanded Details */}
+                          {isExpanded && (
+                            <div className="px-3 pb-3 space-y-3 border-t border-gray-700/50 pt-3">
+                              {/* WHY Section */}
+                              <div className="bg-yellow-900/10 border-l-2 border-yellow-500 pl-3 py-2">
+                                <span className="text-yellow-400 text-xs font-bold">WHY:</span>
+                                <p className="text-sm text-gray-300 mt-1">{decision.why || 'Not specified'}</p>
+                                {decision.alternatives?.supporting_factors && decision.alternatives.supporting_factors.length > 0 && (
+                                  <div className="mt-2">
+                                    <span className="text-xs text-gray-500">Supporting Factors:</span>
+                                    <ul className="list-disc list-inside text-xs text-gray-400 mt-1">
+                                      {decision.alternatives.supporting_factors.map((f, i) => (
+                                        <li key={i}>{f}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* HOW Section */}
+                              {decision.how && (
+                                <div className="bg-blue-900/10 border-l-2 border-blue-500 pl-3 py-2">
+                                  <span className="text-blue-400 text-xs font-bold">HOW:</span>
+                                  <p className="text-sm text-gray-300 mt-1">{decision.how}</p>
+                                </div>
+                              )}
+
+                              {/* Market Context & GEX */}
+                              <div className="grid grid-cols-2 gap-3">
+                                {/* Market Context */}
+                                <div className="bg-gray-800/50 rounded p-2">
+                                  <span className="text-cyan-400 text-xs font-bold">MARKET AT DECISION:</span>
+                                  <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                                    <div>
+                                      <span className="text-gray-500">{decision.symbol}:</span>
+                                      <span className="text-white ml-1">${(decision.market_context?.spot_price || 0).toLocaleString()}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-500">VIX:</span>
+                                      <span className="text-yellow-400 ml-1">{(decision.market_context?.vix || 0).toFixed(1)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* GEX Context */}
+                                <div className="bg-purple-900/20 border border-purple-700/30 rounded p-2">
+                                  <div className="flex items-center gap-1 mb-2">
+                                    <Crosshair className="w-3 h-3 text-purple-400" />
+                                    <span className="text-purple-400 text-xs font-bold">GEX LEVELS:</span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 text-xs">
+                                    <div>
+                                      <span className="text-gray-500">Put Wall:</span>
+                                      <span className="text-green-400 ml-1">${decision.gex_context?.put_wall || '-'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-500">Call Wall:</span>
+                                      <span className="text-red-400 ml-1">${decision.gex_context?.call_wall || '-'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-500">Flip:</span>
+                                      <span className="text-white ml-1">${decision.gex_context?.flip_point || '-'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-500">Regime:</span>
+                                      <span className={`ml-1 ${decision.gex_context?.regime === 'POSITIVE' ? 'text-green-400' : decision.gex_context?.regime === 'NEGATIVE' ? 'text-red-400' : 'text-gray-400'}`}>
+                                        {decision.gex_context?.regime || '-'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Oracle/ML Advice */}
+                              {decision.oracle_advice && (
+                                <div className="bg-green-900/20 border border-green-700/30 rounded p-2">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <Brain className="w-4 h-4 text-green-400" />
+                                      <span className="text-green-400 text-xs font-bold">ML/ORACLE PREDICTION:</span>
+                                    </div>
+                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                      decision.oracle_advice.advice?.includes('TRADE') ? 'bg-green-900/50 text-green-400' :
+                                      decision.oracle_advice.advice?.includes('LONG') || decision.oracle_advice.advice?.includes('SHORT') ? 'bg-green-900/50 text-green-400' :
+                                      'bg-red-900/50 text-red-400'
+                                    }`}>
+                                      {decision.oracle_advice.advice?.replace(/_/g, ' ')}
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2 text-xs mb-2">
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Win Prob</span>
+                                      <span className="text-green-400 font-bold">{((decision.oracle_advice.win_probability || 0) * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Confidence</span>
+                                      <span className="text-white font-bold">{((decision.oracle_advice.confidence || 0) * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Risk %</span>
+                                      <span className="text-yellow-400 font-bold">{(decision.oracle_advice.suggested_risk_pct || 0).toFixed(1)}%</span>
+                                    </div>
+                                  </div>
+                                  {decision.oracle_advice.reasoning && (
+                                    <p className="text-xs text-gray-400 mt-2 italic">{decision.oracle_advice.reasoning}</p>
+                                  )}
+                                  {decision.oracle_advice.claude_analysis && (
+                                    <div className="mt-2 pt-2 border-t border-green-700/30">
+                                      <span className="text-xs text-green-300 font-medium">Claude AI Analysis:</span>
+                                      <p className="text-xs text-gray-400 mt-1">{decision.oracle_advice.claude_analysis.analysis}</p>
+                                      {decision.oracle_advice.claude_analysis.risk_factors?.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mt-1">
+                                          {decision.oracle_advice.claude_analysis.risk_factors.map((rf, i) => (
+                                            <span key={i} className="px-1.5 py-0.5 bg-red-900/30 rounded text-xs text-red-400">{rf}</span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Position Sizing */}
+                              {decision.position_sizing && (decision.position_sizing.contracts > 0 || decision.position_sizing.position_dollars > 0) && (
+                                <div className="bg-gray-800/50 rounded p-2">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <DollarSign className="w-4 h-4 text-yellow-400" />
+                                    <span className="text-yellow-400 text-xs font-bold">POSITION SIZING:</span>
+                                  </div>
+                                  <div className="grid grid-cols-4 gap-2 text-xs">
+                                    <div>
+                                      <span className="text-gray-500">Contracts:</span>
+                                      <span className="text-white ml-1 font-bold">{decision.position_sizing.contracts}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-500">Premium:</span>
+                                      <span className="text-green-400 ml-1">${(decision.position_sizing.position_dollars || 0).toLocaleString()}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-500">Max Risk:</span>
+                                      <span className="text-red-400 ml-1">${(decision.position_sizing.max_risk_dollars || 0).toLocaleString()}</span>
+                                    </div>
+                                    {decision.position_sizing.probability_of_profit > 0 && (
+                                      <div>
+                                        <span className="text-gray-500">POP:</span>
+                                        <span className="text-white ml-1">{(decision.position_sizing.probability_of_profit * 100).toFixed(0)}%</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Trade Legs */}
+                              {decision.legs && decision.legs.length > 0 && (
+                                <div className="bg-gray-800/50 rounded p-2">
+                                  <span className="text-cyan-400 text-xs font-bold">TRADE LEGS:</span>
+                                  <div className="mt-2 space-y-1">
+                                    {decision.legs.map((leg, i) => (
+                                      <div key={i} className="flex items-center gap-2 text-xs">
+                                        <span className={`${leg.action === 'BUY' ? 'text-green-400' : 'text-red-400'} font-medium w-10`}>
+                                          {leg.action}
+                                        </span>
+                                        <span className="text-white">{leg.contracts}x</span>
+                                        <span className="text-gray-400">{leg.option_type?.toUpperCase()}</span>
+                                        <span className="text-white">${leg.strike}</span>
+                                        <span className="text-gray-500">{leg.expiration}</span>
+                                        {leg.entry_price && (
+                                          <span className="text-green-400">@ ${leg.entry_price.toFixed(2)}</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      No decisions logged yet. Decisions will appear here when ATHENA makes trading decisions.
+                    </div>
+                  )}
+                </div>
+              </div>
             </>
           )}
 

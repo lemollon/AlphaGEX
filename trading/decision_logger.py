@@ -46,6 +46,7 @@ class BotName(Enum):
     HERMES = "HERMES"    # WheelStrategyManager - Manual Wheel via UI
     ORACLE = "ORACLE"    # MultiStrategyOptimizer - Advisory/Recommendations
     ARES = "ARES"        # ARESTrader - Aggressive Iron Condor (10% monthly target)
+    ATHENA = "ATHENA"    # ATHENATrader - Directional Spreads (Bull/Bear Call Spreads)
 
 
 class DecisionType(Enum):
@@ -1197,3 +1198,10 @@ def get_ares_logger() -> DecisionLogger:
     if 'ARES' not in _bot_loggers:
         _bot_loggers['ARES'] = DecisionLogger()
     return _bot_loggers['ARES']
+
+
+def get_athena_logger() -> DecisionLogger:
+    """Get logger for ATHENA (Directional Spreads)"""
+    if 'ATHENA' not in _bot_loggers:
+        _bot_loggers['ATHENA'] = DecisionLogger()
+    return _bot_loggers['ATHENA']

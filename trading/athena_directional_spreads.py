@@ -94,7 +94,21 @@ except ImportError:
     TradierGEXCalculator = None
     get_gex_calculator = None
 
-# Import comprehensive bot logger
+# Import comprehensive decision logger (same as ARES)
+try:
+    from trading.decision_logger import (
+        DecisionLogger, TradeDecision, DecisionType, BotName,
+        TradeLeg, MarketContext as LoggerMarketContext, DataSource,
+        DecisionReasoning, get_athena_logger
+    )
+    DECISION_LOGGER_AVAILABLE = True
+except ImportError:
+    DECISION_LOGGER_AVAILABLE = False
+    DecisionLogger = None
+    TradeDecision = None
+    get_athena_logger = None
+
+# Import comprehensive bot logger (legacy - kept for compatibility)
 try:
     from trading.bot_logger import (
         log_bot_decision, update_decision_outcome, update_execution_timeline,
@@ -277,6 +291,12 @@ class ATHENATrader:
         self.session_tracker = None
         if BOT_LOGGER_AVAILABLE and get_session_tracker:
             self.session_tracker = get_session_tracker("ATHENA")
+
+        # Decision logger for full audit trail (same as ARES)
+        self.decision_logger = None
+        if DECISION_LOGGER_AVAILABLE and get_athena_logger:
+            self.decision_logger = get_athena_logger()
+            logger.info("ATHENA: Decision logger initialized")
 
         # Load config from database if available
         self._load_config_from_db()
@@ -859,67 +879,194 @@ class ATHENATrader:
         self,
         position: SpreadPosition,
         gex_data: Dict,
-        advice: OraclePrediction,
+        advice: Any,
         decision_tracker: Optional[Any] = None
     ) -> None:
-        """Log comprehensive decision using bot_logger"""
-        if not BOT_LOGGER_AVAILABLE or not log_bot_decision:
+        """Log comprehensive decision using decision_logger (same as ARES)"""
+        if not DECISION_LOGGER_AVAILABLE or not self.decision_logger:
             return
 
         try:
-            # Build market context
-            market_ctx = BotLogMarketContext(
-                spot_price=gex_data.get('spot_price', 0),
-                vix=20.0,  # TODO: Get actual VIX
-                net_gex=gex_data.get('net_gex', 0),
-                gex_regime=gex_data.get('regime', 'NEUTRAL'),
-                flip_point=gex_data.get('flip_point', 0),
-                call_wall=gex_data.get('call_wall', 0),
-                put_wall=gex_data.get('put_wall', 0)
+            # Create trade legs for the spread
+            if position.spread_type == SpreadType.BULL_CALL_SPREAD:
+                legs = [
+                    TradeLeg(
+                        leg_id=1,
+                        action="BUY",
+                        option_type="call",
+                        strike=position.long_strike,
+                        expiration=position.expiration,
+                        entry_price=position.entry_debit,
+                        contracts=position.contracts
+                    ),
+                    TradeLeg(
+                        leg_id=2,
+                        action="SELL",
+                        option_type="call",
+                        strike=position.short_strike,
+                        expiration=position.expiration,
+                        contracts=position.contracts
+                    )
+                ]
+            else:  # BEAR_CALL_SPREAD
+                legs = [
+                    TradeLeg(
+                        leg_id=1,
+                        action="SELL",
+                        option_type="call",
+                        strike=position.short_strike,
+                        expiration=position.expiration,
+                        entry_price=abs(position.entry_debit),  # Credit received
+                        contracts=position.contracts
+                    ),
+                    TradeLeg(
+                        leg_id=2,
+                        action="BUY",
+                        option_type="call",
+                        strike=position.long_strike,
+                        expiration=position.expiration,
+                        contracts=position.contracts
+                    )
+                ]
+
+            # Get VIX
+            vix = 20.0
+            if UNIFIED_DATA_AVAILABLE:
+                try:
+                    from data.unified_data_provider import get_vix
+                    vix = get_vix() or 20.0
+                except:
+                    pass
+
+            # Build supporting factors
+            supporting_factors = [
+                f"GEX Regime: {gex_data.get('regime', 'UNKNOWN')} (net: {gex_data.get('net_gex', 0):,.0f})",
+                f"Call Wall: ${gex_data.get('call_wall', 0):,.0f}",
+                f"Put Wall: ${gex_data.get('put_wall', 0):,.0f}",
+                f"Spot: ${gex_data.get('spot_price', 0):,.2f}",
+                f"VIX: {vix:.1f}",
+            ]
+
+            # Add Oracle/ML factors
+            if hasattr(advice, 'win_probability'):
+                supporting_factors.append(f"Win Probability: {advice.win_probability:.1%}")
+            if hasattr(advice, 'confidence'):
+                supporting_factors.append(f"Confidence: {advice.confidence:.1%}")
+            if hasattr(advice, 'reasoning') and advice.reasoning:
+                supporting_factors.append(f"Signal Reasoning: {advice.reasoning[:200]}")
+
+            # Build risk factors
+            risk_factors = [
+                f"Max loss per spread: ${position.spread_width * 100:,.0f}",
+                f"Total max risk: ${position.max_loss:,.0f}",
+                f"0DTE expiration: {position.expiration}",
+                f"R:R filter passed (min {self.config.min_rr_ratio}:1)",
+            ]
+
+            # Alternatives considered
+            alternatives_considered = [
+                "STAY_OUT (insufficient signal strength)",
+                "Opposite direction (Bull vs Bear)",
+                "Wider spread width for more credit",
+                "Wait for better entry",
+            ]
+
+            why_not_alternatives = [
+                "GEX/ML signal confirmed direction",
+                f"R:R ratio met minimum threshold",
+                "Current spread width provides optimal risk/reward",
+            ]
+
+            # Build oracle_advice dict for storage
+            oracle_advice_dict = None
+            if hasattr(advice, 'win_probability'):
+                oracle_advice_dict = {
+                    'advice': getattr(advice, 'advice', 'UNKNOWN'),
+                    'win_probability': getattr(advice, 'win_probability', 0),
+                    'confidence': getattr(advice, 'confidence', getattr(advice, 'win_probability', 0)),
+                    'suggested_risk_pct': getattr(advice, 'suggested_risk_pct', None),
+                    'suggested_call_strike': getattr(advice, 'suggested_call_strike', None),
+                    'reasoning': getattr(advice, 'reasoning', ''),
+                }
+                # Include Claude analysis if available
+                if hasattr(advice, 'claude_analysis') and advice.claude_analysis:
+                    claude = advice.claude_analysis
+                    oracle_advice_dict['claude_analysis'] = {
+                        'analysis': getattr(claude, 'analysis', getattr(claude, 'raw_response', '')),
+                        'confidence_adjustment': getattr(claude, 'confidence_adjustment', 0),
+                        'risk_factors': getattr(claude, 'risk_factors', []),
+                        'opportunities': getattr(claude, 'opportunities', []),
+                        'recommendation': getattr(claude, 'recommendation', ''),
+                    }
+
+            # Build comprehensive "what"
+            spread_name = "Bull Call Spread" if position.spread_type == SpreadType.BULL_CALL_SPREAD else "Bear Call Spread"
+            what_desc = f"{spread_name} {position.contracts}x ${position.long_strike}/${position.short_strike} @ ${abs(position.entry_debit):.2f}"
+
+            # Build comprehensive "why"
+            why_parts = [
+                f"GEX-based directional {spread_name} for premium capture.",
+                f"Regime: {gex_data.get('regime', 'UNKNOWN')}",
+            ]
+            if hasattr(advice, 'win_probability'):
+                why_parts.append(f"Win Prob: {advice.win_probability:.0%}")
+            why_desc = " | ".join(why_parts)
+
+            # Build comprehensive "how"
+            how_desc = (
+                f"Strike Selection: ATM ${position.long_strike}, OTM ${position.short_strike} "
+                f"(${position.spread_width} wide). "
+                f"Position Sizing: {self.config.risk_per_trade_pct:.0f}% risk = {position.contracts} contracts. "
+                f"Execution: {'Tradier Sandbox (PAPER)' if self.config.mode == TradingMode.PAPER else 'Tradier Production (LIVE)'}."
             )
 
-            # Build Claude context if available
-            claude_ctx = ClaudeContext()
-            if advice.claude_analysis:
-                claude_ctx.response = advice.claude_analysis.analysis
-                claude_ctx.confidence = str(advice.claude_analysis.confidence_adjustment)
-                claude_ctx.warnings = advice.claude_analysis.risk_factors
-
-            # Create decision object
-            decision = BotDecision(
-                bot_name="ATHENA",
-                decision_type="ENTRY",
+            decision = TradeDecision(
+                decision_id=position.position_id,
+                timestamp=datetime.now(CENTRAL_TZ).isoformat(),
+                decision_type=DecisionType.ENTRY_SIGNAL,
+                bot_name=BotName.ATHENA,
+                what=what_desc,
+                why=why_desc,
+                how=how_desc,
                 action="SELL" if position.spread_type == SpreadType.BEAR_CALL_SPREAD else "BUY",
                 symbol=self.config.ticker,
                 strategy=position.spread_type.value,
-                strike=position.long_strike,
-                expiration=position.expiration,
-                option_type="CALL",
-                contracts=position.contracts,
-                session_id=generate_session_id() if self.session_tracker else "",
-                market_context=market_ctx,
-                claude_context=claude_ctx,
-                entry_reasoning=advice.reasoning,
-                strike_reasoning=f"ATM: {position.long_strike}, OTM: {position.short_strike}",
-                size_reasoning=f"Risk per trade: {self.config.risk_per_trade_pct}%",
-                kelly_pct=self.config.risk_per_trade_pct,
+                legs=legs,
+                underlying_price_at_entry=gex_data.get('spot_price', 0),
+                market_context=LoggerMarketContext(
+                    timestamp=datetime.now(CENTRAL_TZ).isoformat(),
+                    spot_price=gex_data.get('spot_price', 0),
+                    spot_source=DataSource.TRADIER_LIVE,
+                    vix=vix,
+                    net_gex=gex_data.get('net_gex', 0),
+                    gex_regime=gex_data.get('regime', 'NEUTRAL'),
+                    flip_point=gex_data.get('flip_point', 0),
+                    call_wall=gex_data.get('call_wall', 0),
+                    put_wall=gex_data.get('put_wall', 0),
+                ),
+                oracle_advice=oracle_advice_dict,
+                reasoning=DecisionReasoning(
+                    primary_reason=f"GEX-directed {spread_name} for premium collection",
+                    supporting_factors=supporting_factors,
+                    risk_factors=risk_factors,
+                    alternatives_considered=alternatives_considered,
+                    why_not_alternatives=why_not_alternatives,
+                ),
                 position_size_dollars=abs(position.entry_debit) * 100 * position.contracts,
+                position_size_contracts=position.contracts,
                 max_risk_dollars=position.max_loss,
-                backtest_win_rate=advice.win_probability,
-                passed_all_checks=True
+                target_profit_pct=50,  # Typical target for spreads
+                probability_of_profit=getattr(advice, 'win_probability', 0.5),
             )
 
-            # Add API calls if tracked
-            if decision_tracker:
-                decision.api_calls = decision_tracker.api_calls
-                decision.errors_encountered = decision_tracker.errors
-                decision.processing_time_ms = decision_tracker.elapsed_ms
-
             # Log to database
-            log_bot_decision(decision)
+            self.decision_logger.log_decision(decision)
+            self._log_to_db("INFO", f"Decision logged: {position.position_id}")
 
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to log decision: {e}")
+            import traceback
+            traceback.print_exc()
 
     def check_exits(self) -> List[SpreadPosition]:
         """Check all open positions for exit conditions"""
@@ -1068,29 +1215,150 @@ class ATHENATrader:
             self._log_to_db("ERROR", f"Failed to update daily performance: {e}")
 
     def _log_exit_decision(self, position: SpreadPosition, reason: str) -> None:
-        """Log exit decision"""
-        if not BOT_LOGGER_AVAILABLE or not log_bot_decision:
+        """Log exit decision using decision_logger (same as ARES)"""
+        if not DECISION_LOGGER_AVAILABLE or not self.decision_logger:
             return
 
         try:
-            decision = BotDecision(
-                bot_name="ATHENA",
-                decision_type="EXIT",
+            # Create exit legs
+            if position.spread_type == SpreadType.BULL_CALL_SPREAD:
+                legs = [
+                    TradeLeg(
+                        leg_id=1,
+                        action="SELL",  # Close long leg
+                        option_type="call",
+                        strike=position.long_strike,
+                        expiration=position.expiration,
+                        exit_price=position.close_price,
+                        contracts=position.contracts,
+                        realized_pnl=position.realized_pnl / 2  # Approximate split
+                    ),
+                    TradeLeg(
+                        leg_id=2,
+                        action="BUY",  # Close short leg
+                        option_type="call",
+                        strike=position.short_strike,
+                        expiration=position.expiration,
+                        contracts=position.contracts,
+                        realized_pnl=position.realized_pnl / 2
+                    )
+                ]
+            else:  # BEAR_CALL_SPREAD
+                legs = [
+                    TradeLeg(
+                        leg_id=1,
+                        action="BUY",  # Close short leg
+                        option_type="call",
+                        strike=position.short_strike,
+                        expiration=position.expiration,
+                        contracts=position.contracts,
+                        realized_pnl=position.realized_pnl / 2
+                    ),
+                    TradeLeg(
+                        leg_id=2,
+                        action="SELL",  # Close long leg
+                        option_type="call",
+                        strike=position.long_strike,
+                        expiration=position.expiration,
+                        exit_price=position.close_price,
+                        contracts=position.contracts,
+                        realized_pnl=position.realized_pnl / 2
+                    )
+                ]
+
+            spread_name = "Bull Call Spread" if position.spread_type == SpreadType.BULL_CALL_SPREAD else "Bear Call Spread"
+
+            decision = TradeDecision(
+                decision_id=f"{position.position_id}-EXIT",
+                timestamp=datetime.now(CENTRAL_TZ).isoformat(),
+                decision_type=DecisionType.EXIT_SIGNAL,
+                bot_name=BotName.ATHENA,
+                what=f"CLOSE {spread_name} {position.contracts}x ${position.long_strike}/${position.short_strike}",
+                why=f"Exit triggered: {reason}",
+                how=f"Closed at ${position.close_price:.2f} for P&L ${position.realized_pnl:,.2f}",
                 action="CLOSE",
                 symbol=self.config.ticker,
                 strategy=position.spread_type.value,
-                strike=position.long_strike,
-                expiration=position.expiration,
-                option_type="CALL",
-                contracts=position.contracts,
-                exit_reasoning=reason,
+                legs=legs,
+                underlying_price_at_entry=position.underlying_price_at_entry,
                 actual_pnl=position.realized_pnl,
-                exit_triggered_by=reason
+                outcome_notes=reason,
             )
 
-            log_bot_decision(decision)
+            self.decision_logger.log_decision(decision)
+            self._log_to_db("INFO", f"Exit decision logged: {position.position_id}")
+
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to log exit: {e}")
+
+    def _log_skip_decision(self, reason: str, gex_data: Optional[Dict] = None,
+                          ml_signal: Optional[Dict] = None) -> None:
+        """Log skip/no-trade decision using decision_logger (same as ARES)"""
+        if not DECISION_LOGGER_AVAILABLE or not self.decision_logger:
+            return
+
+        try:
+            # Get VIX
+            vix = 20.0
+            if UNIFIED_DATA_AVAILABLE:
+                try:
+                    from data.unified_data_provider import get_vix
+                    vix = get_vix() or 20.0
+                except:
+                    pass
+
+            # Build supporting factors
+            supporting_factors = []
+            if gex_data:
+                supporting_factors.extend([
+                    f"GEX Regime: {gex_data.get('regime', 'UNKNOWN')}",
+                    f"Spot: ${gex_data.get('spot_price', 0):,.2f}",
+                    f"Call Wall: ${gex_data.get('call_wall', 0):,.0f}",
+                    f"Put Wall: ${gex_data.get('put_wall', 0):,.0f}",
+                ])
+            if ml_signal:
+                supporting_factors.extend([
+                    f"ML Advice: {ml_signal.get('advice', 'N/A')}",
+                    f"ML Confidence: {ml_signal.get('confidence', 0):.1%}",
+                ])
+
+            market_context = None
+            if gex_data:
+                market_context = LoggerMarketContext(
+                    timestamp=datetime.now(CENTRAL_TZ).isoformat(),
+                    spot_price=gex_data.get('spot_price', 0),
+                    spot_source=DataSource.TRADIER_LIVE,
+                    vix=vix,
+                    net_gex=gex_data.get('net_gex', 0),
+                    gex_regime=gex_data.get('regime', 'NEUTRAL'),
+                    flip_point=gex_data.get('flip_point', 0),
+                    call_wall=gex_data.get('call_wall', 0),
+                    put_wall=gex_data.get('put_wall', 0),
+                )
+
+            decision = TradeDecision(
+                decision_id=self.decision_logger._generate_decision_id(),
+                timestamp=datetime.now(CENTRAL_TZ).isoformat(),
+                decision_type=DecisionType.NO_TRADE,
+                bot_name=BotName.ATHENA,
+                what=f"SKIP - No trade today",
+                why=reason,
+                how="Conditions not met for directional spread entry",
+                action="SKIP",
+                symbol=self.config.ticker,
+                strategy="directional_spread",
+                market_context=market_context,
+                reasoning=DecisionReasoning(
+                    primary_reason=reason,
+                    supporting_factors=supporting_factors,
+                    risk_factors=[],
+                ),
+            )
+
+            self.decision_logger.log_decision(decision)
+
+        except Exception as e:
+            self._log_to_db("ERROR", f"Failed to log skip decision: {e}")
 
     def run_daily_cycle(self) -> Dict[str, Any]:
         """Run the daily trading cycle using ML signals"""
@@ -1113,6 +1381,7 @@ class ATHENATrader:
         should_trade, reason = self.should_trade()
         if not should_trade:
             self._log_to_db("INFO", f"Skipping trade: {reason}")
+            self._log_skip_decision(reason)
             result['errors'].append(reason)
             result['decision_reason'] = f"SKIP: {reason}"
             return result
@@ -1120,6 +1389,7 @@ class ATHENATrader:
         # Get GEX data first (needed for both ML and Oracle)
         gex_data = self.get_gex_data()
         if not gex_data:
+            self._log_skip_decision("No GEX data available")
             result['errors'].append("No GEX data")
             result['decision_reason'] = "SKIP: No GEX data available"
             return result
@@ -1169,6 +1439,7 @@ class ATHENATrader:
 
             elif ml_signal and ml_signal['advice'] == 'STAY_OUT':
                 self._log_to_db("INFO", f"ML says STAY_OUT: {ml_signal['reasoning']}")
+                self._log_skip_decision(f"ML says STAY_OUT: {ml_signal['reasoning']}", gex_data, ml_signal)
                 result['signal_source'] = 'ML'
                 result['decision_reason'] = f"NO TRADE: ML says STAY_OUT - {ml_signal['reasoning']}"
                 # Still check exits
@@ -1188,6 +1459,7 @@ class ATHENATrader:
 
                 if oracle_advice.advice == TradingAdvice.SKIP_TODAY:
                     self._log_to_db("INFO", f"Oracle says SKIP: {oracle_advice.reasoning}")
+                    self._log_skip_decision(f"Oracle says SKIP: {oracle_advice.reasoning}", gex_data)
                     result['signal_source'] = 'Oracle'
                     result['decision_reason'] = f"NO TRADE: Oracle says SKIP - {oracle_advice.reasoning}"
                     return result
@@ -1209,6 +1481,7 @@ class ATHENATrader:
         # No actionable signal
         if not spread_type:
             self._log_to_db("INFO", "No actionable signal from ML or Oracle")
+            self._log_skip_decision("No actionable signal from ML or Oracle", gex_data, ml_signal)
             result['errors'].append("No actionable signal")
             result['decision_reason'] = "NO TRADE: No actionable signal from ML or Oracle"
             return result
@@ -1223,12 +1496,14 @@ class ATHENATrader:
         self._log_to_db("INFO", f"R:R Analysis: {rr_reasoning}")
 
         if rr_ratio < self.config.min_rr_ratio:
+            skip_reason = f"R:R {rr_ratio:.2f}:1 below minimum {self.config.min_rr_ratio}:1 - {rr_reasoning}"
             self._log_to_db("INFO",
                 f"SKIP: R:R {rr_ratio:.2f}:1 below minimum {self.config.min_rr_ratio}:1",
                 {'rr_ratio': rr_ratio, 'min_required': self.config.min_rr_ratio, 'reasoning': rr_reasoning}
             )
+            self._log_skip_decision(skip_reason, gex_data, ml_signal)
             result['errors'].append(f"R:R {rr_ratio:.2f}:1 < {self.config.min_rr_ratio}:1 minimum")
-            result['decision_reason'] = f"NO TRADE: R:R {rr_ratio:.2f}:1 below {self.config.min_rr_ratio}:1 minimum - {rr_reasoning}"
+            result['decision_reason'] = f"NO TRADE: {skip_reason}"
             # Still check exits for existing positions
             closed = self.check_exits()
             result['positions_closed'] = len(closed)
