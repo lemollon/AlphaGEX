@@ -6,7 +6,7 @@ import {
   RefreshCw, AlertTriangle, Calendar, Clock, Loader2, CheckCircle,
   Settings, DollarSign, Target, Layers, ChevronDown, ChevronUp,
   Download, FileSpreadsheet, LineChart, PieChart, ArrowUpDown,
-  Database, Info, Percent, Shield, Zap
+  Database, Info, Percent, Shield, Zap, Search
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import EnhancedEquityCurve from '@/components/backtest/EnhancedEquityCurve'
@@ -169,7 +169,13 @@ export default function ZeroDTEBacktestPage() {
   const [showTiers, setShowTiers] = useState(false)
   const [showRiskSettings, setShowRiskSettings] = useState(false)
   const [showDataInfo, setShowDataInfo] = useState(false)
-  const [activeTab, setActiveTab] = useState<'overview' | 'charts' | 'trades' | 'compare'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'charts' | 'trades' | 'compare' | 'analytics'>('overview')
+
+  // Analytics state
+  const [analyticsData, setAnalyticsData] = useState<any>(null)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [selectedTradeForInspection, setSelectedTradeForInspection] = useState<number | null>(null)
+  const [tradeInspectorData, setTradeInspectorData] = useState<any>(null)
 
   // Backend connection status
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'error'>('checking')
@@ -187,6 +193,9 @@ export default function ZeroDTEBacktestPage() {
   const [nlQuery, setNlQuery] = useState('')
   const [nlParsedConfig, setNlParsedConfig] = useState<any>(null)
   const [showNlInput, setShowNlInput] = useState(false)
+
+  // Preset application feedback
+  const [presetAppliedMessage, setPresetAppliedMessage] = useState<string | null>(null)
 
   // Check backend health on mount
   const checkBackendHealth = async () => {
@@ -342,6 +351,9 @@ export default function ZeroDTEBacktestPage() {
         end_date: prev.end_date,
         initial_capital: prev.initial_capital,
       }))
+      // Show feedback message
+      setPresetAppliedMessage(`Applied preset: ${preset.name}`)
+      setTimeout(() => setPresetAppliedMessage(null), 3000)
     }
   }
 
@@ -614,6 +626,42 @@ export default function ZeroDTEBacktestPage() {
   const runBacktest = async () => {
     // Prevent double-clicks
     if (running) return
+
+    // Validation
+    const validationErrors: string[] = []
+
+    // Check date range
+    if (config.start_date >= config.end_date) {
+      validationErrors.push('Start date must be before end date')
+    }
+
+    // Check at least one trading day is selected
+    const tradingDaysSelected = [
+      config.trade_monday,
+      config.trade_tuesday,
+      config.trade_wednesday,
+      config.trade_thursday,
+      config.trade_friday
+    ].some(day => day)
+
+    if (!tradingDaysSelected) {
+      validationErrors.push('At least one trading day must be selected')
+    }
+
+    // Check VIX filter is valid
+    if (config.min_vix !== null && config.max_vix !== null && config.min_vix >= config.max_vix) {
+      validationErrors.push('Min VIX must be less than Max VIX')
+    }
+
+    // Check risk per trade is reasonable
+    if (config.risk_per_trade_pct <= 0 || config.risk_per_trade_pct > 100) {
+      validationErrors.push('Risk per trade must be between 0 and 100%')
+    }
+
+    if (validationErrors.length > 0) {
+      setError(validationErrors.join('. '))
+      return
+    }
 
     setRunning(true)
     setError(null)
@@ -988,34 +1036,101 @@ export default function ZeroDTEBacktestPage() {
             </div>
           )}
 
-          {/* Strategy Selection */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {strategies.map(strategy => (
-              <div
-                key={strategy.id}
-                onClick={() => selectStrategy(strategy.id)}
-                className={`bg-gray-900 border rounded-lg p-4 cursor-pointer transition-all ${
-                  config.strategy === strategy.id
-                    ? 'border-blue-500 ring-2 ring-blue-500/20'
-                    : 'border-gray-800 hover:border-gray-700'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-bold">{strategy.name}</h3>
-                  {config.strategy === strategy.id && (
-                    <CheckCircle className="w-5 h-5 text-blue-400" />
-                  )}
-                </div>
-                <p className="text-sm text-gray-400 mb-3">{strategy.description}</p>
-                <div className="flex flex-wrap gap-1">
-                  {strategy.features.slice(0, 2).map((f, i) => (
-                    <span key={i} className="px-2 py-0.5 bg-gray-800 rounded text-xs text-gray-300">
-                      {f}
-                    </span>
-                  ))}
-                </div>
+          {/* Strategy Type Selection - PRIMARY (what type of options strategy to trade) */}
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <Target className="w-5 h-5 text-blue-400" />
+                  Strategy Type
+                </h2>
+                <p className="text-sm text-gray-400 mt-1">Select the options strategy structure to backtest</p>
               </div>
-            ))}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {strategyTypes.map(st => (
+                <div
+                  key={st.id}
+                  onClick={() => setConfig(prev => ({ ...prev, strategy_type: st.id }))}
+                  className={`border rounded-lg p-3 cursor-pointer transition-all ${
+                    config.strategy_type === st.id
+                      ? 'border-blue-500 bg-blue-900/20 ring-2 ring-blue-500/20'
+                      : 'border-gray-700 hover:border-gray-600 bg-gray-800/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-sm">{st.name}</span>
+                    {config.strategy_type === st.id && (
+                      <CheckCircle className="w-4 h-4 text-blue-400" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs mb-1">
+                    <span className={`px-1.5 py-0.5 rounded ${st.credit ? 'bg-green-900/50 text-green-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
+                      {st.credit ? 'Credit' : 'Debit'}
+                    </span>
+                    <span className="text-gray-500">{st.legs} legs</span>
+                  </div>
+                  <p className="text-xs text-gray-400 line-clamp-2">{st.description}</p>
+                </div>
+              ))}
+            </div>
+            {/* Strategy-specific notes */}
+            {config.strategy_type === 'gex_protected_iron_condor' && (
+              <div className="mt-3 p-3 bg-emerald-900/20 border border-emerald-800 rounded-lg text-sm text-emerald-300">
+                <strong>GEX-Protected:</strong> Places strikes outside GEX walls (call wall/put wall) for additional protection. Falls back to SD method when GEX data is unavailable.
+              </div>
+            )}
+            {config.strategy_type === 'apache_directional' && (
+              <div className="mt-3 p-3 bg-orange-900/20 border border-orange-800 rounded-lg text-sm text-orange-300">
+                <strong>Apache GEX Directional:</strong> DEBIT SPREADS ONLY. Opens Bull Call spreads when price is near put wall (support), Bear Put spreads when near call wall (resistance). Skips trades when not near walls. Adjust "Wall Proximity %" in Advanced settings.
+              </div>
+            )}
+            {(config.strategy_type === 'diagonal_call' || config.strategy_type === 'diagonal_put') && (
+              <div className="mt-3 p-3 bg-purple-900/20 border border-purple-800 rounded-lg text-sm text-purple-300">
+                <strong>Diagonal Spread:</strong> Poor Man's Covered {config.strategy_type === 'diagonal_call' ? 'Call' : 'Put'}. Sells near-term OTM option and buys longer-term option. Short strike placed at configured SD multiplier distance.
+              </div>
+            )}
+          </div>
+
+          {/* Risk Profile Selection - SECONDARY (how aggressive to trade) */}
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-bold text-sm flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-gray-400" />
+                  Risk Profile
+                  <span className="text-xs text-gray-500 font-normal">(Account scaling behavior)</span>
+                </h3>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {strategies.map(strategy => (
+                <div
+                  key={strategy.id}
+                  onClick={() => selectStrategy(strategy.id)}
+                  className={`border rounded-lg p-3 cursor-pointer transition-all ${
+                    config.strategy === strategy.id
+                      ? 'border-purple-500 bg-purple-900/20'
+                      : 'border-gray-700 hover:border-gray-600 bg-gray-800/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="font-bold text-sm">{strategy.name}</h4>
+                    {config.strategy === strategy.id && (
+                      <CheckCircle className="w-4 h-4 text-purple-400" />
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 mb-2">{strategy.description}</p>
+                  <div className="flex flex-wrap gap-1">
+                    {strategy.features.slice(0, 2).map((f, i) => (
+                      <span key={i} className="px-1.5 py-0.5 bg-gray-800 rounded text-xs text-gray-400">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Configuration Panel */}
@@ -1118,24 +1233,6 @@ export default function ZeroDTEBacktestPage() {
                 </select>
               </div>
 
-              {/* Strategy Type */}
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Strategy Type</label>
-                <select
-                  value={config.strategy_type}
-                  onChange={e => setConfig(prev => ({ ...prev, strategy_type: e.target.value }))}
-                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
-                >
-                  {strategyTypes.map(st => (
-                    <option key={st.id} value={st.id}>{st.name}</option>
-                  ))}
-                </select>
-                {config.strategy_type === 'gex_protected_iron_condor' && (
-                  <p className="mt-1 text-xs text-emerald-400">
-                    Uses GEX walls for strike protection, falls back to SD when unavailable
-                  </p>
-                )}
-              </div>
             </div>
 
             {/* Risk Management Settings */}
@@ -1357,11 +1454,17 @@ export default function ZeroDTEBacktestPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Wall Proximity % (ATHENA)</label>
+                  <label className={`block text-sm mb-1 ${config.strategy_type === 'apache_directional' ? 'text-orange-400' : 'text-gray-400'}`}>
+                    Wall Proximity % (Apache)
+                  </label>
                   <select
                     value={config.wall_proximity_pct}
                     onChange={e => setConfig(prev => ({ ...prev, wall_proximity_pct: Number(e.target.value) }))}
-                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                    className={`w-full border rounded px-3 py-2 text-sm ${
+                      config.strategy_type === 'apache_directional'
+                        ? 'bg-orange-900/20 border-orange-700'
+                        : 'bg-gray-800 border-gray-700'
+                    }`}
                   >
                     <option value={0.5}>0.5% (very tight)</option>
                     <option value={1.0}>1.0% (default)</option>
@@ -1370,6 +1473,9 @@ export default function ZeroDTEBacktestPage() {
                     <option value={3.0}>3.0% (loose)</option>
                     <option value={5.0}>5.0% (very loose)</option>
                   </select>
+                  {config.strategy_type === 'apache_directional' && (
+                    <p className="text-xs text-orange-400 mt-1">Apache uses this to detect proximity to GEX walls</p>
+                  )}
                 </div>
                 </div>
               </div>
@@ -1463,6 +1569,13 @@ export default function ZeroDTEBacktestPage() {
                   {error}
                 </div>
               )}
+
+              {presetAppliedMessage && (
+                <div className="flex items-center gap-2 text-green-400 animate-pulse">
+                  <CheckCircle className="w-5 h-5" />
+                  {presetAppliedMessage}
+                </div>
+              )}
             </div>
 
             {/* Progress Bar */}
@@ -1534,7 +1647,7 @@ export default function ZeroDTEBacktestPage() {
             <>
               {/* Tabs */}
               <div className="flex gap-2 border-b border-gray-800 pb-2">
-                {['overview', 'charts', 'trades', 'compare'].map(tab => (
+                {['overview', 'charts', 'trades', 'analytics', 'compare'].map(tab => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab as any)}
@@ -1967,6 +2080,392 @@ export default function ZeroDTEBacktestPage() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Analytics Tab */}
+              {activeTab === 'analytics' && completedJobId && (
+                <div className="space-y-6">
+                  {/* Load Analytics Button */}
+                  {!analyticsData && (
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center">
+                      <h3 className="font-bold mb-4">Advanced Analytics</h3>
+                      <p className="text-gray-400 mb-4">
+                        Analyze your backtest with VIX regime breakdown, day-of-week performance,
+                        Monte Carlo simulation, and trade-by-trade inspection.
+                      </p>
+                      <button
+                        onClick={async () => {
+                          setAnalyticsLoading(true)
+                          try {
+                            const response = await fetch(`${API_URL}/api/zero-dte/analytics/comprehensive/${completedJobId}`)
+                            const data = await response.json()
+                            if (data.success) {
+                              setAnalyticsData(data)
+                            }
+                          } catch (err) {
+                            console.error('Failed to load analytics:', err)
+                          }
+                          setAnalyticsLoading(false)
+                        }}
+                        disabled={analyticsLoading}
+                        className="px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold disabled:opacity-50 flex items-center gap-2 mx-auto"
+                      >
+                        {analyticsLoading ? (
+                          <>
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            Loading Analytics...
+                          </>
+                        ) : (
+                          <>
+                            <Activity className="w-5 h-5" />
+                            Load Comprehensive Analytics
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Analytics Results */}
+                  {analyticsData && (
+                    <>
+                      {/* Recommendations */}
+                      {analyticsData.recommendations && analyticsData.recommendations.length > 0 && (
+                        <div className="bg-gray-900 border border-purple-800 rounded-lg p-4">
+                          <h3 className="font-bold mb-3 flex items-center gap-2 text-purple-400">
+                            <Zap className="w-5 h-5" />
+                            AI Recommendations
+                          </h3>
+                          <div className="space-y-2">
+                            {analyticsData.recommendations.map((rec: any, i: number) => (
+                              <div key={i} className={`p-3 rounded-lg border ${
+                                rec.priority === 'HIGH' ? 'border-red-800 bg-red-900/20' :
+                                rec.priority === 'MEDIUM' ? 'border-yellow-800 bg-yellow-900/20' :
+                                'border-green-800 bg-green-900/20'
+                              }`}>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`px-2 py-0.5 rounded text-xs ${
+                                    rec.priority === 'HIGH' ? 'bg-red-800 text-red-200' :
+                                    rec.priority === 'MEDIUM' ? 'bg-yellow-800 text-yellow-200' :
+                                    'bg-green-800 text-green-200'
+                                  }`}>{rec.type}</span>
+                                  <span className="text-sm font-medium">{rec.message}</span>
+                                </div>
+                                <p className="text-xs text-gray-400">{rec.action}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* VIX Regime Analysis */}
+                      {analyticsData.analytics?.vix_regime && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                          <h3 className="font-bold mb-4 flex items-center gap-2">
+                            <TrendingUp className="w-5 h-5 text-orange-400" />
+                            VIX Regime Performance
+                          </h3>
+                          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                            {analyticsData.analytics.vix_regime.regimes?.map((regime: any) => (
+                              <div
+                                key={regime.regime}
+                                className={`p-3 rounded-lg border ${
+                                  regime.regime === analyticsData.analytics.vix_regime.optimal_regime
+                                    ? 'border-green-500 bg-green-900/20'
+                                    : 'border-gray-700 bg-gray-800'
+                                }`}
+                              >
+                                <div className="text-xs text-gray-400 mb-1">{regime.label}</div>
+                                <div className="text-lg font-bold" style={{ color: regime.color }}>
+                                  {regime.win_rate}%
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {regime.trade_count} trades • ${regime.avg_pnl.toFixed(0)} avg
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {analyticsData.analytics.vix_regime.recommendation && (
+                            <p className="mt-3 text-sm text-orange-400">
+                              {analyticsData.analytics.vix_regime.recommendation}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Day of Week Analysis */}
+                      {analyticsData.analytics?.day_of_week && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                          <h3 className="font-bold mb-4 flex items-center gap-2">
+                            <Calendar className="w-5 h-5 text-blue-400" />
+                            Day of Week Performance
+                          </h3>
+                          <div className="grid grid-cols-5 gap-3">
+                            {analyticsData.analytics.day_of_week.days?.map((day: any) => (
+                              <div
+                                key={day.name}
+                                className={`p-4 rounded-lg border text-center ${
+                                  day.name === analyticsData.analytics.day_of_week.best_day
+                                    ? 'border-green-500 bg-green-900/20'
+                                    : day.name === analyticsData.analytics.day_of_week.worst_day
+                                    ? 'border-red-500 bg-red-900/20'
+                                    : 'border-gray-700 bg-gray-800'
+                                }`}
+                              >
+                                <div className="font-bold" style={{ color: day.color }}>{day.name}</div>
+                                <div className="text-2xl font-bold mt-1" style={{ color: day.color }}>
+                                  {day.win_rate}%
+                                </div>
+                                <div className="text-xs text-gray-400 mt-1">
+                                  {day.trade_count} trades
+                                </div>
+                                <div className={`text-sm font-medium ${day.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  ${day.avg_pnl?.toFixed(0)} avg
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {analyticsData.analytics.day_of_week.recommendation && (
+                            <p className="mt-3 text-sm text-blue-400">
+                              {analyticsData.analytics.day_of_week.recommendation}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Monte Carlo Simulation */}
+                      {analyticsData.analytics?.monte_carlo && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                          <h3 className="font-bold mb-4 flex items-center gap-2">
+                            <BarChart3 className="w-5 h-5 text-cyan-400" />
+                            Monte Carlo Simulation ({analyticsData.analytics.monte_carlo.simulations} runs)
+                          </h3>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                            <div className="bg-gray-800 rounded-lg p-4">
+                              <div className="text-xs text-gray-400 mb-1">Verdict</div>
+                              <div className={`text-xl font-bold ${
+                                analyticsData.analytics.monte_carlo.verdict === 'ROBUST' ? 'text-green-400' :
+                                analyticsData.analytics.monte_carlo.verdict === 'MODERATE' ? 'text-yellow-400' :
+                                'text-red-400'
+                              }`}>
+                                {analyticsData.analytics.monte_carlo.verdict}
+                              </div>
+                            </div>
+                            <div className="bg-gray-800 rounded-lg p-4">
+                              <div className="text-xs text-gray-400 mb-1">Profit Probability</div>
+                              <div className="text-xl font-bold text-green-400">
+                                {analyticsData.analytics.monte_carlo.probabilities?.profit}%
+                              </div>
+                            </div>
+                            <div className="bg-gray-800 rounded-lg p-4">
+                              <div className="text-xs text-gray-400 mb-1">Median Return</div>
+                              <div className="text-xl font-bold text-cyan-400">
+                                {analyticsData.analytics.monte_carlo.monte_carlo?.return_pct?.median}%
+                              </div>
+                            </div>
+                            <div className="bg-gray-800 rounded-lg p-4">
+                              <div className="text-xs text-gray-400 mb-1">95% CI Range</div>
+                              <div className="text-sm font-bold text-purple-400">
+                                {analyticsData.analytics.monte_carlo.confidence_interval?.return_range?.[0]}% to {analyticsData.analytics.monte_carlo.confidence_interval?.return_range?.[1]}%
+                              </div>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-4">
+                            <div className="bg-gray-800 rounded-lg p-3">
+                              <div className="text-xs text-gray-400">P(Double Money)</div>
+                              <div className="text-lg font-bold">{analyticsData.analytics.monte_carlo.probabilities?.double_money}%</div>
+                            </div>
+                            <div className="bg-gray-800 rounded-lg p-3">
+                              <div className="text-xs text-gray-400">P(Lose 50%)</div>
+                              <div className="text-lg font-bold text-red-400">{analyticsData.analytics.monte_carlo.probabilities?.lose_50_pct}%</div>
+                            </div>
+                            <div className="bg-gray-800 rounded-lg p-3">
+                              <div className="text-xs text-gray-400">P(DD &gt; 50%)</div>
+                              <div className="text-lg font-bold text-orange-400">{analyticsData.analytics.monte_carlo.probabilities?.drawdown_over_50}%</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Monthly Performance & Streaks */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Monthly */}
+                        {analyticsData.analytics?.monthly && (
+                          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                            <h3 className="font-bold mb-4 flex items-center gap-2">
+                              <Calendar className="w-5 h-5 text-green-400" />
+                              Monthly Performance
+                            </h3>
+                            <div className="flex justify-between items-center mb-4">
+                              <div>
+                                <div className="text-3xl font-bold text-green-400">
+                                  {analyticsData.analytics.monthly.monthly_win_rate}%
+                                </div>
+                                <div className="text-sm text-gray-400">Profitable Months</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm text-gray-400">
+                                  {analyticsData.analytics.monthly.profitable_months}/{analyticsData.analytics.monthly.total_months} months
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {analyticsData.analytics.monthly.months?.slice(-12).map((m: any) => (
+                                <div
+                                  key={m.month}
+                                  title={`${m.month}: $${m.total_pnl.toFixed(0)}`}
+                                  className={`w-6 h-6 rounded flex items-center justify-center text-xs ${
+                                    m.is_profitable ? 'bg-green-900 text-green-400' : 'bg-red-900 text-red-400'
+                                  }`}
+                                >
+                                  {m.is_profitable ? '+' : '-'}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Streaks */}
+                        {analyticsData.analytics?.streaks && (
+                          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                            <h3 className="font-bold mb-4 flex items-center gap-2">
+                              <TrendingUp className="w-5 h-5 text-yellow-400" />
+                              Win/Loss Streaks
+                            </h3>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-green-900/20 border border-green-800 rounded-lg p-3 text-center">
+                                <div className="text-3xl font-bold text-green-400">
+                                  {analyticsData.analytics.streaks.max_win_streak}
+                                </div>
+                                <div className="text-xs text-gray-400">Max Win Streak</div>
+                                <div className="text-xs text-green-400">
+                                  Avg: {analyticsData.analytics.streaks.avg_win_streak}
+                                </div>
+                              </div>
+                              <div className="bg-red-900/20 border border-red-800 rounded-lg p-3 text-center">
+                                <div className="text-3xl font-bold text-red-400">
+                                  {analyticsData.analytics.streaks.max_loss_streak}
+                                </div>
+                                <div className="text-xs text-gray-400">Max Loss Streak</div>
+                                <div className="text-xs text-red-400">
+                                  Avg: {analyticsData.analytics.streaks.avg_loss_streak}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-3 text-center text-sm">
+                              <span className={analyticsData.analytics.streaks.current_streak?.type === 'WIN' ? 'text-green-400' : 'text-red-400'}>
+                                Current: {analyticsData.analytics.streaks.current_streak?.count} {analyticsData.analytics.streaks.current_streak?.type?.toLowerCase()}s
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Trade Inspector */}
+                      {liveJobResult?.all_trades && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                          <h3 className="font-bold mb-4 flex items-center gap-2">
+                            <Search className="w-5 h-5 text-purple-400" />
+                            Trade Inspector
+                          </h3>
+                          <div className="flex gap-4 mb-4">
+                            <select
+                              value={selectedTradeForInspection || ''}
+                              onChange={(e) => {
+                                const num = Number(e.target.value)
+                                setSelectedTradeForInspection(num || null)
+                                setTradeInspectorData(null)
+                              }}
+                              className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2"
+                            >
+                              <option value="">Select a trade to inspect...</option>
+                              {liveJobResult.all_trades.slice(0, 100).map((trade: any) => (
+                                <option key={trade.trade_number} value={trade.trade_number}>
+                                  #{trade.trade_number} - {trade.trade_date} - {trade.outcome} (${trade.net_pnl?.toFixed(0)})
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={async () => {
+                                if (!selectedTradeForInspection || !completedJobId) return
+                                try {
+                                  const response = await fetch(`${API_URL}/api/zero-dte/analytics/trade/${completedJobId}/${selectedTradeForInspection}`)
+                                  const data = await response.json()
+                                  if (data.success) {
+                                    setTradeInspectorData(data)
+                                  }
+                                } catch (err) {
+                                  console.error('Failed to load trade details:', err)
+                                }
+                              }}
+                              disabled={!selectedTradeForInspection}
+                              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg disabled:opacity-50"
+                            >
+                              Inspect
+                            </button>
+                          </div>
+
+                          {tradeInspectorData && (
+                            <div className="border border-purple-800 rounded-lg p-4 bg-purple-900/10">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                <div>
+                                  <div className="text-xs text-gray-400">Entry Price</div>
+                                  <div className="font-bold">${tradeInspectorData.context?.entry_price?.toFixed(2)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-400">Put Short Strike</div>
+                                  <div className="font-bold text-red-400">${tradeInspectorData.context?.put_short_strike}</div>
+                                  <div className="text-xs text-gray-500">{tradeInspectorData.context?.put_distance_pct}% OTM</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-400">Call Short Strike</div>
+                                  <div className="font-bold text-green-400">${tradeInspectorData.context?.call_short_strike}</div>
+                                  <div className="text-xs text-gray-500">{tradeInspectorData.context?.call_distance_pct}% OTM</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-400">VIX</div>
+                                  <div className="font-bold">{tradeInspectorData.market_conditions?.vix?.toFixed(1)}</div>
+                                </div>
+                              </div>
+                              {tradeInspectorData.context?.gex_put_wall && (
+                                <div className="grid grid-cols-2 gap-4 mb-4 p-3 bg-emerald-900/20 rounded-lg">
+                                  <div>
+                                    <div className="text-xs text-gray-400">GEX Put Wall</div>
+                                    <div className="font-bold text-emerald-400">${tradeInspectorData.context.gex_put_wall}</div>
+                                    <div className="text-xs text-gray-500">
+                                      Strike is {tradeInspectorData.context.put_strike_vs_wall} wall ({tradeInspectorData.context.put_wall_cushion_pct}% cushion)
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs text-gray-400">GEX Call Wall</div>
+                                    <div className="font-bold text-emerald-400">${tradeInspectorData.context.gex_call_wall}</div>
+                                    <div className="text-xs text-gray-500">
+                                      Strike is {tradeInspectorData.context.call_strike_vs_wall} wall ({tradeInspectorData.context.call_wall_cushion_pct}% cushion)
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <span className={`px-3 py-1 rounded-full text-sm ${
+                                    tradeInspectorData.outcome_analysis?.outcome === 'WIN' ? 'bg-green-900 text-green-400' : 'bg-red-900 text-red-400'
+                                  }`}>
+                                    {tradeInspectorData.outcome_analysis?.outcome}
+                                  </span>
+                                  <span className="ml-2 text-sm text-gray-400">
+                                    Exit: {tradeInspectorData.outcome_analysis?.exit_type}
+                                  </span>
+                                </div>
+                                <div className={`text-xl font-bold ${tradeInspectorData.outcome_analysis?.net_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  ${tradeInspectorData.outcome_analysis?.net_pnl?.toFixed(2)}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
 
