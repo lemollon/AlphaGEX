@@ -3449,3 +3449,616 @@ def _parse_natural_language_fallback(query: str) -> Dict[str, Any]:
         config["sd_multiplier"] = config.get("sd_multiplier", 1.5)
 
     return config
+
+
+# ============================================================================
+# ENHANCED ANALYTICS ENDPOINTS
+# ============================================================================
+
+@router.get("/analytics/vix-regime/{job_id}")
+async def get_vix_regime_analysis(job_id: str):
+    """
+    Get VIX regime analysis for a completed backtest.
+    Breaks down performance by VIX levels.
+    """
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+    trades = result.get('all_trades', [])
+
+    if not trades:
+        return {"success": False, "error": "No trades found"}
+
+    # Define VIX regimes
+    regimes = {
+        'extreme_low': {'min': 0, 'max': 12, 'label': 'Extreme Low (<12)', 'trades': [], 'color': '#22c55e'},
+        'low': {'min': 12, 'max': 18, 'label': 'Low (12-18)', 'trades': [], 'color': '#84cc16'},
+        'normal': {'min': 18, 'max': 25, 'label': 'Normal (18-25)', 'trades': [], 'color': '#eab308'},
+        'elevated': {'min': 25, 'max': 35, 'label': 'Elevated (25-35)', 'trades': [], 'color': '#f97316'},
+        'high': {'min': 35, 'max': 50, 'label': 'High (35-50)', 'trades': [], 'color': '#ef4444'},
+        'extreme': {'min': 50, 'max': 1000, 'label': 'Extreme (>50)', 'trades': [], 'color': '#dc2626'},
+    }
+
+    # Categorize trades by VIX regime
+    for trade in trades:
+        vix = trade.get('vix', 20)
+        for regime_name, regime in regimes.items():
+            if regime['min'] <= vix < regime['max']:
+                regime['trades'].append(trade)
+                break
+
+    # Calculate statistics per regime
+    regime_stats = []
+    for regime_name, regime in regimes.items():
+        trades_list = regime['trades']
+        if not trades_list:
+            continue
+
+        wins = [t for t in trades_list if t.get('net_pnl', 0) > 0]
+        total_pnl = sum(t.get('net_pnl', 0) for t in trades_list)
+        avg_pnl = total_pnl / len(trades_list) if trades_list else 0
+        win_rate = (len(wins) / len(trades_list) * 100) if trades_list else 0
+        avg_vix = sum(t.get('vix', 0) for t in trades_list) / len(trades_list)
+
+        regime_stats.append({
+            'regime': regime_name,
+            'label': regime['label'],
+            'color': regime['color'],
+            'trade_count': len(trades_list),
+            'win_count': len(wins),
+            'loss_count': len(trades_list) - len(wins),
+            'total_pnl': round(total_pnl, 2),
+            'avg_pnl': round(avg_pnl, 2),
+            'win_rate': round(win_rate, 1),
+            'avg_vix': round(avg_vix, 1),
+            'best_trade': round(max(t.get('net_pnl', 0) for t in trades_list), 2) if trades_list else 0,
+            'worst_trade': round(min(t.get('net_pnl', 0) for t in trades_list), 2) if trades_list else 0,
+        })
+
+    # Find optimal VIX range
+    best_regime = max(regime_stats, key=lambda x: x['avg_pnl']) if regime_stats else None
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "total_trades": len(trades),
+        "regimes": regime_stats,
+        "optimal_regime": best_regime['regime'] if best_regime else None,
+        "recommendation": f"Best performance in {best_regime['label']} with {best_regime['win_rate']:.1f}% win rate" if best_regime else None
+    }
+
+
+@router.get("/analytics/day-of-week/{job_id}")
+async def get_day_of_week_analysis(job_id: str):
+    """
+    Get day-of-week performance analysis for a completed backtest.
+    Shows which days perform best.
+    """
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+    trades = result.get('all_trades', [])
+
+    if not trades:
+        return {"success": False, "error": "No trades found"}
+
+    # Day names
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    day_colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f97316', '#22c55e']
+
+    # Initialize day stats
+    day_stats = {i: {'trades': [], 'name': day_names[i], 'color': day_colors[i]} for i in range(5)}
+
+    # Categorize trades by day of week
+    for trade in trades:
+        trade_date = trade.get('trade_date', '')
+        if trade_date:
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(trade_date, '%Y-%m-%d')
+                dow = dt.weekday()  # 0=Monday, 4=Friday
+                if dow < 5:  # Only weekdays
+                    day_stats[dow]['trades'].append(trade)
+            except:
+                pass
+
+    # Calculate statistics per day
+    results = []
+    for dow, data in day_stats.items():
+        trades_list = data['trades']
+        if not trades_list:
+            results.append({
+                'day': dow,
+                'name': data['name'],
+                'color': data['color'],
+                'trade_count': 0,
+                'total_pnl': 0,
+                'avg_pnl': 0,
+                'win_rate': 0,
+            })
+            continue
+
+        wins = [t for t in trades_list if t.get('net_pnl', 0) > 0]
+        total_pnl = sum(t.get('net_pnl', 0) for t in trades_list)
+        avg_pnl = total_pnl / len(trades_list)
+        win_rate = (len(wins) / len(trades_list) * 100)
+
+        results.append({
+            'day': dow,
+            'name': data['name'],
+            'color': data['color'],
+            'trade_count': len(trades_list),
+            'win_count': len(wins),
+            'loss_count': len(trades_list) - len(wins),
+            'total_pnl': round(total_pnl, 2),
+            'avg_pnl': round(avg_pnl, 2),
+            'win_rate': round(win_rate, 1),
+            'best_trade': round(max(t.get('net_pnl', 0) for t in trades_list), 2),
+            'worst_trade': round(min(t.get('net_pnl', 0) for t in trades_list), 2),
+        })
+
+    # Find best and worst days
+    trading_days = [r for r in results if r['trade_count'] > 0]
+    best_day = max(trading_days, key=lambda x: x['avg_pnl']) if trading_days else None
+    worst_day = min(trading_days, key=lambda x: x['avg_pnl']) if trading_days else None
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "total_trades": len(trades),
+        "days": results,
+        "best_day": best_day['name'] if best_day else None,
+        "worst_day": worst_day['name'] if worst_day else None,
+        "recommendation": f"Best performance on {best_day['name']} ({best_day['win_rate']:.1f}% win rate, ${best_day['avg_pnl']:.2f} avg)" if best_day else None
+    }
+
+
+@router.get("/analytics/trade/{job_id}/{trade_number}")
+async def get_trade_inspector(job_id: str, trade_number: int):
+    """
+    Get detailed inspection of a single trade with GEX context.
+    """
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+    trades = result.get('all_trades', [])
+
+    # Find the trade
+    trade = None
+    for t in trades:
+        if t.get('trade_number') == trade_number:
+            trade = t
+            break
+
+    if not trade:
+        raise HTTPException(status_code=404, detail=f"Trade {trade_number} not found")
+
+    # Calculate additional context
+    entry_price = trade.get('underlying_price', trade.get('open_price', 0))
+    put_short = trade.get('put_short_strike', 0)
+    call_short = trade.get('call_short_strike', 0)
+    gex_put_wall = trade.get('gex_put_wall')
+    gex_call_wall = trade.get('gex_call_wall')
+
+    # Calculate distances
+    put_distance_pct = ((entry_price - put_short) / entry_price * 100) if entry_price and put_short else 0
+    call_distance_pct = ((call_short - entry_price) / entry_price * 100) if entry_price and call_short else 0
+
+    context = {
+        'entry_price': entry_price,
+        'put_short_strike': put_short,
+        'call_short_strike': call_short,
+        'put_distance_pct': round(put_distance_pct, 2),
+        'call_distance_pct': round(call_distance_pct, 2),
+        'put_strike_vs_wall': None,
+        'call_strike_vs_wall': None,
+    }
+
+    if gex_put_wall:
+        context['gex_put_wall'] = gex_put_wall
+        context['put_strike_vs_wall'] = 'ABOVE' if put_short > gex_put_wall else 'BELOW'
+        context['put_wall_cushion_pct'] = round((put_short - gex_put_wall) / entry_price * 100, 2) if entry_price else 0
+
+    if gex_call_wall:
+        context['gex_call_wall'] = gex_call_wall
+        context['call_strike_vs_wall'] = 'BELOW' if call_short < gex_call_wall else 'ABOVE'
+        context['call_wall_cushion_pct'] = round((gex_call_wall - call_short) / entry_price * 100, 2) if entry_price else 0
+
+    # Outcome analysis
+    outcome_analysis = {
+        'outcome': trade.get('outcome', 'Unknown'),
+        'net_pnl': trade.get('net_pnl', 0),
+        'return_pct': trade.get('return_pct', 0),
+        'put_breached': trade.get('put_breached', False),
+        'call_breached': trade.get('call_breached', False),
+        'intraday_put_threat': trade.get('intraday_put_threat', False),
+        'intraday_call_threat': trade.get('intraday_call_threat', False),
+        'exit_type': trade.get('exit_type', 'EOD'),
+    }
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "trade_number": trade_number,
+        "trade": trade,
+        "context": context,
+        "outcome_analysis": outcome_analysis,
+        "market_conditions": {
+            'vix': trade.get('vix', 0),
+            'daily_range': round(trade.get('daily_high', 0) - trade.get('daily_low', 0), 2),
+            'daily_change_pct': round((trade.get('close_price', 0) - trade.get('open_price', 1)) / trade.get('open_price', 1) * 100, 2) if trade.get('open_price') else 0,
+            'gex_regime': trade.get('gex_regime', 'Unknown'),
+        }
+    }
+
+
+@router.post("/analytics/monte-carlo/{job_id}")
+async def run_monte_carlo_simulation(job_id: str, simulations: int = 1000, confidence_level: float = 0.95):
+    """
+    Run Monte Carlo simulation on backtest results.
+    Shuffles trade sequence to estimate confidence intervals.
+    """
+    import random
+    import math
+
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+    trades = result.get('all_trades', [])
+    initial_capital = result.get('summary', {}).get('initial_capital', 1000000)
+
+    if len(trades) < 10:
+        return {"success": False, "error": "Need at least 10 trades for Monte Carlo simulation"}
+
+    # Extract P&L values
+    pnl_values = [t.get('net_pnl', 0) for t in trades]
+
+    # Run simulations
+    final_equities = []
+    max_drawdowns = []
+
+    for _ in range(simulations):
+        # Shuffle trade order
+        shuffled_pnl = random.sample(pnl_values, len(pnl_values))
+
+        # Calculate equity curve
+        equity = initial_capital
+        peak = equity
+        max_dd = 0
+
+        for pnl in shuffled_pnl:
+            equity += pnl
+            if equity > peak:
+                peak = equity
+            dd = (peak - equity) / peak * 100 if peak > 0 else 0
+            if dd > max_dd:
+                max_dd = dd
+
+        final_equities.append(equity)
+        max_drawdowns.append(max_dd)
+
+    # Calculate statistics
+    final_equities.sort()
+    max_drawdowns.sort()
+
+    # Percentile indices
+    p5_idx = int(simulations * 0.05)
+    p25_idx = int(simulations * 0.25)
+    p50_idx = int(simulations * 0.50)
+    p75_idx = int(simulations * 0.75)
+    p95_idx = int(simulations * 0.95)
+
+    # Calculate probability of hitting thresholds
+    prob_profit = sum(1 for e in final_equities if e > initial_capital) / simulations * 100
+    prob_double = sum(1 for e in final_equities if e > initial_capital * 2) / simulations * 100
+    prob_loss_50 = sum(1 for e in final_equities if e < initial_capital * 0.5) / simulations * 100
+    prob_dd_30 = sum(1 for dd in max_drawdowns if dd > 30) / simulations * 100
+    prob_dd_50 = sum(1 for dd in max_drawdowns if dd > 50) / simulations * 100
+
+    # Original performance
+    original_final = result.get('summary', {}).get('final_equity', initial_capital)
+    original_return = result.get('summary', {}).get('total_return_pct', 0)
+    original_dd = result.get('summary', {}).get('max_drawdown_pct', 0)
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "simulations": simulations,
+        "trade_count": len(trades),
+        "original": {
+            "final_equity": original_final,
+            "return_pct": original_return,
+            "max_drawdown_pct": original_dd,
+        },
+        "monte_carlo": {
+            "final_equity": {
+                "p5": round(final_equities[p5_idx], 2),
+                "p25": round(final_equities[p25_idx], 2),
+                "median": round(final_equities[p50_idx], 2),
+                "p75": round(final_equities[p75_idx], 2),
+                "p95": round(final_equities[p95_idx], 2),
+                "mean": round(sum(final_equities) / simulations, 2),
+            },
+            "return_pct": {
+                "p5": round((final_equities[p5_idx] - initial_capital) / initial_capital * 100, 2),
+                "median": round((final_equities[p50_idx] - initial_capital) / initial_capital * 100, 2),
+                "p95": round((final_equities[p95_idx] - initial_capital) / initial_capital * 100, 2),
+            },
+            "max_drawdown_pct": {
+                "p5": round(max_drawdowns[p5_idx], 2),
+                "median": round(max_drawdowns[p50_idx], 2),
+                "p95": round(max_drawdowns[p95_idx], 2),
+                "max": round(max(max_drawdowns), 2),
+            },
+        },
+        "probabilities": {
+            "profit": round(prob_profit, 1),
+            "double_money": round(prob_double, 1),
+            "lose_50_pct": round(prob_loss_50, 1),
+            "drawdown_over_30": round(prob_dd_30, 1),
+            "drawdown_over_50": round(prob_dd_50, 1),
+        },
+        "confidence_interval": {
+            "level": confidence_level,
+            "return_range": [
+                round((final_equities[p5_idx] - initial_capital) / initial_capital * 100, 2),
+                round((final_equities[p95_idx] - initial_capital) / initial_capital * 100, 2)
+            ],
+        },
+        "verdict": "ROBUST" if prob_profit > 80 and prob_dd_50 < 10 else "MODERATE" if prob_profit > 60 else "RISKY"
+    }
+
+
+@router.get("/analytics/monthly/{job_id}")
+async def get_monthly_analysis(job_id: str):
+    """
+    Get month-by-month performance breakdown.
+    """
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+    trades = result.get('all_trades', [])
+
+    if not trades:
+        return {"success": False, "error": "No trades found"}
+
+    # Group trades by month
+    from collections import defaultdict
+    monthly_data = defaultdict(list)
+
+    for trade in trades:
+        trade_date = trade.get('trade_date', '')
+        if trade_date:
+            month_key = trade_date[:7]  # YYYY-MM
+            monthly_data[month_key].append(trade)
+
+    # Calculate monthly stats
+    monthly_stats = []
+    for month, month_trades in sorted(monthly_data.items()):
+        wins = [t for t in month_trades if t.get('net_pnl', 0) > 0]
+        total_pnl = sum(t.get('net_pnl', 0) for t in month_trades)
+        win_rate = (len(wins) / len(month_trades) * 100) if month_trades else 0
+
+        monthly_stats.append({
+            'month': month,
+            'trade_count': len(month_trades),
+            'win_count': len(wins),
+            'total_pnl': round(total_pnl, 2),
+            'avg_pnl': round(total_pnl / len(month_trades), 2) if month_trades else 0,
+            'win_rate': round(win_rate, 1),
+            'is_profitable': total_pnl > 0,
+        })
+
+    # Summary stats
+    profitable_months = sum(1 for m in monthly_stats if m['is_profitable'])
+    best_month = max(monthly_stats, key=lambda x: x['total_pnl']) if monthly_stats else None
+    worst_month = min(monthly_stats, key=lambda x: x['total_pnl']) if monthly_stats else None
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "total_months": len(monthly_stats),
+        "profitable_months": profitable_months,
+        "monthly_win_rate": round(profitable_months / len(monthly_stats) * 100, 1) if monthly_stats else 0,
+        "months": monthly_stats,
+        "best_month": best_month,
+        "worst_month": worst_month,
+    }
+
+
+@router.get("/analytics/streaks/{job_id}")
+async def get_streak_analysis(job_id: str):
+    """
+    Analyze winning and losing streaks.
+    """
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    result = job['result']
+    trades = result.get('all_trades', [])
+
+    if not trades:
+        return {"success": False, "error": "No trades found"}
+
+    # Sort trades by date
+    sorted_trades = sorted(trades, key=lambda x: x.get('trade_date', ''))
+
+    # Analyze streaks
+    current_win_streak = 0
+    current_loss_streak = 0
+    max_win_streak = 0
+    max_loss_streak = 0
+    win_streaks = []
+    loss_streaks = []
+
+    for trade in sorted_trades:
+        pnl = trade.get('net_pnl', 0)
+        if pnl > 0:
+            current_win_streak += 1
+            if current_loss_streak > 0:
+                loss_streaks.append(current_loss_streak)
+                current_loss_streak = 0
+            max_win_streak = max(max_win_streak, current_win_streak)
+        else:
+            current_loss_streak += 1
+            if current_win_streak > 0:
+                win_streaks.append(current_win_streak)
+                current_win_streak = 0
+            max_loss_streak = max(max_loss_streak, current_loss_streak)
+
+    # Don't forget the last streak
+    if current_win_streak > 0:
+        win_streaks.append(current_win_streak)
+    if current_loss_streak > 0:
+        loss_streaks.append(current_loss_streak)
+
+    # Calculate streak distributions
+    win_streak_dist = {}
+    for s in win_streaks:
+        win_streak_dist[s] = win_streak_dist.get(s, 0) + 1
+
+    loss_streak_dist = {}
+    for s in loss_streaks:
+        loss_streak_dist[s] = loss_streak_dist.get(s, 0) + 1
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "total_trades": len(trades),
+        "max_win_streak": max_win_streak,
+        "max_loss_streak": max_loss_streak,
+        "avg_win_streak": round(sum(win_streaks) / len(win_streaks), 1) if win_streaks else 0,
+        "avg_loss_streak": round(sum(loss_streaks) / len(loss_streaks), 1) if loss_streaks else 0,
+        "win_streak_distribution": dict(sorted(win_streak_dist.items())),
+        "loss_streak_distribution": dict(sorted(loss_streak_dist.items())),
+        "current_streak": {
+            "type": "WIN" if current_win_streak > current_loss_streak else "LOSS",
+            "count": max(current_win_streak, current_loss_streak)
+        }
+    }
+
+
+@router.get("/analytics/comprehensive/{job_id}")
+async def get_comprehensive_analytics(job_id: str):
+    """
+    Get all analytics for a backtest in one call.
+    Combines VIX regime, day-of-week, monthly, and streak analysis.
+    """
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Backtest not completed")
+
+    # Get all analytics
+    vix_analysis = await get_vix_regime_analysis(job_id)
+    dow_analysis = await get_day_of_week_analysis(job_id)
+    monthly_analysis = await get_monthly_analysis(job_id)
+    streak_analysis = await get_streak_analysis(job_id)
+
+    # Monte Carlo (quick version with fewer simulations)
+    mc_analysis = await run_monte_carlo_simulation(job_id, simulations=500)
+
+    result = job['result']
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "summary": result.get('summary', {}),
+        "trades_summary": result.get('trades', {}),
+        "risk_metrics": result.get('risk_metrics', {}),
+        "analytics": {
+            "vix_regime": vix_analysis if vix_analysis.get('success') else None,
+            "day_of_week": dow_analysis if dow_analysis.get('success') else None,
+            "monthly": monthly_analysis if monthly_analysis.get('success') else None,
+            "streaks": streak_analysis if streak_analysis.get('success') else None,
+            "monte_carlo": mc_analysis if mc_analysis.get('success') else None,
+        },
+        "recommendations": _generate_recommendations(vix_analysis, dow_analysis, monthly_analysis, mc_analysis)
+    }
+
+
+def _generate_recommendations(vix_analysis, dow_analysis, monthly_analysis, mc_analysis):
+    """Generate actionable recommendations based on analytics."""
+    recommendations = []
+
+    if vix_analysis and vix_analysis.get('success'):
+        optimal = vix_analysis.get('optimal_regime')
+        if optimal:
+            recommendations.append({
+                "type": "VIX_FILTER",
+                "priority": "HIGH",
+                "message": vix_analysis.get('recommendation', ''),
+                "action": f"Consider adding VIX filter for {optimal} regime"
+            })
+
+    if dow_analysis and dow_analysis.get('success'):
+        best = dow_analysis.get('best_day')
+        worst = dow_analysis.get('worst_day')
+        if best and worst and best != worst:
+            recommendations.append({
+                "type": "DAY_FILTER",
+                "priority": "MEDIUM",
+                "message": f"Best on {best}, worst on {worst}",
+                "action": f"Consider trading only on {best} or avoiding {worst}"
+            })
+
+    if mc_analysis and mc_analysis.get('success'):
+        verdict = mc_analysis.get('verdict', 'UNKNOWN')
+        prob_profit = mc_analysis.get('probabilities', {}).get('profit', 0)
+        if verdict == 'RISKY':
+            recommendations.append({
+                "type": "RISK_WARNING",
+                "priority": "HIGH",
+                "message": f"Monte Carlo shows only {prob_profit}% probability of profit",
+                "action": "Consider reducing position size or adjusting strategy parameters"
+            })
+        elif verdict == 'ROBUST':
+            recommendations.append({
+                "type": "CONFIDENCE",
+                "priority": "LOW",
+                "message": f"Strategy shows {prob_profit}% probability of profit across simulations",
+                "action": "Strategy appears robust to trade sequence randomization"
+            })
+
+    if monthly_analysis and monthly_analysis.get('success'):
+        monthly_wr = monthly_analysis.get('monthly_win_rate', 0)
+        if monthly_wr < 50:
+            recommendations.append({
+                "type": "CONSISTENCY",
+                "priority": "MEDIUM",
+                "message": f"Only {monthly_wr}% of months are profitable",
+                "action": "Strategy may have inconsistent monthly returns"
+            })
+
+    return recommendations
