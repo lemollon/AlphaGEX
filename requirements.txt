@@ -2,8 +2,7 @@ requests>=2.31.0
 pandas>=2.0.0
 numpy>=1.24.0
 plotly>=5.17.0
-# yfinance>=0.2.52  # OPTIONAL: Only needed for options chain data (RealOptionsChainFetcher)
-#                   # All market data now uses Polygon.io. Install only if you need options chains.
+yfinance>=0.2.52  # REQUIRED: Used for VIX data fetching (free, no API key needed)
 multitasking>=0.0.7
 scipy>=1.11.0
 py_vollib>=1.0.1

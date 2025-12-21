@@ -1,7 +1,7 @@
 'use client'
 
-import { Activity, TrendingUp, TrendingDown, Shield, AlertTriangle, BarChart3, Clock, Zap, Target, RefreshCw } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
+import { useState } from 'react'
+import { Activity, Shield, AlertTriangle, BarChart3, Clock, Zap, Target, RefreshCw, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useVIX, useVIXHedgeSignal, useVIXSignalHistory } from '@/lib/hooks/useMarketData'
 
@@ -24,6 +24,7 @@ interface VIXData {
   position_size_multiplier: number
   data_date?: string  // When the market data was collected
   timestamp: string
+  fallback_mode?: boolean  // Indicates if using fallback data sources
 }
 
 interface HedgeSignal {
@@ -32,16 +33,24 @@ interface HedgeSignal {
   reasoning: string
   recommended_action: string
   risk_warning?: string
+  fallback_mode?: boolean
 }
 
 interface SignalHistory {
   timestamp: string
   signal_type: string
   vix_level: number
+  confidence?: number
   action_taken?: string
 }
 
+// Pagination constants
+const ITEMS_PER_PAGE = 10
+
 export default function VIXDashboard() {
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0)
+
   // SWR hooks for data fetching with caching
   const { data: vixResponse, error: vixError, isLoading: vixLoading, isValidating: vixValidating, mutate: mutateVix } = useVIX()
   const { data: signalResponse, error: signalError, isValidating: signalValidating, mutate: mutateSignal } = useVIXHedgeSignal()
@@ -51,6 +60,16 @@ export default function VIXDashboard() {
   const vixData = vixResponse?.data as VIXData | undefined
   const hedgeSignal = signalResponse?.data as HedgeSignal | undefined
   const signalHistory = (historyResponse?.data || []) as SignalHistory[]
+
+  // Pagination calculations
+  const totalPages = Math.ceil(signalHistory.length / ITEMS_PER_PAGE)
+  const paginatedHistory = signalHistory.slice(
+    currentPage * ITEMS_PER_PAGE,
+    (currentPage + 1) * ITEMS_PER_PAGE
+  )
+
+  // Check if using fallback mode
+  const isUsingFallback = vixData?.fallback_mode || hedgeSignal?.fallback_mode
 
   const loading = vixLoading && !vixData
   const error = vixError?.message || signalError?.message || null
@@ -137,6 +156,19 @@ export default function VIXDashboard() {
               <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-3 py-1.5 rounded-lg w-fit">
                 <Clock className="w-4 h-4" />
                 <span>Market Data as of: <span className="font-semibold">{vixData.data_date}</span></span>
+              </div>
+            )}
+
+            {/* Fallback Mode Indicator */}
+            {isUsingFallback && (
+              <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/20 px-3 py-2 rounded-lg">
+                <AlertCircle className="w-4 h-4" />
+                <div>
+                  <span className="font-semibold">Fallback Mode Active</span>
+                  <span className="text-text-secondary ml-2">
+                    Primary data source unavailable. Using backup sources (data may be delayed).
+                  </span>
+                </div>
               </div>
             )}
 
@@ -413,38 +445,72 @@ export default function VIXDashboard() {
                   </div>
 
                   {signalHistory.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b border-border">
-                            <th className="text-left py-3 px-4 text-text-secondary font-medium">Time</th>
-                            <th className="text-left py-3 px-4 text-text-secondary font-medium">Signal</th>
-                            <th className="text-center py-3 px-4 text-text-secondary font-medium">VIX Level</th>
-                            <th className="text-left py-3 px-4 text-text-secondary font-medium">Action Taken</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {signalHistory.slice(0, 10).map((signal, idx) => (
-                            <tr key={idx} className="border-b border-border/50 hover:bg-background-hover">
-                              <td className="py-3 px-4 text-text-secondary text-sm">
-                                {formatSignalDate(signal.timestamp)}
-                              </td>
-                              <td className="py-3 px-4">
-                                <span className={`px-2 py-1 rounded text-xs font-semibold ${getSignalColor(signal.signal_type || 'no_action')}`}>
-                                  {(signal.signal_type || 'no_action').replace(/_/g, ' ').toUpperCase()}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 text-center font-semibold">
-                                {signal.vix_level?.toFixed(2) || '--'}
-                              </td>
-                              <td className="py-3 px-4 text-text-primary text-sm">
-                                {signal.action_taken || 'Monitored'}
-                              </td>
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="border-b border-border">
+                              <th className="text-left py-3 px-4 text-text-secondary font-medium">Time</th>
+                              <th className="text-left py-3 px-4 text-text-secondary font-medium">Signal</th>
+                              <th className="text-center py-3 px-4 text-text-secondary font-medium">VIX Level</th>
+                              <th className="text-center py-3 px-4 text-text-secondary font-medium">Confidence</th>
+                              <th className="text-left py-3 px-4 text-text-secondary font-medium">Action Taken</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody>
+                            {paginatedHistory.map((signal, idx) => (
+                              <tr key={idx} className="border-b border-border/50 hover:bg-background-hover">
+                                <td className="py-3 px-4 text-text-secondary text-sm">
+                                  {formatSignalDate(signal.timestamp)}
+                                </td>
+                                <td className="py-3 px-4">
+                                  <span className={`px-2 py-1 rounded text-xs font-semibold ${getSignalColor(signal.signal_type || 'no_action')}`}>
+                                    {(signal.signal_type || 'no_action').replace(/_/g, ' ').toUpperCase()}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 text-center font-semibold">
+                                  {signal.vix_level?.toFixed(2) || '--'}
+                                </td>
+                                <td className="py-3 px-4 text-center text-sm">
+                                  {signal.confidence != null ? `${signal.confidence.toFixed(0)}%` : '--'}
+                                </td>
+                                <td className="py-3 px-4 text-text-primary text-sm">
+                                  {signal.action_taken || 'Monitored'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Pagination Controls */}
+                      {totalPages > 1 && (
+                        <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
+                          <div className="text-sm text-text-muted">
+                            Showing {currentPage * ITEMS_PER_PAGE + 1} - {Math.min((currentPage + 1) * ITEMS_PER_PAGE, signalHistory.length)} of {signalHistory.length}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                              disabled={currentPage === 0}
+                              className="p-2 rounded-lg hover:bg-background-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <ChevronLeft className="w-5 h-5" />
+                            </button>
+                            <span className="text-sm text-text-secondary px-2">
+                              Page {currentPage + 1} of {totalPages}
+                            </span>
+                            <button
+                              onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+                              disabled={currentPage >= totalPages - 1}
+                              className="p-2 rounded-lg hover:bg-background-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <ChevronRight className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <div className="text-center py-8 text-text-secondary">
                       <Clock className="w-10 h-10 text-text-muted mx-auto mb-2" />
