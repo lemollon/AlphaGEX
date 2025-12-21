@@ -266,32 +266,42 @@ export default function VolatilityComparison() {
   const tradierAllExpChartData = prepareChartData(comparisonData?.tradier_all_expirations || null, 'ta')
   const tradier0dteChartData = prepareChartData(comparisonData?.tradier_0dte || null, 'tr')
 
-  // Calculate shared Y-axis domain for the two "all expirations" charts (so they're visually comparable)
-  const calculateSharedYDomain = () => {
-    const allValues: number[] = []
+  // Calculate INDEPENDENT Y-axis domains for each chart
+  // TradingVol API returns values in different units than Tradier GEX calculation
+  // TradingVol: raw gamma values (thousands)
+  // Tradier: full GEX = gamma * OI * 100 * spot^2 (billions)
+  // Using shared domain causes TradingVol bars to appear flat
 
-    // Collect all gamma values from both "all expirations" sources
+  const calculateTradingVolYDomain = () => {
+    const allValues: number[] = []
     if (comparisonData?.trading_volatility?.gamma_array) {
       comparisonData.trading_volatility.gamma_array.forEach(item => {
         allValues.push(item.call_gamma, -Math.abs(item.put_gamma))
       })
     }
+    if (allValues.length === 0) return [-100, 100]
+    const maxVal = Math.max(...allValues)
+    const minVal = Math.min(...allValues)
+    const padding = Math.max(Math.abs(maxVal), Math.abs(minVal)) * 0.1
+    return [minVal - padding, maxVal + padding]
+  }
+
+  const calculateTradierAllExpYDomain = () => {
+    const allValues: number[] = []
     if (comparisonData?.tradier_all_expirations?.gamma_array) {
       comparisonData.tradier_all_expirations.gamma_array.forEach(item => {
         allValues.push(item.call_gamma, -Math.abs(item.put_gamma))
       })
     }
-
     if (allValues.length === 0) return [-100, 100]
-
     const maxVal = Math.max(...allValues)
     const minVal = Math.min(...allValues)
-    // Add 10% padding
     const padding = Math.max(Math.abs(maxVal), Math.abs(minVal)) * 0.1
     return [minVal - padding, maxVal + padding]
   }
 
-  const sharedYDomain = calculateSharedYDomain()
+  const tradingVolYDomain = calculateTradingVolYDomain()
+  const tradierAllExpYDomain = calculateTradierAllExpYDomain()
 
   // Separate Y domain for 0DTE chart
   const calculate0dteYDomain = () => {
@@ -644,7 +654,7 @@ export default function VolatilityComparison() {
                       </div>
                       <p className="text-text-secondary text-sm">
                         All expirations NET gamma comparison. TradingVolatility API (left) vs Tradier calculated (right).
-                        Both charts should show similar patterns if calculations are accurate.
+                        Note: Charts use independent Y-axis scales (different units). Compare shapes/patterns, not absolute values.
                       </p>
                     </div>
 
@@ -680,7 +690,7 @@ export default function VolatilityComparison() {
                                   stroke="#9CA3AF"
                                   tick={{ fill: '#9CA3AF', fontSize: 9 }}
                                   tickFormatter={formatGamma}
-                                  domain={sharedYDomain as [number, number]}
+                                  domain={tradingVolYDomain as [number, number]}
                                 />
                                 <Tooltip
                                   contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
@@ -731,7 +741,7 @@ export default function VolatilityComparison() {
                                   stroke="#9CA3AF"
                                   tick={{ fill: '#9CA3AF', fontSize: 9 }}
                                   tickFormatter={formatGamma}
-                                  domain={sharedYDomain as [number, number]}
+                                  domain={tradierAllExpYDomain as [number, number]}
                                 />
                                 <Tooltip
                                   contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
