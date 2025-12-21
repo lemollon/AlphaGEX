@@ -1045,14 +1045,14 @@ export default function ATHENAPage() {
                                           <th className="text-left py-1">Type</th>
                                           <th className="text-right py-1">Strike</th>
                                           <th className="text-right py-1">Entry</th>
-                                          {decision.legs.some(l => l.delta) && <th className="text-right py-1">Delta</th>}
-                                          {decision.legs.some(l => l.theta) && <th className="text-right py-1">Theta</th>}
-                                          {decision.legs.some(l => l.iv) && <th className="text-right py-1">IV</th>}
-                                          {decision.legs.some(l => l.realized_pnl) && <th className="text-right py-1">P&L</th>}
+                                          {decision.legs?.some(l => l.delta) && <th className="text-right py-1">Delta</th>}
+                                          {decision.legs?.some(l => l.theta) && <th className="text-right py-1">Theta</th>}
+                                          {decision.legs?.some(l => l.iv) && <th className="text-right py-1">IV</th>}
+                                          {decision.legs?.some(l => l.realized_pnl) && <th className="text-right py-1">P&L</th>}
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {decision.legs.map((leg, i) => (
+                                        {decision.legs?.map((leg, i) => (
                                           <tr key={i} className="border-t border-gray-700/50">
                                             <td className="py-1">
                                               <span className={`${leg.action === 'BUY' ? 'text-green-400' : 'text-red-400'} font-medium`}>
@@ -1062,16 +1062,16 @@ export default function ATHENAPage() {
                                             <td className="py-1 text-gray-400">{leg.contracts}x {leg.option_type?.toUpperCase()}</td>
                                             <td className="py-1 text-right text-white">${leg.strike}</td>
                                             <td className="py-1 text-right text-green-400">${leg.entry_price?.toFixed(2) || '-'}</td>
-                                            {decision.legs.some(l => l.delta) && (
+                                            {decision.legs?.some(l => l.delta) && (
                                               <td className="py-1 text-right text-blue-400">{leg.delta?.toFixed(2) || '-'}</td>
                                             )}
-                                            {decision.legs.some(l => l.theta) && (
+                                            {decision.legs?.some(l => l.theta) && (
                                               <td className="py-1 text-right text-purple-400">{leg.theta?.toFixed(3) || '-'}</td>
                                             )}
-                                            {decision.legs.some(l => l.iv) && (
+                                            {decision.legs?.some(l => l.iv) && (
                                               <td className="py-1 text-right text-yellow-400">{leg.iv ? (leg.iv * 100).toFixed(0) + '%' : '-'}</td>
                                             )}
-                                            {decision.legs.some(l => l.realized_pnl) && (
+                                            {decision.legs?.some(l => l.realized_pnl) && (
                                               <td className={`py-1 text-right font-bold ${(leg.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                                                 {leg.realized_pnl ? `$${leg.realized_pnl.toFixed(0)}` : '-'}
                                               </td>
