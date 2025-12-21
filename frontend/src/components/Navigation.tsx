@@ -35,7 +35,8 @@ import {
   Sun,
   BookOpen,
   Pin,
-  PinOff
+  PinOff,
+  Flame
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -50,7 +51,7 @@ const navItems = [
   { href: '/apollo', label: 'APOLLO (ML Scanner)', icon: Sun, category: 'Trading' },
   { href: '/zero-dte-backtest', label: 'KRONOS (0DTE Condor)', icon: Clock, category: 'AI & Testing' },
   { href: '/oracle', label: 'ORACLE (AI Advisor)', icon: Eye, category: 'AI & Testing' },
-  { href: '/ml', label: 'PROMETHEUS (ML System)', icon: Brain, category: 'AI & Testing' },
+  { href: '/prometheus', label: 'PROMETHEUS (ML System)', icon: Flame, category: 'AI & Testing' },
   { href: '/ares', label: 'ARES (SPX Iron Condor)', icon: Sword, category: 'Live Trading' },
   { href: '/athena', label: 'ATHENA (Directional Spreads)', icon: Target, category: 'Live Trading' },
   { href: '/trader', label: 'PHOENIX (SPY 0DTE)', icon: Bot, category: 'Beta' },
