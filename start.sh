@@ -9,6 +9,23 @@ echo "🚀 Starting AlphaGEX API..."
 # Ensure we're in the project root
 cd "$(dirname "$0")"
 
+# CRITICAL: Ensure yfinance is installed for VIX data
+echo "📦 Ensuring yfinance is installed..."
+pip install --quiet yfinance || echo "⚠️ yfinance install failed"
+
+# Test VIX fetch at startup
+echo "🔍 Testing VIX fetch..."
+python3 -c "
+import yfinance as yf
+vix = yf.Ticker('^VIX')
+hist = vix.history(period='5d')
+if not hist.empty:
+    price = hist['Close'].iloc[-1]
+    print(f'✅ VIX Price: {price:.2f}')
+else:
+    print('❌ VIX fetch returned empty data')
+" 2>&1 || echo "⚠️ VIX test failed - will use fallback"
+
 # CRITICAL: Set PYTHONPATH to include project root
 # This ensures all internal modules (utils, core, data, etc.) are importable
 # Fixes "ModuleNotFoundError: No module named 'utils.logging_config'" on Render
