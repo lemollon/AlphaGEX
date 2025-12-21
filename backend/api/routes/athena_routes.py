@@ -17,6 +17,14 @@ from zoneinfo import ZoneInfo
 
 from database_adapter import get_connection
 
+# Import decision logger for ATHENA decisions
+try:
+    from trading.decision_logger import export_decisions_json
+    DECISION_LOGGER_AVAILABLE = True
+except ImportError:
+    DECISION_LOGGER_AVAILABLE = False
+    export_decisions_json = None
+
 router = APIRouter(prefix="/api/athena", tags=["ATHENA"])
 logger = logging.getLogger(__name__)
 
@@ -701,3 +709,47 @@ async def get_athena_diagnostics():
         "success": True,
         "data": diagnostics
     }
+
+
+@router.get("/decisions")
+async def get_athena_decisions(
+    limit: int = Query(100, description="Max decisions to return"),
+    start_date: Optional[str] = Query(None, description="Filter from date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Filter to date (YYYY-MM-DD)"),
+    decision_type: Optional[str] = Query(None, description="Filter by type: ENTRY_SIGNAL, NO_TRADE, EXIT_SIGNAL")
+):
+    """
+    Get ATHENA decision logs with full audit trail.
+
+    Returns comprehensive decision data including:
+    - Oracle/ML advice with win probability and confidence
+    - GEX context (walls, flip point, regime)
+    - Trade legs with strikes, prices, Greeks
+    - Position sizing breakdown
+    - Alternatives considered
+    - Risk checks performed
+    """
+    if not DECISION_LOGGER_AVAILABLE or not export_decisions_json:
+        raise HTTPException(
+            status_code=503,
+            detail="Decision logger not available"
+        )
+
+    try:
+        decisions = export_decisions_json(
+            bot_name="ATHENA",
+            start_date=start_date,
+            end_date=end_date,
+            decision_type=decision_type,
+            limit=limit
+        )
+
+        return {
+            "success": True,
+            "data": decisions,
+            "count": len(decisions)
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting ATHENA decisions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

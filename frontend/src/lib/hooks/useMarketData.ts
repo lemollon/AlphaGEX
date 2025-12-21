@@ -151,6 +151,17 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
+  athenaDecisions: async (limit?: number) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 100))
+      const response = await api.get(`/api/athena/decisions?${params}`)
+      return response.data
+    } catch (error) {
+      console.error('Error fetching ATHENA decisions:', error)
+      return { success: false, data: [], count: 0 }
+    }
+  },
   athenaLogs: async (level?: string, limit?: number) => {
     try {
       const params = new URLSearchParams()
@@ -684,6 +695,14 @@ export function useATHENALogs(level?: string, limit: number = 50, options?: SWRC
   return useSWR(
     `athena-logs-${level || 'all'}-${limit}`,
     () => fetchers.athenaLogs(level, limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useATHENADecisions(limit: number = 100, options?: SWRConfiguration) {
+  return useSWR(
+    `athena-decisions-${limit}`,
+    () => fetchers.athenaDecisions(limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
