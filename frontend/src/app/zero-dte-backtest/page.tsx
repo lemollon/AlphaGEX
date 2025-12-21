@@ -188,6 +188,9 @@ export default function ZeroDTEBacktestPage() {
   const [nlParsedConfig, setNlParsedConfig] = useState<any>(null)
   const [showNlInput, setShowNlInput] = useState(false)
 
+  // Preset application feedback
+  const [presetAppliedMessage, setPresetAppliedMessage] = useState<string | null>(null)
+
   // Check backend health on mount
   const checkBackendHealth = async () => {
     try {
@@ -342,6 +345,9 @@ export default function ZeroDTEBacktestPage() {
         end_date: prev.end_date,
         initial_capital: prev.initial_capital,
       }))
+      // Show feedback message
+      setPresetAppliedMessage(`Applied preset: ${preset.name}`)
+      setTimeout(() => setPresetAppliedMessage(null), 3000)
     }
   }
 
@@ -614,6 +620,42 @@ export default function ZeroDTEBacktestPage() {
   const runBacktest = async () => {
     // Prevent double-clicks
     if (running) return
+
+    // Validation
+    const validationErrors: string[] = []
+
+    // Check date range
+    if (config.start_date >= config.end_date) {
+      validationErrors.push('Start date must be before end date')
+    }
+
+    // Check at least one trading day is selected
+    const tradingDaysSelected = [
+      config.trade_monday,
+      config.trade_tuesday,
+      config.trade_wednesday,
+      config.trade_thursday,
+      config.trade_friday
+    ].some(day => day)
+
+    if (!tradingDaysSelected) {
+      validationErrors.push('At least one trading day must be selected')
+    }
+
+    // Check VIX filter is valid
+    if (config.min_vix !== null && config.max_vix !== null && config.min_vix >= config.max_vix) {
+      validationErrors.push('Min VIX must be less than Max VIX')
+    }
+
+    // Check risk per trade is reasonable
+    if (config.risk_per_trade_pct <= 0 || config.risk_per_trade_pct > 100) {
+      validationErrors.push('Risk per trade must be between 0 and 100%')
+    }
+
+    if (validationErrors.length > 0) {
+      setError(validationErrors.join('. '))
+      return
+    }
 
     setRunning(true)
     setError(null)
@@ -988,34 +1030,101 @@ export default function ZeroDTEBacktestPage() {
             </div>
           )}
 
-          {/* Strategy Selection */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {strategies.map(strategy => (
-              <div
-                key={strategy.id}
-                onClick={() => selectStrategy(strategy.id)}
-                className={`bg-gray-900 border rounded-lg p-4 cursor-pointer transition-all ${
-                  config.strategy === strategy.id
-                    ? 'border-blue-500 ring-2 ring-blue-500/20'
-                    : 'border-gray-800 hover:border-gray-700'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-bold">{strategy.name}</h3>
-                  {config.strategy === strategy.id && (
-                    <CheckCircle className="w-5 h-5 text-blue-400" />
-                  )}
-                </div>
-                <p className="text-sm text-gray-400 mb-3">{strategy.description}</p>
-                <div className="flex flex-wrap gap-1">
-                  {strategy.features.slice(0, 2).map((f, i) => (
-                    <span key={i} className="px-2 py-0.5 bg-gray-800 rounded text-xs text-gray-300">
-                      {f}
-                    </span>
-                  ))}
-                </div>
+          {/* Strategy Type Selection - PRIMARY (what type of options strategy to trade) */}
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <Target className="w-5 h-5 text-blue-400" />
+                  Strategy Type
+                </h2>
+                <p className="text-sm text-gray-400 mt-1">Select the options strategy structure to backtest</p>
               </div>
-            ))}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {strategyTypes.map(st => (
+                <div
+                  key={st.id}
+                  onClick={() => setConfig(prev => ({ ...prev, strategy_type: st.id }))}
+                  className={`border rounded-lg p-3 cursor-pointer transition-all ${
+                    config.strategy_type === st.id
+                      ? 'border-blue-500 bg-blue-900/20 ring-2 ring-blue-500/20'
+                      : 'border-gray-700 hover:border-gray-600 bg-gray-800/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-sm">{st.name}</span>
+                    {config.strategy_type === st.id && (
+                      <CheckCircle className="w-4 h-4 text-blue-400" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs mb-1">
+                    <span className={`px-1.5 py-0.5 rounded ${st.credit ? 'bg-green-900/50 text-green-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
+                      {st.credit ? 'Credit' : 'Debit'}
+                    </span>
+                    <span className="text-gray-500">{st.legs} legs</span>
+                  </div>
+                  <p className="text-xs text-gray-400 line-clamp-2">{st.description}</p>
+                </div>
+              ))}
+            </div>
+            {/* Strategy-specific notes */}
+            {config.strategy_type === 'gex_protected_iron_condor' && (
+              <div className="mt-3 p-3 bg-emerald-900/20 border border-emerald-800 rounded-lg text-sm text-emerald-300">
+                <strong>GEX-Protected:</strong> Places strikes outside GEX walls (call wall/put wall) for additional protection. Falls back to SD method when GEX data is unavailable.
+              </div>
+            )}
+            {config.strategy_type === 'apache_directional' && (
+              <div className="mt-3 p-3 bg-orange-900/20 border border-orange-800 rounded-lg text-sm text-orange-300">
+                <strong>Apache GEX Directional:</strong> DEBIT SPREADS ONLY. Opens Bull Call spreads when price is near put wall (support), Bear Put spreads when near call wall (resistance). Skips trades when not near walls. Adjust "Wall Proximity %" in Advanced settings.
+              </div>
+            )}
+            {(config.strategy_type === 'diagonal_call' || config.strategy_type === 'diagonal_put') && (
+              <div className="mt-3 p-3 bg-purple-900/20 border border-purple-800 rounded-lg text-sm text-purple-300">
+                <strong>Diagonal Spread:</strong> Poor Man's Covered {config.strategy_type === 'diagonal_call' ? 'Call' : 'Put'}. Sells near-term OTM option and buys longer-term option. Short strike placed at configured SD multiplier distance.
+              </div>
+            )}
+          </div>
+
+          {/* Risk Profile Selection - SECONDARY (how aggressive to trade) */}
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-bold text-sm flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-gray-400" />
+                  Risk Profile
+                  <span className="text-xs text-gray-500 font-normal">(Account scaling behavior)</span>
+                </h3>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {strategies.map(strategy => (
+                <div
+                  key={strategy.id}
+                  onClick={() => selectStrategy(strategy.id)}
+                  className={`border rounded-lg p-3 cursor-pointer transition-all ${
+                    config.strategy === strategy.id
+                      ? 'border-purple-500 bg-purple-900/20'
+                      : 'border-gray-700 hover:border-gray-600 bg-gray-800/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="font-bold text-sm">{strategy.name}</h4>
+                    {config.strategy === strategy.id && (
+                      <CheckCircle className="w-4 h-4 text-purple-400" />
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 mb-2">{strategy.description}</p>
+                  <div className="flex flex-wrap gap-1">
+                    {strategy.features.slice(0, 2).map((f, i) => (
+                      <span key={i} className="px-1.5 py-0.5 bg-gray-800 rounded text-xs text-gray-400">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Configuration Panel */}
@@ -1118,24 +1227,6 @@ export default function ZeroDTEBacktestPage() {
                 </select>
               </div>
 
-              {/* Strategy Type */}
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Strategy Type</label>
-                <select
-                  value={config.strategy_type}
-                  onChange={e => setConfig(prev => ({ ...prev, strategy_type: e.target.value }))}
-                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
-                >
-                  {strategyTypes.map(st => (
-                    <option key={st.id} value={st.id}>{st.name}</option>
-                  ))}
-                </select>
-                {config.strategy_type === 'gex_protected_iron_condor' && (
-                  <p className="mt-1 text-xs text-emerald-400">
-                    Uses GEX walls for strike protection, falls back to SD when unavailable
-                  </p>
-                )}
-              </div>
             </div>
 
             {/* Risk Management Settings */}
@@ -1357,11 +1448,17 @@ export default function ZeroDTEBacktestPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Wall Proximity % (ATHENA)</label>
+                  <label className={`block text-sm mb-1 ${config.strategy_type === 'apache_directional' ? 'text-orange-400' : 'text-gray-400'}`}>
+                    Wall Proximity % (Apache)
+                  </label>
                   <select
                     value={config.wall_proximity_pct}
                     onChange={e => setConfig(prev => ({ ...prev, wall_proximity_pct: Number(e.target.value) }))}
-                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+                    className={`w-full border rounded px-3 py-2 text-sm ${
+                      config.strategy_type === 'apache_directional'
+                        ? 'bg-orange-900/20 border-orange-700'
+                        : 'bg-gray-800 border-gray-700'
+                    }`}
                   >
                     <option value={0.5}>0.5% (very tight)</option>
                     <option value={1.0}>1.0% (default)</option>
@@ -1370,6 +1467,9 @@ export default function ZeroDTEBacktestPage() {
                     <option value={3.0}>3.0% (loose)</option>
                     <option value={5.0}>5.0% (very loose)</option>
                   </select>
+                  {config.strategy_type === 'apache_directional' && (
+                    <p className="text-xs text-orange-400 mt-1">Apache uses this to detect proximity to GEX walls</p>
+                  )}
                 </div>
                 </div>
               </div>
@@ -1461,6 +1561,13 @@ export default function ZeroDTEBacktestPage() {
                 <div className="flex items-center gap-2 text-red-400">
                   <AlertTriangle className="w-5 h-5" />
                   {error}
+                </div>
+              )}
+
+              {presetAppliedMessage && (
+                <div className="flex items-center gap-2 text-green-400 animate-pulse">
+                  <CheckCircle className="w-5 h-5" />
+                  {presetAppliedMessage}
                 </div>
               )}
             </div>

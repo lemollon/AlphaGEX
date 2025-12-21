@@ -1845,6 +1845,63 @@ STRATEGY_PRESETS = [
             "spread_width": 10.0,
             "strike_selection": "delta"
         }
+    },
+    {
+        "id": "apache_directional",
+        "name": "Apache GEX Directional",
+        "description": "Trades debit spreads at GEX walls. Bull Call near put wall (support), Bear Put near call wall (resistance). Only trades when near walls.",
+        "is_preset": True,
+        "tags": ["apache", "gex", "directional", "debit"],
+        "config": {
+            "strategy_type": "apache_directional",
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "wall_proximity_pct": 1.0,
+            "strike_selection": "sd",
+            "sd_multiplier": 1.0
+        }
+    },
+    {
+        "id": "bull_put_credit",
+        "name": "Bull Put Spread",
+        "description": "Bullish credit spread - sell put, buy lower put. Profit if price stays above short strike.",
+        "is_preset": True,
+        "tags": ["bullish", "credit", "put_spread"],
+        "config": {
+            "strategy_type": "bull_put",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "bear_call_credit",
+        "name": "Bear Call Spread",
+        "description": "Bearish credit spread - sell call, buy higher call. Profit if price stays below short strike.",
+        "is_preset": True,
+        "tags": ["bearish", "credit", "call_spread"],
+        "config": {
+            "strategy_type": "bear_call",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "iron_butterfly",
+        "name": "Iron Butterfly",
+        "description": "ATM short straddle with OTM wings. Maximum profit at center strike, ideal for range-bound markets.",
+        "is_preset": True,
+        "tags": ["neutral", "iron_butterfly", "high_premium"],
+        "config": {
+            "strategy_type": "iron_butterfly",
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd",
+            "sd_multiplier": 1.0
+        }
     }
 ]
 
