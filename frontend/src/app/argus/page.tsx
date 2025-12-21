@@ -89,6 +89,8 @@ interface Commentary {
   top_magnet: number
   likely_pin: number
   pin_probability: number
+  danger_zones: string[] | null
+  vix: number | null
 }
 
 interface ExpectedMoveChange {
@@ -1113,44 +1115,80 @@ export default function ArgusPage() {
                 </h3>
                 {commentary.length > 0 && (
                   <span className="text-xs text-gray-500">
-                    {commentary.length} entries
+                    {commentary.length} entries • Updates every 5 min
                   </span>
                 )}
               </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto font-mono text-xs">
+              <div className="space-y-3 max-h-80 overflow-y-auto">
                 {commentary.length > 0 ? (
                   commentary.slice(0, 20).map((entry) => (
                     <div
                       key={entry.id}
-                      className="p-3 bg-gray-900/50 rounded-lg border-l-2 border-cyan-500/50"
+                      className="p-4 bg-gray-900/50 rounded-lg border-l-2 border-cyan-500/50"
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1">
-                          <p className="text-gray-300 leading-relaxed">{entry.text}</p>
-                          <div className="flex flex-wrap gap-3 mt-2 text-[10px]">
-                            <span className="text-gray-500">
-                              SPY: <span className="text-white">${entry.spot_price.toFixed(2)}</span>
-                            </span>
-                            <span className="text-gray-500">
-                              Magnet: <span className="text-yellow-400">${entry.top_magnet}</span>
-                            </span>
-                            <span className="text-gray-500">
-                              Pin: <span className="text-purple-400">${entry.likely_pin}</span>
-                              <span className="text-gray-600 ml-1">({entry.pin_probability.toFixed(0)}%)</span>
-                            </span>
-                          </div>
+                      {/* Timestamp Header */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-3 h-3 text-cyan-400" />
+                          <span className="text-xs text-cyan-400 font-medium">
+                            {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
                         </div>
-                        <div className="text-[10px] text-gray-600 whitespace-nowrap">
-                          {new Date(entry.timestamp).toLocaleTimeString()}
+                        <span className="text-[10px] text-gray-600">
+                          {new Date(entry.timestamp).toLocaleDateString()}
+                        </span>
+                      </div>
+
+                      {/* Commentary Text */}
+                      <div className="text-sm text-gray-200 leading-relaxed whitespace-pre-line mb-3">
+                        {entry.text}
+                      </div>
+
+                      {/* Market Context Row */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                        <div className="bg-gray-800/50 rounded px-2 py-1.5">
+                          <span className="text-gray-500">SPY</span>
+                          <span className="text-white ml-1 font-mono">${entry.spot_price?.toFixed(2) || '-'}</span>
+                        </div>
+                        <div className="bg-gray-800/50 rounded px-2 py-1.5">
+                          <span className="text-gray-500">VIX</span>
+                          <span className={`ml-1 font-mono ${(entry.vix || 0) > 20 ? 'text-orange-400' : 'text-emerald-400'}`}>
+                            {entry.vix?.toFixed(1) || '-'}
+                          </span>
+                        </div>
+                        <div className="bg-gray-800/50 rounded px-2 py-1.5">
+                          <span className="text-gray-500">Magnet</span>
+                          <span className="text-yellow-400 ml-1 font-mono">${entry.top_magnet || '-'}</span>
+                        </div>
+                        <div className="bg-gray-800/50 rounded px-2 py-1.5">
+                          <span className="text-gray-500">Pin</span>
+                          <span className="text-purple-400 ml-1 font-mono">
+                            ${entry.likely_pin || '-'}
+                            <span className="text-gray-600 text-[10px] ml-1">
+                              ({entry.pin_probability?.toFixed(0) || 0}%)
+                            </span>
+                          </span>
                         </div>
                       </div>
+
+                      {/* Danger Zones */}
+                      {entry.danger_zones && entry.danger_zones.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          <span className="text-[10px] text-orange-400">Danger:</span>
+                          {entry.danger_zones.slice(0, 5).map((dz, i) => (
+                            <span key={i} className="px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded text-[10px]">
+                              {typeof dz === 'string' ? dz : JSON.stringify(dz)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))
                 ) : (
                   <div className="text-center py-8 text-gray-500">
                     <Activity className="w-8 h-8 mx-auto mb-2 opacity-30" />
                     <p className="text-sm">No log entries yet</p>
-                    <p className="text-xs text-gray-600 mt-1">Commentary will appear as market events occur</p>
+                    <p className="text-xs text-gray-600 mt-1">AI commentary generates every 5 minutes during market hours</p>
                   </div>
                 )}
               </div>
