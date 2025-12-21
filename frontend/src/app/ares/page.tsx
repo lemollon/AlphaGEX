@@ -42,6 +42,7 @@ interface ARESStatus {
 
 interface IronCondorPosition {
   position_id: string
+  ticker?: string  // SPX or SPY
   open_date: string
   close_date?: string
   expiration: string
@@ -54,6 +55,7 @@ interface IronCondorPosition {
   realized_pnl?: number
   max_loss: number
   contracts: number
+  spread_width?: number
   underlying_at_entry: number
   vix_at_entry: number
   status: string
@@ -550,22 +552,34 @@ export default function ARESPage() {
                   )}
                 </div>
 
-                {/* Recent Trades */}
+                {/* Recent Trades - SPX only */}
                 <div className="px-4 pb-4">
-                  <h4 className="text-sm font-medium text-purple-300 mb-2">Recent Closed Trades</h4>
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {closedPositions.length > 0 ? closedPositions.slice(0, 5).map((pos) => (
+                  <h4 className="text-sm font-medium text-purple-300 mb-2">
+                    Recent Closed Trades
+                    <span className="text-xs text-gray-500 ml-2">
+                      ({closedPositions.filter(p => p.ticker === 'SPX' || (!p.ticker && (p.spread_width || 10) > 5)).length} SPX)
+                    </span>
+                  </h4>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {closedPositions
+                      .filter(p => p.ticker === 'SPX' || (!p.ticker && (p.spread_width || 10) > 5))
+                      .slice(0, 10)
+                      .map((pos) => (
                       <div key={pos.position_id} className="flex items-center justify-between text-xs bg-gray-800/30 rounded p-2">
-                        <span className="text-gray-400">{pos.close_date || pos.expiration}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-400">{pos.close_date || pos.expiration}</span>
+                          <span className="px-1 py-0.5 bg-purple-900/50 text-purple-300 rounded text-[10px]">SPX</span>
+                        </div>
                         <span className="text-gray-300 font-mono">
                           {pos.put_short_strike}P / {pos.call_short_strike}C
                         </span>
-                        <span className={(pos.realized_pnl || pos.total_credit) > 0 ? 'text-green-400' : 'text-red-400'}>
-                          {formatCurrency((pos.realized_pnl || pos.total_credit * 100 * pos.contracts))}
+                        <span className={(pos.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                          {formatCurrency(pos.realized_pnl || pos.total_credit * 100 * pos.contracts)}
                         </span>
                       </div>
-                    )) : (
-                      <p className="text-xs text-gray-500 text-center py-2">No closed trades yet</p>
+                    ))}
+                    {closedPositions.filter(p => p.ticker === 'SPX' || (!p.ticker && (p.spread_width || 10) > 5)).length === 0 && (
+                      <p className="text-xs text-gray-500 text-center py-2">No SPX closed trades yet</p>
                     )}
                   </div>
                 </div>
@@ -716,11 +730,16 @@ export default function ARESPage() {
                       )}
                     </div>
 
-                    {/* Recent Orders */}
+                    {/* Recent Orders from Tradier */}
                     <div className="px-4 pb-4">
-                      <h4 className="text-sm font-medium text-blue-300 mb-2">Recent Orders</h4>
+                      <h4 className="text-sm font-medium text-blue-300 mb-2">
+                        Recent Orders (Tradier)
+                        <span className="text-xs text-gray-500 ml-2">
+                          ({tradierStatus?.orders?.length || 0} total)
+                        </span>
+                      </h4>
                       <div className="space-y-1 max-h-32 overflow-y-auto">
-                        {tradierStatus?.orders && tradierStatus.orders.length > 0 ? tradierStatus.orders.slice(0, 5).map((order) => (
+                        {tradierStatus?.orders && tradierStatus.orders.length > 0 ? tradierStatus.orders.slice(0, 10).map((order) => (
                           <div key={order.id} className="flex items-center justify-between text-xs bg-gray-800/30 rounded p-2">
                             <span className="text-white font-mono">{order.symbol}</span>
                             <span className={order.side === 'buy' ? 'text-green-400' : 'text-red-400'}>
@@ -730,6 +749,7 @@ export default function ARESPage() {
                               order.status === 'filled' ? 'bg-green-900 text-green-300' :
                               order.status === 'pending' ? 'bg-yellow-900 text-yellow-300' :
                               order.status === 'canceled' ? 'bg-gray-700 text-gray-300' :
+                              order.status === 'expired' ? 'bg-purple-900 text-purple-300' :
                               'bg-gray-700 text-gray-300'
                             }`}>
                               {order.status}
@@ -737,6 +757,38 @@ export default function ARESPage() {
                           </div>
                         )) : (
                           <p className="text-xs text-gray-500 text-center py-2">No recent orders</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* SPY Closed Trades from AlphaGEX tracking */}
+                    <div className="px-4 pb-4">
+                      <h4 className="text-sm font-medium text-blue-300 mb-2">
+                        Closed SPY Trades
+                        <span className="text-xs text-gray-500 ml-2">
+                          ({closedPositions.filter(p => p.ticker === 'SPY' || (!p.ticker && (p.spread_width || 10) <= 5)).length} SPY)
+                        </span>
+                      </h4>
+                      <div className="space-y-1 max-h-40 overflow-y-auto">
+                        {closedPositions
+                          .filter(p => p.ticker === 'SPY' || (!p.ticker && (p.spread_width || 10) <= 5))
+                          .slice(0, 10)
+                          .map((pos) => (
+                          <div key={pos.position_id} className="flex items-center justify-between text-xs bg-gray-800/30 rounded p-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">{pos.close_date || pos.expiration}</span>
+                              <span className="px-1 py-0.5 bg-blue-900/50 text-blue-300 rounded text-[10px]">SPY</span>
+                            </div>
+                            <span className="text-gray-300 font-mono">
+                              {pos.put_short_strike}P / {pos.call_short_strike}C
+                            </span>
+                            <span className={(pos.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                              {formatCurrency(pos.realized_pnl || pos.total_credit * 100 * pos.contracts)}
+                            </span>
+                          </div>
+                        ))}
+                        {closedPositions.filter(p => p.ticker === 'SPY' || (!p.ticker && (p.spread_width || 10) <= 5)).length === 0 && (
+                          <p className="text-xs text-gray-500 text-center py-2">No SPY closed trades yet</p>
                         )}
                       </div>
                     </div>

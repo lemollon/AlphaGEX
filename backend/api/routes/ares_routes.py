@@ -114,10 +114,20 @@ async def get_ares_positions():
         }
 
     try:
+        # Helper to infer ticker from spread width
+        def get_ticker(pos):
+            if hasattr(pos, 'spread_width'):
+                return "SPY" if pos.spread_width <= 5 else "SPX"
+            # Fallback: infer from underlying price
+            if hasattr(pos, 'underlying_price_at_entry') and pos.underlying_price_at_entry:
+                return "SPY" if pos.underlying_price_at_entry < 1000 else "SPX"
+            return "SPX"
+
         open_positions = []
         for pos in ares.open_positions:
             open_positions.append({
                 "position_id": pos.position_id,
+                "ticker": get_ticker(pos),
                 "open_date": pos.open_date,
                 "expiration": pos.expiration,
                 "put_long_strike": pos.put_long_strike,
@@ -128,6 +138,7 @@ async def get_ares_positions():
                 "call_credit": pos.call_credit,
                 "total_credit": pos.total_credit,
                 "contracts": pos.contracts,
+                "spread_width": pos.spread_width,
                 "max_loss": pos.max_loss,
                 "premium_collected": pos.total_credit * 100 * pos.contracts,
                 "underlying_at_entry": pos.underlying_price_at_entry,
@@ -136,18 +147,25 @@ async def get_ares_positions():
             })
 
         closed_positions = []
-        for pos in ares.closed_positions[-20:]:  # Last 20 closed
+        for pos in ares.closed_positions[-100:]:  # Last 100 closed (increased from 20)
             closed_positions.append({
                 "position_id": pos.position_id,
+                "ticker": get_ticker(pos),
                 "open_date": pos.open_date,
                 "close_date": pos.close_date,
                 "expiration": pos.expiration,
+                "put_long_strike": pos.put_long_strike,
+                "put_short_strike": pos.put_short_strike,
+                "call_short_strike": pos.call_short_strike,
+                "call_long_strike": pos.call_long_strike,
                 "put_spread": f"{pos.put_long_strike}/{pos.put_short_strike}P",
                 "call_spread": f"{pos.call_short_strike}/{pos.call_long_strike}C",
                 "contracts": pos.contracts,
+                "spread_width": pos.spread_width,
                 "total_credit": pos.total_credit,
                 "close_price": pos.close_price,
                 "realized_pnl": pos.realized_pnl,
+                "underlying_at_entry": pos.underlying_price_at_entry,
                 "status": pos.status
             })
 

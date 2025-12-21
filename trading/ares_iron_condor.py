@@ -2243,12 +2243,12 @@ class ARESTrader:
             except Exception as e:
                 result['errors'].append(f"Failed to get positions: {e}")
 
-            # Get recent orders
+            # Get recent orders (include filled/expired, not just open)
             try:
-                orders = tradier_client.get_orders()
+                orders = tradier_client.get_orders(status='all')
                 if orders:
-                    # Only include recent orders (last 10)
-                    result['orders'] = orders[:10] if len(orders) > 10 else orders
+                    # Only include recent orders (last 20, including filled)
+                    result['orders'] = orders[:20] if len(orders) > 20 else orders
             except Exception as e:
                 result['errors'].append(f"Failed to get orders: {e}")
 
