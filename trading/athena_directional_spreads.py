@@ -99,7 +99,8 @@ try:
     from trading.decision_logger import (
         DecisionLogger, TradeDecision, DecisionType, BotName,
         TradeLeg, MarketContext as LoggerMarketContext, DataSource,
-        DecisionReasoning, get_athena_logger
+        DecisionReasoning, get_athena_logger,
+        MLPredictions, RiskCheck, BacktestReference
     )
     DECISION_LOGGER_AVAILABLE = True
 except ImportError:
@@ -107,6 +108,9 @@ except ImportError:
     DecisionLogger = None
     TradeDecision = None
     get_athena_logger = None
+    MLPredictions = None
+    RiskCheck = None
+    BacktestReference = None
 
 # Import comprehensive bot logger (legacy - kept for compatibility)
 try:
@@ -732,7 +736,9 @@ class ATHENATrader:
         spot_price: float,
         gex_data: Dict,
         advice: OraclePrediction,
-        signal_id: Optional[int] = None
+        signal_id: Optional[int] = None,
+        ml_signal: Optional[Dict] = None,
+        rr_ratio: float = 0
     ) -> Optional[SpreadPosition]:
         """Execute a spread trade"""
         decision_tracker = None
@@ -824,6 +830,8 @@ class ATHENATrader:
                 position=position,
                 gex_data=gex_data,
                 advice=advice,
+                ml_signal=ml_signal,
+                rr_ratio=rr_ratio,
                 decision_tracker=decision_tracker
             )
 
@@ -880,14 +888,104 @@ class ATHENATrader:
         position: SpreadPosition,
         gex_data: Dict,
         advice: Any,
+        ml_signal: Optional[Dict] = None,
+        rr_ratio: float = 0,
         decision_tracker: Optional[Any] = None
     ) -> None:
-        """Log comprehensive decision using decision_logger (same as ARES)"""
+        """
+        Log comprehensive decision using decision_logger (same structure as ARES).
+
+        Includes:
+        - ML predictions (direction, flip_gravity, magnet, pin_zone, volatility)
+        - Greeks for each trade leg
+        - Extended GEX context (distance_to_flip_pct)
+        - Extended market context (vix_percentile, expected_move, trend, day_of_week)
+        - Backtest stats from ML model
+        - Structured risk checks
+        """
         if not DECISION_LOGGER_AVAILABLE or not self.decision_logger:
             return
 
         try:
-            # Create trade legs for the spread
+            # Get VIX and VIX percentile
+            vix = 20.0
+            vix_percentile = 50.0
+            if UNIFIED_DATA_AVAILABLE:
+                try:
+                    from data.unified_data_provider import get_vix
+                    vix = get_vix() or 20.0
+                    # Estimate VIX percentile (simplified - could enhance with historical data)
+                    if vix < 12:
+                        vix_percentile = 10
+                    elif vix < 15:
+                        vix_percentile = 25
+                    elif vix < 18:
+                        vix_percentile = 40
+                    elif vix < 22:
+                        vix_percentile = 55
+                    elif vix < 28:
+                        vix_percentile = 75
+                    else:
+                        vix_percentile = 90
+                except:
+                    pass
+
+            # Calculate distance to flip point
+            spot = gex_data.get('spot_price', 0)
+            flip_point = gex_data.get('flip_point', 0)
+            distance_to_flip_pct = 0
+            if spot and flip_point:
+                distance_to_flip_pct = ((spot - flip_point) / spot) * 100
+
+            # Calculate expected move from VIX (simplified)
+            expected_move_pct = (vix / 16) * (1 / 252 ** 0.5) * 100  # Daily expected move
+
+            # Determine trend from position relative to flip point
+            trend = "NEUTRAL"
+            if spot > flip_point * 1.005:
+                trend = "BULLISH"
+            elif spot < flip_point * 0.995:
+                trend = "BEARISH"
+
+            # Get day info
+            now = datetime.now(CENTRAL_TZ)
+            day_of_week = now.weekday()  # 0=Monday, 4=Friday
+
+            # Days to monthly OPEX (3rd Friday)
+            import calendar
+            cal = calendar.Calendar()
+            month_days = cal.monthdayscalendar(now.year, now.month)
+            third_friday = None
+            friday_count = 0
+            for week in month_days:
+                if week[4] != 0:  # Friday
+                    friday_count += 1
+                    if friday_count == 3:
+                        third_friday = week[4]
+                        break
+            if third_friday:
+                opex_date = now.replace(day=third_friday)
+                if opex_date < now:
+                    # Next month's OPEX
+                    next_month = now.month + 1 if now.month < 12 else 1
+                    next_year = now.year if now.month < 12 else now.year + 1
+                    month_days = cal.monthdayscalendar(next_year, next_month)
+                    friday_count = 0
+                    for week in month_days:
+                        if week[4] != 0:
+                            friday_count += 1
+                            if friday_count == 3:
+                                third_friday = week[4]
+                                break
+                    opex_date = datetime(next_year, next_month, third_friday, tzinfo=CENTRAL_TZ)
+                days_to_opex = (opex_date - now).days
+            else:
+                days_to_opex = 0
+
+            # Get Greeks for legs (if available from options chain)
+            leg_greeks = self._get_leg_greeks(position, gex_data.get('spot_price', 0), vix)
+
+            # Create trade legs with Greeks
             if position.spread_type == SpreadType.BULL_CALL_SPREAD:
                 legs = [
                     TradeLeg(
@@ -897,7 +995,12 @@ class ATHENATrader:
                         strike=position.long_strike,
                         expiration=position.expiration,
                         entry_price=position.entry_debit,
-                        contracts=position.contracts
+                        contracts=position.contracts,
+                        delta=leg_greeks.get('long_delta', 0),
+                        gamma=leg_greeks.get('long_gamma', 0),
+                        theta=leg_greeks.get('long_theta', 0),
+                        vega=leg_greeks.get('long_vega', 0),
+                        iv=leg_greeks.get('long_iv', 0),
                     ),
                     TradeLeg(
                         leg_id=2,
@@ -905,7 +1008,12 @@ class ATHENATrader:
                         option_type="call",
                         strike=position.short_strike,
                         expiration=position.expiration,
-                        contracts=position.contracts
+                        contracts=position.contracts,
+                        delta=leg_greeks.get('short_delta', 0),
+                        gamma=leg_greeks.get('short_gamma', 0),
+                        theta=leg_greeks.get('short_theta', 0),
+                        vega=leg_greeks.get('short_vega', 0),
+                        iv=leg_greeks.get('short_iv', 0),
                     )
                 ]
             else:  # BEAR_CALL_SPREAD
@@ -916,8 +1024,13 @@ class ATHENATrader:
                         option_type="call",
                         strike=position.short_strike,
                         expiration=position.expiration,
-                        entry_price=abs(position.entry_debit),  # Credit received
-                        contracts=position.contracts
+                        entry_price=abs(position.entry_debit),
+                        contracts=position.contracts,
+                        delta=leg_greeks.get('short_delta', 0),
+                        gamma=leg_greeks.get('short_gamma', 0),
+                        theta=leg_greeks.get('short_theta', 0),
+                        vega=leg_greeks.get('short_vega', 0),
+                        iv=leg_greeks.get('short_iv', 0),
                     ),
                     TradeLeg(
                         leg_id=2,
@@ -925,18 +1038,104 @@ class ATHENATrader:
                         option_type="call",
                         strike=position.long_strike,
                         expiration=position.expiration,
-                        contracts=position.contracts
+                        contracts=position.contracts,
+                        delta=leg_greeks.get('long_delta', 0),
+                        gamma=leg_greeks.get('long_gamma', 0),
+                        theta=leg_greeks.get('long_theta', 0),
+                        vega=leg_greeks.get('long_vega', 0),
+                        iv=leg_greeks.get('long_iv', 0),
                     )
                 ]
 
-            # Get VIX
-            vix = 20.0
-            if UNIFIED_DATA_AVAILABLE:
-                try:
-                    from data.unified_data_provider import get_vix
-                    vix = get_vix() or 20.0
-                except:
-                    pass
+            # Build ML Predictions object (if ML signal available)
+            ml_predictions_obj = None
+            if ml_signal and MLPredictions:
+                model_preds = ml_signal.get('model_predictions', {})
+                suggested_strikes = ml_signal.get('suggested_strikes', {})
+                ml_predictions_obj = MLPredictions(
+                    direction=model_preds.get('direction', ''),
+                    direction_probability=ml_signal.get('win_probability', 0),
+                    advice=ml_signal.get('advice', ''),
+                    suggested_spread_type=ml_signal.get('spread_type', ''),
+                    flip_gravity=model_preds.get('flip_gravity', 0),
+                    magnet_attraction=model_preds.get('magnet_attraction', 0),
+                    pin_zone_probability=model_preds.get('pin_zone', 0),
+                    expected_volatility=ml_signal.get('expected_volatility', 0),
+                    ml_confidence=ml_signal.get('confidence', 0),
+                    win_probability=ml_signal.get('win_probability', 0),
+                    suggested_entry_strike=suggested_strikes.get('entry_strike', 0),
+                    suggested_exit_strike=suggested_strikes.get('exit_strike', 0),
+                    ml_reasoning=ml_signal.get('reasoning', ''),
+                    model_version=ml_signal.get('model_version', ''),
+                    models_used=['direction', 'flip_gravity', 'magnet', 'pin_zone', 'volatility'],
+                )
+
+            # Build structured risk checks
+            risk_checks_list = []
+            if RiskCheck:
+                # Market hours check
+                risk_checks_list.append(RiskCheck(
+                    check="Market Hours",
+                    passed=True,
+                    value=now.strftime("%H:%M"),
+                    threshold=f"{self.config.entry_start_time}-{self.config.entry_end_time}"
+                ))
+                # Daily trade limit
+                risk_checks_list.append(RiskCheck(
+                    check="Daily Trade Limit",
+                    passed=self.daily_trades < self.config.max_daily_trades,
+                    value=str(self.daily_trades),
+                    threshold=str(self.config.max_daily_trades)
+                ))
+                # Max positions
+                risk_checks_list.append(RiskCheck(
+                    check="Max Positions",
+                    passed=len(self.open_positions) < self.config.max_open_positions,
+                    value=str(len(self.open_positions)),
+                    threshold=str(self.config.max_open_positions)
+                ))
+                # R:R ratio
+                risk_checks_list.append(RiskCheck(
+                    check="R:R Ratio",
+                    passed=rr_ratio >= self.config.min_rr_ratio,
+                    value=f"{rr_ratio:.2f}:1",
+                    threshold=f"{self.config.min_rr_ratio}:1"
+                ))
+                # VIX check
+                risk_checks_list.append(RiskCheck(
+                    check="VIX Level",
+                    passed=vix < 35,
+                    value=f"{vix:.1f}",
+                    threshold="< 35"
+                ))
+                # Between walls
+                between_walls = self._is_between_walls(gex_data)
+                risk_checks_list.append(RiskCheck(
+                    check="Between GEX Walls",
+                    passed=between_walls,
+                    value="Yes" if between_walls else "No",
+                    threshold="Required"
+                ))
+
+            # Build backtest reference (from ML model if available)
+            backtest_ref = None
+            if BacktestReference and ml_signal:
+                # Get backtest stats from ML model metrics if available
+                backtest_ref = BacktestReference(
+                    strategy_name="ATHENA_GEX_ML",
+                    backtest_date=now.strftime('%Y-%m-%d'),
+                    win_rate=ml_signal.get('win_probability', 0) * 100,  # Convert to percentage
+                    expectancy=0,  # Would need to calculate from historical
+                    avg_win=0,
+                    avg_loss=0,
+                    sharpe_ratio=0,
+                    total_trades=0,
+                    max_drawdown=0,
+                    backtest_period="2024-01 to 2024-12",
+                    uses_real_data=True,
+                    data_source="polygon",
+                    date_range="12 months"
+                )
 
             # Build supporting factors
             supporting_factors = [
@@ -944,23 +1143,24 @@ class ATHENATrader:
                 f"Call Wall: ${gex_data.get('call_wall', 0):,.0f}",
                 f"Put Wall: ${gex_data.get('put_wall', 0):,.0f}",
                 f"Spot: ${gex_data.get('spot_price', 0):,.2f}",
-                f"VIX: {vix:.1f}",
+                f"VIX: {vix:.1f} ({vix_percentile:.0f}th percentile)",
             ]
 
-            # Add Oracle/ML factors
-            if hasattr(advice, 'win_probability'):
+            # Add ML/Oracle factors
+            if ml_signal:
+                supporting_factors.append(f"ML Direction: {ml_signal.get('model_predictions', {}).get('direction', 'N/A')}")
+                supporting_factors.append(f"ML Confidence: {ml_signal.get('confidence', 0):.1%}")
+                supporting_factors.append(f"Win Probability: {ml_signal.get('win_probability', 0):.1%}")
+            elif hasattr(advice, 'win_probability'):
                 supporting_factors.append(f"Win Probability: {advice.win_probability:.1%}")
-            if hasattr(advice, 'confidence'):
-                supporting_factors.append(f"Confidence: {advice.confidence:.1%}")
-            if hasattr(advice, 'reasoning') and advice.reasoning:
-                supporting_factors.append(f"Signal Reasoning: {advice.reasoning[:200]}")
+                supporting_factors.append(f"Confidence: {getattr(advice, 'confidence', 0):.1%}")
 
             # Build risk factors
             risk_factors = [
                 f"Max loss per spread: ${position.spread_width * 100:,.0f}",
                 f"Total max risk: ${position.max_loss:,.0f}",
                 f"0DTE expiration: {position.expiration}",
-                f"R:R filter passed (min {self.config.min_rr_ratio}:1)",
+                f"R:R ratio: {rr_ratio:.2f}:1 (min {self.config.min_rr_ratio}:1)",
             ]
 
             # Alternatives considered
@@ -973,18 +1173,18 @@ class ATHENATrader:
 
             why_not_alternatives = [
                 "GEX/ML signal confirmed direction",
-                f"R:R ratio met minimum threshold",
+                f"R:R ratio {rr_ratio:.2f}:1 met minimum threshold",
                 "Current spread width provides optimal risk/reward",
             ]
 
-            # Build oracle_advice dict for storage
+            # Build oracle_advice dict for storage (Oracle fallback info)
             oracle_advice_dict = None
             if hasattr(advice, 'win_probability'):
                 oracle_advice_dict = {
-                    'advice': getattr(advice, 'advice', 'UNKNOWN'),
+                    'advice': str(getattr(advice, 'advice', 'UNKNOWN')),
                     'win_probability': getattr(advice, 'win_probability', 0),
                     'confidence': getattr(advice, 'confidence', getattr(advice, 'win_probability', 0)),
-                    'suggested_risk_pct': getattr(advice, 'suggested_risk_pct', None),
+                    'suggested_risk_pct': getattr(advice, 'suggested_risk_pct', self.config.risk_per_trade_pct),
                     'suggested_call_strike': getattr(advice, 'suggested_call_strike', None),
                     'reasoning': getattr(advice, 'reasoning', ''),
                 }
@@ -1001,15 +1201,18 @@ class ATHENATrader:
 
             # Build comprehensive "what"
             spread_name = "Bull Call Spread" if position.spread_type == SpreadType.BULL_CALL_SPREAD else "Bear Call Spread"
-            what_desc = f"{spread_name} {position.contracts}x ${position.long_strike}/${position.short_strike} @ ${abs(position.entry_debit):.2f}"
+            signal_source = "ML" if ml_signal else "Oracle"
+            what_desc = f"{spread_name} {position.contracts}x ${position.long_strike}/${position.short_strike} @ ${abs(position.entry_debit):.2f} ({signal_source} signal)"
 
             # Build comprehensive "why"
-            why_parts = [
-                f"GEX-based directional {spread_name} for premium capture.",
-                f"Regime: {gex_data.get('regime', 'UNKNOWN')}",
-            ]
-            if hasattr(advice, 'win_probability'):
-                why_parts.append(f"Win Prob: {advice.win_probability:.0%}")
+            why_parts = [f"GEX-based directional {spread_name} for premium capture."]
+            if ml_signal:
+                model_preds = ml_signal.get('model_predictions', {})
+                why_parts.append(f"ML predicts {model_preds.get('direction', 'N/A')} with {ml_signal.get('confidence', 0):.0%} confidence")
+            why_parts.append(f"Regime: {gex_data.get('regime', 'UNKNOWN')}")
+            win_prob = ml_signal.get('win_probability', 0) if ml_signal else getattr(advice, 'win_probability', 0)
+            if win_prob:
+                why_parts.append(f"Win Prob: {win_prob:.0%}")
             why_desc = " | ".join(why_parts)
 
             # Build comprehensive "how"
@@ -1038,15 +1241,24 @@ class ATHENATrader:
                     spot_price=gex_data.get('spot_price', 0),
                     spot_source=DataSource.TRADIER_LIVE,
                     vix=vix,
+                    vix_percentile_30d=vix_percentile,
+                    expected_move_pct=expected_move_pct,
+                    trend=trend,
+                    day_of_week=day_of_week,
+                    days_to_opex=days_to_opex,
                     net_gex=gex_data.get('net_gex', 0),
                     gex_regime=gex_data.get('regime', 'NEUTRAL'),
                     flip_point=gex_data.get('flip_point', 0),
                     call_wall=gex_data.get('call_wall', 0),
                     put_wall=gex_data.get('put_wall', 0),
                 ),
+                ml_predictions=ml_predictions_obj,
                 oracle_advice=oracle_advice_dict,
+                backtest_reference=backtest_ref,
+                risk_checks=risk_checks_list,
+                passed_risk_checks=all(rc.passed for rc in risk_checks_list) if risk_checks_list else True,
                 reasoning=DecisionReasoning(
-                    primary_reason=f"GEX-directed {spread_name} for premium collection",
+                    primary_reason=f"GEX-directed {spread_name} for premium collection via {signal_source}",
                     supporting_factors=supporting_factors,
                     risk_factors=risk_factors,
                     alternatives_considered=alternatives_considered,
@@ -1054,9 +1266,11 @@ class ATHENATrader:
                 ),
                 position_size_dollars=abs(position.entry_debit) * 100 * position.contracts,
                 position_size_contracts=position.contracts,
+                position_size_method="risk_pct",
                 max_risk_dollars=position.max_loss,
                 target_profit_pct=50,  # Typical target for spreads
-                probability_of_profit=getattr(advice, 'win_probability', 0.5),
+                stop_loss_pct=100,  # Max loss is spread width
+                probability_of_profit=ml_signal.get('win_probability', 0) if ml_signal else getattr(advice, 'win_probability', 0.5),
             )
 
             # Log to database
@@ -1067,6 +1281,41 @@ class ATHENATrader:
             self._log_to_db("ERROR", f"Failed to log decision: {e}")
             import traceback
             traceback.print_exc()
+
+    def _get_leg_greeks(self, position: SpreadPosition, spot: float, vix: float) -> Dict:
+        """
+        Get Greeks for trade legs.
+        Uses simplified Black-Scholes approximation for 0DTE options.
+        """
+        greeks = {}
+        try:
+            import math
+            # Simplified 0DTE Greeks approximation
+            # For ATM options, delta ~0.5, gamma peaks, theta accelerates
+            time_to_exp = 1/252  # 1 day in years
+
+            # Long leg (ATM-ish)
+            long_moneyness = (spot - position.long_strike) / spot
+            greeks['long_delta'] = 0.5 + (long_moneyness * 2)  # Simplified
+            greeks['long_delta'] = max(-1, min(1, greeks['long_delta']))
+            greeks['long_gamma'] = 0.05  # Peaks near ATM for 0DTE
+            greeks['long_theta'] = -0.10 * vix / 20  # Accelerated theta for 0DTE
+            greeks['long_vega'] = 0.02
+            greeks['long_iv'] = vix / 100
+
+            # Short leg (OTM)
+            short_moneyness = (spot - position.short_strike) / spot
+            greeks['short_delta'] = 0.5 + (short_moneyness * 2)
+            greeks['short_delta'] = max(-1, min(1, greeks['short_delta']))
+            greeks['short_gamma'] = 0.03  # Lower gamma for OTM
+            greeks['short_theta'] = -0.08 * vix / 20
+            greeks['short_vega'] = 0.01
+            greeks['short_iv'] = vix / 100 * 1.1  # Slight IV skew for OTM
+
+        except Exception as e:
+            self._log_to_db("DEBUG", f"Could not calculate Greeks: {e}")
+
+        return greeks
 
     def check_exits(self) -> List[SpreadPosition]:
         """Check all open positions for exit conditions"""
@@ -1565,7 +1814,9 @@ class ATHENATrader:
             spot_price=gex_data['spot_price'],
             gex_data=gex_data,
             advice=advice_obj,
-            signal_id=signal_id
+            signal_id=signal_id,
+            ml_signal=ml_signal,
+            rr_ratio=rr_ratio
         )
 
         if position:

@@ -183,6 +183,49 @@ class MarketContext:
 
 
 @dataclass
+class MLPredictions:
+    """
+    ML model predictions for ATHENA (GEX ML signal).
+    Captures all outputs from the ML models for full audit trail.
+    """
+    # Primary prediction
+    direction: str = ""  # UP, DOWN, NEUTRAL
+    direction_probability: float = 0  # 0-1 probability of predicted direction
+    advice: str = ""  # LONG, SHORT, STAY_OUT
+    suggested_spread_type: str = ""  # BULL_CALL_SPREAD, BEAR_CALL_SPREAD, NONE
+
+    # Model outputs (from 5 trained models)
+    flip_gravity: float = 0  # Attraction to flip point (0-1)
+    magnet_attraction: float = 0  # Pull toward nearest wall (0-1)
+    pin_zone_probability: float = 0  # Likelihood of pinning (0-1)
+    expected_volatility: float = 0  # Expected range %
+
+    # Confidence and quality
+    ml_confidence: float = 0  # Overall model confidence (0-1)
+    win_probability: float = 0  # Predicted win probability (0-1)
+
+    # Suggested strikes from ML
+    suggested_entry_strike: float = 0
+    suggested_exit_strike: float = 0
+
+    # Model reasoning
+    ml_reasoning: str = ""
+
+    # Model metadata
+    model_version: str = ""
+    models_used: List[str] = field(default_factory=list)
+
+
+@dataclass
+class RiskCheck:
+    """Individual risk check result"""
+    check: str  # Name of the check
+    passed: bool  # Whether it passed
+    value: str = ""  # Optional value that was checked
+    threshold: str = ""  # Optional threshold value
+
+
+@dataclass
 class BacktestReference:
     """Link to backtest that informed this decision"""
     strategy_name: str
@@ -257,6 +300,12 @@ class TradeDecision:
 
     # Oracle AI advice (from OracleAdvisor)
     oracle_advice: Optional[Dict] = None  # Full oracle prediction with win_prob, confidence, factors
+
+    # ML Predictions (for ATHENA - GEX ML signal)
+    ml_predictions: Optional[MLPredictions] = None
+
+    # Structured risk checks (list of individual check results)
+    risk_checks: List[RiskCheck] = field(default_factory=list)
 
     # Reasoning
     reasoning: DecisionReasoning = None
@@ -877,17 +926,53 @@ def export_decisions_json(
                 # RISK CHECKS - What passed/failed
                 # =========================================================
                 record['risk_checks'] = []
-                risk_details = full_dec.get('risk_check_details', [])
-                if isinstance(risk_details, list):
-                    for check in risk_details:
-                        if isinstance(check, str):
+                # First check for structured risk_checks list
+                risk_checks_list = full_dec.get('risk_checks', [])
+                if isinstance(risk_checks_list, list) and risk_checks_list:
+                    for check in risk_checks_list:
+                        if isinstance(check, dict):
                             record['risk_checks'].append({
-                                'check': check,
-                                'passed': not check.upper().startswith('FAILED'),
+                                'check': check.get('check', ''),
+                                'passed': check.get('passed', True),
+                                'value': check.get('value', ''),
+                                'threshold': check.get('threshold', ''),
                             })
-                        elif isinstance(check, dict):
-                            record['risk_checks'].append(check)
+                else:
+                    # Fallback to legacy risk_check_details
+                    risk_details = full_dec.get('risk_check_details', [])
+                    if isinstance(risk_details, list):
+                        for check in risk_details:
+                            if isinstance(check, str):
+                                record['risk_checks'].append({
+                                    'check': check,
+                                    'passed': not check.upper().startswith('FAILED'),
+                                })
+                            elif isinstance(check, dict):
+                                record['risk_checks'].append(check)
                 record['passed_risk_checks'] = full_dec.get('passed_risk_checks', True)
+
+                # =========================================================
+                # ML PREDICTIONS - For ATHENA (GEX ML signal)
+                # =========================================================
+                ml_preds = full_dec.get('ml_predictions', {})
+                if ml_preds and isinstance(ml_preds, dict):
+                    record['ml_predictions'] = {
+                        'direction': ml_preds.get('direction', ''),
+                        'direction_probability': ml_preds.get('direction_probability', 0),
+                        'advice': ml_preds.get('advice', ''),
+                        'suggested_spread_type': ml_preds.get('suggested_spread_type', ''),
+                        'flip_gravity': ml_preds.get('flip_gravity', 0),
+                        'magnet_attraction': ml_preds.get('magnet_attraction', 0),
+                        'pin_zone_probability': ml_preds.get('pin_zone_probability', 0),
+                        'expected_volatility': ml_preds.get('expected_volatility', 0),
+                        'ml_confidence': ml_preds.get('ml_confidence', 0),
+                        'win_probability': ml_preds.get('win_probability', 0),
+                        'suggested_entry_strike': ml_preds.get('suggested_entry_strike', 0),
+                        'suggested_exit_strike': ml_preds.get('suggested_exit_strike', 0),
+                        'ml_reasoning': ml_preds.get('ml_reasoning', ''),
+                        'model_version': ml_preds.get('model_version', ''),
+                        'models_used': ml_preds.get('models_used', []),
+                    }
 
                 # =========================================================
                 # UNDERLYING PRICES & OUTCOME
