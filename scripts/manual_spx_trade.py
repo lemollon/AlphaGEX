@@ -63,9 +63,11 @@ def main():
     spx_price = spx_quote.get('last') or spx_quote.get('close')
     logger.info(f"SPX Price: ${spx_price:.2f}")
 
-    # Get VIX
-    vix_quote = tradier.get_quote('VIX')
-    vix = vix_quote.get('last') or vix_quote.get('close') or 20
+    # Get VIX - use $VIX.X for Tradier (correct symbol format)
+    vix_quote = tradier.get_quote('$VIX.X')
+    vix = vix_quote.get('last') if vix_quote else 0
+    if not vix:
+        vix = 20.0  # Fallback
     logger.info(f"VIX: {vix:.2f}")
 
     # Calculate expected move (1 SD)

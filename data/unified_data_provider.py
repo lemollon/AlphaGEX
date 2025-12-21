@@ -483,51 +483,18 @@ class UnifiedDataProvider:
     # ==================== VIX ====================
 
     def get_vix(self) -> float:
-        """Get current VIX value from Tradier or Yahoo Finance (no Polygon)"""
-        # Try Tradier PRODUCTION first - sandbox doesn't support all index quotes
-        # VIX is read-only (no trading), so production is safe and more reliable
-        try:
-            tradier_prod = TradierDataFetcher(sandbox=False)
-            data = tradier_prod.get_quote('$VIX.X')
-            if data:
-                price = float(data.get('last', 0) or data.get('close', 0) or 0)
-                if price > 0:
-                    logger.info(f"VIX from Tradier production ($VIX.X): {price}")
-                    return price
-        except Exception as e:
-            logger.debug(f"Tradier VIX fetch failed: {e}")
+        """
+        Get current VIX value - NO FAKE FALLBACKS.
 
-        # Try Yahoo Finance (FREE - no API key needed!)
-        try:
-            import yfinance as yf
-            vix_ticker = yf.Ticker("^VIX")
+        Uses dedicated vix_fetcher module which tries:
+        1. Tradier ($VIX.X)
+        2. Yahoo Finance (^VIX)
+        3. Recent cache (up to 5 min old)
 
-            # Method 1: Try info dict (most reliable)
-            try:
-                info = vix_ticker.info
-                price = info.get('regularMarketPrice') or info.get('previousClose') or info.get('open', 0)
-                if price and price > 0:
-                    logger.info(f"VIX from Yahoo Finance (info): {price}")
-                    return float(price)
-            except Exception:
-                pass
-
-            # Method 2: Get from history (always works)
-            hist = vix_ticker.history(period='5d')
-            if not hist.empty:
-                price = float(hist['Close'].iloc[-1])
-                if price > 0:
-                    logger.info(f"VIX from Yahoo Finance (history): {price}")
-                    return price
-        except ImportError:
-            logger.debug("yfinance not installed")
-        except Exception as e:
-            logger.debug(f"Yahoo Finance VIX fetch failed: {e}")
-
-        # CRITICAL: Never return 0.0 - it breaks calculations downstream
-        # Use historical average as safe fallback
-        logger.error("VIX unavailable from Tradier and Yahoo - using fallback 18.0")
-        return 18.0  # Historical average VIX
+        Raises VIXFetchError if all sources fail.
+        """
+        from data.vix_fetcher import get_vix_price
+        return get_vix_price()
 
     # ==================== ACCOUNT (Tradier only) ====================
 

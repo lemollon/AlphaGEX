@@ -182,13 +182,11 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
             return {"type": "gex", "symbol": symbol, "data": None, "error": "API client not available"}
 
         elif command == 'vix':
-            # Fetch VIX data
+            # Fetch VIX data - use $VIX.X for Tradier (correct symbol format)
             try:
                 from data.tradier_data_fetcher import TradierDataFetcher
-                import os
-                use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
-                tradier = TradierDataFetcher(sandbox=use_sandbox)
-                vix_quote = tradier.get_quote('VIX')
+                tradier = TradierDataFetcher()  # Respects TRADIER_SANDBOX env var
+                vix_quote = tradier.get_quote('$VIX.X')
                 return {"type": "vix", "data": vix_quote}
             except Exception as e:
                 return {"type": "vix", "data": None, "error": str(e)}
