@@ -752,7 +752,7 @@ export default function ArgusPage() {
                   <BarChart3 className="w-5 h-5 text-blue-400" />
                   Net Gamma by Strike
                 </h3>
-                <div className="flex items-center gap-4 text-xs">
+                <div className="flex items-center gap-3 text-xs flex-wrap">
                   <div className="flex items-center gap-1.5">
                     <div className="w-3 h-3 rounded bg-purple-500"></div>
                     <span className="text-gray-400">Pin</span>
@@ -768,6 +768,14 @@ export default function ArgusPage() {
                   <div className="flex items-center gap-1.5">
                     <div className="w-3 h-3 rounded bg-rose-500"></div>
                     <span className="text-gray-400">-γ</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-4 h-0 border-t-2 border-blue-400"></div>
+                    <span className="text-gray-400">EM</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-4 h-0 border-t border-dashed border-gray-500"></div>
+                    <span className="text-gray-400">EM'</span>
                   </div>
                 </div>
               </div>
@@ -814,6 +822,66 @@ export default function ArgusPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Prior Day Expected Move Range - Dotted Lines */}
+                {gammaData && gammaData.strikes.length > 1 && gammaData.expected_move_change?.prior_day && (() => {
+                  const minStrike = gammaData.strikes[0].strike
+                  const maxStrike = gammaData.strikes[gammaData.strikes.length - 1].strike
+                  const range = maxStrike - minStrike
+                  const priorEM = gammaData.expected_move_change.prior_day
+                  const lowerPrior = ((gammaData.spot_price - priorEM - minStrike) / range) * 100
+                  const upperPrior = ((gammaData.spot_price + priorEM - minStrike) / range) * 100
+                  return (
+                    <>
+                      {lowerPrior >= 0 && lowerPrior <= 100 && (
+                        <div
+                          className="absolute bottom-0 top-0 border-l border-dashed border-gray-500/50 z-5"
+                          style={{ left: `${lowerPrior}%` }}
+                        >
+                          <div className="absolute bottom-1 -left-3 text-[8px] text-gray-500">-EM'</div>
+                        </div>
+                      )}
+                      {upperPrior >= 0 && upperPrior <= 100 && (
+                        <div
+                          className="absolute bottom-0 top-0 border-l border-dashed border-gray-500/50 z-5"
+                          style={{ left: `${upperPrior}%` }}
+                        >
+                          <div className="absolute bottom-1 -left-3 text-[8px] text-gray-500">+EM'</div>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
+
+                {/* Current Expected Move Range - Solid Lines */}
+                {gammaData && gammaData.strikes.length > 1 && gammaData.expected_move && (() => {
+                  const minStrike = gammaData.strikes[0].strike
+                  const maxStrike = gammaData.strikes[gammaData.strikes.length - 1].strike
+                  const range = maxStrike - minStrike
+                  const currentEM = gammaData.expected_move
+                  const lowerCurrent = ((gammaData.spot_price - currentEM - minStrike) / range) * 100
+                  const upperCurrent = ((gammaData.spot_price + currentEM - minStrike) / range) * 100
+                  return (
+                    <>
+                      {lowerCurrent >= 0 && lowerCurrent <= 100 && (
+                        <div
+                          className="absolute bottom-0 top-0 border-l-2 border-blue-400/70 z-5"
+                          style={{ left: `${lowerCurrent}%` }}
+                        >
+                          <div className="absolute bottom-1 -left-3 text-[8px] text-blue-400 font-medium">-EM</div>
+                        </div>
+                      )}
+                      {upperCurrent >= 0 && upperCurrent <= 100 && (
+                        <div
+                          className="absolute bottom-0 top-0 border-l-2 border-blue-400/70 z-5"
+                          style={{ left: `${upperCurrent}%` }}
+                        >
+                          <div className="absolute bottom-1 -left-3 text-[8px] text-blue-400 font-medium">+EM</div>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
 
               {/* Strike Labels */}
