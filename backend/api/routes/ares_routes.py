@@ -176,6 +176,8 @@ async def get_ares_equity_curve(days: int = 30):
     Returns equity curve built from closed positions.
     """
     ares = get_ares_instance()
+    starting_capital = 200000  # ARES allocated capital
+    today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
     if not ares:
         # Return starting equity point
@@ -183,36 +185,49 @@ async def get_ares_equity_curve(days: int = 30):
             "success": True,
             "data": {
                 "equity_curve": [{
-                    "date": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d'),
-                    "equity": 200000,
+                    "date": today,
+                    "equity": starting_capital,
                     "pnl": 0,
                     "daily_pnl": 0,
                     "return_pct": 0
                 }],
-                "starting_capital": 200000,
-                "current_equity": 200000,
+                "starting_capital": starting_capital,
+                "current_equity": starting_capital,
                 "total_pnl": 0,
                 "message": "ARES not yet initialized"
             }
         }
 
     try:
-        starting_capital = 200000  # ARES allocated capital
-
         # Build equity curve from closed positions
         equity_curve = []
         cumulative_pnl = 0
 
-        # Group positions by close date
+        # Group positions by close date (or expiration if no close_date)
         positions_by_date = {}
         for pos in ares.closed_positions:
-            if pos.close_date:
-                if pos.close_date not in positions_by_date:
-                    positions_by_date[pos.close_date] = []
-                positions_by_date[pos.close_date].append(pos)
+            # Use close_date if available, otherwise expiration
+            date_key = pos.close_date or pos.expiration
+            if date_key:
+                if date_key not in positions_by_date:
+                    positions_by_date[date_key] = []
+                positions_by_date[date_key].append(pos)
 
         # Sort dates and build curve
         sorted_dates = sorted(positions_by_date.keys())
+
+        # Add starting point
+        if sorted_dates:
+            first_date = sorted_dates[0]
+            # Add day before first trade as starting point
+            equity_curve.append({
+                "date": first_date,
+                "equity": starting_capital,
+                "pnl": 0,
+                "daily_pnl": 0,
+                "return_pct": 0
+            })
+
         for date_str in sorted_dates:
             daily_pnl = sum(pos.realized_pnl for pos in positions_by_date[date_str])
             cumulative_pnl += daily_pnl
@@ -223,13 +238,42 @@ async def get_ares_equity_curve(days: int = 30):
                 "equity": round(current_equity, 2),
                 "pnl": round(cumulative_pnl, 2),
                 "daily_pnl": round(daily_pnl, 2),
-                "return_pct": round((cumulative_pnl / starting_capital) * 100, 2)
+                "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                "trades_closed": len(positions_by_date[date_str])
             })
 
-        # Add current date if no trades yet
+        # If no closed positions but we have performance data, build from that
+        if not equity_curve and ares.total_pnl != 0:
+            equity_curve.append({
+                "date": today,
+                "equity": starting_capital,
+                "pnl": 0,
+                "daily_pnl": 0,
+                "return_pct": 0
+            })
+            equity_curve.append({
+                "date": today,
+                "equity": round(starting_capital + ares.total_pnl, 2),
+                "pnl": round(ares.total_pnl, 2),
+                "daily_pnl": round(ares.total_pnl, 2),
+                "return_pct": round((ares.total_pnl / starting_capital) * 100, 2)
+            })
+
+        # Add current point if we have trades
+        if equity_curve and equity_curve[-1]["date"] != today:
+            current_equity = starting_capital + ares.total_pnl
+            equity_curve.append({
+                "date": today,
+                "equity": round(current_equity, 2),
+                "pnl": round(ares.total_pnl, 2),
+                "daily_pnl": 0,
+                "return_pct": round((ares.total_pnl / starting_capital) * 100, 2)
+            })
+
+        # Add starting point if still empty
         if not equity_curve:
             equity_curve.append({
-                "date": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d'),
+                "date": today,
                 "equity": starting_capital,
                 "pnl": 0,
                 "daily_pnl": 0,
@@ -245,7 +289,8 @@ async def get_ares_equity_curve(days: int = 30):
                 "starting_capital": starting_capital,
                 "current_equity": round(current_equity, 2),
                 "total_pnl": round(ares.total_pnl, 2),
-                "total_return_pct": round((ares.total_pnl / starting_capital) * 100, 2)
+                "total_return_pct": round((ares.total_pnl / starting_capital) * 100, 2),
+                "closed_positions_count": len(ares.closed_positions)
             }
         }
     except Exception as e:
@@ -489,22 +534,25 @@ async def get_ares_config():
     """
     Get ARES configuration parameters.
 
-    Returns the current trading configuration.
+    Returns the current trading configuration for both SPX and SPY.
     """
     ares = get_ares_instance()
 
     default_config = {
         "ticker": "SPX",
         "spread_width": 10.0,
+        "spread_width_spy": 2.0,
         "risk_per_trade_pct": 10.0,
-        "sd_multiplier": 1.0,
+        "sd_multiplier": 0.5,
+        "sd_multiplier_spy": 0.5,
         "use_0dte": True,
-        "min_credit": 3.00,
+        "min_credit": 1.50,
+        "min_credit_spy": 0.02,
         "profit_target_pct": 50,
         "use_stop_loss": False,
-        "entry_window": "09:45 - 10:30 ET",
+        "entry_window": "09:35 - 15:55 ET",
         "target_return": "10% monthly (~0.5% daily)",
-        "description": "ARES (Aggressive Iron Condor) trades daily 0DTE Iron Condors at 1 SD strikes targeting 10% monthly returns through premium collection."
+        "description": "ARES (Aggressive Iron Condor) trades daily 0DTE Iron Condors targeting 10% monthly returns through premium collection."
     }
 
     if ares and ares.config:
@@ -513,11 +561,14 @@ async def get_ares_config():
             "success": True,
             "data": {
                 "ticker": ares.get_trading_ticker(),
-                "spread_width": ares.get_spread_width(),
+                "spread_width": config.spread_width,
+                "spread_width_spy": config.spread_width_spy,
                 "risk_per_trade_pct": config.risk_per_trade_pct,
                 "sd_multiplier": config.sd_multiplier,
+                "sd_multiplier_spy": config.sd_multiplier,  # Same for now, can be different
                 "use_0dte": config.use_0dte,
-                "min_credit": ares.get_min_credit(),
+                "min_credit": config.min_credit_per_spread,
+                "min_credit_spy": config.min_credit_per_spread_spy,
                 "profit_target_pct": config.profit_target_pct,
                 "use_stop_loss": config.use_stop_loss,
                 "entry_window": f"{config.entry_time_start} - {config.entry_time_end} ET",
