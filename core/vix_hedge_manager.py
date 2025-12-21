@@ -167,15 +167,8 @@ class VIXHedgeManager:
         - The 'is_estimated' flag indicates when estimates are used
         """
         try:
-            # Use reliable vix_fetcher - NO FAKE FALLBACKS
-            from data.vix_fetcher import get_vix_with_source, VIXFetchError
-
-            try:
-                vix_spot, vix_source = get_vix_with_source()
-                logger.info(f"VIX from {vix_source}: {vix_spot}")
-            except VIXFetchError as e:
-                logger.error(f"VIX fetch failed: {e}")
-                raise  # Don't hide with fake data
+            from data.vix_fetcher import get_vix_with_source
+            vix_spot, vix_source = get_vix_with_source()
 
             # Try to get VVIX (volatility of VIX) for timing signals
             vvix = None

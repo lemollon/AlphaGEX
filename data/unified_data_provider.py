@@ -483,16 +483,7 @@ class UnifiedDataProvider:
     # ==================== VIX ====================
 
     def get_vix(self) -> float:
-        """
-        Get current VIX value - NO FAKE FALLBACKS.
-
-        Uses dedicated vix_fetcher module which tries:
-        1. Tradier ($VIX.X)
-        2. Yahoo Finance (^VIX)
-        3. Recent cache (up to 5 min old)
-
-        Raises VIXFetchError if all sources fail.
-        """
+        """Get current VIX value."""
         from data.vix_fetcher import get_vix_price
         return get_vix_price()
 
