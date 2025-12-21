@@ -442,34 +442,52 @@ def fetch_vix_from_unified_provider() -> Optional[Dict[str, Any]]:
 def fetch_vix_from_yahoo() -> Optional[Dict[str, Any]]:
     """Fetch VIX from Yahoo Finance (FREE - no API key needed)"""
     def _fetch():
-        import yfinance as yf
-        vix_ticker = yf.Ticker("^VIX")
-
-        # Method 1: Try info dict
         try:
-            info = vix_ticker.info
-            price = info.get('regularMarketPrice') or info.get('previousClose') or info.get('open', 0)
-            if price and price > 0:
-                return {
-                    'vix_spot': float(price),
-                    'vix_source': 'yahoo',
-                    'is_estimated': False
-                }
-        except Exception:
-            pass
+            import yfinance as yf
+        except ImportError as e:
+            log_with_context('error', "yfinance not installed!", error=str(e))
+            return None
 
-        # Method 2: Try history
-        hist = vix_ticker.history(period='5d')
-        if not hist.empty:
-            price = float(hist['Close'].iloc[-1])
-            if price > 0:
-                return {
-                    'vix_spot': price,
-                    'vix_source': 'yahoo',
-                    'is_estimated': False
-                }
+        try:
+            vix_ticker = yf.Ticker("^VIX")
 
-        return None
+            # Method 1: Try history (most reliable)
+            try:
+                hist = vix_ticker.history(period='5d')
+                if hist is not None and not hist.empty:
+                    price = float(hist['Close'].iloc[-1])
+                    if price > 0:
+                        log_with_context('info', f"VIX from Yahoo history: {price}")
+                        return {
+                            'vix_spot': price,
+                            'vix_source': 'yahoo',
+                            'is_estimated': False
+                        }
+                else:
+                    log_with_context('warning', "Yahoo VIX history returned empty")
+            except Exception as e:
+                log_with_context('warning', f"Yahoo history method failed: {e}")
+
+            # Method 2: Try info dict (fallback)
+            try:
+                info = vix_ticker.info
+                price = info.get('regularMarketPrice') or info.get('previousClose') or info.get('open', 0)
+                if price and price > 0:
+                    log_with_context('info', f"VIX from Yahoo info: {price}")
+                    return {
+                        'vix_spot': float(price),
+                        'vix_source': 'yahoo',
+                        'is_estimated': False
+                    }
+            except Exception as e:
+                log_with_context('warning', f"Yahoo info method failed: {e}")
+
+            log_with_context('error', "Yahoo Finance returned no valid VIX data")
+            return None
+
+        except Exception as e:
+            log_with_context('error', f"Yahoo Finance VIX fetch failed completely: {e}")
+            return None
 
     return retry_with_backoff(_fetch, max_retries=2, operation_name="Yahoo Finance VIX fetch")
 
