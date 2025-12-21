@@ -839,6 +839,29 @@ export const apiClient = {
     api.post('/api/daily-manna/prayer/today', { user_id: userId }),
   getPrayerStats: (userId: string = 'default_user') =>
     api.get('/api/daily-manna/prayer/stats', { params: { user_id: userId } }),
+
+  // ARGUS - 0DTE Gamma Live (Real-time gamma visualization)
+  getArgusGamma: (expiration?: string) =>
+    api.get('/api/argus/gamma', { params: { expiration } }),
+  getArgusHistory: (expiration?: string, minutes?: number) =>
+    api.get('/api/argus/history', { params: { expiration, minutes } }),
+  getArgusProbability: () => api.get('/api/argus/probability'),
+  getArgusAlerts: (acknowledged?: boolean, priority?: string) =>
+    api.get('/api/argus/alerts', { params: { acknowledged, priority } }),
+  acknowledgeArgusAlert: (alertId: number) =>
+    api.post(`/api/argus/alerts/${alertId}/acknowledge`),
+  getArgusCommentary: (limit?: number) =>
+    api.get('/api/argus/commentary', { params: { limit } }),
+  generateArgusCommentary: () => api.post('/api/argus/commentary/generate'),
+  getArgusBots: () => api.get('/api/argus/bots'),
+  getArgusAccuracy: () => api.get('/api/argus/accuracy'),
+  getArgusPatterns: () => api.get('/api/argus/patterns'),
+  exportArgusData: (format: 'csv' | 'xlsx' = 'xlsx') =>
+    api.get('/api/argus/export', { params: { format }, responseType: 'blob' }),
+  getArgusReplay: (date: string, time?: string) =>
+    api.get('/api/argus/replay', { params: { date, time } }),
+  getArgusReplayDates: () => api.get('/api/argus/replay/dates'),
+  getArgusExpirations: () => api.get('/api/argus/expirations'),
 }
 
 // WebSocket connection
