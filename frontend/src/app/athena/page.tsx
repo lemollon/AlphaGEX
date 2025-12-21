@@ -145,7 +145,11 @@ interface DecisionLog {
   how: string
   timestamp: string
   actual_pnl?: number
-  // Trade legs
+  outcome_notes?: string
+  underlying_price_at_entry?: number
+  underlying_price_at_exit?: number
+
+  // Trade legs with Greeks
   legs?: Array<{
     leg_id: number
     action: string
@@ -155,45 +159,119 @@ interface DecisionLog {
     entry_price: number
     exit_price: number
     contracts: number
+    // Greeks
+    delta?: number
+    gamma?: number
+    theta?: number
+    vega?: number
+    iv?: number
+    realized_pnl?: number
   }>
-  // Oracle/ML advice
+
+  // ML Predictions (ATHENA primary signal source)
+  ml_predictions?: {
+    direction: string
+    direction_probability: number
+    advice: string
+    suggested_spread_type: string
+    flip_gravity: number
+    magnet_attraction: number
+    pin_zone_probability: number
+    expected_volatility: number
+    ml_confidence: number
+    win_probability: number
+    suggested_entry_strike: number
+    suggested_exit_strike: number
+    ml_reasoning: string
+    model_version: string
+    models_used: string[]
+  }
+
+  // Oracle/ML advice (Oracle fallback)
   oracle_advice?: {
     advice: string
     win_probability: number
     confidence: number
     suggested_risk_pct: number
     reasoning: string
+    suggested_sd_multiplier?: number
+    use_gex_walls?: boolean
+    suggested_call_strike?: number
+    top_factors?: Array<{ factor: string; importance: number }>
+    model_version?: string
     claude_analysis?: {
       analysis: string
+      confidence_adjustment?: number
       risk_factors: string[]
+      opportunities?: string[]
+      recommendation?: string
     }
   }
-  // GEX context
+
+  // GEX context (extended)
   gex_context?: {
     net_gex: number
+    gex_normalized?: number
     call_wall: number
     put_wall: number
     flip_point: number
+    distance_to_flip_pct?: number
     regime: string
     between_walls: boolean
   }
-  // Market context
+
+  // Market context (extended)
   market_context?: {
     spot_price: number
     vix: number
+    vix_percentile?: number
+    expected_move?: number
+    trend?: string
+    day_of_week?: number
+    days_to_opex?: number
   }
-  // Position sizing
+
+  // Backtest stats
+  backtest_stats?: {
+    strategy_name: string
+    win_rate: number
+    expectancy: number
+    avg_win: number
+    avg_loss: number
+    sharpe_ratio: number
+    max_drawdown: number
+    total_trades: number
+    uses_real_data: boolean
+    backtest_period: string
+  }
+
+  // Position sizing (extended)
   position_sizing?: {
     contracts: number
     position_dollars: number
     max_risk_dollars: number
+    sizing_method?: string
+    target_profit_pct?: number
+    stop_loss_pct?: number
     probability_of_profit: number
   }
-  // Alternatives
+
+  // Risk checks
+  risk_checks?: Array<{
+    check: string
+    passed: boolean
+    value?: string
+    threshold?: string
+  }>
+  passed_risk_checks?: boolean
+
+  // Alternatives (extended)
   alternatives?: {
     primary_reason: string
     supporting_factors: string[]
     risk_factors: string[]
+    alternatives_considered?: string[]
+    why_not_alternatives?: string[]
   }
 }
 
@@ -668,13 +746,10 @@ export default function ATHENAPage() {
                                 <span className="text-yellow-400 text-xs font-bold">WHY:</span>
                                 <p className="text-sm text-gray-300 mt-1">{decision.why || 'Not specified'}</p>
                                 {decision.alternatives?.supporting_factors && decision.alternatives.supporting_factors.length > 0 && (
-                                  <div className="mt-2">
-                                    <span className="text-xs text-gray-500">Supporting Factors:</span>
-                                    <ul className="list-disc list-inside text-xs text-gray-400 mt-1">
-                                      {decision.alternatives.supporting_factors.map((f, i) => (
-                                        <li key={i}>{f}</li>
-                                      ))}
-                                    </ul>
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    {decision.alternatives.supporting_factors.map((f, i) => (
+                                      <span key={i} className="px-2 py-0.5 bg-yellow-900/30 rounded text-xs text-yellow-300">{f}</span>
+                                    ))}
                                   </div>
                                 )}
                               </div>
@@ -689,22 +764,46 @@ export default function ATHENAPage() {
 
                               {/* Market Context & GEX */}
                               <div className="grid grid-cols-2 gap-3">
-                                {/* Market Context */}
+                                {/* Market Context (Extended) */}
                                 <div className="bg-gray-800/50 rounded p-2">
                                   <span className="text-cyan-400 text-xs font-bold">MARKET AT DECISION:</span>
                                   <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
                                     <div>
                                       <span className="text-gray-500">{decision.symbol}:</span>
-                                      <span className="text-white ml-1">${(decision.market_context?.spot_price || 0).toLocaleString()}</span>
+                                      <span className="text-white ml-1">${(decision.market_context?.spot_price || 0).toFixed(2)}</span>
                                     </div>
                                     <div>
                                       <span className="text-gray-500">VIX:</span>
                                       <span className="text-yellow-400 ml-1">{(decision.market_context?.vix || 0).toFixed(1)}</span>
+                                      {decision.market_context?.vix_percentile !== undefined && (
+                                        <span className="text-gray-500 ml-1">({decision.market_context.vix_percentile}th %ile)</span>
+                                      )}
                                     </div>
+                                    {decision.market_context?.expected_move !== undefined && (
+                                      <div>
+                                        <span className="text-gray-500">Exp Move:</span>
+                                        <span className="text-white ml-1">{decision.market_context.expected_move.toFixed(2)}%</span>
+                                      </div>
+                                    )}
+                                    {decision.market_context?.trend && (
+                                      <div>
+                                        <span className="text-gray-500">Trend:</span>
+                                        <span className={`ml-1 ${
+                                          decision.market_context.trend === 'BULLISH' ? 'text-green-400' :
+                                          decision.market_context.trend === 'BEARISH' ? 'text-red-400' : 'text-gray-400'
+                                        }`}>{decision.market_context.trend}</span>
+                                      </div>
+                                    )}
+                                    {decision.market_context?.days_to_opex !== undefined && (
+                                      <div>
+                                        <span className="text-gray-500">Days to OPEX:</span>
+                                        <span className="text-white ml-1">{decision.market_context.days_to_opex}</span>
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
 
-                                {/* GEX Context */}
+                                {/* GEX Context (Extended) */}
                                 <div className="bg-purple-900/20 border border-purple-700/30 rounded p-2">
                                   <div className="flex items-center gap-1 mb-2">
                                     <Crosshair className="w-3 h-3 text-purple-400" />
@@ -729,17 +828,89 @@ export default function ATHENAPage() {
                                         {decision.gex_context?.regime || '-'}
                                       </span>
                                     </div>
+                                    {decision.gex_context?.net_gex !== undefined && (
+                                      <div className="col-span-2">
+                                        <span className="text-gray-500">Net GEX:</span>
+                                        <span className="text-white ml-1">{(decision.gex_context.net_gex / 1e9).toFixed(2)}B</span>
+                                        {decision.gex_context?.between_walls && (
+                                          <span className="ml-2 px-1 py-0.5 bg-purple-900/50 rounded text-purple-300">In Pin Zone</span>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               </div>
 
-                              {/* Oracle/ML Advice */}
+                              {/* ML Predictions (ATHENA Primary) */}
+                              {decision.ml_predictions && (
+                                <div className="bg-orange-900/20 border border-orange-700/30 rounded p-2">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <Zap className="w-4 h-4 text-orange-400" />
+                                      <span className="text-orange-400 text-xs font-bold">GEX ML PREDICTIONS:</span>
+                                    </div>
+                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                      decision.ml_predictions.advice === 'LONG' ? 'bg-green-900/50 text-green-400' :
+                                      decision.ml_predictions.advice === 'SHORT' ? 'bg-red-900/50 text-red-400' :
+                                      'bg-gray-700 text-gray-400'
+                                    }`}>
+                                      {decision.ml_predictions.advice}
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-4 gap-2 text-xs mb-2">
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Direction</span>
+                                      <span className={`font-bold ${
+                                        decision.ml_predictions.direction === 'UP' ? 'text-green-400' :
+                                        decision.ml_predictions.direction === 'DOWN' ? 'text-red-400' : 'text-gray-400'
+                                      }`}>
+                                        {decision.ml_predictions.direction} ({(decision.ml_predictions.direction_probability * 100).toFixed(0)}%)
+                                      </span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Flip Gravity</span>
+                                      <span className="text-purple-400 font-bold">{(decision.ml_predictions.flip_gravity * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Magnet</span>
+                                      <span className="text-blue-400 font-bold">{(decision.ml_predictions.magnet_attraction * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Pin Zone</span>
+                                      <span className="text-cyan-400 font-bold">{(decision.ml_predictions.pin_zone_probability * 100).toFixed(0)}%</span>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2 text-xs">
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Exp Volatility</span>
+                                      <span className="text-yellow-400 font-bold">{(decision.ml_predictions.expected_volatility).toFixed(2)}%</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">ML Confidence</span>
+                                      <span className="text-white font-bold">{(decision.ml_predictions.ml_confidence * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Win Prob</span>
+                                      <span className="text-green-400 font-bold">{(decision.ml_predictions.win_probability * 100).toFixed(0)}%</span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-2">
+                                    <span className="text-gray-500 text-xs">Suggested: </span>
+                                    <span className="text-orange-300 text-xs font-medium">{decision.ml_predictions.suggested_spread_type?.replace(/_/g, ' ')}</span>
+                                  </div>
+                                  {decision.ml_predictions.ml_reasoning && (
+                                    <p className="text-xs text-gray-400 mt-2 italic">{decision.ml_predictions.ml_reasoning}</p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Oracle/ML Advice (Fallback) */}
                               {decision.oracle_advice && (
                                 <div className="bg-green-900/20 border border-green-700/30 rounded p-2">
                                   <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-2">
                                       <Brain className="w-4 h-4 text-green-400" />
-                                      <span className="text-green-400 text-xs font-bold">ML/ORACLE PREDICTION:</span>
+                                      <span className="text-green-400 text-xs font-bold">ORACLE PREDICTION:</span>
                                     </div>
                                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                                       decision.oracle_advice.advice?.includes('TRADE') ? 'bg-green-900/50 text-green-400' :
@@ -782,7 +953,41 @@ export default function ATHENAPage() {
                                 </div>
                               )}
 
-                              {/* Position Sizing */}
+                              {/* Backtest Stats */}
+                              {decision.backtest_stats && decision.backtest_stats.win_rate > 0 && (
+                                <div className="bg-blue-900/20 border border-blue-700/30 rounded p-2">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <BarChart3 className="w-4 h-4 text-blue-400" />
+                                    <span className="text-blue-400 text-xs font-bold">BACKTEST BACKING:</span>
+                                    {decision.backtest_stats.uses_real_data && (
+                                      <span className="px-1.5 py-0.5 bg-green-900/30 rounded text-xs text-green-400">Real Data</span>
+                                    )}
+                                  </div>
+                                  <div className="grid grid-cols-4 gap-2 text-xs">
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Win Rate</span>
+                                      <span className="text-green-400 font-bold">{decision.backtest_stats.win_rate.toFixed(0)}%</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Expectancy</span>
+                                      <span className="text-white font-bold">${decision.backtest_stats.expectancy.toFixed(0)}</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Sharpe</span>
+                                      <span className="text-cyan-400 font-bold">{decision.backtest_stats.sharpe_ratio.toFixed(2)}</span>
+                                    </div>
+                                    <div className="bg-gray-800/50 rounded p-1.5 text-center">
+                                      <span className="text-gray-500 block">Trades</span>
+                                      <span className="text-white font-bold">{decision.backtest_stats.total_trades}</span>
+                                    </div>
+                                  </div>
+                                  {decision.backtest_stats.backtest_period && (
+                                    <p className="text-xs text-gray-500 mt-2">Period: {decision.backtest_stats.backtest_period}</p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Position Sizing (Extended) */}
                               {decision.position_sizing && (decision.position_sizing.contracts > 0 || decision.position_sizing.position_dollars > 0) && (
                                 <div className="bg-gray-800/50 rounded p-2">
                                   <div className="flex items-center gap-2 mb-2">
@@ -809,29 +1014,129 @@ export default function ATHENAPage() {
                                       </div>
                                     )}
                                   </div>
+                                  {(decision.position_sizing.target_profit_pct || decision.position_sizing.stop_loss_pct) && (
+                                    <div className="grid grid-cols-2 gap-2 text-xs mt-2">
+                                      {decision.position_sizing.target_profit_pct !== undefined && (
+                                        <div>
+                                          <span className="text-gray-500">Target:</span>
+                                          <span className="text-green-400 ml-1">{decision.position_sizing.target_profit_pct}%</span>
+                                        </div>
+                                      )}
+                                      {decision.position_sizing.stop_loss_pct !== undefined && (
+                                        <div>
+                                          <span className="text-gray-500">Stop:</span>
+                                          <span className="text-red-400 ml-1">{decision.position_sizing.stop_loss_pct}%</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
-                              {/* Trade Legs */}
+                              {/* Trade Legs with Greeks */}
                               {decision.legs && decision.legs.length > 0 && (
                                 <div className="bg-gray-800/50 rounded p-2">
-                                  <span className="text-cyan-400 text-xs font-bold">TRADE LEGS:</span>
-                                  <div className="mt-2 space-y-1">
-                                    {decision.legs.map((leg, i) => (
+                                  <span className="text-cyan-400 text-xs font-bold">TRADE LEGS ({decision.legs.length}):</span>
+                                  <div className="mt-2 overflow-x-auto">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="text-gray-500">
+                                          <th className="text-left py-1">Leg</th>
+                                          <th className="text-left py-1">Type</th>
+                                          <th className="text-right py-1">Strike</th>
+                                          <th className="text-right py-1">Entry</th>
+                                          {decision.legs?.some(l => l.delta) && <th className="text-right py-1">Delta</th>}
+                                          {decision.legs?.some(l => l.theta) && <th className="text-right py-1">Theta</th>}
+                                          {decision.legs?.some(l => l.iv) && <th className="text-right py-1">IV</th>}
+                                          {decision.legs?.some(l => l.realized_pnl) && <th className="text-right py-1">P&L</th>}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {decision.legs?.map((leg, i) => (
+                                          <tr key={i} className="border-t border-gray-700/50">
+                                            <td className="py-1">
+                                              <span className={`${leg.action === 'BUY' ? 'text-green-400' : 'text-red-400'} font-medium`}>
+                                                {leg.action}
+                                              </span>
+                                            </td>
+                                            <td className="py-1 text-gray-400">{leg.contracts}x {leg.option_type?.toUpperCase()}</td>
+                                            <td className="py-1 text-right text-white">${leg.strike}</td>
+                                            <td className="py-1 text-right text-green-400">${leg.entry_price?.toFixed(2) || '-'}</td>
+                                            {decision.legs?.some(l => l.delta) && (
+                                              <td className="py-1 text-right text-blue-400">{leg.delta?.toFixed(2) || '-'}</td>
+                                            )}
+                                            {decision.legs?.some(l => l.theta) && (
+                                              <td className="py-1 text-right text-purple-400">{leg.theta?.toFixed(3) || '-'}</td>
+                                            )}
+                                            {decision.legs?.some(l => l.iv) && (
+                                              <td className="py-1 text-right text-yellow-400">{leg.iv ? (leg.iv * 100).toFixed(0) + '%' : '-'}</td>
+                                            )}
+                                            {decision.legs?.some(l => l.realized_pnl) && (
+                                              <td className={`py-1 text-right font-bold ${(leg.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                {leg.realized_pnl ? `$${leg.realized_pnl.toFixed(0)}` : '-'}
+                                              </td>
+                                            )}
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Risk Checks */}
+                              {decision.risk_checks && decision.risk_checks.length > 0 && (
+                                <div className="bg-gray-800/50 rounded p-2">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-cyan-400 text-xs font-bold">RISK CHECKS:</span>
+                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                      decision.passed_risk_checks ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
+                                    }`}>
+                                      {decision.passed_risk_checks ? 'ALL PASSED' : 'SOME FAILED'}
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {decision.risk_checks.map((check, i) => (
                                       <div key={i} className="flex items-center gap-2 text-xs">
-                                        <span className={`${leg.action === 'BUY' ? 'text-green-400' : 'text-red-400'} font-medium w-10`}>
-                                          {leg.action}
+                                        <span className={check.passed ? 'text-green-400' : 'text-red-400'}>
+                                          {check.passed ? '✓' : '✗'}
                                         </span>
-                                        <span className="text-white">{leg.contracts}x</span>
-                                        <span className="text-gray-400">{leg.option_type?.toUpperCase()}</span>
-                                        <span className="text-white">${leg.strike}</span>
-                                        <span className="text-gray-500">{leg.expiration}</span>
-                                        {leg.entry_price && (
-                                          <span className="text-green-400">@ ${leg.entry_price.toFixed(2)}</span>
+                                        <span className="text-gray-400">{check.check}:</span>
+                                        <span className="text-white">{check.value || '-'}</span>
+                                        {check.threshold && (
+                                          <span className="text-gray-500">({check.threshold})</span>
                                         )}
                                       </div>
                                     ))}
                                   </div>
+                                </div>
+                              )}
+
+                              {/* Alternatives Considered */}
+                              {decision.alternatives?.alternatives_considered && decision.alternatives.alternatives_considered.length > 0 && (
+                                <div className="bg-gray-800/50 rounded p-2">
+                                  <span className="text-gray-400 text-xs font-bold">ALTERNATIVES CONSIDERED:</span>
+                                  <div className="mt-2 space-y-1">
+                                    {decision.alternatives.alternatives_considered.map((alt, i) => (
+                                      <div key={i} className="flex items-start gap-2 text-xs">
+                                        <span className="text-red-400">✗</span>
+                                        <span className="text-gray-400">{alt}</span>
+                                        {decision.alternatives?.why_not_alternatives?.[i] && (
+                                          <span className="text-gray-500">- {decision.alternatives.why_not_alternatives[i]}</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Risk Factors */}
+                              {decision.alternatives?.risk_factors && decision.alternatives.risk_factors.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  <span className="text-gray-500 text-xs">Risks:</span>
+                                  {decision.alternatives.risk_factors.map((rf, i) => (
+                                    <span key={i} className="px-1.5 py-0.5 bg-red-900/30 rounded text-xs text-red-400">{rf}</span>
+                                  ))}
                                 </div>
                               )}
                             </div>
