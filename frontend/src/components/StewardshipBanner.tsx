@@ -3,21 +3,21 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Heart, Sparkles } from 'lucide-react'
 
-// Latin Cross icon component with proper proportions
-const CrossIcon = ({ className }: { className?: string }) => (
+// Latin Cross icon component - outline style with proper proportions
+const CrossIcon = ({ className, animated = false }: { className?: string; animated?: boolean }) => (
   <svg
-    className={className}
+    className={`${className} ${animated ? 'animate-pulse' : ''}`}
     viewBox="0 0 24 24"
-    fill="currentColor"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
   >
-    {/* Main cross shape - Latin cross with crossbar at 1/3 height */}
-    <path d="M10.5 1h3v5h5.5v3h-5.5v14h-3V9H5V6h5.5V1z" />
-    {/* Subtle inner highlight for depth */}
-    <path
-      d="M11.5 2h1v4h4.5v1h-4.5v13h-1V7H6V6h5.5V2z"
-      fill="currentColor"
-      opacity="0.3"
-    />
+    {/* Vertical beam */}
+    <path d="M12 2v20" />
+    {/* Horizontal beam - positioned at 1/3 from top */}
+    <path d="M5 7h14" />
   </svg>
 )
 
@@ -117,7 +117,7 @@ export function DedicationModal({ isOpen, onClose }: DedicationModalProps) {
 
               {/* Main cross circle */}
               <div className="absolute inset-3 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/50">
-                <CrossIcon className="w-9 h-9 text-white drop-shadow-lg" />
+                <CrossIcon className="w-9 h-9 text-white drop-shadow-lg" animated />
               </div>
             </div>
 
@@ -333,7 +333,7 @@ export function CrossButton({ onClick }: CrossButtonProps) {
 export function StewardshipTagline() {
   return (
     <span className="text-[10px] text-amber-500/60 tracking-wide hidden md:block">
-      For God's Glory
+      Dedicated to God · Steward Your Blessings
     </span>
   )
 }
