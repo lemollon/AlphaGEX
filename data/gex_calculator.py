@@ -735,10 +735,14 @@ class TradierGEXCalculator:
             if spot_price <= 0:
                 return {'error': f'Invalid spot price for {symbol}'}
 
-            # Get options chain with Greeks
-            chain = tradier.get_option_chain(symbol, greeks=True)
+            # Get options chain with Greeks - use get_multiple_chains to get ALL expirations
+            # get_option_chain without expiration only returns the NEAREST expiration
+            # For "all expirations" comparison, we need multiple expirations
+            chain = tradier.get_multiple_chains(symbol, num_expirations=8, greeks=True)
             if not chain or not chain.chains:
                 return {'error': f'No options chain for {symbol}'}
+
+            logger.info(f"Fetched {len(chain.chains)} expirations for {symbol}: {list(chain.chains.keys())}")
 
             # Combine ALL expirations
             all_contracts = []
