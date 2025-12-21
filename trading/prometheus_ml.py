@@ -35,9 +35,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logger = logging.getLogger(__name__)
 
+# Always import numpy for type hints
+import numpy as np
+
 # ML imports
 try:
-    import numpy as np
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.model_selection import train_test_split, cross_val_score, TimeSeriesSplit
     from sklearn.preprocessing import StandardScaler
@@ -49,7 +51,6 @@ try:
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
-    np = None
     logger.warning("scikit-learn not available. Install with: pip install scikit-learn")
 
 # Database
