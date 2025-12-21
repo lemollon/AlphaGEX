@@ -27,7 +27,12 @@ import {
   Shield,
   Flame,
   ArrowRight,
-  ChevronRight
+  ChevronRight,
+  Gauge,
+  Lock,
+  Unlock,
+  Layers,
+  Compass
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -108,12 +113,58 @@ interface Expiration {
   is_future: boolean
 }
 
+interface MarketContext {
+  gamma_walls: {
+    call_wall: number | null
+    call_wall_distance: number | null
+    call_wall_strength: string | null
+    put_wall: number | null
+    put_wall_distance: number | null
+    put_wall_strength: string | null
+    net_gamma_regime: string | null
+  }
+  psychology_traps: {
+    active_trap: string | null
+    liberation_setup: boolean
+    liberation_target: number | null
+    false_floor: boolean
+    false_floor_strike: number | null
+    polr: string | null
+    polr_confidence: number | null
+  }
+  vix_context: {
+    current: number | null
+    spike_detected: boolean
+    volatility_regime: string | null
+  }
+  rsi_alignment: {
+    rsi_5m: number | null
+    rsi_15m: number | null
+    rsi_1h: number | null
+    rsi_4h: number | null
+    rsi_1d: number | null
+    aligned_overbought: boolean
+    aligned_oversold: boolean
+  }
+  monthly_magnets: {
+    above: number | null
+    below: number | null
+  }
+  regime: {
+    type: string | null
+    confidence: number | null
+    direction: string | null
+    risk_level: string | null
+  }
+}
+
 export default function ArgusPage() {
   const [gammaData, setGammaData] = useState<GammaData | null>(null)
   const [expirations, setExpirations] = useState<Expiration[]>([])
   const [activeDay, setActiveDay] = useState<string>('today')
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [commentary, setCommentary] = useState<Commentary[]>([])
+  const [marketContext, setMarketContext] = useState<MarketContext | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
@@ -168,24 +219,35 @@ export default function ArgusPage() {
     } catch (err) {}
   }, [])
 
+  const fetchContext = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusContext()
+      if (response.data?.success && response.data?.data) {
+        setMarketContext(response.data.data)
+      }
+    } catch (err) {}
+  }, [])
+
   useEffect(() => {
     fetchExpirations()
     fetchGammaData()
     fetchAlerts()
     fetchCommentary()
-  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary])
+    fetchContext()
+  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext])
 
   useEffect(() => {
     if (autoRefresh) {
       refreshIntervalRef.current = setInterval(() => {
         fetchGammaData(activeDay)
         fetchAlerts()
+        fetchContext()
       }, 60000)
     }
     return () => {
       if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current)
     }
-  }, [autoRefresh, activeDay, fetchGammaData, fetchAlerts])
+  }, [autoRefresh, activeDay, fetchGammaData, fetchAlerts, fetchContext])
 
   const handleDayChange = (day: string) => {
     setActiveDay(day)
@@ -715,6 +777,183 @@ export default function ArgusPage() {
                 </div>
               </div>
             </div>
+
+            {/* Gamma Walls */}
+            {marketContext?.gamma_walls && (marketContext.gamma_walls.call_wall || marketContext.gamma_walls.put_wall) && (
+              <div className="bg-gray-800/50 rounded-xl p-5">
+                <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+                  <Layers className="w-5 h-5 text-cyan-400" />
+                  Gamma Walls
+                </h3>
+                <div className="space-y-3">
+                  {marketContext.gamma_walls.call_wall && (
+                    <div className="flex items-center justify-between p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-emerald-400" />
+                        <div>
+                          <div className="text-xs text-emerald-400">CALL WALL</div>
+                          <div className="font-bold text-white">${marketContext.gamma_walls.call_wall}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-gray-500">Distance</div>
+                        <div className={`font-bold ${(marketContext.gamma_walls.call_wall_distance || 0) < 1 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                          +{marketContext.gamma_walls.call_wall_distance?.toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {marketContext.gamma_walls.put_wall && (
+                    <div className="flex items-center justify-between p-3 bg-rose-500/10 rounded-lg border border-rose-500/30">
+                      <div className="flex items-center gap-2">
+                        <TrendingDown className="w-4 h-4 text-rose-400" />
+                        <div>
+                          <div className="text-xs text-rose-400">PUT WALL</div>
+                          <div className="font-bold text-white">${marketContext.gamma_walls.put_wall}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-gray-500">Distance</div>
+                        <div className={`font-bold ${Math.abs(marketContext.gamma_walls.put_wall_distance || 0) < 1 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                          {marketContext.gamma_walls.put_wall_distance?.toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Psychology Traps */}
+            {marketContext?.psychology_traps && (marketContext.psychology_traps.liberation_setup || marketContext.psychology_traps.false_floor || marketContext.psychology_traps.active_trap) && (
+              <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-5">
+                <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+                  <AlertTriangle className="w-5 h-5 text-orange-400" />
+                  Psychology Trap Alert
+                </h3>
+                <div className="space-y-3">
+                  {marketContext.psychology_traps.liberation_setup && (
+                    <div className="p-3 bg-emerald-500/10 rounded-lg border-l-4 border-emerald-500">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Unlock className="w-4 h-4 text-emerald-400" />
+                        <span className="font-bold text-emerald-400">Liberation Setup</span>
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        Price near gamma wall with high IV. Target: ${marketContext.psychology_traps.liberation_target || 'TBD'}
+                      </p>
+                    </div>
+                  )}
+                  {marketContext.psychology_traps.false_floor && (
+                    <div className="p-3 bg-rose-500/10 rounded-lg border-l-4 border-rose-500">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Lock className="w-4 h-4 text-rose-400" />
+                        <span className="font-bold text-rose-400">False Floor Detected</span>
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        Put wall may not hold. Strike: ${marketContext.psychology_traps.false_floor_strike || 'TBD'}
+                      </p>
+                    </div>
+                  )}
+                  {marketContext.psychology_traps.polr && (
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-xs text-gray-400">Path of Least Resistance:</span>
+                      <span className={`font-bold text-sm ${marketContext.psychology_traps.polr === 'UP' ? 'text-emerald-400' : marketContext.psychology_traps.polr === 'DOWN' ? 'text-rose-400' : 'text-gray-400'}`}>
+                        {marketContext.psychology_traps.polr} ({(marketContext.psychology_traps.polr_confidence || 0).toFixed(0)}%)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* RSI Alignment */}
+            {marketContext?.rsi_alignment && (marketContext.rsi_alignment.aligned_overbought || marketContext.rsi_alignment.aligned_oversold || marketContext.rsi_alignment.rsi_5m) && (
+              <div className="bg-gray-800/50 rounded-xl p-5">
+                <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+                  <Gauge className="w-5 h-5 text-indigo-400" />
+                  RSI Alignment
+                  {marketContext.rsi_alignment.aligned_overbought && (
+                    <span className="px-2 py-0.5 bg-rose-500 text-white text-[10px] rounded font-bold">OVERBOUGHT</span>
+                  )}
+                  {marketContext.rsi_alignment.aligned_oversold && (
+                    <span className="px-2 py-0.5 bg-emerald-500 text-white text-[10px] rounded font-bold">OVERSOLD</span>
+                  )}
+                </h3>
+                <div className="grid grid-cols-5 gap-2">
+                  {['5m', '15m', '1h', '4h', '1d'].map((tf) => {
+                    const value = marketContext.rsi_alignment[`rsi_${tf}` as keyof typeof marketContext.rsi_alignment] as number | null
+                    const rsiColor = value && value > 70 ? 'text-rose-400' : value && value < 30 ? 'text-emerald-400' : 'text-gray-300'
+                    return (
+                      <div key={tf} className="text-center p-2 bg-gray-700/30 rounded">
+                        <div className="text-[10px] text-gray-500 uppercase">{tf}</div>
+                        <div className={`font-bold ${rsiColor}`}>{value?.toFixed(0) || '-'}</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Monthly Magnets */}
+            {marketContext?.monthly_magnets && (marketContext.monthly_magnets.above || marketContext.monthly_magnets.below) && (
+              <div className="bg-gray-800/50 rounded-xl p-5">
+                <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+                  <Compass className="w-5 h-5 text-purple-400" />
+                  Monthly Magnets
+                </h3>
+                <div className="space-y-2">
+                  {marketContext.monthly_magnets.above && (
+                    <div className="flex items-center justify-between p-2 bg-emerald-500/10 rounded">
+                      <span className="text-xs text-gray-400">Above Target</span>
+                      <span className="font-bold text-emerald-400">${marketContext.monthly_magnets.above}</span>
+                    </div>
+                  )}
+                  {marketContext.monthly_magnets.below && (
+                    <div className="flex items-center justify-between p-2 bg-rose-500/10 rounded">
+                      <span className="text-xs text-gray-400">Below Target</span>
+                      <span className="font-bold text-rose-400">${marketContext.monthly_magnets.below}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Regime Context */}
+            {marketContext?.regime?.type && (
+              <div className="bg-gray-800/50 rounded-xl p-5">
+                <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+                  <Activity className="w-5 h-5 text-blue-400" />
+                  Market Regime
+                </h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Type</span>
+                    <span className={`font-bold ${
+                      marketContext.regime.type?.includes('BULL') ? 'text-emerald-400' :
+                      marketContext.regime.type?.includes('BEAR') ? 'text-rose-400' : 'text-gray-300'
+                    }`}>{marketContext.regime.type}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Direction</span>
+                    <span className={`font-bold ${
+                      marketContext.regime.direction === 'BULLISH' ? 'text-emerald-400' :
+                      marketContext.regime.direction === 'BEARISH' ? 'text-rose-400' : 'text-gray-300'
+                    }`}>{marketContext.regime.direction || '-'}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Confidence</span>
+                    <span className="font-bold text-blue-400">{(marketContext.regime.confidence || 0).toFixed(0)}%</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Risk Level</span>
+                    <span className={`font-bold ${
+                      marketContext.regime.risk_level === 'HIGH' ? 'text-rose-400' :
+                      marketContext.regime.risk_level === 'MEDIUM' ? 'text-yellow-400' : 'text-emerald-400'
+                    }`}>{marketContext.regime.risk_level || '-'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Education */}
             <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
