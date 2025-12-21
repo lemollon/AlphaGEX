@@ -110,13 +110,20 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         return result
 
     try:
-        # Get SPY quote
-        quote = await tradier.get_quote('SPY')
+        # Get SPY quote (synchronous method)
+        quote = tradier.get_quote('SPY')
         spot_price = quote.get('last', 0) or quote.get('close', 0)
 
-        # Get VIX
-        vix_quote = await tradier.get_quote('VIX')
-        vix = vix_quote.get('last', 0) or 18.0
+        # Get VIX - use $VIX.X for Tradier (correct symbol format)
+        vix_quote = tradier.get_quote('$VIX.X')
+        vix = vix_quote.get('last', 0) if vix_quote else 0
+        if not vix or vix <= 0:
+            # Fallback to unified data provider
+            try:
+                from data.unified_data_provider import get_vix
+                vix = get_vix() or 18.0
+            except Exception:
+                vix = 18.0
 
         # Get expiration (default to 0DTE)
         engine = get_engine()

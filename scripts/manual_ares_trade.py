@@ -82,9 +82,11 @@ def get_market_data(tradier, ticker):
     underlying_price = quote.get('last', 0) or quote.get('close', 0)
     logger.info(f"{ticker} Price: ${underlying_price:.2f}")
 
-    # Get VIX
-    vix_quote = tradier.get_quote('VIX')
-    vix = vix_quote.get('last', 0) or vix_quote.get('close', 20)
+    # Get VIX - use $VIX.X for Tradier (correct symbol format)
+    vix_quote = tradier.get_quote('$VIX.X')
+    vix = vix_quote.get('last', 0) if vix_quote else 0
+    if not vix:
+        vix = 20.0  # Fallback
     logger.info(f"VIX: {vix:.2f}")
 
     # Calculate expected move (1 SD)

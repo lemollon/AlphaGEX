@@ -401,19 +401,20 @@ def calculate_term_structure(vix_spot: float) -> Dict[str, Any]:
 def fetch_vix_from_tradier() -> Optional[Dict[str, Any]]:
     """Fetch VIX from Tradier API with retry.
 
-    NOTE: Always use PRODUCTION mode for VIX quotes - sandbox may not support
-    index quotes like $VIX.X. This is read-only (no trading) so it's safe.
+    NOTE: Respects TRADIER_SANDBOX env setting. $VIX.X quotes work in both
+    sandbox and production modes. Using proper credentials for each mode.
     """
     def _fetch():
         from data.tradier_data_fetcher import TradierDataFetcher
-        # Force PRODUCTION for VIX quotes - sandbox doesn't support all index quotes
-        # VIX is read-only (no trading), so production is safe and more reliable
-        tradier = TradierDataFetcher(sandbox=False)
+        # Let TradierDataFetcher handle sandbox/production selection based on env
+        # This ensures correct API key is used for the mode
+        tradier = TradierDataFetcher()  # Respects TRADIER_SANDBOX env var
         vix_quote = tradier.get_quote("$VIX.X")
         if vix_quote and vix_quote.get('last'):
+            source = 'tradier_sandbox' if tradier.sandbox else 'tradier_production'
             return {
                 'vix_spot': float(vix_quote['last']),
-                'vix_source': 'tradier_production',
+                'vix_source': source,
                 'is_estimated': False
             }
         return None
