@@ -183,6 +183,7 @@ interface MarketContext {
 
 export default function ArgusPage() {
   const [gammaData, setGammaData] = useState<GammaData | null>(null)
+  const [lastLiveData, setLastLiveData] = useState<GammaData | null>(null)  // Preserve last live data during market hours
   const [expirations, setExpirations] = useState<Expiration[]>([])
   const [activeDay, setActiveDay] = useState<string>('today')
   const [alerts, setAlerts] = useState<Alert[]>([])
@@ -193,6 +194,18 @@ export default function ArgusPage() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [selectedStrike, setSelectedStrike] = useState<StrikeData | null>(null)
+
+  // Check if market is currently open (9:30 AM - 4:00 PM CT, Mon-Fri)
+  const isMarketOpen = useCallback(() => {
+    const now = new Date()
+    const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+    const day = ct.getDay()
+    const hour = ct.getHours()
+    const minute = ct.getMinutes()
+    const timeInMinutes = hour * 60 + minute
+    // Mon-Fri (1-5), 9:30 AM (570 min) to 4:00 PM (960 min)
+    return day >= 1 && day <= 5 && timeInMinutes >= 570 && timeInMinutes <= 960
+  }, [])
 
   // Historical Replay State
   const [replayMode, setReplayMode] = useState(false)
@@ -210,10 +223,24 @@ export default function ArgusPage() {
       const expiration = day && day !== 'today' ? day.toLowerCase() : undefined
       const response = await apiClient.getArgusGamma(expiration)
       if (response.data?.success && response.data?.data) {
-        setGammaData(response.data.data)
+        const newData = response.data.data
+
+        // If we receive mock data during market hours and have last live data, use last live data
+        if (newData.is_mock && isMarketOpen() && lastLiveData) {
+          console.log('[ARGUS] Mock data received during market hours, using last live data')
+          // Keep displaying last live data but mark it as stale
+          setGammaData({ ...lastLiveData, is_stale: true })
+        } else {
+          setGammaData(newData)
+          // Store live data for fallback during market hours
+          if (!newData.is_mock) {
+            setLastLiveData(newData)
+          }
+        }
+
         // Use backend's fetched_at timestamp (when Tradier data was fetched), not local time
-        const fetchedAt = response.data.data.fetched_at
-          ? new Date(response.data.data.fetched_at)
+        const fetchedAt = newData.fetched_at
+          ? new Date(newData.fetched_at)
           : new Date()
         setLastUpdated(fetchedAt)
       }
@@ -222,7 +249,7 @@ export default function ArgusPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [isMarketOpen, lastLiveData])
 
   const fetchExpirations = useCallback(async () => {
     try {
@@ -972,19 +999,30 @@ export default function ArgusPage() {
             {/* Chart Section */}
             <div className="bg-gray-800/50 rounded-xl p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-white flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5 text-blue-400" />
-                  Net Gamma by Strike
-                  {gammaData?.is_mock ? (
-                    <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-400 text-[10px] font-medium rounded border border-orange-500/30">
-                      SIMULATED
-                    </span>
-                  ) : (
-                    <span className="ml-2 px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded border border-emerald-500/30">
-                      LIVE
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-blue-400" />
+                    Net Gamma by Strike
+                    {gammaData?.is_mock ? (
+                      <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-400 text-[10px] font-medium rounded border border-orange-500/30">
+                        SIMULATED
+                      </span>
+                    ) : (gammaData as any)?.is_stale ? (
+                      <span className="ml-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-medium rounded border border-yellow-500/30">
+                        LIVE (CACHED)
+                      </span>
+                    ) : (
+                      <span className="ml-2 px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded border border-emerald-500/30">
+                        LIVE
+                      </span>
+                    )}
+                  </h3>
+                  {lastUpdated && (
+                    <span className="text-[10px] text-gray-500">
+                      {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: true })} CT
                     </span>
                   )}
-                </h3>
+                </div>
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <div className="flex items-center gap-1.5">
                     <div className="w-3 h-3 rounded bg-purple-500"></div>
@@ -1144,7 +1182,7 @@ export default function ArgusPage() {
                 {lastUpdated && (
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <Clock className="w-3 h-3" />
-                    <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
+                    <span>Last updated: {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT</span>
                   </div>
                 )}
               </div>
