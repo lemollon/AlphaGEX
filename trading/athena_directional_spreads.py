@@ -198,8 +198,18 @@ class SpreadPosition:
     oracle_reasoning: str = ""
 
     # Trailing stop tracking
-    high_water_mark: float = 0  # Highest favorable price seen
-    low_water_mark: float = float('inf')  # Lowest favorable price seen
+    high_water_mark: float = 0  # Highest favorable price seen (underlying)
+    low_water_mark: float = float('inf')  # Lowest favorable price seen (underlying)
+    peak_spread_value: float = 0  # Highest spread value seen (for P&L trailing)
+    current_atr: float = 0  # Current ATR value for volatility-adjusted stops
+
+    # Scale-out tracking
+    initial_contracts: int = 0  # Original contract count at entry
+    contracts_remaining: int = 0  # Contracts still open
+    scale_out_1_done: bool = False  # First scale-out completed
+    scale_out_2_done: bool = False  # Second scale-out completed
+    profit_threshold_hit: bool = False  # Has position hit profit threshold?
+    total_scaled_pnl: float = 0  # Cumulative P&L from scale-outs
 
 
 @dataclass
@@ -214,7 +224,28 @@ class ATHENAConfig:
     spread_width: int = 2                 # $2 spread width
     default_contracts: int = 10           # Default position size
     wall_filter_pct: float = 1.0          # Only trade within 1% of relevant wall
-    trailing_stop_pct: float = 0.3        # 0.3% trailing stop
+
+    # Hybrid Trailing Stop Configuration
+    # Phase 1: Let profits develop before trailing
+    profit_threshold_pct: float = 40.0    # Don't trail until 40% of max profit reached
+
+    # Phase 2: Scale-out at profit targets (lock in gains)
+    scale_out_1_pct: float = 50.0         # First scale-out at 50% profit
+    scale_out_1_size: float = 30.0        # Exit 30% of contracts
+    scale_out_2_pct: float = 75.0         # Second scale-out at 75% profit
+    scale_out_2_size: float = 30.0        # Exit 30% of contracts
+    # Remaining 40% become "runners" with trailing stop
+
+    # Phase 3: Trailing stop for runners
+    trail_keep_pct: float = 50.0          # Keep 50% of gains (exit if give back 50%)
+    atr_multiplier: float = 1.5           # Trail 1.5x ATR from high/low
+    atr_period: int = 14                  # ATR lookback period
+
+    # Hard stop loss (capital protection)
+    hard_stop_pct: float = 50.0           # Exit if lose 50% of max loss
+
+    # Minimum contracts for scaling (below this, use all-or-nothing)
+    min_contracts_for_scaling: int = 3
 
     # Risk/Reward filter
     min_rr_ratio: float = 1.5             # Minimum risk:reward ratio (1.5 = need $1.50 reward per $1 risk)
@@ -370,6 +401,203 @@ class ATHENATrader:
             conn.close()
         except Exception as e:
             logger.debug(f"Could not log to DB: {e}")
+
+    def _calculate_atr(self, period: Optional[int] = None) -> float:
+        """
+        Calculate Average True Range (ATR) for volatility-adjusted trailing stops.
+
+        ATR measures average daily price movement, adapting stops to market conditions.
+
+        Returns:
+            ATR value in dollars (e.g., 4.50 for SPY means ~$4.50 avg daily range)
+        """
+        if period is None:
+            period = self.config.atr_period
+
+        try:
+            # Try to get historical data for ATR calculation
+            import yfinance as yf
+
+            ticker = yf.Ticker(self.config.ticker)
+            hist = ticker.history(period=f"{period + 5}d")  # Extra days for buffer
+
+            if hist.empty or len(hist) < period:
+                # Fallback: estimate ATR based on typical SPY volatility
+                return self._estimate_atr_fallback()
+
+            # Calculate True Range for each day
+            # TR = max(high-low, abs(high-prev_close), abs(low-prev_close))
+            high = hist['High'].values
+            low = hist['Low'].values
+            close = hist['Close'].values
+
+            true_ranges = []
+            for i in range(1, len(hist)):
+                tr = max(
+                    high[i] - low[i],
+                    abs(high[i] - close[i-1]),
+                    abs(low[i] - close[i-1])
+                )
+                true_ranges.append(tr)
+
+            # ATR is the simple moving average of True Range
+            if len(true_ranges) >= period:
+                atr = sum(true_ranges[-period:]) / period
+                return round(atr, 2)
+
+        except Exception as e:
+            logger.debug(f"Could not calculate ATR: {e}")
+
+        return self._estimate_atr_fallback()
+
+    def _estimate_atr_fallback(self) -> float:
+        """
+        Fallback ATR estimate when historical data unavailable.
+
+        Based on typical volatility:
+        - SPY: ~$4-6 ATR in normal markets, ~$8-12 in volatile
+        - Uses VIX as proxy for volatility regime
+        """
+        try:
+            # Try to get VIX for volatility estimate
+            if TRADIER_AVAILABLE and self.tradier:
+                quote = self.tradier.get_quote('VIX')
+                vix = quote.get('last', 20) or 20
+            else:
+                vix = 20  # Default assumption
+
+            # Base ATR estimate for SPY based on price (~$500)
+            base_price = 500
+            base_atr = 4.5  # Normal market ATR for SPY
+
+            # Scale ATR with VIX (higher VIX = higher ATR)
+            vix_multiplier = vix / 20  # VIX 20 = 1x, VIX 30 = 1.5x, VIX 40 = 2x
+            estimated_atr = base_atr * vix_multiplier
+
+            return round(min(estimated_atr, 15.0), 2)  # Cap at $15
+
+        except Exception as e:
+            logger.debug(f"ATR fallback estimation failed: {e}")
+            return 5.0  # Conservative default
+
+    def _get_current_spread_value(self, position: SpreadPosition) -> float:
+        """
+        Get current value of a spread position.
+
+        For paper trading, estimates based on underlying price movement.
+        For live trading, fetches actual option quotes from Tradier.
+
+        Returns:
+            Current spread value (premium)
+        """
+        try:
+            # Get current underlying price
+            current_price = 0
+            if UNIFIED_DATA_AVAILABLE:
+                current_price = get_price(self.config.ticker)
+            elif TRADIER_AVAILABLE and self.tradier:
+                quote = self.tradier.get_quote(self.config.ticker)
+                current_price = quote.get('last', 0) or quote.get('close', 0)
+
+            if current_price <= 0:
+                return position.entry_debit  # Can't calculate, return entry
+
+            entry_price = position.underlying_price_at_entry
+            price_change_pct = (current_price - entry_price) / entry_price
+
+            # Estimate spread value based on delta approximation
+            # Bull call spread gains ~0.50 delta initially
+            # Bear call spread gains when price drops
+            if position.spread_type == SpreadType.BULL_CALL_SPREAD:
+                # Spread value increases when underlying rises
+                delta_estimate = 0.50  # ATM spread delta
+                spread_value_change = price_change_pct * position.spread_width * delta_estimate
+                current_value = position.entry_debit + spread_value_change
+            else:  # BEAR_CALL_SPREAD
+                # Credit spread - value decreases when underlying drops (good for us)
+                delta_estimate = -0.50
+                spread_value_change = price_change_pct * position.spread_width * delta_estimate
+                current_value = position.entry_debit + spread_value_change
+
+            # Clamp to reasonable bounds (can't exceed spread width)
+            max_value = position.spread_width
+            min_value = 0
+            return max(min_value, min(max_value, current_value))
+
+        except Exception as e:
+            logger.debug(f"Could not get spread value: {e}")
+            return position.entry_debit
+
+    def _execute_scale_out(self, position: SpreadPosition, contracts_to_exit: int,
+                           current_spread_value: float, reason: str) -> float:
+        """
+        Execute a partial exit (scale-out) for a position.
+
+        Args:
+            position: The spread position
+            contracts_to_exit: Number of contracts to close
+            current_spread_value: Current value per spread
+            reason: Exit reason for logging
+
+        Returns:
+            P&L from this scale-out
+        """
+        if contracts_to_exit <= 0 or contracts_to_exit > position.contracts_remaining:
+            return 0
+
+        # Calculate P&L for scaled contracts
+        pnl_per_contract = (current_spread_value - position.entry_debit) * 100
+        scale_pnl = pnl_per_contract * contracts_to_exit
+
+        # Update position tracking
+        position.contracts_remaining -= contracts_to_exit
+        position.total_scaled_pnl += scale_pnl
+
+        # For live trading, place closing order
+        if self.config.mode == TradingMode.LIVE and TRADIER_AVAILABLE and self.tradier:
+            try:
+                # Build OCC symbols for the spread legs
+                today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                long_symbol = self.tradier._build_occ_symbol(
+                    self.config.ticker, today, position.long_strike, 'C'
+                )
+                short_symbol = self.tradier._build_occ_symbol(
+                    self.config.ticker, today, position.short_strike, 'C'
+                )
+
+                # Close the spread (reverse the opening trade)
+                # For bull call: sell long call, buy back short call
+                self.tradier.place_option_order(
+                    option_symbol=long_symbol,
+                    side=OrderSide.SELL_TO_CLOSE,
+                    quantity=contracts_to_exit,
+                    order_type=OrderType.MARKET
+                )
+                self.tradier.place_option_order(
+                    option_symbol=short_symbol,
+                    side=OrderSide.BUY_TO_CLOSE,
+                    quantity=contracts_to_exit,
+                    order_type=OrderType.MARKET
+                )
+
+                logger.info(f"⚡ LIVE SCALE-OUT: {contracts_to_exit} contracts @ ${current_spread_value:.2f}")
+
+            except Exception as e:
+                logger.error(f"Live scale-out failed: {e}")
+
+        self._log_to_db("INFO", f"SCALE-OUT: {reason}", {
+            'position_id': position.position_id,
+            'contracts_exited': contracts_to_exit,
+            'contracts_remaining': position.contracts_remaining,
+            'exit_price': current_spread_value,
+            'scale_pnl': scale_pnl,
+            'total_scaled_pnl': position.total_scaled_pnl
+        })
+
+        logger.info(f"📊 Scale-out: {contracts_to_exit} contracts, P&L: ${scale_pnl:.2f}, "
+                   f"Remaining: {position.contracts_remaining}")
+
+        return scale_pnl
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
         """
@@ -820,7 +1048,12 @@ class ATHENATrader:
                 call_wall_at_entry=gex_data.get('call_wall', 0),
                 put_wall_at_entry=gex_data.get('put_wall', 0),
                 oracle_confidence=advice.confidence,
-                oracle_reasoning=advice.reasoning[:1000]  # Store more reasoning
+                oracle_reasoning=advice.reasoning[:1000],  # Store more reasoning
+                # Initialize scale-out tracking
+                initial_contracts=contracts,
+                contracts_remaining=contracts,
+                peak_spread_value=entry_debit,
+                current_atr=self._calculate_atr()
             )
 
             self.open_positions.append(position)
@@ -898,7 +1131,12 @@ class ATHENATrader:
                             call_wall_at_entry=gex_data.get('call_wall', 0),
                             put_wall_at_entry=gex_data.get('put_wall', 0),
                             oracle_confidence=advice.confidence,
-                            oracle_reasoning=advice.reasoning[:1000]
+                            oracle_reasoning=advice.reasoning[:1000],
+                            # Initialize scale-out tracking
+                            initial_contracts=contracts,
+                            contracts_remaining=contracts,
+                            peak_spread_value=limit_debit,
+                            current_atr=self._calculate_atr()
                         )
 
                         self.open_positions.append(position)
@@ -1401,83 +1639,202 @@ class ATHENATrader:
         return greeks
 
     def check_exits(self) -> List[SpreadPosition]:
-        """Check all open positions for exit conditions"""
+        """
+        Check all open positions for exit conditions.
+
+        Implements hybrid trailing stop with scaled exits:
+        - Phase 1: Let profits develop (no trailing until profit threshold)
+        - Phase 2: Scale out at profit targets (lock in gains)
+        - Phase 3: Trail remaining "runners" with ATR + P&L stops
+        """
         closed = []
         now = datetime.now(CENTRAL_TZ)
 
         for position in self.open_positions[:]:  # Copy list to allow modification
-            should_exit = False
+            should_exit_all = False
             exit_reason = ""
 
-            # Check time-based exit (0DTE - exit before close)
-            exit_time = now.replace(hour=15, minute=55, second=0)
-            if now >= exit_time:
-                should_exit = True
-                exit_reason = "EOD_EXIT"
+            try:
+                # Get current market data
+                current_price = 0
+                if UNIFIED_DATA_AVAILABLE:
+                    current_price = get_price(self.config.ticker)
+                elif TRADIER_AVAILABLE and self.tradier:
+                    quote = self.tradier.get_quote(self.config.ticker)
+                    current_price = quote.get('last', 0) or quote.get('close', 0)
 
-            # Check trailing stop using intraday price data
-            if not should_exit:
-                try:
-                    # Get current price
-                    current_price = 0
-                    if UNIFIED_DATA_AVAILABLE:
-                        current_price = get_price(self.config.ticker)
-                    elif TRADIER_AVAILABLE and self.tradier:
-                        quote = self.tradier.get_quote(self.config.ticker)
-                        current_price = quote.get('last', 0) or quote.get('close', 0)
+                if current_price <= 0:
+                    continue  # Skip if no price data
 
-                    if current_price > 0:
-                        entry_price = position.underlying_price_at_entry
-                        trailing_stop_pct = self.config.trailing_stop_pct / 100  # Convert to decimal
+                # Get current spread value
+                current_spread_value = self._get_current_spread_value(position)
+                entry_price = position.underlying_price_at_entry
+
+                # Update water marks for underlying price
+                if position.spread_type == SpreadType.BULL_CALL_SPREAD:
+                    if position.high_water_mark == 0:
+                        position.high_water_mark = max(entry_price, current_price)
+                    else:
+                        position.high_water_mark = max(position.high_water_mark, current_price)
+                else:  # BEAR_CALL_SPREAD
+                    if position.low_water_mark == float('inf'):
+                        position.low_water_mark = min(entry_price, current_price)
+                    else:
+                        position.low_water_mark = min(position.low_water_mark, current_price)
+
+                # Update peak spread value (for P&L trailing)
+                position.peak_spread_value = max(position.peak_spread_value, current_spread_value)
+
+                # Calculate current profit percentage
+                max_profit_per_spread = position.spread_width - position.entry_debit
+                current_profit = current_spread_value - position.entry_debit
+                profit_pct = (current_profit / max_profit_per_spread * 100) if max_profit_per_spread > 0 else 0
+
+                # ============================================================
+                # CHECK 1: Hard Stop Loss (capital protection)
+                # ============================================================
+                max_loss_per_spread = position.entry_debit  # Max you can lose on debit spread
+                current_loss = position.entry_debit - current_spread_value
+                loss_pct = (current_loss / max_loss_per_spread * 100) if max_loss_per_spread > 0 else 0
+
+                if loss_pct >= self.config.hard_stop_pct:
+                    should_exit_all = True
+                    exit_reason = f"HARD_STOP_LOSS ({loss_pct:.0f}% loss)"
+
+                # ============================================================
+                # CHECK 2: End of Day Exit (0DTE)
+                # ============================================================
+                if not should_exit_all:
+                    exit_time = now.replace(hour=15, minute=55, second=0)
+                    if now >= exit_time:
+                        should_exit_all = True
+                        exit_reason = "EOD_EXIT"
+
+                # ============================================================
+                # CHECK 3: Scale-out at Profit Targets
+                # ============================================================
+                if not should_exit_all and position.contracts_remaining > 0:
+                    # Check if we have enough contracts for scaling
+                    use_scaling = position.initial_contracts >= self.config.min_contracts_for_scaling
+
+                    if use_scaling:
+                        # Scale-out 1: First profit target
+                        if not position.scale_out_1_done and profit_pct >= self.config.scale_out_1_pct:
+                            contracts_to_exit = int(position.initial_contracts * self.config.scale_out_1_size / 100)
+                            contracts_to_exit = min(contracts_to_exit, position.contracts_remaining - 1)  # Keep at least 1
+
+                            if contracts_to_exit > 0:
+                                self._execute_scale_out(
+                                    position, contracts_to_exit, current_spread_value,
+                                    f"SCALE_OUT_1 ({self.config.scale_out_1_pct:.0f}% profit)"
+                                )
+                                position.scale_out_1_done = True
+
+                        # Scale-out 2: Second profit target
+                        if not position.scale_out_2_done and profit_pct >= self.config.scale_out_2_pct:
+                            contracts_to_exit = int(position.initial_contracts * self.config.scale_out_2_size / 100)
+                            contracts_to_exit = min(contracts_to_exit, position.contracts_remaining - 1)  # Keep at least 1
+
+                            if contracts_to_exit > 0:
+                                self._execute_scale_out(
+                                    position, contracts_to_exit, current_spread_value,
+                                    f"SCALE_OUT_2 ({self.config.scale_out_2_pct:.0f}% profit)"
+                                )
+                                position.scale_out_2_done = True
+
+                # ============================================================
+                # CHECK 4: Hybrid Trailing Stop (ATR + P&L) for Runners
+                # ============================================================
+                if not should_exit_all and position.contracts_remaining > 0:
+                    # Only start trailing after profit threshold hit
+                    if profit_pct >= self.config.profit_threshold_pct:
+                        position.profit_threshold_hit = True
+
+                    if position.profit_threshold_hit:
+                        trailing_triggered = False
+                        trailing_reason = ""
+
+                        # --- ATR-based trailing stop (volatility-adjusted) ---
+                        atr = position.current_atr if position.current_atr > 0 else self._calculate_atr()
+                        atr_distance = atr * self.config.atr_multiplier
 
                         if position.spread_type == SpreadType.BULL_CALL_SPREAD:
-                            # Bull call spread: exit if price drops below trailing stop from high
-                            if position.high_water_mark == 0:
-                                position.high_water_mark = max(entry_price, current_price)
-                            else:
-                                position.high_water_mark = max(position.high_water_mark, current_price)
+                            atr_stop_price = position.high_water_mark - atr_distance
+                            if current_price < atr_stop_price:
+                                trailing_triggered = True
+                                trailing_reason = f"ATR_STOP (price {current_price:.2f} < {atr_stop_price:.2f})"
+                        else:  # BEAR_CALL_SPREAD
+                            atr_stop_price = position.low_water_mark + atr_distance
+                            if current_price > atr_stop_price:
+                                trailing_triggered = True
+                                trailing_reason = f"ATR_STOP (price {current_price:.2f} > {atr_stop_price:.2f})"
 
-                            trailing_stop_price = position.high_water_mark * (1 - trailing_stop_pct)
-                            if current_price < trailing_stop_price:
-                                should_exit = True
-                                exit_reason = f"TRAILING_STOP (price {current_price:.2f} < stop {trailing_stop_price:.2f})"
+                        # --- P&L-based trailing stop (protect profits) ---
+                        if not trailing_triggered:
+                            peak_profit = position.peak_spread_value - position.entry_debit
+                            current_profit_from_peak = current_spread_value - position.entry_debit
+                            keep_pct = self.config.trail_keep_pct / 100
 
-                        elif position.spread_type == SpreadType.BEAR_CALL_SPREAD:
-                            # Bear call spread: exit if price rises above trailing stop from low
-                            if position.low_water_mark == float('inf'):
-                                position.low_water_mark = min(entry_price, current_price)
-                            else:
-                                position.low_water_mark = min(position.low_water_mark, current_price)
+                            # Exit if we've given back too much profit
+                            min_acceptable_profit = peak_profit * keep_pct
+                            if peak_profit > 0 and current_profit_from_peak < min_acceptable_profit:
+                                trailing_triggered = True
+                                trailing_reason = f"PNL_STOP (profit ${current_profit_from_peak:.2f} < min ${min_acceptable_profit:.2f})"
 
-                            trailing_stop_price = position.low_water_mark * (1 + trailing_stop_pct)
-                            if current_price > trailing_stop_price:
-                                should_exit = True
-                                exit_reason = f"TRAILING_STOP (price {current_price:.2f} > stop {trailing_stop_price:.2f})"
+                        if trailing_triggered:
+                            should_exit_all = True
+                            exit_reason = f"TRAILING_STOP: {trailing_reason}"
 
-                except Exception as e:
-                    self._log_to_db("DEBUG", f"Could not check trailing stop: {e}")
+            except Exception as e:
+                self._log_to_db("DEBUG", f"Error in check_exits: {e}")
+                logger.debug(f"check_exits error: {e}")
 
-            if should_exit:
+            # ============================================================
+            # EXECUTE FULL EXIT (if triggered)
+            # ============================================================
+            if should_exit_all and position.contracts_remaining > 0:
+                # Exit all remaining contracts
+                current_spread_value = self._get_current_spread_value(position)
+                self._execute_scale_out(
+                    position, position.contracts_remaining, current_spread_value,
+                    exit_reason
+                )
                 self._close_position(position, exit_reason)
+                closed.append(position)
+
+            # Also close if all contracts have been scaled out
+            elif position.contracts_remaining == 0 and position.status == "open":
+                self._close_position(position, "FULLY_SCALED_OUT")
                 closed.append(position)
 
         return closed
 
     def _close_position(self, position: SpreadPosition, reason: str) -> None:
-        """Close a position"""
+        """Close a position - includes P&L from all scale-outs"""
         position.status = "closed"
         position.close_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # For paper trading, simulate close price
-        if self.config.mode == TradingMode.PAPER:
-            # Assume we close at current value
-            if position.spread_type == SpreadType.BULL_CALL_SPREAD:
-                # Bullish - assume 60% of trades hit max profit based on backtest
-                position.close_price = position.entry_debit * 1.5
-                position.realized_pnl = (position.close_price - position.entry_debit) * 100 * position.contracts
-            else:
-                # Bearish credit spread - keep premium
-                position.realized_pnl = abs(position.entry_debit) * 100 * position.contracts * 0.8
+        # Get current spread value for final close price
+        current_spread_value = self._get_current_spread_value(position)
+        position.close_price = current_spread_value
+
+        # Calculate total realized P&L (scale-outs already recorded + any remaining)
+        # Note: If contracts_remaining is 0, all P&L came from scale-outs
+        # If contracts_remaining > 0, this shouldn't happen (exit should scale out first)
+        position.realized_pnl = position.total_scaled_pnl
+
+        # Log summary of scaled exits
+        initial = position.initial_contracts
+        scaled_out = initial - position.contracts_remaining
+        self._log_to_db("INFO", f"Position closed with scale-outs", {
+            'position_id': position.position_id,
+            'initial_contracts': initial,
+            'scaled_out_contracts': scaled_out,
+            'scale_out_1_done': position.scale_out_1_done,
+            'scale_out_2_done': position.scale_out_2_done,
+            'total_pnl': position.realized_pnl,
+            'exit_reason': reason
+        })
 
         # Move to closed positions
         if position in self.open_positions:
