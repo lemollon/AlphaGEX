@@ -162,7 +162,8 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
             'spot_price': spot_price,
             'vix': vix,
             'expiration': expiration,
-            'strikes': list(unique_strikes.values())
+            'strikes': list(unique_strikes.values()),
+            'is_mock': False  # Real market data from Tradier
         }
 
         # Cache the result
@@ -205,8 +206,10 @@ async def get_real_prices() -> tuple:
 
 def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
     """Return mock gamma data for development/testing.
-    Uses deterministic values (no randomization) to avoid fake updates when market is closed.
+    Uses randomization to simulate live updates - marked as is_mock=True.
     """
+    import random
+
     if spot is None:
         spot = 600.0
     if vix is None:
@@ -215,20 +218,14 @@ def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
     strikes = []
     base_strike = round(spot)
 
-    # Deterministic gamma variations based on strike distance
-    # These look realistic but don't change on each call
-    gamma_factors = [0.92, 1.05, 0.98, 1.02, 0.95, 1.0, 1.03, 0.97, 1.01, 0.94, 1.06]
-
-    for idx, i in enumerate(range(-5, 6)):  # Fewer strikes, more realistic
+    for i in range(-5, 6):  # Fewer strikes, more realistic
         strike = base_strike + i
         distance = abs(i)
 
         # Simulate gamma distribution (higher near ATM)
         base_gamma = max(0, 0.05 - distance * 0.008)
-        # Use deterministic factor instead of random
-        factor = gamma_factors[idx]
-        call_gamma = base_gamma * factor
-        put_gamma = base_gamma * (2 - factor)  # Inverse variation
+        call_gamma = base_gamma * (1 + random.uniform(-0.2, 0.2))
+        put_gamma = base_gamma * (1 + random.uniform(-0.2, 0.2))
 
         # Simulate OI - realistic values
         call_oi = int(max(500, 15000 - distance * 2000))
@@ -251,7 +248,8 @@ def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
         'spot_price': spot,
         'vix': vix,
         'expiration': date.today().strftime('%Y-%m-%d'),
-        'strikes': strikes
+        'strikes': strikes,
+        'is_mock': True  # Flag to indicate simulated data
     }
 
 
@@ -317,6 +315,7 @@ async def get_gamma_data(
                 "gamma_regime": snapshot.gamma_regime,
                 "regime_flipped": snapshot.regime_flipped,
                 "market_status": snapshot.market_status,
+                "is_mock": raw_data.get('is_mock', False),  # True = simulated, False = real market data
                 "strikes": [s.to_dict() for s in filtered_strikes],
                 "magnets": snapshot.magnets,
                 "likely_pin": snapshot.likely_pin,

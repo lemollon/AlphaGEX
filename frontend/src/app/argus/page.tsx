@@ -118,6 +118,7 @@ interface GammaData {
   gamma_regime: string
   regime_flipped: boolean
   market_status: string
+  is_mock: boolean
   strikes: StrikeData[]
   magnets: Magnet[]
   likely_pin: number
@@ -310,12 +311,16 @@ export default function ArgusPage() {
     fetchContext()
   }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext])
 
-  // Check if market is closed (no auto-refresh when closed)
+  // Check if market is closed
   const isMarketClosed = gammaData?.market_status === 'closed'
+  // Check if showing simulated data
+  const isMockData = gammaData?.is_mock === true
 
   useEffect(() => {
-    // Don't auto-refresh when market is closed
-    if (autoRefresh && !isMarketClosed) {
+    // Auto-refresh when:
+    // 1. Auto-refresh is enabled, AND
+    // 2. Either market is open OR we're showing simulated data (to demonstrate it works)
+    if (autoRefresh && (!isMarketClosed || isMockData)) {
       refreshIntervalRef.current = setInterval(() => {
         fetchGammaData(activeDay)
         fetchAlerts()
@@ -325,7 +330,7 @@ export default function ArgusPage() {
     return () => {
       if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current)
     }
-  }, [autoRefresh, activeDay, isMarketClosed, fetchGammaData, fetchAlerts, fetchContext])
+  }, [autoRefresh, activeDay, isMarketClosed, isMockData, fetchGammaData, fetchAlerts, fetchContext])
 
   const handleDayChange = (day: string) => {
     setActiveDay(day)
@@ -573,18 +578,31 @@ export default function ArgusPage() {
               {!replayMode && (
                 <>
                   <button
-                    onClick={() => !isMarketClosed && setAutoRefresh(!autoRefresh)}
+                    onClick={() => setAutoRefresh(!autoRefresh)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
-                      isMarketClosed
+                      isMarketClosed && !isMockData
                         ? 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
+                        : isMockData && autoRefresh
+                        ? 'bg-orange-500/20 text-orange-400'
                         : autoRefresh
                         ? 'bg-emerald-500/20 text-emerald-400'
                         : 'bg-gray-700 text-gray-400'
                     }`}
-                    title={isMarketClosed ? 'Market is closed' : autoRefresh ? 'Pause auto-refresh' : 'Enable auto-refresh'}
+                    title={
+                      isMarketClosed && !isMockData
+                        ? 'Market is closed'
+                        : isMockData
+                        ? autoRefresh ? 'Simulating - click to pause' : 'Click to simulate'
+                        : autoRefresh ? 'Pause auto-refresh' : 'Enable auto-refresh'
+                    }
                   >
-                    <RefreshCw className={`w-4 h-4 ${autoRefresh && !isMarketClosed ? 'animate-spin' : ''}`} />
-                    {isMarketClosed ? 'Closed' : autoRefresh ? 'Live' : 'Paused'}
+                    <RefreshCw className={`w-4 h-4 ${autoRefresh && (!isMarketClosed || isMockData) ? 'animate-spin' : ''}`} />
+                    {isMarketClosed && !isMockData
+                      ? 'Closed'
+                      : isMockData
+                      ? autoRefresh ? 'Simulating' : 'Paused'
+                      : autoRefresh ? 'Live' : 'Paused'
+                    }
                   </button>
                   <button
                     onClick={() => fetchGammaData(activeDay)}
@@ -633,13 +651,22 @@ export default function ArgusPage() {
 
         {/* Market Closed Banner */}
         {isMarketClosed && !replayMode && (
-          <div className="bg-gray-700/50 border border-gray-600/50 rounded-xl p-3 mb-4 flex items-center justify-between">
+          <div className={`rounded-xl p-3 mb-4 flex items-center justify-between ${
+            gammaData?.is_mock
+              ? 'bg-orange-500/10 border border-orange-500/30'
+              : 'bg-gray-700/50 border border-gray-600/50'
+          }`}>
             <div className="flex items-center gap-3">
-              <Clock className="w-5 h-5 text-gray-400" />
+              <Clock className={`w-5 h-5 ${gammaData?.is_mock ? 'text-orange-400' : 'text-gray-400'}`} />
               <div>
-                <span className="text-gray-300 font-medium">Market Closed</span>
-                <span className="text-gray-500 ml-2">
-                  Showing last trading day&apos;s data. Auto-refresh paused until market opens.
+                <span className={`font-medium ${gammaData?.is_mock ? 'text-orange-300' : 'text-gray-300'}`}>
+                  Market Closed
+                </span>
+                <span className={`ml-2 ${gammaData?.is_mock ? 'text-orange-400/70' : 'text-gray-500'}`}>
+                  {gammaData?.is_mock
+                    ? 'Displaying simulated data for demonstration. Values update randomly.'
+                    : 'Showing last trading day\'s data. Auto-refresh paused until market opens.'
+                  }
                 </span>
               </div>
             </div>
@@ -907,6 +934,15 @@ export default function ArgusPage() {
                 <h3 className="font-bold text-white flex items-center gap-2">
                   <BarChart3 className="w-5 h-5 text-blue-400" />
                   Net Gamma by Strike
+                  {gammaData?.is_mock ? (
+                    <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-400 text-[10px] font-medium rounded border border-orange-500/30">
+                      SIMULATED
+                    </span>
+                  ) : (
+                    <span className="ml-2 px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded border border-emerald-500/30">
+                      LIVE
+                    </span>
+                  )}
                 </h3>
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <div className="flex items-center gap-1.5">
