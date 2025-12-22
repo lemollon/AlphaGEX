@@ -391,9 +391,9 @@ export default function ARESPage() {
   const spxEquityData = buildEquityCurve(spxClosedPositions, spxStats.capital)
   const spyEquityData = buildEquityCurve(spyClosedPositions, spyStats.capital)
 
-  // UI State
-  const [showSpxPositions, setShowSpxPositions] = useState(false)
-  const [showSpyPositions, setShowSpyPositions] = useState(false)
+  // UI State - default to expanded for better visibility
+  const [showSpxPositions, setShowSpxPositions] = useState(true)
+  const [showSpyPositions, setShowSpyPositions] = useState(true)
   const [expandedDecision, setExpandedDecision] = useState<number | null>(null)
 
   // Manual refresh function

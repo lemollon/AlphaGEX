@@ -300,9 +300,9 @@ export default function ATHENAPage() {
   const error = statusError?.message || null
   const isRefreshing = statusValidating || posValidating || signalsValidating || perfValidating || adviceValidating || mlValidating || logsValidating || decisionsValidating
 
-  // UI State
+  // UI State - default to expanded for better visibility
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'signals' | 'logs'>('overview')
-  const [showClosedPositions, setShowClosedPositions] = useState(false)
+  const [showClosedPositions, setShowClosedPositions] = useState(true)
   const [runningCycle, setRunningCycle] = useState(false)
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
 
