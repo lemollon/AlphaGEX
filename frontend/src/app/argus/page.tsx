@@ -242,11 +242,18 @@ export default function ArgusPage() {
 
   const fetchCommentary = useCallback(async () => {
     try {
+      console.log('[ARGUS] Fetching commentary...')
       const response = await apiClient.getArgusCommentary()
+      console.log('[ARGUS] Commentary response:', response)
       if (response.data?.success && response.data?.data?.commentary) {
         setCommentary(response.data.data.commentary)
+        console.log('[ARGUS] Commentary loaded:', response.data.data.commentary.length, 'entries')
+      } else {
+        console.warn('[ARGUS] No commentary data in response:', response.data?.data?.message || 'Unknown')
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('[ARGUS] Error fetching commentary:', err)
+    }
   }, [])
 
   const fetchContext = useCallback(async () => {
@@ -305,11 +312,21 @@ export default function ArgusPage() {
   }
 
   useEffect(() => {
-    fetchExpirations()
-    fetchGammaData()
-    fetchAlerts()
-    fetchCommentary()
-    fetchContext()
+    // Fetch all data in parallel for faster initial load
+    const fetchAllData = async () => {
+      try {
+        await Promise.all([
+          fetchExpirations(),
+          fetchGammaData(),
+          fetchAlerts(),
+          fetchCommentary(),
+          fetchContext()
+        ])
+      } catch (err) {
+        console.error('Error fetching initial data:', err)
+      }
+    }
+    fetchAllData()
   }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext])
 
   // Check if market is closed or holiday
@@ -1111,10 +1128,18 @@ export default function ArgusPage() {
 
             {/* Strike Details Table */}
             <div className="bg-gray-800/50 rounded-xl p-5">
-              <h3 className="font-bold text-white mb-4 flex items-center gap-2">
-                <Activity className="w-5 h-5 text-blue-400" />
-                Strike Analysis
-              </h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-blue-400" />
+                  Strike Analysis
+                </h3>
+                {lastUpdated && (
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <Clock className="w-3 h-3" />
+                    <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
+                  </div>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -1265,6 +1290,20 @@ export default function ArgusPage() {
                     <Activity className="w-8 h-8 mx-auto mb-2 opacity-30" />
                     <p className="text-sm">No log entries yet</p>
                     <p className="text-xs text-gray-600 mt-1">AI commentary generates every 5 minutes during market hours</p>
+                    <button
+                      onClick={async () => {
+                        try {
+                          console.log('[ARGUS] Manually triggering commentary generation...')
+                          await apiClient.generateArgusCommentary()
+                          await fetchCommentary()
+                        } catch (err) {
+                          console.error('[ARGUS] Failed to generate commentary:', err)
+                        }
+                      }}
+                      className="mt-3 px-3 py-1.5 bg-purple-500/20 text-purple-400 text-xs rounded-lg hover:bg-purple-500/30 transition-colors"
+                    >
+                      Generate Commentary Now
+                    </button>
                   </div>
                 )}
               </div>

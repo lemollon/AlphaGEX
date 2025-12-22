@@ -873,3 +873,15 @@ def get_argus_engine() -> ArgusEngine:
     if _argus_engine is None:
         _argus_engine = ArgusEngine()
     return _argus_engine
+
+
+def initialize_argus_engine() -> ArgusEngine:
+    """
+    Initialize ARGUS engine with eager loading of ML models.
+    Call this at application startup to avoid cold-start latency.
+    """
+    engine = get_argus_engine()
+    # Eagerly load ML models to avoid first-request delay
+    engine._get_ml_models()
+    logger.info("ARGUS engine initialized with ML models pre-loaded")
+    return engine

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Simple in-memory cache with TTL
 _cache: Dict[str, Any] = {}
 _cache_times: Dict[str, float] = {}
-CACHE_TTL_SECONDS = 30  # 30 second cache for gamma data
+CACHE_TTL_SECONDS = 60  # 60 second cache for gamma data (increased from 30s for performance)
 PRICE_CACHE_TTL = 15    # 15 second cache for prices
 
 
@@ -126,20 +126,25 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         # Get options chain
         chain = await tradier.get_options_chain('SPY', expiration)
 
-        # Process chain into strike data
-        strikes = []
+        # Process chain into strike data using O(1) dictionary lookup instead of O(n²) nested loop
+        # Build dictionaries keyed by (strike, option_type) for fast lookup
+        options_by_key = {}
         for option in chain.get('options', []):
             strike = option.get('strike')
-            if not strike:
-                continue
+            opt_type = option.get('option_type')
+            if strike and opt_type:
+                options_by_key[(strike, opt_type)] = option
 
-            # Find call and put for this strike
-            call_data = next((o for o in chain.get('options', [])
-                             if o.get('strike') == strike and o.get('option_type') == 'call'), {})
-            put_data = next((o for o in chain.get('options', [])
-                            if o.get('strike') == strike and o.get('option_type') == 'put'), {})
+        # Get unique strikes
+        unique_strike_values = set(option.get('strike') for option in chain.get('options', []) if option.get('strike'))
 
-            strikes.append({
+        # Build strike data using O(1) lookups
+        unique_strikes = {}
+        for strike in unique_strike_values:
+            call_data = options_by_key.get((strike, 'call'), {})
+            put_data = options_by_key.get((strike, 'put'), {})
+
+            unique_strikes[strike] = {
                 'strike': strike,
                 'call_gamma': call_data.get('greeks', {}).get('gamma', 0) or 0,
                 'put_gamma': put_data.get('greeks', {}).get('gamma', 0) or 0,
@@ -150,13 +155,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
                 'call_iv': call_data.get('greeks', {}).get('mid_iv', 0) or 0,
                 'put_iv': put_data.get('greeks', {}).get('mid_iv', 0) or 0,
                 'volume': (call_data.get('volume', 0) or 0) + (put_data.get('volume', 0) or 0)
-            })
-
-        # Deduplicate strikes
-        unique_strikes = {}
-        for s in strikes:
-            if s['strike'] not in unique_strikes:
-                unique_strikes[s['strike']] = s
+            }
 
         result = {
             'spot_price': spot_price,
@@ -332,6 +331,9 @@ async def get_gamma_data(
 
 # Cache for prior day expected move
 _em_cache: Dict[str, float] = {}
+_em_result_cache: Dict[str, Any] = {}
+_em_result_cache_time: Dict[str, float] = {}
+EM_CACHE_TTL = 300  # 5 minute cache for expected move change calculations
 
 
 async def get_expected_move_change(current_em: float, current_vix: float, spot_price: float = None) -> dict:
@@ -349,6 +351,13 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
     """
     today = date.today().strftime('%Y-%m-%d')
     prior_key = f"em_prior_{today}"
+
+    # Check cache first - DB queries are expensive
+    cache_key = f"em_result_{today}_{round(current_em, 2)}_{round(spot_price or 0, 2)}"
+    if cache_key in _em_result_cache and cache_key in _em_result_cache_time:
+        if time.time() - _em_result_cache_time[cache_key] < EM_CACHE_TTL:
+            logger.debug("ARGUS: Returning cached expected move change")
+            return _em_result_cache[cache_key]
 
     # Try to get prior day's close expected move AND spot from database
     prior_em = None
@@ -439,7 +448,7 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
         interpretation = f"Expected move DOWN {pct_change:.1f}% from prior day - bearish signal"
         sentiment = "BEARISH"
 
-    return {
+    result = {
         "current": round(current_em, 2),
         "current_pct": round(current_em_pct, 3),  # EM as % of spot
         "prior_day": round(prior_em, 2) if prior_em else None,
@@ -451,6 +460,12 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
         "sentiment": sentiment,
         "interpretation": interpretation
     }
+
+    # Cache the result
+    _em_result_cache[cache_key] = result
+    _em_result_cache_time[cache_key] = time.time()
+
+    return result
 
 
 @router.get("/history")
