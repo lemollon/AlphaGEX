@@ -23,6 +23,18 @@ from database_adapter import get_connection
 router = APIRouter(prefix="/api/argus", tags=["ARGUS"])
 logger = logging.getLogger(__name__)
 
+# ==================== TIMEZONE ====================
+# All AlphaGEX timestamps use Texas/Central timezone
+CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+def get_central_time() -> datetime:
+    """Get current time in Central timezone (Texas)"""
+    return datetime.now(CENTRAL_TZ)
+
+def format_central_timestamp() -> str:
+    """Get ISO formatted timestamp in Central timezone"""
+    return get_central_time().isoformat()
+
 # ==================== CACHING ====================
 # Simple in-memory cache with TTL
 _cache: Dict[str, Any] = {}
@@ -183,7 +195,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
             'expiration': expiration,
             'strikes': list(unique_strikes.values()),
             'is_mock': False,  # Real market data from Tradier
-            'fetched_at': datetime.now().isoformat()  # Actual fetch timestamp
+            'fetched_at': format_central_timestamp()  # Actual fetch timestamp (Central timezone)
         }
 
         # Cache the result
@@ -270,7 +282,7 @@ def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
         'expiration': date.today().strftime('%Y-%m-%d'),
         'strikes': strikes,
         'is_mock': True,  # Flag to indicate simulated data
-        'fetched_at': datetime.now().isoformat()  # Actual fetch timestamp
+        'fetched_at': format_central_timestamp()  # Actual fetch timestamp (Central timezone)
     }
 
 
@@ -337,7 +349,7 @@ async def get_gamma_data(
                 "regime_flipped": snapshot.regime_flipped,
                 "market_status": snapshot.market_status,
                 "is_mock": raw_data.get('is_mock', False),  # True = simulated, False = real market data
-                "fetched_at": raw_data.get('fetched_at', datetime.now().isoformat()),  # When data was fetched from Tradier
+                "fetched_at": raw_data.get('fetched_at', format_central_timestamp()),  # When data was fetched from Tradier (Central TZ)
                 "strikes": [s.to_dict() for s in filtered_strikes],
                 "magnets": snapshot.magnets,
                 "likely_pin": snapshot.likely_pin,
@@ -756,7 +768,7 @@ async def generate_commentary(request: CommentaryRequest = None):
             "success": True,
             "data": {
                 "commentary": commentary,
-                "generated_at": datetime.now().isoformat()
+                "generated_at": format_central_timestamp()
             }
         }
 
@@ -1010,7 +1022,7 @@ async def export_data(
         export_data = {
             "snapshot": snapshot.to_dict(),
             "alerts": engine.get_active_alerts(),
-            "export_time": datetime.now().isoformat(),
+            "export_time": format_central_timestamp(),
             "format_requested": format
         }
 
