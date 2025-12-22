@@ -509,6 +509,51 @@ export default function ATHENAPage() {
             </div>
           </div>
 
+          {/* Condensed Market Data Bar */}
+          <div className="mb-4 bg-gray-800/50 rounded-lg p-2 border border-gray-700">
+            <div className="grid grid-cols-6 gap-2 text-center text-sm">
+              <div className="bg-gray-900/50 rounded px-3 py-2">
+                <span className="text-gray-500 text-xs block">SPY</span>
+                <span className="text-white font-bold">
+                  ${(mlSignal?.gex_context?.spot_price || status?.heartbeat?.details?.gex_context?.spot_price || 0).toFixed(2)}
+                </span>
+              </div>
+              <div className="bg-gray-900/50 rounded px-3 py-2">
+                <span className="text-gray-500 text-xs block">VIX</span>
+                <span className="text-yellow-400 font-bold">
+                  {(status?.heartbeat?.details?.vix || mlSignal?.expected_volatility || 0).toFixed(1)}
+                </span>
+              </div>
+              <div className="bg-green-900/20 rounded px-3 py-2">
+                <span className="text-gray-500 text-xs block">Put Wall</span>
+                <span className="text-green-400 font-bold">
+                  ${(mlSignal?.gex_context?.put_wall || status?.heartbeat?.details?.gex_context?.put_wall || 0).toFixed(0)}
+                </span>
+              </div>
+              <div className="bg-red-900/20 rounded px-3 py-2">
+                <span className="text-gray-500 text-xs block">Call Wall</span>
+                <span className="text-red-400 font-bold">
+                  ${(mlSignal?.gex_context?.call_wall || status?.heartbeat?.details?.gex_context?.call_wall || 0).toFixed(0)}
+                </span>
+              </div>
+              <div className="bg-gray-900/50 rounded px-3 py-2">
+                <span className="text-gray-500 text-xs block">Regime</span>
+                <span className={`font-bold ${
+                  (mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime) === 'POSITIVE'
+                    ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime || 'N/A'}
+                </span>
+              </div>
+              <div className="bg-purple-900/20 rounded px-3 py-2">
+                <span className="text-gray-500 text-xs block">Net GEX</span>
+                <span className="text-purple-400 font-bold">
+                  {((mlSignal?.gex_context?.net_gex || status?.heartbeat?.details?.gex_context?.net_gex || 0) / 1e9).toFixed(2)}B
+                </span>
+              </div>
+            </div>
+          </div>
+
           {error && (
             <div className="bg-red-900/50 border border-red-700 rounded-lg p-4 mb-6">
               <p className="text-red-400">{error}</p>
