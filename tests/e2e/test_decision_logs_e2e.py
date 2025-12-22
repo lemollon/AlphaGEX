@@ -36,13 +36,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 @pytest.fixture(scope="module")
 def db_connection():
     """Get database connection for tests."""
+    conn = None
     try:
         from database_adapter import get_connection
         conn = get_connection()
-        yield conn
-        conn.close()
     except ImportError:
         pytest.skip("database_adapter not available")
+    except Exception as e:
+        pytest.skip(f"Database connection failed: {e}")
+
+    if conn is None:
+        pytest.skip("Could not establish database connection")
+
+    yield conn
+    conn.close()
 
 
 @pytest.fixture(scope="module")
