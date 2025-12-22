@@ -208,10 +208,59 @@ def test_vix_fetcher():
         check("VIX fetcher", False, str(e), warn_only=True)
 
 
-def test_api_endpoints():
-    """Test 6: API endpoints (requires server running)"""
+def test_tradier_connection():
+    """Test 6: Tradier API connectivity"""
     logger.info("\n" + "="*60)
-    logger.info("TEST 6: API Endpoints (requires server at localhost:8000)")
+    logger.info("TEST 6: Tradier API Connectivity")
+    logger.info("="*60)
+
+    try:
+        from data.tradier_data_fetcher import TradierDataFetcher
+
+        tradier = TradierDataFetcher()
+        check("Tradier client initialized", True)
+
+        # Test SPY quote
+        quote = tradier.get_quote('SPY')
+        spy_price = quote.get('last') or quote.get('close')
+        check("SPY quote retrieved", spy_price is not None and spy_price > 0,
+              f"SPY=${spy_price}" if spy_price else "No price")
+
+        # Test option expirations
+        expirations = tradier.get_option_expirations('SPY')
+        check("Option expirations retrieved", len(expirations) > 0,
+              f"Found {len(expirations)} expirations")
+
+        if expirations:
+            # Test option chain
+            exp = expirations[0]
+            chain = tradier.get_option_chain('SPY', exp)
+            contracts = chain.chains.get(exp, [])
+            check("Option chain retrieved", len(contracts) > 0,
+                  f"Found {len(contracts)} contracts for {exp}")
+
+            if contracts:
+                # Check that we have both calls and puts
+                calls = [c for c in contracts if c.option_type == 'call']
+                puts = [c for c in contracts if c.option_type == 'put']
+                check("Has both calls and puts", len(calls) > 0 and len(puts) > 0,
+                      f"{len(calls)} calls, {len(puts)} puts")
+
+                # Check for gamma data
+                contracts_with_gamma = [c for c in contracts if c.gamma != 0]
+                check("Greeks (gamma) available", len(contracts_with_gamma) > 0,
+                      f"{len(contracts_with_gamma)} contracts with gamma")
+
+        logger.info(f"{INFO} Tradier mode: {'SANDBOX' if tradier.sandbox else 'PRODUCTION'}")
+
+    except Exception as e:
+        check("Tradier connection", False, str(e))
+
+
+def test_api_endpoints():
+    """Test 7: API endpoints (requires server running)"""
+    logger.info("\n" + "="*60)
+    logger.info("TEST 7: API Endpoints (requires server at localhost:8000)")
     logger.info("="*60)
 
     try:
@@ -257,9 +306,9 @@ def test_api_endpoints():
 
 
 def test_argus_routes_optimization():
-    """Test 7: ARGUS routes optimization code"""
+    """Test 8: ARGUS routes optimization code"""
     logger.info("\n" + "="*60)
-    logger.info("TEST 7: ARGUS Routes Optimization")
+    logger.info("TEST 8: ARGUS Routes Optimization")
     logger.info("="*60)
 
     try:
@@ -271,6 +320,8 @@ def test_argus_routes_optimization():
             ("O(1) dictionary lookup", "options_by_key" in source),
             ("Expected move caching", "EM_CACHE_TTL = 300" in source),
             ("Cache result storage", "_em_result_cache[cache_key]" in source),
+            ("Correct method name (get_option_chain)", "tradier.get_option_chain" in source),
+            ("OptionChain dataclass handling", "option_chain.chains.get" in source),
         ]
 
         for name, condition in checks:
@@ -281,9 +332,9 @@ def test_argus_routes_optimization():
 
 
 def test_frontend_parallel_fetch():
-    """Test 8: Frontend parallel API calls"""
+    """Test 9: Frontend parallel API calls"""
     logger.info("\n" + "="*60)
-    logger.info("TEST 8: Frontend Parallel API Calls")
+    logger.info("TEST 9: Frontend Parallel API Calls")
     logger.info("="*60)
 
     try:
@@ -366,9 +417,10 @@ def main():
     test_ares_validation()
     test_athena_expected_move()
     test_vix_fetcher()
+    test_tradier_connection()
+    test_api_endpoints()
     test_argus_routes_optimization()
     test_frontend_parallel_fetch()
-    test_api_endpoints()
 
     print_summary()
 
