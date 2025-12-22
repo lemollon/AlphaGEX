@@ -444,9 +444,29 @@ class ARESTrader:
                 else:
                     logger.info("ARES: VIX not available, using default 15.0")
 
+            # Validate underlying price before calculation
+            if not underlying_price or underlying_price <= 0:
+                logger.error(f"ARES: Invalid underlying price: {underlying_price}")
+                return None
+
+            # Validate VIX is reasonable (between 8 and 100)
+            if vix < 8 or vix > 100:
+                logger.warning(f"ARES: VIX {vix} outside normal range, clamping")
+                vix = max(8, min(100, vix))
+
             # Calculate expected move (1 SD for 0DTE)
             iv = vix / 100
             expected_move = underlying_price * iv * math.sqrt(1/252)
+
+            # Validate expected move is reasonable (should be 0.1% to 5% of underlying)
+            expected_move_pct = (expected_move / underlying_price) * 100
+            if expected_move <= 0 or expected_move_pct < 0.1 or expected_move_pct > 5:
+                logger.error(f"ARES: Expected move calculation invalid: ${expected_move:.2f} ({expected_move_pct:.2f}%)")
+                # Fallback to reasonable estimate based on VIX
+                expected_move = underlying_price * (vix / 100) * 0.063  # ~1/16 approximation
+                logger.info(f"ARES: Using fallback expected move: ${expected_move:.2f}")
+
+            logger.info(f"ARES Market Data: {ticker}=${underlying_price:.2f}, VIX={vix:.2f}, EM=${expected_move:.2f}")
 
             return {
                 'ticker': ticker,

@@ -478,13 +478,28 @@ async def get_ares_market_data():
         if not spx_price and spy_price:
             spx_price = spy_price * 10
 
+        # Validate VIX is reasonable (between 8 and 100)
+        if vix < 8 or vix > 100:
+            logger.warning(f"ARES API: VIX {vix} outside normal range, clamping")
+            vix = max(8, min(100, vix))
+
         # Calculate expected moves (1 SD daily move)
         spx_expected_move = 0
         spy_expected_move = 0
-        if spx_price:
+        if spx_price and spx_price > 0:
             spx_expected_move = spx_price * (vix / 100) * math.sqrt(1/252)
-        if spy_price:
+            # Validate expected move is reasonable
+            if spx_expected_move <= 0:
+                logger.error(f"ARES API: SPX expected move calculation failed, using fallback")
+                spx_expected_move = spx_price * (vix / 100) * 0.063
+        if spy_price and spy_price > 0:
             spy_expected_move = spy_price * (vix / 100) * math.sqrt(1/252)
+            # Validate expected move is reasonable
+            if spy_expected_move <= 0:
+                logger.error(f"ARES API: SPY expected move calculation failed, using fallback")
+                spy_expected_move = spy_price * (vix / 100) * 0.063
+
+        logger.info(f"ARES API: SPX=${spx_price}, SPY=${spy_price}, VIX={vix}, SPX_EM=${spx_expected_move:.2f}, SPY_EM=${spy_expected_move:.2f}")
 
         return {
             "success": True,

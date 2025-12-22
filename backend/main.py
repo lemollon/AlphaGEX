@@ -1640,6 +1640,16 @@ async def startup_event():
         print(f"⚠️  Initialization check failed: {e}")
         print("📊 App will create tables as needed during operation")
 
+    # Initialize ARGUS engine with ML models pre-loaded for faster first request
+    print("\n👁️  Initializing ARGUS engine...")
+    try:
+        from core.argus_engine import initialize_argus_engine
+        initialize_argus_engine()
+        print("✅ ARGUS engine initialized with ML models pre-loaded")
+    except Exception as e:
+        print(f"⚠️  ARGUS initialization warning: {e}")
+        print("   ARGUS will lazy-load on first request")
+
     # Auto-run AUTONOMOUS backtests on startup IF database is empty
     print("\n🔄 Checking backtest results...")
     try:
