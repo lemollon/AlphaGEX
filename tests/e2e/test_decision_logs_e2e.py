@@ -20,7 +20,7 @@ Run with: pytest tests/e2e/test_decision_logs_e2e.py -v
 import pytest
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 import json
 import uuid
@@ -623,7 +623,7 @@ class TestDataConsistency:
 
         if oldest and newest:
             # Check no future dates
-            assert newest <= datetime.now() + timedelta(hours=1), "Found future timestamps"
+            assert newest <= datetime.now(timezone.utc) + timedelta(hours=1), "Found future timestamps"
 
 
 # =============================================================================
