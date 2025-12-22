@@ -41,6 +41,7 @@ import {
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
 import { CrossButton, DedicationModal, StewardshipTagline, StewardshipMission } from './StewardshipBanner'
+import PilgrimJourney from './PilgrimJourney'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
@@ -203,6 +204,11 @@ export default function Navigation() {
           </div>
         </div>
       </nav>
+
+      {/* Pilgrim's Journey Animation Banner */}
+      <div className="fixed top-16 left-0 right-0 z-40">
+        <PilgrimJourney />
+      </div>
 
       {/* Dedication Modal */}
       <DedicationModal
