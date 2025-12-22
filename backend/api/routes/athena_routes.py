@@ -64,14 +64,59 @@ def get_athena_instance():
     return None
 
 
+def _get_heartbeat(bot_name: str) -> dict:
+    """Get heartbeat info for a bot from the database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT last_heartbeat, status, scan_count, details
+            FROM bot_heartbeats
+            WHERE bot_name = %s
+        ''', (bot_name,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            last_heartbeat, status, scan_count, details = row
+            return {
+                'last_scan': last_heartbeat.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat else None,
+                'last_scan_iso': last_heartbeat.isoformat() if last_heartbeat else None,
+                'status': status,
+                'scan_count_today': scan_count or 0,
+                'details': details or {}
+            }
+        return {
+            'last_scan': None,
+            'last_scan_iso': None,
+            'status': 'NEVER_RUN',
+            'scan_count_today': 0,
+            'details': {}
+        }
+    except Exception as e:
+        logger.debug(f"Could not get heartbeat for {bot_name}: {e}")
+        return {
+            'last_scan': None,
+            'last_scan_iso': None,
+            'status': 'UNKNOWN',
+            'scan_count_today': 0,
+            'details': {}
+        }
+
+
 @router.get("/status")
 async def get_athena_status():
     """
     Get current ATHENA bot status.
 
-    Returns mode, capital, P&L, positions, and configuration.
+    Returns mode, capital, P&L, positions, configuration, and heartbeat.
     """
     athena = get_athena_instance()
+
+    # Get heartbeat info
+    heartbeat = _get_heartbeat('ATHENA')
 
     if not athena:
         # Return default status when ATHENA not initialized
@@ -88,6 +133,8 @@ async def get_athena_status():
                 "traded_today": False,
                 "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
                 "is_active": False,
+                "scan_interval_minutes": 5,
+                "heartbeat": heartbeat,
                 "oracle_available": False,
                 "kronos_available": False,
                 "gex_ml_available": False,
@@ -105,6 +152,8 @@ async def get_athena_status():
     try:
         status = athena.get_status()
         status['is_active'] = True
+        status['scan_interval_minutes'] = 5
+        status['heartbeat'] = heartbeat
 
         return {
             "success": True,

@@ -44,14 +44,59 @@ def get_ares_instance():
         return None
 
 
+def _get_heartbeat(bot_name: str) -> dict:
+    """Get heartbeat info for a bot from the database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT last_heartbeat, status, scan_count, details
+            FROM bot_heartbeats
+            WHERE bot_name = %s
+        ''', (bot_name,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            last_heartbeat, status, scan_count, details = row
+            return {
+                'last_scan': last_heartbeat.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat else None,
+                'last_scan_iso': last_heartbeat.isoformat() if last_heartbeat else None,
+                'status': status,
+                'scan_count_today': scan_count or 0,
+                'details': details or {}
+            }
+        return {
+            'last_scan': None,
+            'last_scan_iso': None,
+            'status': 'NEVER_RUN',
+            'scan_count_today': 0,
+            'details': {}
+        }
+    except Exception as e:
+        logger.debug(f"Could not get heartbeat for {bot_name}: {e}")
+        return {
+            'last_scan': None,
+            'last_scan_iso': None,
+            'status': 'UNKNOWN',
+            'scan_count_today': 0,
+            'details': {}
+        }
+
+
 @router.get("/status")
 async def get_ares_status():
     """
     Get current ARES bot status.
 
-    Returns mode, capital, P&L, positions, and configuration.
+    Returns mode, capital, P&L, positions, configuration, and heartbeat.
     """
     ares = get_ares_instance()
+
+    # Get heartbeat info
+    heartbeat = _get_heartbeat('ARES')
 
     if not ares:
         # Return default status when ARES not initialized
@@ -70,6 +115,8 @@ async def get_ares_status():
                 "high_water_mark": 200000,
                 "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
                 "is_active": False,
+                "scan_interval_minutes": 5,
+                "heartbeat": heartbeat,
                 "config": {
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
@@ -84,6 +131,8 @@ async def get_ares_status():
     try:
         status = ares.get_status()
         status['is_active'] = True
+        status['scan_interval_minutes'] = 5
+        status['heartbeat'] = heartbeat
 
         return {
             "success": True,

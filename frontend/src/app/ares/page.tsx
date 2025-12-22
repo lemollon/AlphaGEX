@@ -17,6 +17,14 @@ import {
 
 // ==================== INTERFACES ====================
 
+interface Heartbeat {
+  last_scan: string | null
+  last_scan_iso: string | null
+  status: string
+  scan_count_today: number
+  details: Record<string, any>
+}
+
 interface ARESStatus {
   mode: string
   capital: number
@@ -32,6 +40,8 @@ interface ARESStatus {
   high_water_mark: number
   sandbox_connected?: boolean
   paper_mode_type?: 'sandbox' | 'simulated'
+  scan_interval_minutes?: number
+  heartbeat?: Heartbeat
   config: {
     risk_per_trade: number
     spread_width: number
@@ -484,6 +494,52 @@ export default function ARESPage() {
               {error}
             </div>
           )}
+
+          {/* Heartbeat Status Bar */}
+          <div className="mb-4 bg-gray-800/50 rounded-lg p-3 border border-gray-700">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${
+                    status?.heartbeat?.status === 'TRADED' ? 'bg-green-500 animate-pulse' :
+                    status?.heartbeat?.status === 'SCAN_COMPLETE' ? 'bg-blue-500' :
+                    status?.heartbeat?.status === 'ERROR' ? 'bg-red-500' :
+                    status?.heartbeat?.status === 'MARKET_CLOSED' ? 'bg-yellow-500' :
+                    'bg-gray-500'
+                  }`} />
+                  <span className="text-gray-400 text-sm">Heartbeat</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-gray-500">Last Scan: </span>
+                  <span className={`font-mono ${status?.heartbeat?.last_scan ? 'text-white' : 'text-gray-500'}`}>
+                    {status?.heartbeat?.last_scan || 'Never'}
+                  </span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-gray-500">Status: </span>
+                  <span className={`font-medium ${
+                    status?.heartbeat?.status === 'TRADED' ? 'text-green-400' :
+                    status?.heartbeat?.status === 'SCAN_COMPLETE' ? 'text-blue-400' :
+                    status?.heartbeat?.status === 'ERROR' ? 'text-red-400' :
+                    'text-gray-400'
+                  }`}>
+                    {status?.heartbeat?.status?.replace(/_/g, ' ') || 'Unknown'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-sm">
+                <div>
+                  <span className="text-gray-500">Scans Today: </span>
+                  <span className="text-white font-bold">{status?.heartbeat?.scan_count_today || 0}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Interval: </span>
+                  <span className="text-cyan-400">{status?.scan_interval_minutes || 5} min</span>
+                </div>
+                <Clock className="w-4 h-4 text-gray-500" />
+              </div>
+            </div>
+          </div>
 
           {/* Market Data Bar */}
           <div className="mb-6 bg-gray-800 rounded-lg p-4 border border-gray-700">

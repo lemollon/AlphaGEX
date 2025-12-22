@@ -2136,20 +2136,55 @@ class OracleExplainRequest(BaseModel):
     context: Dict[str, Any] = Field(..., description="Market context used")
 
 
+def _get_all_heartbeats() -> dict:
+    """Get heartbeat info for all bots from the database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT bot_name, last_heartbeat, status, scan_count, details
+            FROM bot_heartbeats
+            ORDER BY last_heartbeat DESC
+        ''')
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        heartbeats = {}
+        for row in rows:
+            bot_name, last_heartbeat, status, scan_count, details = row
+            heartbeats[bot_name] = {
+                'last_scan': last_heartbeat.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat else None,
+                'last_scan_iso': last_heartbeat.isoformat() if last_heartbeat else None,
+                'status': status,
+                'scan_count_today': scan_count or 0,
+                'details': details or {}
+            }
+        return heartbeats
+    except Exception as e:
+        logger.debug(f"Could not get heartbeats: {e}")
+        return {}
+
+
 @router.get("/oracle/status")
 async def get_oracle_status():
     """
-    Get Oracle system status including Claude AI availability.
+    Get Oracle system status including Claude AI availability and bot heartbeats.
 
     Returns information about:
     - ML model status (trained/untrained)
     - Claude AI status (enabled/disabled)
     - Model version
+    - All bot heartbeats (ARES, ATHENA, etc.)
     """
     try:
         from quant.oracle_advisor import get_oracle
 
         oracle = get_oracle()
+
+        # Get heartbeats for all bots
+        heartbeats = _get_all_heartbeats()
 
         return {
             "success": True,
@@ -2160,19 +2195,22 @@ async def get_oracle_status():
                 "claude_model": oracle.claude.CLAUDE_MODEL if oracle.claude else None,
                 "high_confidence_threshold": oracle.high_confidence_threshold,
                 "low_confidence_threshold": oracle.low_confidence_threshold,
-            }
+            },
+            "bot_heartbeats": heartbeats
         }
 
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}"
+            "error": f"Oracle module not available: {e}",
+            "bot_heartbeats": _get_all_heartbeats()
         }
     except Exception as e:
         logger.error(f"Failed to get Oracle status: {e}")
         return {
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "bot_heartbeats": _get_all_heartbeats()
         }
 
 
