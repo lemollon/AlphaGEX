@@ -805,12 +805,39 @@ async def get_vix_signal_history(
                 if confidence and confidence <= 1:
                     confidence *= 100
 
+                # Get all the detailed metrics from the database
+                iv_percentile = float(row.get('iv_percentile', 0)) if row.get('iv_percentile') else None
+                iv_rv_spread = float(row.get('iv_rv_spread', 0)) if row.get('iv_rv_spread') else None
+                term_structure = float(row.get('term_structure_pct', 0)) if row.get('term_structure_pct') else None
+                realized_vol = float(row.get('realized_vol_20d', 0)) if row.get('realized_vol_20d') else None
+                vix_m1 = float(row.get('vix_futures_m1', 0)) if row.get('vix_futures_m1') else None
+                spy_spot = float(row.get('spy_spot', 0)) if row.get('spy_spot') else None
+
+                # Determine structure type from term structure percentage
+                structure_type = 'flat'
+                if term_structure:
+                    if term_structure > 1:
+                        structure_type = 'contango'
+                    elif term_structure < -1:
+                        structure_type = 'backwardation'
+
                 formatted_data.append({
                     "timestamp": timestamp,
                     "signal_type": row.get('signal_type', 'no_action'),
                     "vix_level": float(row.get('vix_spot', 0)) if row.get('vix_spot') else None,
                     "confidence": confidence,
-                    "action_taken": row.get('recommended_action', 'Monitored')
+                    "action_taken": row.get('recommended_action', 'Monitored'),
+                    # Detailed metrics
+                    "vol_regime": row.get('vol_regime', 'normal'),
+                    "iv_percentile": iv_percentile,
+                    "iv_rv_spread": iv_rv_spread,
+                    "term_structure_pct": term_structure,
+                    "structure_type": structure_type,
+                    "realized_vol_20d": realized_vol,
+                    "vix_m1": vix_m1,
+                    "spy_spot": spy_spot,
+                    "reasoning": row.get('reasoning', ''),
+                    "risk_warning": row.get('risk_warning', '')
                 })
 
             response = {"success": True, "data": formatted_data, "fallback_mode": False}
