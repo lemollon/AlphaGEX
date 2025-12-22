@@ -171,7 +171,6 @@ export default function Navigation() {
                 </div>
               </Link>
               <div className="hidden sm:block border-l border-gray-700 h-8 mx-1" />
-              <PilgrimJourney />
               <CrossButton onClick={() => setDedicationModalOpen(true)} />
             </div>
           </div>
@@ -204,6 +203,11 @@ export default function Navigation() {
           </div>
         </div>
       </nav>
+
+      {/* Pilgrim's Journey Banner - Gold themed with animation */}
+      <div className="fixed top-16 left-0 right-0 z-40">
+        <PilgrimJourney />
+      </div>
 
       {/* Dedication Modal */}
       <DedicationModal
