@@ -365,6 +365,41 @@ export default function ATHENAPage() {
     return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
   }
 
+  // Build equity curve from closed positions
+  const buildEquityCurve = () => {
+    const closedPositions = positions.filter(p => p.status === 'closed' && p.exit_time)
+    if (closedPositions.length === 0) return []
+
+    // Sort by close date
+    const sorted = [...closedPositions].sort((a, b) =>
+      new Date(a.exit_time!).getTime() - new Date(b.exit_time!).getTime()
+    )
+
+    // Group by date
+    const byDate: Record<string, number> = {}
+    sorted.forEach(pos => {
+      const date = new Date(pos.exit_time!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      byDate[date] = (byDate[date] || 0) + (pos.realized_pnl || 0)
+    })
+
+    // Build cumulative equity
+    const startingCapital = status?.capital || 100000
+    let cumPnl = 0
+    return Object.keys(byDate).map(date => {
+      cumPnl += byDate[date]
+      return {
+        date,
+        equity: startingCapital + cumPnl,
+        daily_pnl: byDate[date],
+        pnl: cumPnl
+      }
+    })
+  }
+
+  const equityData = buildEquityCurve()
+  const closedPositions = positions.filter(p => p.status === 'closed')
+  const totalPnl = closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
+
   return (
     <div className="min-h-screen bg-gray-900">
       <Navigation />
@@ -493,6 +528,85 @@ export default function ATHENAPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Equity Curve */}
+              <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-orange-500" />
+                    <h2 className="text-lg font-semibold text-white">Equity Curve</h2>
+                  </div>
+                  {totalPnl !== 0 && (
+                    <span className={`text-sm font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {totalPnl >= 0 ? '+' : ''}{formatCurrency(totalPnl)}
+                    </span>
+                  )}
+                </div>
+                <div className="h-48 bg-gray-900/50 rounded-lg p-2">
+                  {equityData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={equityData}>
+                        <defs>
+                          <linearGradient id="athenaEquity" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#F97316" stopOpacity={0.4} />
+                            <stop offset="95%" stopColor="#F97316" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                          axisLine={{ stroke: '#374151' }}
+                        />
+                        <YAxis
+                          tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                          axisLine={{ stroke: '#374151' }}
+                          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                        />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
+                          formatter={(value: number, name: string) => {
+                            if (name === 'equity') return [formatCurrency(value), 'Equity']
+                            if (name === 'daily_pnl') return [formatCurrency(value), 'Daily P&L']
+                            if (name === 'pnl') return [formatCurrency(value), 'Total P&L']
+                            return [value, name]
+                          }}
+                          labelFormatter={(label) => `Date: ${label}`}
+                        />
+                        <Area type="monotone" dataKey="equity" stroke="#F97316" strokeWidth={2} fill="url(#athenaEquity)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                      No equity data yet - chart appears after first closed trade
+                    </div>
+                  )}
+                </div>
+                {closedPositions.length > 0 && (
+                  <div className="mt-4 grid grid-cols-3 gap-4 text-center border-t border-gray-700 pt-4">
+                    <div>
+                      <p className="text-gray-400 text-xs">Total Trades</p>
+                      <p className="text-white font-bold">{closedPositions.length}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400 text-xs">Win Rate</p>
+                      <p className="text-white font-bold">
+                        {closedPositions.length > 0
+                          ? `${((closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length) * 100).toFixed(0)}%`
+                          : '--'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400 text-xs">Avg Trade</p>
+                      <p className={`font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {closedPositions.length > 0
+                          ? formatCurrency(totalPnl / closedPositions.length)
+                          : '--'}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* ML Signal Card (Primary Signal Source) */}
