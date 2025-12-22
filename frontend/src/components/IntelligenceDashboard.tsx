@@ -191,8 +191,9 @@ export default function IntelligenceDashboard() {
   const { data: planData, isLoading: planLoading, mutate: refreshPlan } = useDailyTradingPlan()
   const { data: commentaryData, isLoading: commentaryLoading, mutate: refreshCommentary } = useMarketCommentary()
 
+  // All sections expanded by default for full visibility
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    new Set(['bias', 'snapshot', 'commentary'])
+    new Set(['bias', 'snapshot', 'commentary', 'flow', 'history', 'intraday', 'patterns', 'windows', 'vix', 'strikes', 'events', 'plan'])
   )
 
   const toggleSection = (section: string) => {
