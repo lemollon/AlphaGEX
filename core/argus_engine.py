@@ -230,7 +230,7 @@ class ArgusEngine:
         from trading.market_calendar import MARKET_HOLIDAYS_2024_2025
         date_str = now.strftime('%Y-%m-%d')
         if date_str in MARKET_HOLIDAYS_2024_2025:
-            return 'closed'
+            return 'holiday'
 
         time_minutes = hour * 60 + minute
 

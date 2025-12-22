@@ -37,7 +37,8 @@ import {
   FileSpreadsheet,
   History,
   Play,
-  Pause
+  Pause,
+  CalendarOff
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -311,8 +312,9 @@ export default function ArgusPage() {
     fetchContext()
   }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext])
 
-  // Check if market is closed
-  const isMarketClosed = gammaData?.market_status === 'closed'
+  // Check if market is closed or holiday
+  const isMarketClosed = gammaData?.market_status === 'closed' || gammaData?.market_status === 'holiday'
+  const isHoliday = gammaData?.market_status === 'holiday'
   // Check if showing simulated data
   const isMockData = gammaData?.is_mock === true
 
@@ -581,7 +583,9 @@ export default function ArgusPage() {
                     onClick={() => setAutoRefresh(!autoRefresh)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
                       isMarketClosed && !isMockData
-                        ? 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
+                        ? isHoliday
+                          ? 'bg-purple-500/20 text-purple-400 cursor-not-allowed'
+                          : 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
                         : isMockData && autoRefresh
                         ? 'bg-orange-500/20 text-orange-400'
                         : autoRefresh
@@ -590,7 +594,7 @@ export default function ArgusPage() {
                     }`}
                     title={
                       isMarketClosed && !isMockData
-                        ? 'Market is closed'
+                        ? isHoliday ? 'Market holiday' : 'Market is closed'
                         : isMockData
                         ? autoRefresh ? 'Simulating - click to pause' : 'Click to simulate'
                         : autoRefresh ? 'Pause auto-refresh' : 'Enable auto-refresh'
@@ -598,7 +602,7 @@ export default function ArgusPage() {
                   >
                     <RefreshCw className={`w-4 h-4 ${autoRefresh && (!isMarketClosed || isMockData) ? 'animate-spin' : ''}`} />
                     {isMarketClosed && !isMockData
-                      ? 'Closed'
+                      ? isHoliday ? 'Holiday' : 'Closed'
                       : isMockData
                       ? autoRefresh ? 'Simulating' : 'Paused'
                       : autoRefresh ? 'Live' : 'Paused'
@@ -649,22 +653,34 @@ export default function ArgusPage() {
           </div>
         )}
 
-        {/* Market Closed Banner */}
+        {/* Market Closed/Holiday Banner */}
         {isMarketClosed && !replayMode && (
           <div className={`rounded-xl p-3 mb-4 flex items-center justify-between ${
             gammaData?.is_mock
               ? 'bg-orange-500/10 border border-orange-500/30'
+              : isHoliday
+              ? 'bg-purple-500/10 border border-purple-500/30'
               : 'bg-gray-700/50 border border-gray-600/50'
           }`}>
             <div className="flex items-center gap-3">
-              <Clock className={`w-5 h-5 ${gammaData?.is_mock ? 'text-orange-400' : 'text-gray-400'}`} />
+              {isHoliday ? (
+                <CalendarOff className={`w-5 h-5 ${gammaData?.is_mock ? 'text-orange-400' : 'text-purple-400'}`} />
+              ) : (
+                <Clock className={`w-5 h-5 ${gammaData?.is_mock ? 'text-orange-400' : 'text-gray-400'}`} />
+              )}
               <div>
-                <span className={`font-medium ${gammaData?.is_mock ? 'text-orange-300' : 'text-gray-300'}`}>
-                  Market Closed
+                <span className={`font-medium ${
+                  gammaData?.is_mock ? 'text-orange-300' : isHoliday ? 'text-purple-300' : 'text-gray-300'
+                }`}>
+                  {isHoliday ? 'Market Holiday' : 'Market Closed'}
                 </span>
-                <span className={`ml-2 ${gammaData?.is_mock ? 'text-orange-400/70' : 'text-gray-500'}`}>
+                <span className={`ml-2 ${
+                  gammaData?.is_mock ? 'text-orange-400/70' : isHoliday ? 'text-purple-400/70' : 'text-gray-500'
+                }`}>
                   {gammaData?.is_mock
                     ? 'Displaying simulated data for demonstration. Values update randomly.'
+                    : isHoliday
+                    ? 'Markets are closed for the holiday. Showing last trading day\'s data.'
                     : 'Showing last trading day\'s data. Auto-refresh paused until market opens.'
                   }
                 </span>
