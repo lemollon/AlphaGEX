@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { X, Heart, Sparkles } from 'lucide-react'
+import { X, Heart, Sparkles, Pause, Play } from 'lucide-react'
 
 // Latin Cross icon component - outline style with proper proportions
 const CrossIcon = ({ className, animated = false }: { className?: string; animated?: boolean }) => (
@@ -185,12 +185,14 @@ export function DedicationModal({ isOpen, onClose }: DedicationModalProps) {
   )
 }
 
-// Rotating Scripture Banner Component
+// Rotating Scripture Banner Component with Pilgrim Animation
 export function StewardshipBanner() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isVisible, setIsVisible] = useState(true)
   const [isPaused, setIsPaused] = useState(false)
   const [isFading, setIsFading] = useState(false)
+  const [pilgrimProgress, setPilgrimProgress] = useState(0)
+  const [animationPaused, setAnimationPaused] = useState(false)
 
   // Rotate scriptures every 10 seconds
   useEffect(() => {
@@ -201,19 +203,34 @@ export function StewardshipBanner() {
       setTimeout(() => {
         setCurrentIndex((prev) => (prev + 1) % scriptures.length)
         setIsFading(false)
-      }, 500) // Wait for fade out before changing
+      }, 500)
     }, 10000)
 
     return () => clearInterval(interval)
   }, [isPaused])
 
+  // Pilgrim animation - walks right to left
+  useEffect(() => {
+    if (animationPaused || !isVisible) return
+
+    const interval = setInterval(() => {
+      setPilgrimProgress((prev) => {
+        if (prev >= 100) {
+          setTimeout(() => setPilgrimProgress(0), 2500)
+          return 100
+        }
+        return prev + 0.4
+      })
+    }, 45)
+
+    return () => clearInterval(interval)
+  }, [animationPaused, isVisible])
+
   const handleDismiss = useCallback(() => {
     setIsVisible(false)
-    // Store dismissal in session (not permanent - shows again on reload)
     sessionStorage.setItem('stewardshipBannerDismissed', 'true')
   }, [])
 
-  // Check if banner was dismissed this session
   useEffect(() => {
     const dismissed = sessionStorage.getItem('stewardshipBannerDismissed')
     if (dismissed === 'true') {
@@ -224,6 +241,45 @@ export function StewardshipBanner() {
   if (!isVisible) return null
 
   const currentScripture = scriptures[currentIndex]
+  const isKneeling = pilgrimProgress >= 94
+
+  // Pilgrim SVG - small, fits in banner height
+  const PilgrimSVG = () => {
+    const time = pilgrimProgress * 0.12
+    const walkPhase = time * Math.PI * 2
+    const walkCycle = Math.sin(walkPhase)
+    const bob = Math.abs(Math.sin(walkPhase)) * 0.8
+
+    if (isKneeling) {
+      return (
+        <g transform="translate(0, 1)">
+          <circle cx="-1" cy="3" r="2.5" fill="#d4a574" />
+          <ellipse cx="-1" cy="1.5" rx="2" ry="1.5" fill="#713f12" />
+          <path d="M-1,5 Q1,7 2,10" stroke="#92400e" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+          <path d="M-2,6 Q-5,4 -8,3" stroke="#d4a574" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+          <circle cx="-8" cy="3" r="1.5" fill="#d4a574" />
+          <path d="M2,10 L1,13 L-1,13" stroke="#78350f" strokeWidth="2" fill="none" strokeLinecap="round" />
+        </g>
+      )
+    }
+
+    const armSwing = walkCycle * 4
+    const legSwing = walkCycle * 5
+
+    return (
+      <g transform={`translate(0, ${-bob})`}>
+        <ellipse cx="0" cy={13 + bob} rx="3" ry="1" fill="#000" opacity="0.1" />
+        <path d={`M1,5 Q${2 + walkCycle * 0.5},8 ${2 + walkCycle},12 Q0,13 -1,12 Q-1,8 0,5 Z`} fill="#92400e" opacity="0.8" />
+        <circle cx="0" cy="2.5" r="2.5" fill="#d4a574" />
+        <ellipse cx="0" cy="1" rx="2" ry="1.5" fill="#713f12" />
+        <line x1="0" y1="5" x2="0" y2="8" stroke="#b45309" strokeWidth="2.5" strokeLinecap="round" />
+        <line x1="0" y1="5.5" x2={1.5 + armSwing * 0.3} y2={8} stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round" />
+        <line x1="0" y1="5.5" x2={-1.5 - armSwing * 0.3} y2={8} stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round" />
+        <line x1="0" y1="8" x2={1 + legSwing * 0.25} y2="13" stroke="#78350f" strokeWidth="2" strokeLinecap="round" />
+        <line x1="0" y1="8" x2={-1 - legSwing * 0.25} y2="13" stroke="#78350f" strokeWidth="2" strokeLinecap="round" />
+      </g>
+    )
+  }
 
   return (
     <div
@@ -234,8 +290,33 @@ export function StewardshipBanner() {
       {/* Subtle animated background glow */}
       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-500/5 to-transparent animate-pulse" />
 
+      {/* Pilgrim animation layer - walks right to left toward cross button above */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <svg className="absolute left-0 top-0 w-full h-full" viewBox="0 0 1200 28" preserveAspectRatio="xMidYMid slice">
+          {/* Prayer glow when kneeling */}
+          {isKneeling && (
+            <ellipse cx={95 - pilgrimProgress * 0.6} cy="14" rx="12" ry="8" fill="#fbbf24" opacity="0.15">
+              <animate attributeName="opacity" values="0.1;0.25;0.1" dur="1.5s" repeatCount="indefinite" />
+            </ellipse>
+          )}
+          {/* Pilgrim walks from right (~150) to left (~95, below cross button) */}
+          <g transform={`translate(${150 - pilgrimProgress * 0.55}, 6)`}>
+            <PilgrimSVG />
+          </g>
+        </svg>
+      </div>
+
       <div className="relative max-w-7xl mx-auto px-4 py-1.5">
         <div className="flex items-center justify-center gap-3">
+          {/* Pilgrim pause/play button */}
+          <button
+            onClick={() => setAnimationPaused(!animationPaused)}
+            className="hidden sm:block p-1 rounded text-amber-500/40 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+            title={animationPaused ? 'Resume pilgrim' : 'Pause pilgrim'}
+          >
+            {animationPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+          </button>
+
           {/* Scripture dots indicator */}
           <div className="hidden sm:flex items-center gap-1">
             {scriptures.map((_, idx) => (

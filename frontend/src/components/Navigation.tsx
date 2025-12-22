@@ -41,7 +41,6 @@ import {
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
 import { CrossButton, DedicationModal, StewardshipTagline, StewardshipBanner } from './StewardshipBanner'
-import PilgrimJourney from './PilgrimJourney'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
@@ -172,7 +171,6 @@ export default function Navigation() {
               </Link>
               <div className="hidden sm:block border-l border-gray-700 h-8 mx-1" />
               <CrossButton onClick={() => setDedicationModalOpen(true)} />
-              <PilgrimJourney />
             </div>
           </div>
 
