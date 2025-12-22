@@ -201,7 +201,7 @@ export function StewardshipBanner() {
       setTimeout(() => {
         setCurrentIndex((prev) => (prev + 1) % scriptures.length)
         setIsFading(false)
-      }, 500) // Wait for fade out before changing
+      }, 500)
     }, 10000)
 
     return () => clearInterval(interval)
@@ -209,11 +209,9 @@ export function StewardshipBanner() {
 
   const handleDismiss = useCallback(() => {
     setIsVisible(false)
-    // Store dismissal in session (not permanent - shows again on reload)
     sessionStorage.setItem('stewardshipBannerDismissed', 'true')
   }, [])
 
-  // Check if banner was dismissed this session
   useEffect(() => {
     const dismissed = sessionStorage.getItem('stewardshipBannerDismissed')
     if (dismissed === 'true') {
@@ -288,36 +286,87 @@ export function StewardshipBanner() {
   )
 }
 
-// Interactive Cross Button for Navigation
+// Interactive Cross Button for Navigation with breathing + sparkle animation
 interface CrossButtonProps {
   onClick: () => void
 }
 
 export function CrossButton({ onClick }: CrossButtonProps) {
   const [isHovered, setIsHovered] = useState(false)
+  const [sparklePhase, setSparklePhase] = useState(0)
+
+  // Sparkle animation cycle
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSparklePhase((prev) => (prev + 1) % 100)
+    }, 50)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Calculate sparkle positions
+  const sparkles = [
+    { angle: 45, delay: 0 },
+    { angle: 135, delay: 25 },
+    { angle: 225, delay: 50 },
+    { angle: 315, delay: 75 },
+  ]
 
   return (
     <button
       onClick={onClick}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className="relative p-1.5 rounded-lg transition-all duration-300 group"
+      className="relative p-2 rounded-lg transition-all duration-300 group"
       title="Dedicated to God's Glory - Click to learn more"
     >
-      {/* Glow effect on hover */}
-      <div className={`absolute inset-0 rounded-lg bg-amber-500/20 transition-opacity duration-300 ${
-        isHovered ? 'opacity-100' : 'opacity-0'
-      }`} />
+      {/* Breathing glow aura */}
+      <div
+        className="absolute inset-0 rounded-full bg-amber-400/20 blur-md transition-all duration-300"
+        style={{
+          transform: `scale(${1 + Math.sin(sparklePhase * 0.08) * 0.15})`,
+          opacity: 0.4 + Math.sin(sparklePhase * 0.08) * 0.2
+        }}
+      />
 
-      {/* Cross icon */}
-      <CrossIcon className={`w-5 h-5 relative z-10 transition-all duration-300 ${
-        isHovered
-          ? 'text-amber-400 scale-110'
-          : 'text-amber-500/70'
-      }`} />
+      {/* Sparkles around the cross */}
+      <div className="absolute inset-0 pointer-events-none">
+        {sparkles.map(({ angle, delay }, i) => {
+          const phase = (sparklePhase + delay) % 100
+          const opacity = phase < 50 ? phase / 50 : (100 - phase) / 50
+          const distance = 14 + Math.sin(phase * 0.1) * 2
+          const x = Math.cos((angle * Math.PI) / 180) * distance
+          const y = Math.sin((angle * Math.PI) / 180) * distance
+
+          return (
+            <div
+              key={i}
+              className="absolute left-1/2 top-1/2 w-1 h-1 rounded-full bg-amber-300"
+              style={{
+                transform: `translate(${x - 2}px, ${y - 2}px)`,
+                opacity: opacity * 0.7,
+                boxShadow: '0 0 3px #fbbf24'
+              }}
+            />
+          )
+        })}
+      </div>
+
+      {/* Cross icon with breathing scale */}
+      <div
+        className="relative z-10 transition-all duration-300"
+        style={{
+          transform: `scale(${isHovered ? 1.15 : 1 + Math.sin(sparklePhase * 0.06) * 0.05})`
+        }}
+      >
+        <CrossIcon
+          className={`w-5 h-5 transition-colors duration-300 ${
+            isHovered ? 'text-amber-300' : 'text-amber-500'
+          }`}
+        />
+      </div>
 
       {/* Tooltip */}
-      <div className={`absolute left-1/2 -translate-x-1/2 top-full mt-2 px-3 py-1.5 bg-background-card border border-amber-500/30 rounded-lg shadow-xl whitespace-nowrap transition-all duration-300 ${
+      <div className={`absolute left-1/2 -translate-x-1/2 top-full mt-2 px-3 py-1.5 bg-background-card border border-amber-500/30 rounded-lg shadow-xl whitespace-nowrap transition-all duration-300 z-20 ${
         isHovered
           ? 'opacity-100 translate-y-0'
           : 'opacity-0 -translate-y-1 pointer-events-none'
