@@ -215,9 +215,10 @@ class ArgusEngine:
         return self._ml_models if self._ml_models else None
 
     def get_market_status(self) -> str:
-        """Determine current market status based on time"""
-        now = datetime.now()
-        # Convert to ET (simplified - assumes server is in ET or adjust as needed)
+        """Determine current market status based on time, including holidays"""
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = datetime.now(CENTRAL_TZ)
         hour = now.hour
         minute = now.minute
 
@@ -225,16 +226,22 @@ class ArgusEngine:
         if now.weekday() >= 5:
             return 'closed'
 
+        # Holiday check - use MarketCalendar holidays
+        from trading.market_calendar import MARKET_HOLIDAYS_2024_2025
+        date_str = now.strftime('%Y-%m-%d')
+        if date_str in MARKET_HOLIDAYS_2024_2025:
+            return 'closed'
+
         time_minutes = hour * 60 + minute
 
-        # Pre-market: 4:00am - 9:30am ET
-        if 4 * 60 <= time_minutes < 9 * 60 + 30:
+        # Pre-market: 4:00am - 8:30am CT (5:00am - 9:30am ET)
+        if 4 * 60 <= time_minutes < 8 * 60 + 30:
             return 'pre_market'
-        # Market hours: 9:30am - 4:00pm ET
-        elif 9 * 60 + 30 <= time_minutes < 16 * 60:
+        # Market hours: 8:30am - 3:00pm CT (9:30am - 4:00pm ET)
+        elif 8 * 60 + 30 <= time_minutes < 15 * 60:
             return 'open'
-        # After hours: 4:00pm - 8:00pm ET
-        elif 16 * 60 <= time_minutes < 20 * 60:
+        # After hours: 3:00pm - 7:00pm CT (4:00pm - 8:00pm ET)
+        elif 15 * 60 <= time_minutes < 19 * 60:
             return 'after_hours'
         else:
             return 'closed'

@@ -310,8 +310,12 @@ export default function ArgusPage() {
     fetchContext()
   }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext])
 
+  // Check if market is closed (no auto-refresh when closed)
+  const isMarketClosed = gammaData?.market_status === 'closed'
+
   useEffect(() => {
-    if (autoRefresh) {
+    // Don't auto-refresh when market is closed
+    if (autoRefresh && !isMarketClosed) {
       refreshIntervalRef.current = setInterval(() => {
         fetchGammaData(activeDay)
         fetchAlerts()
@@ -321,7 +325,7 @@ export default function ArgusPage() {
     return () => {
       if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current)
     }
-  }, [autoRefresh, activeDay, fetchGammaData, fetchAlerts, fetchContext])
+  }, [autoRefresh, activeDay, isMarketClosed, fetchGammaData, fetchAlerts, fetchContext])
 
   const handleDayChange = (day: string) => {
     setActiveDay(day)
@@ -569,13 +573,18 @@ export default function ArgusPage() {
               {!replayMode && (
                 <>
                   <button
-                    onClick={() => setAutoRefresh(!autoRefresh)}
+                    onClick={() => !isMarketClosed && setAutoRefresh(!autoRefresh)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
-                      autoRefresh ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'
+                      isMarketClosed
+                        ? 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
+                        : autoRefresh
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-gray-700 text-gray-400'
                     }`}
+                    title={isMarketClosed ? 'Market is closed' : autoRefresh ? 'Pause auto-refresh' : 'Enable auto-refresh'}
                   >
-                    <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-                    {autoRefresh ? 'Live' : 'Paused'}
+                    <RefreshCw className={`w-4 h-4 ${autoRefresh && !isMarketClosed ? 'animate-spin' : ''}`} />
+                    {isMarketClosed ? 'Closed' : autoRefresh ? 'Live' : 'Paused'}
                   </button>
                   <button
                     onClick={() => fetchGammaData(activeDay)}
@@ -619,6 +628,21 @@ export default function ArgusPage() {
               <Play className="w-4 h-4" />
               Return to Live
             </button>
+          </div>
+        )}
+
+        {/* Market Closed Banner */}
+        {isMarketClosed && !replayMode && (
+          <div className="bg-gray-700/50 border border-gray-600/50 rounded-xl p-3 mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Clock className="w-5 h-5 text-gray-400" />
+              <div>
+                <span className="text-gray-300 font-medium">Market Closed</span>
+                <span className="text-gray-500 ml-2">
+                  Showing last trading day&apos;s data. Auto-refresh paused until market opens.
+                </span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -932,7 +956,7 @@ export default function ArgusPage() {
                         <Target className="absolute -top-5 left-1/2 -translate-x-1/2 w-4 h-4 text-purple-300" />
                       )}
                       {strike.is_magnet && strike.magnet_rank && !strike.is_pin && (
-                        <span className="absolute -top-4 left-1/2 -translate-x-1/2 text-[9px] font-bold text-yellow-400">
+                        <span className="absolute -top-7 left-1/2 -translate-x-1/2 text-[9px] font-bold text-yellow-400 whitespace-nowrap">
                           #{strike.magnet_rank}
                         </span>
                       )}
