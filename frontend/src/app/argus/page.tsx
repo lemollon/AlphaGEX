@@ -37,7 +37,8 @@ import {
   FileSpreadsheet,
   History,
   Play,
-  Pause
+  Pause,
+  CalendarOff
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -118,6 +119,7 @@ interface GammaData {
   gamma_regime: string
   regime_flipped: boolean
   market_status: string
+  is_mock: boolean
   strikes: StrikeData[]
   magnets: Magnet[]
   likely_pin: number
@@ -310,8 +312,17 @@ export default function ArgusPage() {
     fetchContext()
   }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext])
 
+  // Check if market is closed or holiday
+  const isMarketClosed = gammaData?.market_status === 'closed' || gammaData?.market_status === 'holiday'
+  const isHoliday = gammaData?.market_status === 'holiday'
+  // Check if showing simulated data
+  const isMockData = gammaData?.is_mock === true
+
   useEffect(() => {
-    if (autoRefresh) {
+    // Auto-refresh when:
+    // 1. Auto-refresh is enabled, AND
+    // 2. Either market is open OR we're showing simulated data (to demonstrate it works)
+    if (autoRefresh && (!isMarketClosed || isMockData)) {
       refreshIntervalRef.current = setInterval(() => {
         fetchGammaData(activeDay)
         fetchAlerts()
@@ -321,7 +332,7 @@ export default function ArgusPage() {
     return () => {
       if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current)
     }
-  }, [autoRefresh, activeDay, fetchGammaData, fetchAlerts, fetchContext])
+  }, [autoRefresh, activeDay, isMarketClosed, isMockData, fetchGammaData, fetchAlerts, fetchContext])
 
   const handleDayChange = (day: string) => {
     setActiveDay(day)
@@ -571,11 +582,31 @@ export default function ArgusPage() {
                   <button
                     onClick={() => setAutoRefresh(!autoRefresh)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
-                      autoRefresh ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'
+                      isMarketClosed && !isMockData
+                        ? isHoliday
+                          ? 'bg-purple-500/20 text-purple-400 cursor-not-allowed'
+                          : 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
+                        : isMockData && autoRefresh
+                        ? 'bg-orange-500/20 text-orange-400'
+                        : autoRefresh
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-gray-700 text-gray-400'
                     }`}
+                    title={
+                      isMarketClosed && !isMockData
+                        ? isHoliday ? 'Market holiday' : 'Market is closed'
+                        : isMockData
+                        ? autoRefresh ? 'Simulating - click to pause' : 'Click to simulate'
+                        : autoRefresh ? 'Pause auto-refresh' : 'Enable auto-refresh'
+                    }
                   >
-                    <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-                    {autoRefresh ? 'Live' : 'Paused'}
+                    <RefreshCw className={`w-4 h-4 ${autoRefresh && (!isMarketClosed || isMockData) ? 'animate-spin' : ''}`} />
+                    {isMarketClosed && !isMockData
+                      ? isHoliday ? 'Holiday' : 'Closed'
+                      : isMockData
+                      ? autoRefresh ? 'Simulating' : 'Paused'
+                      : autoRefresh ? 'Live' : 'Paused'
+                    }
                   </button>
                   <button
                     onClick={() => fetchGammaData(activeDay)}
@@ -619,6 +650,42 @@ export default function ArgusPage() {
               <Play className="w-4 h-4" />
               Return to Live
             </button>
+          </div>
+        )}
+
+        {/* Market Closed/Holiday Banner */}
+        {isMarketClosed && !replayMode && (
+          <div className={`rounded-xl p-3 mb-4 flex items-center justify-between ${
+            gammaData?.is_mock
+              ? 'bg-orange-500/10 border border-orange-500/30'
+              : isHoliday
+              ? 'bg-purple-500/10 border border-purple-500/30'
+              : 'bg-gray-700/50 border border-gray-600/50'
+          }`}>
+            <div className="flex items-center gap-3">
+              {isHoliday ? (
+                <CalendarOff className={`w-5 h-5 ${gammaData?.is_mock ? 'text-orange-400' : 'text-purple-400'}`} />
+              ) : (
+                <Clock className={`w-5 h-5 ${gammaData?.is_mock ? 'text-orange-400' : 'text-gray-400'}`} />
+              )}
+              <div>
+                <span className={`font-medium ${
+                  gammaData?.is_mock ? 'text-orange-300' : isHoliday ? 'text-purple-300' : 'text-gray-300'
+                }`}>
+                  {isHoliday ? 'Market Holiday' : 'Market Closed'}
+                </span>
+                <span className={`ml-2 ${
+                  gammaData?.is_mock ? 'text-orange-400/70' : isHoliday ? 'text-purple-400/70' : 'text-gray-500'
+                }`}>
+                  {gammaData?.is_mock
+                    ? 'Displaying simulated data for demonstration. Values update randomly.'
+                    : isHoliday
+                    ? 'Markets are closed for the holiday. Showing last trading day\'s data.'
+                    : 'Showing last trading day\'s data. Auto-refresh paused until market opens.'
+                  }
+                </span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -883,6 +950,15 @@ export default function ArgusPage() {
                 <h3 className="font-bold text-white flex items-center gap-2">
                   <BarChart3 className="w-5 h-5 text-blue-400" />
                   Net Gamma by Strike
+                  {gammaData?.is_mock ? (
+                    <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-400 text-[10px] font-medium rounded border border-orange-500/30">
+                      SIMULATED
+                    </span>
+                  ) : (
+                    <span className="ml-2 px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded border border-emerald-500/30">
+                      LIVE
+                    </span>
+                  )}
                 </h3>
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <div className="flex items-center gap-1.5">
@@ -932,7 +1008,7 @@ export default function ArgusPage() {
                         <Target className="absolute -top-5 left-1/2 -translate-x-1/2 w-4 h-4 text-purple-300" />
                       )}
                       {strike.is_magnet && strike.magnet_rank && !strike.is_pin && (
-                        <span className="absolute -top-4 left-1/2 -translate-x-1/2 text-[9px] font-bold text-yellow-400">
+                        <span className="absolute -top-7 left-1/2 -translate-x-1/2 text-[9px] font-bold text-yellow-400 whitespace-nowrap">
                           #{strike.magnet_rank}
                         </span>
                       )}

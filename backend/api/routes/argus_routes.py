@@ -162,7 +162,8 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
             'spot_price': spot_price,
             'vix': vix,
             'expiration': expiration,
-            'strikes': list(unique_strikes.values())
+            'strikes': list(unique_strikes.values()),
+            'is_mock': False  # Real market data from Tradier
         }
 
         # Cache the result
@@ -204,7 +205,9 @@ async def get_real_prices() -> tuple:
 
 
 def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
-    """Return mock gamma data for development/testing"""
+    """Return mock gamma data for development/testing.
+    Uses randomization to simulate live updates - marked as is_mock=True.
+    """
     import random
 
     if spot is None:
@@ -245,7 +248,8 @@ def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
         'spot_price': spot,
         'vix': vix,
         'expiration': date.today().strftime('%Y-%m-%d'),
-        'strikes': strikes
+        'strikes': strikes,
+        'is_mock': True  # Flag to indicate simulated data
     }
 
 
@@ -311,6 +315,7 @@ async def get_gamma_data(
                 "gamma_regime": snapshot.gamma_regime,
                 "regime_flipped": snapshot.regime_flipped,
                 "market_status": snapshot.market_status,
+                "is_mock": raw_data.get('is_mock', False),  # True = simulated, False = real market data
                 "strikes": [s.to_dict() for s in filtered_strikes],
                 "magnets": snapshot.magnets,
                 "likely_pin": snapshot.likely_pin,
