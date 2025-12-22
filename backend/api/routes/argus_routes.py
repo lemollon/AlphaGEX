@@ -180,7 +180,8 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
             'vix': vix,
             'expiration': expiration,
             'strikes': list(unique_strikes.values()),
-            'is_mock': False  # Real market data from Tradier
+            'is_mock': False,  # Real market data from Tradier
+            'fetched_at': datetime.now().isoformat()  # Actual fetch timestamp
         }
 
         # Cache the result
@@ -266,7 +267,8 @@ def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
         'vix': vix,
         'expiration': date.today().strftime('%Y-%m-%d'),
         'strikes': strikes,
-        'is_mock': True  # Flag to indicate simulated data
+        'is_mock': True,  # Flag to indicate simulated data
+        'fetched_at': datetime.now().isoformat()  # Actual fetch timestamp
     }
 
 
@@ -333,6 +335,7 @@ async def get_gamma_data(
                 "regime_flipped": snapshot.regime_flipped,
                 "market_status": snapshot.market_status,
                 "is_mock": raw_data.get('is_mock', False),  # True = simulated, False = real market data
+                "fetched_at": raw_data.get('fetched_at', datetime.now().isoformat()),  # When data was fetched from Tradier
                 "strikes": [s.to_dict() for s in filtered_strikes],
                 "magnets": snapshot.magnets,
                 "likely_pin": snapshot.likely_pin,

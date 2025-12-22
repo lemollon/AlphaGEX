@@ -211,7 +211,11 @@ export default function ArgusPage() {
       const response = await apiClient.getArgusGamma(expiration)
       if (response.data?.success && response.data?.data) {
         setGammaData(response.data.data)
-        setLastUpdated(new Date())
+        // Use backend's fetched_at timestamp (when Tradier data was fetched), not local time
+        const fetchedAt = response.data.data.fetched_at
+          ? new Date(response.data.data.fetched_at)
+          : new Date()
+        setLastUpdated(fetchedAt)
       }
     } catch (err: any) {
       setError(err.message || 'Failed to fetch data')
@@ -284,7 +288,11 @@ export default function ArgusPage() {
       const response = await apiClient.getArgusReplay(date, time)
       if (response.data?.success && response.data?.data) {
         setGammaData(response.data.data)
-        setLastUpdated(new Date())
+        // Use backend's fetched_at timestamp (when data was recorded), not local time
+        const fetchedAt = response.data.data.fetched_at
+          ? new Date(response.data.data.fetched_at)
+          : new Date()
+        setLastUpdated(fetchedAt)
         // Set available times if returned
         if (response.data.data.available_times) {
           setReplayTimes(response.data.data.available_times)
