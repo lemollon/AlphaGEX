@@ -498,6 +498,7 @@ export const apiClient = {
   triggerDataCollection: () => api.post('/api/data-collection/trigger'),
   getWatchdogStatus: () => api.get('/api/watchdog/status'),
   restartThread: (threadName: string) => api.post(`/api/watchdog/restart-thread/${threadName}`),
+  getSystemConfig: () => api.get('/api/system/config'),
 
   // VIX Hedge Manager
   getVIXHedgeSignal: (portfolioDelta?: number, portfolioValue?: number) =>

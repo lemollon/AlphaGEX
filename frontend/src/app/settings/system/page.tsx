@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
-import { Power, PowerOff, PlayCircle, StopCircle, RefreshCw, AlertCircle, CheckCircle, Activity, Database, Wifi, WifiOff, Clock, Zap } from 'lucide-react'
+import { Power, PowerOff, PlayCircle, StopCircle, RefreshCw, AlertCircle, CheckCircle, Activity, Database, Wifi, WifiOff, Clock, Zap, Settings, ChevronDown, ChevronRight } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import { logger } from '@/lib/logger'
 
@@ -36,6 +36,54 @@ interface DataSourceStatus {
   timestamp: string
 }
 
+interface SystemConfig {
+  vix: {
+    default_vix: number
+    low_threshold: number
+    elevated_threshold: number
+    high_threshold: number
+    extreme_threshold: number
+  }
+  gex: {
+    use_adaptive_thresholds: boolean
+    adaptive_lookback_days: number
+    fixed_thresholds: Record<string, number>
+  }
+  rate_limits: {
+    min_request_interval_seconds: number
+    circuit_breaker_duration_seconds: number
+    max_consecutive_errors: number
+    cache_duration_seconds: number
+  }
+  trade_setup: {
+    min_confidence_threshold: number
+    min_win_rate_threshold: number
+    spread_width_normal_pct: number
+    spread_width_low_price_pct: number
+  }
+  risk: {
+    extreme_risk_threshold: number
+    high_risk_threshold: number
+    moderate_risk_threshold: number
+    daily_risk_levels: Record<string, number>
+  }
+  implied_volatility: {
+    default_iv_pct: number
+    low_iv_threshold_pct: number
+    normal_iv_threshold_pct: number
+    high_iv_threshold_pct: number
+    extreme_iv_threshold_pct: number
+  }
+  system: {
+    environment: string
+    log_level: string
+    enable_adaptive_gex: boolean
+    enable_adaptive_gamma: boolean
+    max_concurrent_api_calls: number
+    request_timeout_seconds: number
+  }
+}
+
 export default function SystemSettings() {
   const [status, setStatus] = useState<TraderStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -43,6 +91,16 @@ export default function SystemSettings() {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const [dataSourceStatus, setDataSourceStatus] = useState<DataSourceStatus | null>(null)
   const [dataSourceLoading, setDataSourceLoading] = useState(false)
+  const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null)
+  const [configExpanded, setConfigExpanded] = useState<Record<string, boolean>>({
+    vix: true,
+    gex: false,
+    rate_limits: false,
+    trade_setup: false,
+    risk: false,
+    iv: false,
+    system: false,
+  })
 
   const fetchStatus = async () => {
     try {
@@ -93,9 +151,26 @@ export default function SystemSettings() {
     }
   }
 
+  const fetchConfig = async () => {
+    try {
+      const response = await apiClient.getSystemConfig()
+      const data = response.data.data || response.data
+      if (data) {
+        setSystemConfig(data)
+      }
+    } catch (error) {
+      logger.error('Error fetching system config:', error)
+    }
+  }
+
+  const toggleConfigSection = (section: string) => {
+    setConfigExpanded(prev => ({ ...prev, [section]: !prev[section] }))
+  }
+
   useEffect(() => {
     fetchStatus()
     fetchDataSources()
+    fetchConfig()
 
     // Auto-refresh every 10 seconds for trader status
     const interval = setInterval(fetchStatus, 10000)
@@ -534,6 +609,245 @@ export default function SystemSettings() {
                 <div className="text-center py-8 text-gray-400">
                   <Database className="w-12 h-12 mx-auto mb-3 opacity-50" />
                   <p>Click "Test Connections" to check data source status</p>
+                </div>
+              )}
+            </div>
+
+            {/* System Configuration Section */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-6">
+                <Settings className="w-6 h-6 text-purple-500" />
+                <h2 className="text-2xl font-bold">System Configuration</h2>
+              </div>
+
+              {systemConfig ? (
+                <div className="space-y-3">
+                  {/* VIX Thresholds */}
+                  <div className="border border-gray-700 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => toggleConfigSection('vix')}
+                      className="w-full flex items-center justify-between p-4 hover:bg-gray-800 transition-colors"
+                    >
+                      <span className="font-semibold text-purple-400">VIX Thresholds</span>
+                      {configExpanded.vix ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                    </button>
+                    {configExpanded.vix && (
+                      <div className="p-4 pt-0 grid grid-cols-2 md:grid-cols-5 gap-3">
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Low</div>
+                          <div className="text-lg font-bold text-green-400">&lt; {systemConfig.vix.low_threshold}</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Elevated</div>
+                          <div className="text-lg font-bold text-yellow-400">&gt; {systemConfig.vix.elevated_threshold}</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">High</div>
+                          <div className="text-lg font-bold text-orange-400">&gt; {systemConfig.vix.high_threshold}</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Extreme</div>
+                          <div className="text-lg font-bold text-red-400">&gt; {systemConfig.vix.extreme_threshold}</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Default</div>
+                          <div className="text-lg font-bold text-gray-300">{systemConfig.vix.default_vix}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* GEX Thresholds */}
+                  <div className="border border-gray-700 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => toggleConfigSection('gex')}
+                      className="w-full flex items-center justify-between p-4 hover:bg-gray-800 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-blue-400">GEX Thresholds</span>
+                        {systemConfig.gex.use_adaptive_thresholds && (
+                          <span className="text-xs bg-blue-600 px-2 py-0.5 rounded">Adaptive</span>
+                        )}
+                      </div>
+                      {configExpanded.gex ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                    </button>
+                    {configExpanded.gex && (
+                      <div className="p-4 pt-0 space-y-3">
+                        <div className="text-sm text-gray-400">
+                          Lookback Period: {systemConfig.gex.adaptive_lookback_days} trading days
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                          {Object.entries(systemConfig.gex.fixed_thresholds).map(([key, value]) => (
+                            <div key={key} className={`bg-gray-800 p-3 rounded text-center ${
+                              key.includes('negative') ? 'border-l-2 border-red-500' : 'border-l-2 border-green-500'
+                            }`}>
+                              <div className="text-xs text-gray-400">{key.replace(/_/g, ' ')}</div>
+                              <div className={`text-lg font-bold ${
+                                value < 0 ? 'text-red-400' : 'text-green-400'
+                              }`}>
+                                ${value.toFixed(1)}B
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Rate Limits */}
+                  <div className="border border-gray-700 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => toggleConfigSection('rate_limits')}
+                      className="w-full flex items-center justify-between p-4 hover:bg-gray-800 transition-colors"
+                    >
+                      <span className="font-semibold text-orange-400">API Rate Limits</span>
+                      {configExpanded.rate_limits ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                    </button>
+                    {configExpanded.rate_limits && (
+                      <div className="p-4 pt-0 grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Request Interval</div>
+                          <div className="text-lg font-bold">{systemConfig.rate_limits.min_request_interval_seconds}s</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Circuit Breaker</div>
+                          <div className="text-lg font-bold">{systemConfig.rate_limits.circuit_breaker_duration_seconds}s</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Max Errors</div>
+                          <div className="text-lg font-bold">{systemConfig.rate_limits.max_consecutive_errors}</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Cache Duration</div>
+                          <div className="text-lg font-bold">{systemConfig.rate_limits.cache_duration_seconds / 60}m</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Trade Setup */}
+                  <div className="border border-gray-700 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => toggleConfigSection('trade_setup')}
+                      className="w-full flex items-center justify-between p-4 hover:bg-gray-800 transition-colors"
+                    >
+                      <span className="font-semibold text-green-400">Trade Setup</span>
+                      {configExpanded.trade_setup ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                    </button>
+                    {configExpanded.trade_setup && (
+                      <div className="p-4 pt-0 grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Min Confidence</div>
+                          <div className="text-lg font-bold">{(systemConfig.trade_setup.min_confidence_threshold * 100).toFixed(0)}%</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Min Win Rate</div>
+                          <div className="text-lg font-bold">{(systemConfig.trade_setup.min_win_rate_threshold * 100).toFixed(0)}%</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Spread Width</div>
+                          <div className="text-lg font-bold">{systemConfig.trade_setup.spread_width_normal_pct.toFixed(1)}%</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded text-center">
+                          <div className="text-xs text-gray-400">Low Price Width</div>
+                          <div className="text-lg font-bold">{systemConfig.trade_setup.spread_width_low_price_pct.toFixed(1)}%</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Risk Levels */}
+                  <div className="border border-gray-700 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => toggleConfigSection('risk')}
+                      className="w-full flex items-center justify-between p-4 hover:bg-gray-800 transition-colors"
+                    >
+                      <span className="font-semibold text-red-400">Risk Thresholds</span>
+                      {configExpanded.risk ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                    </button>
+                    {configExpanded.risk && (
+                      <div className="p-4 pt-0 space-y-3">
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="bg-gray-800 p-3 rounded text-center border-l-2 border-yellow-500">
+                            <div className="text-xs text-gray-400">Moderate</div>
+                            <div className="text-lg font-bold text-yellow-400">&lt; {systemConfig.risk.moderate_risk_threshold}</div>
+                          </div>
+                          <div className="bg-gray-800 p-3 rounded text-center border-l-2 border-orange-500">
+                            <div className="text-xs text-gray-400">High</div>
+                            <div className="text-lg font-bold text-orange-400">&gt; {systemConfig.risk.high_risk_threshold}</div>
+                          </div>
+                          <div className="bg-gray-800 p-3 rounded text-center border-l-2 border-red-500">
+                            <div className="text-xs text-gray-400">Extreme</div>
+                            <div className="text-lg font-bold text-red-400">&gt; {systemConfig.risk.extreme_risk_threshold}</div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-5 gap-2">
+                          {Object.entries(systemConfig.risk.daily_risk_levels).map(([day, level]) => (
+                            <div key={day} className={`bg-gray-800 p-2 rounded text-center ${
+                              level >= 70 ? 'border border-red-500/50' : level >= 50 ? 'border border-orange-500/50' : ''
+                            }`}>
+                              <div className="text-xs text-gray-400 capitalize">{day.slice(0, 3)}</div>
+                              <div className={`text-sm font-bold ${
+                                level >= 70 ? 'text-red-400' : level >= 50 ? 'text-orange-400' : level >= 30 ? 'text-yellow-400' : 'text-green-400'
+                              }`}>{level}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* System Settings */}
+                  <div className="border border-gray-700 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => toggleConfigSection('system')}
+                      className="w-full flex items-center justify-between p-4 hover:bg-gray-800 transition-colors"
+                    >
+                      <span className="font-semibold text-cyan-400">System Settings</span>
+                      {configExpanded.system ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                    </button>
+                    {configExpanded.system && (
+                      <div className="p-4 pt-0 grid grid-cols-2 md:grid-cols-3 gap-3">
+                        <div className="bg-gray-800 p-3 rounded">
+                          <div className="text-xs text-gray-400">Environment</div>
+                          <div className={`text-lg font-bold ${
+                            systemConfig.system.environment === 'production' ? 'text-red-400' : 'text-green-400'
+                          }`}>
+                            {systemConfig.system.environment}
+                          </div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded">
+                          <div className="text-xs text-gray-400">Log Level</div>
+                          <div className="text-lg font-bold">{systemConfig.system.log_level}</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded">
+                          <div className="text-xs text-gray-400">Request Timeout</div>
+                          <div className="text-lg font-bold">{systemConfig.system.request_timeout_seconds}s</div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded">
+                          <div className="text-xs text-gray-400">Adaptive GEX</div>
+                          <div className={`text-lg font-bold ${systemConfig.system.enable_adaptive_gex ? 'text-green-400' : 'text-red-400'}`}>
+                            {systemConfig.system.enable_adaptive_gex ? 'Enabled' : 'Disabled'}
+                          </div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded">
+                          <div className="text-xs text-gray-400">Adaptive Gamma</div>
+                          <div className={`text-lg font-bold ${systemConfig.system.enable_adaptive_gamma ? 'text-green-400' : 'text-red-400'}`}>
+                            {systemConfig.system.enable_adaptive_gamma ? 'Enabled' : 'Disabled'}
+                          </div>
+                        </div>
+                        <div className="bg-gray-800 p-3 rounded">
+                          <div className="text-xs text-gray-400">Max Concurrent API</div>
+                          <div className="text-lg font-bold">{systemConfig.system.max_concurrent_api_calls}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-400">
+                  <Settings className="w-12 h-12 mx-auto mb-3 opacity-50 animate-pulse" />
+                  <p>Loading configuration...</p>
                 </div>
               )}
             </div>
