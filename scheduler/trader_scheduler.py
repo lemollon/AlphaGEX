@@ -346,6 +346,7 @@ class AutonomousTraderScheduler:
         # Double-check market is open (belt and suspenders)
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping trade logic.")
+            self._save_heartbeat('PHOENIX', 'MARKET_CLOSED')
             return
 
         logger.info("Market is OPEN. Running autonomous trading logic...")
@@ -357,13 +358,19 @@ class AutonomousTraderScheduler:
 
             trade_result = self.trader.find_and_execute_daily_trade(self.api_client)
 
+            traded = False
             if trade_result:
                 logger.info(f"✓ Trade executed: {trade_result.get('strategy', 'Unknown')}")
                 logger.info(f"  Action: {trade_result.get('action', 'N/A')}")
                 logger.info(f"  Entry: ${trade_result.get('entry_price', 0):.2f}")
                 logger.info(f"  DTE: {trade_result.get('dte', 'N/A')}")
+                traded = True
             else:
                 logger.info("No new trade today (already traded or no good setups)")
+                self._log_no_trade_decision('PHOENIX', 'Already traded today or no good setups', {
+                    'symbol': 'SPY',
+                    'market': {'time': now.isoformat()}
+                })
 
             # Step 2: Manage existing positions (check stops, take profits, etc.)
             logger.info("Step 2: Managing existing positions...")
@@ -382,7 +389,12 @@ class AutonomousTraderScheduler:
             self.execution_count += 1
             self.last_error = None
 
-            # Save state after each execution
+            # Save heartbeat and state after each execution
+            self._save_heartbeat('PHOENIX', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.execution_count,
+                'traded': traded,
+                'positions_managed': len(management_results) if management_results else 0
+            })
             self._save_state()
 
             logger.info(f"Autonomous trading cycle completed successfully (run #{self.execution_count})")
@@ -398,6 +410,8 @@ class AutonomousTraderScheduler:
                 'error': str(e),
                 'traceback': traceback.format_exc()
             }
+
+            self._save_heartbeat('PHOENIX', 'ERROR', {'error': str(e)})
 
             # Don't crash the scheduler - just log and continue
             logger.info("Scheduler will continue despite error")
@@ -420,16 +434,20 @@ class AutonomousTraderScheduler:
 
         if not self.atlas_trader:
             logger.warning("ATLAS trader not available - skipping")
+            self._save_heartbeat('ATLAS', 'UNAVAILABLE')
             return
 
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping ATLAS logic.")
+            self._save_heartbeat('ATLAS', 'MARKET_CLOSED')
             return
 
         logger.info("Market is OPEN. Running ATLAS wheel strategy...")
 
         try:
             self.last_atlas_check = now
+            traded = False
+            scan_context = {'symbol': 'SPX'}
 
             # Run the daily wheel cycle
             # This handles: new positions, expiration processing, roll checks
@@ -441,23 +459,39 @@ class AutonomousTraderScheduler:
                 logger.info(f"  Open Positions: {result.get('open_positions', 0)}")
                 logger.info(f"  Actions taken: {result.get('actions', [])}")
 
+                scan_context['market'] = {'spx_price': result.get('spx_price', 0)}
+
                 # Log any new positions
                 if result.get('new_position'):
                     logger.info(f"  NEW POSITION: {result.get('new_position')}")
+                    traded = True
 
                 # Log any rolls
                 if result.get('rolls'):
                     for roll in result.get('rolls', []):
                         logger.info(f"  ROLLED: {roll}")
+                    traded = True
 
                 # Log any expirations
                 if result.get('expirations'):
                     for exp in result.get('expirations', []):
                         logger.info(f"  EXPIRED: {exp}")
+
+                # Log NO_TRADE if no action taken
+                if not traded and not result.get('new_position') and not result.get('rolls'):
+                    no_trade_reason = result.get('skip_reason', 'No wheel action needed today')
+                    self._log_no_trade_decision('ATLAS', no_trade_reason, scan_context)
             else:
                 logger.info("ATLAS: No actions taken today")
+                self._log_no_trade_decision('ATLAS', 'No result from trading cycle', scan_context)
 
             self.atlas_execution_count += 1
+            self._save_heartbeat('ATLAS', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.atlas_execution_count,
+                'traded': traded,
+                'open_positions': result.get('open_positions', 0) if result else 0,
+                'spx_price': result.get('spx_price', 0) if result else 0
+            })
             logger.info(f"ATLAS cycle #{self.atlas_execution_count} completed successfully")
             logger.info(f"=" * 80)
 
@@ -465,6 +499,7 @@ class AutonomousTraderScheduler:
             error_msg = f"ERROR in ATLAS trading logic: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
+            self._save_heartbeat('ATLAS', 'ERROR', {'error': str(e)})
             logger.info("ATLAS will continue despite error")
             logger.info(f"=" * 80)
 

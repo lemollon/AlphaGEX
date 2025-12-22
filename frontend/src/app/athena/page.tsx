@@ -586,6 +586,114 @@ export default function ATHENAPage() {
                 </div>
               </div>
 
+              {/* Live GEX Context Panel */}
+              <div className="bg-gray-800 rounded-xl p-6 border border-purple-700/50 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Crosshair className="w-5 h-5 text-purple-500" />
+                    <h2 className="text-lg font-semibold text-white">Live GEX Context</h2>
+                    <span className="px-2 py-0.5 text-xs bg-purple-900/50 text-purple-400 rounded">REAL-TIME</span>
+                  </div>
+                  {status?.heartbeat?.details?.gex_context && (
+                    <span className="text-xs text-gray-500">
+                      Updated: {status.heartbeat.last_scan}
+                    </span>
+                  )}
+                </div>
+
+                {mlSignal?.gex_context || status?.heartbeat?.details?.gex_context ? (
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">SPY Price</p>
+                      <p className="text-2xl font-bold text-white">
+                        ${(mlSignal?.gex_context?.spot_price || status?.heartbeat?.details?.gex_context?.spot_price || 0).toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="bg-green-900/20 border border-green-700/30 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">Put Wall (Support)</p>
+                      <p className="text-2xl font-bold text-green-400">
+                        ${(mlSignal?.gex_context?.put_wall || status?.heartbeat?.details?.gex_context?.put_wall || 0).toFixed(0)}
+                      </p>
+                    </div>
+                    <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">Call Wall (Resistance)</p>
+                      <p className="text-2xl font-bold text-red-400">
+                        ${(mlSignal?.gex_context?.call_wall || status?.heartbeat?.details?.gex_context?.call_wall || 0).toFixed(0)}
+                      </p>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">GEX Regime</p>
+                      <p className={`text-xl font-bold ${
+                        (mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime) === 'POSITIVE'
+                          ? 'text-green-400'
+                          : 'text-red-400'
+                      }`}>
+                        {mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime || 'N/A'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {(mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime) === 'POSITIVE'
+                          ? 'Dealers hedge → mean reversion'
+                          : 'Dealers amplify → momentum'}
+                      </p>
+                    </div>
+                    <div className="bg-purple-900/20 border border-purple-700/30 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">Net GEX</p>
+                      <p className="text-xl font-bold text-purple-400">
+                        {((mlSignal?.gex_context?.net_gex || status?.heartbeat?.details?.gex_context?.net_gex || 0) / 1e9).toFixed(2)}B
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {(mlSignal?.gex_context?.net_gex || 0) > 0 ? 'Bullish gamma pressure' : 'Bearish gamma pressure'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-4 text-gray-500">
+                    <p>No GEX data available</p>
+                    <p className="text-xs mt-1">GEX context will appear after ATHENA runs a scan during market hours</p>
+                  </div>
+                )}
+
+                {/* Visual Range Bar */}
+                {mlSignal?.gex_context?.spot_price && mlSignal?.gex_context?.put_wall && mlSignal?.gex_context?.call_wall && (
+                  <div className="mt-4 pt-4 border-t border-gray-700">
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                      <span>Put Wall ${mlSignal.gex_context.put_wall.toFixed(0)}</span>
+                      <span className="text-white font-medium">SPY ${mlSignal.gex_context.spot_price.toFixed(2)}</span>
+                      <span>Call Wall ${mlSignal.gex_context.call_wall.toFixed(0)}</span>
+                    </div>
+                    <div className="relative h-3 bg-gray-700 rounded-full overflow-hidden">
+                      {/* Range background gradient */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-green-600/30 via-gray-600/30 to-red-600/30" />
+                      {/* SPY position marker */}
+                      {(() => {
+                        const range = mlSignal.gex_context.call_wall - mlSignal.gex_context.put_wall
+                        const position = ((mlSignal.gex_context.spot_price - mlSignal.gex_context.put_wall) / range) * 100
+                        const clampedPosition = Math.max(0, Math.min(100, position))
+                        return (
+                          <div
+                            className="absolute top-0 bottom-0 w-1 bg-white shadow-lg shadow-white/50"
+                            style={{ left: `${clampedPosition}%` }}
+                          />
+                        )
+                      })()}
+                    </div>
+                    <div className="flex justify-between text-xs mt-1">
+                      <span className="text-green-400">Support Zone</span>
+                      <span className="text-gray-400">
+                        {(() => {
+                          const range = mlSignal.gex_context.call_wall - mlSignal.gex_context.put_wall
+                          const position = ((mlSignal.gex_context.spot_price - mlSignal.gex_context.put_wall) / range) * 100
+                          if (position < 30) return 'Near Put Wall - Bullish Setup'
+                          if (position > 70) return 'Near Call Wall - Bearish Setup'
+                          return 'Between Walls - Range Bound'
+                        })()}
+                      </span>
+                      <span className="text-red-400">Resistance Zone</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Equity Curve */}
               <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 mb-6">
                 <div className="flex items-center justify-between mb-4">
