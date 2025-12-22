@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { X, Heart, Sparkles, Pause, Play } from 'lucide-react'
+import { X, Heart, Sparkles } from 'lucide-react'
 
 // Latin Cross icon component - outline style with proper proportions
 const CrossIcon = ({ className, animated = false }: { className?: string; animated?: boolean }) => (
@@ -185,14 +185,12 @@ export function DedicationModal({ isOpen, onClose }: DedicationModalProps) {
   )
 }
 
-// Rotating Scripture Banner Component with Pilgrim Animation
+// Rotating Scripture Banner Component
 export function StewardshipBanner() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isVisible, setIsVisible] = useState(true)
   const [isPaused, setIsPaused] = useState(false)
   const [isFading, setIsFading] = useState(false)
-  const [pilgrimProgress, setPilgrimProgress] = useState(0)
-  const [animationPaused, setAnimationPaused] = useState(false)
 
   // Rotate scriptures every 10 seconds
   useEffect(() => {
@@ -209,23 +207,6 @@ export function StewardshipBanner() {
     return () => clearInterval(interval)
   }, [isPaused])
 
-  // Pilgrim animation - walks right to left
-  useEffect(() => {
-    if (animationPaused || !isVisible) return
-
-    const interval = setInterval(() => {
-      setPilgrimProgress((prev) => {
-        if (prev >= 100) {
-          setTimeout(() => setPilgrimProgress(0), 2500)
-          return 100
-        }
-        return prev + 0.4
-      })
-    }, 45)
-
-    return () => clearInterval(interval)
-  }, [animationPaused, isVisible])
-
   const handleDismiss = useCallback(() => {
     setIsVisible(false)
     sessionStorage.setItem('stewardshipBannerDismissed', 'true')
@@ -241,45 +222,6 @@ export function StewardshipBanner() {
   if (!isVisible) return null
 
   const currentScripture = scriptures[currentIndex]
-  const isKneeling = pilgrimProgress >= 94
-
-  // Pilgrim SVG - small, fits in banner height
-  const PilgrimSVG = () => {
-    const time = pilgrimProgress * 0.12
-    const walkPhase = time * Math.PI * 2
-    const walkCycle = Math.sin(walkPhase)
-    const bob = Math.abs(Math.sin(walkPhase)) * 0.8
-
-    if (isKneeling) {
-      return (
-        <g transform="translate(0, 1)">
-          <circle cx="-1" cy="3" r="2.5" fill="#d4a574" />
-          <ellipse cx="-1" cy="1.5" rx="2" ry="1.5" fill="#713f12" />
-          <path d="M-1,5 Q1,7 2,10" stroke="#92400e" strokeWidth="2.5" fill="none" strokeLinecap="round" />
-          <path d="M-2,6 Q-5,4 -8,3" stroke="#d4a574" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-          <circle cx="-8" cy="3" r="1.5" fill="#d4a574" />
-          <path d="M2,10 L1,13 L-1,13" stroke="#78350f" strokeWidth="2" fill="none" strokeLinecap="round" />
-        </g>
-      )
-    }
-
-    const armSwing = walkCycle * 4
-    const legSwing = walkCycle * 5
-
-    return (
-      <g transform={`translate(0, ${-bob})`}>
-        <ellipse cx="0" cy={13 + bob} rx="3" ry="1" fill="#000" opacity="0.1" />
-        <path d={`M1,5 Q${2 + walkCycle * 0.5},8 ${2 + walkCycle},12 Q0,13 -1,12 Q-1,8 0,5 Z`} fill="#92400e" opacity="0.8" />
-        <circle cx="0" cy="2.5" r="2.5" fill="#d4a574" />
-        <ellipse cx="0" cy="1" rx="2" ry="1.5" fill="#713f12" />
-        <line x1="0" y1="5" x2="0" y2="8" stroke="#b45309" strokeWidth="2.5" strokeLinecap="round" />
-        <line x1="0" y1="5.5" x2={1.5 + armSwing * 0.3} y2={8} stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round" />
-        <line x1="0" y1="5.5" x2={-1.5 - armSwing * 0.3} y2={8} stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round" />
-        <line x1="0" y1="8" x2={1 + legSwing * 0.25} y2="13" stroke="#78350f" strokeWidth="2" strokeLinecap="round" />
-        <line x1="0" y1="8" x2={-1 - legSwing * 0.25} y2="13" stroke="#78350f" strokeWidth="2" strokeLinecap="round" />
-      </g>
-    )
-  }
 
   return (
     <div
@@ -290,33 +232,8 @@ export function StewardshipBanner() {
       {/* Subtle animated background glow */}
       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-500/5 to-transparent animate-pulse" />
 
-      {/* Pilgrim animation layer - walks right to left toward cross button above */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <svg className="absolute left-0 top-0 w-full h-full" viewBox="0 0 1200 28" preserveAspectRatio="xMidYMid slice">
-          {/* Prayer glow when kneeling */}
-          {isKneeling && (
-            <ellipse cx={95 - pilgrimProgress * 0.6} cy="14" rx="12" ry="8" fill="#fbbf24" opacity="0.15">
-              <animate attributeName="opacity" values="0.1;0.25;0.1" dur="1.5s" repeatCount="indefinite" />
-            </ellipse>
-          )}
-          {/* Pilgrim walks from right (~150) to left (~95, below cross button) */}
-          <g transform={`translate(${150 - pilgrimProgress * 0.55}, 6)`}>
-            <PilgrimSVG />
-          </g>
-        </svg>
-      </div>
-
       <div className="relative max-w-7xl mx-auto px-4 py-1.5">
         <div className="flex items-center justify-center gap-3">
-          {/* Pilgrim pause/play button */}
-          <button
-            onClick={() => setAnimationPaused(!animationPaused)}
-            className="hidden sm:block p-1 rounded text-amber-500/40 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
-            title={animationPaused ? 'Resume pilgrim' : 'Pause pilgrim'}
-          >
-            {animationPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
-          </button>
-
           {/* Scripture dots indicator */}
           <div className="hidden sm:flex items-center gap-1">
             {scriptures.map((_, idx) => (
@@ -369,36 +286,87 @@ export function StewardshipBanner() {
   )
 }
 
-// Interactive Cross Button for Navigation
+// Interactive Cross Button for Navigation with breathing + sparkle animation
 interface CrossButtonProps {
   onClick: () => void
 }
 
 export function CrossButton({ onClick }: CrossButtonProps) {
   const [isHovered, setIsHovered] = useState(false)
+  const [sparklePhase, setSparklePhase] = useState(0)
+
+  // Sparkle animation cycle
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSparklePhase((prev) => (prev + 1) % 100)
+    }, 50)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Calculate sparkle positions
+  const sparkles = [
+    { angle: 45, delay: 0 },
+    { angle: 135, delay: 25 },
+    { angle: 225, delay: 50 },
+    { angle: 315, delay: 75 },
+  ]
 
   return (
     <button
       onClick={onClick}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className="relative p-1.5 rounded-lg transition-all duration-300 group"
+      className="relative p-2 rounded-lg transition-all duration-300 group"
       title="Dedicated to God's Glory - Click to learn more"
     >
-      {/* Glow effect on hover */}
-      <div className={`absolute inset-0 rounded-lg bg-amber-500/20 transition-opacity duration-300 ${
-        isHovered ? 'opacity-100' : 'opacity-0'
-      }`} />
+      {/* Breathing glow aura */}
+      <div
+        className="absolute inset-0 rounded-full bg-amber-400/20 blur-md transition-all duration-300"
+        style={{
+          transform: `scale(${1 + Math.sin(sparklePhase * 0.08) * 0.15})`,
+          opacity: 0.4 + Math.sin(sparklePhase * 0.08) * 0.2
+        }}
+      />
 
-      {/* Cross icon */}
-      <CrossIcon className={`w-5 h-5 relative z-10 transition-all duration-300 ${
-        isHovered
-          ? 'text-amber-400 scale-110'
-          : 'text-amber-500/70'
-      }`} />
+      {/* Sparkles around the cross */}
+      <div className="absolute inset-0 pointer-events-none">
+        {sparkles.map(({ angle, delay }, i) => {
+          const phase = (sparklePhase + delay) % 100
+          const opacity = phase < 50 ? phase / 50 : (100 - phase) / 50
+          const distance = 14 + Math.sin(phase * 0.1) * 2
+          const x = Math.cos((angle * Math.PI) / 180) * distance
+          const y = Math.sin((angle * Math.PI) / 180) * distance
+
+          return (
+            <div
+              key={i}
+              className="absolute left-1/2 top-1/2 w-1 h-1 rounded-full bg-amber-300"
+              style={{
+                transform: `translate(${x - 2}px, ${y - 2}px)`,
+                opacity: opacity * 0.7,
+                boxShadow: '0 0 3px #fbbf24'
+              }}
+            />
+          )
+        })}
+      </div>
+
+      {/* Cross icon with breathing scale */}
+      <div
+        className="relative z-10 transition-all duration-300"
+        style={{
+          transform: `scale(${isHovered ? 1.15 : 1 + Math.sin(sparklePhase * 0.06) * 0.05})`
+        }}
+      >
+        <CrossIcon
+          className={`w-5 h-5 transition-colors duration-300 ${
+            isHovered ? 'text-amber-300' : 'text-amber-500'
+          }`}
+        />
+      </div>
 
       {/* Tooltip */}
-      <div className={`absolute left-1/2 -translate-x-1/2 top-full mt-2 px-3 py-1.5 bg-background-card border border-amber-500/30 rounded-lg shadow-xl whitespace-nowrap transition-all duration-300 ${
+      <div className={`absolute left-1/2 -translate-x-1/2 top-full mt-2 px-3 py-1.5 bg-background-card border border-amber-500/30 rounded-lg shadow-xl whitespace-nowrap transition-all duration-300 z-20 ${
         isHovered
           ? 'opacity-100 translate-y-0'
           : 'opacity-0 -translate-y-1 pointer-events-none'
