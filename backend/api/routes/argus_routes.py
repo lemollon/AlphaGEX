@@ -94,12 +94,14 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
 
     Returns processed options chain with gamma data.
     """
-    # Check cache first
+    # Check cache first - but skip if cached data is mock (allow retry for live)
     cache_key = f"gamma_data_{expiration or 'today'}"
     cached = get_cached(cache_key, CACHE_TTL_SECONDS)
-    if cached:
-        logger.debug(f"ARGUS: Returning cached gamma data for {expiration or 'today'}")
+    if cached and not cached.get('is_mock', False):
+        logger.debug(f"ARGUS: Returning cached LIVE gamma data for {expiration or 'today'}")
         return cached
+    elif cached and cached.get('is_mock', False):
+        logger.debug(f"ARGUS: Skipping cached mock data, attempting fresh fetch")
 
     tradier = get_tradier()
     if not tradier:
@@ -107,7 +109,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         # Get real prices for mock data
         spot, vix = await get_real_prices()
         result = get_mock_gamma_data(spot, vix)
-        set_cached(cache_key, result)
+        # Don't cache mock data - allow retry on next request
         return result
 
     try:
@@ -139,9 +141,9 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         # If no options (market closed/weekend), fall back to mock
         if options_count == 0:
             logger.warning("ARGUS: No options data available (market likely closed), using mock data")
-            spot, vix = await get_real_prices()
-            result = get_mock_gamma_data(spot, vix)
-            set_cached(cache_key, result)
+            spot, vix_val = await get_real_prices()
+            result = get_mock_gamma_data(spot, vix_val)
+            # Don't cache mock data - allow retry on next request for live data
             return result
 
         # Process chain into strike data using O(1) dictionary lookup instead of O(n²) nested loop
@@ -180,7 +182,8 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
             'vix': vix,
             'expiration': expiration,
             'strikes': list(unique_strikes.values()),
-            'is_mock': False  # Real market data from Tradier
+            'is_mock': False,  # Real market data from Tradier
+            'fetched_at': datetime.now().isoformat()  # Actual fetch timestamp
         }
 
         # Cache the result
@@ -189,9 +192,9 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
 
     except Exception as e:
         logger.error(f"Error fetching gamma data: {e}")
-        spot, vix = await get_real_prices()
-        result = get_mock_gamma_data(spot, vix)
-        set_cached(cache_key, result)
+        spot, vix_val = await get_real_prices()
+        result = get_mock_gamma_data(spot, vix_val)
+        # Don't cache mock data on error - allow retry on next request
         return result
 
 
@@ -266,7 +269,8 @@ def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
         'vix': vix,
         'expiration': date.today().strftime('%Y-%m-%d'),
         'strikes': strikes,
-        'is_mock': True  # Flag to indicate simulated data
+        'is_mock': True,  # Flag to indicate simulated data
+        'fetched_at': datetime.now().isoformat()  # Actual fetch timestamp
     }
 
 
@@ -333,6 +337,7 @@ async def get_gamma_data(
                 "regime_flipped": snapshot.regime_flipped,
                 "market_status": snapshot.market_status,
                 "is_mock": raw_data.get('is_mock', False),  # True = simulated, False = real market data
+                "fetched_at": raw_data.get('fetched_at', datetime.now().isoformat()),  # When data was fetched from Tradier
                 "strikes": [s.to_dict() for s in filtered_strikes],
                 "magnets": snapshot.magnets,
                 "likely_pin": snapshot.likely_pin,

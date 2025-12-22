@@ -716,6 +716,29 @@ async def get_gamma_expiration_intel(symbol: str):
         elif current_day == 'Friday':
             key_factors.append("Friday = low gamma, more volatile")
 
+        # Build expected range - validate walls are valid (call_wall > put_wall)
+        # If walls are invalid, use VIX-based expected move instead
+        if call_wall and put_wall and spot_price and call_wall > put_wall:
+            range_width = ((call_wall - put_wall) / spot_price * 100)
+            expected_range = f"${put_wall:.2f} - ${call_wall:.2f}"
+            range_lower = put_wall
+            range_upper = call_wall
+        else:
+            # Fallback: Calculate expected range from VIX
+            # Daily expected move = spot * (VIX/100) * sqrt(1/252)
+            # For 0DTE, use simplified: spot * (VIX/100) * 0.063
+            vix_expected_move = spot_price * (current_vix / 100) * 0.063
+            range_lower = spot_price - vix_expected_move
+            range_upper = spot_price + vix_expected_move
+            range_width = (vix_expected_move * 2 / spot_price * 100)
+            expected_range = f"${range_lower:.2f} - ${range_upper:.2f}"
+            # Also fix the walls if they're invalid
+            if not call_wall or call_wall <= spot_price:
+                call_wall = range_upper
+            if not put_wall or put_wall >= spot_price:
+                put_wall = range_lower
+        range_width_pct = f"{range_width:.1f}%"
+
         # Determine direction
         if bullish_score >= 65:
             direction = "UPWARD"
@@ -731,12 +754,7 @@ async def get_gamma_expiration_intel(symbol: str):
             direction = "SIDEWAYS"
             direction_emoji = "↔️"
             probability = int(100 - abs(bullish_score - 50) * 2)
-            expected_move = f"Expect range between ${put_wall:.0f} - ${call_wall:.0f}"
-
-        # Build expected range
-        range_width = ((call_wall - put_wall) / spot_price * 100) if call_wall and put_wall and spot_price else 0
-        expected_range = f"${put_wall:.2f} - ${call_wall:.2f}"
-        range_width_pct = f"{range_width:.1f}%"
+            expected_move = f"Expect range between ${range_lower:.0f} - ${range_upper:.0f}"
 
         directional_prediction = {
             'direction': direction,
