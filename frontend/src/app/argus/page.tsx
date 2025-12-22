@@ -120,6 +120,8 @@ interface GammaData {
   regime_flipped: boolean
   market_status: string
   is_mock: boolean
+  is_stale?: boolean  // True when showing cached live data during market hours
+  fetched_at?: string  // Timestamp when data was fetched (Central timezone)
   strikes: StrikeData[]
   magnets: Magnet[]
   likely_pin: number
@@ -1007,7 +1009,7 @@ export default function ArgusPage() {
                       <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-400 text-[10px] font-medium rounded border border-orange-500/30">
                         SIMULATED
                       </span>
-                    ) : (gammaData as any)?.is_stale ? (
+                    ) : gammaData?.is_stale ? (
                       <span className="ml-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-medium rounded border border-yellow-500/30">
                         LIVE (CACHED)
                       </span>
