@@ -112,13 +112,13 @@ except ImportError:
     RiskCheck = None
     BacktestReference = None
 
-# Import comprehensive bot logger (legacy - kept for compatibility)
+# Import comprehensive bot logger for dual logging (same as ARES)
 try:
     from trading.bot_logger import (
         log_bot_decision, update_decision_outcome, update_execution_timeline,
         BotDecision, MarketContext as BotLogMarketContext, ClaudeContext,
-        Alternative, RiskCheck, ApiCall, ExecutionTimeline, generate_session_id,
-        get_session_tracker, DecisionTracker
+        Alternative, RiskCheck as BotRiskCheck, ApiCall, ExecutionTimeline,
+        generate_session_id, get_session_tracker, DecisionTracker
     )
     BOT_LOGGER_AVAILABLE = True
 except ImportError:
@@ -126,6 +126,9 @@ except ImportError:
     log_bot_decision = None
     get_session_tracker = None
     DecisionTracker = None
+    BotDecision = None
+    BotLogMarketContext = None
+    ClaudeContext = None
 
 # Import unified data provider
 try:
@@ -1611,9 +1614,58 @@ class ATHENATrader:
                 probability_of_profit=ml_signal.get('win_probability', 0) if ml_signal else getattr(advice, 'win_probability', 0.5),
             )
 
-            # Log to database
+            # Log to database (primary)
             self.decision_logger.log_decision(decision)
             self._log_to_db("INFO", f"Decision logged: {position.position_id}")
+
+            # DUAL LOGGING: Also log to bot_decision_logs for comprehensive audit trail (like ARES)
+            if BOT_LOGGER_AVAILABLE and log_bot_decision and BotDecision:
+                try:
+                    comprehensive_decision = BotDecision(
+                        bot_name="ATHENA",
+                        decision_type="ENTRY",
+                        action="SELL" if position.spread_type == SpreadType.BEAR_CALL_SPREAD else "BUY",
+                        symbol=self.config.ticker,
+                        strategy=position.spread_type.value,
+                        strike=position.short_strike,
+                        expiration=str(position.expiration),
+                        option_type="call",
+                        contracts=position.contracts,
+                        market_context=BotLogMarketContext(
+                            spot_price=gex_data.get('spot_price', 0),
+                            vix=vix,
+                            net_gex=gex_data.get('net_gex', 0),
+                            gex_regime=gex_data.get('regime', 'NEUTRAL'),
+                            flip_point=gex_data.get('flip_point', 0),
+                            call_wall=gex_data.get('call_wall', 0),
+                            put_wall=gex_data.get('put_wall', 0),
+                            trend=trend,
+                        ) if BotLogMarketContext else None,
+                        claude_context=ClaudeContext(
+                            prompt=f"ATHENA {signal_source} signal evaluation for {spread_name}",
+                            response=oracle_advice_dict.get('claude_analysis', {}).get('analysis', '') if oracle_advice_dict else '',
+                            model="claude-3-sonnet" if oracle_advice_dict else "",
+                            tokens_used=0,
+                            response_time_ms=0,
+                            confidence=str(oracle_advice_dict.get('confidence', '')) if oracle_advice_dict else "",
+                        ) if ClaudeContext and oracle_advice_dict else None,
+                        entry_reasoning=why_desc,
+                        strike_reasoning=f"Long ${position.long_strike}, Short ${position.short_strike} ({position.spread_width} wide)",
+                        size_reasoning=f"{self.config.risk_per_trade_pct:.0f}% risk = {position.contracts} contracts",
+                        alternatives_considered=[
+                            Alternative(strategy="STAY_OUT", reason="Insufficient signal"),
+                            Alternative(strategy="Opposite direction", reason="GEX confirms direction"),
+                        ] if Alternative else [],
+                        kelly_pct=self.config.risk_per_trade_pct / 100,
+                        position_size_dollars=abs(position.entry_debit) * 100 * position.contracts,
+                        max_risk_dollars=position.max_loss,
+                        backtest_win_rate=ml_signal.get('win_probability', 0) if ml_signal else getattr(advice, 'win_probability', 0.5),
+                        passed_all_checks=True,
+                    )
+                    decision_id = log_bot_decision(comprehensive_decision)
+                    logger.info(f"ATHENA: Logged to bot_decision_logs (ENTRY) - ID: {decision_id}")
+                except Exception as comp_e:
+                    logger.warning(f"ATHENA: Could not log to comprehensive table: {comp_e}")
 
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to log decision: {e}")
@@ -2034,6 +2086,36 @@ class ATHENATrader:
             self.decision_logger.log_decision(decision)
             self._log_to_db("INFO", f"Exit decision logged: {position.position_id}")
 
+            # DUAL LOGGING: Also log to bot_decision_logs for comprehensive audit trail
+            if BOT_LOGGER_AVAILABLE and log_bot_decision and BotDecision:
+                try:
+                    comprehensive_decision = BotDecision(
+                        bot_name="ATHENA",
+                        decision_type="EXIT",
+                        action="CLOSE",
+                        symbol=self.config.ticker,
+                        strategy=position.spread_type.value,
+                        strike=position.short_strike,
+                        expiration=str(position.expiration),
+                        option_type="call",
+                        contracts=position.contracts,
+                        entry_reasoning=f"Exit triggered: {reason}",
+                        exit_reasoning=reason,
+                        passed_all_checks=True,
+                    )
+                    # Update with outcome data
+                    if update_decision_outcome:
+                        update_decision_outcome(
+                            decision_id=f"{position.position_id}-EXIT",
+                            actual_pnl=position.realized_pnl,
+                            exit_triggered_by=reason,
+                            exit_price=position.close_price,
+                        )
+                    decision_id = log_bot_decision(comprehensive_decision)
+                    logger.info(f"ATHENA: Logged to bot_decision_logs (EXIT) - ID: {decision_id}")
+                except Exception as comp_e:
+                    logger.warning(f"ATHENA: Could not log EXIT to comprehensive table: {comp_e}")
+
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to log exit: {e}")
 
@@ -2198,6 +2280,44 @@ class ATHENATrader:
             )
 
             self.decision_logger.log_decision(decision)
+
+            # DUAL LOGGING: Also log to bot_decision_logs for comprehensive audit trail
+            if BOT_LOGGER_AVAILABLE and log_bot_decision and BotDecision:
+                try:
+                    comprehensive_decision = BotDecision(
+                        bot_name="ATHENA",
+                        decision_type="SKIP",
+                        action="SKIP",
+                        symbol=self.config.ticker,
+                        strategy="directional_spread",
+                        market_context=BotLogMarketContext(
+                            spot_price=gex_data.get('spot_price', 0) if gex_data else 0,
+                            vix=vix,
+                            net_gex=gex_data.get('net_gex', 0) if gex_data else 0,
+                            gex_regime=gex_data.get('regime', 'NEUTRAL') if gex_data else 'UNKNOWN',
+                            flip_point=gex_data.get('flip_point', 0) if gex_data else 0,
+                            call_wall=gex_data.get('call_wall', 0) if gex_data else 0,
+                            put_wall=gex_data.get('put_wall', 0) if gex_data else 0,
+                        ) if BotLogMarketContext and gex_data else None,
+                        claude_context=ClaudeContext(
+                            prompt=f"ATHENA SKIP evaluation: {reason}",
+                            response=getattr(oracle_advice, 'reasoning', '') if oracle_advice else '',
+                            confidence=str(getattr(oracle_advice, 'confidence', '')) if oracle_advice else "",
+                        ) if ClaudeContext else None,
+                        entry_reasoning=reason,
+                        blocked_reason=reason,
+                        passed_all_checks=False,
+                        alternatives_considered=[
+                            Alternative(
+                                strategy=ml_signal.get('spread_type', 'NONE') if ml_signal else 'NONE',
+                                reason=ml_signal.get('reasoning', 'ML signal insufficient') if ml_signal else 'No ML signal'
+                            ),
+                        ] if Alternative and ml_signal else [],
+                    )
+                    decision_id = log_bot_decision(comprehensive_decision)
+                    logger.info(f"ATHENA: Logged to bot_decision_logs (SKIP) - ID: {decision_id}")
+                except Exception as comp_e:
+                    logger.warning(f"ATHENA: Could not log SKIP to comprehensive table: {comp_e}")
 
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to log skip decision: {e}")
