@@ -103,6 +103,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
 
     tradier = get_tradier()
     if not tradier:
+        logger.warning("ARGUS: Tradier not available, using mock data")
         # Get real prices for mock data
         spot, vix = await get_real_prices()
         result = get_mock_gamma_data(spot, vix)
@@ -113,18 +114,31 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         # Get SPY quote (synchronous method)
         quote = tradier.get_quote('SPY')
         spot_price = quote.get('last', 0) or quote.get('close', 0)
+        logger.info(f"ARGUS: SPY quote fetched, price=${spot_price}")
 
         # Get VIX - use reliable vix_fetcher (NO FAKE FALLBACKS)
         from data.vix_fetcher import get_vix_price
         vix = get_vix_price()
+        logger.info(f"ARGUS: VIX fetched, value={vix}")
 
         # Get expiration (default to 0DTE)
         engine = get_engine()
         if not expiration and engine:
             expiration = engine.get_0dte_expiration()
+        logger.info(f"ARGUS: Using expiration={expiration}")
 
         # Get options chain
         chain = await tradier.get_options_chain('SPY', expiration)
+        options_count = len(chain.get('options', []))
+        logger.info(f"ARGUS: Options chain fetched, {options_count} options")
+
+        # If no options (market closed/weekend), fall back to mock
+        if options_count == 0:
+            logger.warning("ARGUS: No options data available (market likely closed), using mock data")
+            spot, vix = await get_real_prices()
+            result = get_mock_gamma_data(spot, vix)
+            set_cached(cache_key, result)
+            return result
 
         # Process chain into strike data using O(1) dictionary lookup instead of O(n²) nested loop
         # Build dictionaries keyed by (strike, option_type) for fast lookup
