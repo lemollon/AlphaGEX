@@ -7,6 +7,14 @@ import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
 import { useOracleStatus, useOracleLogs } from '@/lib/hooks/useMarketData'
 
+interface BotHeartbeat {
+  last_scan: string | null
+  last_scan_iso: string | null
+  status: string
+  scan_count_today: number
+  details: Record<string, any>
+}
+
 interface OracleStatus {
   model_trained: boolean
   model_version: string
@@ -14,6 +22,13 @@ interface OracleStatus {
   claude_model: string
   high_confidence_threshold: number
   low_confidence_threshold: number
+}
+
+interface OracleStatusResponse {
+  success: boolean
+  oracle?: OracleStatus
+  bot_heartbeats?: Record<string, BotHeartbeat>
+  error?: string
 }
 
 interface TrainingStatus {
@@ -197,6 +212,7 @@ export default function OraclePage() {
 
   // Extract data from responses
   const status = statusRes?.oracle as OracleStatus | undefined
+  const botHeartbeats = (statusRes?.bot_heartbeats || {}) as Record<string, BotHeartbeat>
   const logs = (logsRes?.logs || []) as LogEntry[]
 
   const loading = statusLoading && !status
@@ -466,6 +482,53 @@ export default function OraclePage() {
                 {botInteractions.length}
               </p>
               <p className="text-text-muted text-xs mt-1">Last {interactionDays} days</p>
+            </div>
+          </div>
+
+          {/* Bot Heartbeats Section */}
+          <div className="mb-6 bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+            <div className="flex items-center gap-2 mb-3">
+              <Activity className="w-5 h-5 text-purple-400" />
+              <h3 className="text-lg font-semibold text-white">Bot Heartbeats</h3>
+              <span className="text-xs text-gray-500">(5-min scan intervals)</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {['ARES', 'ATHENA', 'ATLAS', 'PHOENIX'].map((botName) => {
+                const hb = botHeartbeats[botName]
+                const statusColor = hb?.status === 'TRADED' ? 'bg-green-500' :
+                                   hb?.status === 'SCAN_COMPLETE' ? 'bg-blue-500' :
+                                   hb?.status === 'ERROR' ? 'bg-red-500' :
+                                   hb?.status === 'MARKET_CLOSED' ? 'bg-yellow-500' :
+                                   'bg-gray-500'
+                return (
+                  <div key={botName} className="bg-gray-900/50 rounded-lg p-3 border border-gray-600">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${statusColor} ${hb?.status === 'TRADED' ? 'animate-pulse' : ''}`} />
+                        <span className="text-white font-bold">{botName}</span>
+                      </div>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                        hb?.status === 'TRADED' ? 'bg-green-900/50 text-green-400' :
+                        hb?.status === 'SCAN_COMPLETE' ? 'bg-blue-900/50 text-blue-400' :
+                        hb?.status === 'ERROR' ? 'bg-red-900/50 text-red-400' :
+                        'bg-gray-700 text-gray-400'
+                      }`}>
+                        {hb?.status?.replace(/_/g, ' ') || 'Never Run'}
+                      </span>
+                    </div>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Last Scan:</span>
+                        <span className="text-gray-300 font-mono">{hb?.last_scan || 'Never'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Scans Today:</span>
+                        <span className="text-cyan-400 font-bold">{hb?.scan_count_today || 0}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
 

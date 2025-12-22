@@ -15,10 +15,13 @@ TRADING BOTS:
 ============
 - PHOENIX: 0DTE options trading (hourly 10 AM - 3 PM ET)
 - ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
-- ARES: Aggressive Iron Condor targeting 10% monthly (daily at 9:35 AM ET)
-- ARES EOD: Process expired 0DTE positions (daily at 4:05 PM ET)
-- ATHENA: GEX Directional Spreads (every 30 min 9:35 AM - 3:30 PM ET)
+- ARES: Aggressive Iron Condor targeting 10% monthly (every 5 min 9:35 AM - 2:55 PM CT)
+- ARES EOD: Process expired 0DTE positions (daily at 3:05 PM CT)
+- ATHENA: GEX Directional Spreads (every 5 min 8:35 AM - 2:30 PM CT)
 - ARGUS: Gamma Commentary Generation (every 5 min 8:30 AM - 3:00 PM CT)
+
+All bots now scan every 5 minutes for optimal entry timing and log NO_TRADE
+decisions with full context when they scan but don't take a trade.
 
 This partitioning provides:
 - Aggressive short-term trading via PHOENIX
@@ -343,6 +346,7 @@ class AutonomousTraderScheduler:
         # Double-check market is open (belt and suspenders)
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping trade logic.")
+            self._save_heartbeat('PHOENIX', 'MARKET_CLOSED')
             return
 
         logger.info("Market is OPEN. Running autonomous trading logic...")
@@ -354,13 +358,19 @@ class AutonomousTraderScheduler:
 
             trade_result = self.trader.find_and_execute_daily_trade(self.api_client)
 
+            traded = False
             if trade_result:
                 logger.info(f"✓ Trade executed: {trade_result.get('strategy', 'Unknown')}")
                 logger.info(f"  Action: {trade_result.get('action', 'N/A')}")
                 logger.info(f"  Entry: ${trade_result.get('entry_price', 0):.2f}")
                 logger.info(f"  DTE: {trade_result.get('dte', 'N/A')}")
+                traded = True
             else:
                 logger.info("No new trade today (already traded or no good setups)")
+                self._log_no_trade_decision('PHOENIX', 'Already traded today or no good setups', {
+                    'symbol': 'SPY',
+                    'market': {'time': now.isoformat()}
+                })
 
             # Step 2: Manage existing positions (check stops, take profits, etc.)
             logger.info("Step 2: Managing existing positions...")
@@ -379,7 +389,12 @@ class AutonomousTraderScheduler:
             self.execution_count += 1
             self.last_error = None
 
-            # Save state after each execution
+            # Save heartbeat and state after each execution
+            self._save_heartbeat('PHOENIX', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.execution_count,
+                'traded': traded,
+                'positions_managed': len(management_results) if management_results else 0
+            })
             self._save_state()
 
             logger.info(f"Autonomous trading cycle completed successfully (run #{self.execution_count})")
@@ -395,6 +410,8 @@ class AutonomousTraderScheduler:
                 'error': str(e),
                 'traceback': traceback.format_exc()
             }
+
+            self._save_heartbeat('PHOENIX', 'ERROR', {'error': str(e)})
 
             # Don't crash the scheduler - just log and continue
             logger.info("Scheduler will continue despite error")
@@ -417,16 +434,20 @@ class AutonomousTraderScheduler:
 
         if not self.atlas_trader:
             logger.warning("ATLAS trader not available - skipping")
+            self._save_heartbeat('ATLAS', 'UNAVAILABLE')
             return
 
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping ATLAS logic.")
+            self._save_heartbeat('ATLAS', 'MARKET_CLOSED')
             return
 
         logger.info("Market is OPEN. Running ATLAS wheel strategy...")
 
         try:
             self.last_atlas_check = now
+            traded = False
+            scan_context = {'symbol': 'SPX'}
 
             # Run the daily wheel cycle
             # This handles: new positions, expiration processing, roll checks
@@ -438,23 +459,39 @@ class AutonomousTraderScheduler:
                 logger.info(f"  Open Positions: {result.get('open_positions', 0)}")
                 logger.info(f"  Actions taken: {result.get('actions', [])}")
 
+                scan_context['market'] = {'spx_price': result.get('spx_price', 0)}
+
                 # Log any new positions
                 if result.get('new_position'):
                     logger.info(f"  NEW POSITION: {result.get('new_position')}")
+                    traded = True
 
                 # Log any rolls
                 if result.get('rolls'):
                     for roll in result.get('rolls', []):
                         logger.info(f"  ROLLED: {roll}")
+                    traded = True
 
                 # Log any expirations
                 if result.get('expirations'):
                     for exp in result.get('expirations', []):
                         logger.info(f"  EXPIRED: {exp}")
+
+                # Log NO_TRADE if no action taken
+                if not traded and not result.get('new_position') and not result.get('rolls'):
+                    no_trade_reason = result.get('skip_reason', 'No wheel action needed today')
+                    self._log_no_trade_decision('ATLAS', no_trade_reason, scan_context)
             else:
                 logger.info("ATLAS: No actions taken today")
+                self._log_no_trade_decision('ATLAS', 'No result from trading cycle', scan_context)
 
             self.atlas_execution_count += 1
+            self._save_heartbeat('ATLAS', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.atlas_execution_count,
+                'traded': traded,
+                'open_positions': result.get('open_positions', 0) if result else 0,
+                'spx_price': result.get('spx_price', 0) if result else 0
+            })
             logger.info(f"ATLAS cycle #{self.atlas_execution_count} completed successfully")
             logger.info(f"=" * 80)
 
@@ -462,18 +499,20 @@ class AutonomousTraderScheduler:
             error_msg = f"ERROR in ATLAS trading logic: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
+            self._save_heartbeat('ATLAS', 'ERROR', {'error': str(e)})
             logger.info("ATLAS will continue despite error")
             logger.info(f"=" * 80)
 
     def scheduled_ares_logic(self):
         """
-        ARES (Aggressive Iron Condor) trading logic - runs daily at 9:35 AM CT
+        ARES (Aggressive Iron Condor) trading logic - runs every 5 minutes during market hours
 
         The aggressive Iron Condor strategy:
         - Targets 10% monthly returns
         - Trades 0DTE Iron Condors every weekday
         - 1 SD strikes, 10% risk per trade
         - No stop loss - let theta work
+        - Scans every 5 mins for optimal entry timing
         """
         now = datetime.now(CENTRAL_TZ)
 
@@ -482,13 +521,28 @@ class AutonomousTraderScheduler:
 
         if not self.ares_trader:
             logger.warning("ARES trader not available - skipping")
+            self._save_heartbeat('ARES', 'UNAVAILABLE')
             return
 
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping ARES logic.")
+            self._save_heartbeat('ARES', 'MARKET_CLOSED')
             return
 
-        logger.info("Market is OPEN. Running ARES aggressive Iron Condor strategy...")
+        # Check if within ARES entry window (9:35 AM - 2:55 PM CT for 0DTE)
+        entry_start = now.replace(hour=9, minute=35, second=0)
+        entry_end = now.replace(hour=14, minute=55, second=0)
+
+        if now < entry_start:
+            logger.info(f"Before entry window ({entry_start.strftime('%H:%M')}). Skipping.")
+            self._save_heartbeat('ARES', 'BEFORE_WINDOW')
+            return
+
+        if now > entry_end:
+            logger.info(f"After entry window ({entry_end.strftime('%H:%M')}). Managing existing positions only.")
+            # Still scan but won't open new positions due to 0DTE risk
+
+        logger.info("Market is OPEN. Scanning for ARES aggressive Iron Condor opportunities...")
 
         try:
             self.last_ares_check = now
@@ -496,29 +550,50 @@ class AutonomousTraderScheduler:
             # Run the daily ARES cycle
             result = self.ares_trader.run_daily_cycle()
 
+            traded = False
+            scan_context = {'symbol': 'SPX'}
+
             if result:
-                logger.info(f"ARES daily cycle completed:")
+                logger.info(f"ARES scan completed:")
                 logger.info(f"  Capital: ${result.get('capital', 0):,.2f}")
                 logger.info(f"  Open Positions: {result.get('open_positions', 0)}")
                 logger.info(f"  Actions: {result.get('actions', [])}")
+
+                # Get market context for logging
+                if hasattr(self.ares_trader, 'last_market_data'):
+                    scan_context['market'] = self.ares_trader.last_market_data
 
                 # Log any new positions
                 if result.get('new_position'):
                     pos = result.get('new_position')
                     logger.info(f"  NEW POSITION: {pos.get('position_id')} - {pos.get('strikes')}")
                     logger.info(f"    Contracts: {pos.get('contracts')}, Credit: ${pos.get('credit', 0):.2f}")
+                    traded = True
+
+                # Log NO_TRADE with reason if no new position
+                if not traded and not result.get('new_position'):
+                    no_trade_reason = result.get('skip_reason', result.get('reason', 'Position limit reached or no favorable setup'))
+                    self._log_no_trade_decision('ARES', no_trade_reason, scan_context)
             else:
-                logger.info("ARES: No actions taken today")
+                logger.info("ARES: No result returned from cycle")
+                self._log_no_trade_decision('ARES', 'No result from trading cycle', scan_context)
 
             self.ares_execution_count += 1
-            logger.info(f"ARES cycle #{self.ares_execution_count} completed successfully")
+            self._save_heartbeat('ARES', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.ares_execution_count,
+                'traded': traded,
+                'open_positions': result.get('open_positions', 0) if result else 0,
+                'capital': result.get('capital', 0) if result else 0
+            })
+            logger.info(f"ARES scan #{self.ares_execution_count} completed (next scan in 5 min)")
             logger.info(f"=" * 80)
 
         except Exception as e:
             error_msg = f"ERROR in ARES trading logic: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            logger.info("ARES will continue despite error")
+            self._save_heartbeat('ARES', 'ERROR', {'error': str(e)})
+            logger.info("ARES will retry next interval")
             logger.info(f"=" * 80)
 
     def scheduled_ares_eod_logic(self):
@@ -575,9 +650,88 @@ class AutonomousTraderScheduler:
             logger.info("ARES EOD will retry next trading day")
             logger.info(f"=" * 80)
 
+    def _log_no_trade_decision(self, bot_name: str, reason: str, context: dict = None):
+        """Log a NO_TRADE decision to the database for visibility"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            now = datetime.now(CENTRAL_TZ)
+            decision_id = f"{bot_name}_{now.strftime('%Y%m%d_%H%M%S')}_NO_TRADE"
+
+            c.execute('''
+                INSERT INTO decision_logs
+                (decision_id, bot_name, symbol, decision_type, action, what, why, how, timestamp,
+                 market_context, gex_context, oracle_advice, ml_predictions)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (decision_id) DO UPDATE SET
+                    what = EXCLUDED.what,
+                    why = EXCLUDED.why,
+                    timestamp = EXCLUDED.timestamp
+            ''', (
+                decision_id,
+                bot_name,
+                context.get('symbol', 'SPY') if context else 'SPY',
+                'NO_TRADE',
+                'SKIP',
+                f"Scanned market but did not trade",
+                reason,
+                f"Next scan in 5 minutes",
+                now,
+                json.dumps(context.get('market', {})) if context and context.get('market') else None,
+                json.dumps(context.get('gex', {})) if context and context.get('gex') else None,
+                json.dumps(context.get('oracle', {})) if context and context.get('oracle') else None,
+                json.dumps(context.get('ml', {})) if context and context.get('ml') else None,
+            ))
+
+            conn.commit()
+            conn.close()
+            logger.info(f"[HEARTBEAT] {bot_name} NO_TRADE logged: {reason}")
+        except Exception as e:
+            logger.debug(f"Could not log NO_TRADE decision: {e}")
+
+    def _save_heartbeat(self, bot_name: str, status: str = 'SCAN_COMPLETE', details: dict = None):
+        """Save heartbeat to database for dashboard visibility"""
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            now = datetime.now(CENTRAL_TZ)
+
+            # Ensure bot_heartbeats table exists
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS bot_heartbeats (
+                    id SERIAL PRIMARY KEY,
+                    bot_name VARCHAR(50) NOT NULL,
+                    last_heartbeat TIMESTAMP NOT NULL,
+                    status VARCHAR(50) NOT NULL,
+                    scan_count INTEGER DEFAULT 0,
+                    trades_today INTEGER DEFAULT 0,
+                    last_trade_time TIMESTAMP,
+                    details JSONB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(bot_name)
+                )
+            ''')
+
+            c.execute('''
+                INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
+                VALUES (%s, %s, %s, 1, %s)
+                ON CONFLICT (bot_name) DO UPDATE SET
+                    last_heartbeat = EXCLUDED.last_heartbeat,
+                    status = EXCLUDED.status,
+                    scan_count = bot_heartbeats.scan_count + 1,
+                    details = EXCLUDED.details
+            ''', (bot_name, now, status, json.dumps(details) if details else None))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"Could not save heartbeat: {e}")
+
     def scheduled_athena_logic(self):
         """
-        ATHENA (GEX Directional Spreads) trading logic - runs every 30 minutes during market hours
+        ATHENA (GEX Directional Spreads) trading logic - runs every 5 minutes during market hours
 
         The GEX-based directional spread strategy:
         - Uses live Tradier GEX data for real-time signal generation
@@ -595,10 +749,12 @@ class AutonomousTraderScheduler:
 
         if not self.athena_trader:
             logger.warning("ATHENA trader not available - skipping")
+            self._save_heartbeat('ATHENA', 'UNAVAILABLE')
             return
 
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping ATHENA logic.")
+            self._save_heartbeat('ATHENA', 'MARKET_CLOSED')
             return
 
         # Check if within entry window (8:35 AM - 2:30 PM CT)
@@ -607,6 +763,7 @@ class AutonomousTraderScheduler:
 
         if now < entry_start:
             logger.info(f"Before entry window ({entry_start.strftime('%H:%M')}). Skipping.")
+            self._save_heartbeat('ATHENA', 'BEFORE_WINDOW')
             return
 
         if now > entry_end:
@@ -622,6 +779,9 @@ class AutonomousTraderScheduler:
             # Run the ATHENA intraday cycle
             result = self.athena_trader.run_daily_cycle()
 
+            scan_context = {}
+            traded = False
+
             if result:
                 logger.info(f"ATHENA intraday scan completed:")
 
@@ -632,6 +792,7 @@ class AutonomousTraderScheduler:
                     logger.info(f"    SPY: ${gex_ctx.get('spot_price', 0):.2f}")
                     logger.info(f"    Walls: Put ${gex_ctx.get('put_wall', 0):.0f} | Call ${gex_ctx.get('call_wall', 0):.0f}")
                     logger.info(f"    Regime: {gex_ctx.get('regime', 'N/A')} | Source: {gex_ctx.get('source', 'N/A')}")
+                    scan_context['gex'] = gex_ctx
 
                 # === ML SIGNAL ===
                 ml_sig = result.get('ml_signal')
@@ -639,6 +800,7 @@ class AutonomousTraderScheduler:
                     logger.info(f"  ML Signal:")
                     logger.info(f"    Direction: {ml_sig.get('direction', 'N/A')} | Advice: {ml_sig.get('advice', 'N/A')}")
                     logger.info(f"    Confidence: {ml_sig.get('confidence', 0)*100:.1f}% | Win Prob: {ml_sig.get('win_probability', 0)*100:.1f}%")
+                    scan_context['ml'] = ml_sig
 
                 # === DECISION REASON ===
                 decision = result.get('decision_reason')
@@ -646,7 +808,8 @@ class AutonomousTraderScheduler:
                     logger.info(f"  >>> DECISION: {decision}")
 
                 # === TRADE STATS ===
-                logger.info(f"  Stats: Attempted={result.get('trades_attempted', 0)} | Executed={result.get('trades_executed', 0)} | Closed={result.get('positions_closed', 0)}")
+                trades_executed = result.get('trades_executed', 0)
+                logger.info(f"  Stats: Attempted={result.get('trades_attempted', 0)} | Executed={trades_executed} | Closed={result.get('positions_closed', 0)}")
 
                 if result.get('daily_pnl', 0) != 0:
                     logger.info(f"  Daily P&L: ${result.get('daily_pnl', 0):,.2f}")
@@ -655,17 +818,37 @@ class AutonomousTraderScheduler:
                 if result.get('rr_ratio'):
                     logger.info(f"  R:R Ratio: {result.get('rr_ratio', 0):.2f}:1")
 
+                traded = trades_executed > 0
+
+                # Log NO_TRADE decision with full context if no trade was made
+                if not traded:
+                    no_trade_reason = decision or result.get('skip_reason', 'No favorable setup found')
+                    scan_context['symbol'] = 'SPY'
+                    scan_context['market'] = {
+                        'spot_price': gex_ctx.get('spot_price') if gex_ctx else None,
+                        'time': now.isoformat()
+                    }
+                    self._log_no_trade_decision('ATHENA', no_trade_reason, scan_context)
+
             else:
                 logger.info("ATHENA: No result returned")
+                self._log_no_trade_decision('ATHENA', 'No result from trading cycle', {'symbol': 'SPY'})
 
             self.athena_execution_count += 1
-            logger.info(f"ATHENA scan #{self.athena_execution_count} completed (next scan in 30 min)")
+            self._save_heartbeat('ATHENA', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.athena_execution_count,
+                'traded': traded,
+                'gex_context': scan_context.get('gex'),
+                'ml_signal': scan_context.get('ml')
+            })
+            logger.info(f"ATHENA scan #{self.athena_execution_count} completed (next scan in 5 min)")
             logger.info(f"=" * 80)
 
         except Exception as e:
             error_msg = f"ERROR in ATHENA trading logic: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
+            self._save_heartbeat('ATHENA', 'ERROR', {'error': str(e)})
             logger.info("ATHENA will retry next interval")
             logger.info(f"=" * 80)
 
@@ -815,23 +998,24 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ATLAS not available - wheel trading disabled")
 
         # =================================================================
-        # ARES JOB: Aggressive Iron Condor - runs once daily at 9:35 AM CT
-        # (Matches ARES trading window which starts at 9:35 AM CT)
+        # ARES JOB: Aggressive Iron Condor - runs every 5 minutes during market hours
+        # Scans continuously for optimal 0DTE Iron Condor entry timing
         # =================================================================
         if self.ares_trader:
             self.scheduler.add_job(
                 self.scheduled_ares_logic,
-                trigger=CronTrigger(
-                    hour=9,        # 9:00 AM CT
-                    minute=35,     # 9:35 AM CT - matches ARES entry_time_start
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    start_date=datetime.now(CENTRAL_TZ).replace(
+                        hour=9, minute=35, second=0, microsecond=0
+                    ),
                     timezone='America/Chicago'
                 ),
                 id='ares_trading',
-                name='ARES - Aggressive Iron Condor',
+                name='ARES - Aggressive Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ ARES job scheduled (9:35 AM CT daily)")
+            logger.info("✅ ARES job scheduled (every 5 min during market hours)")
 
             # =================================================================
             # ARES EOD JOB: Process expired positions - runs at 3:05 PM CT
@@ -853,26 +1037,26 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
 
         # =================================================================
-        # ATHENA JOB: GEX Directional Spreads - runs every 30 minutes during market hours
+        # ATHENA JOB: GEX Directional Spreads - runs every 5 minutes during market hours
         # Uses live Tradier GEX data to find intraday opportunities
         # =================================================================
         if self.athena_trader:
-            # Run every 30 minutes during market hours (8:35 AM - 2:30 PM CT)
-            # First run at 8:35 AM CT, then 9:05, 9:35, etc.
+            # Run every 5 minutes during market hours (8:35 AM - 2:30 PM CT)
+            # First run at 8:35 AM CT, then 8:40, 8:45, etc.
             self.scheduler.add_job(
                 self.scheduled_athena_logic,
                 trigger=IntervalTrigger(
-                    minutes=30,
+                    minutes=5,
                     start_date=datetime.now(CENTRAL_TZ).replace(
                         hour=8, minute=35, second=0, microsecond=0
                     ),
                     timezone='America/Chicago'
                 ),
                 id='athena_trading',
-                name='ATHENA - GEX Directional Spreads (30-min intervals)',
+                name='ATHENA - GEX Directional Spreads (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ ATHENA job scheduled (every 30 min during market hours)")
+            logger.info("✅ ATHENA job scheduled (every 5 min during market hours)")
         else:
             logger.warning("⚠️ ATHENA not available - GEX directional trading disabled")
 
