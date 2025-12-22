@@ -1,367 +1,255 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { Pause, Play } from 'lucide-react'
 
-// Animated banner showing a pilgrim's journey through trials to the cross
-export default function PilgrimJourney() {
-  const [isVisible, setIsVisible] = useState(true)
-  const [animationPhase, setAnimationPhase] = useState(0)
+interface PilgrimJourneyProps {
+  onReachCross?: () => void
+}
 
-  // Check if banner was dismissed this session
+// Compact inline animation showing a pilgrim walking toward the cross
+export default function PilgrimJourney({ onReachCross }: PilgrimJourneyProps) {
+  const [isPaused, setIsPaused] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [hasReachedCross, setHasReachedCross] = useState(false)
+
+  // Progress through animation
   useEffect(() => {
-    const dismissed = sessionStorage.getItem('pilgrimBannerDismissed')
-    if (dismissed === 'true') {
-      setIsVisible(false)
-    }
-  }, [])
+    if (isPaused) return
 
-  // Progress through animation phases
-  useEffect(() => {
     const interval = setInterval(() => {
-      setAnimationPhase((prev) => (prev + 1) % 100)
-    }, 300) // Update every 300ms for smooth animation
+      setProgress((prev) => {
+        const next = prev + 1
+        if (next >= 100) {
+          setHasReachedCross(true)
+          // Reset after kneeling for a moment
+          setTimeout(() => {
+            setHasReachedCross(false)
+            setProgress(0)
+          }, 3000)
+          return 100
+        }
+        return next
+      })
+    }, 250)
 
     return () => clearInterval(interval)
-  }, [])
+  }, [isPaused])
 
-  const handleDismiss = () => {
-    setIsVisible(false)
-    sessionStorage.setItem('pilgrimBannerDismissed', 'true')
-  }
-
-  if (!isVisible) return null
-
-  // Calculate pilgrim position (0-100%)
-  const pilgrimProgress = animationPhase
-  const isKneeling = pilgrimProgress >= 90
+  const isKneeling = progress >= 95
+  const isInStorm = progress > 30 && progress < 70
 
   return (
-    <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-amber-500/20 overflow-hidden">
-      {/* Sky gradient */}
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-700/50 via-amber-900/20 to-slate-900/80" />
+    <div className="hidden lg:flex items-center space-x-2">
+      {/* Pause/Play button */}
+      <button
+        onClick={() => setIsPaused(!isPaused)}
+        className="p-1 rounded text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+        title={isPaused ? 'Play animation' : 'Pause animation'}
+      >
+        {isPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+      </button>
 
-      <div className="relative h-12 max-w-full mx-auto">
+      {/* Animation container */}
+      <div className="relative w-48 h-10 overflow-hidden rounded-lg bg-gradient-to-r from-slate-800/50 via-slate-700/30 to-amber-900/20 border border-slate-700/50">
         <svg
-          viewBox="0 0 1200 48"
+          viewBox="0 0 200 40"
           className="w-full h-full"
           preserveAspectRatio="xMidYMid slice"
         >
           <defs>
-            {/* Gradient for the ground/hills */}
-            <linearGradient id="groundGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#1e293b" />
-              <stop offset="50%" stopColor="#334155" />
-              <stop offset="100%" stopColor="#1e293b" />
-            </linearGradient>
-
-            {/* Gradient for storm clouds */}
-            <linearGradient id="stormGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#475569" />
-              <stop offset="100%" stopColor="#1e293b" />
-            </linearGradient>
-
             {/* Golden glow for the cross */}
-            <radialGradient id="crossGlow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.6" />
-              <stop offset="50%" stopColor="#f59e0b" stopOpacity="0.3" />
+            <radialGradient id="miniCrossGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.8" />
+              <stop offset="70%" stopColor="#f59e0b" stopOpacity="0.3" />
               <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
             </radialGradient>
 
-            {/* Rain pattern */}
-            <pattern id="rain" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
-              <line x1="10" y1="0" x2="8" y2="10" stroke="#64748b" strokeWidth="0.5" opacity="0.5">
-                <animate attributeName="y1" values="0;20;0" dur="0.8s" repeatCount="indefinite" />
-                <animate attributeName="y2" values="10;30;10" dur="0.8s" repeatCount="indefinite" />
-              </line>
-            </pattern>
+            {/* Storm gradient */}
+            <linearGradient id="miniStormGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#475569" />
+              <stop offset="100%" stopColor="#1e293b" />
+            </linearGradient>
           </defs>
 
-          {/* Background hills - distant mountains */}
+          {/* Background terrain - hills and valleys */}
           <path
-            d="M0,40 Q100,25 200,35 T400,30 T600,38 T800,28 T1000,35 T1200,32 L1200,48 L0,48 Z"
-            fill="#1e293b"
-            opacity="0.5"
+            d="M0,35 Q20,30 40,33 Q60,38 80,32 Q100,28 120,34 Q140,38 160,30 Q180,26 200,28 L200,40 L0,40 Z"
+            fill="#334155"
+            opacity="0.6"
           />
 
-          {/* Storm clouds in the middle section */}
-          <g opacity={pilgrimProgress > 30 && pilgrimProgress < 70 ? 0.8 : 0.3}>
-            {/* Cloud 1 */}
-            <ellipse cx="400" cy="8" rx="60" ry="8" fill="url(#stormGradient)">
-              <animate attributeName="cx" values="380;420;380" dur="8s" repeatCount="indefinite" />
+          {/* Storm clouds (visible during storm phase) */}
+          <g opacity={isInStorm ? 0.7 : 0.2} className="transition-opacity duration-1000">
+            <ellipse cx="80" cy="8" rx="25" ry="6" fill="url(#miniStormGrad)">
+              <animate attributeName="cx" values="75;90;75" dur="4s" repeatCount="indefinite" />
             </ellipse>
-            <ellipse cx="430" cy="10" rx="40" ry="6" fill="url(#stormGradient)">
-              <animate attributeName="cx" values="420;450;420" dur="6s" repeatCount="indefinite" />
-            </ellipse>
-
-            {/* Cloud 2 */}
-            <ellipse cx="550" cy="6" rx="50" ry="7" fill="url(#stormGradient)">
-              <animate attributeName="cx" values="540;570;540" dur="7s" repeatCount="indefinite" />
-            </ellipse>
-            <ellipse cx="580" cy="9" rx="35" ry="5" fill="url(#stormGradient)">
-              <animate attributeName="cx" values="570;600;570" dur="5s" repeatCount="indefinite" />
-            </ellipse>
-
-            {/* Cloud 3 */}
-            <ellipse cx="700" cy="7" rx="45" ry="6" fill="url(#stormGradient)">
-              <animate attributeName="cx" values="690;720;690" dur="9s" repeatCount="indefinite" />
+            <ellipse cx="110" cy="6" rx="20" ry="5" fill="url(#miniStormGrad)">
+              <animate attributeName="cx" values="105;120;105" dur="3s" repeatCount="indefinite" />
             </ellipse>
           </g>
 
-          {/* Rain in storm section */}
-          {pilgrimProgress > 35 && pilgrimProgress < 65 && (
-            <rect x="350" y="15" width="400" height="30" fill="url(#rain)" opacity="0.4" />
+          {/* Rain during storm */}
+          {isInStorm && (
+            <g stroke="#64748b" strokeWidth="0.5" opacity="0.5">
+              {[...Array(12)].map((_, i) => (
+                <line
+                  key={i}
+                  x1={60 + i * 8}
+                  y1={10 + (i % 3) * 5}
+                  x2={58 + i * 8}
+                  y2={20 + (i % 3) * 5}
+                >
+                  <animate
+                    attributeName="y1"
+                    values={`${10 + (i % 3) * 5};${30 + (i % 3) * 5};${10 + (i % 3) * 5}`}
+                    dur="0.6s"
+                    repeatCount="indefinite"
+                  />
+                  <animate
+                    attributeName="y2"
+                    values={`${20 + (i % 3) * 5};${40 + (i % 3) * 5};${20 + (i % 3) * 5}`}
+                    dur="0.6s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+              ))}
+            </g>
           )}
 
-          {/* Main terrain path with hills and valleys */}
-          <path
-            d="M0,42
-               Q50,40 100,38
-               Q150,36 200,40
-               Q250,44 300,38
-               Q350,32 400,42
-               Q450,48 500,40
-               Q550,32 600,44
-               Q650,48 700,38
-               Q750,30 800,36
-               Q850,42 900,34
-               Q950,28 1000,32
-               Q1050,36 1100,30
-               L1200,28 L1200,48 L0,48 Z"
-            fill="url(#groundGradient)"
-          />
-
-          {/* Thorns/obstacles in the valley sections */}
-          <g stroke="#475569" strokeWidth="0.5" fill="none" opacity="0.6">
-            <path d="M280,42 l5,-4 l-3,0 l4,-3" />
-            <path d="M480,44 l4,-5 l-2,1 l3,-4" />
-            <path d="M620,46 l5,-4 l-3,1 l4,-3" />
-          </g>
-
-          {/* Small rocks/obstacles */}
-          <g fill="#475569">
-            <circle cx="320" cy="41" r="2" />
-            <circle cx="520" cy="43" r="1.5" />
-            <circle cx="680" cy="42" r="2" />
-          </g>
-
-          {/* The Cross at the end - with glow */}
-          <g transform="translate(1100, 10)">
-            {/* Glow behind cross */}
-            <circle cx="0" cy="12" r="25" fill="url(#crossGlow)">
-              <animate attributeName="r" values="20;28;20" dur="3s" repeatCount="indefinite" />
-              <animate attributeName="opacity" values="0.6;1;0.6" dur="3s" repeatCount="indefinite" />
+          {/* The Cross at the destination */}
+          <g transform="translate(180, 12)">
+            {/* Glow */}
+            <circle cx="0" cy="10" r="15" fill="url(#miniCrossGlow)">
+              <animate attributeName="r" values="12;18;12" dur="2s" repeatCount="indefinite" />
             </circle>
 
-            {/* Hill under cross */}
-            <ellipse cx="0" cy="25" rx="30" ry="8" fill="#334155" />
+            {/* Small hill */}
+            <ellipse cx="0" cy="20" rx="15" ry="5" fill="#475569" />
 
             {/* Cross */}
-            <g stroke="#fbbf24" strokeWidth="2.5" strokeLinecap="round">
-              {/* Vertical beam */}
-              <line x1="0" y1="0" x2="0" y2="22">
+            <g stroke="#fbbf24" strokeWidth="2" strokeLinecap="round">
+              <line x1="0" y1="2" x2="0" y2="18">
                 <animate attributeName="stroke" values="#fbbf24;#fcd34d;#fbbf24" dur="2s" repeatCount="indefinite" />
               </line>
-              {/* Horizontal beam */}
-              <line x1="-10" y1="6" x2="10" y2="6">
+              <line x1="-7" y1="6" x2="7" y2="6">
                 <animate attributeName="stroke" values="#fbbf24;#fcd34d;#fbbf24" dur="2s" repeatCount="indefinite" />
-              </line>
-            </g>
-
-            {/* Light rays from cross */}
-            <g stroke="#fbbf24" strokeWidth="0.5" opacity="0.4">
-              <line x1="0" y1="10" x2="-25" y2="0">
-                <animate attributeName="opacity" values="0.2;0.5;0.2" dur="2s" repeatCount="indefinite" />
-              </line>
-              <line x1="0" y1="10" x2="25" y2="0">
-                <animate attributeName="opacity" values="0.3;0.6;0.3" dur="2.5s" repeatCount="indefinite" />
-              </line>
-              <line x1="0" y1="10" x2="-20" y2="25">
-                <animate attributeName="opacity" values="0.2;0.4;0.2" dur="1.8s" repeatCount="indefinite" />
-              </line>
-              <line x1="0" y1="10" x2="20" y2="25">
-                <animate attributeName="opacity" values="0.3;0.5;0.3" dur="2.2s" repeatCount="indefinite" />
               </line>
             </g>
           </g>
 
-          {/* The Pilgrim figure */}
-          <g
-            transform={`translate(${50 + (pilgrimProgress * 10.5)}, 0)`}
-            className="transition-transform duration-300"
-          >
-            {/* Calculate Y position based on terrain */}
+          {/* The Pilgrim */}
+          <g transform={`translate(${10 + progress * 1.6}, 0)`}>
             {(() => {
-              // Terrain heights at different points (matching the path)
-              const getTerrainY = (progress: number) => {
-                if (progress < 10) return 38 + (progress * 0.2)
-                if (progress < 20) return 40 - ((progress - 10) * 0.4)
-                if (progress < 30) return 36 + ((progress - 20) * 0.6)
-                if (progress < 40) return 42 - ((progress - 30) * 0.4)
-                if (progress < 50) return 38 + ((progress - 40) * 0.6)
-                if (progress < 60) return 44 - ((progress - 50) * 0.4)
-                if (progress < 70) return 40 + ((progress - 60) * 0.2)
-                if (progress < 80) return 42 - ((progress - 70) * 0.4)
-                if (progress < 90) return 38 - ((progress - 80) * 0.6)
-                return 32 // At the cross
+              // Terrain Y position based on progress
+              const getY = (p: number) => {
+                if (p < 20) return 30 + Math.sin(p * 0.3) * 3
+                if (p < 40) return 33 - (p - 20) * 0.15
+                if (p < 60) return 30 + (p - 40) * 0.2
+                if (p < 80) return 34 - (p - 60) * 0.2
+                return 30 - (p - 80) * 0.1
               }
 
-              const yPos = getTerrainY(pilgrimProgress)
+              const yPos = getY(progress)
 
               if (isKneeling) {
-                // Kneeling figure at the cross
+                // Kneeling at the cross
                 return (
-                  <g transform={`translate(0, ${yPos - 12})`}>
+                  <g transform={`translate(0, ${yPos - 8})`}>
                     {/* Head */}
-                    <circle cx="0" cy="2" r="3" fill="#d4a574" />
-                    {/* Body - bent forward */}
-                    <path
-                      d="M0,5 Q-2,8 -4,10"
-                      stroke="#64748b"
-                      strokeWidth="2"
-                      fill="none"
-                      strokeLinecap="round"
-                    />
-                    {/* Arms - reaching toward cross */}
-                    <path
-                      d="M-2,7 Q2,5 6,4"
-                      stroke="#d4a574"
-                      strokeWidth="1.5"
-                      fill="none"
-                      strokeLinecap="round"
-                    />
+                    <circle cx="0" cy="0" r="2.5" fill="#d4a574" />
+                    {/* Body bent forward */}
+                    <path d="M0,2.5 Q-1,5 -3,7" stroke="#64748b" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+                    {/* Arms reaching to cross */}
+                    <path d="M-1,4 Q3,2 7,1" stroke="#d4a574" strokeWidth="1" fill="none" strokeLinecap="round" />
                     {/* Kneeling legs */}
-                    <path
-                      d="M-4,10 L-3,14 L0,14"
-                      stroke="#475569"
-                      strokeWidth="2"
-                      fill="none"
-                      strokeLinecap="round"
-                    />
-                  </g>
-                )
-              } else {
-                // Walking figure with animation
-                const walkCycle = pilgrimProgress % 10
-                const legOffset = Math.sin(walkCycle * 0.6) * 3
-                const armOffset = Math.cos(walkCycle * 0.6) * 2
-                const bobOffset = Math.abs(Math.sin(walkCycle * 0.6)) * 1
-
-                // Struggling more in storm section
-                const isInStorm = pilgrimProgress > 35 && pilgrimProgress < 65
-                const leanAngle = isInStorm ? -10 : 0
-
-                return (
-                  <g transform={`translate(0, ${yPos - 14 - bobOffset}) rotate(${leanAngle})`}>
-                    {/* Head */}
-                    <circle cx="0" cy="0" r="3" fill="#d4a574" />
-
-                    {/* Body */}
-                    <line
-                      x1="0" y1="3" x2="0" y2="10"
-                      stroke="#64748b"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-
-                    {/* Arms swinging */}
-                    <line
-                      x1="0" y1="4"
-                      x2={-2 + armOffset} y2={7 + Math.abs(armOffset) * 0.5}
-                      stroke="#d4a574"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-                    <line
-                      x1="0" y1="4"
-                      x2={2 - armOffset} y2={7 + Math.abs(armOffset) * 0.5}
-                      stroke="#d4a574"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-
-                    {/* Legs walking */}
-                    <line
-                      x1="0" y1="10"
-                      x2={-2 + legOffset} y2="16"
-                      stroke="#475569"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                    <line
-                      x1="0" y1="10"
-                      x2={2 - legOffset} y2="16"
-                      stroke="#475569"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-
-                    {/* Walking stick (shows struggle) */}
-                    {isInStorm && (
-                      <line
-                        x1="3" y1="5"
-                        x2="6" y2="16"
-                        stroke="#78716c"
-                        strokeWidth="1"
-                        strokeLinecap="round"
-                      />
-                    )}
+                    <path d="M-3,7 L-2,10 L1,10" stroke="#475569" strokeWidth="1.5" fill="none" strokeLinecap="round" />
                   </g>
                 )
               }
+
+              // Walking figure
+              const walkCycle = progress % 8
+              const legSwing = Math.sin(walkCycle * 0.8) * 2
+              const armSwing = Math.cos(walkCycle * 0.8) * 1.5
+              const bob = Math.abs(Math.sin(walkCycle * 0.8)) * 0.5
+              const lean = isInStorm ? -8 : 0
+
+              return (
+                <g transform={`translate(0, ${yPos - 10 - bob}) rotate(${lean})`}>
+                  {/* Head */}
+                  <circle cx="0" cy="0" r="2.5" fill="#d4a574" />
+
+                  {/* Body */}
+                  <line x1="0" y1="2.5" x2="0" y2="8" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+
+                  {/* Arms */}
+                  <line
+                    x1="0" y1="3.5"
+                    x2={-1.5 + armSwing} y2={6}
+                    stroke="#d4a574" strokeWidth="1" strokeLinecap="round"
+                  />
+                  <line
+                    x1="0" y1="3.5"
+                    x2={1.5 - armSwing} y2={6}
+                    stroke="#d4a574" strokeWidth="1" strokeLinecap="round"
+                  />
+
+                  {/* Legs */}
+                  <line
+                    x1="0" y1="8"
+                    x2={-1.5 + legSwing} y2="12"
+                    stroke="#475569" strokeWidth="1.5" strokeLinecap="round"
+                  />
+                  <line
+                    x1="0" y1="8"
+                    x2={1.5 - legSwing} y2="12"
+                    stroke="#475569" strokeWidth="1.5" strokeLinecap="round"
+                  />
+
+                  {/* Walking stick during storm */}
+                  {isInStorm && (
+                    <line x1="2" y1="4" x2="5" y2="12" stroke="#78716c" strokeWidth="0.8" strokeLinecap="round" />
+                  )}
+                </g>
+              )
             })()}
           </g>
 
-          {/* Footprints left behind (fading) */}
-          <g fill="#475569" opacity="0.3">
-            {[...Array(8)].map((_, i) => {
-              const footX = 50 + (pilgrimProgress * 10.5) - (i + 1) * 40
-              if (footX < 50 || footX > 1050) return null
+          {/* Footprints */}
+          <g fill="#475569" opacity="0.4">
+            {[...Array(5)].map((_, i) => {
+              const footX = 10 + progress * 1.6 - (i + 1) * 12
+              if (footX < 5 || footX > 160) return null
               return (
                 <ellipse
                   key={i}
                   cx={footX}
-                  cy="44"
-                  rx="2"
-                  ry="1"
-                  opacity={1 - i * 0.12}
+                  cy="36"
+                  rx="1.5"
+                  ry="0.8"
+                  opacity={1 - i * 0.2}
                 />
               )
             })}
           </g>
-
-          {/* Text overlay */}
-          <text
-            x="600"
-            y="46"
-            textAnchor="middle"
-            fill="#94a3b8"
-            fontSize="8"
-            fontStyle="italic"
-            opacity="0.6"
-          >
-            {isKneeling
-              ? "Come to me, all who are weary and burdened — Matthew 11:28"
-              : pilgrimProgress > 35 && pilgrimProgress < 65
-                ? "Though I walk through the valley of the shadow... — Psalm 23:4"
-                : "I press on toward the goal — Philippians 3:14"
-            }
-          </text>
         </svg>
 
-        {/* Close button */}
-        <button
-          onClick={handleDismiss}
-          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 transition-colors"
-          title="Dismiss for this session"
-        >
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
+        {/* Scripture text overlay */}
+        <div className="absolute bottom-0 left-0 right-0 text-center">
+          <span className="text-[8px] text-slate-400 italic">
+            {isKneeling
+              ? "Come to me... — Mt 11:28"
+              : isInStorm
+                ? "Through the valley... — Ps 23:4"
+                : "Press on... — Phil 3:14"
+            }
+          </span>
+        </div>
       </div>
 
-      {/* Bottom gradient line */}
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500/30 to-transparent" />
+      {/* Arrow pointing to cross button */}
+      <div className="text-amber-500/50 text-xs">→</div>
     </div>
   )
 }
