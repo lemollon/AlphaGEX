@@ -34,7 +34,10 @@ import {
   Layers,
   Compass,
   Download,
-  FileSpreadsheet
+  FileSpreadsheet,
+  History,
+  Play,
+  Pause
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -86,6 +89,8 @@ interface Commentary {
   top_magnet: number
   likely_pin: number
   pin_probability: number
+  danger_zones: string[] | null
+  vix: number | null
 }
 
 interface ExpectedMoveChange {
@@ -187,6 +192,13 @@ export default function ArgusPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [selectedStrike, setSelectedStrike] = useState<StrikeData | null>(null)
 
+  // Historical Replay State
+  const [replayMode, setReplayMode] = useState(false)
+  const [replayDates, setReplayDates] = useState<string[]>([])
+  const [selectedReplayDate, setSelectedReplayDate] = useState<string>('')
+  const [replayTimes, setReplayTimes] = useState<string[]>([])
+  const [selectedReplayTime, setSelectedReplayTime] = useState<string>('')
+
   const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Fetch functions
@@ -243,6 +255,52 @@ export default function ArgusPage() {
       }
     } catch (err) {}
   }, [])
+
+  // Historical Replay Functions
+  const fetchReplayDates = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusReplayDates()
+      if (response.data?.success && response.data?.data?.dates) {
+        setReplayDates(response.data.data.dates)
+        if (response.data.data.dates.length > 0 && !selectedReplayDate) {
+          setSelectedReplayDate(response.data.data.dates[0])
+        }
+      }
+    } catch (err) {}
+  }, [selectedReplayDate])
+
+  const fetchReplayData = useCallback(async (date: string, time?: string) => {
+    try {
+      setLoading(true)
+      const response = await apiClient.getArgusReplay(date, time)
+      if (response.data?.success && response.data?.data) {
+        setGammaData(response.data.data)
+        setLastUpdated(new Date())
+        // Set available times if returned
+        if (response.data.data.available_times) {
+          setReplayTimes(response.data.data.available_times)
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch replay data')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const toggleReplayMode = () => {
+    if (replayMode) {
+      // Exiting replay mode - go back to live
+      setReplayMode(false)
+      setAutoRefresh(true)
+      fetchGammaData(activeDay)
+    } else {
+      // Entering replay mode
+      setReplayMode(true)
+      setAutoRefresh(false)
+      fetchReplayDates()
+    }
+  }
 
   useEffect(() => {
     fetchExpirations()
@@ -461,22 +519,74 @@ export default function ArgusPage() {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Live/Replay Toggle */}
               <button
-                onClick={() => setAutoRefresh(!autoRefresh)}
+                onClick={toggleReplayMode}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
-                  autoRefresh ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'
+                  replayMode ? 'bg-orange-500/20 text-orange-400' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                 }`}
+                title={replayMode ? 'Exit replay mode' : 'View historical data'}
               >
-                <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-                {autoRefresh ? 'Live' : 'Paused'}
+                <History className="w-4 h-4" />
+                {replayMode ? 'Replay' : 'History'}
               </button>
-              <button
-                onClick={() => fetchGammaData(activeDay)}
-                className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg"
-                title="Refresh data"
-              >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              </button>
+
+              {/* Replay Controls - Show when in replay mode */}
+              {replayMode && (
+                <>
+                  <select
+                    value={selectedReplayDate}
+                    onChange={(e) => {
+                      setSelectedReplayDate(e.target.value)
+                      setSelectedReplayTime('')
+                      fetchReplayData(e.target.value)
+                    }}
+                    className="bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600"
+                  >
+                    {replayDates.map(date => (
+                      <option key={date} value={date}>{date}</option>
+                    ))}
+                  </select>
+                  {replayTimes.length > 0 && (
+                    <select
+                      value={selectedReplayTime}
+                      onChange={(e) => {
+                        setSelectedReplayTime(e.target.value)
+                        fetchReplayData(selectedReplayDate, e.target.value)
+                      }}
+                      className="bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600"
+                    >
+                      <option value="">Select time...</option>
+                      {replayTimes.map(time => (
+                        <option key={time} value={time}>{time}</option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              )}
+
+              {/* Live Controls - Show when not in replay mode */}
+              {!replayMode && (
+                <>
+                  <button
+                    onClick={() => setAutoRefresh(!autoRefresh)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
+                      autoRefresh ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'
+                    }`}
+                  >
+                    <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
+                    {autoRefresh ? 'Live' : 'Paused'}
+                  </button>
+                  <button
+                    onClick={() => fetchGammaData(activeDay)}
+                    className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg"
+                    title="Refresh data"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  </button>
+                </>
+              )}
+
               <button
                 onClick={exportToExcel}
                 disabled={!gammaData}
@@ -489,6 +599,28 @@ export default function ArgusPage() {
             </div>
           </div>
         </div>
+
+        {/* Replay Mode Banner */}
+        {replayMode && (
+          <div className="bg-orange-500/20 border border-orange-500/50 rounded-xl p-3 mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <History className="w-5 h-5 text-orange-400" />
+              <div>
+                <span className="text-orange-400 font-medium">Historical Replay Mode</span>
+                <span className="text-gray-400 ml-2">
+                  Viewing: {selectedReplayDate} {selectedReplayTime && `@ ${selectedReplayTime}`}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={toggleReplayMode}
+              className="px-3 py-1 bg-orange-500 hover:bg-orange-400 text-white text-sm rounded-lg flex items-center gap-2"
+            >
+              <Play className="w-4 h-4" />
+              Return to Live
+            </button>
+          </div>
+        )}
 
         {/* Expected Move Change Banner - TOP PRIORITY */}
         {gammaData?.expected_move_change && (
@@ -971,6 +1103,94 @@ export default function ArgusPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            {/* Live Commentary / ARGUS Log */}
+            <div className="bg-gray-800/50 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-cyan-400" />
+                  ARGUS Live Log
+                </h3>
+                {commentary.length > 0 && (
+                  <span className="text-xs text-gray-500">
+                    {commentary.length} entries • Updates every 5 min
+                  </span>
+                )}
+              </div>
+              <div className="space-y-3 max-h-80 overflow-y-auto">
+                {commentary.length > 0 ? (
+                  commentary.slice(0, 20).map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="p-4 bg-gray-900/50 rounded-lg border-l-2 border-cyan-500/50"
+                    >
+                      {/* Timestamp Header */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-3 h-3 text-cyan-400" />
+                          <span className="text-xs text-cyan-400 font-medium">
+                            {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-gray-600">
+                          {new Date(entry.timestamp).toLocaleDateString()}
+                        </span>
+                      </div>
+
+                      {/* Commentary Text */}
+                      <div className="text-sm text-gray-200 leading-relaxed whitespace-pre-line mb-3">
+                        {entry.text}
+                      </div>
+
+                      {/* Market Context Row */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                        <div className="bg-gray-800/50 rounded px-2 py-1.5">
+                          <span className="text-gray-500">SPY</span>
+                          <span className="text-white ml-1 font-mono">${entry.spot_price?.toFixed(2) || '-'}</span>
+                        </div>
+                        <div className="bg-gray-800/50 rounded px-2 py-1.5">
+                          <span className="text-gray-500">VIX</span>
+                          <span className={`ml-1 font-mono ${(entry.vix || 0) > 20 ? 'text-orange-400' : 'text-emerald-400'}`}>
+                            {entry.vix?.toFixed(1) || '-'}
+                          </span>
+                        </div>
+                        <div className="bg-gray-800/50 rounded px-2 py-1.5">
+                          <span className="text-gray-500">Magnet</span>
+                          <span className="text-yellow-400 ml-1 font-mono">${entry.top_magnet || '-'}</span>
+                        </div>
+                        <div className="bg-gray-800/50 rounded px-2 py-1.5">
+                          <span className="text-gray-500">Pin</span>
+                          <span className="text-purple-400 ml-1 font-mono">
+                            ${entry.likely_pin || '-'}
+                            <span className="text-gray-600 text-[10px] ml-1">
+                              ({entry.pin_probability?.toFixed(0) || 0}%)
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Danger Zones */}
+                      {entry.danger_zones && entry.danger_zones.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          <span className="text-[10px] text-orange-400">Danger:</span>
+                          {entry.danger_zones.slice(0, 5).map((dz, i) => (
+                            <span key={i} className="px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded text-[10px]">
+                              {typeof dz === 'string' ? dz : JSON.stringify(dz)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <Activity className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No log entries yet</p>
+                    <p className="text-xs text-gray-600 mt-1">AI commentary generates every 5 minutes during market hours</p>
+                  </div>
+                )}
               </div>
             </div>
 
