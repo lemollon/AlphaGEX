@@ -180,6 +180,67 @@ class QuantEnhancedTrader:
 
         return default_stats
 
+    def _check_walk_forward_validity(self) -> bool:
+        """
+        Check if current strategy parameters are walk-forward validated.
+
+        Queries the walk_forward_results table to see if:
+        1. There's a recent walk-forward analysis (within 30 days)
+        2. The strategy passed robustness checks (degradation < 20%, OOS win rate > 50%)
+
+        Returns:
+            True if walk-forward validated or no validation data exists (assume valid)
+            False if validation failed
+        """
+        if not DB_AVAILABLE:
+            return True  # No DB, assume valid
+
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            # Check for recent walk-forward results
+            c.execute("""
+                SELECT
+                    strategy_name,
+                    is_avg_win_rate,
+                    oos_avg_win_rate,
+                    degradation_pct,
+                    is_robust,
+                    analysis_date
+                FROM walk_forward_results
+                WHERE symbol = %s
+                  AND analysis_date >= NOW() - INTERVAL '30 days'
+                ORDER BY analysis_date DESC
+                LIMIT 1
+            """, (self.symbol,))
+
+            row = c.fetchone()
+            conn.close()
+
+            if row is None:
+                # No walk-forward data - assume valid but log warning
+                return True
+
+            # Check robustness criteria:
+            # 1. OOS win rate > 50%
+            # 2. Degradation < 20% (OOS not much worse than IS)
+            # 3. Explicitly marked as robust
+            is_robust = row[4]  # is_robust column
+            oos_win_rate = row[2] or 0
+            degradation = row[3] or 100
+
+            if is_robust and oos_win_rate > 50 and degradation < 20:
+                return True
+
+            # Strategy failed walk-forward validation
+            return False
+
+        except Exception as e:
+            # On error, assume valid to not block trading
+            print(f"Could not check walk-forward validity: {e}")
+            return True
+
     def get_ml_prediction(
         self,
         gex_data: Dict,
@@ -370,9 +431,9 @@ class QuantEnhancedTrader:
         reasoning_parts.append(f"Safe Kelly: {sizing['kelly_safe']:.1f}%")
         reasoning_parts.append(f"Uncertainty: {sizing['uncertainty_level']}")
 
-        # Walk-forward validation flag
-        # In production, this would check if current params passed walk-forward
-        walk_forward_valid = True  # TODO: Implement actual check
+        # Walk-forward validation check
+        # Checks database for recent walk-forward results to ensure strategy is robust
+        walk_forward_valid = self._check_walk_forward_validity()
 
         return QuantRecommendation(
             timestamp=datetime.now(),

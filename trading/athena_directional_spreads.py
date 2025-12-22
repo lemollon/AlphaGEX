@@ -197,6 +197,10 @@ class SpreadPosition:
     oracle_confidence: float = 0
     oracle_reasoning: str = ""
 
+    # Trailing stop tracking
+    high_water_mark: float = 0  # Highest favorable price seen
+    low_water_mark: float = float('inf')  # Lowest favorable price seen
+
 
 @dataclass
 class ATHENAConfig:
@@ -844,7 +848,86 @@ class ATHENATrader:
 
             return position
 
-        # TODO: Live execution via Tradier
+        # Live execution via Tradier
+        if self.config.mode == TradingMode.LIVE and TRADIER_AVAILABLE and self.tradier:
+            try:
+                # Format today's date for expiration
+                today_expiration = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+
+                # Determine option type based on spread type
+                option_type = "call"  # Both BULL_CALL and BEAR_CALL use call options
+
+                # Get quotes for spread pricing
+                long_contract = self.tradier.find_delta_option(
+                    self.config.ticker, 0.50, today_expiration, option_type
+                )
+                if long_contract:
+                    # Calculate limit price (mid of spread)
+                    limit_debit = abs(long_contract.mid) * 0.5  # Approximate spread cost
+
+                    # Execute the vertical spread order
+                    order_response = self.tradier.place_vertical_spread(
+                        symbol=self.config.ticker,
+                        expiration=today_expiration,
+                        long_strike=long_strike,
+                        short_strike=short_strike,
+                        option_type=option_type,
+                        quantity=contracts,
+                        limit_price=round(limit_debit, 2)
+                    )
+
+                    if order_response and order_response.get('order'):
+                        order_info = order_response['order']
+
+                        # Create position tracking record
+                        import uuid
+                        position = SpreadPosition(
+                            position_id=f"ATHENA-LIVE-{order_info.get('id', uuid.uuid4().hex[:8])}",
+                            open_date=today,
+                            expiration=today,
+                            spread_type=spread_type,
+                            long_strike=long_strike,
+                            short_strike=short_strike,
+                            entry_debit=limit_debit,
+                            contracts=contracts,
+                            spread_width=spread_width,
+                            max_loss=spread_width * 100 * contracts,
+                            max_profit=(spread_width - limit_debit) * 100 * contracts,
+                            underlying_price_at_entry=spot_price,
+                            gex_regime_at_entry=gex_data.get('regime', 'NEUTRAL'),
+                            call_wall_at_entry=gex_data.get('call_wall', 0),
+                            put_wall_at_entry=gex_data.get('put_wall', 0),
+                            oracle_confidence=advice.confidence,
+                            oracle_reasoning=advice.reasoning[:1000]
+                        )
+
+                        self.open_positions.append(position)
+                        self.daily_trades += 1
+
+                        # Save to database
+                        self._save_position_to_db(position, signal_id)
+
+                        self._log_to_db("INFO", f"LIVE TRADE EXECUTED: {spread_type.value}", {
+                            'position_id': position.position_id,
+                            'order_id': order_info.get('id'),
+                            'order_status': order_info.get('status'),
+                            'strikes': f"{long_strike}/{short_strike}",
+                            'contracts': contracts,
+                            'entry_debit': limit_debit
+                        })
+
+                        logger.info(f"⚡ LIVE ORDER: {spread_type.value} {contracts}x {long_strike}/{short_strike}")
+                        return position
+                    else:
+                        self._log_to_db("ERROR", "Live order failed", {'response': str(order_response)})
+                        logger.error(f"Live order failed: {order_response}")
+
+            except Exception as e:
+                self._log_to_db("ERROR", f"Live execution error: {str(e)}", {})
+                logger.error(f"Live execution via Tradier failed: {e}")
+                import traceback
+                traceback.print_exc()
+
         return None
 
     def _save_position_to_db(self, position: SpreadPosition, signal_id: Optional[int]) -> None:
@@ -1332,7 +1415,47 @@ class ATHENATrader:
                 should_exit = True
                 exit_reason = "EOD_EXIT"
 
-            # TODO: Check trailing stop if we have intraday price data
+            # Check trailing stop using intraday price data
+            if not should_exit:
+                try:
+                    # Get current price
+                    current_price = 0
+                    if UNIFIED_DATA_AVAILABLE:
+                        current_price = get_price(self.config.ticker)
+                    elif TRADIER_AVAILABLE and self.tradier:
+                        quote = self.tradier.get_quote(self.config.ticker)
+                        current_price = quote.get('last', 0) or quote.get('close', 0)
+
+                    if current_price > 0:
+                        entry_price = position.underlying_price_at_entry
+                        trailing_stop_pct = self.config.trailing_stop_pct / 100  # Convert to decimal
+
+                        if position.spread_type == SpreadType.BULL_CALL_SPREAD:
+                            # Bull call spread: exit if price drops below trailing stop from high
+                            if position.high_water_mark == 0:
+                                position.high_water_mark = max(entry_price, current_price)
+                            else:
+                                position.high_water_mark = max(position.high_water_mark, current_price)
+
+                            trailing_stop_price = position.high_water_mark * (1 - trailing_stop_pct)
+                            if current_price < trailing_stop_price:
+                                should_exit = True
+                                exit_reason = f"TRAILING_STOP (price {current_price:.2f} < stop {trailing_stop_price:.2f})"
+
+                        elif position.spread_type == SpreadType.BEAR_CALL_SPREAD:
+                            # Bear call spread: exit if price rises above trailing stop from low
+                            if position.low_water_mark == float('inf'):
+                                position.low_water_mark = min(entry_price, current_price)
+                            else:
+                                position.low_water_mark = min(position.low_water_mark, current_price)
+
+                            trailing_stop_price = position.low_water_mark * (1 + trailing_stop_pct)
+                            if current_price > trailing_stop_price:
+                                should_exit = True
+                                exit_reason = f"TRAILING_STOP (price {current_price:.2f} > stop {trailing_stop_price:.2f})"
+
+                except Exception as e:
+                    self._log_to_db("DEBUG", f"Could not check trailing stop: {e}")
 
             if should_exit:
                 self._close_position(position, exit_reason)

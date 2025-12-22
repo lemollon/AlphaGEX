@@ -23,6 +23,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from core_classes_and_engines import TradingVolatilityAPI
 from data.polygon_data_fetcher import PolygonDataFetcher
 
+# Import rate limiter for tracking
+try:
+    from utils.rate_limiter import trading_volatility_limiter, RateLimiter
+    RATE_LIMITER_AVAILABLE = True
+except ImportError:
+    RATE_LIMITER_AVAILABLE = False
+    trading_volatility_limiter = None
+
+# Import GEX history fetcher
+try:
+    from gamma.gex_history_snapshot_job import get_gex_history
+    GEX_HISTORY_AVAILABLE = True
+except ImportError:
+    GEX_HISTORY_AVAILABLE = False
+    get_gex_history = None
+
 # =============================================================================
 # MCP Protocol Models
 # =============================================================================
@@ -182,8 +198,24 @@ async def get_trading_volatility_gex(symbol: str, include_history: bool = False)
         }
 
         if include_history:
-            # TODO: Fetch from database
-            result["history_note"] = "History fetching from database not yet implemented"
+            # Fetch historical GEX data from database
+            if GEX_HISTORY_AVAILABLE and get_gex_history:
+                history_data = get_gex_history(symbol, days=30)
+                result["history"] = [
+                    {
+                        "timestamp": h.get("timestamp").isoformat() if hasattr(h.get("timestamp"), "isoformat") else str(h.get("timestamp")),
+                        "net_gex": h.get("net_gex"),
+                        "flip_point": h.get("flip_point"),
+                        "call_wall": h.get("call_wall"),
+                        "put_wall": h.get("put_wall"),
+                        "spot_price": h.get("spot_price"),
+                        "regime": h.get("regime")
+                    }
+                    for h in history_data
+                ]
+            else:
+                result["history"] = []
+                result["history_note"] = "GEX history module not available"
 
         return result
     except Exception as e:
@@ -261,14 +293,34 @@ async def get_market_snapshot(symbol: str) -> Dict[str, Any]:
 
 async def check_rate_limits() -> Dict[str, Any]:
     """Check API rate limit status"""
+    # Get actual rate limit stats if available
+    if RATE_LIMITER_AVAILABLE and trading_volatility_limiter:
+        stats = trading_volatility_limiter.get_stats()
+        tv_status = {
+            "limit": f"{stats.get('max_calls_per_minute', 20)} calls/minute",
+            "calls_last_minute": stats.get('calls_last_minute', 0),
+            "calls_last_hour": stats.get('calls_last_hour', 0),
+            "remaining_minute": stats.get('remaining_minute', 0),
+            "remaining_hour": stats.get('remaining_hour', 0),
+            "utilization_minute": round(stats.get('utilization_minute', 0), 1),
+            "utilization_hour": round(stats.get('utilization_hour', 0), 1),
+            "total_calls": stats.get('total_calls', 0),
+            "total_blocked": stats.get('total_blocked', 0),
+            "total_delayed": stats.get('total_delayed', 0),
+            "status": "ok" if stats.get('remaining_minute', 1) > 0 else "rate_limited",
+            "note": "Dynamic limits based on market hours"
+        }
+    else:
+        tv_status = {
+            "limit": "20 calls/minute",
+            "status": "unknown",
+            "note": "Rate limiter module not available"
+        }
+
     return {
         "timestamp": datetime.now().isoformat(),
         "rate_limits": {
-            "trading_volatility": {
-                "limit": "20 calls/minute",
-                "status": "ok",  # TODO: Implement actual rate limit tracking
-                "note": "Circuit breaker active with 4-second intervals"
-            },
+            "trading_volatility": tv_status,
             "polygon": {
                 "limit": "Varies by plan (Starter/Developer tier)",
                 "status": "ok",
