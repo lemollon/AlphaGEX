@@ -242,3 +242,81 @@ async def stop_trader_manually():
             return {"success": False, "error": f"Permission denied when trying to stop PID {pid}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+@router.get("/config")
+async def get_system_config():
+    """
+    Get system configuration values (read-only).
+    Exposes key configuration parameters for UI display.
+    """
+    try:
+        # Import config classes
+        from config import (
+            VIXConfig, GEXThresholdConfig, RateLimitConfig,
+            TradeSetupConfig, RiskLevelConfig, SystemConfig,
+            ImpliedVolatilityConfig
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "vix": {
+                    "default_vix": VIXConfig.DEFAULT_VIX,
+                    "low_threshold": VIXConfig.LOW_VIX_THRESHOLD,
+                    "elevated_threshold": VIXConfig.ELEVATED_VIX_THRESHOLD,
+                    "high_threshold": VIXConfig.HIGH_VIX_THRESHOLD,
+                    "extreme_threshold": VIXConfig.EXTREME_VIX_THRESHOLD,
+                },
+                "gex": {
+                    "use_adaptive_thresholds": GEXThresholdConfig.USE_ADAPTIVE_THRESHOLDS,
+                    "adaptive_lookback_days": GEXThresholdConfig.ADAPTIVE_LOOKBACK_DAYS,
+                    "fixed_thresholds": {
+                        "extreme_negative": GEXThresholdConfig.FIXED_THRESHOLDS['extreme_negative'] / 1e9,
+                        "high_negative": GEXThresholdConfig.FIXED_THRESHOLDS['high_negative'] / 1e9,
+                        "moderate_negative": GEXThresholdConfig.FIXED_THRESHOLDS['moderate_negative'] / 1e9,
+                        "moderate_positive": GEXThresholdConfig.FIXED_THRESHOLDS['moderate_positive'] / 1e9,
+                        "high_positive": GEXThresholdConfig.FIXED_THRESHOLDS['high_positive'] / 1e9,
+                        "extreme_positive": GEXThresholdConfig.FIXED_THRESHOLDS['extreme_positive'] / 1e9,
+                    },
+                },
+                "rate_limits": {
+                    "min_request_interval_seconds": RateLimitConfig.MIN_REQUEST_INTERVAL,
+                    "circuit_breaker_duration_seconds": RateLimitConfig.CIRCUIT_BREAKER_DURATION,
+                    "max_consecutive_errors": RateLimitConfig.MAX_CONSECUTIVE_ERRORS,
+                    "cache_duration_seconds": RateLimitConfig.CACHE_DURATION,
+                },
+                "trade_setup": {
+                    "min_confidence_threshold": TradeSetupConfig.MIN_CONFIDENCE_THRESHOLD,
+                    "min_win_rate_threshold": TradeSetupConfig.MIN_WIN_RATE_THRESHOLD,
+                    "spread_width_normal_pct": TradeSetupConfig.SPREAD_WIDTH_NORMAL * 100,
+                    "spread_width_low_price_pct": TradeSetupConfig.SPREAD_WIDTH_LOW_PRICE * 100,
+                },
+                "risk": {
+                    "extreme_risk_threshold": RiskLevelConfig.EXTREME_RISK_THRESHOLD,
+                    "high_risk_threshold": RiskLevelConfig.HIGH_RISK_THRESHOLD,
+                    "moderate_risk_threshold": RiskLevelConfig.MODERATE_RISK_THRESHOLD,
+                    "daily_risk_levels": RiskLevelConfig.DAILY_RISK_LEVELS,
+                },
+                "implied_volatility": {
+                    "default_iv_pct": ImpliedVolatilityConfig.DEFAULT_IV * 100,
+                    "low_iv_threshold_pct": ImpliedVolatilityConfig.LOW_IV_THRESHOLD * 100,
+                    "normal_iv_threshold_pct": ImpliedVolatilityConfig.NORMAL_IV_THRESHOLD * 100,
+                    "high_iv_threshold_pct": ImpliedVolatilityConfig.HIGH_IV_THRESHOLD * 100,
+                    "extreme_iv_threshold_pct": ImpliedVolatilityConfig.EXTREME_IV_THRESHOLD * 100,
+                },
+                "system": {
+                    "environment": SystemConfig.ENVIRONMENT,
+                    "log_level": SystemConfig.LOG_LEVEL,
+                    "enable_adaptive_gex": SystemConfig.ENABLE_ADAPTIVE_GEX_THRESHOLDS,
+                    "enable_adaptive_gamma": SystemConfig.ENABLE_ADAPTIVE_GAMMA_PATTERN,
+                    "max_concurrent_api_calls": SystemConfig.MAX_CONCURRENT_API_CALLS,
+                    "request_timeout_seconds": SystemConfig.REQUEST_TIMEOUT,
+                },
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except ImportError as e:
+        return {"success": False, "error": f"Config import failed: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
