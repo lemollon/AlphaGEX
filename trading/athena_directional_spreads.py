@@ -1228,28 +1228,38 @@ class ATHENATrader:
             return
 
         try:
-            # Get VIX and VIX percentile
+            # Get VIX and VIX percentile with validation
             vix = 20.0
             vix_percentile = 50.0
             if UNIFIED_DATA_AVAILABLE:
                 try:
                     from data.unified_data_provider import get_vix
-                    vix = get_vix() or 20.0
-                    # Estimate VIX percentile (simplified - could enhance with historical data)
-                    if vix < 12:
-                        vix_percentile = 10
-                    elif vix < 15:
-                        vix_percentile = 25
-                    elif vix < 18:
-                        vix_percentile = 40
-                    elif vix < 22:
-                        vix_percentile = 55
-                    elif vix < 28:
-                        vix_percentile = 75
+                    fetched_vix = get_vix()
+                    if fetched_vix and fetched_vix > 0:
+                        vix = fetched_vix
                     else:
-                        vix_percentile = 90
-                except:
-                    pass
+                        logger.warning(f"ATHENA: get_vix() returned invalid value: {fetched_vix}, using default 20.0")
+                except Exception as e:
+                    logger.warning(f"ATHENA: Failed to get VIX: {e}, using default 20.0")
+
+            # Validate VIX is in reasonable range (8-100)
+            if vix < 8 or vix > 100:
+                logger.warning(f"ATHENA: VIX {vix} outside normal range, clamping")
+                vix = max(8, min(100, vix))
+
+            # Estimate VIX percentile (simplified - could enhance with historical data)
+            if vix < 12:
+                vix_percentile = 10
+            elif vix < 15:
+                vix_percentile = 25
+            elif vix < 18:
+                vix_percentile = 40
+            elif vix < 22:
+                vix_percentile = 55
+            elif vix < 28:
+                vix_percentile = 75
+            else:
+                vix_percentile = 90
 
             # Calculate distance to flip point
             spot = gex_data.get('spot_price', 0)
@@ -1260,6 +1270,13 @@ class ATHENATrader:
 
             # Calculate expected move from VIX (simplified)
             expected_move_pct = (vix / 16) * (1 / 252 ** 0.5) * 100  # Daily expected move
+
+            # Validate expected move is reasonable (0.5% to 10% daily)
+            if expected_move_pct <= 0 or expected_move_pct > 10:
+                logger.warning(f"ATHENA: Expected move {expected_move_pct:.2f}% invalid, recalculating")
+                expected_move_pct = (vix / 16) * 0.063 * 100  # Fallback
+
+            logger.info(f"ATHENA Trade Decision: VIX={vix:.2f}, Expected Move={expected_move_pct:.2f}%")
 
             # Determine trend from position relative to flip point
             trend = "NEUTRAL"
@@ -2027,14 +2044,33 @@ class ATHENATrader:
             return
 
         try:
-            # Get VIX
+            # Get VIX with validation
             vix = 20.0
             if UNIFIED_DATA_AVAILABLE:
                 try:
                     from data.unified_data_provider import get_vix
-                    vix = get_vix() or 20.0
-                except:
-                    pass
+                    fetched_vix = get_vix()
+                    if fetched_vix and fetched_vix > 0:
+                        vix = fetched_vix
+                    else:
+                        logger.warning(f"ATHENA: get_vix() returned invalid value: {fetched_vix}, using default 20.0")
+                except Exception as e:
+                    logger.warning(f"ATHENA: Failed to get VIX: {e}, using default 20.0")
+
+            # Validate VIX is in reasonable range (8-100)
+            if vix < 8 or vix > 100:
+                logger.warning(f"ATHENA: VIX {vix} outside normal range, clamping")
+                vix = max(8, min(100, vix))
+
+            # Calculate expected move (same formula as _log_decision)
+            expected_move_pct = (vix / 16) * (1 / 252 ** 0.5) * 100  # Daily expected move
+
+            # Validate expected move is reasonable
+            if expected_move_pct <= 0 or expected_move_pct > 10:
+                logger.warning(f"ATHENA: Expected move {expected_move_pct:.2f}% invalid, recalculating")
+                expected_move_pct = (vix / 16) * 0.063 * 100  # Fallback calculation
+
+            logger.info(f"ATHENA Skip Decision: VIX={vix:.2f}, Expected Move={expected_move_pct:.2f}%")
 
             # Build supporting factors
             supporting_factors = []
@@ -2044,6 +2080,7 @@ class ATHENATrader:
                     f"Spot: ${gex_data.get('spot_price', 0):,.2f}",
                     f"Call Wall: ${gex_data.get('call_wall', 0):,.0f}",
                     f"Put Wall: ${gex_data.get('put_wall', 0):,.0f}",
+                    f"Expected Move: {expected_move_pct:.2f}%",
                 ])
             if ml_signal:
                 supporting_factors.extend([
@@ -2058,6 +2095,7 @@ class ATHENATrader:
                     spot_price=gex_data.get('spot_price', 0),
                     spot_source=DataSource.TRADIER_LIVE,
                     vix=vix,
+                    expected_move_pct=expected_move_pct,
                     net_gex=gex_data.get('net_gex', 0),
                     gex_regime=gex_data.get('regime', 'NEUTRAL'),
                     flip_point=gex_data.get('flip_point', 0),
