@@ -127,10 +127,14 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
             expiration = engine.get_0dte_expiration()
         logger.info(f"ARGUS: Using expiration={expiration}")
 
-        # Get options chain
-        chain = await tradier.get_options_chain('SPY', expiration)
-        options_count = len(chain.get('options', []))
-        logger.info(f"ARGUS: Options chain fetched, {options_count} options")
+        # Get options chain (synchronous method, returns OptionChain dataclass)
+        option_chain = tradier.get_option_chain('SPY', expiration)
+
+        # OptionChain.chains is Dict[expiration, List[OptionContract]]
+        # Get contracts for the requested expiration
+        contracts = option_chain.chains.get(expiration, [])
+        options_count = len(contracts)
+        logger.info(f"ARGUS: Options chain fetched, {options_count} contracts for {expiration}")
 
         # If no options (market closed/weekend), fall back to mock
         if options_count == 0:
@@ -143,32 +147,32 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         # Process chain into strike data using O(1) dictionary lookup instead of O(n²) nested loop
         # Build dictionaries keyed by (strike, option_type) for fast lookup
         options_by_key = {}
-        for option in chain.get('options', []):
-            strike = option.get('strike')
-            opt_type = option.get('option_type')
+        for contract in contracts:
+            strike = contract.strike
+            opt_type = contract.option_type
             if strike and opt_type:
-                options_by_key[(strike, opt_type)] = option
+                options_by_key[(strike, opt_type)] = contract
 
         # Get unique strikes
-        unique_strike_values = set(option.get('strike') for option in chain.get('options', []) if option.get('strike'))
+        unique_strike_values = set(contract.strike for contract in contracts if contract.strike)
 
         # Build strike data using O(1) lookups
         unique_strikes = {}
         for strike in unique_strike_values:
-            call_data = options_by_key.get((strike, 'call'), {})
-            put_data = options_by_key.get((strike, 'put'), {})
+            call_contract = options_by_key.get((strike, 'call'))
+            put_contract = options_by_key.get((strike, 'put'))
 
             unique_strikes[strike] = {
                 'strike': strike,
-                'call_gamma': call_data.get('greeks', {}).get('gamma', 0) or 0,
-                'put_gamma': put_data.get('greeks', {}).get('gamma', 0) or 0,
-                'call_oi': call_data.get('open_interest', 0) or 0,
-                'put_oi': put_data.get('open_interest', 0) or 0,
-                'call_price': call_data.get('last', 0) or call_data.get('mid', 0) or 0,
-                'put_price': put_data.get('last', 0) or put_data.get('mid', 0) or 0,
-                'call_iv': call_data.get('greeks', {}).get('mid_iv', 0) or 0,
-                'put_iv': put_data.get('greeks', {}).get('mid_iv', 0) or 0,
-                'volume': (call_data.get('volume', 0) or 0) + (put_data.get('volume', 0) or 0)
+                'call_gamma': call_contract.gamma if call_contract else 0,
+                'put_gamma': put_contract.gamma if put_contract else 0,
+                'call_oi': call_contract.open_interest if call_contract else 0,
+                'put_oi': put_contract.open_interest if put_contract else 0,
+                'call_price': (call_contract.last or call_contract.mid) if call_contract else 0,
+                'put_price': (put_contract.last or put_contract.mid) if put_contract else 0,
+                'call_iv': call_contract.implied_volatility if call_contract else 0,
+                'put_iv': put_contract.implied_volatility if put_contract else 0,
+                'volume': (call_contract.volume if call_contract else 0) + (put_contract.volume if put_contract else 0)
             }
 
         result = {
