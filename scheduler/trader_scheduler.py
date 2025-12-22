@@ -18,6 +18,7 @@ TRADING BOTS:
 - ARES: Aggressive Iron Condor targeting 10% monthly (daily at 9:35 AM ET)
 - ARES EOD: Process expired 0DTE positions (daily at 4:05 PM ET)
 - ATHENA: GEX Directional Spreads (every 30 min 9:35 AM - 3:30 PM ET)
+- ARGUS: Gamma Commentary Generation (every 5 min 8:30 AM - 3:00 PM CT)
 
 This partitioning provides:
 - Aggressive short-term trading via PHOENIX
@@ -201,11 +202,13 @@ class AutonomousTraderScheduler:
         self.last_atlas_check = None
         self.last_ares_check = None
         self.last_athena_check = None
+        self.last_argus_check = None
         self.last_error = None
         self.execution_count = 0
         self.atlas_execution_count = 0
         self.ares_execution_count = 0
         self.athena_execution_count = 0
+        self.argus_execution_count = 0
 
         # Load saved state from database
         self._load_state()
@@ -464,7 +467,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_ares_logic(self):
         """
-        ARES (Aggressive Iron Condor) trading logic - runs daily at 8:35 AM CT
+        ARES (Aggressive Iron Condor) trading logic - runs daily at 9:35 AM CT
 
         The aggressive Iron Condor strategy:
         - Targets 10% monthly returns
@@ -666,6 +669,82 @@ class AutonomousTraderScheduler:
             logger.info("ATHENA will retry next interval")
             logger.info(f"=" * 80)
 
+    def scheduled_argus_logic(self):
+        """
+        ARGUS (0DTE Gamma Live) commentary generation - runs every 5 minutes during market hours
+
+        Generates AI-powered market commentary based on current gamma structure:
+        - Gamma regime analysis
+        - Magnet/pin predictions
+        - Danger zone alerts
+        - Expected move changes
+
+        Commentary is stored in the argus_commentary table for the Live Log.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ARGUS (Commentary) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping ARGUS commentary generation.")
+            return
+
+        logger.info("Market is OPEN. Generating ARGUS gamma commentary...")
+
+        try:
+            self.last_argus_check = now
+
+            # Call the ARGUS commentary generation endpoint via HTTP
+            # This ensures we use the same logic as manual generation
+            import requests
+
+            # Try local FastAPI server first, then production
+            base_urls = [
+                "http://127.0.0.1:8000",
+                "https://alphagex-api.onrender.com"
+            ]
+
+            result = None
+            for base_url in base_urls:
+                try:
+                    response = requests.post(
+                        f"{base_url}/api/argus/commentary/generate",
+                        json={"force": False},
+                        timeout=60
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        logger.info(f"ARGUS: Commentary generated via {base_url}")
+                        break
+                except requests.exceptions.RequestException as e:
+                    logger.debug(f"ARGUS: Could not reach {base_url}: {e}")
+                    continue
+
+            if result and result.get('success'):
+                data = result.get('data', {})
+                commentary = data.get('commentary', '')
+                generated_at = data.get('generated_at', '')
+
+                # Log success with preview of commentary
+                preview = commentary[:100] + '...' if len(commentary) > 100 else commentary
+                logger.info(f"ARGUS commentary generated:")
+                logger.info(f"  Time: {generated_at}")
+                logger.info(f"  Preview: {preview}")
+            else:
+                logger.warning("ARGUS: Commentary generation returned no result")
+
+            self.argus_execution_count += 1
+            logger.info(f"ARGUS commentary #{self.argus_execution_count} completed (next in 5 min)")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in ARGUS commentary generation: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("ARGUS will retry next interval")
+            logger.info(f"=" * 80)
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -679,12 +758,13 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), ATHENA (GEX Directional)")
+        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), ATHENA (GEX Directional), ARGUS (Commentary)")
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
-        logger.info(f"ARES Schedule: Daily at 8:35 AM CT, Mon-Fri")
+        logger.info(f"ARES Schedule: Daily at 9:35 AM CT, Mon-Fri")
         logger.info(f"ATHENA Schedule: Every 30 min (8:35 AM - 2:30 PM CT), Mon-Fri")
+        logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Mon-Fri")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -735,14 +815,15 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ATLAS not available - wheel trading disabled")
 
         # =================================================================
-        # ARES JOB: Aggressive Iron Condor - runs once daily at 8:35 AM CT
+        # ARES JOB: Aggressive Iron Condor - runs once daily at 9:35 AM CT
+        # (Matches ARES trading window which starts at 9:35 AM CT)
         # =================================================================
         if self.ares_trader:
             self.scheduler.add_job(
                 self.scheduled_ares_logic,
                 trigger=CronTrigger(
-                    hour=8,        # 8:00 AM CT
-                    minute=35,     # 8:35 AM CT - 5 min after market open for max premium
+                    hour=9,        # 9:00 AM CT
+                    minute=35,     # 9:35 AM CT - matches ARES entry_time_start
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
@@ -750,7 +831,7 @@ class AutonomousTraderScheduler:
                 name='ARES - Aggressive Iron Condor',
                 replace_existing=True
             )
-            logger.info("✅ ARES job scheduled (8:35 AM CT daily)")
+            logger.info("✅ ARES job scheduled (9:35 AM CT daily)")
 
             # =================================================================
             # ARES EOD JOB: Process expired positions - runs at 3:05 PM CT
@@ -794,6 +875,25 @@ class AutonomousTraderScheduler:
             logger.info("✅ ATHENA job scheduled (every 30 min during market hours)")
         else:
             logger.warning("⚠️ ATHENA not available - GEX directional trading disabled")
+
+        # =================================================================
+        # ARGUS JOB: Commentary Generation - runs every 5 minutes during market hours
+        # Generates AI-powered gamma commentary for the Live Log
+        # =================================================================
+        self.scheduler.add_job(
+            self.scheduled_argus_logic,
+            trigger=IntervalTrigger(
+                minutes=5,
+                start_date=datetime.now(CENTRAL_TZ).replace(
+                    hour=8, minute=30, second=0, microsecond=0
+                ),
+                timezone='America/Chicago'
+            ),
+            id='argus_commentary',
+            name='ARGUS - Gamma Commentary (5-min intervals)',
+            replace_existing=True
+        )
+        logger.info("✅ ARGUS job scheduled (every 5 min during market hours)")
 
         self.scheduler.start()
         self.is_running = True
@@ -971,7 +1071,7 @@ def run_standalone():
             # Log status periodically
             status = scheduler.get_status()
             if status['market_open']:
-                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, ATHENA={scheduler.athena_execution_count}")
+                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, ATHENA={scheduler.athena_execution_count}, ARGUS={scheduler.argus_execution_count}")
             else:
                 logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
 

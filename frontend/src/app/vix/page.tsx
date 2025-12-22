@@ -42,6 +42,17 @@ interface SignalHistory {
   vix_level: number
   confidence?: number
   action_taken?: string
+  // Detailed metrics
+  vol_regime?: string
+  iv_percentile?: number
+  iv_rv_spread?: number
+  term_structure_pct?: number
+  structure_type?: string
+  realized_vol_20d?: number
+  vix_m1?: number
+  spy_spot?: number
+  reasoning?: string
+  risk_warning?: string
 }
 
 // Pagination constants
@@ -450,37 +461,96 @@ export default function VIXDashboard() {
                         <table className="w-full">
                           <thead>
                             <tr className="border-b border-border">
-                              <th className="text-left py-3 px-4 text-text-secondary font-medium">Time</th>
-                              <th className="text-left py-3 px-4 text-text-secondary font-medium">Signal</th>
-                              <th className="text-center py-3 px-4 text-text-secondary font-medium">VIX Level</th>
-                              <th className="text-center py-3 px-4 text-text-secondary font-medium">Confidence</th>
-                              <th className="text-left py-3 px-4 text-text-secondary font-medium">Action Taken</th>
+                              <th className="text-left py-3 px-3 text-text-secondary font-medium text-sm">Time</th>
+                              <th className="text-center py-3 px-3 text-text-secondary font-medium text-sm">VIX</th>
+                              <th className="text-center py-3 px-3 text-text-secondary font-medium text-sm">IV %ile</th>
+                              <th className="text-center py-3 px-3 text-text-secondary font-medium text-sm">IV-RV</th>
+                              <th className="text-center py-3 px-3 text-text-secondary font-medium text-sm">Structure</th>
+                              <th className="text-left py-3 px-3 text-text-secondary font-medium text-sm">Signal</th>
+                              <th className="text-left py-3 px-3 text-text-secondary font-medium text-sm">Analysis</th>
                             </tr>
                           </thead>
                           <tbody>
                             {paginatedHistory.map((signal, idx) => (
                               <tr key={idx} className="border-b border-border/50 hover:bg-background-hover">
-                                <td className="py-3 px-4 text-text-secondary text-sm">
+                                <td className="py-3 px-3 text-text-secondary text-xs">
                                   {formatSignalDate(signal.timestamp)}
                                 </td>
-                                <td className="py-3 px-4">
-                                  <span className={`px-2 py-1 rounded text-xs font-semibold ${getSignalColor(signal.signal_type || 'no_action')}`}>
-                                    {(signal.signal_type || 'no_action').replace(/_/g, ' ').toUpperCase()}
+                                <td className="py-3 px-3 text-center">
+                                  <span className={`font-semibold ${
+                                    (signal.vix_level || 0) > 25 ? 'text-danger' :
+                                    (signal.vix_level || 0) > 20 ? 'text-warning' :
+                                    'text-success'
+                                  }`}>
+                                    {signal.vix_level?.toFixed(1) || '--'}
                                   </span>
                                 </td>
-                                <td className="py-3 px-4 text-center font-semibold">
-                                  {signal.vix_level?.toFixed(2) || '--'}
+                                <td className="py-3 px-3 text-center">
+                                  <span className={`text-sm font-medium px-2 py-0.5 rounded ${
+                                    (signal.iv_percentile || 0) > 80 ? 'bg-danger/20 text-danger' :
+                                    (signal.iv_percentile || 0) > 50 ? 'bg-warning/20 text-warning' :
+                                    'bg-success/20 text-success'
+                                  }`}>
+                                    {signal.iv_percentile != null ? `${signal.iv_percentile.toFixed(0)}%` : '--'}
+                                  </span>
                                 </td>
-                                <td className="py-3 px-4 text-center text-sm">
-                                  {signal.confidence != null ? `${signal.confidence.toFixed(0)}%` : '--'}
+                                <td className="py-3 px-3 text-center">
+                                  <span className={`text-sm font-medium ${
+                                    (signal.iv_rv_spread || 0) > 5 ? 'text-warning' :
+                                    (signal.iv_rv_spread || 0) < 0 ? 'text-success' :
+                                    'text-text-primary'
+                                  }`}>
+                                    {signal.iv_rv_spread != null ? `${signal.iv_rv_spread > 0 ? '+' : ''}${signal.iv_rv_spread.toFixed(1)}` : '--'}
+                                  </span>
                                 </td>
-                                <td className="py-3 px-4 text-text-primary text-sm">
-                                  {signal.action_taken || 'Monitored'}
+                                <td className="py-3 px-3 text-center">
+                                  <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                                    signal.structure_type === 'backwardation' ? 'bg-danger/20 text-danger' :
+                                    signal.structure_type === 'contango' ? 'bg-success/20 text-success' :
+                                    'bg-background-hover text-text-muted'
+                                  }`}>
+                                    {signal.structure_type === 'contango' ? 'CONTANGO' :
+                                     signal.structure_type === 'backwardation' ? 'BACKWRD' :
+                                     'FLAT'}
+                                    {signal.term_structure_pct != null && (
+                                      <span className="ml-1 opacity-75">
+                                        ({signal.term_structure_pct > 0 ? '+' : ''}{signal.term_structure_pct.toFixed(0)}%)
+                                      </span>
+                                    )}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-3">
+                                  <div className="flex flex-col gap-1">
+                                    <span className={`px-2 py-0.5 rounded text-xs font-semibold inline-block w-fit ${getSignalColor(signal.signal_type || 'no_action')}`}>
+                                      {(signal.signal_type || 'no_action').replace(/_/g, ' ').toUpperCase()}
+                                    </span>
+                                    <span className="text-xs text-text-muted">
+                                      {signal.confidence != null ? `${signal.confidence.toFixed(0)}% conf` : ''}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-3 max-w-xs">
+                                  <div className="text-xs text-text-secondary line-clamp-2" title={signal.reasoning || signal.action_taken || ''}>
+                                    {signal.reasoning || signal.action_taken || 'No analysis available'}
+                                  </div>
+                                  {signal.spy_spot && (
+                                    <div className="text-xs text-text-muted mt-1">
+                                      SPY: ${signal.spy_spot.toFixed(2)}
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
+                      </div>
+
+                      {/* Legend */}
+                      <div className="mt-4 pt-4 border-t border-border flex flex-wrap gap-4 text-xs text-text-muted">
+                        <div><span className="text-success font-medium">IV %ile &lt;50%</span> = Protection cheap</div>
+                        <div><span className="text-warning font-medium">IV-RV &gt;5</span> = IV premium high</div>
+                        <div><span className="text-danger font-medium">BACKWRD</span> = Stress/fear signal</div>
+                        <div><span className="text-success font-medium">CONTANGO</span> = Normal conditions</div>
                       </div>
 
                       {/* Pagination Controls */}

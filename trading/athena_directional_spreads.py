@@ -2038,8 +2038,17 @@ class ATHENATrader:
             self._log_to_db("ERROR", f"Failed to log exit: {e}")
 
     def _log_skip_decision(self, reason: str, gex_data: Optional[Dict] = None,
-                          ml_signal: Optional[Dict] = None) -> None:
-        """Log skip/no-trade decision using decision_logger (same as ARES)"""
+                          ml_signal: Optional[Dict] = None, oracle_advice: Optional[Any] = None) -> None:
+        """
+        Log skip/no-trade decision with FULL TRANSPARENCY.
+
+        Shows exactly what the bot was thinking:
+        - Market conditions at decision time
+        - ML model predictions (direction, confidence, probabilities)
+        - Oracle advice (if consulted)
+        - Why the decision was made
+        - What would need to change for a trade
+        """
         if not DECISION_LOGGER_AVAILABLE or not self.decision_logger:
             return
 
@@ -2062,17 +2071,58 @@ class ATHENATrader:
                 logger.warning(f"ATHENA: VIX {vix} outside normal range, clamping")
                 vix = max(8, min(100, vix))
 
-            # Calculate expected move (same formula as _log_decision)
-            expected_move_pct = (vix / 16) * (1 / 252 ** 0.5) * 100  # Daily expected move
+            # Calculate expected move
+            expected_move_pct = (vix / 16) * (1 / 252 ** 0.5) * 100
 
-            # Validate expected move is reasonable
             if expected_move_pct <= 0 or expected_move_pct > 10:
-                logger.warning(f"ATHENA: Expected move {expected_move_pct:.2f}% invalid, recalculating")
-                expected_move_pct = (vix / 16) * 0.063 * 100  # Fallback calculation
+                expected_move_pct = (vix / 16) * 0.063 * 100
 
-            logger.info(f"ATHENA Skip Decision: VIX={vix:.2f}, Expected Move={expected_move_pct:.2f}%")
+            # Build detailed "WHAT" description showing bot's thinking
+            what_parts = [f"SKIP - {reason}"]
 
-            # Build supporting factors
+            # Add market snapshot
+            if gex_data:
+                spot = gex_data.get('spot_price', 0)
+                regime = gex_data.get('regime', 'UNKNOWN')
+                call_wall = gex_data.get('call_wall', 0)
+                put_wall = gex_data.get('put_wall', 0)
+
+                # Calculate wall distances
+                if spot > 0:
+                    call_dist = ((call_wall - spot) / spot * 100) if call_wall else 0
+                    put_dist = ((spot - put_wall) / spot * 100) if put_wall else 0
+                    what_parts.append(f"[{self.config.ticker} ${spot:.2f} | {regime} | Walls: Put -${put_dist:.1f}% / Call +${call_dist:.1f}%]")
+
+            # Add ML signal details
+            if ml_signal:
+                ml_advice = ml_signal.get('advice', 'N/A')
+                ml_conf = ml_signal.get('confidence', 0)
+                ml_win = ml_signal.get('win_probability', 0)
+                ml_spread = ml_signal.get('spread_type', 'NONE')
+                predictions = ml_signal.get('model_predictions', {})
+
+                what_parts.append(f"[ML: {ml_advice} ({ml_conf:.0%} conf, {ml_win:.0%} win) -> {ml_spread}]")
+
+                if predictions:
+                    direction = predictions.get('direction', 'FLAT')
+                    flip_grav = predictions.get('flip_gravity', 0)
+                    magnet = predictions.get('magnet_attraction', 0)
+                    pin_zone = predictions.get('pin_zone', 0)
+                    what_parts.append(f"[ML Predictions: {direction} | FlipGrav={flip_grav:.0%} | Magnet={magnet:.0%} | Pin={pin_zone:.0%}]")
+
+            # Add Oracle advice details
+            if oracle_advice:
+                advice_str = oracle_advice.advice.value if hasattr(oracle_advice.advice, 'value') else str(oracle_advice.advice)
+                oracle_conf = getattr(oracle_advice, 'confidence', 0)
+                oracle_win = getattr(oracle_advice, 'win_probability', 0)
+                what_parts.append(f"[Oracle: {advice_str} ({oracle_conf:.0%} conf, {oracle_win:.0%} win)]")
+
+            # Build the complete "what" string
+            what_description = " ".join(what_parts)
+
+            logger.info(f"ATHENA Decision: {what_description}")
+
+            # Build supporting factors with full context
             supporting_factors = []
             if gex_data:
                 supporting_factors.extend([
@@ -2080,12 +2130,25 @@ class ATHENATrader:
                     f"Spot: ${gex_data.get('spot_price', 0):,.2f}",
                     f"Call Wall: ${gex_data.get('call_wall', 0):,.0f}",
                     f"Put Wall: ${gex_data.get('put_wall', 0):,.0f}",
+                    f"Net GEX: {gex_data.get('net_gex', 0):,.0f}",
+                    f"VIX: {vix:.1f}",
                     f"Expected Move: {expected_move_pct:.2f}%",
                 ])
             if ml_signal:
                 supporting_factors.extend([
                     f"ML Advice: {ml_signal.get('advice', 'N/A')}",
                     f"ML Confidence: {ml_signal.get('confidence', 0):.1%}",
+                    f"ML Win Prob: {ml_signal.get('win_probability', 0):.1%}",
+                    f"ML Spread Type: {ml_signal.get('spread_type', 'NONE')}",
+                    f"ML Reasoning: {ml_signal.get('reasoning', 'N/A')[:100]}...",
+                ])
+            if oracle_advice:
+                advice_str = oracle_advice.advice.value if hasattr(oracle_advice.advice, 'value') else str(oracle_advice.advice)
+                supporting_factors.extend([
+                    f"Oracle Advice: {advice_str}",
+                    f"Oracle Confidence: {getattr(oracle_advice, 'confidence', 0):.1%}",
+                    f"Oracle Win Prob: {getattr(oracle_advice, 'win_probability', 0):.1%}",
+                    f"Oracle Reasoning: {getattr(oracle_advice, 'reasoning', 'N/A')[:100]}...",
                 ])
 
             market_context = None
@@ -2103,14 +2166,26 @@ class ATHENATrader:
                     put_wall=gex_data.get('put_wall', 0),
                 )
 
+            # Build detailed "how" showing what conditions would need to change
+            how_details = []
+            if ml_signal and ml_signal.get('advice') == 'STAY_OUT':
+                how_details.append("ML needs directional signal (LONG/SHORT) instead of STAY_OUT")
+            if oracle_advice and hasattr(oracle_advice, 'advice'):
+                if oracle_advice.advice == TradingAdvice.SKIP_TODAY:
+                    how_details.append("Oracle needs to recommend TRADE_FULL instead of SKIP")
+            if not ml_signal and not oracle_advice:
+                how_details.append("Waiting for ML or Oracle signal")
+
+            how_description = " | ".join(how_details) if how_details else "Conditions not met for directional spread entry"
+
             decision = TradeDecision(
                 decision_id=self.decision_logger._generate_decision_id(),
                 timestamp=datetime.now(CENTRAL_TZ).isoformat(),
                 decision_type=DecisionType.NO_TRADE,
                 bot_name=BotName.ATHENA,
-                what=f"SKIP - No trade today",
+                what=what_description,  # Use the detailed description we built
                 why=reason,
-                how="Conditions not met for directional spread entry",
+                how=how_description,
                 action="SKIP",
                 symbol=self.config.ticker,
                 strategy="directional_spread",
@@ -2129,7 +2204,9 @@ class ATHENATrader:
 
     def run_daily_cycle(self) -> Dict[str, Any]:
         """Run the daily trading cycle using ML signals"""
-        self._log_to_db("INFO", "=== ATHENA Daily Cycle Starting ===")
+        now = datetime.now(CENTRAL_TZ)
+        self._log_to_db("INFO", f"=== ATHENA Scan #{self.daily_trades + 1} at {now.strftime('%I:%M %p CT')} ===")
+        self._log_to_db("INFO", f"ATHENA is ACTIVE - checking for directional spread opportunities...")
 
         result = {
             'trades_attempted': 0,
@@ -2206,17 +2283,13 @@ class ATHENATrader:
 
             elif ml_signal and ml_signal['advice'] == 'STAY_OUT':
                 self._log_to_db("INFO", f"ML says STAY_OUT: {ml_signal['reasoning']}")
-                self._log_skip_decision(f"ML says STAY_OUT: {ml_signal['reasoning']}", gex_data, ml_signal)
-                result['signal_source'] = 'ML'
-                result['decision_reason'] = f"NO TRADE: ML says STAY_OUT - {ml_signal['reasoning']}"
-                # Still check exits
-                closed = self.check_exits()
-                result['positions_closed'] = len(closed)
-                result['daily_pnl'] = sum(p.realized_pnl for p in closed)
-                return result
+                # DON'T return immediately - check Oracle as second opinion
+                # Oracle can OVERRIDE ML STAY_OUT if it's confident
 
-        # === FALLBACK: Use Oracle if ML unavailable ===
+        # === ORACLE: Use as FALLBACK (when ML unavailable) or OVERRIDE (when ML says STAY_OUT) ===
         oracle_advice = None  # Track Oracle advice separately for proper usage
+        ml_said_stay_out = ml_signal and ml_signal['advice'] == 'STAY_OUT'
+
         if not spread_type and ORACLE_AVAILABLE:
             signal_source = "Oracle"
             oracle_advice = self.get_oracle_advice()
@@ -2224,18 +2297,53 @@ class ATHENATrader:
             if oracle_advice:
                 result['trades_attempted'] = 1
 
+                # Store Oracle advice for logging
+                result['oracle_advice'] = {
+                    'advice': oracle_advice.advice.value if hasattr(oracle_advice.advice, 'value') else str(oracle_advice.advice),
+                    'win_probability': oracle_advice.win_probability,
+                    'confidence': oracle_advice.confidence,
+                    'reasoning': oracle_advice.reasoning
+                }
+
                 if oracle_advice.advice == TradingAdvice.SKIP_TODAY:
-                    self._log_to_db("INFO", f"Oracle says SKIP: {oracle_advice.reasoning}")
-                    self._log_skip_decision(f"Oracle says SKIP: {oracle_advice.reasoning}", gex_data)
-                    result['signal_source'] = 'Oracle'
-                    result['decision_reason'] = f"NO TRADE: Oracle says SKIP - {oracle_advice.reasoning}"
+                    # Both ML (if checked) and Oracle say skip
+                    if ml_said_stay_out:
+                        skip_reason = f"ML STAY_OUT + Oracle SKIP agree: {oracle_advice.reasoning}"
+                        self._log_to_db("INFO", f"Both ML and Oracle say SKIP")
+                    else:
+                        skip_reason = f"Oracle says SKIP: {oracle_advice.reasoning}"
+                    self._log_to_db("INFO", skip_reason)
+                    self._log_skip_decision(skip_reason, gex_data, ml_signal)
+                    result['signal_source'] = 'ML+Oracle' if ml_said_stay_out else 'Oracle'
+                    result['decision_reason'] = f"NO TRADE: {skip_reason}"
+                    # Still check exits
+                    closed = self.check_exits()
+                    result['positions_closed'] = len(closed)
+                    result['daily_pnl'] = sum(p.realized_pnl for p in closed)
                     return result
+
+                # Oracle says TRADE - this OVERRIDES ML STAY_OUT
+                if ml_said_stay_out:
+                    self._log_to_db("WARNING",
+                        f"ORACLE OVERRIDE: Oracle says {oracle_advice.advice.value} (conf={oracle_advice.confidence:.0%}, "
+                        f"win={oracle_advice.win_probability:.0%}) overriding ML STAY_OUT",
+                        {'ml_advice': 'STAY_OUT', 'oracle_advice': oracle_advice.advice.value,
+                         'oracle_confidence': oracle_advice.confidence,
+                         'oracle_win_prob': oracle_advice.win_probability}
+                    )
+                    signal_source = "Oracle (override ML)"
 
                 # Determine spread type from Oracle reasoning
                 if "BULL_CALL_SPREAD" in oracle_advice.reasoning:
                     spread_type = SpreadType.BULL_CALL_SPREAD
                 elif "BEAR_CALL_SPREAD" in oracle_advice.reasoning:
                     spread_type = SpreadType.BEAR_CALL_SPREAD
+                # Also check for BULLISH/BEARISH direction as fallback
+                elif hasattr(oracle_advice, 'direction'):
+                    if oracle_advice.direction == 'BULLISH':
+                        spread_type = SpreadType.BULL_CALL_SPREAD
+                    elif oracle_advice.direction == 'BEARISH':
+                        spread_type = SpreadType.BEAR_CALL_SPREAD
 
                 # Log Oracle-specific info (similar to ARES fix)
                 self._log_to_db("INFO", f"Oracle Advice: {oracle_advice.advice.value}", {
@@ -2243,14 +2351,33 @@ class ATHENATrader:
                     'confidence': oracle_advice.confidence,
                     'suggested_risk_pct': oracle_advice.suggested_risk_pct,
                     'suggested_call_strike': getattr(oracle_advice, 'suggested_call_strike', None),
+                    'overriding_ml': ml_said_stay_out
                 })
 
-        # No actionable signal
+        # No actionable signal - provide detailed context
         if not spread_type:
-            self._log_to_db("INFO", "No actionable signal from ML or Oracle")
-            self._log_skip_decision("No actionable signal from ML or Oracle", gex_data, ml_signal)
+            # Build detailed skip reason
+            skip_details = []
+            if ml_signal:
+                skip_details.append(f"ML={ml_signal['advice']} (conf={ml_signal['confidence']:.0%})")
+            else:
+                skip_details.append("ML=unavailable")
+            if oracle_advice:
+                advice_str = oracle_advice.advice.value if hasattr(oracle_advice.advice, 'value') else str(oracle_advice.advice)
+                skip_details.append(f"Oracle={advice_str} (win={oracle_advice.win_probability:.0%})")
+            else:
+                skip_details.append("Oracle=unavailable")
+
+            skip_reason = f"No actionable signal: {', '.join(skip_details)}"
+
+            self._log_to_db("INFO", skip_reason)
+            self._log_skip_decision(skip_reason, gex_data, ml_signal)
             result['errors'].append("No actionable signal")
-            result['decision_reason'] = "NO TRADE: No actionable signal from ML or Oracle"
+            result['decision_reason'] = f"NO TRADE: {skip_reason}"
+            # Still check exits
+            closed = self.check_exits()
+            result['positions_closed'] = len(closed)
+            result['daily_pnl'] = sum(p.realized_pnl for p in closed)
             return result
 
         result['signal_source'] = signal_source
