@@ -40,11 +40,12 @@ import {
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
-import { CrossButton, DedicationModal, StewardshipBanner, StewardshipTagline, StewardshipMission } from './StewardshipBanner'
+import { CrossButton, DedicationModal, StewardshipTagline } from './StewardshipBanner'
+import PilgrimJourney from './PilgrimJourney'
 
 const navItems = [
-  { href: '/daily-manna', label: 'Daily Manna', icon: BookOpen, category: 'Main' },
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
+  { href: '/daily-manna', label: 'Daily Manna', icon: BookOpen, category: 'Main' },
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp, category: 'Analysis' },
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
   { href: '/gamma', label: 'Gamma Intelligence', icon: Zap, category: 'Analysis' },
@@ -170,8 +171,8 @@ export default function Navigation() {
                 </div>
               </Link>
               <div className="hidden sm:block border-l border-gray-700 h-8 mx-1" />
+              <PilgrimJourney />
               <CrossButton onClick={() => setDedicationModalOpen(true)} />
-              <StewardshipMission />
             </div>
           </div>
 
@@ -203,11 +204,6 @@ export default function Navigation() {
           </div>
         </div>
       </nav>
-
-      {/* Stewardship Scripture Banner */}
-      <div className="fixed top-16 left-0 right-0 z-40">
-        <StewardshipBanner />
-      </div>
 
       {/* Dedication Modal */}
       <DedicationModal
