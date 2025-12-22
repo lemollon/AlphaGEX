@@ -6,7 +6,8 @@ import {
   Database, RefreshCw, CheckCircle, AlertCircle, Info, Table2,
   Wifi, WifiOff, Activity, Clock, Trash2, AlertTriangle,
   Server, Zap, Eye, EyeOff, ChevronDown, ChevronRight,
-  Shield, TrendingUp, BarChart3, XCircle
+  Shield, TrendingUp, BarChart3, XCircle, Play, RotateCcw,
+  Cpu, HardDrive, Settings2
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -73,19 +74,64 @@ interface TableFreshness {
   }
 }
 
+interface DataCollectionStatus {
+  timestamp: string
+  status: string
+  threads: {
+    [key: string]: {
+      alive: boolean
+      last_run?: string
+      run_count?: number
+      error_count?: number
+    }
+  }
+  last_gex_collection?: string
+  last_scheduler_update?: string
+  market_hours: {
+    is_market_hours: boolean
+    current_time: string
+    market_open?: string
+    market_close?: string
+  }
+  api_health: {
+    trading_volatility: string
+    polygon: string
+  }
+}
+
+interface WatchdogStatus {
+  timestamp: string
+  enabled: boolean
+  check_interval_seconds: number
+  threads_monitored: {
+    [key: string]: {
+      status: 'running' | 'stopped' | 'restarting' | 'failed'
+      last_heartbeat?: string
+      restart_count: number
+      last_restart?: string
+      error?: string
+    }
+  }
+  total_restarts: number
+  watchdog_uptime_hours: number
+}
+
 export default function DatabaseAdminPage() {
   // State
   const [stats, setStats] = useState<DatabaseStats | null>(null)
   const [health, setHealth] = useState<SystemHealth | null>(null)
   const [freshness, setFreshness] = useState<TableFreshness | null>(null)
+  const [dataCollection, setDataCollection] = useState<DataCollectionStatus | null>(null)
+  const [watchdog, setWatchdog] = useState<WatchdogStatus | null>(null)
   const [errorLogs, setErrorLogs] = useState<LogEntry[]>([])
   const [activityLogs, setActivityLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set())
-  const [activeTab, setActiveTab] = useState<'tables' | 'health' | 'logs' | 'freshness'>('health')
+  const [activeTab, setActiveTab] = useState<'tables' | 'health' | 'logs' | 'freshness' | 'collection' | 'threads'>('health')
   const [showCredentials, setShowCredentials] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [restartingThread, setRestartingThread] = useState<string | null>(null)
 
   // Fetch all data
   const fetchAllData = useCallback(async (showLoader = true) => {
@@ -93,11 +139,13 @@ export default function DatabaseAdminPage() {
     setError(null)
 
     try {
-      const [statsRes, healthRes, freshnessRes, logsRes] = await Promise.all([
+      const [statsRes, healthRes, freshnessRes, logsRes, collectionRes, watchdogRes] = await Promise.all([
         apiClient.getDatabaseStats().catch(e => ({ data: null, error: e })),
         apiClient.getSystemHealth().catch(e => ({ data: null, error: e })),
         apiClient.getTableFreshness().catch(e => ({ data: null, error: e })),
-        apiClient.getSystemLogs(100, 'all').catch(e => ({ data: null, error: e }))
+        apiClient.getSystemLogs(100, 'all').catch(e => ({ data: null, error: e })),
+        apiClient.getDataCollectionStatus().catch(e => ({ data: null, error: e })),
+        apiClient.getWatchdogStatus().catch(e => ({ data: null, error: e }))
       ])
 
       if (statsRes.data) setStats(statsRes.data)
@@ -107,6 +155,8 @@ export default function DatabaseAdminPage() {
         setErrorLogs(logsRes.data.errors || [])
         setActivityLogs(logsRes.data.activity || [])
       }
+      if (collectionRes.data) setDataCollection(collectionRes.data)
+      if (watchdogRes.data) setWatchdog(watchdogRes.data)
     } catch (err: any) {
       logger.error('Failed to fetch admin data:', err)
       setError(err.message || 'Failed to fetch data')
@@ -151,6 +201,32 @@ export default function DatabaseAdminPage() {
       setActivityLogs([])
     } catch (err: any) {
       logger.error('Failed to clear logs:', err)
+    }
+  }
+
+  const handleTriggerDataCollection = async () => {
+    try {
+      await apiClient.triggerDataCollection()
+      alert('Data collection triggered successfully!')
+      fetchAllData(false)
+    } catch (err: any) {
+      logger.error('Failed to trigger data collection:', err)
+      alert('Failed to trigger data collection: ' + err.message)
+    }
+  }
+
+  const handleRestartThread = async (threadName: string) => {
+    if (!confirm(`Are you sure you want to restart the ${threadName} thread?`)) return
+    setRestartingThread(threadName)
+    try {
+      await apiClient.restartThread(threadName)
+      alert(`Thread ${threadName} restart initiated!`)
+      fetchAllData(false)
+    } catch (err: any) {
+      logger.error(`Failed to restart thread ${threadName}:`, err)
+      alert(`Failed to restart thread: ${err.message}`)
+    } finally {
+      setRestartingThread(null)
     }
   }
 
@@ -317,11 +393,13 @@ export default function DatabaseAdminPage() {
           )}
 
           {/* Tab Navigation */}
-          <div className="flex gap-2 border-b border-gray-700 pb-2">
+          <div className="flex flex-wrap gap-2 border-b border-gray-700 pb-2">
             {[
               { id: 'health', label: 'System Health', icon: Activity },
               { id: 'tables', label: 'Database Tables', icon: Table2 },
               { id: 'freshness', label: 'Data Freshness', icon: Clock },
+              { id: 'collection', label: 'Data Collection', icon: HardDrive },
+              { id: 'threads', label: 'Thread Manager', icon: Cpu },
               { id: 'logs', label: 'System Logs', icon: BarChart3 },
             ].map(tab => (
               <button
@@ -787,6 +865,287 @@ export default function DatabaseAdminPage() {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Data Collection Tab */}
+            {activeTab === 'collection' && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-text-secondary">
+                    Monitor background data collection threads and trigger manual updates
+                  </div>
+                  <button
+                    onClick={handleTriggerDataCollection}
+                    className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg transition-colors"
+                  >
+                    <Play className="w-4 h-4" />
+                    Trigger Collection
+                  </button>
+                </div>
+
+                {dataCollection ? (
+                  <div className="space-y-4">
+                    {/* Status Overview */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className={`rounded-lg p-4 border ${
+                        dataCollection.status === 'running' ? 'bg-success/10 border-success/30' : 'bg-warning/10 border-warning/30'
+                      }`}>
+                        <div className="flex items-center gap-3 mb-2">
+                          <Settings2 className="w-6 h-6" />
+                          <div>
+                            <div className="font-semibold">Collection Status</div>
+                            <div className={`text-sm ${dataCollection.status === 'running' ? 'text-success' : 'text-warning'}`}>
+                              {dataCollection.status?.toUpperCase() || 'UNKNOWN'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          Last checked: {dataCollection.timestamp ? new Date(dataCollection.timestamp).toLocaleTimeString() : 'N/A'}
+                        </div>
+                      </div>
+
+                      <div className={`rounded-lg p-4 border ${
+                        dataCollection.market_hours?.is_market_hours ? 'bg-success/10 border-success/30' : 'bg-gray-800 border-gray-700'
+                      }`}>
+                        <div className="flex items-center gap-3 mb-2">
+                          <Clock className="w-6 h-6" />
+                          <div>
+                            <div className="font-semibold">Market Hours</div>
+                            <div className={`text-sm ${dataCollection.market_hours?.is_market_hours ? 'text-success' : 'text-text-secondary'}`}>
+                              {dataCollection.market_hours?.is_market_hours ? 'OPEN' : 'CLOSED'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          {dataCollection.market_hours?.current_time || 'N/A'}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg p-4 border bg-gray-800 border-gray-700">
+                        <div className="flex items-center gap-3 mb-2">
+                          <HardDrive className="w-6 h-6" />
+                          <div>
+                            <div className="font-semibold">Last GEX Collection</div>
+                            <div className="text-sm text-text-primary">
+                              {dataCollection.last_gex_collection
+                                ? new Date(dataCollection.last_gex_collection).toLocaleTimeString()
+                                : 'Never'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          Scheduler: {dataCollection.last_scheduler_update
+                            ? new Date(dataCollection.last_scheduler_update).toLocaleTimeString()
+                            : 'N/A'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* API Health */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                        <Zap className="w-5 h-5" />
+                        API Health
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className={`rounded-lg p-3 border ${
+                          dataCollection.api_health?.trading_volatility === 'healthy' ? 'bg-success/10 border-success/30' : 'bg-warning/10 border-warning/30'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold">Trading Volatility API</span>
+                            <span className={`text-sm ${
+                              dataCollection.api_health?.trading_volatility === 'healthy' ? 'text-success' : 'text-warning'
+                            }`}>
+                              {dataCollection.api_health?.trading_volatility?.toUpperCase() || 'UNKNOWN'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className={`rounded-lg p-3 border ${
+                          dataCollection.api_health?.polygon === 'healthy' ? 'bg-success/10 border-success/30' : 'bg-warning/10 border-warning/30'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold">Polygon API</span>
+                            <span className={`text-sm ${
+                              dataCollection.api_health?.polygon === 'healthy' ? 'text-success' : 'text-warning'
+                            }`}>
+                              {dataCollection.api_health?.polygon?.toUpperCase() || 'UNKNOWN'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Thread Status */}
+                    {dataCollection.threads && Object.keys(dataCollection.threads).length > 0 && (
+                      <div>
+                        <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                          <Cpu className="w-5 h-5" />
+                          Collection Threads
+                        </h3>
+                        <div className="space-y-2">
+                          {Object.entries(dataCollection.threads).map(([name, thread]) => (
+                            <div key={name} className={`rounded-lg p-3 border ${
+                              thread.alive ? 'bg-success/10 border-success/30' : 'bg-danger/10 border-danger/30'
+                            }`}>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-3 h-3 rounded-full ${thread.alive ? 'bg-success animate-pulse' : 'bg-danger'}`} />
+                                  <span className="font-mono font-semibold">{name}</span>
+                                </div>
+                                <span className={`text-sm ${thread.alive ? 'text-success' : 'text-danger'}`}>
+                                  {thread.alive ? 'ALIVE' : 'STOPPED'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-4 mt-2 text-xs text-text-muted">
+                                {thread.last_run && <span>Last run: {new Date(thread.last_run).toLocaleTimeString()}</span>}
+                                {thread.run_count !== undefined && <span>Runs: {thread.run_count}</span>}
+                                {thread.error_count !== undefined && thread.error_count > 0 && (
+                                  <span className="text-danger">Errors: {thread.error_count}</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-gray-800 rounded-lg p-8 text-center">
+                    <HardDrive className="w-12 h-12 text-text-muted mx-auto mb-3" />
+                    <div className="text-text-secondary">Data collection status unavailable</div>
+                    <div className="text-sm text-text-muted mt-1">The backend may not support this endpoint yet</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Thread Manager Tab */}
+            {activeTab === 'threads' && (
+              <div className="space-y-6">
+                <div className="text-sm text-text-secondary">
+                  Monitor and manage background threads. Restart threads that have stopped or are unresponsive.
+                </div>
+
+                {watchdog ? (
+                  <div className="space-y-4">
+                    {/* Watchdog Status */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className={`rounded-lg p-4 border ${
+                        watchdog.enabled ? 'bg-success/10 border-success/30' : 'bg-warning/10 border-warning/30'
+                      }`}>
+                        <div className="text-center">
+                          <div className={`text-2xl font-bold ${watchdog.enabled ? 'text-success' : 'text-warning'}`}>
+                            {watchdog.enabled ? 'ENABLED' : 'DISABLED'}
+                          </div>
+                          <div className="text-xs text-text-muted">Watchdog Status</div>
+                        </div>
+                      </div>
+                      <div className="rounded-lg p-4 border bg-gray-800 border-gray-700 text-center">
+                        <div className="text-2xl font-bold text-text-primary">
+                          {watchdog.check_interval_seconds || 60}s
+                        </div>
+                        <div className="text-xs text-text-muted">Check Interval</div>
+                      </div>
+                      <div className="rounded-lg p-4 border bg-gray-800 border-gray-700 text-center">
+                        <div className="text-2xl font-bold text-text-primary">
+                          {watchdog.total_restarts || 0}
+                        </div>
+                        <div className="text-xs text-text-muted">Total Restarts</div>
+                      </div>
+                      <div className="rounded-lg p-4 border bg-gray-800 border-gray-700 text-center">
+                        <div className="text-2xl font-bold text-text-primary">
+                          {watchdog.watchdog_uptime_hours?.toFixed(1) || 0}h
+                        </div>
+                        <div className="text-xs text-text-muted">Watchdog Uptime</div>
+                      </div>
+                    </div>
+
+                    {/* Thread List */}
+                    {watchdog.threads_monitored && Object.keys(watchdog.threads_monitored).length > 0 ? (
+                      <div>
+                        <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                          <Cpu className="w-5 h-5" />
+                          Monitored Threads ({Object.keys(watchdog.threads_monitored).length})
+                        </h3>
+                        <div className="space-y-3">
+                          {Object.entries(watchdog.threads_monitored).map(([name, thread]) => (
+                            <div key={name} className={`rounded-lg p-4 border ${
+                              thread.status === 'running' ? 'bg-success/10 border-success/30' :
+                              thread.status === 'restarting' ? 'bg-warning/10 border-warning/30' :
+                              'bg-danger/10 border-danger/30'
+                            }`}>
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-3 h-3 rounded-full ${
+                                    thread.status === 'running' ? 'bg-success animate-pulse' :
+                                    thread.status === 'restarting' ? 'bg-warning animate-spin' :
+                                    'bg-danger'
+                                  }`} />
+                                  <span className="font-mono font-semibold text-lg">{name}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className={`text-sm font-semibold px-2 py-1 rounded ${
+                                    thread.status === 'running' ? 'bg-success/20 text-success' :
+                                    thread.status === 'restarting' ? 'bg-warning/20 text-warning' :
+                                    'bg-danger/20 text-danger'
+                                  }`}>
+                                    {thread.status.toUpperCase()}
+                                  </span>
+                                  <button
+                                    onClick={() => handleRestartThread(name)}
+                                    disabled={restartingThread === name}
+                                    className="flex items-center gap-1 px-3 py-1 bg-primary hover:bg-primary-dark text-white text-sm rounded transition-colors disabled:opacity-50"
+                                  >
+                                    <RotateCcw className={`w-4 h-4 ${restartingThread === name ? 'animate-spin' : ''}`} />
+                                    Restart
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                <div>
+                                  <span className="text-text-muted">Last Heartbeat:</span>
+                                  <div className="text-text-primary">
+                                    {thread.last_heartbeat ? new Date(thread.last_heartbeat).toLocaleTimeString() : 'N/A'}
+                                  </div>
+                                </div>
+                                <div>
+                                  <span className="text-text-muted">Restart Count:</span>
+                                  <div className={thread.restart_count > 0 ? 'text-warning' : 'text-text-primary'}>
+                                    {thread.restart_count}
+                                  </div>
+                                </div>
+                                <div>
+                                  <span className="text-text-muted">Last Restart:</span>
+                                  <div className="text-text-primary">
+                                    {thread.last_restart ? new Date(thread.last_restart).toLocaleTimeString() : 'Never'}
+                                  </div>
+                                </div>
+                                {thread.error && (
+                                  <div className="col-span-2 md:col-span-1">
+                                    <span className="text-text-muted">Error:</span>
+                                    <div className="text-danger text-xs">{thread.error}</div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-gray-800 rounded-lg p-8 text-center">
+                        <Cpu className="w-12 h-12 text-text-muted mx-auto mb-3" />
+                        <div className="text-text-secondary">No threads being monitored</div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-gray-800 rounded-lg p-8 text-center">
+                    <Cpu className="w-12 h-12 text-text-muted mx-auto mb-3" />
+                    <div className="text-text-secondary">Watchdog status unavailable</div>
+                    <div className="text-sm text-text-muted mt-1">The backend may not support this endpoint yet</div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -494,6 +494,10 @@ export const apiClient = {
   clearSystemLogs: (logType?: string) =>
     api.delete('/api/system/logs/clear', { params: { log_type: logType || 'all' } }),
   clearSystemCache: () => api.post('/api/system/cache/clear'),
+  getDataCollectionStatus: () => api.get('/api/data-collection/status'),
+  triggerDataCollection: () => api.post('/api/data-collection/trigger'),
+  getWatchdogStatus: () => api.get('/api/watchdog/status'),
+  restartThread: (threadName: string) => api.post(`/api/watchdog/restart-thread/${threadName}`),
 
   // VIX Hedge Manager
   getVIXHedgeSignal: (portfolioDelta?: number, portfolioValue?: number) =>
