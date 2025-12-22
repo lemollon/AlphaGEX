@@ -501,7 +501,7 @@ export default function ArgusPage() {
       ...gammaData.danger_zones.map(d => [d.danger_type, `$${d.strike}`, `ROC: ${d.roc_5min.toFixed(1)}%`]),
       [],
       ['=== Alerts ==='],
-      ...alerts.map(a => [a.priority, a.message, new Date(a.triggered_at).toLocaleTimeString()]),
+      ...alerts.map(a => [a.priority, a.message, new Date(a.triggered_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) + ' CT']),
       [],
       ['=== Strike Data ==='],
       headers
@@ -986,7 +986,7 @@ export default function ArgusPage() {
             {lastUpdated && (
               <div className="text-xs text-gray-500 flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                {lastUpdated.toLocaleTimeString()}
+                {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT
               </div>
             )}
           </div>
@@ -1387,7 +1387,7 @@ export default function ArgusPage() {
                       >
                         <div className="text-sm text-white">{alert.message}</div>
                         <div className="text-xs text-gray-500 mt-1">
-                          {new Date(alert.triggered_at).toLocaleTimeString()}
+                          {new Date(alert.triggered_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT
                         </div>
                       </div>
                     ))
