@@ -7,7 +7,7 @@
 
 # Try to find a working URL
 find_api_url() {
-    local urls=("${API_URL:-}" "http://localhost:8000" "https://alphagex-api.onrender.com" "https://alphagex.onrender.com")
+    local urls=("${API_URL:-}" "https://alphagex-api.onrender.com" "http://localhost:8000")
 
     for url in "${urls[@]}"; do
         if [ -z "$url" ]; then continue; fi

@@ -17,10 +17,9 @@ from datetime import datetime
 # Use environment variable or default to localhost
 BASE_URL = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
 
-# Common production URLs - try these if localhost fails
+# Production URL - alphagex-api.onrender.com is the correct backend
 FALLBACK_URLS = [
     "https://alphagex-api.onrender.com",
-    "https://alphagex.onrender.com",
 ]
 
 def test_strike_trends():
