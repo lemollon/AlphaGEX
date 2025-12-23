@@ -591,12 +591,14 @@ async def get_devotional(force_refresh: bool = False):
         devotional = await generate_devotional_with_claude(news_items, scriptures)
 
         # Combine all content
+        now = datetime.now()
         content = {
             "devotional": devotional,
             "scriptures": scriptures,
             "news": news_items,
-            "date": datetime.now().strftime("%A, %B %d, %Y"),
-            "timestamp": datetime.now().isoformat()
+            "date": now.strftime("%A, %B %d, %Y"),
+            "timestamp": now.isoformat(),
+            "_timestamp_dt": now  # Keep datetime object for database
         }
 
         # Cache for the day
@@ -607,7 +609,7 @@ async def get_devotional(force_refresh: bool = False):
 
         return {
             "success": True,
-            "data": content,
+            "data": {k: v for k, v in content.items() if not k.startswith('_')},
             "cached": False
         }
     except Exception as e:
@@ -648,14 +650,16 @@ async def get_daily_manna(force_refresh: bool = False):
         devotional = await generate_devotional_with_claude(news_items, scriptures)
 
         # Combine all content
+        now = datetime.now()
         content = {
             "devotional": devotional,
             "scriptures": scriptures,
             "news": news_items,
-            "date": datetime.now().strftime("%A, %B %d, %Y"),
-            "timestamp": datetime.now().isoformat(),
+            "date": now.strftime("%A, %B %d, %Y"),
+            "timestamp": now.isoformat(),
             "greeting": get_daily_greeting(),
-            "news_sources": list(set(item.get('source', 'Unknown') for item in news_items))
+            "news_sources": list(set(item.get('source', 'Unknown') for item in news_items)),
+            "_timestamp_dt": now  # Keep datetime object for database
         }
 
         # Cache for the day
@@ -666,7 +670,7 @@ async def get_daily_manna(force_refresh: bool = False):
 
         return {
             "success": True,
-            "data": content,
+            "data": {k: v for k, v in content.items() if not k.startswith('_')},
             "cached": False,
             "message": "Fresh manna prepared from today's headlines! May it nourish your soul."
         }
@@ -718,7 +722,22 @@ def save_to_archive(content: Dict[str, Any]) -> None:
         news = content.get("news", [])
         greeting = content.get("greeting", "")
         news_sources = content.get("news_sources", [])
-        generated_at = content.get("timestamp", datetime.now().isoformat())
+
+        # Handle timestamp - prefer datetime object if available
+        if "_timestamp_dt" in content and isinstance(content["_timestamp_dt"], datetime):
+            generated_at = content["_timestamp_dt"]
+        else:
+            timestamp = content.get("timestamp")
+            if isinstance(timestamp, str):
+                try:
+                    # Parse ISO format string to datetime
+                    generated_at = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                except ValueError:
+                    generated_at = datetime.now()
+            elif isinstance(timestamp, datetime):
+                generated_at = timestamp
+            else:
+                generated_at = datetime.now()
 
         with pool.get_connection() as conn:
             cursor = conn.cursor()
@@ -1576,7 +1595,7 @@ async def backfill_devotionals(request: dict):
                         json.dumps(news_items),
                         "Backfilled devotional",
                         content["news_sources"],
-                        datetime.now().isoformat()
+                        datetime.now()  # Use datetime object, not ISO string
                     ))
 
                 results["generated"].append(date_str)
