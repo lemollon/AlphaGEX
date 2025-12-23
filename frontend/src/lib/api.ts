@@ -868,6 +868,7 @@ export const apiClient = {
   getArgusReplayDates: () => api.get('/api/argus/replay/dates'),
   getArgusExpirations: () => api.get('/api/argus/expirations'),
   getArgusContext: () => api.get('/api/argus/context'),
+  getArgusDangerZoneLogs: () => api.get('/api/argus/danger-zones/log'),
 }
 
 // WebSocket connection

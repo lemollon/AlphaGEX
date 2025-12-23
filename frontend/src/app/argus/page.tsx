@@ -121,13 +121,29 @@ interface GammaData {
   market_status: string
   is_mock: boolean
   is_stale?: boolean  // True when showing cached live data during market hours
+  is_cached?: boolean  // True when showing cached data
+  cache_age_seconds?: number  // How old the cached data is
   fetched_at?: string  // Timestamp when data was fetched (Central timezone)
+  data_timestamp?: string  // When Tradier data was actually fetched
   strikes: StrikeData[]
   magnets: Magnet[]
   likely_pin: number
   pin_probability: number
   danger_zones: DangerZone[]
   gamma_flips: any[]
+}
+
+interface DangerZoneLog {
+  id: number
+  detected_at: string
+  strike: number
+  danger_type: string
+  roc_1min: number
+  roc_5min: number
+  spot_price: number
+  distance_from_spot_pct: number
+  is_active: boolean
+  resolved_at: string | null
 }
 
 interface Expiration {
@@ -190,12 +206,19 @@ export default function ArgusPage() {
   const [activeDay, setActiveDay] = useState<string>('today')
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [commentary, setCommentary] = useState<Commentary[]>([])
+  const [dangerZoneLogs, setDangerZoneLogs] = useState<DangerZoneLog[]>([])
   const [marketContext, setMarketContext] = useState<MarketContext | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [dataTimestamp, setDataTimestamp] = useState<Date | null>(null)  // When data was actually fetched
   const [selectedStrike, setSelectedStrike] = useState<StrikeData | null>(null)
+
+  // Polling intervals (in milliseconds)
+  const FAST_POLL_INTERVAL = 15000  // 15 seconds for gamma data
+  const MEDIUM_POLL_INTERVAL = 30000  // 30 seconds for alerts and context
+  const SLOW_POLL_INTERVAL = 60000  // 60 seconds for commentary
 
   // Check if market is currently open (9:30 AM - 4:00 PM CT, Mon-Fri)
   const isMarketOpen = useCallback(() => {
@@ -216,7 +239,7 @@ export default function ArgusPage() {
   const [replayTimes, setReplayTimes] = useState<string[]>([])
   const [selectedReplayTime, setSelectedReplayTime] = useState<string>('')
 
-  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  // Removed single refreshIntervalRef - now using separate refs for different polling speeds
 
   // Fetch functions
   const fetchGammaData = useCallback(async (day?: string) => {
@@ -240,7 +263,13 @@ export default function ArgusPage() {
           }
         }
 
-        // Use backend's fetched_at timestamp (when Tradier data was fetched), not local time
+        // Use backend's data_timestamp (when Tradier data was actually fetched)
+        const dataTime = newData.data_timestamp
+          ? new Date(newData.data_timestamp)
+          : new Date(newData.fetched_at || Date.now())
+        setDataTimestamp(dataTime)
+
+        // Use backend's fetched_at timestamp for display
         const fetchedAt = newData.fetched_at
           ? new Date(newData.fetched_at)
           : new Date()
@@ -252,6 +281,17 @@ export default function ArgusPage() {
       setLoading(false)
     }
   }, [isMarketOpen, lastLiveData])
+
+  const fetchDangerZoneLogs = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusDangerZoneLogs()
+      if (response.data?.success && response.data?.data?.logs) {
+        setDangerZoneLogs(response.data.data.logs)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching danger zone logs:', err)
+    }
+  }, [])
 
   const fetchExpirations = useCallback(async () => {
     try {
@@ -357,14 +397,15 @@ export default function ArgusPage() {
           fetchGammaData(),
           fetchAlerts(),
           fetchCommentary(),
-          fetchContext()
+          fetchContext(),
+          fetchDangerZoneLogs()
         ])
       } catch (err) {
         console.error('Error fetching initial data:', err)
       }
     }
     fetchAllData()
-  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext])
+  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext, fetchDangerZoneLogs])
 
   // Check if market is closed or holiday
   const isMarketClosed = gammaData?.market_status === 'closed' || gammaData?.market_status === 'holiday'
@@ -372,21 +413,39 @@ export default function ArgusPage() {
   // Check if showing simulated data
   const isMockData = gammaData?.is_mock === true
 
+  // Refs for multiple polling intervals
+  const fastPollRef = useRef<NodeJS.Timeout | null>(null)
+  const mediumPollRef = useRef<NodeJS.Timeout | null>(null)
+  const slowPollRef = useRef<NodeJS.Timeout | null>(null)
+
   useEffect(() => {
     // Auto-refresh when:
     // 1. Auto-refresh is enabled, AND
     // 2. Either market is open OR we're showing simulated data (to demonstrate it works)
     if (autoRefresh && (!isMarketClosed || isMockData)) {
-      refreshIntervalRef.current = setInterval(() => {
+      // Fast polling: Gamma data and danger zones every 15 seconds
+      fastPollRef.current = setInterval(() => {
         fetchGammaData(activeDay)
+        fetchDangerZoneLogs()
+      }, FAST_POLL_INTERVAL)
+
+      // Medium polling: Alerts and context every 30 seconds
+      mediumPollRef.current = setInterval(() => {
         fetchAlerts()
         fetchContext()
-      }, 60000)
+      }, MEDIUM_POLL_INTERVAL)
+
+      // Slow polling: Commentary every 60 seconds
+      slowPollRef.current = setInterval(() => {
+        fetchCommentary()
+      }, SLOW_POLL_INTERVAL)
     }
     return () => {
-      if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current)
+      if (fastPollRef.current) clearInterval(fastPollRef.current)
+      if (mediumPollRef.current) clearInterval(mediumPollRef.current)
+      if (slowPollRef.current) clearInterval(slowPollRef.current)
     }
-  }, [autoRefresh, activeDay, isMarketClosed, isMockData, fetchGammaData, fetchAlerts, fetchContext])
+  }, [autoRefresh, activeDay, isMarketClosed, isMockData, fetchGammaData, fetchAlerts, fetchContext, fetchCommentary, fetchDangerZoneLogs, FAST_POLL_INTERVAL, MEDIUM_POLL_INTERVAL, SLOW_POLL_INTERVAL])
 
   const handleDayChange = (day: string) => {
     setActiveDay(day)
@@ -983,12 +1042,20 @@ export default function ArgusPage() {
               </div>
               <p className="text-gray-300 leading-relaxed">{generateInsight()}</p>
             </div>
-            {lastUpdated && (
-              <div className="text-xs text-gray-500 flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT
-              </div>
-            )}
+            <div className="flex flex-col items-end gap-1">
+              {dataTimestamp && (
+                <div className="text-xs text-gray-500 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  {dataTimestamp.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT
+                </div>
+              )}
+              {autoRefresh && !isMarketClosed && (
+                <div className="text-[10px] text-emerald-400 flex items-center gap-1">
+                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                  Updates every 15s
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1011,17 +1078,21 @@ export default function ArgusPage() {
                       </span>
                     ) : gammaData?.is_stale ? (
                       <span className="ml-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-medium rounded border border-yellow-500/30">
-                        LIVE (CACHED)
+                        STALE
+                      </span>
+                    ) : gammaData?.is_cached ? (
+                      <span className="ml-2 px-2 py-0.5 bg-blue-500/20 text-blue-400 text-[10px] font-medium rounded border border-blue-500/30">
+                        LIVE ({gammaData.cache_age_seconds}s ago)
                       </span>
                     ) : (
-                      <span className="ml-2 px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded border border-emerald-500/30">
+                      <span className="ml-2 px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded border border-emerald-500/30 animate-pulse">
                         LIVE
                       </span>
                     )}
                   </h3>
-                  {lastUpdated && (
+                  {dataTimestamp && (
                     <span className="text-[10px] text-gray-500">
-                      {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: true })} CT
+                      Data: {dataTimestamp.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT
                     </span>
                   )}
                 </div>
@@ -1400,14 +1471,23 @@ export default function ArgusPage() {
                 </div>
               </div>
 
-              {/* Danger Zones Summary */}
+              {/* Danger Zones with Live Log */}
               <div className="bg-gray-800/50 rounded-xl p-5">
-                <h3 className="font-bold text-white flex items-center gap-2 mb-4">
-                  <AlertTriangle className="w-5 h-5 text-orange-400" />
-                  Danger Zones
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-orange-400" />
+                    Danger Zones
+                  </h3>
+                  {dangerZoneLogs.length > 0 && (
+                    <span className="text-xs text-gray-500">
+                      {dangerZoneLogs.length} events today
+                    </span>
+                  )}
+                </div>
+
+                {/* Current Active Danger Zones */}
                 {(buildingZones.length > 0 || collapsingZones.length > 0) ? (
-                  <div className="space-y-4">
+                  <div className="space-y-4 mb-4">
                     {buildingZones.length > 0 && (
                       <div>
                         <div className="flex items-center gap-2 mb-2">
@@ -1440,9 +1520,54 @@ export default function ArgusPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="text-center py-6 text-gray-500">
-                    <Shield className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">No danger zones detected</p>
+                  <div className="text-center py-4 text-gray-500 mb-4">
+                    <Shield className="w-6 h-6 mx-auto mb-1 opacity-30" />
+                    <p className="text-xs">No danger zones detected</p>
+                  </div>
+                )}
+
+                {/* Danger Zone Log History */}
+                {dangerZoneLogs.length > 0 && (
+                  <div className="border-t border-gray-700/50 pt-3">
+                    <div className="text-xs text-gray-500 mb-2">Recent Activity</div>
+                    <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                      {dangerZoneLogs.slice(0, 10).map((log) => (
+                        <div
+                          key={log.id}
+                          className={`flex items-center justify-between text-xs px-2 py-1.5 rounded ${
+                            log.is_active
+                              ? log.danger_type === 'BUILDING' ? 'bg-orange-500/10' : 'bg-rose-500/10'
+                              : 'bg-gray-700/30'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`font-mono ${log.is_active ? 'text-white' : 'text-gray-500'}`}>
+                              ${log.strike}
+                            </span>
+                            <span className={`px-1 py-0.5 rounded text-[10px] ${
+                              log.danger_type === 'BUILDING'
+                                ? 'bg-orange-500/30 text-orange-400'
+                                : log.danger_type === 'COLLAPSING'
+                                ? 'bg-rose-500/30 text-rose-400'
+                                : 'bg-yellow-500/30 text-yellow-400'
+                            }`}>
+                              {log.danger_type}
+                            </span>
+                            {!log.is_active && (
+                              <span className="text-gray-600">(resolved)</span>
+                            )}
+                          </div>
+                          <span className="text-gray-500">
+                            {new Date(log.detected_at).toLocaleTimeString('en-US', {
+                              timeZone: 'America/Chicago',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true
+                            })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
