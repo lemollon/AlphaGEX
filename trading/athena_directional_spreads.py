@@ -2525,6 +2525,32 @@ class ATHENATrader:
                     self._log_skip_decision(skip_reason, gex_data, ml_signal)
                     result['signal_source'] = 'ML+Oracle' if ml_said_stay_out else 'Oracle'
                     result['decision_reason'] = f"NO TRADE: {skip_reason}"
+                    # Log scan activity - ORACLE SKIP
+                    if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                        spot = gex_data.get('spot_price', 0)
+                        try:
+                            from data.unified_data_provider import get_vix
+                            vix = get_vix() or 20.0
+                        except Exception:
+                            vix = 20.0
+
+                        log_athena_scan(
+                            outcome=ScanOutcome.NO_TRADE,
+                            decision_summary=skip_reason[:200],
+                            action_taken="No trade - Oracle AI recommends skip",
+                            market_data={'underlying_price': spot, 'vix': vix, 'symbol': 'SPY'},
+                            gex_data=gex_data,
+                            signal_source='ML+Oracle' if ml_said_stay_out else 'Oracle',
+                            signal_direction="NEUTRAL",
+                            signal_confidence=oracle_advice.confidence,
+                            signal_win_probability=oracle_advice.win_probability,
+                            checks=[
+                                CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
+                                CheckResult("gex_data", True, f"Spot ${spot:.2f}", "Required", f"GEX regime: {gex_data.get('regime', 'UNKNOWN')}"),
+                                CheckResult("ml_signal", ml_said_stay_out, "STAY_OUT" if ml_said_stay_out else "N/A", "Actionable", "ML recommends staying out" if ml_said_stay_out else "ML not available"),
+                                CheckResult("oracle_signal", True, "SKIP_TODAY", "TRADE", f"Oracle: {oracle_advice.reasoning[:50]}")
+                            ]
+                        )
                     # Still check exits
                     closed = self.check_exits()
                     result['positions_closed'] = len(closed)
