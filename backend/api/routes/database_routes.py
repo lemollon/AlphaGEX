@@ -340,33 +340,6 @@ async def get_rate_limit_status():
         }
 
 
-@router.get("/api/time")
-async def get_server_time():
-    """Get current server time and market status"""
-    from zoneinfo import ZoneInfo
-
-    # Central Time is the standard - no need for two different times
-    now = datetime.now(ZoneInfo("America/Chicago"))
-
-    # Check if market is open (8:30 AM - 3:00 PM CT)
-    market_open = (
-        now.weekday() < 5 and  # Monday-Friday
-        8 <= now.hour < 15 and  # 8:30 AM - 3 PM CT
-        not (now.hour == 8 and now.minute < 30)
-    )
-
-    return {
-        "success": True,
-        "data": {
-            "utc": datetime.utcnow().isoformat(),
-            "eastern": now.isoformat(),
-            "chicago": chicago.isoformat(),
-            "market_open": market_open,
-            "day_of_week": now.strftime("%A")
-        }
-    }
-
-
 @router.get("/api/system/logs")
 async def get_system_logs(limit: int = 50, log_type: str = "all"):
     """
