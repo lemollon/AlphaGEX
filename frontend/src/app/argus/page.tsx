@@ -232,6 +232,10 @@ export default function ArgusPage() {
     return day >= 1 && day <= 5 && timeInMinutes >= 570 && timeInMinutes <= 960
   }, [])
 
+  // Expand/Collapse State for sections
+  const [alertsExpanded, setAlertsExpanded] = useState(false)
+  const [dangerZonesExpanded, setDangerZonesExpanded] = useState(false)
+
   // Historical Replay State
   const [replayMode, setReplayMode] = useState(false)
   const [replayDates, setReplayDates] = useState<string[]>([])
@@ -459,6 +463,51 @@ export default function ArgusPage() {
     if (absValue >= 1e6) return `${(value / 1e6).toFixed(1)}M`
     if (absValue >= 1e3) return `${(value / 1e3).toFixed(1)}K`
     return value.toFixed(0)
+  }
+
+  // Download logs to CSV/Excel
+  const downloadAlertsToExcel = () => {
+    if (alerts.length === 0) return
+    const headers = ['Time (CT)', 'Type', 'Strike', 'Message', 'Priority']
+    const rows = alerts.map(a => [
+      new Date(a.triggered_at).toLocaleString('en-US', { timeZone: 'America/Chicago' }),
+      a.alert_type,
+      a.strike ? `$${a.strike}` : '-',
+      a.message,
+      a.priority
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `argus_alerts_${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadDangerZonesToExcel = () => {
+    if (dangerZoneLogs.length === 0) return
+    const headers = ['Detected At (CT)', 'Strike', 'Type', 'ROC 1min', 'ROC 5min', 'Spot Price', 'Distance %', 'Status', 'Resolved At']
+    const rows = dangerZoneLogs.map(log => [
+      new Date(log.detected_at).toLocaleString('en-US', { timeZone: 'America/Chicago' }),
+      `$${log.strike}`,
+      log.danger_type,
+      `${log.roc_1min.toFixed(1)}%`,
+      `${log.roc_5min.toFixed(1)}%`,
+      log.spot_price ? `$${log.spot_price.toFixed(2)}` : '-',
+      `${log.distance_from_spot_pct.toFixed(2)}%`,
+      log.is_active ? 'Active' : 'Resolved',
+      log.resolved_at ? new Date(log.resolved_at).toLocaleString('en-US', { timeZone: 'America/Chicago' }) : '-'
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `argus_danger_zones_${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   const getBarColor = (strike: StrikeData): string => {
@@ -1436,19 +1485,41 @@ export default function ArgusPage() {
                   <h3 className="font-bold text-white flex items-center gap-2">
                     <Bell className="w-5 h-5 text-yellow-400" />
                     Live Alerts
+                    {alerts.length > 0 && (
+                      <span className="px-2 py-0.5 bg-rose-500 text-white text-xs rounded-full font-bold">
+                        {alerts.length}
+                      </span>
+                    )}
                   </h3>
-                  {alerts.length > 0 && (
-                    <span className="px-2 py-0.5 bg-rose-500 text-white text-xs rounded-full font-bold">
-                      {alerts.length}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {alerts.length > 0 && (
+                      <button
+                        onClick={downloadAlertsToExcel}
+                        className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                        title="Download alerts to CSV"
+                      >
+                        <Download className="w-4 h-4 text-gray-400 hover:text-white" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setAlertsExpanded(!alertsExpanded)}
+                      className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                      title={alertsExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      {alertsExpanded ? (
+                        <ChevronUp className="w-4 h-4 text-gray-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-gray-400" />
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-3 max-h-48 overflow-y-auto">
+                <div className={`space-y-2 overflow-y-auto transition-all duration-300 ${alertsExpanded ? 'max-h-[500px]' : 'max-h-48'}`}>
                   {alerts.length > 0 ? (
-                    alerts.slice(0, 6).map((alert, idx) => (
+                    alerts.slice(0, alertsExpanded ? 50 : 6).map((alert, idx) => (
                       <div
                         key={idx}
-                        className={`p-3 rounded-lg border-l-4 ${
+                        className={`p-2.5 rounded-lg border-l-4 ${
                           alert.priority === 'HIGH'
                             ? 'bg-rose-500/10 border-rose-500'
                             : alert.priority === 'MEDIUM'
@@ -1469,6 +1540,14 @@ export default function ArgusPage() {
                     </div>
                   )}
                 </div>
+                {alerts.length > 6 && !alertsExpanded && (
+                  <button
+                    onClick={() => setAlertsExpanded(true)}
+                    className="w-full mt-2 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700/50 rounded transition-colors"
+                  >
+                    Show {alerts.length - 6} more alerts
+                  </button>
+                )}
               </div>
 
               {/* Danger Zones with Live Log */}
@@ -1477,12 +1556,32 @@ export default function ArgusPage() {
                   <h3 className="font-bold text-white flex items-center gap-2">
                     <AlertTriangle className="w-5 h-5 text-orange-400" />
                     Danger Zones
+                    <span className="text-xs text-gray-500 font-normal">
+                      {dangerZoneLogs.length > 0 ? `${dangerZoneLogs.length} events` : ''}
+                    </span>
                   </h3>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500">
-                      {dangerZoneLogs.length > 0 ? `${dangerZoneLogs.length} events` : 'Monitoring'}
-                    </span>
                     <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                    {dangerZoneLogs.length > 0 && (
+                      <button
+                        onClick={downloadDangerZonesToExcel}
+                        className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                        title="Download danger zone logs to CSV"
+                      >
+                        <Download className="w-4 h-4 text-gray-400 hover:text-white" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setDangerZonesExpanded(!dangerZonesExpanded)}
+                      className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                      title={dangerZonesExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      {dangerZonesExpanded ? (
+                        <ChevronUp className="w-4 h-4 text-gray-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-gray-400" />
+                      )}
+                    </button>
                   </div>
                 </div>
 
@@ -1521,12 +1620,40 @@ export default function ArgusPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="text-center py-3 text-gray-500 mb-3 bg-gray-800/30 rounded-lg">
-                    <Shield className="w-5 h-5 mx-auto mb-1 opacity-40" />
-                    <p className="text-xs font-medium">No active danger zones</p>
-                    <p className="text-[10px] text-gray-600 mt-1">
-                      All strikes have stable gamma (ROC within ±25%)
-                    </p>
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-5 h-5 text-emerald-400" />
+                        <div>
+                          <p className="text-sm font-medium text-emerald-400">All Clear</p>
+                          <p className="text-[10px] text-gray-500">
+                            All strikes stable (ROC within ±25%)
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                        <span className="text-[10px] text-emerald-400/70">Monitoring</span>
+                      </div>
+                    </div>
+                    {/* Show top ROC strikes even when calm */}
+                    {gammaData && gammaData.strikes.length > 0 && (
+                      <div className="mt-2 grid grid-cols-3 gap-1">
+                        {gammaData.strikes
+                          .filter(s => s.roc_5min !== 0)
+                          .sort((a, b) => Math.abs(b.roc_5min) - Math.abs(a.roc_5min))
+                          .slice(0, 3)
+                          .map(s => (
+                            <div key={s.strike} className="px-2 py-1 bg-gray-700/30 rounded text-[10px] text-center">
+                              <span className="text-gray-400">${s.strike}</span>
+                              <span className={`ml-1 ${s.roc_5min > 0 ? 'text-emerald-400' : 'text-gray-500'}`}>
+                                {s.roc_5min > 0 ? '+' : ''}{s.roc_5min.toFixed(0)}%
+                              </span>
+                            </div>
+                          ))
+                        }
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1537,8 +1664,8 @@ export default function ArgusPage() {
                     <span className="text-[10px] text-emerald-400">Live • 15s refresh</span>
                   </div>
                   {dangerZoneLogs.length > 0 ? (
-                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                      {dangerZoneLogs.slice(0, 15).map((log) => (
+                    <div className={`space-y-1.5 overflow-y-auto transition-all duration-300 ${dangerZonesExpanded ? 'max-h-[400px]' : 'max-h-32'}`}>
+                      {dangerZoneLogs.slice(0, dangerZonesExpanded ? 100 : 5).map((log) => (
                         <div
                           key={log.id}
                           className={`flex items-center justify-between text-xs px-2 py-1.5 rounded ${
@@ -1581,6 +1708,14 @@ export default function ArgusPage() {
                       <p>No events yet today</p>
                       <p className="text-[10px] text-gray-700 mt-1">Logs when ROC exceeds ±25%</p>
                     </div>
+                  )}
+                  {dangerZoneLogs.length > 5 && !dangerZonesExpanded && (
+                    <button
+                      onClick={() => setDangerZonesExpanded(true)}
+                      className="w-full mt-2 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700/50 rounded transition-colors"
+                    >
+                      Show {dangerZoneLogs.length - 5} more events
+                    </button>
                   )}
                 </div>
               </div>
