@@ -37,7 +37,7 @@ except ImportError as e:
             return False
         market_open = ct.replace(hour=8, minute=30, second=0, microsecond=0)
         market_close = ct.replace(hour=15, minute=0, second=0, microsecond=0)
-        return market_open <= ct <= market_close
+        return market_open <= ct < market_close
 
 # TradingVolatilityAPI - with fallback
 TradingVolatilityAPI = None
