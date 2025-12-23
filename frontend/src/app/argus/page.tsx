@@ -1241,6 +1241,18 @@ export default function ArgusPage() {
                       <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-400 text-[10px] font-medium rounded border border-orange-500/30">
                         SIMULATED
                       </span>
+                    ) : gammaData?.market_status === 'closed' ? (
+                      <span className="ml-2 px-2 py-0.5 bg-gray-500/20 text-gray-400 text-[10px] font-medium rounded border border-gray-500/30">
+                        CLOSED
+                      </span>
+                    ) : gammaData?.market_status === 'after_hours' ? (
+                      <span className="ml-2 px-2 py-0.5 bg-purple-500/20 text-purple-400 text-[10px] font-medium rounded border border-purple-500/30">
+                        AFTER HOURS
+                      </span>
+                    ) : gammaData?.market_status === 'pre_market' ? (
+                      <span className="ml-2 px-2 py-0.5 bg-blue-500/20 text-blue-400 text-[10px] font-medium rounded border border-blue-500/30">
+                        PRE-MARKET
+                      </span>
                     ) : gammaData?.is_stale ? (
                       <span className="ml-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-medium rounded border border-yellow-500/30">
                         STALE
@@ -1488,7 +1500,10 @@ export default function ArgusPage() {
                         </td>
                         <td className="py-2 px-2 text-center">
                           {(() => {
-                            const trend = strikeTrends[String(strike.strike)]
+                            // API returns keys as "683.0", frontend may have "683" - try both
+                            const trend = strikeTrends[String(strike.strike)] ||
+                                          strikeTrends[String(strike.strike) + '.0'] ||
+                                          strikeTrends[String(parseFloat(String(strike.strike)).toFixed(1))]
                             if (!trend || trend.dominant_status === 'NEUTRAL') {
                               return <span className="text-gray-600 text-[10px]">—</span>
                             }
@@ -1520,15 +1535,20 @@ export default function ArgusPage() {
                             {strike.is_danger && (
                               <span className="px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded text-[10px]">{strike.danger_type}</span>
                             )}
-                            {gammaFlips30m.some(f => f.strike === strike.strike) && (
-                              <span className={`px-1.5 py-0.5 rounded text-[10px] ${
-                                gammaFlips30m.find(f => f.strike === strike.strike)?.direction === 'POS_TO_NEG'
-                                  ? 'bg-rose-500/20 text-rose-400'
-                                  : 'bg-emerald-500/20 text-emerald-400'
-                              }`}>
-                                FLIP {gammaFlips30m.find(f => f.strike === strike.strike)?.mins_ago.toFixed(0)}m
-                              </span>
-                            )}
+                            {(() => {
+                              // Check for gamma flip - compare as numbers
+                              const flip = gammaFlips30m.find(f => Math.abs(f.strike - strike.strike) < 0.01)
+                              if (!flip) return null
+                              return (
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                  flip.direction === 'POS_TO_NEG'
+                                    ? 'bg-rose-500/20 text-rose-400'
+                                    : 'bg-emerald-500/20 text-emerald-400'
+                                }`}>
+                                  FLIP {flip.mins_ago.toFixed(0)}m
+                                </span>
+                              )
+                            })()}
                           </div>
                         </td>
                       </tr>
