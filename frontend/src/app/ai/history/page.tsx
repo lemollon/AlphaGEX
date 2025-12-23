@@ -1,10 +1,8 @@
 'use client'
 
-import { logger } from '@/lib/logger'
-
 import { useState, useEffect } from 'react'
-import Navigation from '@/components/Navigation'
-import { apiClient } from '@/lib/api'
+import Navigation from '../../../components/Navigation'
+import { apiClient } from '../../../lib/api'
 import { MessageSquare, Clock, Search, User, Bot } from 'lucide-react'
 
 interface Conversation {
@@ -50,7 +48,7 @@ export default function ConversationHistory() {
         setFilteredConversations(res.data.conversations)
       }
     } catch (error) {
-      logger.error('Error fetching conversations:', error)
+      console.error('Error fetching conversations:', error)
     } finally {
       setLoading(false)
     }
