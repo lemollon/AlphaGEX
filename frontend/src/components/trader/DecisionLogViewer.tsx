@@ -365,7 +365,7 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
                   )}
 
                   {/* P&L if available */}
-                  {log.actual_pnl !== undefined && log.actual_pnl !== 0 && (
+                  {log.actual_pnl != null && log.actual_pnl !== 0 && (
                     <div>
                       <span className="text-text-muted text-xs font-medium">REALIZED P&L: </span>
                       <span className={`text-sm font-bold ${log.actual_pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
