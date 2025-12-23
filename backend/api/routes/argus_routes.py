@@ -319,13 +319,26 @@ async def get_gamma_data(
         # Fetch raw data
         raw_data = await fetch_gamma_data(expiration)
 
-        # Process through engine
-        snapshot = engine.process_options_chain(
-            raw_data,
-            raw_data['spot_price'],
-            raw_data['vix'],
-            expiration
-        )
+        # CRITICAL: Only process through engine if data is FRESH (not cached)
+        # Re-processing cached data causes ROC to become 0 because the same gamma values
+        # get added to history with new timestamps, making rate of change appear as 0
+        cache_time = raw_data.get('cache_time')
+        cache_age_seconds = int(time.time() - cache_time) if cache_time else 0
+        is_cached = cache_age_seconds > 2  # Data older than 2 seconds is from cache
+
+        if is_cached and engine.previous_snapshot:
+            # Use existing snapshot - don't reprocess cached data
+            logger.debug(f"ARGUS: Using existing snapshot (cached data, age={cache_age_seconds}s)")
+            snapshot = engine.previous_snapshot
+        else:
+            # Process fresh data through engine
+            logger.debug(f"ARGUS: Processing fresh data through engine")
+            snapshot = engine.process_options_chain(
+                raw_data,
+                raw_data['spot_price'],
+                raw_data['vix'],
+                expiration
+            )
 
         # Filter strikes to expected move ± 5
         filtered_strikes = engine.filter_strikes_by_expected_move(
@@ -338,15 +351,12 @@ async def get_gamma_data(
         # Get expected move change data (pass spot_price to normalize for overnight gaps)
         em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'], snapshot.spot_price)
 
-        # Persist danger zones and alerts to database for history
-        await persist_danger_zones_to_db(snapshot.danger_zones, snapshot.spot_price, expiration)
-        if engine:
-            await persist_alerts_to_db(engine.get_active_alerts())
-
-        # Calculate cache age for freshness indicator
-        cache_time = raw_data.get('cache_time')
-        cache_age_seconds = int(time.time() - cache_time) if cache_time else 0
-        is_cached = cache_age_seconds > 5  # Data is considered cached if > 5 seconds old
+        # Only persist danger zones and alerts when we process FRESH data
+        # This prevents clearing danger zones due to cached data with stale ROC values
+        if not is_cached:
+            await persist_danger_zones_to_db(snapshot.danger_zones, snapshot.spot_price, expiration)
+            if engine:
+                await persist_alerts_to_db(engine.get_active_alerts())
 
         # Build response
         return {
