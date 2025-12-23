@@ -2428,6 +2428,152 @@ async def clear_oracle_logs():
         return {"success": False, "error": str(e)}
 
 
+@router.get("/oracle/data-flows")
+async def get_oracle_data_flows(limit: int = 50, bot_name: str = None):
+    """
+    Get detailed Oracle data flow records for FULL TRANSPARENCY.
+
+    Returns complete data at each stage of the Oracle pipeline:
+    - INPUT: Market context data fed into Oracle
+    - ML_OUTPUT: ML model predictions and features
+    - DECISION: Final advice with all reasoning
+
+    This gives you complete visibility into what data Oracle is processing.
+    """
+    try:
+        from quant.oracle_advisor import oracle_live_log
+
+        flows = oracle_live_log.get_data_flows(limit=limit, bot_name=bot_name)
+
+        return {
+            "success": True,
+            "data_flows": flows,
+            "count": len(flows)
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}",
+            "data_flows": []
+        }
+    except Exception as e:
+        logger.error(f"Failed to get Oracle data flows: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "data_flows": []
+        }
+
+
+@router.get("/oracle/claude-exchanges")
+async def get_oracle_claude_exchanges(limit: int = 20, bot_name: str = None):
+    """
+    Get COMPLETE Claude AI exchanges with FULL TRANSPARENCY.
+
+    Returns the EXACT prompts sent to Claude and EXACT responses received.
+    This is critical for:
+    - Seeing what market data Claude is analyzing
+    - Understanding Claude's reasoning
+    - Verifying Claude is not hallucinating
+    - Full audit trail of AI decision-making
+
+    Each exchange includes:
+    - prompt_sent: The full prompt text sent to Claude
+    - response_received: The complete response from Claude
+    - market_context: All market data that was included
+    - ml_prediction: The ML model's prediction that was validated
+    - tokens_used: Token consumption for cost tracking
+    - response_time_ms: Response latency
+    """
+    try:
+        from quant.oracle_advisor import oracle_live_log
+
+        exchanges = oracle_live_log.get_claude_exchanges(limit=limit, bot_name=bot_name)
+
+        return {
+            "success": True,
+            "claude_exchanges": exchanges,
+            "count": len(exchanges)
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}",
+            "claude_exchanges": []
+        }
+    except Exception as e:
+        logger.error(f"Failed to get Claude exchanges: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "claude_exchanges": []
+        }
+
+
+@router.get("/oracle/full-transparency")
+async def get_oracle_full_transparency(bot_name: str = None):
+    """
+    Get COMPLETE Oracle transparency data in one call.
+
+    Returns everything:
+    - Recent logs (500 max)
+    - Data flows with full input/output at each stage
+    - Complete Claude AI exchanges with full prompt/response
+    - Latest data flow for each bot
+
+    Use this endpoint for the Oracle transparency dashboard.
+    """
+    try:
+        from quant.oracle_advisor import oracle_live_log
+
+        # Get all transparency data
+        logs = oracle_live_log.get_logs(limit=100)
+        data_flows = oracle_live_log.get_data_flows(limit=50, bot_name=bot_name)
+        claude_exchanges = oracle_live_log.get_claude_exchanges(limit=20, bot_name=bot_name)
+
+        # Get latest flow per bot
+        latest_by_bot = {}
+        for bot in ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX']:
+            latest = oracle_live_log.get_latest_flow_for_bot(bot)
+            if latest:
+                latest_by_bot[bot] = latest
+
+        return {
+            "success": True,
+            "logs": logs,
+            "data_flows": data_flows,
+            "claude_exchanges": claude_exchanges,
+            "latest_by_bot": latest_by_bot,
+            "summary": {
+                "total_logs": len(logs),
+                "total_data_flows": len(data_flows),
+                "total_claude_exchanges": len(claude_exchanges)
+            }
+        }
+
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"Oracle module not available: {e}",
+            "logs": [],
+            "data_flows": [],
+            "claude_exchanges": [],
+            "latest_by_bot": {}
+        }
+    except Exception as e:
+        logger.error(f"Failed to get Oracle transparency data: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "logs": [],
+            "data_flows": [],
+            "claude_exchanges": [],
+            "latest_by_bot": {}
+        }
+
+
 @router.post("/oracle/analyze-patterns")
 async def oracle_analyze_patterns(job_id: Optional[str] = None):
     """

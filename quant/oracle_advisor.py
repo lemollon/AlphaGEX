@@ -257,17 +257,20 @@ class ClaudeAnalysis:
 
 class OracleLiveLog:
     """
-    Live logging system for Oracle Claude AI interactions.
-    Stores recent logs for frontend transparency.
+    Live logging system for Oracle - FULL TRANSPARENCY.
+    Captures every piece of data flowing through Oracle for frontend visibility.
     """
     _instance = None
-    MAX_LOGS = 100
+    MAX_LOGS = 500  # Increased for more history
+    MAX_DATA_FLOWS = 100  # Store detailed data flow records
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._logs = []
             cls._instance._callbacks = []
+            cls._instance._data_flows = []  # Full data pipeline records
+            cls._instance._claude_exchanges = []  # Complete Claude prompt/response pairs
         return cls._instance
 
     def log(self, event_type: str, message: str, data: Optional[Dict] = None):
@@ -294,13 +297,119 @@ class OracleLiveLog:
         # Also log to standard logger
         logger.info(f"[ORACLE] {event_type}: {message}")
 
+    def log_data_flow(self, bot_name: str, stage: str, data: Dict):
+        """
+        Log a complete data flow step for full transparency.
+
+        Stages: INPUT, ML_FEATURES, ML_OUTPUT, CLAUDE_PROMPT, CLAUDE_RESPONSE,
+                DECISION, SENT_TO_BOT, ANTI_HALLUCINATION_CHECK
+        """
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "bot_name": bot_name,
+            "stage": stage,
+            "data": data
+        }
+        self._data_flows.append(entry)
+
+        # Keep only recent
+        if len(self._data_flows) > self.MAX_DATA_FLOWS:
+            self._data_flows = self._data_flows[-self.MAX_DATA_FLOWS:]
+
+        # Also add to regular logs with summary
+        self.log(f"DATA_FLOW_{stage}", f"{bot_name}: {stage}", {
+            "bot": bot_name,
+            "stage": stage,
+            "summary": self._summarize_data(data, stage)
+        })
+
+    def log_claude_exchange(self, bot_name: str, prompt: str, response: str,
+                           market_context: Dict, ml_prediction: Dict,
+                           tokens_used: int = 0, response_time_ms: int = 0,
+                           model: str = ""):
+        """
+        Log a complete Claude AI exchange with full context.
+        This is the key for transparency - shows exactly what AI sees and says.
+        """
+        exchange = {
+            "timestamp": datetime.now().isoformat(),
+            "bot_name": bot_name,
+            "market_context": market_context,
+            "ml_prediction": ml_prediction,
+            "prompt_sent": prompt,
+            "response_received": response,
+            "tokens_used": tokens_used,
+            "response_time_ms": response_time_ms,
+            "model": model
+        }
+        self._claude_exchanges.append(exchange)
+
+        # Keep only recent
+        if len(self._claude_exchanges) > self.MAX_DATA_FLOWS:
+            self._claude_exchanges = self._claude_exchanges[-self.MAX_DATA_FLOWS:]
+
+        # Log summary
+        self.log("CLAUDE_EXCHANGE", f"{bot_name}: Claude AI consulted", {
+            "bot": bot_name,
+            "tokens": tokens_used,
+            "time_ms": response_time_ms,
+            "model": model,
+            "prompt_length": len(prompt),
+            "response_length": len(response)
+        })
+
+    def _summarize_data(self, data: Dict, stage: str) -> Dict:
+        """Create a summary of data for log display"""
+        if stage == "INPUT":
+            return {
+                "spot_price": data.get("spot_price"),
+                "vix": data.get("vix"),
+                "gex_regime": data.get("gex_regime"),
+                "gex_net": data.get("gex_net")
+            }
+        elif stage == "ML_OUTPUT":
+            return {
+                "win_probability": data.get("win_probability"),
+                "advice": data.get("advice")
+            }
+        elif stage == "DECISION":
+            return {
+                "final_advice": data.get("advice"),
+                "win_prob": data.get("win_probability"),
+                "claude_validated": data.get("claude_validated", False)
+            }
+        return {"keys": list(data.keys())[:5]}
+
     def get_logs(self, limit: int = 50) -> List[Dict]:
         """Get recent logs"""
         return self._logs[-limit:]
 
+    def get_data_flows(self, limit: int = 50, bot_name: str = None) -> List[Dict]:
+        """Get detailed data flow records"""
+        flows = self._data_flows
+        if bot_name:
+            flows = [f for f in flows if f.get("bot_name") == bot_name]
+        return flows[-limit:]
+
+    def get_claude_exchanges(self, limit: int = 20, bot_name: str = None) -> List[Dict]:
+        """Get complete Claude AI exchanges with full prompt/response"""
+        exchanges = self._claude_exchanges
+        if bot_name:
+            exchanges = [e for e in exchanges if e.get("bot_name") == bot_name]
+        return exchanges[-limit:]
+
+    def get_latest_flow_for_bot(self, bot_name: str) -> Optional[Dict]:
+        """Get the most recent complete data flow for a specific bot"""
+        bot_flows = [f for f in self._data_flows if f.get("bot_name") == bot_name]
+        if bot_flows:
+            return bot_flows[-1]
+        return None
+
     def clear(self):
         """Clear all logs"""
         self._logs = []
+        self._data_flows = []
+        self._claude_exchanges = []
 
     def add_callback(self, callback):
         """Add callback for real-time log streaming"""
@@ -327,7 +436,7 @@ class OracleClaudeEnhancer:
     3. Identify patterns in training data
     """
 
-    CLAUDE_MODEL = "claude-sonnet-4-5-latest"  # Always use latest Sonnet 4.5
+    CLAUDE_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - correct model ID
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize Claude AI enhancer"""
@@ -464,6 +573,33 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
                 "tokens": tokens_used,
                 "time_ms": response_time_ms
             })
+
+            # Log complete Claude exchange for full transparency
+            day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            market_context_dict = {
+                "spot_price": context.spot_price,
+                "vix": context.vix,
+                "vix_change_1d": context.vix_change_1d,
+                "gex_regime": context.gex_regime.value,
+                "gex_normalized": context.gex_normalized,
+                "gex_net": context.gex_net,
+                "gex_flip_point": context.gex_flip_point,
+                "gex_call_wall": context.gex_call_wall,
+                "gex_put_wall": context.gex_put_wall,
+                "gex_between_walls": context.gex_between_walls,
+                "day_of_week": day_names[context.day_of_week] if 0 <= context.day_of_week < 7 else "Unknown",
+                "days_to_opex": context.days_to_opex
+            }
+            self.live_log.log_claude_exchange(
+                bot_name=bot_name.value,
+                prompt=full_prompt,
+                response=response,
+                market_context=market_context_dict,
+                ml_prediction=ml_prediction,
+                tokens_used=tokens_used,
+                response_time_ms=response_time_ms,
+                model=self.CLAUDE_MODEL
+            )
 
             return result
 
@@ -1076,8 +1212,39 @@ class OracleAdvisor:
             "use_claude": use_claude_validation
         })
 
+        # === FULL DATA FLOW LOGGING: INPUT ===
+        input_data = {
+            "spot_price": context.spot_price,
+            "price_change_1d": context.price_change_1d,
+            "vix": context.vix,
+            "vix_percentile_30d": context.vix_percentile_30d,
+            "vix_change_1d": context.vix_change_1d,
+            "gex_net": context.gex_net,
+            "gex_normalized": context.gex_normalized,
+            "gex_regime": context.gex_regime.value,
+            "gex_flip_point": context.gex_flip_point,
+            "gex_call_wall": context.gex_call_wall,
+            "gex_put_wall": context.gex_put_wall,
+            "gex_distance_to_flip_pct": context.gex_distance_to_flip_pct,
+            "gex_between_walls": context.gex_between_walls,
+            "day_of_week": context.day_of_week,
+            "days_to_opex": context.days_to_opex,
+            "win_rate_30d": context.win_rate_30d,
+            "expected_move_pct": context.expected_move_pct
+        }
+        self.live_log.log_data_flow("ARES", "INPUT", input_data)
+
         # Get base prediction
         base_pred = self._get_base_prediction(context)
+
+        # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
+        self.live_log.log_data_flow("ARES", "ML_OUTPUT", {
+            "win_probability": base_pred.get('win_probability'),
+            "top_factors": base_pred.get('top_factors', []),
+            "probabilities": base_pred.get('probabilities', {}),
+            "model_version": self.model_version,
+            "is_calibrated": self.calibrated_model is not None
+        })
 
         # Calculate GEX wall strikes if requested
         suggested_put = None
@@ -1158,6 +1325,25 @@ class OracleAdvisor:
             "claude_validated": claude_analysis is not None
         })
 
+        # === FULL DATA FLOW LOGGING: DECISION ===
+        decision_data = {
+            "advice": advice.value,
+            "win_probability": base_pred['win_probability'],
+            "confidence": prediction.confidence,
+            "risk_pct": risk_pct,
+            "sd_multiplier": sd_mult,
+            "use_gex_walls": use_gex_walls,
+            "suggested_put_strike": suggested_put,
+            "suggested_call_strike": suggested_call,
+            "reasoning": prediction.reasoning,
+            "claude_validated": claude_analysis is not None,
+            "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
+            "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
+            "claude_risk_factors": claude_analysis.risk_factors if claude_analysis else [],
+            "model_version": self.model_version
+        }
+        self.live_log.log_data_flow("ARES", "DECISION", decision_data)
+
         return prediction
 
     def get_atlas_advice(self, context: MarketContext) -> OraclePrediction:
@@ -1231,7 +1417,36 @@ class OracleAdvisor:
             "claude_validation": use_claude_validation
         })
 
+        # === FULL DATA FLOW LOGGING: INPUT ===
+        input_data = {
+            "spot_price": context.spot_price,
+            "price_change_1d": context.price_change_1d,
+            "vix": context.vix,
+            "vix_percentile_30d": context.vix_percentile_30d,
+            "vix_change_1d": context.vix_change_1d,
+            "gex_net": context.gex_net,
+            "gex_normalized": context.gex_normalized,
+            "gex_regime": context.gex_regime.value,
+            "gex_flip_point": context.gex_flip_point,
+            "gex_call_wall": context.gex_call_wall,
+            "gex_put_wall": context.gex_put_wall,
+            "gex_distance_to_flip_pct": context.gex_distance_to_flip_pct,
+            "gex_between_walls": context.gex_between_walls,
+            "day_of_week": context.day_of_week,
+            "days_to_opex": context.days_to_opex
+        }
+        self.live_log.log_data_flow("PHOENIX", "INPUT", input_data)
+
         base_pred = self._get_base_prediction(context)
+
+        # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
+        self.live_log.log_data_flow("PHOENIX", "ML_OUTPUT", {
+            "win_probability": base_pred.get('win_probability'),
+            "top_factors": base_pred.get('top_factors', []),
+            "probabilities": base_pred.get('probabilities', {}),
+            "model_version": self.model_version
+        })
+
         reasoning_parts = []
 
         # Negative GEX + below flip = potential rally
@@ -1280,6 +1495,20 @@ class OracleAdvisor:
             "claude_validated": claude_analysis is not None
         })
 
+        # === FULL DATA FLOW LOGGING: DECISION ===
+        decision_data = {
+            "advice": advice.value,
+            "win_probability": base_pred['win_probability'],
+            "confidence": prediction.confidence,
+            "risk_pct": risk_pct * 0.5,
+            "reasoning": prediction.reasoning,
+            "claude_validated": claude_analysis is not None,
+            "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
+            "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
+            "model_version": self.model_version
+        }
+        self.live_log.log_data_flow("PHOENIX", "DECISION", decision_data)
+
         return prediction
 
     def get_athena_advice(
@@ -1311,7 +1540,36 @@ class OracleAdvisor:
             "claude_validation": use_claude_validation
         })
 
+        # === FULL DATA FLOW LOGGING: INPUT ===
+        input_data = {
+            "spot_price": context.spot_price,
+            "price_change_1d": context.price_change_1d,
+            "vix": context.vix,
+            "vix_percentile_30d": context.vix_percentile_30d,
+            "vix_change_1d": context.vix_change_1d,
+            "gex_net": context.gex_net,
+            "gex_normalized": context.gex_normalized,
+            "gex_regime": context.gex_regime.value,
+            "gex_flip_point": context.gex_flip_point,
+            "gex_call_wall": context.gex_call_wall,
+            "gex_put_wall": context.gex_put_wall,
+            "gex_distance_to_flip_pct": context.gex_distance_to_flip_pct,
+            "gex_between_walls": context.gex_between_walls,
+            "day_of_week": context.day_of_week,
+            "days_to_opex": context.days_to_opex
+        }
+        self.live_log.log_data_flow("ATHENA", "INPUT", input_data)
+
         base_pred = self._get_base_prediction(context)
+
+        # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
+        self.live_log.log_data_flow("ATHENA", "ML_OUTPUT", {
+            "win_probability": base_pred.get('win_probability'),
+            "top_factors": base_pred.get('top_factors', []),
+            "probabilities": base_pred.get('probabilities', {}),
+            "model_version": self.model_version
+        })
+
         reasoning_parts = []
 
         # Determine directional bias from GEX structure
@@ -1435,6 +1693,27 @@ class OracleAdvisor:
             "spread_type": spread_direction,
             "claude_validated": claude_analysis is not None
         })
+
+        # === FULL DATA FLOW LOGGING: DECISION ===
+        decision_data = {
+            "advice": advice.value,
+            "win_probability": base_pred['win_probability'],
+            "confidence": prediction.confidence,
+            "risk_pct": risk_pct * 0.5,
+            "direction": direction,
+            "spread_type": spread_direction,
+            "direction_confidence": direction_confidence,
+            "suggested_put_strike": suggested_put,
+            "suggested_call_strike": suggested_call,
+            "dist_to_call_wall": dist_to_call_wall,
+            "dist_to_put_wall": dist_to_put_wall,
+            "reasoning": prediction.reasoning,
+            "claude_validated": claude_analysis is not None,
+            "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
+            "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
+            "model_version": self.model_version
+        }
+        self.live_log.log_data_flow("ATHENA", "DECISION", decision_data)
 
         return prediction
 

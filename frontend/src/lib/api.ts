@@ -662,6 +662,25 @@ export const apiClient = {
     return api.get(`/api/zero-dte/oracle/predictions?${queryParams.toString()}`)
   },
 
+  // Oracle Full Transparency - NEW: Complete visibility into Oracle data flow
+  getOracleDataFlows: (params?: { limit?: number, bot_name?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
+    return api.get(`/api/zero-dte/oracle/data-flows?${queryParams.toString()}`)
+  },
+  getOracleClaudeExchanges: (params?: { limit?: number, bot_name?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
+    return api.get(`/api/zero-dte/oracle/claude-exchanges?${queryParams.toString()}`)
+  },
+  getOracleFullTransparency: (bot_name?: string) => {
+    const queryParams = new URLSearchParams()
+    if (bot_name) queryParams.append('bot_name', bot_name)
+    return api.get(`/api/zero-dte/oracle/full-transparency?${queryParams.toString()}`)
+  },
+
   // Export Routes
   exportData: async (type: 'trades' | 'pnl-attribution' | 'decision-logs' | 'wheel-cycles' | 'full-audit', params?: {
     symbol?: string
