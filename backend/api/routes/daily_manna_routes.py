@@ -15,6 +15,9 @@ from typing import Optional, Dict, Any, List
 from xml.etree import ElementTree
 
 from fastapi import APIRouter, HTTPException
+import psycopg2.extras
+
+from backend.api.database import get_database_pool, fetch_all, fetch_one, execute_query
 
 router = APIRouter(prefix="/api/daily-manna", tags=["Daily Manna"])
 
@@ -697,22 +700,53 @@ def get_daily_greeting() -> str:
 
 # ============================================================================
 # ARCHIVE, COMMENTS, REFLECTIONS & PRAYER TRACKER
+# Persistent storage using PostgreSQL
 # ============================================================================
-
-# In-memory storage (replace with database in production)
-_devotional_archive: Dict[str, Dict[str, Any]] = {}  # date -> devotional
-_comments: List[Dict[str, Any]] = []  # Community comments
-_reflections: Dict[str, List[Dict[str, Any]]] = {}  # user_id -> list of reflections
-_prayer_tracker: Dict[str, Dict[str, Any]] = {}  # user_id -> prayer data
 
 
 def save_to_archive(content: Dict[str, Any]) -> None:
-    """Save devotional to archive."""
-    date_key = datetime.now().strftime("%Y-%m-%d")
-    _devotional_archive[date_key] = {
-        **content,
-        "archived_at": datetime.now().isoformat()
-    }
+    """Save devotional to database archive."""
+    try:
+        pool = get_database_pool()
+        if not pool.is_available:
+            print("Database not available - skipping archive save")
+            return
+
+        date_key = datetime.now().strftime("%Y-%m-%d")
+        devotional = content.get("devotional", {})
+        scriptures = content.get("scriptures", [])
+        news = content.get("news", [])
+        greeting = content.get("greeting", "")
+        news_sources = content.get("news_sources", [])
+        generated_at = content.get("timestamp", datetime.now().isoformat())
+
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO daily_manna_archive
+                    (date, devotional, scriptures, news, greeting, news_sources, generated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (date) DO UPDATE SET
+                    devotional = EXCLUDED.devotional,
+                    scriptures = EXCLUDED.scriptures,
+                    news = EXCLUDED.news,
+                    greeting = EXCLUDED.greeting,
+                    news_sources = EXCLUDED.news_sources,
+                    generated_at = EXCLUDED.generated_at,
+                    archived_at = NOW()
+            """, (
+                date_key,
+                json.dumps(devotional),
+                json.dumps(scriptures),
+                json.dumps(news),
+                greeting,
+                news_sources,
+                generated_at
+            ))
+            print(f"Archived Daily Manna for {date_key}")
+
+    except Exception as e:
+        print(f"Error saving to archive: {e}")
 
 
 @router.get("/archive")
@@ -723,28 +757,58 @@ async def get_devotional_archive(limit: int = 30):
     Returns a list of past devotionals for review.
     """
     try:
-        # Sort by date descending
-        sorted_dates = sorted(_devotional_archive.keys(), reverse=True)[:limit]
-
-        archive_list = []
-        for date_key in sorted_dates:
-            devotional = _devotional_archive.get(date_key, {})
-            archive_list.append({
-                "date": date_key,
-                "theme": devotional.get("devotional", {}).get("theme", "Unknown"),
-                "key_insight": devotional.get("devotional", {}).get("key_insight", ""),
-                "scriptures": [s.get("reference") for s in devotional.get("scriptures", [])],
-                "news_count": len(devotional.get("news", [])),
-                "archived_at": devotional.get("archived_at")
-            })
-
-        return {
-            "success": True,
-            "data": {
-                "archive": archive_list,
-                "total": len(_devotional_archive)
+        pool = get_database_pool()
+        if not pool.is_available:
+            return {
+                "success": True,
+                "data": {"archive": [], "total": 0},
+                "message": "Database not available"
             }
-        }
+
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get archive list
+            cursor.execute("""
+                SELECT
+                    date,
+                    devotional->>'theme' as theme,
+                    devotional->>'key_insight' as key_insight,
+                    scriptures,
+                    jsonb_array_length(news) as news_count,
+                    archived_at
+                FROM daily_manna_archive
+                ORDER BY date DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+
+            # Get total count
+            cursor.execute("SELECT COUNT(*) as count FROM daily_manna_archive")
+            total_row = cursor.fetchone()
+            total = total_row['count'] if total_row else 0
+
+            archive_list = []
+            for row in rows:
+                scriptures = row.get('scriptures', [])
+                if isinstance(scriptures, str):
+                    scriptures = json.loads(scriptures)
+                archive_list.append({
+                    "date": str(row['date']),
+                    "theme": row.get('theme', 'Unknown'),
+                    "key_insight": row.get('key_insight', ''),
+                    "scriptures": [s.get("reference") for s in scriptures] if scriptures else [],
+                    "news_count": row.get('news_count', 0),
+                    "archived_at": row['archived_at'].isoformat() if row.get('archived_at') else None
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "archive": archive_list,
+                    "total": total
+                }
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -757,13 +821,38 @@ async def get_archived_devotional(date: str):
     Date format: YYYY-MM-DD
     """
     try:
-        if date not in _devotional_archive:
-            raise HTTPException(status_code=404, detail=f"No devotional found for {date}")
+        pool = get_database_pool()
+        if not pool.is_available:
+            raise HTTPException(status_code=503, detail="Database not available")
 
-        return {
-            "success": True,
-            "data": _devotional_archive[date]
-        }
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM daily_manna_archive WHERE date = %s
+            """, (date,))
+            row = cursor.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail=f"No devotional found for {date}")
+
+            # Parse JSONB fields
+            devotional = row.get('devotional', {})
+            scriptures = row.get('scriptures', [])
+            news = row.get('news', [])
+
+            return {
+                "success": True,
+                "data": {
+                    "date": str(row['date']),
+                    "devotional": devotional,
+                    "scriptures": scriptures,
+                    "news": news,
+                    "greeting": row.get('greeting'),
+                    "news_sources": row.get('news_sources', []),
+                    "timestamp": row.get('generated_at').isoformat() if row.get('generated_at') else None,
+                    "archived_at": row.get('archived_at').isoformat() if row.get('archived_at') else None
+                }
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -788,10 +877,14 @@ async def add_comment(request: dict):
     }
     """
     try:
+        pool = get_database_pool()
+        if not pool.is_available:
+            raise HTTPException(status_code=503, detail="Database not available")
+
         user_name = request.get("user_name", "Anonymous")
         user_id = request.get("user_id", "anonymous")
         comment_text = request.get("comment", "").strip()
-        date = request.get("date", datetime.now().strftime("%Y-%m-%d"))
+        comment_date = request.get("date", datetime.now().strftime("%Y-%m-%d"))
 
         if not comment_text:
             raise HTTPException(status_code=400, detail="Comment cannot be empty")
@@ -799,23 +892,30 @@ async def add_comment(request: dict):
         if len(comment_text) > 2000:
             raise HTTPException(status_code=400, detail="Comment too long (max 2000 characters)")
 
-        comment = {
-            "id": len(_comments) + 1,
-            "user_name": user_name[:50],
-            "user_id": user_id,
-            "comment": comment_text,
-            "date": date,
-            "created_at": datetime.now().isoformat(),
-            "likes": 0
-        }
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO daily_manna_comments (user_id, user_name, comment, date)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, user_id, user_name, comment, date, likes, created_at
+            """, (user_id, user_name[:50], comment_text, comment_date))
+            row = cursor.fetchone()
 
-        _comments.append(comment)
+            comment = {
+                "id": row['id'],
+                "user_name": row['user_name'],
+                "user_id": row['user_id'],
+                "comment": row['comment'],
+                "date": str(row['date']),
+                "created_at": row['created_at'].isoformat(),
+                "likes": row['likes']
+            }
 
-        return {
-            "success": True,
-            "data": comment,
-            "message": "Comment added successfully"
-        }
+            return {
+                "success": True,
+                "data": comment,
+                "message": "Comment added successfully"
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -830,22 +930,51 @@ async def get_comments(date: str = None, limit: int = 50):
     If date is not specified, returns comments for today.
     """
     try:
+        pool = get_database_pool()
+        if not pool.is_available:
+            return {
+                "success": True,
+                "data": {"comments": [], "total": 0, "date": date or datetime.now().strftime("%Y-%m-%d")}
+            }
+
         target_date = date or datetime.now().strftime("%Y-%m-%d")
 
-        # Filter comments for the specified date
-        date_comments = [c for c in _comments if c.get("date") == target_date]
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, user_id, user_name, comment, date, likes, created_at
+                FROM daily_manna_comments
+                WHERE date = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (target_date, limit))
+            rows = cursor.fetchall()
 
-        # Sort by created_at descending
-        date_comments.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            # Get total count
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM daily_manna_comments WHERE date = %s
+            """, (target_date,))
+            total_row = cursor.fetchone()
+            total = total_row['count'] if total_row else 0
 
-        return {
-            "success": True,
-            "data": {
-                "comments": date_comments[:limit],
-                "total": len(date_comments),
-                "date": target_date
+            comments = [{
+                "id": row['id'],
+                "user_name": row['user_name'],
+                "user_id": row['user_id'],
+                "comment": row['comment'],
+                "date": str(row['date']),
+                "created_at": row['created_at'].isoformat(),
+                "likes": row['likes']
+            } for row in rows]
+
+            return {
+                "success": True,
+                "data": {
+                    "comments": comments,
+                    "total": total,
+                    "date": target_date
+                }
             }
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -854,15 +983,27 @@ async def get_comments(date: str = None, limit: int = 50):
 async def like_comment(comment_id: int):
     """Like a comment."""
     try:
-        for comment in _comments:
-            if comment.get("id") == comment_id:
-                comment["likes"] = comment.get("likes", 0) + 1
-                return {
-                    "success": True,
-                    "data": {"likes": comment["likes"]}
-                }
+        pool = get_database_pool()
+        if not pool.is_available:
+            raise HTTPException(status_code=503, detail="Database not available")
 
-        raise HTTPException(status_code=404, detail="Comment not found")
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE daily_manna_comments
+                SET likes = likes + 1
+                WHERE id = %s
+                RETURNING likes
+            """, (comment_id,))
+            row = cursor.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Comment not found")
+
+            return {
+                "success": True,
+                "data": {"likes": row['likes']}
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -888,8 +1029,12 @@ async def save_reflection(request: dict):
     }
     """
     try:
+        pool = get_database_pool()
+        if not pool.is_available:
+            raise HTTPException(status_code=503, detail="Database not available")
+
         user_id = request.get("user_id", "default_user")
-        date = request.get("date", datetime.now().strftime("%Y-%m-%d"))
+        reflection_date = request.get("date", datetime.now().strftime("%Y-%m-%d"))
         reflection_text = request.get("reflection", "").strip()
         prayer_answered = request.get("prayer_answered", False)
         favorite = request.get("favorite", False)
@@ -897,28 +1042,32 @@ async def save_reflection(request: dict):
         if not reflection_text:
             raise HTTPException(status_code=400, detail="Reflection cannot be empty")
 
-        reflection = {
-            "id": f"{user_id}_{date}_{datetime.now().timestamp()}",
-            "user_id": user_id,
-            "date": date,
-            "reflection": reflection_text,
-            "prayer_answered": prayer_answered,
-            "favorite": favorite,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
-        }
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO daily_manna_reflections
+                    (user_id, date, reflection, prayer_answered, favorite)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, user_id, date, reflection, prayer_answered, favorite, created_at, updated_at
+            """, (user_id, reflection_date, reflection_text, prayer_answered, favorite))
+            row = cursor.fetchone()
 
-        # Initialize user's reflections list if needed
-        if user_id not in _reflections:
-            _reflections[user_id] = []
+            reflection = {
+                "id": row['id'],
+                "user_id": row['user_id'],
+                "date": str(row['date']),
+                "reflection": row['reflection'],
+                "prayer_answered": row['prayer_answered'],
+                "favorite": row['favorite'],
+                "created_at": row['created_at'].isoformat(),
+                "updated_at": row['updated_at'].isoformat()
+            }
 
-        _reflections[user_id].append(reflection)
-
-        return {
-            "success": True,
-            "data": reflection,
-            "message": "Reflection saved successfully"
-        }
+            return {
+                "success": True,
+                "data": reflection,
+                "message": "Reflection saved successfully"
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -931,19 +1080,53 @@ async def get_reflections(user_id: str = "default_user", limit: int = 100):
     Get all reflections for a user.
     """
     try:
-        user_reflections = _reflections.get(user_id, [])
-
-        # Sort by date descending
-        user_reflections.sort(key=lambda x: x.get("date", ""), reverse=True)
-
-        return {
-            "success": True,
-            "data": {
-                "reflections": user_reflections[:limit],
-                "total": len(user_reflections),
-                "favorites": len([r for r in user_reflections if r.get("favorite")])
+        pool = get_database_pool()
+        if not pool.is_available:
+            return {
+                "success": True,
+                "data": {"reflections": [], "total": 0, "favorites": 0}
             }
-        }
+
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, user_id, date, reflection, prayer_answered, favorite, created_at, updated_at
+                FROM daily_manna_reflections
+                WHERE user_id = %s
+                ORDER BY date DESC
+                LIMIT %s
+            """, (user_id, limit))
+            rows = cursor.fetchall()
+
+            # Get counts
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN favorite THEN 1 END) as favorites
+                FROM daily_manna_reflections
+                WHERE user_id = %s
+            """, (user_id,))
+            counts = cursor.fetchone()
+
+            reflections = [{
+                "id": row['id'],
+                "user_id": row['user_id'],
+                "date": str(row['date']),
+                "reflection": row['reflection'],
+                "prayer_answered": row['prayer_answered'],
+                "favorite": row['favorite'],
+                "created_at": row['created_at'].isoformat(),
+                "updated_at": row['updated_at'].isoformat()
+            } for row in rows]
+
+            return {
+                "success": True,
+                "data": {
+                    "reflections": reflections,
+                    "total": counts['total'] if counts else 0,
+                    "favorites": counts['favorites'] if counts else 0
+                }
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -954,46 +1137,106 @@ async def get_reflection_for_date(date: str, user_id: str = "default_user"):
     Get reflection for a specific date.
     """
     try:
-        user_reflections = _reflections.get(user_id, [])
-        date_reflections = [r for r in user_reflections if r.get("date") == date]
-
-        return {
-            "success": True,
-            "data": {
-                "reflections": date_reflections,
-                "date": date
+        pool = get_database_pool()
+        if not pool.is_available:
+            return {
+                "success": True,
+                "data": {"reflections": [], "date": date}
             }
-        }
+
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, user_id, date, reflection, prayer_answered, favorite, created_at, updated_at
+                FROM daily_manna_reflections
+                WHERE user_id = %s AND date = %s
+                ORDER BY created_at DESC
+            """, (user_id, date))
+            rows = cursor.fetchall()
+
+            reflections = [{
+                "id": row['id'],
+                "user_id": row['user_id'],
+                "date": str(row['date']),
+                "reflection": row['reflection'],
+                "prayer_answered": row['prayer_answered'],
+                "favorite": row['favorite'],
+                "created_at": row['created_at'].isoformat(),
+                "updated_at": row['updated_at'].isoformat()
+            } for row in rows]
+
+            return {
+                "success": True,
+                "data": {
+                    "reflections": reflections,
+                    "date": date
+                }
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/reflections/{reflection_id}")
-async def update_reflection(reflection_id: str, request: dict):
+async def update_reflection(reflection_id: int, request: dict):
     """
     Update an existing reflection.
     """
     try:
+        pool = get_database_pool()
+        if not pool.is_available:
+            raise HTTPException(status_code=503, detail="Database not available")
+
         user_id = request.get("user_id", "default_user")
-        user_reflections = _reflections.get(user_id, [])
 
-        for reflection in user_reflections:
-            if reflection.get("id") == reflection_id:
-                if "reflection" in request:
-                    reflection["reflection"] = request["reflection"]
-                if "prayer_answered" in request:
-                    reflection["prayer_answered"] = request["prayer_answered"]
-                if "favorite" in request:
-                    reflection["favorite"] = request["favorite"]
-                reflection["updated_at"] = datetime.now().isoformat()
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
 
-                return {
-                    "success": True,
-                    "data": reflection,
-                    "message": "Reflection updated"
-                }
+            # Build update query dynamically
+            updates = []
+            params = []
+            if "reflection" in request:
+                updates.append("reflection = %s")
+                params.append(request["reflection"])
+            if "prayer_answered" in request:
+                updates.append("prayer_answered = %s")
+                params.append(request["prayer_answered"])
+            if "favorite" in request:
+                updates.append("favorite = %s")
+                params.append(request["favorite"])
 
-        raise HTTPException(status_code=404, detail="Reflection not found")
+            if not updates:
+                raise HTTPException(status_code=400, detail="No fields to update")
+
+            updates.append("updated_at = NOW()")
+            params.extend([reflection_id, user_id])
+
+            cursor.execute(f"""
+                UPDATE daily_manna_reflections
+                SET {', '.join(updates)}
+                WHERE id = %s AND user_id = %s
+                RETURNING id, user_id, date, reflection, prayer_answered, favorite, created_at, updated_at
+            """, tuple(params))
+            row = cursor.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Reflection not found")
+
+            reflection = {
+                "id": row['id'],
+                "user_id": row['user_id'],
+                "date": str(row['date']),
+                "reflection": row['reflection'],
+                "prayer_answered": row['prayer_answered'],
+                "favorite": row['favorite'],
+                "created_at": row['created_at'].isoformat(),
+                "updated_at": row['updated_at'].isoformat()
+            }
+
+            return {
+                "success": True,
+                "data": reflection,
+                "message": "Reflection updated"
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -1003,6 +1246,53 @@ async def update_reflection(reflection_id: str, request: dict):
 # ============================================================================
 # PRAYER TRACKER
 # ============================================================================
+
+def calculate_prayer_streak(user_id: str, conn) -> tuple:
+    """Calculate current and longest prayer streaks for a user."""
+    cursor = conn.cursor()
+
+    # Get all prayer dates for user, ordered descending
+    cursor.execute("""
+        SELECT date FROM daily_manna_prayer_tracker
+        WHERE user_id = %s
+        ORDER BY date DESC
+    """, (user_id,))
+    rows = cursor.fetchall()
+
+    if not rows:
+        return 0, 0
+
+    dates = [row['date'] for row in rows]
+    today = date.today()
+
+    # Calculate current streak
+    current_streak = 0
+    check_date = today
+    for d in dates:
+        if d == check_date:
+            current_streak += 1
+            check_date = check_date - timedelta(days=1)
+        elif d == check_date - timedelta(days=1):
+            # Allow for checking from yesterday if not prayed today
+            check_date = d
+            current_streak += 1
+            check_date = check_date - timedelta(days=1)
+        else:
+            break
+
+    # Calculate longest streak
+    longest_streak = 1
+    streak = 1
+    sorted_dates = sorted(dates)
+    for i in range(1, len(sorted_dates)):
+        if sorted_dates[i] - sorted_dates[i-1] == timedelta(days=1):
+            streak += 1
+            longest_streak = max(longest_streak, streak)
+        else:
+            streak = 1
+
+    return current_streak, longest_streak
+
 
 @router.post("/prayer/today")
 async def mark_prayed_today(request: dict):
@@ -1015,45 +1305,44 @@ async def mark_prayed_today(request: dict):
     }
     """
     try:
+        pool = get_database_pool()
+        if not pool.is_available:
+            raise HTTPException(status_code=503, detail="Database not available")
+
         user_id = request.get("user_id", "default_user")
         today = datetime.now().strftime("%Y-%m-%d")
 
-        if user_id not in _prayer_tracker:
-            _prayer_tracker[user_id] = {
-                "days_prayed": [],
-                "current_streak": 0,
-                "longest_streak": 0,
-                "total_days": 0
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Insert prayer record (ignore if already exists)
+            cursor.execute("""
+                INSERT INTO daily_manna_prayer_tracker (user_id, date)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id, date) DO NOTHING
+            """, (user_id, today))
+
+            # Get total days
+            cursor.execute("""
+                SELECT COUNT(*) as total FROM daily_manna_prayer_tracker
+                WHERE user_id = %s
+            """, (user_id,))
+            total_row = cursor.fetchone()
+            total_days = total_row['total'] if total_row else 0
+
+            # Calculate streaks
+            current_streak, longest_streak = calculate_prayer_streak(user_id, conn)
+
+            return {
+                "success": True,
+                "data": {
+                    "prayed_today": True,
+                    "current_streak": current_streak,
+                    "longest_streak": longest_streak,
+                    "total_days": total_days
+                },
+                "message": f"Prayer logged! You're on a {current_streak}-day streak!"
             }
-
-        tracker = _prayer_tracker[user_id]
-
-        # Check if already prayed today
-        if today not in tracker["days_prayed"]:
-            tracker["days_prayed"].append(today)
-            tracker["total_days"] += 1
-
-            # Calculate streak
-            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-            if yesterday in tracker["days_prayed"]:
-                tracker["current_streak"] += 1
-            else:
-                tracker["current_streak"] = 1
-
-            # Update longest streak
-            if tracker["current_streak"] > tracker["longest_streak"]:
-                tracker["longest_streak"] = tracker["current_streak"]
-
-        return {
-            "success": True,
-            "data": {
-                "prayed_today": True,
-                "current_streak": tracker["current_streak"],
-                "longest_streak": tracker["longest_streak"],
-                "total_days": tracker["total_days"]
-            },
-            "message": f"Prayer logged! You're on a {tracker['current_streak']}-day streak!"
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1064,9 +1353,8 @@ async def get_prayer_stats(user_id: str = "default_user"):
     Get prayer statistics for a user.
     """
     try:
-        today = datetime.now().strftime("%Y-%m-%d")
-
-        if user_id not in _prayer_tracker:
+        pool = get_database_pool()
+        if not pool.is_available:
             return {
                 "success": True,
                 "data": {
@@ -1078,27 +1366,55 @@ async def get_prayer_stats(user_id: str = "default_user"):
                 }
             }
 
-        tracker = _prayer_tracker[user_id]
+        today = datetime.now().strftime("%Y-%m-%d")
 
-        # Get last 7 days
-        recent_days = []
-        for i in range(7):
-            day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            recent_days.append({
-                "date": day,
-                "prayed": day in tracker["days_prayed"]
-            })
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
 
-        return {
-            "success": True,
-            "data": {
-                "prayed_today": today in tracker["days_prayed"],
-                "current_streak": tracker["current_streak"],
-                "longest_streak": tracker["longest_streak"],
-                "total_days": tracker["total_days"],
-                "recent_days": recent_days
+            # Check if prayed today
+            cursor.execute("""
+                SELECT 1 FROM daily_manna_prayer_tracker
+                WHERE user_id = %s AND date = %s
+            """, (user_id, today))
+            prayed_today = cursor.fetchone() is not None
+
+            # Get total days
+            cursor.execute("""
+                SELECT COUNT(*) as total FROM daily_manna_prayer_tracker
+                WHERE user_id = %s
+            """, (user_id,))
+            total_row = cursor.fetchone()
+            total_days = total_row['total'] if total_row else 0
+
+            # Get last 7 days of prayer activity
+            cursor.execute("""
+                SELECT date FROM daily_manna_prayer_tracker
+                WHERE user_id = %s AND date >= %s
+                ORDER BY date DESC
+            """, (user_id, (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")))
+            prayer_dates = {row['date'] for row in cursor.fetchall()}
+
+            recent_days = []
+            for i in range(7):
+                day = (datetime.now() - timedelta(days=i)).date()
+                recent_days.append({
+                    "date": str(day),
+                    "prayed": day in prayer_dates
+                })
+
+            # Calculate streaks
+            current_streak, longest_streak = calculate_prayer_streak(user_id, conn)
+
+            return {
+                "success": True,
+                "data": {
+                    "prayed_today": prayed_today,
+                    "current_streak": current_streak,
+                    "longest_streak": longest_streak,
+                    "total_days": total_days,
+                    "recent_days": recent_days
+                }
             }
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1140,6 +1456,185 @@ async def get_daily_manna_widget():
                     "key_insight": "Click to receive today's devotional",
                     "scripture": scriptures[0]["reference"] if scriptures else "",
                     "has_content": False
+                }
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# BACKFILL & ADMIN ENDPOINTS
+# ============================================================================
+
+@router.post("/backfill")
+async def backfill_devotionals(request: dict):
+    """
+    Generate and archive devotionals for past dates.
+
+    This endpoint allows backfilling historical devotionals for dates
+    that were missed or before the archive system was implemented.
+
+    Request body:
+    {
+        "start_date": "2024-12-01",  # Start date (YYYY-MM-DD)
+        "end_date": "2024-12-15",    # End date (YYYY-MM-DD), defaults to yesterday
+        "skip_existing": true        # Skip dates that already have archives
+    }
+
+    Note: This is a slow operation as it generates AI content for each day.
+    Consider running for small date ranges.
+    """
+    try:
+        pool = get_database_pool()
+        if not pool.is_available:
+            raise HTTPException(status_code=503, detail="Database not available")
+
+        start_date_str = request.get("start_date")
+        end_date_str = request.get("end_date", (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"))
+        skip_existing = request.get("skip_existing", True)
+
+        if not start_date_str:
+            raise HTTPException(status_code=400, detail="start_date is required")
+
+        try:
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+        if start_date > end_date:
+            raise HTTPException(status_code=400, detail="start_date must be before end_date")
+
+        if end_date >= date.today():
+            end_date = date.today() - timedelta(days=1)
+
+        # Get existing archive dates if skipping
+        existing_dates = set()
+        if skip_existing:
+            with pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT date FROM daily_manna_archive
+                    WHERE date >= %s AND date <= %s
+                """, (start_date, end_date))
+                existing_dates = {row['date'] for row in cursor.fetchall()}
+
+        # Generate devotionals for each missing date
+        results = {
+            "generated": [],
+            "skipped": [],
+            "failed": []
+        }
+
+        current_date = start_date
+        while current_date <= end_date:
+            date_str = current_date.strftime("%Y-%m-%d")
+
+            if current_date in existing_dates:
+                results["skipped"].append(date_str)
+                current_date += timedelta(days=1)
+                continue
+
+            try:
+                # Generate content for this date
+                # Note: News will be current (can't fetch historical RSS)
+                # but scriptures rotate based on day of year
+                news_items = fetch_economic_news()
+                scriptures = get_daily_scriptures()
+                devotional = await generate_devotional_with_claude(news_items, scriptures)
+
+                content = {
+                    "devotional": devotional,
+                    "scriptures": scriptures,
+                    "news": news_items,
+                    "date": current_date.strftime("%A, %B %d, %Y"),
+                    "timestamp": datetime.now().isoformat(),
+                    "greeting": "Backfilled devotional",
+                    "news_sources": list(set(item.get('source', 'Unknown') for item in news_items)),
+                    "backfilled": True
+                }
+
+                # Save to database
+                with pool.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO daily_manna_archive
+                            (date, devotional, scriptures, news, greeting, news_sources, generated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (date) DO UPDATE SET
+                            devotional = EXCLUDED.devotional,
+                            scriptures = EXCLUDED.scriptures,
+                            news = EXCLUDED.news,
+                            greeting = EXCLUDED.greeting,
+                            news_sources = EXCLUDED.news_sources,
+                            generated_at = EXCLUDED.generated_at,
+                            archived_at = NOW()
+                    """, (
+                        date_str,
+                        json.dumps(devotional),
+                        json.dumps(scriptures),
+                        json.dumps(news_items),
+                        "Backfilled devotional",
+                        content["news_sources"],
+                        datetime.now().isoformat()
+                    ))
+
+                results["generated"].append(date_str)
+                print(f"Backfilled Daily Manna for {date_str}")
+
+            except Exception as e:
+                results["failed"].append({"date": date_str, "error": str(e)})
+                print(f"Failed to backfill {date_str}: {e}")
+
+            current_date += timedelta(days=1)
+
+        return {
+            "success": True,
+            "data": {
+                "generated": len(results["generated"]),
+                "skipped": len(results["skipped"]),
+                "failed": len(results["failed"]),
+                "details": results
+            },
+            "message": f"Backfill complete: {len(results['generated'])} generated, {len(results['skipped'])} skipped, {len(results['failed'])} failed"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/archive/stats")
+async def get_archive_stats():
+    """
+    Get statistics about the archive.
+    """
+    try:
+        pool = get_database_pool()
+        if not pool.is_available:
+            return {
+                "success": True,
+                "data": {"total": 0, "oldest": None, "newest": None}
+            }
+
+        with pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    MIN(date) as oldest,
+                    MAX(date) as newest
+                FROM daily_manna_archive
+            """)
+            row = cursor.fetchone()
+
+            return {
+                "success": True,
+                "data": {
+                    "total": row['total'] if row else 0,
+                    "oldest": str(row['oldest']) if row and row['oldest'] else None,
+                    "newest": str(row['newest']) if row and row['newest'] else None
                 }
             }
     except Exception as e:
