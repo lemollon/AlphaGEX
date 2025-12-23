@@ -146,6 +146,25 @@ interface DangerZoneLog {
   resolved_at: string | null
 }
 
+interface StrikeTrend {
+  dominant_status: 'BUILDING' | 'COLLAPSING' | 'SPIKE' | 'NEUTRAL'
+  dominant_duration_mins: number
+  current_status: string | null
+  current_duration_mins: number
+  status_counts: { BUILDING: number; COLLAPSING: number; SPIKE: number }
+  status_durations: { BUILDING: number; COLLAPSING: number; SPIKE: number }
+  total_events: number
+}
+
+interface GammaFlip30m {
+  strike: number
+  direction: 'POS_TO_NEG' | 'NEG_TO_POS'
+  flipped_at: string
+  gamma_before: number
+  gamma_after: number
+  mins_ago: number
+}
+
 interface Expiration {
   day: string
   date: string
@@ -207,6 +226,9 @@ export default function ArgusPage() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [commentary, setCommentary] = useState<Commentary[]>([])
   const [dangerZoneLogs, setDangerZoneLogs] = useState<DangerZoneLog[]>([])
+  const [strikeTrends, setStrikeTrends] = useState<Record<string, StrikeTrend>>({})
+  const [gammaFlips30m, setGammaFlips30m] = useState<GammaFlip30m[]>([])
+  const [timeToExpiry, setTimeToExpiry] = useState<string>('')
   const [marketContext, setMarketContext] = useState<MarketContext | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -342,6 +364,61 @@ export default function ArgusPage() {
     } catch (err) {}
   }, [])
 
+  const fetchStrikeTrends = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/api/argus/strike-trends')
+      if (response.data?.success && response.data?.data?.trends) {
+        setStrikeTrends(response.data.data.trends)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching strike trends:', err)
+    }
+  }, [])
+
+  const fetchGammaFlips30m = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/api/argus/gamma-flips')
+      if (response.data?.success && response.data?.data?.flips) {
+        setGammaFlips30m(response.data.data.flips)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching gamma flips:', err)
+    }
+  }, [])
+
+  // Calculate time to expiry (market close at 3:00 PM CT / 4:00 PM ET)
+  useEffect(() => {
+    const calculateTimeToExpiry = () => {
+      const now = new Date()
+      const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+      const marketClose = new Date(ct)
+      marketClose.setHours(15, 0, 0, 0) // 3:00 PM CT
+
+      // If past close time, show "EXPIRED"
+      if (ct > marketClose) {
+        setTimeToExpiry('EXPIRED')
+        return
+      }
+
+      const diff = marketClose.getTime() - ct.getTime()
+      const hours = Math.floor(diff / (1000 * 60 * 60))
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+
+      if (hours > 0) {
+        setTimeToExpiry(`${hours}h ${minutes}m`)
+      } else if (minutes > 0) {
+        setTimeToExpiry(`${minutes}m ${seconds}s`)
+      } else {
+        setTimeToExpiry(`${seconds}s`)
+      }
+    }
+
+    calculateTimeToExpiry()
+    const timer = setInterval(calculateTimeToExpiry, 1000)
+    return () => clearInterval(timer)
+  }, [])
+
   // Historical Replay Functions
   const fetchReplayDates = useCallback(async () => {
     try {
@@ -402,14 +479,16 @@ export default function ArgusPage() {
           fetchAlerts(),
           fetchCommentary(),
           fetchContext(),
-          fetchDangerZoneLogs()
+          fetchDangerZoneLogs(),
+          fetchStrikeTrends(),
+          fetchGammaFlips30m()
         ])
       } catch (err) {
         console.error('Error fetching initial data:', err)
       }
     }
     fetchAllData()
-  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext, fetchDangerZoneLogs])
+  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext, fetchDangerZoneLogs, fetchStrikeTrends, fetchGammaFlips30m])
 
   // Check if market is closed or holiday
   const isMarketClosed = gammaData?.market_status === 'closed' || gammaData?.market_status === 'holiday'
@@ -440,11 +519,13 @@ export default function ArgusPage() {
         fetchDangerZoneLogs()
       }, 15000)
 
-      // Medium polling: Alerts and context every 30 seconds
+      // Medium polling: Alerts, context, trends, and flips every 30 seconds
       mediumPollRef.current = setInterval(() => {
-        console.log('[ARGUS] Medium poll: fetching alerts and context')
+        console.log('[ARGUS] Medium poll: fetching alerts, context, trends, flips')
         fetchAlerts()
         fetchContext()
+        fetchStrikeTrends()
+        fetchGammaFlips30m()
       }, 30000)
 
       // Slow polling: Commentary every 60 seconds
@@ -1045,7 +1126,7 @@ export default function ArgusPage() {
         )}
 
         {/* Key Metrics Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">SPY Spot</div>
             <div className="text-xl font-bold text-white">${gammaData?.spot_price.toFixed(2)}</div>
@@ -1088,6 +1169,27 @@ export default function ArgusPage() {
             <div className="text-gray-500 text-xs mb-1">Pin Strike</div>
             <div className="text-xl font-bold text-purple-400">
               ${gammaData?.likely_pin || '-'}
+            </div>
+          </div>
+          <div className={`rounded-xl p-4 ${
+            timeToExpiry === 'EXPIRED'
+              ? 'bg-gray-800/50'
+              : timeToExpiry.includes('m') && !timeToExpiry.includes('h')
+                ? 'bg-orange-900/30 border border-orange-500/30'
+                : 'bg-gray-800/50'
+          }`}>
+            <div className="text-gray-500 text-xs mb-1 flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              Time to Expiry
+            </div>
+            <div className={`text-xl font-bold font-mono ${
+              timeToExpiry === 'EXPIRED'
+                ? 'text-gray-500'
+                : timeToExpiry.includes('m') && !timeToExpiry.includes('h')
+                  ? 'text-orange-400 animate-pulse'
+                  : 'text-cyan-400'
+            }`}>
+              {timeToExpiry || '--:--'}
             </div>
           </div>
         </div>
@@ -1327,10 +1429,12 @@ export default function ArgusPage() {
                   <thead>
                     <tr className="border-b border-gray-700">
                       <th className="text-left py-2 px-2 text-gray-500 font-medium">Strike</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">Dist</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Net Gamma</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Prob %</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">1m ROC</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">5m ROC</th>
+                      <th className="text-center py-2 px-2 text-gray-500 font-medium">30m Trend</th>
                       <th className="text-center py-2 px-2 text-gray-500 font-medium">Status</th>
                     </tr>
                   </thead>
@@ -1351,6 +1455,19 @@ export default function ArgusPage() {
                             ${strike.strike}
                           </span>
                         </td>
+                        <td className={`py-2 px-2 text-right font-mono text-xs ${
+                          (() => {
+                            const dist = gammaData?.spot_price ? ((strike.strike - gammaData.spot_price) / gammaData.spot_price * 100) : 0
+                            return dist > 0 ? 'text-emerald-400' : dist < 0 ? 'text-rose-400' : 'text-gray-500'
+                          })()
+                        }`}>
+                          {gammaData?.spot_price ? (
+                            (() => {
+                              const dist = ((strike.strike - gammaData.spot_price) / gammaData.spot_price * 100)
+                              return `${dist > 0 ? '+' : ''}${dist.toFixed(2)}%`
+                            })()
+                          ) : '-'}
+                        </td>
                         <td className={`py-2 px-2 text-right font-mono ${
                           strike.net_gamma > 0 ? 'text-emerald-400' : 'text-rose-400'
                         }`}>
@@ -1370,7 +1487,30 @@ export default function ArgusPage() {
                           {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
                         </td>
                         <td className="py-2 px-2 text-center">
-                          <div className="flex items-center justify-center gap-1">
+                          {(() => {
+                            const trend = strikeTrends[String(strike.strike)]
+                            if (!trend || trend.dominant_status === 'NEUTRAL') {
+                              return <span className="text-gray-600 text-[10px]">—</span>
+                            }
+                            const statusColors: Record<string, string> = {
+                              'BUILDING': 'text-emerald-400 bg-emerald-500/20',
+                              'COLLAPSING': 'text-rose-400 bg-rose-500/20',
+                              'SPIKE': 'text-orange-400 bg-orange-500/20'
+                            }
+                            const arrows: Record<string, string> = {
+                              'BUILDING': '↑',
+                              'COLLAPSING': '↓',
+                              'SPIKE': '⚡'
+                            }
+                            return (
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] ${statusColors[trend.dominant_status] || 'text-gray-400'}`}>
+                                {arrows[trend.dominant_status]} {trend.dominant_duration_mins.toFixed(0)}m
+                              </span>
+                            )
+                          })()}
+                        </td>
+                        <td className="py-2 px-2 text-center">
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
                             {strike.is_pin && (
                               <span className="px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded text-[10px]">PIN</span>
                             )}
@@ -1379,6 +1519,15 @@ export default function ArgusPage() {
                             )}
                             {strike.is_danger && (
                               <span className="px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded text-[10px]">{strike.danger_type}</span>
+                            )}
+                            {gammaFlips30m.some(f => f.strike === strike.strike) && (
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                gammaFlips30m.find(f => f.strike === strike.strike)?.direction === 'POS_TO_NEG'
+                                  ? 'bg-rose-500/20 text-rose-400'
+                                  : 'bg-emerald-500/20 text-emerald-400'
+                              }`}>
+                                FLIP {gammaFlips30m.find(f => f.strike === strike.strike)?.mins_ago.toFixed(0)}m
+                              </span>
                             )}
                           </div>
                         </td>
