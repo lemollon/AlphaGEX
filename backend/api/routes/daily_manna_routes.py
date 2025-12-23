@@ -599,6 +599,9 @@ async def get_devotional(force_refresh: bool = False):
         # Cache for the day
         set_cached_content(content)
 
+        # Auto-archive for historical access
+        save_to_archive(content)
+
         return {
             "success": True,
             "data": content,
@@ -654,6 +657,9 @@ async def get_daily_manna(force_refresh: bool = False):
 
         # Cache for the day
         set_cached_content(content)
+
+        # Auto-archive for historical access
+        save_to_archive(content)
 
         return {
             "success": True,
