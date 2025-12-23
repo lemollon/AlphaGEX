@@ -9,7 +9,12 @@
     "lint": "next lint",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:oracle": "playwright test oracle.spec.ts",
+    "test:e2e:argus": "playwright test argus.spec.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",

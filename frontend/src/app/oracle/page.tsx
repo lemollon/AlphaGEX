@@ -1,11 +1,97 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Component, ErrorInfo, ReactNode } from 'react'
 import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
 import { useOracleStatus, useOracleLogs, useOracleFullTransparency } from '@/lib/hooks/useMarketData'
+
+// Error Boundary for Oracle component-level errors
+interface ErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+  errorInfo: ErrorInfo | null
+}
+
+interface ErrorBoundaryProps {
+  children: ReactNode
+  fallback?: ReactNode
+}
+
+class OracleErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props)
+    this.state = { hasError: false, error: null, errorInfo: null }
+  }
+
+  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Oracle Error Boundary caught error:', error, errorInfo)
+    this.setState({ errorInfo })
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback
+      }
+      return (
+        <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-lg m-4">
+          <div className="flex items-center gap-3 mb-4">
+            <AlertTriangle className="w-6 h-6 text-red-400" />
+            <h3 className="text-lg font-semibold text-red-400">Component Error</h3>
+          </div>
+          <p className="text-text-secondary mb-4">
+            An error occurred while rendering this section. Please try refreshing the page.
+          </p>
+          {process.env.NODE_ENV === 'development' && this.state.error && (
+            <div className="bg-gray-900 rounded p-3 mb-4">
+              <pre className="text-xs text-red-300 whitespace-pre-wrap">
+                {this.state.error.message}
+              </pre>
+            </div>
+          )}
+          <button
+            onClick={() => this.setState({ hasError: false, error: null, errorInfo: null })}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Try Again
+          </button>
+        </div>
+      )
+    }
+
+    return this.props.children
+  }
+}
+
+// Safe array access helper - returns typed array or empty array
+function safeArray<T = unknown>(arr: T[] | null | undefined): T[] {
+  return Array.isArray(arr) ? arr : []
+}
+
+// Safe string array helper for common use case
+function safeStringArray(arr: string[] | null | undefined | unknown): string[] {
+  if (!Array.isArray(arr)) return []
+  return arr.map(item => String(item ?? ''))
+}
+
+// Safe number formatting helper
+function safeNumber(val: number | null | undefined, decimals: number = 2): string {
+  if (val == null || isNaN(val)) return 'N/A'
+  return val.toFixed(decimals)
+}
+
+// Safe percentage formatting helper
+function safePercent(val: number | null | undefined, decimals: number = 1): string {
+  if (val == null || isNaN(val)) return 'N/A'
+  return `${(val * 100).toFixed(decimals)}%`
+}
 
 interface BotHeartbeat {
   last_scan: string | null
@@ -175,27 +261,27 @@ function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
               </span>
             </div>
           )}
-          {analysis.risk_factors && analysis.risk_factors.length > 0 && (
+          {safeStringArray(analysis.risk_factors).length > 0 && (
             <div>
               <span className="text-text-muted">Risk Factors:</span>
               <ul className="mt-1 space-y-1">
-                {analysis.risk_factors.map((risk: string, idx: number) => (
+                {safeStringArray(analysis.risk_factors).map((risk, idx) => (
                   <li key={idx} className="text-red-300 flex items-start gap-2">
                     <AlertCircle className="w-3 h-3 mt-1 flex-shrink-0" />
-                    {risk}
+                    {risk || 'Unknown risk'}
                   </li>
                 ))}
               </ul>
             </div>
           )}
-          {analysis.opportunities && analysis.opportunities.length > 0 && (
+          {safeStringArray(analysis.opportunities).length > 0 && (
             <div>
               <span className="text-text-muted">Opportunities:</span>
               <ul className="mt-1 space-y-1">
-                {analysis.opportunities.map((opp: string, idx: number) => (
+                {safeStringArray(analysis.opportunities).map((opp, idx) => (
                   <li key={idx} className="text-green-300 flex items-start gap-2">
                     <CheckCircle className="w-3 h-3 mt-1 flex-shrink-0" />
-                    {opp}
+                    {opp || 'Unknown opportunity'}
                   </li>
                 ))}
               </ul>
@@ -664,6 +750,7 @@ export default function OraclePage() {
 
           {/* Bot Interactions Tab */}
           {activeTab === 'interactions' && (
+            <OracleErrorBoundary>
             <div className="space-y-6">
               {/* Filters */}
               <div className="flex flex-wrap items-center gap-4">
@@ -920,10 +1007,12 @@ export default function OraclePage() {
                 )}
               </div>
             </div>
+            </OracleErrorBoundary>
           )}
 
           {/* Performance Tab */}
           {activeTab === 'performance' && (
+            <OracleErrorBoundary>
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-text-primary">Oracle Prediction Performance (90 Days)</h3>
@@ -1013,10 +1102,12 @@ export default function OraclePage() {
                 </div>
               )}
             </div>
+            </OracleErrorBoundary>
           )}
 
           {/* Training Tab */}
           {activeTab === 'training' && (
+            <OracleErrorBoundary>
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-text-primary">ML Model Training</h3>
@@ -1208,10 +1299,12 @@ export default function OraclePage() {
                 </div>
               )}
             </div>
+            </OracleErrorBoundary>
           )}
 
           {/* Live Logs Tab */}
           {activeTab === 'logs' && (
+            <OracleErrorBoundary>
             <div className="card">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-text-primary flex items-center gap-2">
@@ -1271,10 +1364,12 @@ export default function OraclePage() {
                 )}
               </div>
             </div>
+            </OracleErrorBoundary>
           )}
 
           {/* Decision Log Tab */}
           {activeTab === 'decisions' && (
+            <OracleErrorBoundary>
             <div className="card">
               <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-green-500" />
@@ -1282,10 +1377,12 @@ export default function OraclePage() {
               </h3>
               <DecisionLogViewer defaultBot="ORACLE" />
             </div>
+            </OracleErrorBoundary>
           )}
 
           {/* Data Flow Tab - FULL TRANSPARENCY */}
           {activeTab === 'dataflow' && (
+            <OracleErrorBoundary>
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -1358,7 +1455,7 @@ export default function OraclePage() {
                         </div>
 
                         {/* Hallucination Warnings (if any) */}
-                        {exchange.hallucination_risk !== 'LOW' && exchange.hallucination_warnings?.length > 0 && (
+                        {exchange.hallucination_risk !== 'LOW' && safeStringArray(exchange.hallucination_warnings).length > 0 && (
                           <div className={`px-4 py-3 border-b border-gray-700 ${
                             exchange.hallucination_risk === 'HIGH' ? 'bg-red-900/10' : 'bg-yellow-900/10'
                           }`}>
@@ -1371,24 +1468,24 @@ export default function OraclePage() {
                             <ul className={`text-xs list-disc list-inside space-y-1 ${
                               exchange.hallucination_risk === 'HIGH' ? 'text-red-300/80' : 'text-yellow-300/80'
                             }`}>
-                              {exchange.hallucination_warnings.map((warning: string, wIdx: number) => (
-                                <li key={wIdx}>{warning}</li>
+                              {safeStringArray(exchange.hallucination_warnings).map((warning, wIdx) => (
+                                <li key={wIdx}>{warning || 'Unknown warning'}</li>
                               ))}
                             </ul>
                           </div>
                         )}
 
                         {/* Data Citations (if verified) */}
-                        {exchange.hallucination_risk === 'LOW' && exchange.data_citations?.length > 0 && (
+                        {exchange.hallucination_risk === 'LOW' && safeStringArray(exchange.data_citations).length > 0 && (
                           <div className="px-4 py-3 border-b border-gray-700 bg-green-900/10">
                             <p className="text-xs text-green-400 font-semibold mb-2 flex items-center gap-2">
                               <CheckCircle className="w-3 h-3" />
                               DATA CITATIONS (VERIFIED):
                             </p>
                             <div className="flex flex-wrap gap-1">
-                              {exchange.data_citations.map((citation: string, cIdx: number) => (
+                              {safeStringArray(exchange.data_citations).map((citation, cIdx) => (
                                 <span key={cIdx} className="text-xs bg-green-500/20 text-green-300 px-2 py-0.5 rounded">
-                                  {citation}
+                                  {citation || 'Unknown citation'}
                                 </span>
                               ))}
                             </div>
@@ -1401,23 +1498,31 @@ export default function OraclePage() {
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                             <div>
                               <span className="text-text-muted">Spot:</span>
-                              <span className="ml-1 text-text-primary">${exchange.market_context?.spot_price?.toFixed(2)}</span>
+                              <span className="ml-1 text-text-primary">
+                                {exchange.market_context?.spot_price != null
+                                  ? `$${safeNumber(exchange.market_context.spot_price)}`
+                                  : 'N/A'}
+                              </span>
                             </div>
                             <div>
                               <span className="text-text-muted">VIX:</span>
-                              <span className="ml-1 text-text-primary">{exchange.market_context?.vix?.toFixed(2)}</span>
+                              <span className="ml-1 text-text-primary">
+                                {safeNumber(exchange.market_context?.vix)}
+                              </span>
                             </div>
                             <div>
                               <span className="text-text-muted">GEX Regime:</span>
                               <span className={`ml-1 font-medium ${
                                 exchange.market_context?.gex_regime === 'POSITIVE' ? 'text-green-400' :
                                 exchange.market_context?.gex_regime === 'NEGATIVE' ? 'text-red-400' : 'text-yellow-400'
-                              }`}>{exchange.market_context?.gex_regime}</span>
+                              }`}>{exchange.market_context?.gex_regime || 'N/A'}</span>
                             </div>
                             <div>
                               <span className="text-text-muted">Between Walls:</span>
                               <span className={`ml-1 ${exchange.market_context?.gex_between_walls ? 'text-green-400' : 'text-red-400'}`}>
-                                {exchange.market_context?.gex_between_walls ? 'Yes' : 'No'}
+                                {exchange.market_context?.gex_between_walls != null
+                                  ? (exchange.market_context.gex_between_walls ? 'Yes' : 'No')
+                                  : 'N/A'}
                               </span>
                             </div>
                           </div>
@@ -1430,17 +1535,27 @@ export default function OraclePage() {
                             <div>
                               <span className="text-text-muted">Win Probability:</span>
                               <span className="ml-1 text-text-primary font-bold">
-                                {((exchange.ml_prediction?.win_probability || 0) * 100).toFixed(1)}%
+                                {exchange.ml_prediction?.win_probability != null
+                                  ? safePercent(exchange.ml_prediction.win_probability)
+                                  : 'N/A'}
                               </span>
                             </div>
                             <div>
                               <span className="text-text-muted">Top Factors:</span>
                               <span className="ml-1 text-text-primary">
-                                {Array.isArray(exchange.ml_prediction?.top_factors)
-                                  ? exchange.ml_prediction.top_factors.slice(0, 3).map((f: any) =>
-                                      typeof f === 'object' ? f[0] : f
-                                    ).join(', ')
-                                  : 'N/A'}
+                                {(() => {
+                                  try {
+                                    const factors = exchange.ml_prediction?.top_factors
+                                    if (!Array.isArray(factors) || factors.length === 0) return 'N/A'
+                                    return factors.slice(0, 3).map((f: any) => {
+                                      if (typeof f === 'string') return f
+                                      if (typeof f === 'object' && f !== null) return f[0] || 'Unknown'
+                                      return String(f)
+                                    }).join(', ')
+                                  } catch {
+                                    return 'N/A'
+                                  }
+                                })()}
                               </span>
                             </div>
                           </div>
@@ -1522,19 +1637,20 @@ export default function OraclePage() {
                 <div className="grid grid-cols-3 gap-4">
                   <div className="card text-center">
                     <p className="text-text-muted text-sm">Total Logs</p>
-                    <p className="text-2xl font-bold text-text-primary">{transparencyRes.summary.total_logs}</p>
+                    <p className="text-2xl font-bold text-text-primary">{transparencyRes.summary.total_logs ?? 0}</p>
                   </div>
                   <div className="card text-center">
                     <p className="text-text-muted text-sm">Data Flows</p>
-                    <p className="text-2xl font-bold text-cyan-400">{transparencyRes.summary.total_data_flows}</p>
+                    <p className="text-2xl font-bold text-cyan-400">{transparencyRes.summary.total_data_flows ?? 0}</p>
                   </div>
                   <div className="card text-center">
                     <p className="text-text-muted text-sm">Claude Exchanges</p>
-                    <p className="text-2xl font-bold text-purple-400">{transparencyRes.summary.total_claude_exchanges}</p>
+                    <p className="text-2xl font-bold text-purple-400">{transparencyRes.summary.total_claude_exchanges ?? 0}</p>
                   </div>
                 </div>
               )}
             </div>
+            </OracleErrorBoundary>
           )}
 
           {/* Info Section */}
